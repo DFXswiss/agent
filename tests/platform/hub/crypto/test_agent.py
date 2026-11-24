@@ -257,3 +257,67 @@ def test_a_handover_with_a_bad_secret_or_root_key_is_refused() -> None:
         assert refused.value.code == "header_invalid"
     with pytest.raises(CryptoError):
         agent.seal_handover(b(bot["kem"]), bot["id"], user["id"], bytes(16), DATA["remote"]["handover"]["root_key"])
+
+
+def canonical_text(label: bytes, fields: dict[str, Any]) -> bytes:
+    return PREFIX + label + json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
+
+
+def test_the_account_text_and_its_three_signatures_are_reproduced_with_independent_code() -> None:
+    own = DATA["own_account"]
+    account, bot, user = own["account"], DATA["agent"], DATA["user"]
+    assert own["methods"] == ["agent-signature-v1"] == list(agent.PROOF_METHODS)
+    text = canonical_text(
+        b"agent-account\x00",
+        {
+            "agent": bot["id"],
+            "agent_pub": {"kem": bot["kem"], "sig": bot["sig"]},
+            "invite_id": account["invite_id"],
+            "method": "agent-signature-v1",
+            "pub": {"kem": user["kem"], "sig": user["sig"]},
+            "user": user["id"],
+        },
+    )
+    assert b(account["text"]) == text
+    signing = Ed25519PrivateKey.from_private_bytes(hkdf(b(account["invite_code"]), PREFIX + b"invite-sign"))
+    assert b64u_encode(signing.public_key().public_bytes_raw()) == account["pk_inv"]
+    for signer, signature in ((account["pk_inv"], "inv_sig"), (user["sig"], "id_sig"), (bot["sig"], "agent_sig")):
+        Ed25519PublicKey.from_public_bytes(b(signer)).verify(b(account[signature]), text)
+        agent.verify_text(b(signer), account[signature], text)
+    assert agent.sign_text(signing, text) == account["inv_sig"]
+
+
+def test_the_recover_text_and_its_signatures_are_reproduced_with_independent_code() -> None:
+    recover, bot, user = DATA["own_account"]["recover"], DATA["agent"], DATA["user"]
+    text = canonical_text(
+        b"agent-recover\x00",
+        {
+            "agent": bot["id"],
+            "agent_pub": {"kem": bot["kem"], "sig": bot["sig"]},
+            "challenge": recover["challenge"],
+            "method": "agent-signature-v1",
+            "user": user["id"],
+        },
+    )
+    assert b(recover["text"]) == text
+    assert len(b(recover["challenge"])) == agent.CHALLENGE_BYTES
+    Ed25519PublicKey.from_public_bytes(b(user["sig"])).verify(b(recover["id_sig"]), text)
+    Ed25519PublicKey.from_public_bytes(b(bot["sig"])).verify(b(recover["agent_sig"]), text)
+
+
+def test_a_proof_method_outside_the_list_and_short_keys_are_refused() -> None:
+    assert agent.check_method("agent-signature-v1") == "agent-signature-v1"
+    for method in ("webauthn", "", None, 1):
+        with pytest.raises(CryptoError) as refused:
+            agent.check_method(method)
+        assert refused.value.code == "header_invalid"
+    with pytest.raises(CryptoError) as short:
+        agent.recover_text(
+            agent_id="a",
+            agent_kem=bytes(31),
+            agent_sig=bytes(32),
+            challenge=bytes(32),
+            method="agent-signature-v1",
+            user_id="u",
+        )
+    assert short.value.code == "header_invalid"
