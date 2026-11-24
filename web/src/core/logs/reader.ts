@@ -50,12 +50,15 @@ export interface OpenedLog {
   readonly truncated: boolean;
 }
 
-const target = (source: LogSource, suffix = ''): string =>
-  `/v1/tasks/${encodeURIComponent(source.task)}/logs/${encodeURIComponent(source.log.object_id)}${suffix}`;
+const ids = (source: LogSource) => ({
+  task: encodeURIComponent(source.task),
+  object: encodeURIComponent(source.log.object_id),
+});
 
 /** The checked manifest and the chunk key of the log of `source` (module comment). */
 export async function openLog(context: TasksContext, source: LogSource): Promise<OpenedLog> {
-  const body = await context.client.request('GET', target(source));
+  const { task, object } = ids(source);
+  const body = await context.client.request('GET', `/v1/tasks/${task}/logs/${object}`);
   const manifest = checkManifest(isRecord(body) ? body.manifest : null);
   if (
     manifest.object !== source.log.object_id ||
@@ -80,7 +83,8 @@ export async function openLog(context: TasksContext, source: LogSource): Promise
 }
 
 async function fetchSealed(context: TasksContext, log: OpenedLog, index: number): Promise<Uint8Array> {
-  const body = await context.client.request('GET', target(log.source, `/chunks/${index}`));
+  const { task, object } = ids(log.source);
+  const body = await context.client.request('GET', `/v1/tasks/${task}/logs/${object}/chunks/${index}`);
   return b64uDecode(isRecord(body) ? body.ct : null);
 }
 

@@ -92,6 +92,8 @@ describe('readChunk and readAll', () => {
     await expect(readChunk(w.t.context, log, 0)).rejects.toMatchObject({ code: 'header_invalid' });
     w.t.client.on(logPath('/chunks/1'), () => ({ nothing: true }));
     await expect(readChunk(w.t.context, log, 1)).rejects.toMatchObject({ code: 'header_invalid' });
+    w.t.client.on(logPath('/chunks/1'), () => 'nothing');
+    await expect(readChunk(w.t.context, log, 1)).rejects.toMatchObject({ code: 'header_invalid' });
   });
 
   it('refuses a download whose size or digest differs from the manifest', async () => {
