@@ -214,7 +214,12 @@ test('@E2E-64 @needs-vm two people in one task: the session knows who speaks, co
     expect(await queueOf(viewer)).toEqual([`${ada.userId}:waiting`]);
   }
   await expect(wendy.page.locator('[data-testid="chat.prompt"][data-withdrawal="withdrawn"]')).toHaveCount(1);
-  await expectAnswerInChat(page, 'The slow part is done kz56-answer-s-t5v1.');
+  // the slow turn holds its answer for 90 s (scenario step `slow`)
+  await expect(
+    page.getByTestId('chat.output').filter({ hasText: 'The slow part is done kz56-answer-s-t5v1.' }),
+  ).toBeVisible({
+    timeout: 240_000,
+  });
   await expectAnswerInChat(page, "Ada's queued instruction is done kz56-answer-q-c8n4.");
   expect(await requestOf(orchestrator, 'ada-queued')).toContain(
     `The person instructing you changed: the previous instruction came from \\"${WENDY_NAME}\\"`,
