@@ -5,11 +5,15 @@
 // linked to its parent and to the operation that started it, with its terminal in the web. Four children requested at
 // once: three run, the fourth exceeds the limit of running children per task. Claude Code's own Agent/Task tools are
 // never offered nor used. Runs on T1 and T2.
-// Pending (SCN-07): "child session appears in the monitoring overview with its own samples" - checked by SCN-08/ACC-M2.
+// Live view of a running child (KONZEPT idea 26 and section 6 point 7, KOR-60): the double holds the child's final
+// answer back for 40 s; meanwhile the child's terminal grows in the web, its chat tab shows its first answer and the
+// monitoring overview lists it with its own sample in state `working` - each checked while the hub still has the
+// child unfinished.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures/test.ts';
 import { expectNoPlaintext, runnerStore, vmFiles } from '../fixtures/guest.ts';
 import { hubOperations } from '../fixtures/github.ts';
+import { navigate } from '../fixtures/identity.ts';
 import {
   expectAnswerInChat,
   mainSessions,
@@ -20,6 +24,7 @@ import {
   taskBodies,
   uuid,
 } from '../fixtures/platform.ts';
+import { PageUser } from '../../../web/e2e/helpers/user.ts';
 
 const scenario: unknown = JSON.parse(
   readFileSync(new URL('../scenarios/e2e-24-subagents.json', import.meta.url), 'utf8'),
@@ -46,6 +51,15 @@ interface SessionTree {
   readonly vm_id: string | null;
 }
 
+interface MonitoredSession {
+  readonly session_id: string;
+  readonly state: string;
+  readonly latest: { readonly state: string; readonly mem_used_bytes: number | null } | null;
+}
+
+/** States after which a session no longer runs. */
+const ENDED = ['stopping', 'stopped', 'failed'];
+
 interface JournalEntry {
   readonly path: string;
   readonly body: {
@@ -67,7 +81,60 @@ test('@E2E-24 @R-10.6 @R-13.1 @R-13.2 @R-13.3 @R-13.4 @R-13.5 @R-13.6 @R-13.7 @R
   await poolReady(orchestrator);
   await authenticator('platform');
   const onboarded = await onboard(page, orchestrator, 'Ada kz24-name-b6n1m4q7');
+  const api = await PageUser.open(page, onboarded.recoveryCode);
   const task = await sendPrompt(page, PROMPT);
+
+  // Live view while the child runs: the double answers the child's final turn only after 40 s.
+  let liveChild = '';
+  await expect
+    .poll(
+      async () => {
+        const [row] = await orchestrator.hubQuery<{ id: string }>(
+          `SELECT id FROM hub.session WHERE task_id = '${uuid(task)}' AND depth = 1 ORDER BY created_at LIMIT 1`,
+        );
+        liveChild = row?.id ?? '';
+        return liveChild;
+      },
+      { timeout: 120_000 },
+    )
+    .not.toBe('');
+  const childState = async () =>
+    (
+      await orchestrator.hubQuery<{ state: string }>(`SELECT state FROM hub.session WHERE id = '${uuid(liveChild)}'`)
+    )[0]!.state;
+  const stillRunning = async (what: string) =>
+    expect(ENDED, `${what} before the child ended`).not.toContain(await childState());
+  await page.getByTestId('task.tabs.sessions').click();
+  await page.locator(`[data-testid="sessions.node"][data-session="${liveChild}"] > a`).click();
+  await expect(page).toHaveURL(new RegExp(`/s/${liveChild}$`));
+  const terminal = page.getByTestId('terminal');
+  await expect(terminal).toBeVisible({ timeout: 30_000 });
+  const chunks = async () => Number(await terminal.getAttribute('data-chunks'));
+  await expect.poll(chunks, { timeout: 30_000 }).toBeGreaterThan(0);
+  const seen = await chunks();
+  await expect.poll(chunks, { timeout: 30_000, intervals: [500] }).toBeGreaterThan(seen);
+  await stillRunning('the child terminal grew');
+  await page.getByTestId('session.tabs.chat').click();
+  const firstAnswer = page.getByTestId('chat.output').filter({ hasText: 'Asking for a second opinion.' });
+  await expect(firstAnswer.first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('chat.output').filter({ hasText: 'kz24-child-t9y3u6' })).toHaveCount(0);
+  await stillRunning("the child's chat showed its first answer");
+  const monitored = async () =>
+    (
+      (await api.request('GET', `/v1/monitoring/overview?org=${onboarded.org}`)) as { sessions: MonitoredSession[] }
+    ).sessions.find((item) => item.session_id === liveChild);
+  await expect
+    .poll(
+      async () => {
+        const item = await monitored();
+        return item?.latest?.state === 'working' && (item.latest.mem_used_bytes ?? 0) > 0;
+      },
+      { timeout: 40_000, intervals: [2000] },
+    )
+    .toBe(true);
+  await stillRunning('the monitoring sampled the child');
+
+  await navigate(page, `/o/${onboarded.org}/t/${task}`);
   await expectAnswerInChat(page, 'Subagents finished kz24-answer-o4i8p1.');
   await expect.poll(async () => (await orchestrator.doubleState('model')).ok, { timeout: 60_000 }).toBe(true);
   const [main] = await mainSessions(orchestrator, task);
