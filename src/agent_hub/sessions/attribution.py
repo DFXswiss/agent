@@ -2,8 +2,8 @@
 (KOR-45, A11).
 
 `triggered_by` of `hub.operation` and `hub.session` is the person whose instruction the row follows from: for an
-operation the acting user the runner stamped on the turn (`POST /v1/device/operations`, checked to be the author of a
-prompt of the task with `wg:write`), for a main session the author of the prompt it was created for, for a child
+operation the acting user the runner stamped on the turn (`POST /v1/device/operations`, an active member of the task's
+organization, KOR-47 check H2a), for a main session the author of the prompt it was created for, for a child
 session the triggering person of the `subagent.request` that created it. KOR-45 intersects that person's rights with
 the task owner's.
 

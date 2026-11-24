@@ -1,9 +1,10 @@
 """What the hub says about the prompt queue, from the last desired state (`GET /v1/device/state` section
 `prompt_queue`, ADR-083 sections 2 and 3).
 
-- `api(desired)`: the hub sends the section, so it takes the new fields of ADR-083 - `triggered_by` of an operation
-  registration and of the outbox `usage` and `runtime` items, and the outbox audit `session.prompt_withdrawn`. An
-  older hub has no section and refuses unknown fields; the runner then sends none of them.
+- `api(desired)`: the hub sends the section, so it takes the new fields of ADR-083 - `triggered_by` of the outbox
+  `usage` and `runtime` items and the outbox audit `session.prompt_withdrawn`. An older hub has no section and refuses
+  unknown fields; the runner then sends none of them. (`triggered_by` of an operation registration belongs to KOR-47,
+  `operations/register.py`.)
 - `parse(desired)`: `(via_agent, withdrawn)`, the event IDs of pending prompts of this device's sessions the hub
   received from the author's agent, and those whose author asked to withdraw them (both empty without the section).
   A malformed section raises `wire.ResponseInvalid` like every other malformed answer.

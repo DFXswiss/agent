@@ -77,10 +77,10 @@ stays traceable internally), [Idee 46](../KONZEPT.md#k-idee-46) (consumption ass
   the turn's acting user for consumption of a main session, and the acting user of the `subagent.request` for a child
   session and its consumption. It is reported to the hub as `triggered_by` (user ID, or null when the turn had
   several authors or none):
-  - operation registration `POST /v1/device/operations` (`triggered_by`) → `hub.operation.triggered_by`, the audit
-    detail of every `operation.*` row, the operation JSON. The hub accepts it only when it is null or the author of a
-    prompt event of that task, and check H2 also requires `wg:write` of that person now (a runner cannot attribute an
-    operation to an arbitrary member, and a person who lost write access triggers nothing any more);
+  - operations: built together with KOR-47 ([ADR-078](078-github-identities.md) §2) - the registration
+    `POST /v1/device/operations` carries `triggered_by`, the hub stores `hub.operation.triggered_by` (an active member
+    of the task's organization, check H2a), names it in the audit detail of every `operation.*` row and in the
+    operation JSON;
   - a child session created from that operation → `hub.session.triggered_by`; a main session → the author of the
     prompt that created it (`POST /v1/tasks`, a follow-up, a carry-over or a retry: the first prompt it was created
     for);
@@ -99,8 +99,8 @@ stays traceable internally), [Idee 46](../KONZEPT.md#k-idee-46) (consumption ass
   the intersection with every author involved, or denies.
 - The model access of a session stays the one chosen at its start; its consumption is attributed per person as
   above (ADR-070 "Consequences").
-- **Old runners** send no `triggered_by`: the hub stores null (shown as "not attributed"). The runner sends the new
-  fields only to a hub that announces the section `prompt_queue` in `GET /v1/device/state`.
+- **Old runners** send no `triggered_by`: the hub stores null (shown as "not attributed"). The runner sends it with
+  `usage` and `runtime` items only to a hub that announces the section `prompt_queue` in `GET /v1/device/state`.
 
 ### 3. The queue is visible and a waiting prompt can be withdrawn
 - **Order.** Unchanged: prompts of a task are delivered strictly in event order (`scope_seq`), one turn at a time.

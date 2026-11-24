@@ -28,14 +28,14 @@ Producer: the hub (device state, hints) and the runner (registration, outbox); a
   that sends the section takes `triggered_by` and the outbox audit `session.prompt_withdrawn`; the runner sends
   neither to a hub without it.
 - `ws/device/objects.json#/$defs/hint_prompt`: optional `via_agent` (boolean).
-- `api/device-operations.request.json`: optional `triggered_by` (UUID or null) in both variants.
+- Operation registration: `triggered_by` came with KOR-47 (`contracts/changes/KOR-47.md`); this package adds nothing
+  there.
 - `outbox/objects.json`: optional `triggered_by` (UUID or null) in `body_usage` and `body_runtime`; new `body_audit`
   variant `session.prompt_withdrawn` (target the prompt event, empty detail).
 - `enums/outbox-audit-actions.json`: `session.prompt_withdrawn`.
 
 Fixtures: `api/device-state.response/{valid/prompt-queue,invalid/prompt-queue-extra-field,invalid/prompt-queue-missing-withdrawn}.json`,
 `ws/device/prompt/{valid/via-agent,invalid/via-agent-text}.json`,
-`api/device-operations.request/{valid/triggered-by,valid/triggered-by-null,invalid/triggered-by-invalid}.json`,
 `outbox/usage/{valid,invalid}/triggered-by*.json`, `outbox/runtime/{valid,invalid}/triggered-by*.json`,
 `outbox/audit/{valid/prompt-withdrawn,invalid/prompt-withdrawn-detail}.json`.
 
@@ -49,16 +49,16 @@ Producer: the hub; consumers: the web and the user's agent (`agent-platform`).
   prompt's author) → `{state: withdrawn|withdrawing}`. New `api/objects.json` definitions `queue_prompt`
   `{event_id, author_id, via_agent, scope_seq, received_at, session_id, device_id, state:
   waiting|waiting_for_device|withdrawing}` and `charge_person`.
-- `api/objects.json`: optional `triggered_by` (UUID or null) in `operation_row` and `session_row`; notification kind
+- `api/objects.json`: optional `triggered_by` (UUID or null) in `session_row` (the one of `operation_row` came with
+  KOR-47); notification kind
   `prompt.waiting_for_device` (`ref` the prompt event ID).
 - `api/org-billing.response.json`, `api/task-charges.response.json`: optional `people` (`charge_person`: consumption
   per person, `user_id` null for unattributed consumption).
 - Audit actions (`enums/audit-actions.json`, `audit/<action>.json`): `prompt.withdraw {state}` (hub, actor the
-  author, target the prompt event), `session.prompt_withdrawn {}` (from the runner's outbox), `read.task.queue`;
-  every `operation.*` detail takes an optional `triggered_by`.
+  author, target the prompt event), `session.prompt_withdrawn {}` (from the runner's outbox), `read.task.queue` (the optional `triggered_by` of every `operation.*` detail came with KOR-47).
 
 Fixtures: `api/task-queue.{request,response}/`, `api/prompt-withdraw.{request,response}/`,
 `api/operation-get.response/{valid,invalid}/triggered-by*.json`, `api/session-get.response/valid/triggered-by.json`,
 `api/{task-charges,org-billing}.response/{valid/people,invalid/people-extra-field}.json`,
-`api/notifications-list.response/valid/waiting-for-device.json`, `audit/{prompt.withdraw,session.prompt_withdrawn,read.task.queue}/`,
-`audit/operation.accepted/{valid,invalid}/triggered-by*.json`.
+`api/notifications-list.response/valid/waiting-for-device.json`, `audit/{prompt.withdraw,session.prompt_withdrawn,read.task.queue}/`; extra fixtures of the KOR-47 fields:
+`api/device-operations.request/{valid,invalid}/triggered-by*.json`, `audit/operation.accepted/{valid,invalid}/triggered-by*.json`.
