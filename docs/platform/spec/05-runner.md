@@ -699,7 +699,7 @@ Prompts for a session are delivered strictly in event order; a prompt arriving w
 - Delivery journaled (`ping.delivered`) and audited (`ping.delivered`) for every ping; for a hub ping the audit also
   marks the hub `session_ping` row delivered, the runner's own pings have no hub row (KOR-07). Never via `Stop` (a `Stop` hook answer with context would force the session to continue).
 
-## 10. Model access (ADR-010, ADR-025)
+## 10. Model access (ADR-010, ADR-025, ADR-080)
 
 ### 10.1 Selection
 
@@ -717,7 +717,9 @@ organizations see no difference; an empty pool changes nothing (`model_access_un
 reason `model_access_unavailable` (no silent fallback); the task's chat offers its owner the connection, and the
 hub continues the task by itself once the owner stored a model credential (ADR-079 §4). Model: owner's `model_id` if allowed for the access kind
 in the catalog, else the catalog default (`platform`: `deepseek/deepseek-v4.1-flash-1017`; API key/subscription:
-Claude Code default, no `--model`). Chosen kind and model are reported in `session_transition`.
+Claude Code default, no `--model`). Chosen kind and model are reported in `session_transition`. Exhausted
+subscriptions are skipped and the crossing from the owner's own access to DFX access follows the owner's fallback
+settings and the task's consent (§10.7, ADR-080).
 
 ### 10.2 Gateway (`/model/…` in `agent-guest-api`)
 
@@ -735,7 +737,8 @@ Claude Code default, no `--model`). Chosen kind and model are reported in `sessi
   gateway's `usage` records feeds the pool: `401`/`403` for the content the session holds block the file until it
   changes and move the session to another usable file at its next renewal (none: it keeps its token; refusals within
   60 s after the gateway got a token are ignored, one session blocks at most one file per 10 min); `429` defers the
-  file for 300 s for new sessions only (the record carries no `retry-after`); running sessions stay on it.
+  file for 300 s for new sessions only (the record carries no `retry-after`); running sessions stay on it until an
+  exhaustion is confirmed (§10.7). Blocks and confirmed exhaustions survive a restart (`runner.access_limit`).
 - No credential (it is memory only in `agent-guest-api`; a restart loses it): journal `guest.error
   credential_missing` and hold the request without a model slot, polling every 0.2 s, until the runner provisions
   again (it ignores reports within 10 s of its last provisioning), at most 22 s and only while the session is active;
@@ -792,6 +795,75 @@ equivalent (`subscription_equivalent`). Claude Code's own cost fields are never 
 - Platform key: `GET <openrouter>/api/v1/key` every 900 s → `spend_snapshot` → device metrics
   (`agent_runner_device_model_spend_*`), operators only.
 - Tokens are never logged, never written to disk outside the encrypted credential record.
+
+### 10.7 Fallback, exhaustion and waits (ADR-080 sections 1–5)
+
+- **Cost classes.** `own`: the owner's subscription or API key; `dfx`: an operator subscription or `platform`
+  (OpenRouter, also the per-device key of §10.9). Inside a class the runner falls back by itself; from `own` to `dfx`
+  only when the owner's `fallback.own_to_dfx` (default off) or the task's `model_consent` allows it. From the operator
+  pool to `platform` only with `fallback.operator_to_platform` (default on). Both settings come with every session of
+  the owner in `GET /v1/device/state` (`sessions[].fallback`, `sessions[].model_consent`); an older hub that sends
+  neither means the defaults. An explicit `api_key` or `platform` preference has no fallback.
+- **Exhaustion** (subscriptions only; access key `own:<owner_id>` or `operator:<file name>`). Trigger: a gateway
+  `usage` record with status `429`. Readable quota: the runner reads the usage endpoint with the same token at once
+  (at most once per access per 60 s); exhausted when `five_hour` or `seven_day` reports `used_percent >= 100` with
+  `resets_at` in the future, until the latest such `resets_at` (`weekly:<model>` does not count). Not readable, or
+  below 100 %: 3 `429` records within 300 s without a success in between mark it until `now + 900 s`; a single `429`
+  marks nothing. The quota polls (§10.6, §10.8) mark and release with the same rule. Stored in
+  `runner.access_limit` (access key, `until`, `readable`, `limited_at`; the `401`/`403` block of an operator file with
+  the file's identity), read at start; a row whose `until` passed is released. A `402` of a `platform` session on an
+  org device marks `dfxkey:<device_id>` for 120 s.
+- **Order** (`model.access.resolve`): the preference's steps, exhausted accesses skipped; the operator pool picks the
+  file with the lowest known `used_percent` of its fullest window first (unknown after known), then fewest bound
+  sessions, unused longest, name. Deterministic: stored limits, latest snapshots, bindings and settings only.
+- **Wait.** No allowed access left: `until` = the earliest release of the skipped accesses (an own credential that
+  cannot be used right now: `now + 300 s`), `choice` = a `dfx` access would be available but the crossing rule bars it
+  (never while the organization's credit is exhausted). Without any release time (only blocked files): `failed`
+  `model_access_unavailable` as before. A new main session starts on the access with the earliest release and is
+  suspended before its first prompt; a new subagent session fails with `model_quota_exhausted`.
+- **Running sessions** (reconcile step `model_fallback`, after `billing`, on every desired state and every 5 s): an
+  exhausted operator file is replaced in place by another file of the pool (gateway renewal); a change of the model
+  kind pauses the session like a credit pause (`runner.model_pause`, interrupt, suspend under the deliverer's lock)
+  and resumes it at once on the newly resolved access; with nothing allowed the session is `suspended` with
+  `error_code` `model_quota_exhausted`, `wait_until` and `dfx_choice` (sent only to a hub with
+  `model_fallback.api >= 1`). The pause ends by itself at `until`, at an earlier release, or when the setting or the
+  consent allows a `dfx` access; the session then receives one fixed continuation sentence ("The platform switched
+  this session's model access from <from> to <to> because <from> is used up until <time>. Continue the interrupted
+  work." or "The model quota is available again. Continue the interrupted work."). A subagent session is moved in
+  place but never paused (`model_quota_exhausted`). A running session is never moved back; a credit pause comes
+  first. Every switch writes the outbox audit `session.model_switched` `{from_access, to_access, from_model, to_model,
+  cause: exhausted|unusable|released, until}`.
+
+### 10.8 Quotas of the operator's subscriptions (ADR-080 section 6)
+
+- A platform device with `OPERATOR_SUBSCRIPTION_DIR` polls the usage endpoint with every usable file's token every
+  900 s and at a confirmation (§10.7), parsed like §10.6. It sends the outbox item `operator_quota {at, subscriptions:
+  [{name, state: usable|exhausted|blocked|deferred|ignored, readable, windows, limited_at, until, fetched_at}]}` – the
+  complete snapshot of the device, at most every 60 s and only when something changed; file names only, never a
+  token. The own subscription's `quota` item carries the latest observed limit `limited: {at, until, readable}`.
+- The hub keeps the newest snapshot per device and serves `GET /v1/orgs/{org}/quotas` (03-api.md §4.3): the web shows
+  it in the settings section "Model access and quotas" and as the counter of the situation view, the agent tool as
+  `agent-platform quotas --org`.
+
+### 10.9 DFX key on organization devices (ADR-080 section 7, idea 46 case 3)
+
+- **Issuer**: a platform device whose runner has `AGENT_RUNNER_OPENROUTER_MANAGEMENT_KEY_FILE` (0600, platform
+  devices only, never logged or sent) announces `dfx_key_state {issuer: true}`; the hub elects the online issuer with
+  the smallest device ID and lists `dfx_keys.requests` (one per active org device of a non-exhausted organization
+  without a key, only while billing is active) and `dfx_keys.keys` in its device state.
+- **Issuing**: per request the issuer deletes a key left over for the same request (by name), creates one key with
+  `limit` = headroom (name `dfx-` + the first 8 characters of the request ID), seals it with HPKE to the device's
+  `device_kem`, signs the envelope with its device signing key, forgets the key and sends `dfx_key_issued`.
+- **Org device**: accepts the envelope (`dfx_key_held` of its device state) only when the signer is a platform device
+  certified in its verified platform log and the header names this device, its KEM key and an organization it serves;
+  keeps it sealed in `runner.dfx_key` and opens it only to provision a `platform` session. Its usage items carry the
+  origin `platform` and are not charged by the hub (the provider's figures are, below).
+- **Measuring**: every 60 s the issuer reads each listed key's spend and sends the provider's cumulative figure
+  `dfx_key_usage {key_ref, org_id, device_id, spent_micro_usd, at}` and sets `limit = spent + min(headroom_usd,
+  AGENT_RUNNER_DFX_KEY_MAX_HEADROOM_USD (5))`; `disabled` switches the key off at the provider, `revoke` reads the
+  final spend, reports it and deletes the key. The credit pause of ADR-062 §6 acts on an org device's `platform`
+  sessions; sessions on own access there are never touched.
+- Operator subscriptions stay on platform devices; no token of the pool reaches an org device.
 
 ## 11. Credentials, device requests, subscription login (ADR-011)
 

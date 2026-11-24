@@ -231,7 +231,10 @@ The home of an organization shows where people are needed, across all workgroups
 
 - **Counters** at the top: "Waiting for me" (`needs_decision` tasks the user owns), "Stuck", "Running", "Finished
   today" (`GET /v1/orgs/{org}/attention/summary`, `since` = local midnight). The navigation entry Home (sidebar,
-  navigation row, phone bottom bar) carries the "waiting for me" count as a badge.
+  navigation row, phone bottom bar) carries the "waiting for me" count as a badge. Below them the organization's
+  subscriptions ("Subscriptions: n available · m used up – next release 14:05", `GET /v1/orgs/{org}/quotas`, refreshed
+  every minute, a link to the section of §8.2; hidden without any subscription to list or when the hub cannot answer;
+  KOR-50, [ADR-080](../adr/080-model-access-fallback-and-dfx-access-on-own-hardware.md) §6).
 - **Groups** in this order: "Needs your decision" (`needs_decision`, longest waiting first), "Stuck" (`blocked`),
   "Running" (`working`), "Recently finished" (`done`, last 7 days, with the link to the default workgroup's task
   list); the last three newest first. Each group is a windowed list paged by the hub (50 per page; at most 50 entries
@@ -248,7 +251,11 @@ The home of an organization shows where people are needed, across all workgroups
   `device_missing` leads admins to assigning a computer (§7.3), others see who can do it; `model_access_missing`
   opens the model settings (§8.2); `credit_empty` says that the operator sets the balance and offers "Continue";
   `session_failed`, `guest_error`, `device_unreachable`, `no_capacity` offer "Try again" (a follow-up prompt starts a
-  new main session); every entry offers "Open task". Users without write access see the entry without controls.
+  new main session); `quota_choice` ("Your subscription is used up until 14:05 – continue with DFX access?") offers
+  "Continue with DFX access" (`POST /v1/tasks/{task}/model-consent`) and, to the task's owner only, "Always" (the
+  setting `fallback.own_to_dfx` of §8.2), with the note that DFX access is charged and that the task otherwise
+  continues by itself; `quota_wait` names the time ("Waiting for model quota – continues at 14:05") and needs nobody
+  (ADR-080 §5); every entry offers "Open task". Users without write access see the entry without controls.
 - **New task**: the composer of §4.1 stays at the top in a compact form (context line with the workgroup selector and
   the prompt field), so a new task is always one step away; its suggestion chips are shown while the organization has
   no task yet, otherwise behind "Suggestions". Users without write access see a short note instead.
@@ -354,6 +361,14 @@ Below the task header, `ContextNotice` reads `context_restore`/`context_reason` 
 A restored row with a reason the client does not know counts as a full restore (the conversation is complete). The
 error catalog has texts for `quota_exceeded` (a checkpoint over its quota; shown only where a device error reaches a
 user).
+
+### 5.1c Model switch line (task page, KOR-50, [ADR-080](../adr/080-model-access-fallback-and-dfx-access-on-own-hardware.md) §5)
+
+Below the resume notice the task page shows the newest switch of the model access of one of its sessions (audit row
+`session.model_switched`, read from `GET /v1/orgs/{org}/audit?action=session.model_switched&task=`): "Model switched:
+Claude subscription → DFX access over OpenRouter (model) · used up until 14:05" (cause `exhausted` with or without
+the time, `unusable`, `released`). It is read when the page opens, when the task or its main session changes state and
+after a reconnect; without a switch, or when the audit cannot be read, nothing is shown.
 
 ### 5.2 Chat (`/o/:org/t/:task`, tab Chat)
 
@@ -607,6 +622,15 @@ newest `CK` after a rotation.
 
 - Preference (`auto`, `subscription`, `api_key`, `platform`) and model choice (`PUT /v1/me/settings`). Allowed model
   IDs per access kind come only from `GET /v1/config` (`models`); there is no build-time list. `platform` explains it is available only on DFX devices.
+- **Fallback** (KOR-50, [ADR-080](../adr/080-model-access-fallback-and-dfx-access-on-own-hardware.md) §1), saved with the same button: "Use DFX access when my own subscription is used
+  up" (`fallback.own_to_dfx`, default off; charged) and "Use DFX access over OpenRouter when the operator's
+  subscriptions are used up" (`fallback.operator_to_platform`, default on). Not shown for a hub whose settings carry
+  no `fallback` (an older release).
+- **Model access and quotas** (organization, section `model-quotas`, ADR-080 §6): `GET /v1/orgs/{org}/quotas` of the
+  active organization – the summary ("Subscriptions: n available · m used up – next release 14:05"), the user's own
+  subscription (its windows, or "Not readable" honestly, with the last observed limit time), the operator's
+  subscriptions when the organization may use them (label, state, used share or "quota not readable", release or
+  "used up until", last observed limit) and whether DFX access over OpenRouter is available.
 - **Anthropic API key:** paste field (password type), stored as `anthropic_api_key` credential (encrypt with `CK`,
   `PUT /v1/me/credentials/anthropic_api_key`); optional "Check key" device request `credential.check`.
 - **Claude subscription (setup-token relay):** device request `claude.login` → response shows the authorize link →

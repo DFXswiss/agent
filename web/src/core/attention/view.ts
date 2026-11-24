@@ -3,13 +3,18 @@
 // - the reasons of each category (closed lists of `contracts/enums/attention.json`); an unknown reason is shown with
 //   its category's generic text (a newer hub may add reasons);
 // - the next step of an entry (`actionOf`): an answer field, approve / decline, connect GitHub, assign a computer,
-//   the model settings, "Continue" after an empty balance, "Try again" only where a new attempt can help, nothing
-//   else for a refused action ("Open task" is always offered);
+//   the model settings, "Continue" after an empty balance, "Continue with DFX access" while the own subscription is
+//   used up (ADR-080 section 5), "Try again" only where a new attempt can help, nothing else for a refused action
+//   ("Open task" is always offered);
+// - the text of a reason that continues by itself at a time (`quota_wait`, `quota_choice`) names that time;
 // - the prompt of an approval: exactly `Approved.` or `Declined.` (English in every locale, so the agent reads the
 //   same), then a blank line and the comment when one was given;
 // - the agent's question of a `question` / `approval` record: the `params.question` of the verified
 //   `operation.params` event of the record's operation, and only for the two asking operation types;
 // - the window of a group (`groupWindow`): at most `WINDOW` entries in the DOM, moved by `STEP` (HOT-05).
+import { parseTime } from '../encoding/time';
+import type { Params } from '../i18n/catalog';
+import { formatClock, type TimeOptions } from '../i18n/format';
 import { selectOperation } from '../operations/view';
 import { type AttentionRow, attentionGroup, CATEGORIES, type Category } from '../store/slices/attention';
 import type { TaskRow } from '../store/slices/tasks';
@@ -17,7 +22,7 @@ import type { StoreState } from '../store/store';
 
 /** The reasons of each category, in the order of ADR-076 section 1. */
 export const REASONS: Readonly<Record<Category, readonly string[]>> = {
-  needs_decision: ['question', 'approval', 'connection_missing', 'credit_empty', 'device_missing'],
+  needs_decision: ['question', 'approval', 'connection_missing', 'credit_empty', 'device_missing', 'quota_choice'],
   blocked: [
     'session_failed',
     'guest_error',
@@ -26,13 +31,33 @@ export const REASONS: Readonly<Record<Category, readonly string[]>> = {
     'no_capacity',
     'operation_refused',
   ],
-  working: ['queued', 'starting', 'working', 'operation', 'subagents'],
+  working: ['queued', 'starting', 'working', 'operation', 'subagents', 'quota_wait'],
   done: ['idle', 'closed'],
 };
 
 /** The message key of a reason's plain words (`attention` catalog). */
 export function reasonKey(category: Category, reason: string): string {
   return REASONS[category].includes(reason) ? `attention.reason.${reason}` : `attention.generic.${category}`;
+}
+
+/** The reasons whose text names the time the task continues by itself (ADR-080 section 5). */
+export const TIMED_REASONS: ReadonlySet<string> = new Set(['quota_wait', 'quota_choice']);
+
+/**
+ * The message key and parameters of a reason's plain words: a timed reason of its own category with a known
+ * `wait_until` names that time (`attention.reason.<reason>.at`), otherwise the words of `reasonKey`.
+ */
+export function reasonText(
+  category: Category,
+  row: Pick<AttentionRow, 'reason' | 'wait_until'>,
+  options: TimeOptions,
+): { readonly key: string; readonly params: Params } {
+  const key = reasonKey(category, row.reason);
+  const until = row.wait_until ?? null;
+  if (until === null || !TIMED_REASONS.has(row.reason) || !REASONS[category].includes(row.reason)) {
+    return { key, params: {} };
+  }
+  return { key: `${key}.at`, params: { time: formatClock(parseTime(until), options) } };
 }
 
 /** The operation types with which an agent asks a person (03-api.md section 9). */
@@ -49,7 +74,7 @@ export const RETRY_REASONS: ReadonlySet<string> = new Set([
   'no_capacity',
 ]);
 
-export type Action = 'answer' | 'approve' | 'connect' | 'assign' | 'model' | 'continue' | 'retry' | null;
+export type Action = 'answer' | 'approve' | 'connect' | 'assign' | 'model' | 'continue' | 'consent' | 'retry' | null;
 
 /** The next step of a record (module comment). */
 export function actionOf(row: Pick<AttentionRow, 'category' | 'reason'>): Action {
@@ -65,6 +90,8 @@ export function actionOf(row: Pick<AttentionRow, 'category' | 'reason'>): Action
         return 'assign';
       case 'credit_empty':
         return 'continue';
+      case 'quota_choice':
+        return 'consent';
       default:
         return null;
     }

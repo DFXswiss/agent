@@ -37,6 +37,8 @@ describe('validation', () => {
     expect(isAttentionRow(record('t'))).toBe(true);
     expect(isAttentionRow(record('t', { ref_kind: null, ref_id: null }))).toBe(true);
     expect(isAttentionRow(record('t', { ref_kind: 'session' }))).toBe(true);
+    expect(isAttentionRow(record('t', { reason: 'quota_choice', wait_until: at(5) }))).toBe(true);
+    expect(isAttentionRow(record('t', { reason: 'quota_wait', category: 'working', wait_until: null }))).toBe(true);
     for (const bad of [
       { task_id: '' },
       { category: 'later' },
@@ -49,6 +51,8 @@ describe('validation', () => {
       { subagents_total: 1.5 },
       { subagents_active: null },
       { updated_at: 'x' },
+      { wait_until: 'soon' },
+      { wait_until: 5 },
     ])
       expect(isAttentionRow({ ...record('t'), ...bad })).toBe(false);
     expect(isAttentionRow(null)).toBe(false);

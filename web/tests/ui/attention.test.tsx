@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { b64uDecode } from '../../src/core/encoding/b64u';
 import { fromUtf8 } from '../../src/core/encoding/bytes';
 import { openEvent } from '../../src/core/crypto/event';
-import { createI18n } from '../../src/core/i18n';
+import { createI18n, formatClock, localTimeZone } from '../../src/core/i18n';
 import { epochKey, WG } from '../../src/core/log/state';
 import { applyFrame, frameHandlers } from '../../src/core/net/frames';
 import { HubError } from '../../src/core/net/signedFetch';
@@ -26,6 +26,7 @@ import { BottomNav } from '../../src/ui/responsive/BottomNav';
 import { AttentionBadge } from '../../src/ui/screens/home/Badge';
 import { HomeScreen } from '../../src/ui/screens/home/HomeScreen';
 import { nav } from '../../src/ui/screens/home/nav';
+import { REFRESH_MS as QUOTA_REFRESH_MS } from '../../src/ui/screens/home/QuotaCounter';
 import { NotificationText } from '../../src/ui/screens/notifications/text';
 import { durationLabel } from '../../src/ui/screens/tasks/TaskItem';
 import { AppEnvProvider } from '../../src/ui/shell/context';
@@ -448,6 +449,103 @@ describe('situation view', () => {
     await waitFor(() =>
       expect(t.client.of(`GET /v1/orgs/${t.org}/attention`).length).toBeGreaterThanOrEqual(calls + 4),
     );
+  });
+});
+
+describe('model quota (ADR-080)', () => {
+  const UNTIL = '2026-11-24T14:05:00.000Z';
+  const clock = (value: string) =>
+    formatClock(Date.parse(value), { locale: 'en', timeZone: localTimeZone(), now: Date.now() });
+  const QUOTAS = {
+    own: { windows: [], unreadable: null, limited: null },
+    operator: { granted: true, subscriptions: [] },
+    platform: { available: true },
+    summary: { usable: 2, exhausted: 1, next_release: UNTIL },
+  };
+
+  it('offers DFX access on the card, "Always" to the owner only, and names when a wait continues', async () => {
+    const other = '0190f000-0000-7000-8000-0000000000c9';
+    const t = await world((w) => ({
+      needs_decision: [
+        item(w, Q, { reason: 'quota_choice', ref_id: null, ref_kind: null, wait_until: UNTIL }),
+        item(w, A, { reason: 'quota_choice', ref_id: null, ref_kind: null }, { owner_id: other }),
+      ],
+      working: [
+        item(w, E, { category: 'working', reason: 'quota_wait', ref_id: null, ref_kind: null, wait_until: UNTIL }),
+      ],
+    }));
+    t.client.on(`POST /v1/tasks/${Q}/model-consent`, () => ({ task_id: Q, model_consent: true }));
+    t.client.on(`POST /v1/tasks/${A}/model-consent`, () => {
+      throw new HubError('forbidden', 403);
+    });
+    t.client.on('PUT /v1/me/settings', (body) => body);
+    mount(t);
+    await waitFor(() => expect(screen.getAllByTestId('attention.item')).toHaveLength(3));
+    expect(within(entry(Q)).getByTestId('attention.item.reason')).toHaveTextContent(
+      `Your subscription is used up until ${clock(UNTIL)} – continue with DFX access?`,
+    );
+    expect(within(entry(A)).getByTestId('attention.item.reason')).toHaveTextContent(
+      'Your subscription is used up – continue with DFX access?',
+    );
+    expect(within(entry(E)).getByTestId('attention.item.reason')).toHaveTextContent(
+      `Waiting for model quota – continues at ${clock(UNTIL)}`,
+    );
+    expect(within(entry(E)).queryByTestId('attention.actions')).toBeNull();
+    expect(within(entry(Q)).getByTestId('attention.consent.hint')).toHaveTextContent('charged by use');
+    // the owner may say "always"; another writer only for this task
+    expect(within(entry(A)).queryByTestId('attention.consent.always')).toBeNull();
+    fireEvent.click(within(entry(A)).getByTestId('attention.consent'));
+    expect(await within(entry(A)).findByTestId('attention.error')).toHaveAttribute('data-code', 'forbidden');
+    fireEvent.click(within(entry(Q)).getByTestId('attention.consent'));
+    await within(entry(Q)).findByTestId('attention.sent');
+    expect(t.client.of(`POST /v1/tasks/${Q}/model-consent`)).toHaveLength(1);
+    expect(within(entry(Q)).getByTestId('attention.consent.always.hint')).toHaveTextContent('switch it off');
+    fireEvent.click(within(entry(Q)).getByTestId('attention.consent.always'));
+    await waitFor(() =>
+      expect(within(entry(Q)).getByTestId('attention.consent.always.hint')).toHaveTextContent(
+        'your tasks continue with DFX access',
+      ),
+    );
+    expect(within(entry(Q)).getByTestId('attention.consent.always')).toBeDisabled();
+    expect(t.client.of('PUT /v1/me/settings')[0]!.body).toMatchObject({
+      fallback: { own_to_dfx: true, operator_to_platform: true },
+    });
+  });
+
+  it('counts the subscriptions in the head of the view and hides the counter without any', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const t = await world();
+    let answer: () => unknown = () => QUOTAS;
+    t.client.on(`GET /v1/orgs/${t.org}/quotas`, () => answer());
+    mount(t);
+    const counter = await screen.findByTestId('attention.quotas');
+    expect(counter).toHaveTextContent(`Subscriptions: 2 available · 1 used up – next release ${clock(UNTIL)}`);
+    expect(counter).toHaveAttribute('href', '/settings#model-quotas');
+    answer = () => ({ ...QUOTAS, summary: { usable: 0, exhausted: 3, next_release: null } });
+    await act(async () => {
+      vi.advanceTimersByTime(QUOTA_REFRESH_MS);
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId('attention.quotas')).toHaveTextContent('Subscriptions: 0 available · 3 used up'),
+    );
+    expect(screen.getByTestId('attention.quotas').className).toContain('text-red-800');
+    answer = () => ({ ...QUOTAS, summary: { usable: 0, exhausted: 0, next_release: null } });
+    await act(async () => {
+      vi.advanceTimersByTime(QUOTA_REFRESH_MS);
+    });
+    await waitFor(() => expect(screen.queryByTestId('attention.quotas')).toBeNull());
+    answer = () => QUOTAS;
+    await act(async () => {
+      vi.advanceTimersByTime(QUOTA_REFRESH_MS);
+    });
+    await screen.findByTestId('attention.quotas');
+    answer = () => {
+      throw new HubError('not_found', 404);
+    };
+    await act(async () => {
+      vi.advanceTimersByTime(QUOTA_REFRESH_MS);
+    });
+    await waitFor(() => expect(screen.queryByTestId('attention.quotas')).toBeNull());
   });
 });
 

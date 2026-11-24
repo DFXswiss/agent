@@ -8,7 +8,7 @@
 - `quotas`: `GET /v1/me/quotas`, the newest row per window (`five_hour`, `seven_day`, `weekly:<model>`), malformed rows
   left out, ordered five hours, week, then by model; no rows: not available. `unreadable_since` (KOR-40): since when
   the subscription refuses the read (a long-lived token of `claude setup-token` may not read quotas; sessions still
-  run), else null.
+  run), else null. With `--org` the model access of an org (`agent_platform.modelaccess`, ADR-080).
 - `monitoring --org`: `GET /v1/monitoring/overview?org=` (devices, VMs, sessions and their work VMs); with
   `--entity-kind/--entity-id/--metric` one series of a range of the web's charts (`GET /v1/monitoring/series`, the
   window aligned to the step like the web).
@@ -19,7 +19,6 @@
 
 from __future__ import annotations
 
-import math
 import re
 import time
 from datetime import UTC, datetime
@@ -31,12 +30,12 @@ from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import rows_of, uuid_argument
 from agent_platform.hub import segment
+from agent_platform.modelaccess import newest_bars, org_quotas, parsed_time
 from agent_runner.crypto.encoding import format_time
 
 NOTIFICATIONS_PAGE = 50
 READ_MAX = 200
 AUDIT_PAGE = 100
-WINDOW_RE = re.compile(r"five_hour|seven_day|weekly:[A-Za-z0-9._-]{1,64}")
 ACTION_RE = re.compile(r"[a-z_]+(?:\.[a-z_]+)*")
 ACTION_MAX = 96
 RANGES = {
@@ -99,56 +98,16 @@ def notifications_read(account: Account, ids: list[str], every: bool) -> dict[st
 # --- quotas ---
 
 
-def _time(value: object) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def quota_bar(value: dict[str, Any]) -> dict[str, Any] | None:
-    """One row as a bar, or None when it is malformed."""
-    window, used = value.get("window"), value.get("used_percent")
-    if not isinstance(window, str) or not WINDOW_RE.fullmatch(window):
-        return None
-    if isinstance(used, bool) or not isinstance(used, int | float) or not math.isfinite(used) or used < 0:
-        return None
-    fetched, resets = _time(value.get("fetched_at")), value.get("resets_at")
-    if fetched is None or (resets is not None and _time(resets) is None):
-        return None
-    severity = value.get("severity")
-    return {
-        "window": window,
-        "model": window.removeprefix("weekly:") if window.startswith("weekly:") else None,
-        "used_percent": used,
-        "resets_at": resets,
-        "severity": severity if isinstance(severity, str) else None,
-        "fetched_at": value["fetched_at"],
-        "_fetched": fetched,
-    }
-
-
 def quotas(account: Account) -> dict[str, Any]:
-    newest: dict[str, dict[str, Any]] = {}
     answer = account.call("GET", "/v1/me/quotas")
     unreadable = answer.get("unreadable")
     since = unreadable.get("since") if isinstance(unreadable, dict) else None
-    for row in rows_of(answer, "quotas"):
-        bar = quota_bar(row)
-        if bar is None:
-            continue
-        known = newest.get(bar["window"])
-        if known is None or known["_fetched"] < bar["_fetched"]:
-            newest[bar["window"]] = bar
-
-    def rank(bar: dict[str, Any]) -> tuple[int, str]:
-        order = {"five_hour": 0, "seven_day": 1}
-        return order.get(bar["window"], 2), bar["window"]
-
-    bars = [{k: v for k, v in bar.items() if k != "_fetched"} for bar in sorted(newest.values(), key=rank)]
-    return {"available": bool(bars), "quotas": bars, "unreadable_since": since if _time(since) is not None else None}
+    bars = newest_bars(list(rows_of(answer, "quotas")))
+    return {
+        "available": bool(bars),
+        "quotas": bars,
+        "unreadable_since": since if parsed_time(since) is not None else None,
+    }
 
 
 # --- monitoring ---
@@ -219,7 +178,7 @@ def audit_row(row: dict[str, Any]) -> bool:
     detail = row.get("detail")
     return (
         isinstance(row.get("seq"), int)
-        and _time(row.get("at")) is not None
+        and parsed_time(row.get("at")) is not None
         and all(isinstance(row.get(name), str) for name in ("actor_kind", "action", "result"))
         and all(row.get(name) is None or isinstance(row.get(name), str) for name in AUDIT_NULLABLE)
         and isinstance(detail, dict)
@@ -275,6 +234,8 @@ def _notifications_read(account: Account, args: Any, context: Context) -> dict[s
 
 
 def _quotas(account: Account, args: Any, context: Context) -> dict[str, Any]:
+    if args.org is not None:
+        return org_quotas(account, args.org)
     return quotas(account)
 
 
@@ -314,14 +275,19 @@ def register(tree: Tree) -> None:
     )
     sub.add_argument("--id", action="append", default=[], help="notification ID, repeatable")
     sub.add_argument("--all", action="store_true", help="every notification")
-    tree.command(
+    sub = tree.command(
         tree.commands,
         "quotas",
         _quotas,
-        "the subscription quotas of the user",
-        example="agent-platform quotas",
-        words="kontingent limit nutzung abo verbrauch usage limits subscription",
+        "the subscription quotas of the user, or with --org the model access of an org (own and operator "
+        "subscriptions, DFX access, next release)",
+        example="agent-platform quotas [--org <org_id>]",
+        words=(
+            "kontingent limit nutzung abo verbrauch erschöpft freigabe betreiber-abos modellzugang usage limits "
+            "subscription exhausted release operator model access"
+        ),
     )
+    sub.add_argument("--org", help="the model access and quotas of this org (ADR-080)")
     text = "devices, VMs, sessions and work VMs of an org, or a series"
     sub = tree.command(
         tree.commands,

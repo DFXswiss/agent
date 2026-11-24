@@ -2,10 +2,14 @@
 // Anthropic API key, DFX platform) and the model, saved in the user's settings (`PUT /v1/me/settings`). The models come
 // only from the hub's configuration (`GET /v1/config`, `models` per access kind; `core/credentials/model.ts`); a model
 // the new preference does not allow falls back to the default. The platform is available only on DFX devices.
+// Below, the two fallback settings of ADR-080 section 1, saved with the same button: "Use DFX access when my own
+// subscription is used up" (default off) and "… when the operator's subscriptions are used up" (default on); a hub of
+// an older release has none, then they are not shown.
 import { type FormEvent, useState } from 'react';
 import {
   ACCESS_KINDS,
   type AccessPreference,
+  type FallbackSettings,
   modelChoices,
   modelSettings,
   platformDefault,
@@ -31,9 +35,14 @@ export function ModelSection() {
   const [status, setStatus] = useState<Status>('idle');
   const choices = modelChoices(config, settings.access);
   const fallback = platformDefault(config);
+  const changeFallback = (change: Partial<FallbackSettings>) => {
+    setStatus('idle');
+    setSettings({ ...settings, fallback: { ...settings.fallback!, ...change } });
+  };
   const changeAccess = (access: AccessPreference) => {
     setStatus('idle');
     setSettings({
+      ...settings,
       access,
       modelId:
         settings.modelId !== null && modelChoices(config, access).includes(settings.modelId) ? settings.modelId : null,
@@ -98,6 +107,31 @@ export function ModelSection() {
         <p className="text-sm text-gray-600" data-testid="model.model.none">
           {t('model.model.none')}
         </p>
+      )}
+      {settings.fallback !== undefined && (
+        <fieldset className="flex flex-col gap-1" data-testid="model.fallback">
+          <legend className="mb-1">{t('model.fallback.label')}</legend>
+          {(
+            [
+              ['own', 'ownToDfx'],
+              ['platform', 'operatorToPlatform'],
+            ] as const
+          ).map(([name, field]) => (
+            <label key={name} className="flex min-h-11 items-start gap-2">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={settings.fallback![field]}
+                onChange={(event) => changeFallback({ [field]: event.target.checked })}
+                data-testid={`model.fallback.${name}`}
+              />
+              <span className="flex flex-col">
+                <span>{t(`model.fallback.${name}`)}</span>
+                <span className="text-sm text-gray-600">{t(`model.fallback.${name}.hint`)}</span>
+              </span>
+            </label>
+          ))}
+        </fieldset>
       )}
       <button
         type="submit"

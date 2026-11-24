@@ -52,6 +52,26 @@ export function formatEventTime(epochMs: number, { locale, timeZone, now }: Time
   return date === day.format(now) ? time.format(epochMs) : `${date} ${time.format(epochMs)}`;
 }
 
+const clockFormats = new Map<string, { time: Intl.DateTimeFormat; day: Intl.DateTimeFormat }>();
+
+/**
+ * A time of day `HH:MM` in the user's zone, prefixed with the date when it is not today (a release time, "continues at
+ * 14:05", ADR-080 section 5).
+ */
+export function formatClock(epochMs: number, { locale, timeZone, now }: TimeOptions): string {
+  const key = `${locale} ${timeZone}`;
+  let formats = clockFormats.get(key);
+  if (formats === undefined) {
+    formats = {
+      time: new Intl.DateTimeFormat(locale, { timeZone, hourCycle: 'h23', hour: '2-digit', minute: '2-digit' }),
+      day: timeFormat(locale, timeZone).day,
+    };
+    clockFormats.set(key, formats);
+  }
+  const date = formats.day.format(epochMs);
+  return date === formats.day.format(now) ? formats.time.format(epochMs) : `${date} ${formats.time.format(epochMs)}`;
+}
+
 let zone: string | null = null;
 
 /** The user's time zone (06-web.md section 12.4), resolved once per page load instead of once per shown time. */

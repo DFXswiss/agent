@@ -640,10 +640,13 @@ class HubFake:
         }
 
     def r_settings(self, request: Request, body: Json) -> tuple[int, Any]:
-        if set(body) != {"model_access", "model_id", "locale"}:
+        """The settings; `fallback` (ADR-080 section 1) is optional and kept when a later body omits it."""
+        if set(body) - {"fallback"} != {"model_access", "model_id", "locale"}:
             return 400, {"error": "request_invalid"}
-        self.users[cast(str, request.user)].settings = dict(body)
-        return 200, dict(body)
+        user = self.users[cast(str, request.user)]
+        kept = user.settings.get("fallback") if isinstance(user.settings, dict) else None
+        user.settings = {**({"fallback": kept} if kept is not None else {}), **body}
+        return 200, dict(user.settings)
 
     def r_credentials(self, request: Request, body: Any) -> tuple[int, Any]:
         found = [

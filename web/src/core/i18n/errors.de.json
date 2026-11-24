@@ -359,6 +359,11 @@
     "body": "Das gewählte Modell ist für diese Zugangsart nicht erlaubt.",
     "action": "Wähle in den Einstellungen ein anderes Modell."
   },
+  "model_quota_exhausted": {
+    "title": "Modellkontingent erschöpft",
+    "body": "Alle Modellzugänge, die diese Session nutzen darf, sind gerade erschöpft.",
+    "action": "Die Aufgabe geht bei der nächsten Freigabe von selbst weiter; die Lageansicht zeigt die Zeit."
+  },
   "no_changes": {
     "title": "Nichts zu committen",
     "body": "Der Arbeitsbereich hat keine Änderungen gegenüber dem Branch.",

@@ -474,6 +474,9 @@ with `hub_error: peer_outdated` names the execution `devices` that need a newer 
 agent-platform notifications list [--unread]
 agent-platform notifications read --all                          # or --id <id> (repeatable)
 agent-platform quotas                                            # unreadable_since: the login may not read them
+agent-platform quotas --org <org_id>                             # own and operator subscriptions, DFX access, release
+agent-platform settings set --fallback on                        # own subscription used up: continue on DFX access
+agent-platform settings set --fallback-platform off              # operator subscriptions used up: wait instead
 agent-platform billing --org <org_id>                            # credit balance, prices, credit history, usage
 agent-platform monitoring --org <org_id>
 agent-platform audit                                             # your user's security activity
@@ -495,6 +498,12 @@ Amounts of `billing` and `task charges` are micro-USD. Credit is added by the op
 top-up. With `exhausted: true` the organization's credit is used up: paid resources (DFX devices and DFX model access)
 are paused until credit is added, then paused tasks continue; own devices with own model access keep working.
 `billing_active: false` means usage is not billed yet.
+
+A used-up subscription is passed over: the next operator subscription, then DFX access over OpenRouter
+(`--fallback-platform`, on by default). From your user's own subscription the platform never moves to paid DFX access
+by itself (`--fallback`, off by default): the task waits until the subscription is released and continues by itself.
+`quotas --org` shows the subscriptions with their state, the next release (`summary.next_release`) and, where a quota
+cannot be read, the last time a limit was observed (`limited_at`). Change `--fallback` only on your user's word.
 
 **Key changes the tool makes by itself.** A browser keeps the account's keys in order in the background; the tool
 does the same around its commands, so you never need to ask for it:
@@ -533,7 +542,12 @@ agent-platform status --attention [--org <org_id>]        # counters, decisions 
 agent-platform task list --org <org_id> --state needs-decision [--mine]   # also blocked, working, done
 agent-platform task prompt --task <task_id> --text "Use PostgreSQL."      # answer a question
 agent-platform task prompt --task <task_id> --approve [--text "Go ahead."]  # or --decline
+agent-platform task model-consent --task <task_id>                       # quota_choice: continue on DFX access
 ```
+
+`working/quota_wait` waits for model quota and continues by itself at `wait_until`. `needs_decision/quota_choice`: the
+owner's own subscription is used up until `wait_until`; `task model-consent` lets this task continue on DFX access
+(charged) at once, `settings set --fallback on` does so for every task of your user ("always").
 
 Answer or approve only what your user decided; never decide for them.
 

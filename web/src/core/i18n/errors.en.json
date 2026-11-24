@@ -359,6 +359,11 @@
     "body": "The chosen model is not allowed for this access kind.",
     "action": "Choose another model in the settings."
   },
+  "model_quota_exhausted": {
+    "title": "Model quota used up",
+    "body": "Every model access this session may use is used up for now.",
+    "action": "The task continues by itself at the next release; the situation view shows the time."
+  },
   "no_changes": {
     "title": "Nothing to commit",
     "body": "The workspace has no changes against the branch.",

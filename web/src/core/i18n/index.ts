@@ -9,7 +9,7 @@ import type { Locale } from './locale';
 export { DEFAULT_LOCALE, LOCALES, isLocale, pickLocale, type Locale } from './locale';
 export { buildCatalogs, interpolate, translate, type Catalog, type Params } from './catalog';
 export { errorMessage, type ErrorCatalog, type ErrorMessage, type ErrorText } from './errors';
-export { formatEventTime, formatMoney, formatNumber, localTimeZone, type TimeOptions } from './format';
+export { formatClock, formatEventTime, formatMoney, formatNumber, localTimeZone, type TimeOptions } from './format';
 
 export const catalogs: Record<Locale, Catalog> = buildCatalogs(
   import.meta.glob('./catalog/*.json', { eager: true, import: 'default' }),

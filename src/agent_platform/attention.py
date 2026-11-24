@@ -7,7 +7,9 @@ The hub derives one attention record per task (`GET /v1/orgs/{org}/attention`, p
 owner names (the verified profile events) and, for the reasons `question` and `approval`, the question - the sealed
 `operation.params` event of the operation the record names (`GET /v1/scopes/{wg}/events?kinds=operation.params&task=
 &ref=`), opened only after the reader checks (device author, kind rule, signature) and only when its body names that
-operation and the asking type. Items that do not fit the API shape are left out and counted (`unverified`).
+operation and the asking type. Items that do not fit the API shape are left out and counted (`unverified`). An entry
+carries the hub's `wait_until` (ADR-080 section 5: `working/quota_wait` and `needs_decision/quota_choice` continue by
+themselves at that time; null otherwise, and from a hub of an older release).
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ ATTENTION_KEYS = (
     "subagents_total",
     "subagents_active",
     "updated_at",
+    "wait_until",
 )
 PAGE_MAX = 100
 LIST_DEFAULT = 100

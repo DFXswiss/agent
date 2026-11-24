@@ -16,4 +16,5 @@ INSTALLERS: tuple[str, ...] = (
     "community",
     "identities",
     "runlogs",
+    "model_access",
 )

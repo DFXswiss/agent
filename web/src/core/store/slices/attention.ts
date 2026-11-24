@@ -33,6 +33,8 @@ export interface AttentionRow {
   readonly subagents_total: number;
   readonly subagents_active: number;
   readonly updated_at: string;
+  /** When a `quota_wait` / `quota_choice` record continues by itself (ADR-080 section 5); absent otherwise. */
+  readonly wait_until?: string | null;
 }
 
 /** The counters of `GET /v1/orgs/{org}/attention/summary`. */
@@ -108,7 +110,8 @@ export function isAttentionRow(value: unknown): value is AttentionRow {
     isCount(value.seq) &&
     isCount(value.subagents_total) &&
     isCount(value.subagents_active) &&
-    isTime(value.updated_at)
+    isTime(value.updated_at) &&
+    (value.wait_until === undefined || value.wait_until === null || isTime(value.wait_until))
   );
 }
 

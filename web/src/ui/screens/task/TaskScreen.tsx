@@ -1,7 +1,8 @@
 // The task page (06-web.md sections 2.4 and 5, route `/o/:org/t/:task`, right `task:read`): title and state, the task
 // menu with "Close task" for writers, "Renamed by session" after a `task.set_title` (WEB-09), and the tab frame. Tabs are discovered at `ui/task-tabs/<area>/index.tsx`
 // (ADR-027 section 4): Chat (default) and Sessions here; Operations, Whiteboard and Audit join from their packages.
-// Below the header, how the current main session took over the context after a resume (ContextNotice, KOR-33).
+// Below the header, how the current main session took over the context after a resume (ContextNotice, KOR-33), and the
+// newest switch of the model access (ModelSwitchLine, ADR-080 section 5).
 // The send sequence of the home screen navigates here at once (WEB-04); the countdown is part of the chat. The header
 // names device and VM of the main session ("on <device> · vm-…", ADR-075 section 6).
 // The task's GitHub identity is shown below it; writers change it (`TaskIdentity.tsx`, ADR-078).
@@ -23,6 +24,7 @@ import { RUNTIME_TICK_MS } from '../../task-tabs/sessions/SessionsTab';
 import { LoadError } from '../errors/pages';
 import { useDirectory, useOrgView, useTitle } from '../tasks/hooks';
 import { ContextNotice } from './ContextNotice';
+import { ModelSwitchLine } from './ModelSwitchLine';
 import { activeTab, Tabs } from './Tabs';
 import { TaskIdentity } from './TaskIdentity';
 import { Unlocking } from '../../unlock/Unlocking';
@@ -159,6 +161,7 @@ function TaskView({ row }: { readonly row: TaskRow }) {
         {writer && <TaskMenu task={row} />}
       </header>
       <ContextNotice sessionId={row.main_session_id} />
+      <ModelSwitchLine row={row} />
       <Tabs tabs={tabs} label={t('task.tabs.label')} testId="task.tabs" />
       <Unlocking org={row.org_id} wg={row.wg_id}>
         <active.Component orgId={row.org_id} taskId={row.task_id} />

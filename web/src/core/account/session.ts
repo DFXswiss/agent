@@ -12,6 +12,7 @@ import { b64uDecode } from '../encoding/b64u';
 import type { PlatformConfig } from '../config/check';
 import { fail } from '../crypto/errors';
 import type { Identity } from '../crypto/keys';
+import { keptFallback } from '../credentials/model';
 import { isLocale, type Locale } from '../i18n/locale';
 import { backgroundJobs, JobRunner, type JobRegistration } from '../jobs';
 import { INTERVAL_MS } from '../jobs/catch-up';
@@ -445,7 +446,7 @@ export class AppSession {
     };
   }
 
-  /** `PUT /v1/me/settings` with a new locale (model settings unchanged). */
+  /** `PUT /v1/me/settings` with a new locale (model and fallback settings unchanged, ADR-080 section 1). */
   async saveLocale(locale: Locale): Promise<void> {
     const profile = this.store.getState().me.profile;
     const settings = isRecord(profile?.settings) ? profile.settings : {};
@@ -453,6 +454,7 @@ export class AppSession {
       model_access: typeof settings.model_access === 'string' ? settings.model_access : 'auto',
       model_id: typeof settings.model_id === 'string' ? settings.model_id : null,
       locale,
+      ...keptFallback(settings),
     };
     const saved = await this.client.request('PUT', '/v1/me/settings', { body });
     setProfile(this.store, { ...profile, settings: isRecord(saved) ? saved : body });

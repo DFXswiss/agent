@@ -12,6 +12,7 @@ import {
   groupWindow,
   laterFrom,
   reasonKey,
+  reasonText,
   REASONS,
   selectTaskRows,
   selectNoTask,
@@ -48,6 +49,32 @@ describe('reasons and actions', () => {
     expect(reasonKey('blocked', 'later_reason')).toBe('attention.generic.blocked');
   });
 
+  it('name the time a wait for model quota continues (ADR-080 section 5)', () => {
+    const options = { locale: 'en' as const, timeZone: 'UTC', now: Date.parse('2026-11-24T08:00:00.000Z') };
+    const until = '2026-11-24T14:05:00.000Z';
+    expect(reasonText('working', { reason: 'quota_wait', wait_until: until }, options)).toEqual({
+      key: 'attention.reason.quota_wait.at',
+      params: { time: '14:05' },
+    });
+    expect(reasonText('needs_decision', { reason: 'quota_choice', wait_until: until }, options)).toEqual({
+      key: 'attention.reason.quota_choice.at',
+      params: { time: '14:05' },
+    });
+    // without a time, without the field, another reason, or a timed reason in the wrong category
+    expect(reasonText('working', { reason: 'quota_wait', wait_until: null }, options)).toEqual({
+      key: 'attention.reason.quota_wait',
+      params: {},
+    });
+    expect(reasonText('needs_decision', { reason: 'quota_choice' }, options).key).toBe('attention.reason.quota_choice');
+    expect(reasonText('working', { reason: 'working', wait_until: until }, options).key).toBe(
+      'attention.reason.working',
+    );
+    expect(reasonText('blocked', { reason: 'quota_wait', wait_until: until }, options)).toEqual({
+      key: 'attention.generic.blocked',
+      params: {},
+    });
+  });
+
   it('offer the next step, "Try again" only where a new attempt can help', () => {
     const action = (category: string, reason: string) => actionOf({ category, reason });
     expect(action('needs_decision', 'question')).toBe('answer');
@@ -55,6 +82,8 @@ describe('reasons and actions', () => {
     expect(action('needs_decision', 'connection_missing')).toBe('connect');
     expect(action('needs_decision', 'device_missing')).toBe('assign');
     expect(action('needs_decision', 'credit_empty')).toBe('continue');
+    expect(action('needs_decision', 'quota_choice')).toBe('consent');
+    expect(action('working', 'quota_wait')).toBeNull();
     expect(action('needs_decision', 'later')).toBeNull();
     expect(action('blocked', 'model_access_missing')).toBe('model');
     for (const reason of ['session_failed', 'guest_error', 'device_unreachable', 'no_capacity'])

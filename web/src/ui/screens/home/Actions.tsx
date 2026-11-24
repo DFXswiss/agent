@@ -7,6 +7,9 @@
 // - `connection_missing`: "Connect GitHub" (the settings); `model_access_missing`: the model settings;
 // - `device_missing`: "Assign a computer" for those who may (an admin, any writer of a private org), else who can;
 // - `credit_empty`: the operator sets the balance, "Continue" once it is set;
+// - `quota_choice` (ADR-080 section 5): "Continue with DFX access" (the task's consent, `POST
+//   /v1/tasks/{task}/model-consent`) and, for the task's owner only, "Always" (the setting `fallback.own_to_dfx`);
+//   without an answer the task continues by itself on the own subscription at its release;
 // - `session_failed`, `guest_error`, `device_unreachable`, `no_capacity`: "Try again" (the newest prompt again).
 //
 // Prompts go through the chat's send code (the sealed prompt is kept for a retry after a lost answer). The entry
@@ -16,6 +19,7 @@ import { Link } from 'react-router-dom';
 import { loadQuestion } from '../../../core/attention/load';
 import { type Action, approvalText, CONTINUE, selectQuestion } from '../../../core/attention/view';
 import { sendPrompt } from '../../../core/chat/actions';
+import { allowDfxAlways, allowDfxForTask } from '../../../core/credentials/model';
 import type { AttentionRow } from '../../../core/store/slices/attention';
 import type { TaskRow } from '../../../core/store/slices/tasks';
 import { retryPrompt, sendable, sendErrorCode } from '../../../core/tasks/send';
@@ -59,6 +63,7 @@ export function Actions({
   row,
   action,
   assign,
+  owner,
 }: {
   readonly org: string;
   readonly task: TaskRow;
@@ -66,12 +71,15 @@ export function Actions({
   readonly action: Action;
   /** The user may assign a computer to the task's workgroup. */
   readonly assign: boolean;
+  /** The user owns the task (only the owner's own setting can say "always"). */
+  readonly owner: boolean;
 }) {
   const { app } = useAppEnv();
-  const { t, error } = useI18n();
+  const { t, error, locale } = useI18n();
   const fieldId = useId();
   const [text, setText] = useState('');
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
+  const [always, setAlways] = useState(false);
   const sending = status.kind === 'sending';
   const run = async (send: () => Promise<unknown>) => {
     setStatus({ kind: 'sending' });
@@ -187,6 +195,43 @@ export function Actions({
             >
               {t('attention.continue')}
             </button>
+          </>
+        )}
+        {action === 'consent' && (
+          <>
+            <p className="w-full text-sm text-gray-700" data-testid="attention.consent.hint">
+              {t('attention.consent.hint')}
+            </p>
+            <button
+              type="button"
+              className={PRIMARY}
+              disabled={sending}
+              onClick={() => void run(() => allowDfxForTask(app.tasks, task.task_id))}
+              data-testid="attention.consent"
+            >
+              {t('attention.consent')}
+            </button>
+            {owner && (
+              <button
+                type="button"
+                className={SECONDARY}
+                disabled={sending || always}
+                onClick={() =>
+                  void run(async () => {
+                    await allowDfxAlways(app.tasks, locale);
+                    setAlways(true);
+                  })
+                }
+                data-testid="attention.consent.always"
+              >
+                {t('attention.consent.always')}
+              </button>
+            )}
+            {owner && (
+              <p className="w-full text-xs text-gray-600" data-testid="attention.consent.always.hint">
+                {t(always ? 'attention.consent.always.saved' : 'attention.consent.always.hint')}
+              </p>
+            )}
           </>
         )}
         {action === 'retry' && (

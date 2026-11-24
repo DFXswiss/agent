@@ -119,7 +119,7 @@ Reconcile step `model_fallback` (after `billing`, on every desired state and eve
   weiter um 14:05" when no person is needed, `needs_decision/quota_choice` "Dein Abo ist bis 14:05 erschöpft – mit
   DFX-Zugang weiterarbeiten?" when `dfx_choice` is set. The card offers "Mit DFX-Zugang weiterarbeiten" (`POST
   /v1/tasks/{task_id}/model-consent`, task writers; sets the task's consent, delivered as `model_consent` with the
-  task's sessions; audited `task.model_consent`; CLI `agent-platform tasks model-consent --task ID`) and, to the
+  task's sessions; audited `task.model_consent`; CLI `agent-platform task model-consent --task ID`) and, to the
   session's owner only, "Immer so" (the setting of §1; CLI `agent-platform settings set --fallback on`). Without an
   answer the task continues by itself at the release time on the own subscription.
 

@@ -4,7 +4,8 @@
 //   (preselected with the default workgroup; only workgroups with `wg:write`) and the prompt field. The suggestion
 //   chips are shown while the organization has no task yet, otherwise behind "Suggestions". A user without write
 //   access anywhere sees a short note instead (controls the rights do not allow are not rendered, section 1).
-// - The counters: "Waiting for me", "Stuck", "Running", "Finished today" (since local midnight).
+// - The counters: "Waiting for me", "Stuck", "Running", "Finished today" (since local midnight), and below them the
+//   organization's subscriptions ("Subscriptions: n available · m used up – next release 14:05", ADR-080 section 6).
 // - The four groups in this order: "Needs your decision", "Stuck", "Running", "Recently finished" (the last links the
 //   default workgroup's full task list), each a windowed list paged by the hub (`AttentionGroup.tsx`).
 // Live `attention` frames update the entries and the counters (batched in the store, counters at most once a second).
@@ -22,6 +23,7 @@ import { useAppEnv } from '../../shell/context';
 import { useDirectory, useOrgView } from '../tasks/hooks';
 import { AttentionGroup } from './AttentionGroup';
 import { useSummary } from './hooks';
+import { QuotaCounter } from './QuotaCounter';
 
 /** The counters in their order: test ID suffix and field of the summary. */
 const COUNTERS: readonly [string, keyof AttentionSummary][] = [
@@ -149,6 +151,7 @@ export function HomeScreen() {
         <p className="text-sm text-gray-700">{t('attention.intro')}</p>
       </div>
       <Counters org={org} />
+      <QuotaCounter org={org} />
       {CATEGORIES.map((category) => (
         <AttentionGroup
           key={category}

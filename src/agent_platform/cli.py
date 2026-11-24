@@ -25,6 +25,7 @@ from agent_platform import (
     diagnose,
     lookup,
     membership,
+    modelaccess,
     names,
     orgs,
     registry,
@@ -259,11 +260,14 @@ def cmd_setup_token(account: Account, args: argparse.Namespace, context: Context
 def cmd_settings_set(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
     current = account.me().get("settings")
     settings = dict(current) if isinstance(current, dict) else {}
-    body = {
+    body: dict[str, Any] = {
         "model_access": args.model_access or settings.get("model_access") or "auto",
         "model_id": settings.get("model_id") if args.model is None else (args.model or None),
         "locale": args.locale or settings.get("locale") or "en",
     }
+    fallback = modelaccess.fallback_body(settings, args.fallback, args.fallback_platform)
+    if fallback is not None:
+        body["fallback"] = fallback
     return {"settings": account.call("PUT", "/v1/me/settings", body)}
 
 
@@ -484,11 +488,24 @@ def _account_commands(tree: Tree) -> None:
         with_account(cmd_settings_set),
         "PUT /v1/me/settings",
         example="agent-platform settings set --model-access subscription",
-        words="einstellungen modell sprache abo preferences model language locale configure",
+        words=(
+            "einstellungen modell sprache abo ausweichen erschöpft dfx-zugang immer so preferences model language "
+            "locale configure fallback exhausted"
+        ),
     )
     sub.add_argument("--model-access", choices=["auto", "subscription", "api_key", "platform"])
     sub.add_argument("--model", help="model ID ('' clears it)")
     sub.add_argument("--locale", choices=["de", "en"])
+    sub.add_argument(
+        "--fallback",
+        choices=["on", "off"],
+        help="when the own subscription is used up, continue on DFX access (charged; default off, ADR-080)",
+    )
+    sub.add_argument(
+        "--fallback-platform",
+        choices=["on", "off"],
+        help="when the operator's subscriptions are used up, continue on DFX access over OpenRouter (default on)",
+    )
     credentials = tree.group("credentials", "credential records")
     tree.add(
         credentials,

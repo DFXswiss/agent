@@ -1,6 +1,7 @@
 // One entry of the situation view (06-web.md section 4.0): the row building block of the task lists (`TaskItem`:
 // title, workgroup, state, the signed owner, last activity) extended by the attention line – the reason in plain words,
-// the main agent's state, how long the task is in its group, for "Running" the phase and the active subagents – the
+// the main agent's state (a wait for model quota names when it continues, ADR-080 section 5), how long the task is in
+// its group, for "Running" the phase and the active subagents – the
 // next step (`Actions.tsx`, for users who may write in the workgroup), "Open task", and the agent tree on demand.
 //
 // A record whose task row is not known yet (a live frame of a new task) loads the row first; a task of a workgroup the
@@ -8,7 +9,7 @@
 import { memo, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ensureTask } from '../../../core/attention/load';
-import { actionOf, reasonKey } from '../../../core/attention/view';
+import { actionOf, reasonText } from '../../../core/attention/view';
 import { parseTime } from '../../../core/encoding/time';
 import { formatEventTime, localTimeZone } from '../../../core/i18n';
 import { type OrgState, WG } from '../../../core/log/state';
@@ -58,6 +59,7 @@ function Item({ org, id, category, state, userId, directory, now }: AttentionIte
     );
   if (!state.canRead(userId, WG, task.wg_id)) return null;
   const since = parseTime(row.since);
+  const reason = reasonText(category, row, { locale, timeZone: localTimeZone(), now });
   const action = actionOf(row);
   const writer = state.canWriteWg(userId, task.wg_id);
   const assign = state.isAdmin(userId) || (state.private && writer);
@@ -78,7 +80,7 @@ function Item({ org, id, category, state, userId, directory, now }: AttentionIte
           data-category={row.category}
           data-reason={row.reason}
         >
-          {t(reasonKey(category, row.reason))}
+          {t(reason.key, reason.params)}
         </span>
         {agent !== null && (
           <span className="text-gray-700" data-testid="attention.item.agent" data-state={agent}>
@@ -97,7 +99,15 @@ function Item({ org, id, category, state, userId, directory, now }: AttentionIte
         )}
       </div>
       {writer && action !== null && (
-        <Actions key={row.seq} org={org} task={task} row={row} action={action} assign={assign} />
+        <Actions
+          key={row.seq}
+          org={org}
+          task={task}
+          row={row}
+          action={action}
+          assign={assign}
+          owner={task.owner_id === userId}
+        />
       )}
       <div className="flex flex-wrap gap-2 px-2 pb-2">
         <Link

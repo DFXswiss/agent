@@ -37,7 +37,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | sign-out | shell | (ends a browser session; an agent is disconnected with `agents revoke`) | n/a |
 | me-view | shell | `status` | done |
 | settings-language | settings/language | `settings set --locale` | done |
-| settings-model | settings/model | `settings set --model-access --model` | done |
+| settings-model | settings/model (also the two fallback settings of ADR-080: own subscription used up → DFX access, default off; operator subscriptions used up → DFX access over OpenRouter, default on) | `settings set --model-access --model --fallback --fallback-platform` | done |
 | settings-billing | settings/billing (credit balance, prices, credit history, consumption per day and workgroup, KOR-31) | `billing --org` | done |
 | task-charges | screens/task (tab "Costs": charges per session and the total, KOR-31) | `task charges --task` | done |
 | credential-list | settings/credentials | `credentials list` | done |
@@ -49,6 +49,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | credential-delete | settings/credentials | `credentials delete --kind` | done |
 | credential-rotate | jobs (CK re-wrap) | `credentials rotate` | done |
 | quotas | settings/quotas | `quotas` | done |
+| model-quotas | settings/model-quotas (model access and quotas of the active organization: own subscription, operator subscriptions with state and release or "not readable" with the last observed limit, DFX access, summary; ADR-080) | `quotas --org` | done |
 | github-status | settings/github | `github status` | done |
 | github-connect | settings/github | `github connect --device --request --wait` | done |
 | github-token | settings/github (an existing token, a GitHub CLI login or a personal access token, checked by the device, ADR-065; the pre-filled link to create one, KOR-65) | `github connect --token --device --wait`, `github connect --from-gh` (this computer's GitHub CLI login, KOR-65) | done |
@@ -81,6 +82,9 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | attention-assign-device | screens/home | `device assign` | done |
 | attention-model-settings | screens/home | `settings set --model-access --model` | done |
 | attention-open-task | screens/home | `task show --task` | done |
+| attention-quota-counter | screens/home (counter "Subscriptions: n available · m used up – next release", ADR-080) | `quotas --org` | done |
+| attention-model-consent | screens/home (card `quota_choice`: continue with DFX access, ADR-080) | `task model-consent --task` | done |
+| attention-model-always | screens/home (card `quota_choice`, for the task's owner: "Always") | `settings set --fallback` | done |
 | org-join | screens/invite (existing user) | `org join` | done |
 | members-list | screens/members (explicit and inherited access, ADR-058) | `member list` | done |
 | members-invite | screens/members | `org invite --role admin\|member --name` | done |
@@ -119,6 +123,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | task-view | screens/task (chat) | `task show` | done |
 | task-prompt | screens/task (composer) | `task prompt` | done |
 | task-close | screens/task | `task close --task` | done |
+| task-model-switch | screens/task (line "Model switched" from the audit row `session.model_switched`, ADR-080) | `audit --org --task --action` | done |
 | session-view | screens/session | `session show --session` | done |
 | session-workvm | screens/session (work VM panel and runtime, KOR-29) | `session workvm --session` | done |
 | task-workvm-items | screens/task (work VM runs and states in the chat) | `task show`, `task follow` | done |
@@ -188,7 +193,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/me/quotas` | quotas |
 | `POST /v1/me/recovery/begin` | recovery-new |
 | `DELETE /v1/me/registration` | register |
-| `PUT /v1/me/settings` | settings-language, settings-model |
+| `PUT /v1/me/settings` | settings-language, settings-model, attention-model-always |
 | `GET /v1/monitoring/overview` | monitoring |
 | `GET /v1/monitoring/series` | monitoring |
 | `GET /v1/community` | community-read |
@@ -212,9 +217,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/orgs` | org-create |
 | `GET /v1/orgs/{org}/attention` | attention-view, attention-list |
 | `GET /v1/orgs/{org}/attention/summary` | attention-view |
-| `GET /v1/orgs/{org}/audit` | audit |
+| `GET /v1/orgs/{org}/audit` | audit, task-model-switch |
 | `GET /v1/orgs/{org}/audit/verify` | audit |
 | `GET /v1/orgs/{org}/billing` | settings-billing, credit-balance |
+| `GET /v1/orgs/{org}/quotas` | model-quotas, attention-quota-counter |
 | `GET /v1/orgs/{org}/catch-up` | key-catch-up |
 | `GET /v1/orgs/{org}/devices` | devices-list, task-runtime |
 | `GET /v1/orgs/{org}/invites` | members-list, members-invite-revoke, members-invite-states |
@@ -244,6 +250,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/tasks/{task}/close` | task-close |
 | `GET /v1/tasks/{task}/logs/{object}` | test-runs |
 | `GET /v1/tasks/{task}/logs/{object}/chunks/{index}` | test-runs |
+| `POST /v1/tasks/{task}/model-consent` | attention-model-consent |
 | `GET /v1/tasks/{task}/operations` | operations, session-workvm, task-waiting |
 | `PUT /v1/tasks/{task}/placement` | task-create, task-view |
 | `POST /v1/tasks/{task}/prompts` | task-prompt |

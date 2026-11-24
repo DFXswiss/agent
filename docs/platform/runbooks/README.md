@@ -11,6 +11,7 @@ device, runner device, second device. The cutover to production is a separate pl
 | [claude-code-upgrade-gate.md](claude-code-upgrade-gate.md) | Changing the pinned Claude Code version: attack suite, model-double E2E, PERF-01 |
 | [runner-installation.md](runner-installation.md) | Runner installation as LaunchDaemon, configuration, `doctor`, operator markers, failing inbox consumers, uninstall |
 | [operator-subscriptions.md](operator-subscriptions.md) | The operator's Claude subscriptions for approved organizations on a platform device: token files, approval, `doctor`, log and metrics (ADR-052) |
+| [model-access.md](model-access.md) | Model access with fallback and visible quotas, DFX access on own hardware: release order, placing the provider's management key, checks (ADR-080) |
 | [hub-operation.md](hub-operation.md) | Hub process (one per database), configuration, migrations, rate limits behind NAT, audit verification |
 | [monitoring-patch-handover.md](monitoring-patch-handover.md) | Rendering and handing over the monitoring patch for the infrastructure repository |
 | [export-restore.md](export-restore.md) | Org export and restore, projection rebuild, runner store wipe (DR-01) |
