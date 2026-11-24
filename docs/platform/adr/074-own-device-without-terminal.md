@@ -49,8 +49,10 @@ Status: Accepted (2026-11-24)
   produces an unsigned package (tests, and until DFX has a Developer ID).
 - Reproducible (unsigned builds; a signed build adds time-stamped signatures, so its check compares the unsigned
   stage of two builds): two builds of one commit and lock produce the same `release.json` (normalised modes and times, byte
-  code with unchecked hashes and the installed path, no console scripts); the launcher runs `python -I -B`, so nothing
-  is ever written into the payload. Measured: two builds byte-identical, 210 MB package, 45 s per build.
+  code with unchecked hashes and the installed path, each file compiled by a fresh interpreter that reads no byte
+  code, no console scripts); the launcher runs `python -I -B`, so nothing is ever written into the payload. Measured:
+  two builds byte-identical, 210 MB package, 45 s per build. Amended by HOT-19: one `compileall -j 0` run was not
+  enough, its byte code depended on what each worker had compiled before (`decisions/HOT-19.md`).
 
 ### 2. Trust roots
 | Way | What decides that the code is genuine |

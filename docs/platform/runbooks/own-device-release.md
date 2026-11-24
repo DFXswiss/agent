@@ -30,6 +30,19 @@ Without identities the package is unsigned (tests). With them every Mach-O file 
 and a time stamp before the manifest is written (entitlements in `scripts/macos-package/entitlements/`), and the package is
 signed. Build twice without identities into two scratch directories and compare `release.json` (`cmp`): equal
 bytes are the reproducibility check (signatures carry time stamps, so signed builds are compared before signing).
+The interpreter library is compiled file by file, each in a fresh interpreter that reads no byte code, so the byte code
+does not depend on cores, order, directory or time (a few seconds per thousand files).
+
+If the two `release.json` differ, publish neither build. List the files whose digests differ:
+
+```sh
+python3 -c 'import json,sys; a,b=(json.load(open(p))["files"] for p in sys.argv[1:]); [print(k) for k in sorted(a.keys()|b.keys()) if a.get(k)!=b.get(k)]' \
+  <scratch1>/stage/release.json <scratch2>/stage/release.json
+```
+
+Keep both scratch directories and report the commit, the device and the listed paths as a build defect; the gate test
+`test_byte_code_does_not_depend_on_what_the_compiling_process_compiled_before` covers the known cause (a `.pyc` that
+depended on what the compiling process had compiled before). Publish only once two builds of the fixed commit agree.
 
 ## 3. Notarise (with a Developer ID)
 
