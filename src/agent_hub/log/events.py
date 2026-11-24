@@ -58,7 +58,8 @@ _EVENT_KEYS = frozenset({"header", "ct", "sig"})
 class KindRule:
     """One row of the matrix: `kind` in `scope`, written by one of `authors`, needs `right`; `header` constrains
     header fields (`empty` = "", `set` = a UUID, `scope_id` = equals scope_id, `target` = a workgroup of the org,
-    `author` = equals the author, `device`/`entry`/`operation` = a UUID, `read_target` = not empty)."""
+    `author` = equals the author, `device`/`entry`/`operation` = a UUID, `read_target` = not empty,
+    `subject` = a user of the org or a user invitation of its log at `lh`)."""
 
     kind: str
     scope: str
@@ -80,6 +81,8 @@ KIND_RULES: tuple[KindRule, ...] = (
     KindRule("wg.profile", "org", (USER,), ORG_ADMIN, {"wg": "target"}),
     KindRule("member.profile", "org", (USER,), ORG_MEMBER_SELF, {"wg": "empty", "ref": "author"}),
     KindRule("device.profile", "org", (USER,), ORG_ADMIN, {"wg": "empty", "ref": "device"}),
+    # an admin-given name of a member or of an invitation's person (ADR-067)
+    KindRule("member.name", "org", (USER,), ORG_ADMIN, {"wg": "empty", "ref": "subject"}),
     *(
         rule
         for kind in ("whiteboard.entry", "whiteboard.edit", "whiteboard.delete")
@@ -136,6 +139,15 @@ def kind_rule(kind: str, scope: str, author_kind: str) -> KindRule:
     return rule
 
 
+def _is_subject(value: object, state: OrgState) -> bool:
+    """A user of the org (`principals`, active or not) or a user invitation of its log, in the state at `lh`."""
+    if not isinstance(value, str):
+        return False
+    principal = state.principals.get(value)
+    invite = state.invites.get(value)
+    return (principal is not None and principal.kind == USER) or (invite is not None and invite.kind == USER)
+
+
 def _field_valid(rule: str, value: object, header: Mapping[str, object], state: OrgState) -> bool:
     if rule == "empty":
         return value == ""
@@ -145,8 +157,8 @@ def _field_valid(rule: str, value: object, header: Mapping[str, object], state: 
         return value in state.workgroups
     if rule == "author":
         return value == header["author"]
-    if rule == "read_target":
-        return value != ""
+    if rule in ("read_target", "subject"):
+        return value != "" if rule == "read_target" else _is_subject(value, state)
     # set, device, entry, operation: a UUID
     return is_uuid7(value)
 

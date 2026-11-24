@@ -235,11 +235,15 @@ def _opened(connection: Connection, org_id: UUID, invite_ids: list[str]) -> dict
 
 
 def listing(connection: Connection, *, org_id: UUID, user: UUID, now: datetime) -> list[dict[str, Any]]:
-    """The org's invitations, newest first (at most 1000), with the time of the first lookup (`opened_at`)."""
+    """The org's invitations, newest first (at most 1000), with the time of the first lookup (`opened_at`) and the
+    account that registered with the invitation once it is an active member of the org (`registered_user`, ADR-067:
+    an invitation of a person admitted directly is settled by the admitting client; no other account is named)."""
     rights.require(connection, user, rights.ORG_ADMIN, org_id=org_id)
     rows = connection.execute(
-        "SELECT id, kind, log_seq, created_by, created_at, expires_at, registered_user, used_at, used_by, revoked_at"
-        " FROM hub.invite WHERE org_id = %s ORDER BY created_at DESC, id DESC LIMIT %s",
+        "SELECT id, kind, log_seq, created_by, created_at, expires_at, registered_user, used_at, used_by, revoked_at,"
+        " EXISTS (SELECT 1 FROM hub.org_member m WHERE m.org_id = i.org_id AND m.principal_id = i.registered_user"
+        " AND m.removed_seq IS NULL)"
+        " FROM hub.invite i WHERE org_id = %s ORDER BY created_at DESC, id DESC LIMIT %s",
         (org_id, MAX_LISTED),
     ).fetchall()
     opened = _opened(connection, org_id, [str(row[0]) for row in rows])
@@ -253,6 +257,8 @@ def listing(connection: Connection, *, org_id: UUID, user: UUID, now: datetime) 
             "created_at": format_time(created_at),
             "expires_at": format_time(expires_at),
             "registered": registered_user is not None,
+            # only an account that is a member now (the settled case): the list names no other account
+            "registered_user": str(registered_user) if member else None,
             "opened_at": _time(opened.get(invite_id)),
             "used_at": _time(used_at),
             "used_by": None if used_by is None else str(used_by),
@@ -269,5 +275,6 @@ def listing(connection: Connection, *, org_id: UUID, user: UUID, now: datetime) 
             used_at,
             used_by,
             revoked_at,
+            member,
         ) in rows
     ]

@@ -295,6 +295,7 @@ def test_list_shows_every_state_newest_first(world: World, browser_accept: Any) 
     by_id = {item["invite_id"]: item for item in listed}
     assert by_id[used.invite_id]["used_by"] == user.id
     assert by_id[used.invite_id]["registered"] is True
+    assert by_id[used.invite_id]["registered_user"] == user.id
     assert by_id[used.invite_id]["used_at"] is not None
     assert by_id[revoked.invite_id]["revoked_at"] is not None
     assert by_id[device.invite_id] == {
@@ -306,6 +307,7 @@ def test_list_shows_every_state_newest_first(world: World, browser_accept: Any) 
         "created_at": format_time(world.hub.clock() - timedelta(seconds=HOUR)),
         "expires_at": format_time(world.hub.clock() + timedelta(hours=23)),
         "registered": False,
+        "registered_user": None,
         "opened_at": None,
         "used_at": None,
         "used_by": None,

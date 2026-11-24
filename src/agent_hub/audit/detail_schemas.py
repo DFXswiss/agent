@@ -335,6 +335,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "wg.profile",
                         "member.profile",
                         "device.profile",
+                        "member.name",
                         "whiteboard.entry",
                         "whiteboard.edit",
                         "whiteboard.delete",

@@ -1768,6 +1768,10 @@ def build_events() -> Json:
         "device_profile": ev(
             "alice", "device.profile", "org", ORG, 3, lh=26, label="device-profile", ref=pid("device")
         ),
+        "member_name": ev("alice", "member.name", "org", ORG, 3, lh=26, label="member-name", ref=pid("bob")),
+        "member_name_invitation": ev(
+            "alice", "member.name", "org", ORG, 3, lh=26, label="member-name-inv", ref=secrets("bob").invite_id
+        ),
         "settings": ev("alice", "settings.workgroup", "wg", W1, 2, lh=26, label="settings", wg=W1),
     }
     valid = []
@@ -1904,6 +1908,58 @@ def build_events() -> Json:
             "check_event",
             _main_args(full, event=ev("bob", "prompt", "wg", W1, 1, lh=3, label="read-only", wg=W1, task=TASK)),
             "author_not_writer",
+        ),
+        neg(
+            "E5_member_names_a_member",
+            "check_event",
+            _main_args(full, event=ev("bob", "member.name", "org", ORG, 1, lh=3, label="not-admin", ref=pid("bob"))),
+            "author_not_writer",
+        ),
+        neg(
+            "header_member_name_ref_text",
+            "check_event",
+            _main_args(full, event=ev("alice", "member.name", "org", ORG, 3, lh=26, label="ref-text", ref="bob")),
+            "header_invalid",
+        ),
+        neg(
+            "header_member_name_ref_device",
+            "check_event",
+            _main_args(
+                full, event=ev("alice", "member.name", "org", ORG, 3, lh=26, label="ref-device", ref=pid("device"))
+            ),
+            "header_invalid",
+        ),
+        neg(
+            "header_member_name_ref_joined_after_lh",
+            "check_event",
+            _main_args(full, event=ev("alice", "member.name", "org", ORG, 1, lh=2, label="ref-later", ref=pid("bob"))),
+            "header_invalid",
+        ),
+        neg(
+            "header_member_name_ref_unknown",
+            "check_event",
+            _main_args(
+                full, event=ev("alice", "member.name", "org", ORG, 3, lh=26, label="ref-unknown", ref=pid("nobody"))
+            ),
+            "header_invalid",
+        ),
+        neg(
+            "header_member_name_ref_device_invitation",
+            "check_event",
+            _main_args(
+                full,
+                event=ev(
+                    "alice",
+                    "member.name",
+                    "org",
+                    ORG,
+                    3,
+                    lh=26,
+                    label="ref-device_invitation",
+                    ref=secrets("pdev").invite_id,
+                ),
+            ),
+            "header_invalid",
         ),
         neg(
             "E5_member_writes_org_profile",
