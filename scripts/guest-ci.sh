@@ -134,35 +134,41 @@ run_tests() {
   return "$rc"
 }
 
-# The commit time, commit and version both builds compile in; outside a git checkout (the gates copy the tree without
-# .git) fixed values, the same for both sides.
-build_env() {
-  local epoch commit
+# The web build of both sides: a fresh copy of web/ with its own `npm ci` (same lock file, no install scripts), built
+# with an empty environment but for PATH, HOME and the commit time, commit and version (outside a git checkout - the
+# gates copy the tree without .git - fixed values, the same for both sides). This device builds below the scratch
+# directory, the VM below $guest_web (a `src` component), in another time zone.
+web_build() {
+  local scratch="${TMPDIR:-/tmp}/guest-ci-web-$vm" epoch commit version host_node vm_node rc=0
   epoch=$(git -C "$repo" log -1 --format=%ct 2>/dev/null) || epoch=0
   commit=$(git -C "$repo" rev-parse HEAD 2>/dev/null) || commit=0000000000000000000000000000000000000000
-  printf '%s\n' "SOURCE_DATE_EPOCH=$epoch" "BUILD_COMMIT=$commit" \
-    "BUILD_VERSION=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$repo/web/package.json")"
-}
-
-web_build() {
-  local scratch tarball rc=0
-  scratch=$(mktemp -d -t guest-ci-web.XXXXXX)
-  # shellcheck disable=SC2046
-  set -- $(build_env)
-  log "web build: $* (this device and the VM)"
-  tarball="$scratch/web.tgz"
-  COPYFILE_DISABLE=1 tar -C "$repo" --exclude 'web/node_modules' -czf "$tarball" web
-  limactl copy "$tarball" "$vm:/tmp/guest-ci-web.tgz"
-  in_vm sudo env "$@" "PATH=$guest_node/bin:/usr/bin:/bin" "WEB=$guest_web" "OUT=$guest_web_out" \
-    bash -euo pipefail -c 'rm -rf "$(dirname "$WEB")" "$OUT" && mkdir -p "$(dirname "$WEB")" && \
-      tar --no-same-owner -xzf /tmp/guest-ci-web.tgz -C "$(dirname "$WEB")" && rm -f /tmp/guest-ci-web.tgz && \
-      cd "$WEB" && npm ci --no-audit --no-fund --loglevel=error >/dev/null && \
-      TZ=Pacific/Kiritimati node scripts/build-compare.mjs build "$OUT" >&2 && chmod 0644 "$OUT/build-manifest.json"'
-  limactl copy "$vm:$guest_web_out/build-manifest.json" "$scratch/linux.json"
-  [ -d "$repo/web/node_modules" ] || (cd "$repo/web" && npm ci --no-audit --no-fund --loglevel=error >/dev/null)
-  (cd "$repo/web" && env "$@" node scripts/build-compare.mjs build "$scratch/out" >&2)
-  (cd "$repo/web" && node scripts/build-compare.mjs compare "$scratch/out/build-manifest.json" "$scratch/linux.json" 2>&1) \
-    | sed 's/^/guest-ci: web build (this device \/ Linux VM): /' >&2 || rc=$?
+  version=$(node -p 'require(process.argv[1]).version' "$repo/web/package.json") || { log "web build: node missing"; return 1; }
+  local build=("SOURCE_DATE_EPOCH=$epoch" "BUILD_COMMIT=$commit" "BUILD_VERSION=$version")
+  rm -rf "$scratch" && mkdir -p "$scratch/host"
+  COPYFILE_DISABLE=1 tar -C "$repo" --exclude 'web/node_modules' -czf "$scratch/web.tgz" web
+  host_node=$(node --version)
+  vm_node=$(in_vm "$guest_node/bin/node" --version) || { log "web build: no Node in the VM"; return 1; }
+  log "web build: ${build[*]}, Node $host_node here, $vm_node in the VM"
+  [ "$host_node" = "$vm_node" ] || log "web build: WARNING the Node versions differ (VM: images/versions.json)"
+  limactl copy "$scratch/web.tgz" "$vm:/tmp/guest-ci-web.tgz"
+  in_vm sudo env -i "${build[@]}" "PATH=$guest_node/bin:/usr/bin:/bin" HOME=/root TZ=Pacific/Kiritimati \
+    "npm_config_cache=/var/lib/guest-ci/npm-cache" "WEB=$guest_web" "OUT=$guest_web_out" \
+    bash -euo pipefail -c 'rm -rf "$(dirname "$WEB")" "$OUT" && mkdir -p "$(dirname "$WEB")" &&
+      tar --no-same-owner -xzf /tmp/guest-ci-web.tgz -C "$(dirname "$WEB")" && rm -f /tmp/guest-ci-web.tgz &&
+      cd "$WEB" && npm ci --ignore-scripts --no-audit --no-fund --loglevel=error >/dev/null &&
+      node scripts/build-compare.mjs build "$OUT" >&2 && chmod 0644 "$OUT/build-manifest.json"' ||
+    { log "web build: the build in the VM failed"; rc=1; }
+  [ "$rc" = 0 ] && { limactl copy "$vm:$guest_web_out/build-manifest.json" "$scratch/linux.json" || rc=1; }
+  [ "$rc" = 0 ] && {
+    (tar -xzf "$scratch/web.tgz" -C "$scratch/host" && cd "$scratch/host/web" &&
+      npm ci --ignore-scripts --no-audit --no-fund --loglevel=error >/dev/null &&
+      env -i "${build[@]}" "PATH=$PATH" "HOME=$HOME" node scripts/build-compare.mjs build "$scratch/out" >&2) ||
+      { log "web build: the build on this device failed"; rc=1; }
+  }
+  [ "$rc" = 0 ] && {
+    (cd "$scratch/host/web" && node scripts/build-compare.mjs compare "$scratch/out/build-manifest.json" \
+      "$scratch/linux.json" 2>&1) | sed 's/^/guest-ci: web build (this device \/ Linux VM): /' >&2 || rc=1
+  }
   rm -rf "$scratch"
   return "$rc"
 }

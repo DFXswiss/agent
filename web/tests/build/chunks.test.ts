@@ -2,7 +2,8 @@
 // its path relative to web/, so the same commit gives the same chunks in any checkout directory – also one below a
 // directory named `src`, where a rule on the absolute id put the libraries into the app chunks.
 import { describe, expect, it } from 'vitest';
-import { chunkGroups, groupOf } from '../../build/chunks.ts';
+import type { UserConfig } from 'vite';
+import { type ChunkGroup, chunkGroups, groupOf } from '../../build/chunks.ts';
 
 const WEBS = ['/home/u/agent/web', '/src/agent/web', '/usr/src/app/web', '/x/node_modules/y/web'];
 
@@ -44,5 +45,17 @@ describe('chunk groups', () => {
     const groups = chunkGroups('/src/agent/web');
     expect(groupOf(groups, '\0vite/preload-helper.js')).toBeUndefined();
     expect(groupOf(groups, 'src/main.tsx')).toBeUndefined();
+  });
+});
+
+describe('build configuration', () => {
+  it('takes its chunk groups from chunkGroups of web/', async () => {
+    const { default: config, WEB_DIR: web } = await import('../../vite.config.ts');
+    const resolved = (config as (env: object) => UserConfig)({ command: 'build', mode: 'production' });
+    const output = resolved.build?.rolldownOptions?.output as { codeSplitting: { groups: ChunkGroup[] } };
+    const groups = output.codeSplitting.groups;
+    expect(groups.map((group) => group.name)).toEqual(['framework', 'start', 'screens']);
+    expect(groupOf(groups, `${web}node_modules/react/index.js`)).toBe('framework');
+    expect(groupOf(groups, '/src/elsewhere/node_modules/react/index.js')).toBeUndefined();
   });
 });

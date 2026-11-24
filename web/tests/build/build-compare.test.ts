@@ -1,7 +1,11 @@
 // The cross-system build comparison of the Linux part of the gates (06-web.md section 10.3, decision HOT-18): two
 // build manifests of the same commit, one built on macOS and one in the Linux VM below another directory.
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildHash, manifestDifferences } from '../../scripts/build-compare.mjs';
+import { WEB_DIR } from '../helpers';
 
 const manifest = (files: { path: string; sha256: string; size: number }[], commit = 'a'.repeat(40)) =>
   `${JSON.stringify({ version: '0.1.0', commit, files, root_key_fingerprint: 'f' }, null, 2)}\n`;
@@ -36,5 +40,35 @@ describe('build comparison', () => {
 
   it('reports a difference of the bytes alone (formatting of the manifest)', () => {
     expect(manifestDifferences(manifest([A]), manifest([A]).trimEnd())).toEqual(['manifest bytes differ']);
+  });
+});
+
+describe('build comparison command', () => {
+  const script = join(WEB_DIR, 'scripts', 'build-compare.mjs');
+  const run = (...args: string[]) => spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
+
+  function files(...texts: string[]): string[] {
+    const base = join(WEB_DIR, 'node_modules', '.tmp');
+    mkdirSync(base, { recursive: true });
+    const dir = mkdtempSync(join(base, 'build-compare-'));
+    return texts.map((text, index) => {
+      const path = join(dir, `${index}.json`);
+      writeFileSync(path, text);
+      return path;
+    });
+  }
+
+  it('exits 0 with the hash when the manifests are equal and 1 with the files when not', () => {
+    const [same, other] = files(manifest([A]), manifest([B]));
+    const equal = run('compare', same!, same!);
+    expect([equal.status, equal.stdout]).toEqual([0, `build hashes equal: ${buildHash(manifest([A]))}\n`]);
+    const differ = run('compare', same!, other!);
+    expect(differ.status).toBe(1);
+    expect(differ.stderr).toContain('assets/start-A.js: only in the first build');
+  });
+
+  it('refuses other arguments', () => {
+    expect(run('compare', 'one').status).toBe(2);
+    expect(run().stderr).toContain('usage: build-compare.mjs build OUT_DIR | compare MANIFEST MANIFEST');
   });
 });

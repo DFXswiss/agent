@@ -16,15 +16,18 @@ as root.
 2. **Fix: rules on the path relative to `web/`** (`web/build/chunks.ts`). The groups and their priorities are
    unchanged. In an ordinary checkout the output is byte-identical to before (same `5ebdd8c9…`, same file names), so
    neither the first-load budget nor the time tolerance of HOT-16 moves. A virtual module or one outside `web/` matches
-   no group. The React Router global plugin (`build/globals.ts`) also looks at the absolute id, but it only rewrites one
-   pinned statement inside React Router, so a parent directory cannot change its output. It stays as it is.
+   no group. The React Router global plugin (`build/globals.ts`) also looks at the absolute id, but it does not assign
+   chunks. It only rewrites one pinned statement inside React Router, so a parent directory cannot change its output.
+   It stays as it is.
 3. **Gate (E-19): the Linux part compares builds.** `make platform-ci-linux` (`scripts/guest-ci.sh`, command `run`;
-   alone: `web-build`) now also builds `web/` on the runner device (macOS) and in the `guest-ci` VM. In the VM the
-   tree sits below `/var/lib/guest-ci/src/agent/web`, so the directory differs too, with another time zone. Both
-   builds get the same `SOURCE_DATE_EPOCH`, `BUILD_COMMIT` and `BUILD_VERSION`; outside a git checkout these are fixed
-   values. `web/scripts/build-compare.mjs` compares the two manifests. On any difference it names the files and the
-   step is red. The VM gets Node from the work image pins (`images/versions.json`, checked by SHA-256), so both sides
-   run the same Node version. `build:check` stays a check on one system: the work-package gates always run the Linux
-   part, and GitHub CI has no VM.
+   alone: `web-build`) now also builds `web/` on the runner device (macOS) and in the `guest-ci` VM. Each side builds a
+   fresh copy of `web/` with its own `npm ci` (no install scripts), with an empty environment except `PATH`, `HOME`
+   and the same `SOURCE_DATE_EPOCH`, `BUILD_COMMIT` and `BUILD_VERSION`. Outside a git checkout these are fixed
+   values. The VM copy sits below `/var/lib/guest-ci/src/agent/web`, so the directory differs too, and it uses another
+   time zone. `web/scripts/build-compare.mjs` compares the two manifests. On any difference it names the files and
+   the step is red. The VM gets Node from the work image pins (`images/versions.json`, checked by SHA-256). The runner
+   device uses its own Node. The step logs both versions and warns when they differ, but still compares: equal output
+   is required either way. Today both are 26.13.1. `build:check` stays a check on one system, because the
+   work-package gates always run the Linux part and GitHub CI has no VM.
 4. **Not checked: processor architecture.** Both sides of the gate are arm64. A build on x86-64 is not compared,
    because no test device has one. The bundler's output on the two architectures has not been seen to differ.
