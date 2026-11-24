@@ -196,9 +196,9 @@ The harness implements this command; Agent does not.
 8. Provide each account's login on the target. An account whose `config_dir`
    is the driver's default directory leaves the driver's home variable unset,
    in local mode as well, because some driver CLIs keep that login outside the
-   directory. On the target, the lane then runs with the target's own default
-   profile of that driver, so that profile must be logged in to the same
-   account. Mirroring the listed `config_dir` does not carry that login.
+   directory. Agent does not list that `config_dir` as a `--read`, so the
+   target's own default profile of that driver is not replaced and the lane
+   runs with it; that profile must already be logged in to the same account.
 
 Add as many named accounts, roles, and bindings as needed. No fixed account
 list, role list, or count is built in. Configurable role names are chosen by

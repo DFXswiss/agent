@@ -1530,3 +1530,38 @@ def test_check_lane_delegate_closes_its_row_when_the_profile_dir_fails(
     assert [run["payload"]["status"] for run in _check_lane_runs(ctx)] == [
         "unavailable"
     ]
+
+
+def test_check_lane_delegate_does_not_mirror_the_driver_default_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    default_dir = str(home / ".tool-c")
+    accounts = accounts_document()
+    accounts["accounts"]["driver-c-account"]["config_dir"] = default_dir
+    accounts["lane_execution"] = {
+        "mode": "delegate",
+        "argv": ["/opt/operator/lane"],
+    }
+    seen: list[list[str]] = []
+
+    def lane(argv: list[str], stdin: str | None = None) -> Completed:
+        seen.append(list(argv))
+        return Completed(0, CHECK_RESULT_OK, "")
+
+    ctx = _placeholder_check_context(
+        tmp_path, "driver-c", accounts=accounts, lanes=lane
+    )
+    outcome = _run_placeholder_check(ctx)
+
+    assert (outcome.status, outcome.value) == ("valid", "ok")
+    argv = seen[0]
+    reads = [
+        argv[index + 1]
+        for index, value in enumerate(argv[:-1])
+        if value == "--read"
+    ]
+    # The target keeps its own logged-in default profile.
+    assert default_dir not in reads
+    assert not any(value.startswith("TOOL_C_CONFIG=") for value in argv)

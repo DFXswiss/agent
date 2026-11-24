@@ -70,6 +70,7 @@ from .lane import (
     LaneResult,
     LaneUsage,
     bounded_lane_metadata,
+    delegated_account_read,
     delegated_lane_argv,
     finalize_lane_output,
     redact_lane_text,
@@ -2239,7 +2240,9 @@ def launch_lane(
                         reads=(
                             str(spec_path),
                             *read_dirs,
-                            selected.account.config_dir,
+                            delegated_account_read(
+                                driver, selected.account.config_dir
+                            ),
                             profile_dir,
                         ),
                         write_backs=write_backs,
@@ -3412,6 +3415,9 @@ def _prepare_pr_review_agent(
         "worktree": worktree,
         "model": selected.model,
         "config_dir": selected.account.config_dir,
+        "delegated_account_read": delegated_account_read(
+            driver, selected.account.config_dir
+        ),
         "path_replacements": _coordinator_path_replacements(store, worker, task),
         "lane_execution": execution,
         "spec_file": str(spec_path),
@@ -3474,7 +3480,7 @@ def _run_prepared(
                             worktree,
                             *(prepared.get("read_dirs") or ()),
                             str(prepared.get("spec_file") or ""),
-                            str(prepared.get("config_dir") or ""),
+                            str(prepared.get("delegated_account_read") or ""),
                             delegate_profile_dir or "",
                         ),
                         write_backs=write_backs,

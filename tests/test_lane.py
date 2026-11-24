@@ -37,6 +37,7 @@ from agent_cli.lane import (
     LaneResult,
     LaneUsage,
     _run_in_tmux,
+    delegated_account_read,
     delegated_lane_argv,
     finalize_lane_output,
     hide_config_dir,
@@ -3025,6 +3026,19 @@ def test_launch_remote_mode_is_rejected_before_runner(tmp_path: Path) -> None:
             session_id=DEFAULT_SESSION,
         )
     assert called["n"] == 0
+
+
+def test_delegated_account_read_omits_the_driver_default_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    default = str(tmp_path / ".tool-c")
+    named = str(tmp_path / "named-profile")
+    # The target's own default profile must not be replaced by a mirror.
+    assert delegated_account_read(DRIVERS["driver-c"], default) == ""
+    assert delegated_account_read(DRIVERS["driver-c"], named) == named
+    # The same path is a named profile for a driver whose default it is not.
+    assert delegated_account_read(DRIVERS["driver-d"], default) == default
 
 
 def test_delegated_lane_argv_local_mode_is_unchanged() -> None:

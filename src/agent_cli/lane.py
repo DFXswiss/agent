@@ -18,9 +18,11 @@ from typing import TYPE_CHECKING
 
 from .drivers import (
     WRITE_READ_DIRS_REFUSED,
+    DriverSpec,
     LaneIO,
     credential_dir_overlap_error,
     harden_write_argv,
+    is_home_default_dir,
     lane_argv,
     lane_io,
     lane_scrub_env,
@@ -141,6 +143,17 @@ def _unique_abspaths(paths: Sequence[str | None]) -> list[str]:
         seen.add(absolute)
         selected.append(absolute)
     return selected
+
+
+def delegated_account_read(driver: DriverSpec, config_dir: str) -> str:
+    """The account directory a delegated lane reads, or ``""`` for none.
+
+    An account in the driver's default directory runs with the target's own
+    default profile (operator contract item 8). Mirroring the local directory
+    onto that path would replace the target's logged-in profile, so it is not
+    listed.
+    """
+    return "" if is_home_default_dir(driver, config_dir) else config_dir
 
 
 def delegated_lane_argv(
@@ -832,7 +845,7 @@ def launch(
                 reads=(
                     spec_file,
                     *read_dirs,
-                    selected.account.config_dir,
+                    delegated_account_read(driver, selected.account.config_dir),
                     profile_dir,
                 ),
                 write_backs=write_backs,

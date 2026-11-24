@@ -54,6 +54,7 @@ from .drivers import (
 from .lane import (
     LANE_MODEL_LIMIT,
     LaneResult,
+    delegated_account_read,
     delegated_lane_argv,
     finalize_lane_output,
     output_read_failure,
@@ -274,7 +275,7 @@ def run_check_lane(
                             workdir=str(cwd),
                             reads=(
                                 str(spec_path),
-                                config_dir,
+                                delegated_account_read(driver, config_dir),
                                 profile_dir or "",
                             ),
                             write_backs=(lane_output,) if lane_output else (),
