@@ -148,7 +148,7 @@ class Bench:
 
 def compile_argv(python: str) -> list[str]:
     """The start of the command that compiles one file of the interpreter library."""
-    return [python, "-I", "-S", "-B", "-X", "pycache_prefix=/dev/null", "-c", build.COMPILE_ONE]
+    return ["/usr/bin/env", "-i", python, "-I", "-S", "-B", "-X", "utf8", "-X", "pycache_prefix=/dev/null", "-c"]
 
 
 def calls_besides_compiling(bench: Bench) -> list[list[str]]:
@@ -162,6 +162,7 @@ def calls_besides_compiling(bench: Bench) -> list[list[str]]:
     assert sorted(compiles) == sorted(
         [
             *compiling,
+            build.COMPILE_ONE,
             str(source),
             str(source.parent / "__pycache__" / f"{source.stem}.cpython-312.pyc"),
             f"{FINAL}/{LIBRARY}/{source.relative_to(stage / LIBRARY)}",
@@ -594,10 +595,12 @@ def test_an_interpreter_archive_without_python3_is_refused(tmp_path: Path, keys:
     assert bench.run.called(bench.python) == []
 
 
-@pytest.mark.parametrize(("program", "step"), [(("-B", "-m", "pip"), "pip"), (("-S", "-B", "-X"), "pyc")])
+@pytest.mark.parametrize(
+    ("program", "step"), [(("<python>", "-I", "-B", "-m", "pip"), "pip"), (("/usr/bin/env", "-i", "<python>"), "pyc")]
+)
 def test_a_failed_python_step_is_refused(tmp_path: Path, keys: Keys, program: tuple[str, ...], step: str) -> None:
     bench = make_bench(tmp_path, keys)
-    bench.run.answer([bench.python, "-I", *program], rc=1)
+    bench.run.answer([bench.python if part == "<python>" else part for part in program], rc=1)
     with refused("build_failed", step):
         build.build(bench.options, bench.tools)
     assert bench.run.called("pkgbuild") == []
@@ -612,7 +615,9 @@ SHARES_A_SET = (
 )
 
 
-def compiled_library(tmp_path: Path, name: str, files: dict[str, str]) -> dict[str, bytes]:
+def compiled_library(
+    tmp_path: Path, name: str, files: dict[str, str], tools: build.Tools | None = None
+) -> dict[str, bytes]:
     """`compile_python` with the real interpreter on a library of `files`; every resulting `.pyc` by path."""
     tree = tmp_path / name / "stage"
     (tree / "python/bin").mkdir(parents=True)
@@ -622,11 +627,13 @@ def compiled_library(tmp_path: Path, name: str, files: dict[str, str]) -> dict[s
     for path, text in files.items():
         (tree / LIBRARY / path).parent.mkdir(parents=True, exist_ok=True)
         (tree / LIBRARY / path).write_text(text, encoding="utf-8")
-    build.compile_python(build.Tools(), tree, VERSION)
+    build.compile_python(tools or build.Tools(), tree, VERSION)
     return {str(path.relative_to(tree)): path.read_bytes() for path in sorted(tree.rglob("*.pyc"))}
 
 
-def test_byte_code_does_not_depend_on_what_the_compiling_process_compiled_before(tmp_path: Path) -> None:
+def test_byte_code_does_not_depend_on_what_the_compiling_process_compiled_before(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Two builds of one commit differed in one `.pyc` (HOT-19): the parser interns every identifier for the life of
     the process, and a code object rebuilds a constant `frozenset` whose strings are already interned, so whether
     `marshal` shares it (`FLAG_REF`) depended on the files the same worker of `compileall -j 0` had compiled before.
@@ -637,7 +644,10 @@ def test_byte_code_does_not_depend_on_what_the_compiling_process_compiled_before
     library = {f"site-packages/a{index:03}.py": USES_THE_NAME for index in range(150)}
     library["site-packages/zz.py"] = SHARES_A_SET
     alone = compiled_library(tmp_path, "alone", {"site-packages/zz.py": SHARES_A_SET})
-    first, second = (compiled_library(tmp_path, name, library) for name in ("first", "second"))
+    first = compiled_library(tmp_path, "first", library)
+    # another locale (it would choose the codec modules a compiling interpreter imports at start)
+    monkeypatch.setenv("LC_ALL", "en_US.ISO8859-1")
+    second = compiled_library(tmp_path, "second", library)
     assert len(first) == 151
     assert first == second
     pyc = f"{LIBRARY}/site-packages/__pycache__/zz.cpython-312.pyc"
@@ -655,9 +665,11 @@ def test_byte_code_does_not_depend_on_what_the_compiling_process_compiled_before
     assert not namespace["second"]("other")
 
 
-def test_a_library_file_that_does_not_compile_is_refused(tmp_path: Path) -> None:
+def test_a_library_file_that_does_not_compile_is_refused_and_named(tmp_path: Path) -> None:
+    tools = build.Tools()
     with refused("build_failed", "pyc"):
-        compiled_library(tmp_path, "broken", {"good.py": "x = 1\n", "bad.py": "def (:\n"})
+        compiled_library(tmp_path, "broken", {"good.py": "x = 1\n", "sub/bad.py": "def (:\n"}, tools)
+    assert tools.log == ["pyc_failed sub/bad.py"]
 
 
 def test_python_sources_are_found_in_a_fixed_order_without_caches_or_linked_directories(tmp_path: Path) -> None:
@@ -666,7 +678,11 @@ def test_python_sources_are_found_in_a_fixed_order_without_caches_or_linked_dire
         (library / path).parent.mkdir(parents=True, exist_ok=True)
         (library / path).write_text("", encoding="utf-8")
     (library / "linked").symlink_to(library / "m")
-    assert build.python_sources(library) == [library / name for name in ("a.py", "b.py", "m/x.py", "z/__init__.py")]
+    (library / "dangling.py").symlink_to(library / "missing.py")
+    (library / "folder.py").mkdir()
+    (library / "y.py").symlink_to(library / "a.py")
+    expected = ("a.py", "b.py", "y.py", "m/x.py", "z/__init__.py")
+    assert build.python_sources(library) == [library / name for name in expected]
 
 
 def test_normalise_sets_modes_and_the_commit_time(tmp_path: Path) -> None:

@@ -51,7 +51,7 @@ Status: Accepted (2026-11-24)
   stage of two builds): two builds of one commit and lock produce the same `release.json` (normalised modes and times, byte
   code with unchecked hashes and the installed path, each file compiled by a fresh interpreter that reads no byte
   code, no console scripts); the launcher runs `python -I -B`, so nothing is ever written into the payload. Measured:
-  two builds byte-identical, 210 MB package, 45 s per build. Amended by HOT-19: one `compileall -j 0` run was not
+  two builds byte-identical, 210 MB package, 45 s per build (before HOT-19). Amended by HOT-19: one `compileall -j 0` run was not
   enough, its byte code depended on what each worker had compiled before (`decisions/HOT-19.md`).
 
 ### 2. Trust roots

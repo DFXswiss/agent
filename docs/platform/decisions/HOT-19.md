@@ -27,20 +27,23 @@ device: a copy of the stdlib and `agent_cli` compiled with `-j 0` differed from 
 when compiled before it; the hash seed alone changed nothing. `marshal.loads`/`dumps` does not repair it (the sharing
 itself differs).
 
-Decision: every file is compiled by its own fresh interpreter (`python3 -I -S -B -X pycache_prefix=/dev/null -c ...`),
+Decision: every file is compiled by its own fresh interpreter
+(`env -i python3 -I -S -B -X utf8 -X pycache_prefix=/dev/null -c ...`),
 started by the build in parallel threads. Its state before compiling is fixed: built-in and frozen modules and the
 source of the few library modules it imports (it reads no byte code, since nothing exists below `/dev/null`, so it does
-not matter which `.pyc` the other processes are writing), no `site`, no environment (`-I`). The compiled bytes are
+not matter which `.pyc` the other processes are writing), no `site`, an empty environment and UTF-8 mode (the
+locale would otherwise choose which codec modules the interpreter compiles at start). The compiled bytes are
 written exactly as `py_compile` writes an unchecked-hash `.pyc`. The result depends only on the file and the
 interpreter, not on cores, order, directory or time.
 
 Rejected: no byte code in the payload (every runner start would compile the library; not measured as needed, since
 the per-file way costs seconds); one process with a fixed order (still depends on the rest of the library).
 
-Cost measured on a test device: 1 559 files of a full interpreter library in 6-7 s with 8 cores (before: under 1 s).
-The 10-core build Mac compiles the payload in well under a minute; the build stays below five minutes.
+Cost measured on a test device: 1 559 files of a full interpreter library in 6-7 s with 8 cores (before: under 1 s),
+about 30 ms of one core per file. For the payload's library on the 10-core build Mac that is an estimate of well
+under a minute, not a measurement; the operator's next build records the real time (`board` report of HOT-19).
 
 Gate: `test_byte_code_does_not_depend_on_what_the_compiling_process_compiled_before` compiles a library of 150 files
 that use a rare word as a name and one file that shares a `frozenset` of that word between two functions, twice and
-alone. With the former `compileall -j 0` it failed five times out of five on a test device; with the correction it
-passes.
+alone, the second time under another locale. With the former `compileall -j 0` it failed five times out of five on a
+test device; with the correction it passes. A file that does not compile is named in the build log (`pyc_failed`).

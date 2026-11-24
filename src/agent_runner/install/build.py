@@ -72,8 +72,9 @@ MAX_INPUT = 1024**3
 PYC_TAG = "cpython-312"
 # Where the compiling interpreter would look for byte code: nothing can ever exist below /dev/null, so it reads none.
 NO_PYCACHE = "/dev/null"
-# Compiles one file (argv: source, target, installed path) exactly as `py_compile` does with unchecked hashes, using
-# only built-in and frozen modules.
+# Compiles one file (argv: source, target, installed path) exactly as `py_compile` does with unchecked hashes; it
+# imports nothing beyond the interpreter's start (built-in and frozen modules, `encodings`, `importlib`).
+ENV = "/usr/bin/env"
 COMPILE_ONE = """import _imp, os, sys
 from importlib import _bootstrap_external as bootstrap
 source, target, installed = sys.argv[1:]
@@ -271,11 +272,12 @@ def stage(tools: Tools, options: Options, source: Path, lock: dict[str, Any], ta
 
 def python_sources(library: Path) -> list[Path]:
     """Every `.py` file below `library` in a fixed order, as `compileall` finds them (no `__pycache__`, no linked
-    directories)."""
+    directories, nothing that is not a file or a link to one)."""
     found: list[Path] = []
     for directory, dirnames, filenames in os.walk(library):
         dirnames[:] = sorted(name for name in dirnames if name != "__pycache__")
-        found += [Path(directory) / name for name in sorted(filenames) if name.endswith(".py")]
+        files = (Path(directory) / name for name in sorted(filenames) if name.endswith(".py"))
+        found += [path for path in files if path.is_file()]
     return found
 
 
@@ -285,24 +287,28 @@ def compile_python(tools: Tools, tree: Path, version: str) -> None:
     replaced.
 
     Every file is compiled by its own fresh interpreter (`-I -S -B`, byte code looked up below `NO_PYCACHE`, so it
-    reads none and only runs built-in, frozen and source modules of this tree). Byte code depends on the state of the
-    compiling process: the parser interns every identifier for the life of the process, and a code object rebuilds
-    a constant `frozenset` when one of its strings equals an already interned one, which decides whether `marshal`
-    shares it (`FLAG_REF`). With one process for many files (`compileall -j`) that state is whatever the process
-    compiled before; here it is the same for every build, whatever the cores, order, directory or time."""
+    reads none and only runs built-in, frozen and source modules of this tree), with an empty environment and UTF-8
+    mode (the locale would otherwise choose the codec modules imported at start). Byte code depends on the state of
+    the compiling process: the parser interns every identifier for the life of the process, and a code object
+    rebuilds a constant `frozenset` when one of its strings equals an already interned one, which decides whether
+    `marshal` shares it (`FLAG_REF`). With one process for many files (`compileall -j`) that state is whatever the
+    process compiled before; here it is the same for every build, whatever the cores, order, directory or time.
+    Files that do not compile are logged (`pyc_failed`) and fail the build."""
     library = tree / LIBRARY
     final = Layout().version_dir(version) / LIBRARY
     python = str(tree / "python/bin/python3")
 
-    def one(source: Path) -> bool:
+    def one(source: Path) -> str | None:
         target = source.parent / "__pycache__" / f"{source.stem}.{PYC_TAG}.pyc"
         installed = final / source.relative_to(library)
-        argv = [python, "-I", "-S", "-B", "-X", f"pycache_prefix={NO_PYCACHE}", "-c", COMPILE_ONE]
-        return tools.run([*argv, str(source), str(target), str(installed)]).returncode == 0
+        argv = [ENV, "-i", python, "-I", "-S", "-B", "-X", "utf8", "-X", f"pycache_prefix={NO_PYCACHE}"]
+        done = tools.run([*argv, "-c", COMPILE_ONE, str(source), str(target), str(installed)])
+        return None if done.returncode == 0 else str(source.relative_to(library))
 
     with ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
-        compiled = list(pool.map(one, python_sources(library)))
-    if not all(compiled):
+        failed = [name for name in pool.map(one, python_sources(library)) if name is not None]
+    if failed:
+        tools.log += [f"pyc_failed {name}" for name in failed]
         raise RunnerError("build_failed", "pyc")
 
 
