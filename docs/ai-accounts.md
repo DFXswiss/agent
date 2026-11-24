@@ -193,6 +193,12 @@ The harness implements this command; Agent does not.
    and its empty `GH_CONFIG_DIR`. Do not add those variables, do not copy a
    real `gh` config, and do not mirror `github-accounts.json` or `$AGENT_HOME`
    beyond the listed paths.
+8. Provide each account's login on the target. An account whose `config_dir`
+   is the driver's default directory leaves the driver's home variable unset,
+   in local mode as well, because some driver CLIs keep that login outside the
+   directory. On the target, the lane then runs with the target's own default
+   profile of that driver, so that profile must be logged in to the same
+   account. Mirroring the listed `config_dir` does not carry that login.
 
 Add as many named accounts, roles, and bindings as needed. No fixed account
 list, role list, or count is built in. Configurable role names are chosen by
