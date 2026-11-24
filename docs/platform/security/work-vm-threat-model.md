@@ -35,6 +35,10 @@ manipulated. The attacker fully controls the VM's kernel, network stack, Lima gu
 | Escape from the VM to the host (hypervisor bug) | Out of scope of the platform; Apple Virtualization framework; a host-agent compromise yields only that slot account (no other slot's disk, no runner secret, `_config` root-owned) | — |
 
 ## Residual risks
+- **Open (decisions #34): the host filter matches a slot by `user`, and pf does not attribute every packet to its
+  socket's account.** The rehearsal reached the device's listening ports over loopback and over the site address from
+  a slot account, intermittently, in every client state. Work VMs stay off (`WORKVM_SLOTS=0`) until a boundary that
+  does not depend on the account is built.
 - ICMP is not matched by pf's `user`, the anchor has no device-wide rules (decisions #22), and the Cloudflare client
   passes ICMP to the private networks. The boundary for ICMP is therefore Lima's user network: gvisor-tap-vsock does
   not forward a VM's ICMP out of its virtual network (it may answer echo requests itself). `egress-check.sh --vm`

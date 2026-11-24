@@ -4,7 +4,7 @@
 # connected; no hub is needed. It never loads the main pf ruleset itself.
 #
 #   host-rehearsal.sh --runner-account NAME --site-ip ADDRESS [--prefix PREFIX] [--deadline-minutes N]
-#                     [--log DIR] [--no-service-restart]
+#                     [--log DIR] [--no-service-restart] [--vm NAME]
 #
 #   --runner-account      an existing unprivileged account (the sudoers rule names it; nothing runs as it)
 #   --site-ip             the site's public IPv4 address (a slot must never leave with it)
@@ -13,6 +13,7 @@
 #                         operator's connection breaks; disarmed at the normal end
 #   --log DIR             where the log and the saved state go (default /var/tmp/agent-workvm-rehearsal-<time>)
 #   --no-service-restart  skip the restart of the client's system service (step 6)
+#   --vm NAME             also run the continuous prober inside this running work VM of the rehearsal slot
 #
 # Steps: 1 save the state; 2 arm the timer; 3 `workvm install --plan`, then `install` with one slot; 4 check (main
 # ruleset unchanged, client anchor still hooked, our anchor hooked before it, watcher state, `firewall check`,
@@ -31,6 +32,10 @@ prefix=reh-
 deadline=20
 log=
 restart=1
+vm=
+# Lima's user network maps this gateway address to the host's loopback (written from its octets: no address
+# literals in the repository)
+lima_gateway=$(printf '%d.%d.%d.%d' 192 168 5 2)
 here=$(cd "$(dirname "$0")" && pwd)
 runner=${AGENT_RUNNER:-agent-runner}
 egress_check=${EGRESS_CHECK:-$here/egress-check.sh}
@@ -50,6 +55,7 @@ while [ $# -gt 0 ]; do
     --deadline-minutes) deadline=${2:-}; shift 2 ;;
     --log) log=${2:-}; shift 2 ;;
     --no-service-restart) restart=0; shift ;;
+    --vm) vm=${2:-}; shift 2 ;;
     *) usage ;;
   esac
 done
@@ -193,17 +199,20 @@ else
   report reboot_check_baseline fail "see after-reboot-baseline.txt"
 fi
 
-# 4b. The continuous prober: from now until the uninstall, about every 100 ms, as the slot account: a TCP port the
-# device really listens on, over loopback and over the device's own site address, and (while the client is
-# disconnected) the internet. Every success is a failure of the boundary: the prober writes a line with the time and
-# the root side saves at that moment the anchor's rules with counters, its table, the children of com.apple, the
-# main ruleset, the client's anchor with counters, the matching pf states, `pfctl -s info` and the watcher state.
+# 4b. The continuous prober (images/workvm/continuous-probe.sh): from now until the uninstall, about every 100 ms,
+# as the slot account (and with --vm inside that running work VM of the slot): a TCP port the device really listens
+# on, over loopback and over the device's own site address, and the internet through Cloudflare's trace - a hit
+# there only when it answers `warp=off` (past the client), in every phase, so no phase marker can lag. Every hit is
+# a failure of the boundary; the root side saves at that moment the anchor's rules with counters, its table, the
+# children of com.apple, the main ruleset and the client's anchor with counters, the matching pf states,
+# `pfctl -s info`, the client's state and the watcher state.
 lsof -nP -iTCP -sTCP:LISTEN 2>/dev/null >"$log/listeners.txt"
 port=$(awk 'NR > 1 && ($9 ~ /^\*:[0-9]+$/ || $9 ~ /^127\.0\.0\.1:[0-9]+$/) { sub(/.*:/, "", $9); print $9; exit }' "$log/listeners.txt")
 own=$(ipconfig getifaddr en0 2>/dev/null)
 probe_any=$(awk -v p=":$port" 'NR > 1 && $9 == "*" p { print "yes"; exit }' "$log/listeners.txt")
-phase_file=/var/tmp/agent-workvm-rehearsal.phase
-echo connected >"$phase_file" && chmod 0644 "$phase_file"
+site_target=$([ "$probe_any" = yes ] && echo "$own")
+probe_script=/var/tmp/agent-workvm-continuous-probe.sh
+install -m 0755 "$here/continuous-probe.sh" "$probe_script"
 hits=0
 snapshot() { # line
   hits=$((hits + 1))
@@ -217,50 +226,52 @@ snapshot() { # line
   pfctl -a com.cloudflare.warp_svc -vsr >"$dir/client.txt" 2>/dev/null
   pfctl -vss 2>/dev/null | grep -A2 -E "127\.0\.0\.1|${own:-none}" >"$dir/states.txt"
   pfctl -s info >"$dir/info.txt" 2>/dev/null
+  "$warp" --accept-tos status >"$dir/client-status.txt" 2>/dev/null
   cat /var/run/agent.workvm.state >"$dir/watcher.txt" 2>/dev/null
 }
+watch_hits() { # source: read hit lines from stdin, snapshot each
+  while read -r line; do
+    case "$line" in
+      hit\ *) echo "$1 $line" >>"$log/prober.txt"; snapshot "$1 $line" ;;
+      done\ *) echo "$1 $line" >>"$log/prober.txt" ;;
+    esac
+  done
+}
+probers=
 if [ -n "$port" ]; then
-  # shellcheck disable=SC2016 # expanded by the slot account's shell from its arguments
-  sudo -n -u "$account" /bin/sh -c '
-    port=$1 own=$2 phase=$3
-    now() { perl -MTime::HiRes=time -e "printf q(%.3f), time"; }
-    while :; do
-      nc -z -G 1 -w 1 127.0.0.1 "$port" >/dev/null 2>&1 && echo "hit loopback port=$port t=$(now)" &
-      [ -n "$own" ] && nc -z -G 1 -w 1 "$own" "$port" >/dev/null 2>&1 && echo "hit site_address port=$port t=$(now)" &
-      if [ "$(cat "$phase" 2>/dev/null)" = disconnected ]; then
-        curl -s -m 1 -o /dev/null https://cloudflare.com/cdn-cgi/trace && echo "hit internet_disconnected t=$(now)" &
-      fi
-      sleep 0.1
-    done
-  ' prober "$port" "$([ "$probe_any" = yes ] && echo "$own")" "$phase_file" 2>/dev/null | while read -r line; do
-    echo "$line" >>"$log/prober.txt"
-    snapshot "$line"
-  done &
-  prober=$!
-  report prober_started pass "port=$port site_address=$([ "$probe_any" = yes ] && echo yes || echo no-listener-on-it)"
+  sudo -n -u "$account" "$probe_script" --port "$port" --site-address "$site_target" 2>/dev/null | watch_hits slot &
+  probers=$!
+  if [ -n "$vm" ]; then
+    # inside the VM, Lima's user network maps the gateway to the host's loopback
+    # shellcheck disable=SC2024 # root reads the script and hands it to the VM's shell on stdin
+    sudo -n -u "$account" /usr/local/libexec/agent-runner-workvm-limactl shell "$vm" -- sh -s -- \
+      --port "$port" --loopback "$lima_gateway" --site-address "$site_target" <"$probe_script" 2>/dev/null | watch_hits vm &
+    probers="$probers $!"
+  fi
+  report prober_started pass "port=$port site_address=$([ -n "$site_target" ] && echo yes || echo no-listener-on-it) vm=${vm:-none}"
 else
-  prober=
   report prober_started fail "no TCP port listening on loopback (see listeners.txt)"
 fi
 stop_prober() {
-  [ -n "$prober" ] || return 0
-  pkill -KILL -u "$account" -f 'prober' 2>/dev/null
-  kill "$prober" 2>/dev/null
+  [ -n "$probers" ] || return 0
+  pkill -KILL -u "$account" -f 'continuous-probe' 2>/dev/null
+  # shellcheck disable=SC2086 # a list of process IDs
+  kill $probers 2>/dev/null
   sleep 1
-  for target in loopback site_address internet_disconnected; do
-    count=$(grep -c "^hit $target " "$log/prober.txt" 2>/dev/null)
-    first=$(grep -m 1 "^hit $target " "$log/prober.txt" 2>/dev/null | sed -n 's/.* t=//p')
+  for target in loopback site_address internet; do
+    count=$(grep -c " hit $target " "$log/prober.txt" 2>/dev/null)
+    first=$(grep -m 1 " hit $target " "$log/prober.txt" 2>/dev/null | sed -n 's/.* t=//p')
     if [ "${count:-0}" = 0 ]; then
       report "continuous_$target" pass "never reached"
     else
       report "continuous_$target" fail "$count hits, first at t=$first (snapshots hit-*)"
     fi
   done
+  rm -f "$probe_script"
 }
 
 # 5. Disconnect: the slot has no internet; reconnect: it comes back by itself.
 say "5 disconnect"
-echo disconnected >"$phase_file"
 "$warp" --accept-tos disconnect >/dev/null 2>&1
 sleep 10
 leak=$(slot_internet)
@@ -271,13 +282,11 @@ if sudo -n -u "$account" nc -z -G 3 -w 3 127.0.0.1 22 >/dev/null 2>&1; then repo
 if hook_ok || ! client_hooked; then report hook_disconnected pass "hook intact or client anchor removed"; else report hook_disconnected fail "client before our anchor"; fi
 "$warp" --accept-tos connect >/dev/null 2>&1
 if wait_connected 120; then report reconnect pass connected; else report reconnect fail "not connected after 120 s"; fi
-echo connected >"$phase_file"
 check_all reconnected
 
 # 6. Restart the client's service (as a self-update does) and check that the hook survives and the slot recovers.
 if [ "$restart" = 1 ]; then
   say "6 service restart"
-  echo disconnected >"$phase_file" # the tunnel is down while the service restarts
   launchctl kickstart -k "system/$service" >/dev/null 2>&1
   sleep 5
   leak=$(slot_internet)
@@ -291,14 +300,12 @@ if [ "$restart" = 1 ]; then
     report restart_window fail "internet without hook ip=$leak"
   fi
   if wait_connected 180; then report restart_reconnect pass connected; else report restart_reconnect fail "not connected after 180 s"; fi
-  echo connected >"$phase_file"
-  check_all restarted
+    check_all restarted
 fi
 
 # 7. Uninstall and compare with the saved state.
 say "7 uninstall"
 stop_prober
-rm -f "$phase_file"
 if "$runner" workvm uninstall >"$log/uninstall.txt" 2>&1; then report uninstall pass ok; else report uninstall fail "see uninstall.txt"; fi
 disarm
 if [ "$(main_rules)" = "$(cat "$log/before.main")" ]; then report after_main pass same; else report after_main fail "main ruleset differs"; fi

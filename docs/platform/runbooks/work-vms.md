@@ -5,6 +5,11 @@ anything. Inside, everything is allowed. Outside, the runner device keeps them t
 egress only through the device's Cloudflare client. This runbook covers setting them up, operating them, handling
 faults and removing them. Devices are named by role only.
 
+> **Do not enable work VMs on any device for now** (decisions #34): the rehearsal showed that the per-account pf
+> boundary lets some connections of a slot account through. Keep `AGENT_RUNNER_WORKVM_SLOTS=0` until a new boundary
+> has passed a rehearsal whose continuous prober (`images/workvm/continuous-probe.sh`) ran ten minutes through every
+> phase with zero hits.
+
 ## 1. Preconditions
 - Runner at a version with work VMs, `AGENT_RUNNER_WORKVM_SLOTS=0` (the default: nothing changes).
 - The hub is updated before the runner. An older hub refuses a work VM metrics sample, and with it the whole

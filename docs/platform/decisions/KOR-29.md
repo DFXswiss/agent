@@ -268,3 +268,20 @@ MON-3. **Runner measures only from outside** (`agent_runner.metrics.workvm`): th
     counters of a hit. A boundary that does not depend on `user`: work VMs on Apple's vmnet (Lima `vzNAT`) instead
     of the user network, filtered by the bridge interface - open, to be decided (no installation on the execution
     device before).
+34. **Third rehearsal (2026-11-24 09:15): the per-account boundary is not tight; work VMs stay off.** The continuous
+    prober reached a listening port of the device 10 times over loopback and 5 times over the site address in about
+    two minutes, in every client state. Cause, shown by snapshot `hit-1`: the anchor's
+    `block return out quick all user = 601` had blocked 653 packets of the slot account, and at the same moment a
+    connection of that account to port 22 went through - pf did not attribute that packet to the account (its
+    socket lookup per packet), so none of the anchor's rules matched, and pf passes what no rule matches (the main
+    ruleset of macOS has no block; the client's anchor passes `lo0` and the private networks). The 37 "internet
+    while disconnected" hits are a fault of the prober, not of the boundary: in every one the client was connected
+    and the watcher reported `ok utun4`; the prober's phase marker lagged behind the reconnection. The prober is now
+    `images/workvm/continuous-probe.sh`: it counts the internet only on a `warp=off` trace answer (past the client),
+    in every phase; it runs as the slot account and with `--vm` inside a work VM; the gates run it for real without
+    root. Lima's user network cannot be switched off (only replaced by `user-v2`, again a process of the slot
+    account), so `vzNAT` alone does not remove the path. A boundary that does not depend on `user` and holds as "no
+    path" also while the client is disconnected or pf is off needs another structure - options and estimate in the
+    report (`board`): nested work VMs inside a platform "work host" VM whose Linux kernel forwards them only into its
+    own tunnel (recommended), work VMs on a separate machine, or a network extension content filter. A decision of
+    the owner is needed before building; until then `AGENT_RUNNER_WORKVM_SLOTS` stays 0 on every device.

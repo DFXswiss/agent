@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import socket
 import subprocess
 from pathlib import Path
 
@@ -17,11 +18,12 @@ WORKVM = Path(__file__).resolve().parents[3] / "images" / "workvm"
 REHEARSAL = WORKVM / "host-rehearsal.sh"
 EGRESS = WORKVM / "egress-check.sh"
 REBOOT = WORKVM / "after-reboot-check.sh"
+PROBE = WORKVM / "continuous-probe.sh"
 FIRST_ANCHOR = "grep -n '^anchor ' | head -n 1"
 HOOK_CASE = """*:'anchor "com.apple/*"'*)"""
 
 
-@pytest.mark.parametrize("script", [REHEARSAL, EGRESS, REBOOT], ids=["rehearsal", "egress", "reboot"])
+@pytest.mark.parametrize("script", [REHEARSAL, EGRESS, REBOOT, PROBE], ids=["rehearsal", "egress", "reboot", "probe"])
 def test_parses_is_executable_and_never_touches_the_main_ruleset(script: Path) -> None:
     assert subprocess.run(["/bin/sh", "-n", str(script)], check=False).returncode == 0
     assert os.access(script, os.X_OK)
@@ -103,11 +105,10 @@ def test_rehearsal_sets_the_runner_home_private_and_saves_pf_state_from_stdout_o
 
 def test_rehearsal_probes_continuously_and_saves_the_state_of_every_hit() -> None:
     text = REHEARSAL.read_text(encoding="utf-8")
-    loop = text[text.index('sudo -n -u "$account" /bin/sh -c \'') :]
-    assert "sleep 0.1" in loop  # about every 100 ms
-    for target in ("hit loopback", "hit site_address", "hit internet_disconnected"):
-        assert target in loop
-    snapshot = text[text.index("snapshot() {") : text.index('if [ -n "$port" ]; then')]
+    assert '"$probe_script" --port "$port" --site-address "$site_target"' in text  # as the slot account
+    assert '--loopback "$lima_gateway"' in text  # with --vm: inside the VM, towards the host's loopback
+    assert "phase_file" not in text  # the trace answer decides (warp=off), no marker can lag
+    snapshot = text[text.index("snapshot() {") : text.index("watch_hits() {")]
     for saved in (
         "anchor.txt",
         "table.txt",
@@ -116,8 +117,66 @@ def test_rehearsal_probes_continuously_and_saves_the_state_of_every_hit() -> Non
         "client.txt",
         "states.txt",
         "info.txt",
+        "client-status.txt",
         "watcher.txt",
     ):
         assert saved in snapshot
     assert text.index("stop_prober\n") < text.index('"$runner" workvm uninstall >"$log/uninstall.txt"')
     assert "pf-table-probe.txt" in text  # how pf takes `::` into a table, read back from pf itself
+
+
+def _listener() -> tuple[socket.socket, int]:
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(64)
+    return server, server.getsockname()[1]
+
+
+def _probe(*args: str) -> list[str]:
+    done = subprocess.run(
+        ["/bin/sh", str(PROBE), *args, "--interval", "0.1", "--duration", "2"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    return done.stdout.splitlines()
+
+
+def test_continuous_probe_reports_every_reached_target_with_its_time(tmp_path: Path) -> None:
+    trace = tmp_path / "trace"
+    trace.write_text("ip=192.0.2.9\nwarp=off\n")  # left past the client
+    server, port = _listener()
+    try:
+        lines = _probe("--port", str(port), "--trace-url", trace.as_uri())
+    finally:
+        server.close()
+    loopback = [line for line in lines if line.startswith(f"hit loopback 127.0.0.1:{port} t=")]
+    internet = [line for line in lines if line.startswith("hit internet warp=off ip=192.0.2.9 t=")]
+    assert len(loopback) >= 5  # tried again and again, not once
+    assert len(internet) >= 5
+    assert re.fullmatch(r"done tries=\d+", lines[-1])
+    assert int(lines[-1].split("=")[1]) >= 10
+
+
+def test_continuous_probe_is_silent_when_the_boundary_holds(tmp_path: Path) -> None:
+    trace = tmp_path / "trace"
+    trace.write_text("ip=192.0.2.9\nwarp=on\n")  # through the client: the intended way out
+    server, port = _listener()
+    server.close()  # nothing listens: the port is closed
+    lines = _probe("--port", str(port), "--site-address", "127.0.0.1", "--trace-url", trace.as_uri())
+    assert [line for line in lines if line.startswith("hit ")] == []
+    assert lines[-1].startswith("done tries=")
+
+
+def test_continuous_probe_refuses_bad_arguments() -> None:
+    for args, message in (
+        ([], "--port needs a number"),
+        (["--port", "x"], "--port needs a number"),
+        (["--port", "1", "--duration", "0.5"], "--duration needs whole seconds"),
+        (["--port"], "--port needs a value"),
+        (["--bogus", "1"], "unknown option --bogus"),
+    ):
+        done = subprocess.run(["/bin/sh", str(PROBE), *args], capture_output=True, text=True, check=False)
+        assert (done.returncode, done.stderr) == (2, f"continuous-probe: {message}\n")
