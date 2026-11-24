@@ -1,13 +1,13 @@
 # KOR-42 – decisions
 
-## Remote pairing (ADR-058): design review with fresh context, before building
+## Remote pairing (ADR-062): design review with fresh context, before building
 
-The draft of ADR-058 was reviewed by a reviewer without the author's context. Findings and their handling:
+The draft of ADR-062 was reviewed by a reviewer without the author's context. Findings and their handling:
 
 1. **High – a malicious hub could forge the remote handover** (HPKE base mode: anyone who knows the agent's public key
    can seal to it; the hub could seal its own `r'` around an identity it controls). Fixed: return code
    `HKDF(r, "agent-return")` shown by the page after the confirmation; the tool checks it before it claims or stores
-   anything (ADR-058 §3). This adds one step for the user in the remote mode (passing a code back to the agent); it
+   anything (ADR-062 §3). This adds one step for the user in the remote mode (passing a code back to the agent); it
    is the price of E-04 without letting the hub impersonate the user.
 2. **High – a phished agent could mark the notification as read.** Fixed: `remote` per row in `GET /v1/me/agents`
    and a banner in the web shell while the main orchestrator is a remote one (no read state hides it) (§4.4).

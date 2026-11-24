@@ -10,7 +10,7 @@
 // - `sealLabel`/`openLabel`: `{"host","name"}` (body JSON) HPKE-sealed to the user's identity X25519 key; each text
 //   1–64 characters, no leading or trailing space, none of the Unicode categories Cc Cf Zl Zp Cs Co Cn.
 //
-// Pairing from another computer (ADR-058, 11-agent-access.md sections 3 and 5.4):
+// Pairing from another computer (ADR-062, 11-agent-access.md sections 3 and 5.4):
 // - `agentCode`: `crockford32(SHA-256(P || "agent-code\0" || canonical({"fp","mode":"remote","nonce","origin",
 //   "pairing_id"})))[:10]` with the hub's 16-byte nonce; the user types it, the page never shows it.
 // - `sealHandover`/`openHandover`: `canonical({"k","r"})` (platform root key of the build, `r`) HPKE-sealed to the

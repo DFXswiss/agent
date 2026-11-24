@@ -53,7 +53,7 @@ export const LABEL_AGENT_BUNDLE_KEY = 'agent-bundle-key\0';
 export const LABEL_AGENT_LABEL = 'agent-label\0';
 export const LABEL_AGENT_CLAIM = 'agent-claim\0';
 export const LABEL_AGENT_CLAIM_HASH = 'agent-claim-hash\0';
-// Pairing from another computer (ADR-058, 11-agent-access.md section 3), without the prefix P.
+// Pairing from another computer (ADR-062, 11-agent-access.md section 3), without the prefix P.
 export const LABEL_AGENT_CODE = 'agent-code\0';
 export const LABEL_AGENT_HANDOVER = 'agent-handover\0';
 export const LABEL_AGENT_RETURN = 'agent-return\0';

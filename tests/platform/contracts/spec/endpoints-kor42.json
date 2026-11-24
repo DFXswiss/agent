@@ -1,5 +1,5 @@
 {
-  "description": "Endpoints of the pairing from another computer (11-agent-access.md sections 4 and 5.4, KOR-42, ADR-058): the agent fetches the handover of its confirmed remote pairing.",
+  "description": "Endpoints of the pairing from another computer (11-agent-access.md sections 4 and 5.4, KOR-42, ADR-062): the agent fetches the handover of its confirmed remote pairing.",
   "rights": [
     "agent:confirmed"
   ],

@@ -1,4 +1,4 @@
-# ADR-058: Pairing an agent that runs on another computer
+# ADR-062: Pairing an agent that runs on another computer
 
 Status: Accepted (2026-11-24, KOR-42; revised after the design review with fresh context, findings in
 `decisions/KOR-42.md`). Extends ADR-056 (§3 "Pairing: three bindings") and `11-agent-access.md` (§3, §4, §5, §8,

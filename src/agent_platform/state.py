@@ -7,7 +7,7 @@ and the handover secret `r`; and the agent's private keys: in the macOS login ke
 available, else in `agent.key` (`0600`). A directory or file with another mode or owner, or a symlink, is refused
 (`state_damaged`). `delete` removes both (after `key_revoked`).
 
-A pending pairing from another computer (ADR-058, `agent_platform.remote`) keeps `pending.json` (`0600`) and its
+A pending pairing from another computer (ADR-062, `agent_platform.remote`) keeps `pending.json` (`0600`) and its
 private keys in the keychain item `agent-platform` / `<pairing id>` where available, else in `pending.key` (`0600`);
 the paired state above stays untouched until the pairing completes.
 

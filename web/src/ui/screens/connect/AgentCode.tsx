@@ -1,4 +1,4 @@
-// The agent code of a pairing from another computer (ADR-058 section 2): the user types the code their AI agent
+// The agent code of a pairing from another computer (ADR-062 section 2): the user types the code their AI agent
 // shows them; the page never shows it. The typed text is read like the agent tool prints it (lower case, spaces,
 // dashes; `I`/`L` as `1`, `O` as `0`), and only an exact match with the code computed from the link and the hub's
 // nonce enables the passkey button. The warning of section 4.2 names the computer as the link states it.
@@ -52,7 +52,7 @@ export function AgentCodeField({ typed, onChange, matches, disabled, testId }: A
   );
 }
 
-/** The warning of a pairing from another computer (ADR-058 section 4.2): visually distinct from the loopback one. */
+/** The warning of a pairing from another computer (ADR-062 section 4.2): visually distinct from the loopback one. */
 export function RemoteWarning({ host, testId }: { readonly host: string; readonly testId: string }) {
   const { t } = useI18n();
   return (

@@ -16,7 +16,7 @@
 - `seal_label`/`open_label`: the label `{"host", "name"}` (body JSON) sealed with HPKE to the user's identity X25519
   key, `info = P || "agent-label\\0" || canonical({"agent", "user"})`.
 
-Pairing from another computer (ADR-058, 11-agent-access.md sections 3 and 5.4):
+Pairing from another computer (ADR-062, 11-agent-access.md sections 3 and 5.4):
 
 - `agent_code`: the code the agent shows and the user types on the page,
   `crockford32(SHA-256(P || "agent-code\\0" || canonical({"fp", "mode": "remote", "nonce", "origin",

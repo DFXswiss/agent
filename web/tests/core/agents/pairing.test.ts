@@ -122,7 +122,7 @@ describe('preparePairing and submitPairing', () => {
   });
 });
 
-describe('a pairing from another computer (ADR-058)', () => {
+describe('a pairing from another computer (ADR-062)', () => {
   async function remote() {
     const world = await setup();
     const link = { ...world.link, mode: 'remote' as const, port: null };

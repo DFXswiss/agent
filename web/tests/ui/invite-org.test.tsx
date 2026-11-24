@@ -791,7 +791,7 @@ describe('OrgInvite: with the pairing of an agent (11-agent-access.md section 5.
     expect(logins(hub).at(-1)).toEqual({ pairing_id: PAIRING });
   });
 
-  it('asks for the code of an agent on another computer before any passkey gesture (ADR-058)', async () => {
+  it('asks for the code of an agent on another computer before any passkey gesture (ADR-062)', async () => {
     const hub = new SimHub();
     const agent = await Identity.generate();
     const nonce = 'yw1CyUW_rzOg-hZzWeorVQ';

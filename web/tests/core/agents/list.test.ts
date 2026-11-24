@@ -53,7 +53,7 @@ describe('loadAgents', () => {
     expect(remoteOrchestrator(entries)).toBeNull();
   });
 
-  it('marks agents paired from another computer; a row without the field is not remote (ADR-058)', async () => {
+  it('marks agents paired from another computer; a row without the field is not remote (ADR-062)', async () => {
     let agents: unknown[] = [];
     const w = await agentWorld(() => ({ agents }));
     const label = await sealLabel(w.identity.kemPublic(), AGENT, USER, { name: 'Claude Code', host: 'server' });

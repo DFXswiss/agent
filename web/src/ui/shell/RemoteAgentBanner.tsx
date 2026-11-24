@@ -1,4 +1,4 @@
-// The banner of a main orchestrator on another computer (ADR-058 section 4.4): while the user's main orchestrator
+// The banner of a main orchestrator on another computer (ADR-062 section 4.4): while the user's main orchestrator
 // (the newest confirmed or active agent) was paired from another computer, every signed-in page shows "Your main
 // orchestrator runs on another computer (<host>), connected <time>" with "Disconnect". It comes from the agent list
 // (`GET /v1/me/agents`, loaded once the identity is unlocked), never from a notification's read state, so an agent

@@ -14,7 +14,7 @@ One main orchestrator per user (concept idea 34, ADR-056 section 4): a user has 
 agent. The passkey confirmation of a new pairing revokes the previous one in the same transaction and records it in
 `replaces`; the unique index `agent_one_per_user` makes two at once impossible.
 
-A pairing from another computer (`remote`, ADR-058, 11-agent-access.md section 5.4) has a 16-byte `nonce` drawn by
+A pairing from another computer (`remote`, ADR-062, 11-agent-access.md section 5.4) has a 16-byte `nonce` drawn by
 the hub (input of the agent code the user types), must be confirmed within `REMOTE_PAIRING_SECONDS` of its creation
 and then has `REMOTE_CLAIM_SECONDS` to be claimed. Its confirmation must carry `handover_ct` (the handover sealed to
 the agent; `handover_required`), a loopback confirmation must not (`handover_unexpected`). The hub relays
@@ -50,10 +50,10 @@ CLAIM_SECONDS = 60
 """After the confirmation the claim deadline is at most this far away: the agent listening on the loopback claims at
 once (review M1, decisions KOR-24)."""
 REMOTE_PAIRING_SECONDS = 300
-"""A remote pairing must be confirmed within this time of its creation (ADR-058 section 4.3)."""
+"""A remote pairing must be confirmed within this time of its creation (ADR-062 section 4.3)."""
 REMOTE_CLAIM_SECONDS = 600
 """After the confirmation of a remote pairing the agent has this long to claim: a conversational agent may answer its
-user only at the end of a turn (ADR-058 section 3)."""
+user only at the end of a turn (ADR-062 section 3)."""
 NONCE_BYTES = agent_format.NONCE_BYTES
 UNCLAIMED_RETENTION_SECONDS = 3600
 MAX_OPEN_PAIRINGS = 10_000
@@ -455,7 +455,7 @@ def _time(value: datetime | None) -> str | None:
 
 def list_agents(connection: Connection, user: UUID, now: datetime) -> list[dict[str, Any]]:
     """The user's agents, newest first; an unclaimed one past its deadline is `expired`; `remote` for one paired from
-    another computer (the web client's banner, ADR-058 section 4.4)."""
+    another computer (the web client's banner, ADR-062 section 4.4)."""
     rows = connection.execute(
         "SELECT id, state, label_ct, created_at, confirmed_at, claimed_at, last_used_at, revoked_at, expires_at,"
         " replaces, remote FROM hub.agent WHERE user_id = %s ORDER BY created_at DESC, id DESC",

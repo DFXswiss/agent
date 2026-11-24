@@ -11,7 +11,7 @@
 // 4. `loopbackForm`: the top-level form POST the same tab submits to the agent's loopback listener; only there does
 //    `r` leave the browser. `r` is a form field, never part of a URL (it would stay in the browser history).
 //
-// A pairing from another computer (ADR-058, section 5.4): the link's mode must equal the hub's `remote`
+// A pairing from another computer (ADR-062, section 5.4): the link's mode must equal the hub's `remote`
 // (`pairing_mismatch` otherwise, both ways), the hub's 16-byte nonce yields the agent code the user must type
 // (`agentCode`, computed with the page's origin after the fingerprint check), the confirmation carries `handover_ct`
 // (`r` and the platform root key sealed to the agent's key) instead of a loopback form, and the page shows the return
@@ -40,7 +40,7 @@ import type { PairingLink } from './link';
 
 /** How long a pairing stays open (11-agent-access.md section 2: created + 600 s). */
 export const PAIRING_TTL_MS = 600_000;
-/** How long a remote pairing stays open (ADR-058 section 4.3: created + 300 s). */
+/** How long a remote pairing stays open (ADR-062 section 4.3: created + 300 s). */
 export const REMOTE_PAIRING_TTL_MS = 300_000;
 
 export interface Pairing {

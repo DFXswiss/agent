@@ -1,4 +1,4 @@
-// A pairing from another computer (ADR-058) in jsdom with the simulated hub: `/connect#…&m=remote&…` shows the
+// A pairing from another computer (ADR-062) in jsdom with the simulated hub: `/connect#…&m=remote&…` shows the
 // warning and asks for the agent code (normalised; a wrong code keeps the passkey button disabled; the page never
 // shows the code), confirms with the handover sealed to the agent instead of the loopback form, shows the return code
 // derived from the same `r` and waits for the claim; a mode that link and hub disagree on is refused both ways; the

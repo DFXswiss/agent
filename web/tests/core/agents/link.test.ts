@@ -37,7 +37,7 @@ describe('parsePairingLink', () => {
     }
   });
 
-  it('reads a link from another computer: m=remote instead of the port (ADR-058)', () => {
+  it('reads a link from another computer: m=remote instead of the port (ADR-062)', () => {
     const link = parsePairingLink(remote);
     expect(link).toEqual({
       mode: 'remote',

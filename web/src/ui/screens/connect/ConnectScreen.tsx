@@ -16,7 +16,7 @@
 // pairing-tagged sign-in, so the page confirms at once with the unlocked identity – no second gesture unless the hub
 // asks for one (`pairing_gesture_required`) or a main orchestrator is to be replaced.
 //
-// A pairing from another computer (`m=remote`, ADR-058): the link's mode must agree with the hub's (else "This link
+// A pairing from another computer (`m=remote`, ADR-062): the link's mode must agree with the hub's (else "This link
 // is not valid"), the page shows the warning of section 4.2 and asks for the agent code; "Confirm with passkey" stays
 // disabled until the typed code equals the one computed from the link and the hub's nonce (the page never shows it).
 // The confirmation carries the handover sealed to the agent instead of the loopback form; then the page shows the

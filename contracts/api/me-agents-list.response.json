@@ -75,7 +75,7 @@
           },
           "remote": {
             "type": "boolean",
-            "description": "the agent was paired from another computer (ADR-058); the web client shows a banner while such a main orchestrator is confirmed or active"
+            "description": "the agent was paired from another computer (ADR-062); the web client shows a banner while such a main orchestrator is confirmed or active"
           }
         },
         "required": [

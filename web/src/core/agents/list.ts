@@ -3,7 +3,7 @@
 // - `loadAgents`: `GET /v1/me/agents` (newest first, as the hub sends them) into the `agents` slice; each label is
 //   opened with the user's identity key (`crypto/agent.ts`), one that does not open is an unknown agent (label null).
 //   Malformed rows are left out. `replaces` names the main orchestrator a row replaced at its confirmation (or null);
-//   `remote` marks an agent paired from another computer (ADR-058; a row without it, from a hub of before KOR-42, is
+//   `remote` marks an agent paired from another computer (ADR-062; a row without it, from a hub of before KOR-42, is
 //   not remote).
 // - `revokeAgent`: `DELETE /v1/me/agents/{id}`; `revokeAllAgents`: `DELETE /v1/me/agents` (→ the number revoked).
 //   Both take effect at once at the hub; the list is loaded again afterwards.

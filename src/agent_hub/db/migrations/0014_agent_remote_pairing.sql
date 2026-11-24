@@ -1,4 +1,4 @@
--- 0011_agent_remote_pairing: pairing an agent that runs on another computer (KOR-42, ADR-058; 11-agent-access.md
+-- 0014_agent_remote_pairing: pairing an agent that runs on another computer (KOR-42, ADR-062; 11-agent-access.md
 -- sections 2 and 5.4).
 --
 -- A pairing created with `remote: true` keeps `remote`, the hub's 16-byte `nonce` (input of the agent code the user

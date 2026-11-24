@@ -1,4 +1,4 @@
-"""Pairing an agent that runs on another computer (ADR-058, 11-agent-access.md section 5.4).
+"""Pairing an agent that runs on another computer (ADR-062, 11-agent-access.md section 5.4).
 
 The agent cannot reach a listener on the user's computer, so the pairing runs in two calls of the tool:
 

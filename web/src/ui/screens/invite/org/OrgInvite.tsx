@@ -58,7 +58,7 @@ export interface OrgInviteProps {
   readonly lookup: Lookup;
   /** The pairing of the agent's invitation, or null. */
   readonly pairing?: PairingLink | null;
-  /** The agent code of a remote pairing the user must type before a passkey gesture (ADR-058), or null. */
+  /** The agent code of a remote pairing the user must type before a passkey gesture (ADR-062), or null. */
   readonly agentCode?: string | null;
   /** The display name the agent proposed, or null. */
   readonly proposedName?: string | null;
@@ -85,7 +85,7 @@ export function OrgInvite({
   const [pairing, setPairing] = useState(linked);
   const tag = pairing === null ? {} : { pairingId: pairing.pairingId };
   const agentCode = useAgentCode(expectedCode);
-  /** A remote pairing's code must match before any passkey gesture (ADR-058 section 6). */
+  /** A remote pairing's code must match before any passkey gesture (ADR-062 section 6). */
   const codeOk = pairing === null || agentCode.matches;
   /** The notice of a failed sign-in; an expired pairing is dropped so that the next sign-in works without it. */
   const signInNotice = (caught: unknown, cancelled: string): string => {

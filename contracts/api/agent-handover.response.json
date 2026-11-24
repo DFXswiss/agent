@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/agent-handover.response.json",
   "title": "GET /v1/agent/handover response",
-  "description": "Body of a successful response to GET /v1/agent/handover (11-agent-access.md section 4, ADR-058): the handover of a confirmed remote pairing, sealed to the agent.",
+  "description": "Body of a successful response to GET /v1/agent/handover (11-agent-access.md section 4, ADR-062): the handover of a confirmed remote pairing, sealed to the agent.",
   "type": "object",
   "properties": {
     "agent_id": {

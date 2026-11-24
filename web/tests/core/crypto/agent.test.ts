@@ -49,7 +49,7 @@ describe('agent crypto', () => {
     expect(() => agent.checkLabel(['h', 'n'])).toThrow('header_invalid');
   });
 
-  it('reads typed codes leniently and refuses malformed handovers (ADR-058)', async () => {
+  it('reads typed codes leniently and refuses malformed handovers (ADR-062)', async () => {
     expect(agent.tryParseCode('gk08v-h4mrf', 10)).toBe('GK08VH4MRF');
     expect(agent.tryParseCode('gk08v-h4mr', 10)).toBeNull();
     expect(agent.formatCode('669RH5EF')).toBe('669R-H5EF');

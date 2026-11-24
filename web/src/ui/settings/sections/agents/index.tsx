@@ -5,7 +5,7 @@
 // "Disconnect all agents" after a dialog that says the agent loses all access at once and keeps what it has already
 // read. `?agent=connected|failed` (the agent's redirect after a pairing) is only a hint above the list; the
 // state shown is always the hub's. An agent paired from another computer is marked "Runs on another computer"
-// (ADR-058).
+// (ADR-062).
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { loadAgents, revokeAgent, revokeAllAgents } from '../../../../core/agents/list';

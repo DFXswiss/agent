@@ -1,4 +1,4 @@
-"""Pairing from another computer (ADR-058, 11-agent-access.md section 5.4): `pair --remote`, `register --remote` and
+"""Pairing from another computer (ADR-062, 11-agent-access.md section 5.4): `pair --remote`, `register --remote` and
 `pair --wait`, against the hub fake whose browser side seals the handover to the agent."""
 
 from __future__ import annotations
