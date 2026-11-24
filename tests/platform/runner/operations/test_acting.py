@@ -16,6 +16,7 @@ from agent_runner.credentials import acting
 from agent_runner.credentials import session_state as acting_state
 from agent_runner.crypto.ids import uuid7
 from agent_runner.guestlink.client import JournalRecord
+from agent_runner.operations import results
 from agent_runner.operations.journal import HANDLERS as OPERATION_HANDLERS
 from agent_runner.prompts import queue
 from agent_runner.registry import ROOT_PACKAGE
@@ -224,3 +225,13 @@ def test_the_migration_takes_the_verified_author_of_prompts_stored_before(rig: R
             assert [row[0] for row in await cur.fetchall()] == [BOB, None, None]
 
     run(rig, body)
+
+
+def test_a_result_event_names_whose_connection_it_used_only_as_a_user_id() -> None:
+    base = {"operation_id": uuid7(), "status": "succeeded", "result": {"x": 1}}
+    assert results.outcome_of(base) == results.Outcome("succeeded", result={"x": 1})
+    assert results.outcome_of({**base, "connection_of": BOB}) == results.Outcome("succeeded", result={"x": 1})
+    failed = {"operation_id": uuid7(), "status": "rejected", "connection_of": BOB, "error": {"code": "not_found"}}
+    assert results.outcome_of(failed) == results.Outcome("rejected", error={"code": "not_found"})
+    for bad in ("bob", 7, None):
+        assert results.outcome_of({**base, "connection_of": bad}) is None
