@@ -177,7 +177,7 @@
         }
       ],
       "copy": "src/agent_runner/crypto/log/vectors.py",
-      "sha256": "82962b273eb9abd25988caee8a09b748248366b1933bcac1945e4d321663ae89",
+      "sha256": "257052367ed25a7948d86574792787e231c8ec0be7ba83403b27422efc68240e",
       "source": "src/agent_hub/log/vectors.py"
     },
     {
@@ -189,7 +189,7 @@
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/wraps.py",
-      "sha256": "600d7df29d1d04365a11d5b410f889a316f8c547edc3032174d449094d0acae4",
+      "sha256": "787bbeb17969a09d4edee850865f287396e0d7c83a04b11f4d163acfab88ffe9",
       "source": "src/agent_hub/log/wraps.py"
     },
     {

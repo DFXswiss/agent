@@ -1748,7 +1748,7 @@ def build_wraps() -> Json:
                 "current_epoch": 2,
             },
         ),
-        # Key model KM-35 (ADR-076): the `cred` scope of the org itself (company credentials) is read by the devices
+        # Key model KM-35 (ADR-078): the `cred` scope of the org itself (company credentials) is read by the devices
         # assigned to its workgroups only; an active admin wraps each epoch for them, a device wraps for a device.
         ("cred_org_admin_for_device", {**args("alice", "cred", ORG, 1, "device"), "current_epoch": 1}),
         ("cred_org_device_for_device", {**args("device", "cred", ORG, 1, "pdev"), "current_epoch": 1}),
