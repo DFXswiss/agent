@@ -24,8 +24,9 @@ REASON = "model_access_unavailable"
 def _credential(desk: Desk, owner: str, kind: str, at: datetime) -> None:
     """A stored credential row of the owner (the record's content does not matter to the hub's continuation)."""
     desk.execute(
-        "INSERT INTO hub.credential (id, owner_id, kind, version, epoch, header_text, ct, sig, updated_at)"
-        " VALUES (%s, %s, %s, 1, 1, '{}', %s, %s, %s) ON CONFLICT (owner_id, kind) DO UPDATE SET updated_at = %s",
+        "INSERT INTO hub.credential (id, owner_id, kind, version, epoch, header_text, ct, sig, updated_at, created_at,"
+        " is_primary) VALUES (%s, %s, %s, 1, 1, '{}', %s, %s, %s, %s, true)"
+        " ON CONFLICT (owner_id, kind) WHERE kind <> 'github' DO UPDATE SET updated_at = EXCLUDED.updated_at",
         uuid7(),
         owner,
         kind,

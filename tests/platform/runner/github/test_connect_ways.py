@@ -101,6 +101,7 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
             (
                 "log.admit",
                 "log.org_assign",
+                "log.policy",
                 "vm.choice",
                 "github.ways",
                 "github.identities",
@@ -113,6 +114,7 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
             (
                 "log.admit",
                 "log.org_assign",
+                "log.policy",
                 "vm.choice",
                 "github.ways",
                 "github.identities",

@@ -36,7 +36,9 @@ def _insert(writer: psycopg.Connection[Any], record: str, owner: str, kind: str,
 def test_the_migration_applies_on_the_previous_schema_with_data(hub_db: HubDatabase, tmp_path: Path) -> None:
     previous = tmp_path / "previous"
     previous.mkdir()
-    files = [path for path in sorted(MIGRATIONS.glob("*.sql")) if NAME not in path.name]
+    # the migrations before this one (later ones, e.g. 0023 of KOR-49, build on it)
+    own = next(path.name for path in MIGRATIONS.glob("*.sql") if NAME in path.name)
+    files = [path for path in sorted(MIGRATIONS.glob("*.sql")) if path.name < own]
     for path in files:
         shutil.copy(path, previous / path.name)
     assert run_migrate(hub_db.migrate_env(), directory=previous) == (f"applied {len(files)}", 0)
