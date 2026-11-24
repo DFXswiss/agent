@@ -104,26 +104,38 @@ def test_the_account_audit_holds_the_users_rows_and_everything_its_agents_did(hu
     stranger = stored_agent(hub)
     assert stranger.client(hub).delete(f"/v1/me/agents/{stranger.agent_id}").status_code == 200
     hub.flush_read_log()
-    response = session.get("/v1/me/audit")
-    assert response.status_code == 200
-    body = response.json()
-    seqs = [row["seq"] for row in body["rows"]]
-    assert seqs == sorted(seqs, reverse=True)
+    # the rows before the listing (its own read row is written before its answer leaves, after the query)
     expected = rows(
         hub,
         "SELECT seq FROM hub.audit WHERE (actor_id = %s AND org_id IS NULL) OR agent_id = %s ORDER BY seq DESC",
         founder.id,
         agent.agent_id,
     )
+    response = session.get("/v1/me/audit")
+    assert response.status_code == 200
+    body = response.json()
+    seqs = [row["seq"] for row in body["rows"]]
+    assert seqs == sorted(seqs, reverse=True)
     assert seqs == [seq for (seq,) in expected]
     assert any(row.get("org_id") == draft.id and row.get("agent_id") == str(agent.agent_id) for row in body["rows"])
     assert all(row.get("agent_id") != str(stranger.agent_id) for row in body["rows"])
     assert body["next_before"] is None
-    # paging
+
+    # paging (every listing's own read row is newer than what it lists)
+    def account_rows() -> list[int]:
+        found = rows(
+            hub,
+            "SELECT seq FROM hub.audit WHERE (actor_id = %s AND org_id IS NULL) OR agent_id = %s ORDER BY seq DESC",
+            founder.id,
+            agent.agent_id,
+        )
+        return [seq for (seq,) in found]
+
+    latest = account_rows()
     first = session.get("/v1/me/audit", params={"limit": "1"}).json()
-    assert [row["seq"] for row in first["rows"]] == seqs[:1]
+    assert [row["seq"] for row in first["rows"]] == latest[:1]
     second = session.get("/v1/me/audit", params={"limit": "1", "before": first["next_before"]}).json()
-    assert [row["seq"] for row in second["rows"]] == seqs[1:2]
+    assert [row["seq"] for row in second["rows"]] == latest[1:2]
     # the agent reads the same account audit (plus its own read rows)
     assert agent.client(hub).get("/v1/me/audit").status_code == 200
     hub.flush_read_log()

@@ -158,7 +158,6 @@ def test_make_spec_rules() -> None:
         ({"read_resource": None}, "must declare read_resource"),
         ({"read_resource": "no.such.resource"}, "not an audit action"),
         ({"read_resource": "Org"}, "not an audit action"),
-        ({"read_resource": "org", "streaming": True}, "only an authenticated"),
         ({"read_resource": "org", "auth": "anon"}, "only an authenticated"),
     ]
     for change, message in cases:
@@ -178,6 +177,11 @@ def test_make_spec_rules() -> None:
         "GET", "/v1/stream", auth="browser", right="user", read_resource=None, max_body=0, streaming=True
     )
     assert streaming.read_resource is None
+    # a streaming GET may declare its read (the browser live channel, ADR-063 section 3)
+    logged = make_spec(
+        "GET", "/v1/stream", auth="browser", right="user", read_resource="stream", max_body=0, streaming=True
+    )
+    assert logged.read_resource == "stream"
     static = make_spec("GET", "/assets/x", auth="anon", right="anon", read_resource=None, max_body=0, streaming=False)
     assert static.auth == "anon"
 

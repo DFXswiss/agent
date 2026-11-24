@@ -249,7 +249,9 @@ def test_first_passkey_stores_identity_recovery_wrap_and_binds_the_invitation(br
     assert rows(hub, "SELECT registered_user, registered_at, used_at FROM hub.invite") == [(user_id, now, None)]
     assert rows(hub, "SELECT used_at FROM hub.ceremony") == [(now,)]
     reference = credential["id"]
+    begun = {"method": "POST", "route": "/v1/passkeys/register/begin", "status": 200, "code": "ok"}
     assert audit_actions(hub) == [
+        ("request.write", "ok", "anonymous", None, None, None, begun),  # the ceremony's generic row (ADR-063)
         ("auth.register", "ok", "user", user_id, "passkey", reference, {"passkey_id": reference, "invite_id": invite}),
         ("invite.register", "ok", "user", user_id, "invite", invite, {"invite_id": invite, "kind": "user"}),
     ]

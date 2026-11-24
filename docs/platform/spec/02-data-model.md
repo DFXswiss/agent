@@ -133,7 +133,7 @@ main session failed and no retry is pending; `closed` only by user action.
 log appends (`log.<type>`), `event.append`, `task.create`, `task.close`, `session.<state>`, `session.control`,
 `operation.<state>`, `credential.put`, `credential.delete`, `device_request.<state>`, `device.enroll`,
 `device.certify`, `device.connect`, `device.disconnect`, `whiteboard.notify`, `ping.delivered`,
-`hook.denied` (metadata only: session, tool name), `session.prompt_refused`, `model.provider_outside_allowlist`, `runner.inbound_rejected`, `runner.log_rollback`, `runner.log_fork`, `runner.alert`, `platform.<entry type>`, `read.<resource>` (every authenticated read endpoint and
+`hook.denied` (metadata only: session, tool name), `request.refused`, `request.write`, `audit.repeat` (ADR-063), `event.append_batch` (the session's own events of one session and scope, summarised by the audit job; `event_audit_cover` (`scope_id` PK, `covered_seq`) keeps its progress, migration 0012), `session.prompt_refused`, `model.provider_outside_allowlist`, `runner.inbound_rejected`, `runner.log_rollback`, `runner.log_fork`, `runner.alert`, `platform.<entry type>`, `read.<resource>` (every authenticated read endpoint and
 every session platform read reported by a runner). `detail` schemas per action list only metadata fields.
 
 ## 3. Event log format

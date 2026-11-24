@@ -27,6 +27,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from agent_hub.audit.checkpoint import write_checkpoint
+from agent_hub.audit.eventbatch import summarise
 from agent_hub.backup.export import line, signed_text, write_export
 from agent_hub.crypto import aead
 from agent_hub.crypto import event as event_format
@@ -101,6 +102,7 @@ class Estate:
         estate._events()
         estate._rows()
         with hub.pool.connection() as connection:
+            summarise(connection, hub.clock())  # the audit job's summary of the session's events (ADR-063)
             write_checkpoint(connection, hub.config.signer(), hub.clock())
         return estate
 
@@ -278,6 +280,10 @@ class Estate:
                 'INSERT INTO hub.quota_snapshot (owner_id, "window", used_percent, resets_at, fetched_at, device_id)'
                 " VALUES (%s, 'five_hour', 42.5, %s, %s, %s)",
                 (writer.id, now + timedelta(hours=5), now, device.id),
+            ),
+            (
+                "INSERT INTO hub.quota_unreadable (owner_id, since, device_id) VALUES (%s, %s, %s)",
+                (writer.id, now, device.id),
             ),
             (
                 "INSERT INTO hub.usage_daily (org_id, day, device_id, cost_micro_usd) VALUES (%s, %s, %s, 5000)",

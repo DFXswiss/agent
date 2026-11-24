@@ -343,7 +343,7 @@ Per session (created by `agent-guest-control`):
 | Environment | exactly the allow-listed env of §10.3 (+ `HOME`, `CLAUDE_CONFIG_DIR=…/home/.claude`, `PLATFORM_SESSION_TOKEN`, `TERM=xterm-256color`, `LANG=C.UTF-8`, `PATH=/usr/bin:/bin`) |
 | Filesystem | `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateDevices=yes`, `PrivateTmp=no` + `TemporaryFileSystem=/tmp:rw,noexec,nosuid,nodev,mode=1777,size=512M`, `TemporaryFileSystem=/srv/sessions` + `BindPaths=/srv/sessions/<id>`, `TemporaryFileSystem=/run/agent-guest/harness` + `BindReadOnlyPaths=/run/agent-guest/harness/<id>.md`, `InaccessiblePaths=/etc/agent-guest -/var/lib/agent-guest -/run/agent-guest/control.sock -/run/agent-guest/api.sock`, and `InaccessiblePaths=-/run/dbus/system_bus_socket -/run/systemd/private -/run/systemd/transient` (the system bus, systemd's private socket and the transient unit files expose every unit's environment, i.e. other sessions' tokens; Landlock cannot refuse a UNIX connect; SBX-02 decision 24) |
 | Kernel/processes | `ProtectProc=invisible`, `ProcSubset=pid`, `ProtectKernelTunables=yes`, `ProtectKernelModules=yes`, `ProtectKernelLogs=yes`, `ProtectControlGroups=yes`, `ProtectClock=yes`, `ProtectHostname=yes`, `RestrictNamespaces=yes`, `RestrictSUIDSGID=yes`, `LockPersonality=yes`, `RestrictRealtime=yes`, `PrivateIPC=yes`, `KeyringMode=private`, `CapabilityBoundingSet=`, `SystemCallArchitectures=native` |
-| Syscalls | `SystemCallFilter=@system-service landlock_create_ruleset landlock_add_rule landlock_restrict_self`, `SystemCallFilter=~@privileged @mount @debug @module @reboot @swap @obsolete @cpu-emulation` |
+| Syscalls | `SystemCallFilter=@system-service landlock_create_ruleset landlock_add_rule landlock_restrict_self`, `SystemCallFilter=~@privileged @mount @debug @module @reboot @swap @obsolete @cpu-emulation`, `SystemCallFilter=~bind:EPERM listen:EPERM io_uring_setup:EPERM io_uring_enter:EPERM io_uring_register:EPERM` (no socket name another session could reach, ADR-064 §4; the launcher also refuses `setsockopt(SOL_SOCKET, SO_PASSCRED/SO_PASSPIDFD)` by seccomp) |
 | Network | `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`, `IPAddressDeny=any`, `IPAddressAllow=localhost` |
 | Exec | `NoExecPaths=/`, `ExecPaths=/opt/claude/claude <python3 realpath> <lib-dynload dir> <exec_paths from build.json>` |
 | Resources | main sessions: `MemoryMax=4G`, `CPUQuota=200%`, `TasksMax=256`, `IOAccounting=yes`, `RuntimeMaxSec=8h`; subagent sessions: same with `RuntimeMaxSec=30min` |
@@ -460,9 +460,14 @@ Otherwise block (`03-api.md` §8.2), journal `session.state prompt_refused` and 
 - `Stop`: main session → state `idle`; subagent session → completion (§13). `StopFailure` → `session.status`
   with error.
 - `PermissionRequest`, `PermissionDenied`: journal only (mode `dontAsk` never asks).
-- Fail-open: if a hook request fails (500/timeout) Claude Code continues to its own permission check; layer 1
-  denies and layer 2 sandbox remain, so a hook failure never opens a forbidden capability (tested by ATK with
-  `FAULT_HOOKS`). Hook failures are counted (`agent_runner_session_hook_errors_total`).
+- Fail closed (ADR-064, KOR-40; replaces the former fail-open): Claude Code itself goes on when a hook request fails
+  (500/timeout), so the guest closes the path around it. The gateway forwards a `/v1/messages` request with tools
+  (or `tool_choice`, `mcp_servers`) only during a turn the `UserPromptSubmit` hook confirmed (session `working`),
+  else `403` and `guest.error turn_unconfirmed`. A failed decision hook (`UserPromptSubmit`, `PreToolUse`, `Stop`,
+  `StopFailure`: fault, failed control call, exception, answer later than the hook timeout) ends the session with
+  `failed hook_unavailable`. Layer 1 denies and the layer 2 sandbox remain; the attack suite proves layer 2 alone
+  with the switch `open` and the production reaction with `500` (ATK-38 `outage`). Hook failures are counted
+  (`agent_runner_session_hook_errors_total`).
 - Pings: see §9; the `additionalContext` text is exactly the one of `03-api.md` §8.2.
 
 ## 6. Session lifecycle

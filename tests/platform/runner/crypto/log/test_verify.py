@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/log/test_verify.py at 9d06f916bd4d.
+"""Copied from agent-core tests/platform/hub/log/test_verify.py at 3392035c31d1.
 
 U-HUB-log, U-HUB-rights: L1-L10, the transition of every entry type, derived rights, the Spike D malicious-hub
 cases and the property "incremental state = state rebuilt from the whole log"."""

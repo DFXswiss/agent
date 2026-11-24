@@ -8,6 +8,7 @@ for the budget hook and the `quota` handler (`agent_hub.usage.binding`).
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
@@ -17,6 +18,13 @@ from agent_hub.http.routing import HubRouter
 from agent_hub.usage import binding
 
 router = HubRouter()
+
+
+def my_quotas_state(context: HubContext, user_id: UUID) -> tuple[list[dict[str, Any]], datetime | None]:
+    """The quota windows of the user and since when its subscription refuses the read (KOR-40), None if it does not."""
+    with context.pool.connection() as connection:
+        found = connection.execute("SELECT since FROM hub.quota_unreadable WHERE owner_id = %s", (user_id,)).fetchone()
+    return my_quotas(context, user_id), None if found is None else found[0]
 
 
 def my_quotas(context: HubContext, user_id: UUID) -> list[dict[str, Any]]:
@@ -44,4 +52,5 @@ def my_quotas(context: HubContext, user_id: UUID) -> list[dict[str, Any]]:
 async def get_my_quotas(context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
     binding.bind(context.config)
     user = cast(UUID, principal.principal_id)
-    return {"quotas": await asyncio.to_thread(my_quotas, context, user)}
+    quotas, since = await asyncio.to_thread(my_quotas_state, context, user)
+    return {"quotas": quotas, "unreadable": None if since is None else {"since": format_time(since)}}

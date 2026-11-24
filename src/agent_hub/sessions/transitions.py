@@ -67,6 +67,7 @@ SESSION_FAILURE_REASONS = frozenset(
         "credit_exhausted",
         "oom",
         "unassigned",
+        "hook_unavailable",
     }
 )
 """A copy of `contracts/enums/session-failure-reasons.json` (a test compares them)."""

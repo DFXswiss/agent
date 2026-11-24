@@ -76,6 +76,10 @@ RUNTIME_MAX = {"main": "8h", "subagent": "30min"}
 
 LANDLOCK_SYSCALLS = "landlock_create_ruleset landlock_add_rule landlock_restrict_self"
 DENIED_SYSCALL_SETS = "@privileged @mount @debug @module @reboot @swap @obsolete @cpu-emulation"
+# ADR-064 section 4: no socket of a session can get a name another session could reach (abstract unix sockets share the
+# VM's network namespace); io_uring could bind and listen past this filter on newer kernels. EPERM, not a kill: a
+# program that probes for these calls goes on.
+REFUSED_SYSCALLS = "bind:EPERM listen:EPERM io_uring_setup:EPERM io_uring_enter:EPERM io_uring_register:EPERM"
 
 # Values end up in space-separated systemd lists or are parsed by systemd: plain absolute paths only.
 _PATH_RE = re.compile(r"/[A-Za-z0-9._+@/-]*")
@@ -221,6 +225,7 @@ def properties(spec: SessionSpec) -> list[str]:
         # System calls
         f"SystemCallFilter=@system-service {LANDLOCK_SYSCALLS}",
         f"SystemCallFilter=~{DENIED_SYSCALL_SETS}",
+        f"SystemCallFilter=~{REFUSED_SYSCALLS}",
         # Network
         "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
         "IPAddressDeny=any",

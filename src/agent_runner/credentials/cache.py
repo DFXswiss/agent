@@ -28,7 +28,10 @@ duration of one use (`opened`) and is never written, logged or put into an answe
 The cache never goes back to an older version (the upsert keeps a newer row).
 
 Purges call the listeners registered with `subscribe(context, listener)` (`listener(owner, kind)`), so the model
-gateways (RUN-12) can withdraw a deleted credential from running sessions (05 section 2.6).
+gateways (RUN-12) can withdraw a deleted credential from running sessions (05 section 2.6). Before the cached record
+is deleted, the listeners of `subscribe_before_purge(context, listener)` get its decrypted body for one use
+(`listener(owner, kind, body)`), so the GitHub area can revoke a token the platform minted (`github.revoke`, KOR-40);
+a record that does not open is skipped with a fact line, and a failing listener changes nothing.
 """
 
 from __future__ import annotations
@@ -82,9 +85,13 @@ class RecordRefused(Exception):
         self.code = code
 
 
+BeforePurge = Callable[[str, str, dict[str, Any]], Awaitable[None]]
+
+
 @dataclass
 class Listeners:
     items: list[Listener] = field(default_factory=list)
+    before: list[tuple[frozenset[str], BeforePurge]] = field(default_factory=list)
 
 
 def _listeners(context: Any) -> Listeners:
@@ -99,6 +106,11 @@ def _listeners(context: Any) -> Listeners:
 def subscribe(context: Any, listener: Listener) -> None:
     """Call `listener(owner, kind)` after every purge of a cached record."""
     _listeners(context).items.append(listener)
+
+
+def subscribe_before_purge(context: Any, kinds: frozenset[str], listener: BeforePurge) -> None:
+    """Call `listener(owner, kind, body)` with the decrypted body before a cached record of `kinds` is purged."""
+    _listeners(context).before.append((kinds, listener))
 
 
 def _line(context: Any, text: str) -> None:
@@ -135,8 +147,31 @@ async def _store(conn: AsyncConnection[Any], owner: str, kind: str, version: int
     )
 
 
+async def _before_purge(context: Any, owner: str, kind: str, listeners: list[BeforePurge]) -> None:
+    async with session(context.pool) as conn:
+        found = await cached(conn, owner, kind)
+    if found is None:
+        return
+    try:
+        body = await _open(context, owner, kind, found[1])
+    except CredentialUnavailable as error:
+        _line(context, f"before_purge_skipped owner={owner} kind={kind} reason={error.reason}")
+        return
+    try:
+        for listener in listeners:
+            try:
+                await listener(owner, kind, body)
+            except Exception as exc:
+                _line(context, f"before_purge_failed error={type(exc).__name__}")
+    finally:
+        body.clear()
+
+
 async def purge(context: Any, owner: str, kind: str) -> bool:
     """Delete a cached record; True when one was cached (the listeners are called then)."""
+    before = [listener for kinds, listener in _listeners(context).before if kind in kinds]
+    if before:
+        await _before_purge(context, owner, kind, before)
     async with session(context.pool) as conn:
         cur = await conn.execute("DELETE FROM runner.credential_cache WHERE owner_id = %s AND kind = %s", (owner, kind))
     if cur.rowcount == 0:
@@ -148,6 +183,14 @@ async def purge(context: Any, owner: str, kind: str) -> bool:
         except Exception as exc:
             _line(context, f"listener_failed error={type(exc).__name__}")
     return True
+
+
+def eligible(context: Any, owner: str) -> bool:
+    """This device is an eligible reader of the owner's `CK` in an acting org (the verified logs)."""
+    book = book_for(context)
+    states = [log.state for org in book.acting_orgs() if (log := book.log(org)) is not None]
+    excluded = {device for org in book.acting_orgs() for device in book.excluded(org)}
+    return context.identity.device.device_id in cred_readers(states, owner, excluded)
 
 
 def author_key(context: Any, book: OrgBook, owner: str, author: str) -> bytes:
@@ -246,21 +289,27 @@ async def opened(context: Any, owner: str, kind: str) -> AsyncIterator[dict[str,
         raise CredentialUnavailable("invalid") from None
     if record is None:
         raise CredentialUnavailable("missing")
+    body = await _open(context, owner, kind, record)
+    try:
+        yield body
+    finally:
+        body.clear()
+
+
+async def _open(context: Any, owner: str, kind: str, record: object) -> dict[str, Any]:
+    """The decrypted body of a record (verified first); `CredentialUnavailable("invalid")` when it does not open."""
     try:
         header, author = await verify_record(context, owner, kind, record)
     except RecordRefused:
         raise CredentialUnavailable("invalid") from None
     key = await _key(context, owner, cast(int, header["epoch"]))
     try:
-        body = parse_json(credential_format.open_credential(key, record, author))
+        body = parse_json(credential_format.open_credential(key, cast(dict[str, Any], record), author))
     except CryptoError:
         raise CredentialUnavailable("invalid") from None
     if not isinstance(body, dict):
         raise CredentialUnavailable("invalid")
-    try:
-        yield body
-    finally:
-        body.clear()
+    return body
 
 
 async def newest_epoch(context: Any, owner: str) -> int | None:

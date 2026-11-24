@@ -616,6 +616,46 @@
     {
       "action": "read.session.get_subagent_result",
       "group": "read_session"
+    },
+    {
+      "action": "request.refused",
+      "group": "request"
+    },
+    {
+      "action": "request.write",
+      "group": "request"
+    },
+    {
+      "action": "audit.repeat",
+      "group": "audit"
+    },
+    {
+      "action": "read.stream",
+      "group": "read"
+    },
+    {
+      "action": "read.stream.terminal",
+      "group": "read"
+    },
+    {
+      "action": "event.append_batch",
+      "group": "event"
+    },
+    {
+      "action": "settings.put",
+      "group": "settings"
+    },
+    {
+      "action": "auth.passkey_bundle",
+      "group": "auth"
+    },
+    {
+      "action": "wrap.put",
+      "group": "wrap"
+    },
+    {
+      "action": "agent.pairing",
+      "group": "agent"
     }
   ]
 }

@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/audit.repeat.json",
+  "title": "audit detail audit.repeat",
+  "description": "detail of audit rows with action audit.repeat: further reads, or further rows of the request pipeline (request.write, request.refused), with the same key (action, result, actor, agent, device, scope IDs, target, query) within one window of window_s seconds after the first, which is the row first_seq (ADR-063 section 3). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "pattern": "^(read\\.[a-z_]+(\\.[a-z_]+)*|request\\.write|request\\.refused)$"
+    },
+    "repeats": {
+      "$ref": "../common.json#/$defs/positive"
+    },
+    "first_seq": {
+      "$ref": "../common.json#/$defs/positive"
+    },
+    "window_s": {
+      "$ref": "../common.json#/$defs/positive"
+    }
+  },
+  "required": [
+    "action",
+    "repeats",
+    "first_seq",
+    "window_s"
+  ],
+  "additionalProperties": false
+}

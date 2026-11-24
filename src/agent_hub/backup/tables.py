@@ -95,6 +95,8 @@ RULES: tuple[TableRule, ...] = (
     TableRule("key_wrap", SCOPE_ROWS),
     TableRule("scope_head", "scope_id = %(org)s OR scope_id = ANY(%(wgs)s)"),
     TableRule("event", ORG_ROWS, append_only=True),
+    # how far the audit job summarised the session's own events of the org's scopes (ADR-063 section 4)
+    TableRule("event_audit_cover", "scope_id = %(org)s OR scope_id = ANY(%(wgs)s)"),
     TableRule("device_stream", DEVICE_ROWS),
     TableRule("outbox_receipt", DEVICE_ROWS),
     TableRule("task", ORG_ROWS),
@@ -118,6 +120,7 @@ RULES: tuple[TableRule, ...] = (
     TableRule("metric_rollup_cursor", ALL_ROWS, seeded=True),
     TableRule("usage_counter", "session_id = ANY(%(sessions)s)"),
     TableRule("quota_snapshot", "owner_id = ANY(%(users)s)"),
+    TableRule("quota_unreadable", "owner_id = ANY(%(users)s)"),
     TableRule("usage_daily", ORG_ROWS),
     TableRule("price_list", ALL_ROWS, append_only=True),
     TableRule("fx_rate", ALL_ROWS, append_only=True),

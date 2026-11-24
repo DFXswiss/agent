@@ -175,6 +175,10 @@ def start_units(tmp_path: Path, guest: Guest) -> Iterator[StartUnits]:
         }
         spec_file = tmp_path / "unit-spec.json"
         spec_file.write_text(json.dumps(spec))
+        # This rig installs no managed settings, so no hook ever confirms a turn: the units run with the test switch
+        # `open` of a TEST_MODE install record, which keeps the gateway's turn gate out of the way (ADR-064 section 3).
+        install = tmp_path / "golden-install.json"
+        install.write_text(json.dumps({"test_mode": True}))
         environment = {
             "AGENT_GUEST_CONTROL_SOCKET": str(tmp_path / "control.sock"),
             "AGENT_GUEST_API_SOCKET": str(tmp_path / "api.sock"),
@@ -185,6 +189,8 @@ def start_units(tmp_path: Path, guest: Guest) -> Iterator[StartUnits]:
             "AGENT_GUEST_BUILD_FILE": str(tmp_path / "missing-build.json"),
             "AGENT_GUEST_CLAUDE_INSTALL_FILE": str(tmp_path / "missing-install.json"),
             "AGENT_GUEST_CONTRACTS": str(REPO / "contracts"),
+            "AGENT_GUEST_FAULT_HOOKS": "open",
+            "AGENT_GUEST_GOLDEN_INSTALL_FILE": str(install),
         }
         # Units of an earlier run killed hard would still serve the shared test tmux socket or port 7700.
         subprocess.run(["systemctl", "stop", f"{UNIT_PREFIX}*", f"{API_PREFIX}*"], capture_output=True, check=False)
@@ -202,6 +208,8 @@ def start_units(tmp_path: Path, guest: Guest) -> Iterator[StartUnits]:
                 "AGENT_GUEST_BUILD_FILE": environment["AGENT_GUEST_BUILD_FILE"],
                 "AGENT_GUEST_CLAUDE_INSTALL_FILE": environment["AGENT_GUEST_CLAUDE_INSTALL_FILE"],
                 "AGENT_GUEST_PEER_TABLE": "/proc/net/tcp",
+                "AGENT_GUEST_FAULT_HOOKS": environment["AGENT_GUEST_FAULT_HOOKS"],
+                "AGENT_GUEST_GOLDEN_INSTALL_FILE": environment["AGENT_GUEST_GOLDEN_INSTALL_FILE"],
                 "PYTHONPATH": str(REPO / "src"),
             }
             run_unit(found.api_name, api_environment, [guest.python, "-s", "-m", "agent_guest.server"], API_PROPERTIES)

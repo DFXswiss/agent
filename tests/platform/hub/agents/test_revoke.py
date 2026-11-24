@@ -89,13 +89,15 @@ def test_the_session_revokes_one_agent_at_once(hub: HubHarness, published: Memor
     assert (refused.status_code, refused.json()) == (401, {"error": "key_revoked"})
     assert refused.extensions["hub_signature"] is True
     assert client.get("/v1/me").json() == {"error": "key_revoked"}
-    assert rows(hub, "SELECT action, actor_id, target_kind, target_id, agent_id FROM hub.audit") == [
-        ("agent.revoke", user, "agent", str(agent.agent_id), None)
-    ]
-    # a session's revocation notifies nobody; a repeat changes nothing
+    writes = "SELECT action, actor_id, target_kind, target_id, agent_id FROM hub.audit WHERE action NOT LIKE 'read.%%'"
+    assert rows(hub, writes) == [("agent.revoke", user, "agent", str(agent.agent_id), None)]
+    # a session's revocation notifies nobody; a repeat changes nothing (the pipeline's generic row records it)
     assert rows(hub, "SELECT count(*) FROM hub.notification") == [(0,)]
     assert session.delete(f"/v1/me/agents/{agent.agent_id}").json() == {}
-    assert rows(hub, "SELECT count(*) FROM hub.audit") == [(1,)]
+    assert rows(hub, writes) == [
+        ("agent.revoke", user, "agent", str(agent.agent_id), None),
+        ("request.write", user, "agent_id", str(agent.agent_id), None),
+    ]
     # the agent's open streams are ended in every hub process (no notification frame)
     assert [(item.audience.id, item.frame, item.data) for item in published.items()] == [
         (user, "close_keys", {"key_ids": [agent.key_id]})
@@ -145,8 +147,9 @@ def test_an_agent_disconnecting_itself_notifies_the_user(hub: HubHarness, publis
     assert (response.status_code, response.json()) == (200, {"revoked": 1})
     assert response.extensions["hub_signature"] is True
     assert client.get("/v1/agent/me").json() == {"error": "key_revoked"}
-    assert rows(hub, "SELECT action, target_id, agent_id FROM hub.audit") == [
-        ("agent.revoke", str(actor.agent_id), actor.agent_id)
+    assert rows(hub, "SELECT action, target_id, agent_id FROM hub.audit WHERE action NOT LIKE 'read.%%'") == [
+        ("request.write", str(earlier.agent_id), actor.agent_id),
+        ("agent.revoke", str(actor.agent_id), actor.agent_id),
     ]
     ref = f"agent_revoked:{actor.agent_id}:{actor.agent_id}"
     assert rows(hub, "SELECT recipient_id, kind, org_id, ref FROM hub.notification") == [

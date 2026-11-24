@@ -13,7 +13,7 @@ Two independent layers per session (`05-runner.md` §4):
 - The guest runs as **two processes**: an unprivileged API process (user `platform`; MCP, hooks, model gateway on 127.0.0.1:7700) and a root control process (session lifecycle, tmux, recorder, transcripts, file import/export, journal, control socket).
 
 ## Consequences
-- Residual risks: exec of the Claude binary itself is allowed (needed for ripgrep; a second instance gains nothing); HTTP hooks fail open (therefore never the only barrier); Landlock does not cover `mmap(PROT_EXEC)` (covered by noexec + ExecPaths); session token visible inside the sandbox (only its own events); dependency on Claude Code 2.1.x flags and keys.
+- Residual risks: exec of the Claude binary itself is allowed (needed for ripgrep; a second instance gains nothing); HTTP hooks fail open in Claude Code (therefore never the only barrier; since ADR-064 the guest closes that path: no agent-loop request without a confirmed turn, a failed decision hook ends the session); Landlock does not cover `mmap(PROT_EXEC)` (covered by noexec + ExecPaths); session token visible inside the sandbox (only its own events); dependency on Claude Code 2.1.x flags and keys.
 - Claude Code is pinned and auto-update disabled; every upgrade must pass the attack suite (ATK) as a gate.
 
 ## Alternatives considered

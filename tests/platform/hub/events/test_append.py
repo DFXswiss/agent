@@ -16,7 +16,7 @@ from agent_hub.crypto import signed
 from agent_hub.crypto.encoding import b64u_decode, b64u_encode, canonical, format_time
 from agent_hub.errors import HubError
 from agent_hub.events.notify import announce
-from agent_hub.events.store import append_events
+from agent_hub.events.store import SESSION_KINDS, append_events
 from agent_hub.stream.publish import Audience, MemoryPublisher
 from tests.platform.hub.events.support import Scene
 from tests.platform.hub.orgs.support import new_id
@@ -121,10 +121,10 @@ def test_device_events_with_origin_and_hints_skip_the_author(scene: Scene, publi
     assert stored.devices == frozenset({scene.other_device.id})
     row = scene.rows("SELECT author_kind, origin_device_id::text, origin_seq FROM hub.event WHERE id = %s", stored.id)
     assert row == [("device", scene.device.id, 7)]
-    audit = scene.rows(
-        "SELECT actor_kind, device_id::text, session_id::text FROM hub.audit WHERE event_id = %s", stored.id
-    )
-    assert audit == [("device", scene.device.id, session)]
+    audit = "SELECT actor_kind, device_id::text, action FROM hub.audit WHERE event_id = %s"
+    # the session's own output gets no row of its own: the audit job summarises it (ADR-063 section 4)
+    assert scene.rows(audit, stored.id) == []
+    assert scene.rows(audit, second.id) == [("device", scene.device.id, "event.append")]
     with pytest.raises(ValueError, match="one origin_seq"):
         scene.append(scene.device, event, origin_seqs=[9, 10])
 
@@ -298,6 +298,15 @@ def test_e7_session_runs_on_the_author_device(scene: Scene) -> None:
     assert mismatch.value.code == "author_not_writer"
     params = scene.wg_event(scene.device, "operation.params", ref=new_id())
     assert scene.append(scene.device, params)[0].scope_seq == 2  # no session kind: no E7
+
+
+@pytest.mark.parametrize("kind", ["session.error", "workvm.run", "workvm.state"])
+def test_e7_knows_every_session_kind_of_the_matrix(scene: Scene, kind: str) -> None:
+    """KOR-40: the store takes its session kinds from the matrix, so a kind added there (`session.error`, the work-VM
+    kinds) finds the session's device instead of failing E7."""
+    assert kind in SESSION_KINDS
+    _task, session = scene.start_session()
+    assert len(scene.append(scene.device, scene.session_event(scene.device, session, kind))) == 1
 
 
 def _oversized(event: Json, size: int, author: Any) -> Json:

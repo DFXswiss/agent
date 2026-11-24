@@ -1,0 +1,6 @@
+{
+  "method": "POST",
+  "route": "/v1/passkeys/login/begin",
+  "status": 200,
+  "code": "forbidden"
+}

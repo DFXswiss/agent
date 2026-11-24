@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/crypto/agent.py at 9d06f916bd4d.
+"""Copied from agent-core src/agent_hub/crypto/agent.py at 3392035c31d1.
 
 Delegated agent access (11-agent-access.md section 3, ADR-056).
 

@@ -149,6 +149,11 @@
     "body": "A request or record header is malformed.",
     "action": "Reload the page and try again."
   },
+  "hook_unavailable": {
+    "title": "Safety check unavailable",
+    "body": "The check that clears every step of the session before it runs could not be reached. The session was ended so that nothing runs unchecked.",
+    "action": "Start the task again."
+  },
   "hpke_short": {
     "title": "Damaged data",
     "body": "Protected data is damaged.",

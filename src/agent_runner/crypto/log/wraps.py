@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/wraps.py at 9d06f916bd4d.
+"""Copied from agent-core src/agent_hub/log/wraps.py at 3392035c31d1.
 
 Wrap rules W1-W3 (04-crypto.md sections 4.2 and 6.3).
 

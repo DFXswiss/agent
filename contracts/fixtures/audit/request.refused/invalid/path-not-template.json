@@ -1,0 +1,6 @@
+{
+  "method": "GET",
+  "route": "/v1/me",
+  "status": 404,
+  "code": "not_found"
+}

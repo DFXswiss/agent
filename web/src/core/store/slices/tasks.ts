@@ -37,6 +37,8 @@ export interface SessionRow {
   readonly estimate_ms: number | null;
   readonly created_at: string;
   readonly first_working_at: string | null;
+  /** When the session ended (absent from an older hub: the runtime of an ended session is then not shown). */
+  readonly ended_at?: string | null;
 }
 
 /** `session_transition`: `at` is the device clock, `received_at` the hub clock. */

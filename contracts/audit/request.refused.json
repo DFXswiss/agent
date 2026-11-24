@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/request.refused.json",
+  "title": "audit detail request.refused",
+  "description": "detail of audit rows with action request.refused: a write request was refused and its route left no refusal row of its own; written by the request pipeline in a transaction of its own after the route's transaction was rolled back (ADR-063 section 1): the method, the path template of the route (never the path), the answered status and error code; the target is the last path parameter. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "method": {
+      "type": "string",
+      "enum": [
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
+      ]
+    },
+    "route": {
+      "type": "string",
+      "pattern": "^/v1/[ -~]{0,250}$"
+    },
+    "status": {
+      "type": "integer",
+      "minimum": 400,
+      "maximum": 599
+    },
+    "code": {
+      "$ref": "../common.json#/$defs/error_code"
+    }
+  },
+  "required": [
+    "method",
+    "route",
+    "status",
+    "code"
+  ],
+  "additionalProperties": false
+}

@@ -99,15 +99,15 @@ def test_a_restored_hub_serves_the_same_heads_and_continues(
     estate: Estate, exported: list[bytes], target_hub: HubHarness
 ) -> None:
     scene = estate.scene
+    with target_hub.pool.connection() as connection:
+        restored_audit = connection.execute("SELECT max(seq) FROM hub.audit").fetchone()
+    assert restored_audit == (lines(exported[1])[0]["audit_head"]["seq"],)
     old_log = scene.writer.browser.get(f"/v1/orgs/{estate.org}/log").json()
     writer = target_hub.client(scene.writer.browser.key)
     assert writer.get(f"/v1/orgs/{estate.org}/log").json() == old_log
     old_events = scene.read(scene.writer).json()
     assert writer.get(f"/v1/scopes/{scene.wg}/events").json() == old_events
     head = estate.rows("SELECT seq FROM hub.scope_head WHERE scope_id = %s", scene.wg)[0][0]
-    with target_hub.pool.connection() as connection:
-        restored_audit = connection.execute("SELECT max(seq) FROM hub.audit").fetchone()
-    assert restored_audit == (lines(exported[1])[0]["audit_head"]["seq"],)
     response = writer.post("/v1/events", json={"events": [{"event": scene.wg_event(scene.writer, ref=new_id())}]})
     assert response.status_code == 200, response.text
     assert response.json()["results"][0]["scope_seq"] == head + 1

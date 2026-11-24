@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/platform.py at 9d06f916bd4d.
+"""Copied from agent-core src/agent_hub/log/platform.py at 3392035c31d1.
 
 Platform log verification P1-P4 and the certification state (04-crypto.md sections 4.8 and 6.2, ADR-023, ADR-026).
 

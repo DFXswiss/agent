@@ -2,8 +2,9 @@
 
 Every route is declared through `HubRouter` with its authentication class (`auth`, the `auth` column of
 `contracts/api/INDEX.json`), its right (`right`, 03-api.md section 3; the check of the right itself belongs to the
-area's handler), the read-log resource of an authenticated `GET` (`read_resource`, written as `read.<resource>`), the
-body limit and whether the response streams. The request pipeline (`agent_hub.http.pipeline`) reads the declaration
+area's handler), the read-log resource of an authenticated `GET` (`read_resource`, written as `read.<resource>`;
+required unless the response streams, allowed for a streaming one: ADR-063 section 3), the body limit and whether the
+response streams. The request pipeline (`agent_hub.http.pipeline`) reads the declaration
 before the route runs: it enforces the authentication class, the body limit, the rate limit and the read log, and it
 signs every non-streaming response to a signed request. A route without a declaration cannot be registered with the
 app (`agent_hub.app` refuses it).
@@ -98,12 +99,12 @@ def make_spec(
         raise ValueError(f"{method} {path}: right must name rights of 03-api.md section 3")
     if not 0 <= max_body <= EVENT_BATCH_BYTES:
         raise ValueError(f"{method} {path}: max_body must be between 0 and {EVENT_BATCH_BYTES}")
-    authenticated_read = method == "GET" and path.startswith(API_PREFIX) and auth != "anon" and not streaming
+    authenticated_get = method == "GET" and path.startswith(API_PREFIX) and auth != "anon"
     if read_resource is None:
-        if authenticated_read:
+        if authenticated_get and not streaming:
             raise ValueError(f"{method} {path}: an authenticated GET must declare read_resource")
-    elif not authenticated_read:
-        raise ValueError(f"{method} {path}: only an authenticated, non-streaming GET has a read_resource")
+    elif not authenticated_get:
+        raise ValueError(f"{method} {path}: only an authenticated GET has a read_resource")
     elif _RESOURCE_RE.fullmatch(read_resource) is None or f"read.{read_resource}" not in AUDIT_ACTIONS:
         raise ValueError(f"{method} {path}: read.{read_resource} is not an audit action")
     return RouteSpec(auth=auth, rights=rights, read_resource=read_resource, max_body=max_body, streaming=streaming)

@@ -15,6 +15,7 @@ import secrets
 import threading
 import uuid
 import warnings
+from collections import Counter
 from collections.abc import Callable, Generator, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -51,6 +52,7 @@ from agent_hub.config import HubConfig, load_config
 from agent_hub.db.migrate import OWNER_VARIABLE, WRITER_VARIABLE, run_migrate
 from agent_hub.db.pool import open_pool
 from agent_hub.errors import HubError
+from agent_hub.http.writelog import UNAUDITED
 from agent_hub.registry import KEY_RESOLVERS, merge_mappings
 from tests.platform.contracts.harness import CONTRACTS, Contracts
 
@@ -145,6 +147,24 @@ def drop_database(admin: psycopg.Connection[Any], name: str, roles: tuple[str, .
     admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
     for role in roles:
         admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role)))
+
+
+def unaudited_since(before: Counter[str]) -> dict[str, int]:
+    """The successful writes without an audit row of their own since `before` (a copy of `UNAUDITED`); the routes the
+    pipeline tests declare for themselves (`/v1/test/...`) are no product routes."""
+    return {key: count for key, count in (UNAUDITED - before).items() if " /v1/test/" not in key}
+
+
+@pytest.fixture(autouse=True)
+def every_write_audited() -> Iterator[None]:
+    """ADR-063 section 1: a successful write whose route left no audit row of its own (outside
+    `agent_hub.audit.generic_routes.GENERIC` and the handler's `unchanged()`) fails the test that made it - so a new
+    route without its own audit fails the suite the first time its success path is tested."""
+    before = Counter(UNAUDITED)
+    yield
+    added = unaudited_since(before)
+    if added:
+        pytest.fail(f"successful writes left no audit row of their own (ADR-063 section 1): {sorted(added)}")
 
 
 @pytest.fixture

@@ -47,6 +47,7 @@ from agent_hub.auth.ceremonies import (
     take_ceremony,
 )
 from agent_hub.auth.fields import CredentialId, Strict, Uuid7, b64u_text, decode
+from agent_hub.db.pool import transaction
 from agent_hub.errors import HubError
 from agent_hub.http.context import HubContext
 
@@ -66,7 +67,22 @@ class RecoveryAssertion(Strict):
 
 def begin(context: HubContext, user_id: uuid.UUID) -> dict[str, Any]:
     """`POST /v1/me/recovery/begin`: a `recovery_rotate` ceremony of the caller."""
-    ceremony = create_ceremony(context.pool, kind=ROTATE, now=context.clock(), user_id=user_id)
+    now = context.clock()
+    ceremony = create_ceremony(context.pool, kind=ROTATE, now=now, user_id=user_id)
+    with transaction(context.pool) as connection:
+        append_audit(
+            connection,
+            AuditRow(
+                at=now,
+                actor_kind="user",
+                actor_id=user_id,
+                action="auth.recovery",
+                result="ok",
+                target_kind="ceremony",
+                target_id=str(ceremony.id),
+                detail={"step": "rotate_begin"},
+            ),
+        )
     return {
         "ceremony_id": str(ceremony.id),
         "challenge": b64url_encode(ceremony.challenge),

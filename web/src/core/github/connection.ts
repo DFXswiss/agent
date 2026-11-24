@@ -4,10 +4,12 @@
 //   (`GET /v1/me/credentials/github`) is verified and opened in the browser: its owner is the user, its author the
 //   user or a device entitled to the user's `CK` by the verified logs (the device that ran the device flow,
 //   04-crypto.md section 4.4), its signature checks with that author's key, and it opens with the user's `CK` of the
-//   record's epoch (the user's own self-wrap). Only the GitHub login and the creation time leave this module – the
-//   token is never kept or shown. The result goes to the `github` slice (settings section, composer chip).
-// - `disconnectGithub`: `DELETE /v1/me/credentials/github` (a missing record, `404`, counts as done); the user then
-//   revokes the app authorization at GitHub (the UI links the settings page).
+//   record's epoch (the user's own self-wrap). Only the GitHub login, the creation time and whether the token is one
+//   the platform minted (`revocable`: a GitHub App user token, `ghu_`, which the devices revoke at GitHub on disconnect;
+//   KOR-40) leave this module – the token is never kept or shown. The result goes to the `github` slice (settings section, composer chip).
+// - `disconnectGithub`: `DELETE /v1/me/credentials/github` (a missing record, `404`, counts as done); a revocable token
+//   is revoked at GitHub by the devices; any other (the operator's account, a transferred token) stays valid there and
+//   the UI says so and links the settings page.
 // - `connectDevices`: the devices a `github.connect` request may go to. If `GET /v1/me/devices` is empty (a fresh
 //   private org), the device auto-assignment of the first task (`ensureDevice`, 03-api.md section 4.6.1 step 1) runs
 //   for the default workgroup of the active org first. Devices the verified logs do not confirm are left out; online
@@ -43,11 +45,19 @@ import {
 } from '../requests/client';
 
 export const KIND = 'github';
+/** Tokens the platform minted (GitHub App user tokens of the device flow): the devices revoke them on disconnect. */
+export const REVOCABLE_PREFIX = 'ghu_';
 /** Where the user revokes the app authorization (06-web.md section 8.1). */
 export const GITHUB_SETTINGS_URL = 'https://github.com/settings/applications';
 
 export type GithubConnection =
-  | { readonly status: 'connected'; readonly login: string; readonly createdAt: string; readonly version: number }
+  | {
+      readonly status: 'connected';
+      readonly login: string;
+      readonly createdAt: string;
+      readonly version: number;
+      readonly revocable: boolean;
+    }
   | { readonly status: 'disconnected' }
   | { readonly status: 'unverifiable'; readonly code: string };
 
@@ -96,7 +106,7 @@ const TOKEN_RE = /^[!-~]{1,4096}$/;
 const SCOPE_RE = /^[a-z0-9:_-]{1,64}$/;
 
 /** The body exactly as `contracts/credentials/github.json` allows it. */
-export const isGithubBody = (value: unknown): value is { login: string; created_at: string } =>
+export const isGithubBody = (value: unknown): value is { token: string; login: string; created_at: string } =>
   isRecord(value) &&
   Object.keys(value).sort().join(',') === 'created_at,login,scopes,token,user_id' &&
   typeof value.token === 'string' &&
@@ -122,7 +132,13 @@ export async function openGithubRecord(context: RequestsContext, record: unknown
   const body = parseJson(await openCredential(ck, record, key));
   if (!isGithubBody(body)) refuse('params_invalid');
   parseTime(body.created_at);
-  return { status: 'connected', login: body.login, createdAt: body.created_at, version: checked.version as number };
+  return {
+    status: 'connected',
+    login: body.login,
+    createdAt: body.created_at,
+    version: checked.version as number,
+    revocable: body.token.startsWith(REVOCABLE_PREFIX),
+  };
 }
 
 const listed = (body: unknown): boolean =>

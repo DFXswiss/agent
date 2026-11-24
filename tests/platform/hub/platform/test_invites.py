@@ -77,7 +77,9 @@ def test_an_inviter_creates_lists_and_revokes(plat: Platform, hub: HubHarness) -
         ("invite.revoke", user, first, {"invite_id": first, "kind": "user"}),
     ]
     hub.flush_read_log()
-    assert plat.query("SELECT count(*) FROM hub.audit WHERE action = 'read.platform.invites'") == [(2,)]
+    # the same read twice in one window: one row and its repeat (ADR-063 section 3)
+    assert plat.query("SELECT count(*) FROM hub.audit WHERE action = 'read.platform.invites'") == [(1,)]
+    assert plat.query("SELECT detail->>'repeats' FROM hub.audit WHERE action = 'audit.repeat'") == [("1",)]
 
 
 def test_operator_invitations_are_listed_and_used_ones_cannot_be_revoked(plat: Platform, hub: HubHarness) -> None:

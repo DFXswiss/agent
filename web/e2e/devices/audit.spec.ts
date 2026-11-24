@@ -11,13 +11,11 @@ test('the task tab shows the task rows and links the referenced events @R-7.6', 
   const task = await sendPrompt(page, 'Audit this task');
   const main = await mainSession(task);
   await walk(main.session_id, [...START_STEPS, 'working'], { intervalMs: 20 });
-  // more rows than one page (100): every stored event is audited
+  // more rows than one page (100): every stored event of a kind that is not batched has its own row (ADR-063;
+  // output, terminal, tool, hook and file records are summarised by the job `audit.event_batch` instead)
   await sessionEvents(
     main.session_id,
-    Array.from({ length: 110 }, (_, i) => ({
-      kind: 'session.output',
-      body: { message_id: `m${i}`, role: 'assistant', turn: 1, text: `Step ${i}` },
-    })),
+    Array.from({ length: 110 }, () => ({ kind: 'session.error', body: { code: 'gateway_route' } })),
   );
   await page.getByTestId('task.tabs.audit').click();
   await expect(page).toHaveURL(/\?tab=audit$/);

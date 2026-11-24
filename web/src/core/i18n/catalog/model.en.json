@@ -37,5 +37,6 @@
   "usage.basis.list_price": "list price",
   "usage.basis.subscription_equivalent": "subscription equivalent",
   "usage.context": "Context:",
-  "usage.context.unknown": "unknown"
+  "usage.context.unknown": "unknown",
+  "quotas.unreadable": "Quotas cannot be read: the connected access (for example a long-lived token from “claude setup-token”) does not allow reading them. Sessions still run."
 }

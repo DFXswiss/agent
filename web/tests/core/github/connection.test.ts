@@ -75,7 +75,13 @@ describe('loadGithub', () => {
     const t = await world();
     serve(t, await record(t, t.device));
     const connection = await loadGithub(t.context);
-    expect(connection).toEqual({ status: 'connected', login: 'octo-cat', createdAt: BODY.created_at, version: 2 });
+    expect(connection).toEqual({
+      status: 'connected',
+      login: 'octo-cat',
+      createdAt: BODY.created_at,
+      version: 2,
+      revocable: false,
+    });
     expect(t.store.getState().github).toEqual(connection);
     expect(JSON.stringify(t.store.getState().github)).not.toContain('gho_');
   });

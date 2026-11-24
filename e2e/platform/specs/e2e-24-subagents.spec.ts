@@ -142,7 +142,7 @@ test('@E2E-24 @R-10.6 @R-13.1 @R-13.2 @R-13.3 @R-13.4 @R-13.5 @R-13.6 @R-13.7 @R
   expect(tools.length).toBeGreaterThan(0);
   expect(tools.filter((tool) => tool.name === 'Agent' || tool.name === 'Task')).toEqual([]);
 
-  // The web: the session tree of the task, the child's terminal and its own child with the requested purpose.
+  // The web: the session tree of the task, the child's terminal and chat, and its own child with the requested purpose.
   await page.getByTestId('task.tabs.sessions').click();
   await expect(page.getByTestId('sessions.node')).toHaveCount(6, { timeout: 30_000 });
   await expect(page.locator(`[data-testid="sessions.node"][data-session="${grandchild!.id}"]`)).toHaveAttribute(
@@ -155,6 +155,12 @@ test('@E2E-24 @R-10.6 @R-13.1 @R-13.2 @R-13.3 @R-13.4 @R-13.5 @R-13.6 @R-13.7 @R
   await expect
     .poll(async () => Number(await page.getByTestId('terminal').getAttribute('data-chunks')), { timeout: 30_000 })
     .toBeGreaterThan(0);
+  // the child's own chat (KOR-40, AUD-03 L17): its answer with the final text, no row of the parent
+  await page.getByTestId('session.tabs.chat').click();
+  await expect(page.getByTestId('chat.output').filter({ hasText: 'kz24-child-t9y3u6' }).first()).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByTestId('chat.prompt')).toHaveCount(0);
   await page.getByTestId('session.tabs.children').click();
   const grand = page.locator(`[data-testid="session.child"][data-session="${grandchild!.id}"]`);
   await expect(grand).toBeVisible({ timeout: 30_000 });

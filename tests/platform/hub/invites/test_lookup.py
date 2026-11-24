@@ -141,7 +141,16 @@ def test_answered_lookups_are_audited_without_content(hub: HubHarness) -> None:
     hub.anon.post("/v1/invites/lookup", json={"invite_id": new_invite_id()})
     with hub.pool.connection() as connection:
         rows = connection.execute("SELECT action, actor_kind, target_id, detail FROM hub.audit").fetchall()
-    assert rows == [("invite.lookup", "anonymous", invite_id, {"invite_id": invite_id, "kind": "user"})]
+    assert rows == [
+        ("invite.lookup", "anonymous", invite_id, {"invite_id": invite_id, "kind": "user"}),
+        # the refused lookup leaves the pipeline's refusal, still without content (ADR-063 section 1)
+        (
+            "request.refused",
+            "anonymous",
+            None,
+            {"method": "POST", "route": "/v1/invites/lookup", "status": 404, "code": "invite_unknown"},
+        ),
+    ]
 
 
 @pytest.mark.parametrize(

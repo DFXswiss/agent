@@ -18,7 +18,7 @@ default silently.
 | ``AGENT_GUEST_BOOT_ID_FILE`` | ``/proc/sys/kernel/random/boot_id`` | absolute path |
 | ``AGENT_GUEST_CONTRACTS`` | ``contracts`` next to the package (``/opt/agent-guest/contracts``) | absolute path |
 | ``AGENT_GUEST_GOLDEN_INSTALL_FILE`` | ``/var/lib/agent-golden/install.json`` | absolute path (TEST_MODE marker) |
-| ``AGENT_GUEST_FAULT_HOOKS`` | empty | empty or ``500`` (hooks answer 500; only in a TEST_MODE golden) |
+| ``AGENT_GUEST_FAULT_HOOKS`` | empty | empty, ``500`` or ``open`` (TEST_MODE golden only, ``fault.py``) |
 | ``AGENT_GUEST_PEER_TABLE`` | empty | empty or absolute path of the TCP socket table (``peer.py``) |
 
 ``AGENT_GUEST_PEER_TABLE`` (``/proc/net/tcp`` in ``agent-guest-api.service``) binds every session token to the UID
@@ -55,7 +55,7 @@ DEFAULTS: dict[str, str] = {
     "PEER_TABLE": "",
 }
 PATHS = frozenset(DEFAULTS) - {"CONTROL_GROUP", "API_GROUP", "API_PORT", "FAULT_HOOKS", "PEER_TABLE"}
-FAULT_HOOKS_VALUES = frozenset({"", "500"})
+FAULT_HOOKS_VALUES = frozenset({"", "500", "open"})
 _GROUP_RE = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
 _PORT_RE = re.compile(r"0|[1-9][0-9]{0,4}")
 

@@ -149,6 +149,11 @@
     "body": "Ein Anfrage- oder Datensatz-Header ist fehlerhaft.",
     "action": "Lade die Seite neu und versuche es noch einmal."
   },
+  "hook_unavailable": {
+    "title": "Sicherheitsprüfung ausgefallen",
+    "body": "Die Prüfung, die jeden Schritt der Session vor der Ausführung freigibt, war nicht erreichbar. Die Session wurde deshalb beendet, damit nichts ungeprüft läuft.",
+    "action": "Starte den Task noch einmal."
+  },
   "hpke_short": {
     "title": "Beschädigte Daten",
     "body": "Geschützte Daten sind beschädigt.",

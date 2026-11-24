@@ -69,6 +69,7 @@ EXPECTED_PROPERTIES = [
     "SystemCallArchitectures=native",
     "SystemCallFilter=@system-service landlock_create_ruleset landlock_add_rule landlock_restrict_self",
     "SystemCallFilter=~@privileged @mount @debug @module @reboot @swap @obsolete @cpu-emulation",
+    "SystemCallFilter=~bind:EPERM listen:EPERM io_uring_setup:EPERM io_uring_enter:EPERM io_uring_register:EPERM",
     "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6",
     "IPAddressDeny=any",
     "IPAddressAllow=localhost",

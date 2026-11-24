@@ -30,6 +30,7 @@ import psycopg.errors
 
 from agent_core.signing import b64url_decode, b64url_encode
 from agent_hub.agents.notify import account_change
+from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.auth.ceremonies import credential_reference
 from agent_hub.auth.fields import B64u16Id, BundleCt, Empty, ModelId, Strict, decode
 from agent_hub.auth.keys import Principal
@@ -204,6 +205,19 @@ def put_bundle(
             " RETURNING xmax <> 0",
             (user_id, slot, ct, now),
         ).fetchone()
+        if credential_id is not None:
+            append_audit(
+                connection,
+                AuditRow(
+                    at=now,
+                    actor_kind="user",
+                    actor_id=user_id,
+                    action="auth.passkey_bundle",
+                    result="ok",
+                    target_kind="passkey",
+                    target_id=credential_reference(credential_id),
+                ),
+            )
         if credential_id is not None and replaced is not None and replaced[0]:
             # an agent overwrote the bundle slot of a passkey (KOR-24)
             target = credential_reference(credential_id)
@@ -224,15 +238,28 @@ def check_model(config: HubConfig, settings: Settings) -> None:
 
 def put_settings(context: HubContext, user_id: uuid.UUID, settings: Settings) -> dict[str, Any]:
     check_model(context.config, settings)
+    now = context.clock()
     with transaction(context.pool) as connection:
         row = connection.execute(
             "INSERT INTO hub.user_settings (user_id, model_access, model_id, locale, updated_at)"
             " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id) DO UPDATE SET model_access = EXCLUDED.model_access,"
             " model_id = EXCLUDED.model_id, locale = EXCLUDED.locale, updated_at = EXCLUDED.updated_at"
             " RETURNING model_access, model_id, locale",
-            (user_id, settings.model_access, settings.model_id, settings.locale, context.clock()),
+            (user_id, settings.model_access, settings.model_id, settings.locale, now),
         ).fetchone()
-    return settings_body(cast(tuple[Any, ...], row))
+        body = settings_body(cast(tuple[Any, ...], row))
+        append_audit(
+            connection,
+            AuditRow(
+                at=now,
+                actor_kind="user",
+                actor_id=user_id,
+                action="settings.put",
+                result="ok",
+                detail={"model_access": body["model_access"], "model_id": body["model_id"], "locale": body["locale"]},
+            ),
+        )
+    return body
 
 
 @router.get("/v1/me", auth="browser", right="user", read_resource="me")

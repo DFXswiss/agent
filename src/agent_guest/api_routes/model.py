@@ -16,7 +16,8 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from agent_guest.apisock import ApiSockError
-from agent_guest.gateway import anthropic_error, gateway_for
+from agent_guest.fault import guard_suppressed
+from agent_guest.gateway import Gateway, anthropic_error, gateway_for
 from agent_guest.routing import Request, Response, Route, json_response
 from agent_guest.server import ApiContext
 
@@ -34,13 +35,17 @@ def _guarded(work: Callable[[], Response]) -> Response:
         return anthropic_error(503, "api_error", "The gateway is not available right now.")
 
 
+def _gateway(context: ApiContext) -> Gateway:
+    return gateway_for(context.control, context.config.peer_table, fail_open=guard_suppressed(context.config))
+
+
 def messages(context: ApiContext, request: Request) -> Response:
-    gateway = gateway_for(context.control, context.config.peer_table)
+    gateway = _gateway(context)
     return _guarded(lambda: gateway.forward(request, "/v1/messages", record_usage=True))
 
 
 def count_tokens(context: ApiContext, request: Request) -> Response:
-    gateway = gateway_for(context.control, context.config.peer_table)
+    gateway = _gateway(context)
     return _guarded(lambda: gateway.forward(request, "/v1/messages/count_tokens", record_usage=False))
 
 
@@ -49,7 +54,7 @@ def hello(context: ApiContext, request: Request) -> Response:
 
 
 def unknown(context: ApiContext, request: Request) -> Response:
-    gateway = gateway_for(context.control, context.config.peer_table)
+    gateway = _gateway(context)
     return _guarded(lambda: gateway.unknown(request))
 
 

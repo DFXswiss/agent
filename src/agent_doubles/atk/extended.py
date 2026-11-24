@@ -535,6 +535,8 @@ async def after_38(ctx: RunContext) -> None:
 
 
 def check_38(ctx: RunContext, run: evidence.RunEvidence) -> list[str]:
+    if run.mode == evidence.OUTAGE:
+        return check_38_outage(run)
     details = failed_tools(
         [a for a in evidence.attempts(run.exchanges) if a.tool != "mcp__platform__request_operation"]
     )
@@ -548,6 +550,23 @@ def check_38(ctx: RunContext, run: evidence.RunEvidence) -> list[str]:
     texts = json.dumps([exchange.get("body") for exchange in run.exchanges])
     if "ATK-38-PASTED" not in texts:
         details.append("the pasted text never reached the model")
+    return details
+
+
+def check_38_outage(run: evidence.RunEvidence) -> list[str]:
+    """The run with failing hooks and the production reaction (ADR-064): the hook of the registered prompt failed, the
+    guest recorded the failure, the prompt was never accepted and no tool was attempted."""
+    details = []
+    prompts = [body for body in records(run.journal, "session.hook") if body.get("event") == "UserPromptSubmit"]
+    if not prompts or any(body.get("decision") != "none" for body in prompts):
+        details.append(f"UserPromptSubmit records {prompts}, expected the failed hook (decision none)")
+    if not any(body.get("code") == "hook_handler_failed" for body in records(run.journal, "guest.error")):
+        details.append("no guest.error hook_handler_failed journaled")
+    accepted = [body for body in records(run.journal, "session.state") if body.get("state") == "prompt_accepted"]
+    if accepted:
+        details.append("the prompt was accepted although its hook failed")
+    if evidence.attempts(run.exchanges):
+        details.append("tool calls were attempted although the hook failed")
     return details
 
 

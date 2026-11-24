@@ -1,0 +1,7 @@
+{
+  "method": "PUT",
+  "route": "/v1/me/settings",
+  "status": 400,
+  "code": "params_invalid",
+  "path": "/v1/me/settings"
+}

@@ -70,5 +70,9 @@
   "state.resuming": "Resuming",
   "state.stopping": "Stopping",
   "state.stopped": "Ended",
-  "state.failed": "Failed"
+  "state.failed": "Failed",
+  "sessions.device.reachable": "(reachable)",
+  "sessions.device.unreachable": "(not reachable)",
+  "sessions.runtime": "Runtime {duration}",
+  "runtime": "Runtime {duration}"
 }

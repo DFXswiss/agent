@@ -8,9 +8,7 @@
   "connect": "GitHub verbinden",
   "disconnect": "Trennen",
   "disconnect.title": "GitHub trennen?",
-  "disconnect.body": "Das gespeicherte Token wird sofort auf dem Hub und auf allen Ausführungsgeräten gelöscht. Widerrufe zusätzlich die Berechtigung der App bei GitHub.",
   "disconnect.failed": "Trennen fehlgeschlagen: {reason}",
-  "disconnected-note": "Getrennt. Widerrufe auch die Berechtigung der App bei GitHub.",
   "github-settings": "GitHub-Einstellungen öffnen",
   "cancel": "Abbrechen",
   "devices.loading": "Ausführungsgerät wird gesucht …",
@@ -35,5 +33,9 @@
   "close": "Schließen",
   "flow.title": "GitHub verbinden",
   "read-failed": "Der Stand konnte nicht gelesen werden ({reason}); neuer Versuch läuft.",
-  "code.expires.announce": "Der Code läuft in weniger als {minutes} Min. ab."
+  "code.expires.announce": "Der Code läuft in weniger als {minutes} Min. ab.",
+  "disconnect.body.revoked": "Das gespeicherte Token wird sofort auf dem Hub und auf allen Ausführungsgeräten gelöscht. Hat die Plattform den Zugang bei GitHub angemeldet, widerruft ihn das Gerät, das die Verbindung hergestellt hat, bei GitHub.",
+  "disconnect.body.kept": "Das gespeicherte Token wird sofort auf dem Hub und auf allen Ausführungsgeräten gelöscht. Es stammt nicht aus der Anmeldung über die Plattform (Konto des Betreibers oder übertragener Zugang) und bleibt deshalb bei GitHub gültig.",
+  "disconnected-note.revoked": "Getrennt. Ein über die Plattform angemeldeter Zugang wird vom verbindenden Gerät bei GitHub widerrufen.",
+  "disconnected-note.kept": "Getrennt. Bei GitHub bleibt dieser Zugang bestehen (Konto des Betreibers oder übertragener Zugang); widerrufe ihn dort, wenn er nicht mehr gebraucht wird."
 }

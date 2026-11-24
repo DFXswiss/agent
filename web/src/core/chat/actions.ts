@@ -24,6 +24,7 @@ export const CHAT_KINDS = [
   'session.file',
   'session.hook',
   'session.status',
+  'session.error',
   'operation.params',
   'operation.result',
   'workvm.run',

@@ -64,6 +64,15 @@ async def http_exception(request: Request) -> None:
     raise HTTPException(int((await request.body()) or b"400"))
 
 
+@router.get("/v1/test/late-crash", auth="anon", right="anon")
+async def late_crash_read() -> Any:
+    async def chunks() -> Any:
+        yield b"partial"
+        raise RuntimeError(SECRET_TEXT)
+
+    return StreamingResponse(chunks())
+
+
 @router.post("/v1/test/late-crash", auth="anon", right="anon")
 async def late_crash() -> Any:
     async def chunks() -> Any:
@@ -142,8 +151,19 @@ def test_a_crash_of_a_signed_request_is_signed(errors_hub: HubHarness) -> None:
 
 def test_a_crash_after_the_response_started(errors_hub: HubHarness, caplog: pytest.LogCaptureFixture) -> None:
     # Nothing can be answered any more: the response stays incomplete and the failure is logged.
-    response = errors_hub.anon.post("/v1/test/late-crash")
+    response = errors_hub.anon.get("/v1/test/late-crash")
     assert response.status_code == 200
+    assert_no_secret(response)
+    assert "the route failed" in caplog.text
+
+
+def test_a_write_that_crashes_after_its_first_chunk_is_refused(
+    errors_hub: HubHarness, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A write is held until it is settled (ADR-063): its first chunk never leaves, the client gets 503.
+    response = errors_hub.anon.post("/v1/test/late-crash")
+    assert response.status_code == 503
+    assert response.json() == {"error": "unavailable"}
     assert_no_secret(response)
     assert "the route failed" in caplog.text
 

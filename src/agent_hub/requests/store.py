@@ -39,6 +39,7 @@ import psycopg
 import psycopg.errors
 
 from agent_hub.audit.chain import AuditRow, append_audit
+from agent_hub.audit.recorder import unchanged
 from agent_hub.config import LIMITS
 from agent_hub.credentials.eligibility import eligible_device_ids, is_eligible
 from agent_hub.credentials.records import device_key, identity_key
@@ -256,6 +257,7 @@ def create_request(connection: Connection, user_id: UUID, envelope: dict[str, An
     existing = load(connection, request_id)
     if existing is not None:
         if existing.user_id == user_id and existing.envelope == text:
+            unchanged()
             return Created(row=existing, replayed=True)
         raise HubError("id_conflict")
     device_id = UUID(cast(str, header["device"]))

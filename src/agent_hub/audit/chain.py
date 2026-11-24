@@ -34,6 +34,7 @@ from psycopg.types.json import Jsonb
 from agent_core.signing import sha256_hex
 from agent_hub.audit.actions import AUDIT_ACTIONS
 from agent_hub.audit.details import detail_violation
+from agent_hub.audit.recorder import note
 from agent_hub.crypto.encoding import MAX_SAFE_INTEGER, canonical, format_time, is_printable_ascii
 from agent_hub.crypto.errors import CryptoError
 
@@ -258,6 +259,7 @@ def append_audit(connection: psycopg.Connection[Any], row: AuditRow) -> StoredAu
                 stored_row.agent_id,
             ),
         )
+    note(seq, digest, stored_row.result)
     return StoredAudit(seq=seq, row=stored_row, prev_hash=prev_hash, hash=digest)
 
 

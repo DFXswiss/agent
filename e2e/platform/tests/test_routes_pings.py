@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from orchestrator import guestvm
-from orchestrator.routes import guest_journal, pane_input
+from orchestrator.routes import guest_api, guest_journal, pane_input
 from test_routes_guest import SESSION, VM1, Result, call, failed, ok, scripted, session_handler
 
 UNIT = f"e2e-pane-input-{SESSION}"
@@ -214,3 +214,26 @@ def test_guest_journal_refusals(tmp_path: Path) -> None:
     status, answer = call(ctx, "POST", f"/sessions/{SESSION}/guest-journal", {"kinds": ["ping.delivered"]})
     assert status == 500
     assert answer["detail"].endswith("no such table")
+
+
+def test_guest_api_restart(tmp_path: Path) -> None:
+    """E2E-47 (KOR-40): the guest's API process of the session's VM is restarted."""
+    seen: list[list[str]] = []
+
+    def extra(_vm: str, argv: list[str]) -> Result | None:
+        if argv[:2] == ["systemctl", "restart"]:
+            seen.append(argv)
+            return ok()
+        return None
+
+    ctx, _ = scripted(tmp_path, session_handler(extra))
+    assert call(ctx, "POST", f"/sessions/{SESSION}/guest-api-restart", {}) == (200, {"vm": VM1})
+    assert seen == [["systemctl", "restart", guest_api.UNIT]]
+    assert call(ctx, "POST", "/sessions/nope/guest-api-restart", {})[0] == 404
+
+
+def test_guest_api_restart_failure(tmp_path: Path) -> None:
+    ctx, _ = scripted(tmp_path, session_handler(lambda vm, argv: failed(1, "unit unknown")))
+    status, answer = call(ctx, "POST", f"/sessions/{SESSION}/guest-api-restart", {})
+    assert status == 500
+    assert answer["detail"].endswith("unit unknown")

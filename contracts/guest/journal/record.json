@@ -968,7 +968,8 @@
             "session_unit_failed",
             "credential_missing",
             "auth_failed",
-            "auth_rate_limited"
+            "auth_rate_limited",
+            "turn_unconfirmed"
           ]
         }
       },

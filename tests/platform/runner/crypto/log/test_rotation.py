@@ -1,4 +1,4 @@
-"""Copied from agent-core tests/platform/hub/log/test_rotation.py at 9d06f916bd4d.
+"""Copied from agent-core tests/platform/hub/log/test_rotation.py at 3392035c31d1.
 
 U-HUB-log: the rotate set R and the atomic append batch (agent_hub.log.rotation, agent_hub.log.batch)."""
 

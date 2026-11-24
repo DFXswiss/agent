@@ -88,6 +88,7 @@ device_stream: events | device_id:uuid last_origin_seq:number
 event: events | scope_id:uuid scope_seq:number id:uuid scope:code org_id:uuid wg_id:uuid task_id:uuid
   session_id:uuid author_id:uuid author_kind:code kind:code ref:code epoch:number ts:time lh:number header_text:json
   ct:bytes@ciphertext sig:bytes size:number origin_device_id:uuid origin_seq:number received_at:time
+event_audit_cover: audit | scope_id:uuid covered_seq:number
 identity_bundle: ciphertext | user_id:uuid@ids slot:code@auth ct:bytes updated_at:time@auth
 invite: logs | id:code scope:code kind:code org_id:uuid log_seq:number created_by:uuid created_at:time
   expires_at:time registered_user:uuid registered_at:time used_at:time used_by:uuid revoked_at:time
@@ -126,6 +127,7 @@ platform_role: logs | user_id:uuid role:code granted_seq:number revoked_seq:numb
 principal: ids | id:uuid kind:code created_at:time disabled_at:time
 quota_snapshot: metrics | owner_id:uuid window:code used_percent:number resets_at:time severity:code
   fetched_at:time device_id:uuid
+quota_unreadable: metrics | owner_id:uuid since:time device_id:uuid
 request_nonce: auth | key_id:code nonce:code seen_at:time
 schema_version: internal | version:number name:code checksum:code applied_at:time
 scope_epoch: logs | scope:code scope_id:uuid epoch:number created_at:time created_seq:number

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/audit/notification.read.json",
   "title": "audit detail notification.read",
-  "description": "detail of audit rows with action notification.read: an agent marked notifications of its user read (11-agent-access.md section 7): the number marked and what was marked (ids: the listed ones; all: every org notification; all_account: also the account notifications). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "description": "detail of audit rows with action notification.read: a user (or the user's agent, 11-agent-access.md section 7) marked notifications read (ADR-063 section 2): the number marked and what was marked (ids: the listed ones; all: every org notification; all_account: also the account notifications). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
   "type": "object",
   "properties": {
     "marked": {

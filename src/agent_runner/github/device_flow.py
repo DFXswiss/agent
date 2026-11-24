@@ -34,7 +34,7 @@ import re
 from typing import Any
 
 from agent_runner.credentials.cache import CredentialUnavailable, put
-from agent_runner.github import operator, ops
+from agent_runner.github import operator, ops, revoke
 from agent_runner.github.client import GitHubClient, GitHubError, GitHubResponse, settings_for
 from agent_runner.requests.service import RESPOND_DELAYS, Flow
 from agent_runner.sessions.records import time_text
@@ -184,7 +184,7 @@ async def _user(client: GitHubClient) -> tuple[str, int, list[str]]:
         raise ConnectFailed("upstream_error") from None
 
 
-async def _store(flow: Flow, token: str, user: tuple[str, int, list[str]]) -> None:
+async def _store(flow: Flow, token: str, user: tuple[str, int, list[str]], *, minted: bool = False) -> None:
     """Credential `github {token, login, user_id, scopes, created_at}` under the owner's `CK` (step 5)."""
     login, user_id, granted = user
     body = {
@@ -207,6 +207,8 @@ async def _store(flow: Flow, token: str, user: tuple[str, int, list[str]]) -> No
         raise ConnectFailed("upstream_unreachable", f"step=store kind=hub {error.describe()}") from None
     finally:
         body.clear()
+    if minted:  # this device minted the token through the device flow: it revokes it on disconnect (KOR-40)
+        await revoke.remember(flow.context, flow.user, token)
 
 
 async def _connect_operator(flow: Flow) -> str:
@@ -248,7 +250,7 @@ async def _connect(flow: Flow) -> str:
             login, user_id, _named = await _user(api)
         except GitHubError as error:
             raise _failed("user", error) from None
-    await _store(flow, token, (login, user_id, scopes(issued.get("scope"))))
+    await _store(flow, token, (login, user_id, scopes(issued.get("scope"))), minted=True)
     return login
 
 

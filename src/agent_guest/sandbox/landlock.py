@@ -8,7 +8,10 @@ The session unit runs this file as a script, standard library only and without t
 
 It requires Landlock ABI >= 4, handles every filesystem access right of the running ABI plus
 ``NET_BIND_TCP | NET_CONNECT_TCP``, adds the rules of section 4.3, sets ``PR_SET_NO_NEW_PRIVS``, calls
-``landlock_restrict_self`` and ``execv``s the command. Every failure exits with status 126 (the session then fails
+``landlock_restrict_self``, installs the seccomp filter ``socket_filter`` (``setsockopt(SOL_SOCKET, SO_PASSCRED |
+SO_PASSPIDFD)`` fails with ``EPERM``: such a unix socket would be bound to an abstract name on ``connect``/``sendmsg``,
+reachable from another session of the VM; the unit refuses ``bind`` and ``listen``, ADR-064 section 4) and ``execv``s
+the command. Every failure exits with status 126 (the session then fails
 with reason ``sandbox_failed``). After ``execv`` the Python interpreter itself is no longer executable.
 
 Rules (fixed; the options only name the per-session paths):
@@ -36,8 +39,9 @@ Interface:
 * ``plan(options, abi, *, standard_ro=None, standard_rw=None, standard_dev=None, sessions_root=None) -> Plan``:
   the complete ruleset, deterministic (``None`` selects the module constants)
 * ``apply(plan: Plan, kernel: Kernel) -> None``: install one layer on the calling thread
+* ``socket_filter(machine: str) -> list[tuple[int, int, int, int]]``: the seccomp program of ADR-064 section 4
 * ``Kernel(libc=None)``: the system calls (``abi``, ``create_ruleset``, ``add_path_rule``, ``add_port_rule``,
-  ``no_new_privs``, ``restrict_self``, ``close``)
+  ``no_new_privs``, ``restrict_self``, ``seccomp``, ``close``)
 * ``main(argv=None, *, kernel=None, execv=os.execv, stderr=None) -> int``
 """
 
@@ -387,6 +391,13 @@ class Kernel:
         args = (_long(1), _long(0), _long(0), _long(0))
         self._check(self._libc.prctl(PR_SET_NO_NEW_PRIVS, *args), "prctl(PR_SET_NO_NEW_PRIVS)")
 
+    def seccomp(self, program: Sequence[tuple[int, int, int, int]]) -> None:
+        """Install a seccomp filter on the calling thread (``PR_SET_NO_NEW_PRIVS`` must be set)."""
+        filters = (_SockFilter * len(program))(*(_SockFilter(*instruction) for instruction in program))
+        fprog = _SockFprog(len(program), filters)
+        args = (_long(SECCOMP_MODE_FILTER), ctypes.byref(fprog), _long(0), _long(0))
+        self._check(self._libc.prctl(PR_SET_SECCOMP, *args), "prctl(PR_SET_SECCOMP)")
+
     def restrict_self(self, ruleset_fd: int) -> None:
         self._check(
             self._libc.syscall(SYS_LANDLOCK_RESTRICT_SELF, _long(ruleset_fd), _long(0)), "landlock_restrict_self"
@@ -401,6 +412,53 @@ class Kernel:
             errno = ctypes.get_errno()
             raise OSError(errno, f"{what}: {os.strerror(errno)}")
         return int(result)
+
+
+# seccomp (linux/seccomp.h, linux/filter.h, linux/audit.h): BPF over struct seccomp_data {int nr; u32 arch; u64 ip;
+# u64 args[6]}; the low 32 bits of args[i] are at 16 + 8 * i on the little-endian architectures the guest runs on.
+PR_SET_SECCOMP = 22
+SECCOMP_MODE_FILTER = 2
+SECCOMP_RET_ALLOW = 0x7FFF0000
+SECCOMP_RET_ERRNO = 0x00050000
+EPERM = 1
+BPF_LD_W_ABS = 0x20
+BPF_JEQ_K = 0x15
+BPF_RET_K = 0x06
+ARCHES = {"aarch64": (0xC00000B7, 208), "arm64": (0xC00000B7, 208), "x86_64": (0xC000003E, 54)}
+"""``uname -m`` -> (``AUDIT_ARCH_*``, ``__NR_setsockopt``); ``arm64`` is the same architecture under another name."""
+SOL_SOCKET = 1
+SO_PASSCRED = 16
+SO_PASSPIDFD = 76
+
+
+class _SockFilter(ctypes.Structure):
+    _fields_ = [("code", ctypes.c_uint16), ("jt", ctypes.c_uint8), ("jf", ctypes.c_uint8), ("k", ctypes.c_uint32)]
+
+
+class _SockFprog(ctypes.Structure):
+    _fields_ = [("len", ctypes.c_uint16), ("filter", ctypes.POINTER(_SockFilter))]
+
+
+def socket_filter(machine: str) -> list[tuple[int, int, int, int]]:
+    """The seccomp program ``(code, jt, jf, k)``: ``setsockopt`` with level ``SOL_SOCKET`` and option ``SO_PASSCRED``
+    or ``SO_PASSPIDFD`` fails with ``EPERM``; everything else passes (other architectures: the unit allows only the
+    native one, ``SystemCallArchitectures=native``)."""
+    if machine not in ARCHES:
+        raise LauncherError(f"no seccomp filter for the architecture {machine}")
+    arch, setsockopt = ARCHES[machine]
+    return [
+        (BPF_LD_W_ABS, 0, 0, 4),  # arch
+        (BPF_JEQ_K, 0, 7, arch),
+        (BPF_LD_W_ABS, 0, 0, 0),  # nr
+        (BPF_JEQ_K, 0, 5, setsockopt),
+        (BPF_LD_W_ABS, 0, 0, 24),  # args[1]: level
+        (BPF_JEQ_K, 0, 3, SOL_SOCKET),
+        (BPF_LD_W_ABS, 0, 0, 32),  # args[2]: option
+        (BPF_JEQ_K, 2, 0, SO_PASSCRED),
+        (BPF_JEQ_K, 1, 0, SO_PASSPIDFD),
+        (BPF_RET_K, 0, 0, SECCOMP_RET_ALLOW),
+        (BPF_RET_K, 0, 0, SECCOMP_RET_ERRNO | EPERM),
+    ]
 
 
 def apply(layer: Plan, kernel: Kernel) -> None:
@@ -433,6 +491,7 @@ def main(
         if abi < MIN_ABI:
             raise LauncherError(f"Landlock ABI {abi} < {MIN_ABI} (filesystem and network rules need ABI 4)")
         apply(plan(options, abi), kern)
+        kern.seccomp(socket_filter(os.uname().machine))
         execv(options.command[0], list(options.command))
     except (LauncherError, OSError, UnicodeDecodeError) as exc:
         err.write(f"landlock: {exc}\n{USAGE if isinstance(exc, LauncherError) else ''}\n")

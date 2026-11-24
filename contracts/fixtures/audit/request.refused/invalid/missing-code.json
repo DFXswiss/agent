@@ -1,0 +1,5 @@
+{
+  "method": "PUT",
+  "route": "/v1/me/settings",
+  "status": 403
+}

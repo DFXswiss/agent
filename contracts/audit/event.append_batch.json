@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/event.append_batch.json",
+  "title": "audit detail event.append_batch",
+  "description": "detail of audit rows with action event.append_batch: stored events of the session's own output kinds (session.output, session.terminal, session.tool, session.hook, session.file) of one session and scope, summarised by the hub's audit job instead of one event.append row each (ADR-063 section 4): their number, the scope sequence numbers of the first and the last of them and their ciphertext bytes. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "scope": {
+      "$ref": "../common.json#/$defs/scope"
+    },
+    "count": {
+      "$ref": "../common.json#/$defs/positive"
+    },
+    "first_scope_seq": {
+      "$ref": "../common.json#/$defs/positive"
+    },
+    "last_scope_seq": {
+      "$ref": "../common.json#/$defs/positive"
+    },
+    "ct_bytes": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "scope",
+    "count",
+    "first_scope_seq",
+    "last_scope_seq",
+    "ct_bytes"
+  ],
+  "additionalProperties": false
+}

@@ -18,9 +18,12 @@ the host, 00-overview.md section 3 B4: a guest never speaks for another VM's ses
 - `session.hook` with a PreToolUse `deny`: additionally the audit `hook.denied` with tool name and rule number only
   (never the path).
 - `usage`: handled by the model area (`model/journal.py`, RUN-12).
-- `guest.error`: a fact line `runner.journal guest_error` with the code; `credential_missing` of a session on this VM
-  (its gateway lost the credential with a restart of the guest's API process) also provisions the session's
-  credential again at once (`model.gateways.credential_missing`; KOR-02).
+- `guest.error`: a fact line `runner.journal guest_error` with the code; a record of a session on this VM with a code
+  of the closed list (`GUEST_ERROR_CODES`, `contracts/guest/journal/record.json`) also becomes the device event
+  `session.error {code}` (sealed and synchronised like the other session events, so the task history shows it;
+  ADR-064 section 5; records without a session stay in the log). `credential_missing` of a session on this VM (its
+  gateway lost the credential with a restart of the guest's API process) also provisions the session's credential
+  again at once (`model.gateways.credential_missing`; KOR-02).
 
 A record whose body cannot be turned into an item (`JournalRecordInvalid`, a draft refused by the seal checks) is
 skipped with a fact line; the cursor moves on, so one bad record never blocks the journal.
@@ -65,6 +68,25 @@ GUEST_FAILURES = frozenset(
         "budget_exceeded",
         "credit_exhausted",
         "oom",
+        "hook_unavailable",
+    }
+)
+# The codes of the guest journal's `guest.error` record (contracts/guest/journal/record.json, body_guest_error).
+GUEST_ERROR_CODES = frozenset(
+    {
+        "subagent_hook_seen",
+        "gateway_route",
+        "hook_handler_failed",
+        "transcript_unreadable",
+        "recorder_failed",
+        "scanner_failed",
+        "journal_write_failed",
+        "pending_expired",
+        "session_unit_failed",
+        "credential_missing",
+        "auth_failed",
+        "auth_rate_limited",
+        "turn_unconfirmed",
     }
 )
 DENY_RULES = range(2, 7)
@@ -195,10 +217,15 @@ async def guest_error(journal: Any, conn: AsyncConnection[Any], record: JournalR
     code = record.body.get("code")
     shown = code if isinstance(code, str) and _CODE_RE.fullmatch(code) else "unknown"
     journal.env.log(f"runner.journal guest_error vm_id={journal.vm.id} code={shown} seq={record.seq}")
+    if code not in GUEST_ERROR_CODES or record.session_id is None:
+        return
+    session = await journal.session(conn, record)
+    if session is None:
+        return
+    body = {"code": cast(str, code)}
+    await session_event(conn, journal.env.outbox, session, kind="session.error", body=body, ts=_ts(record, journal))
     if code == "credential_missing":
-        session = await journal.session(conn, record)
-        if session is not None:
-            gateways.credential_missing(journal.env, session)
+        gateways.credential_missing(journal.env, session)
 
 
 HANDLERS: dict[str, Callable[..., Any]] = {

@@ -198,6 +198,18 @@
       "device_pull": true
     },
     {
+      "kind": "session.error",
+      "body": "events/session.error.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
       "kind": "operation.params",
       "body": "events/operation.params.json",
       "scopes": [

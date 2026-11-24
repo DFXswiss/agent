@@ -34,6 +34,7 @@ import psycopg.errors
 
 from agent_hub.agents.notify import account_change
 from agent_hub.audit.chain import AuditRow, append_audit
+from agent_hub.audit.recorder import unchanged
 from agent_hub.config import LIMITS
 from agent_hub.crypto.encoding import format_time, parse_time
 from agent_hub.errors import HubError
@@ -146,6 +147,7 @@ def create(
         other_org, log_seq, package_ct = existing
         same_package = package_ct is None or bytes(package_ct) == package
         if other_org == org_id and same_package and stored_entry(connection, org_id, cast(int, log_seq)) == dict(entry):
+            unchanged()
             return Stored(invite_id, cast(int, log_seq), None)
         raise HubError("id_conflict")
 
@@ -202,6 +204,7 @@ def revoke(
             (org_id,),
         ).fetchall():
             if json.loads(text) == dict(entry):
+                unchanged()
                 return Stored(invite_id, seq, None)
 
     def store(connection: Connection, _result: AppendResult) -> None:

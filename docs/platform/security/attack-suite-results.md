@@ -154,10 +154,12 @@ key reached the guest gateway in memory only.
    interpreter that the launcher needs in `ExecPaths` (B-10); the probe shows that Python stays inside every
    restriction of the session, and the Claude binary is itself a JavaScript runtime with the same reach. A static
    launcher would remove nothing; accepted.
-2. **HTTP hooks fail open** (mode `fault`): every attack still passes on layer 1's managed settings and layer 2.
+2. **HTTP hooks fail open** (mode `fault`): every attack still passes on layer 1's managed settings and layer 2. Since KOR-40 (ADR-064) the guest reacts: the mode `fault` runs with the switch `open` (reaction off, layer 2 alone), the run `outage` of ATK-38 with `500` proves the reaction.
 3. **Session token visible inside the session**: bound to the session's UID and rate-limited (ADR-044).
 4. **Abstract unix sockets** are not hidden by a mount namespace and Landlock ABI 4 cannot scope them; today none
-   listens (self-test), a later package that opens one fails the golden build.
+   listens (self-test), a later package that opens one fails the golden build. Closed for sessions by KOR-40
+   (ADR-064 section 4): `bind`, `listen` and io_uring refused by the unit, `SO_PASSCRED`/`SO_PASSPIDFD` by the
+   launcher's seccomp filter (self-test checks `unix_bind_abstract`, `unix_listen`, `unix_passcred`, `io_uring`).
 5. **Version dependence**: flags, managed keys, hook types and the list of instruction files are those of 2.1.330;
    every upgrade repeats this gate (`scripts/run-atk.sh --golden <new cache> --redteam`, and once `--live`).
 6. **Evidence limits**: the process sampler runs every 100 ms (short-lived processes are backed by Landlock,
@@ -171,7 +173,8 @@ key reached the guest gateway in memory only.
 
 - New attack classes for 07 section 2.3: abstract-socket and varlink probing, fileless exec, instruction files of
   later Claude Code versions (the extended probe covers the first two at OS level already).
-- Landlock ABI 6 (kernel 6.10+) would scope abstract unix sockets and signals for sessions.
+- Landlock ABI 6 (kernel 6.12) would scope abstract unix sockets and signals for sessions (abstract sockets are closed
+  by system-call filters since KOR-40, ADR-064).
 - A guest journal record for MCP calls that never reach a handler (GST-07 decision 10).
 
 ## Reproduction (runner device)

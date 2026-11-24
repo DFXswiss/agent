@@ -3,7 +3,8 @@
 // as bars with the used share and the reset time. Several devices may have reported a window over time; the newest
 // `fetched_at` wins. Bars are ordered 5 h, week, then per model by name. Malformed rows are left out; an answer
 // without rows means the quota is "not available" (no subscription, or the usage endpoint did not answer: quota
-// polling is feature-detected).
+// polling is feature-detected). `unreadable` (KOR-40) says since when the subscription refuses the read (a
+// long-lived setup token of `claude setup-token` may not read quotas): the UI says so instead of "not available".
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
 import type { RequestsContext } from '../requests/client';
@@ -50,7 +51,8 @@ export async function loadQuotas(context: RequestsContext): Promise<readonly Quo
   const body = await context.client.request('GET', '/v1/me/quotas');
   if (!isRecord(body) || !Array.isArray(body.quotas)) throw new HubError('unavailable', 200);
   const bars = quotaBars(body.quotas);
-  if (context.store.generation === generation) setQuotas(context.store, bars);
+  const since = isRecord(body.unreadable) ? time(body.unreadable.since) : null;
+  if (context.store.generation === generation) setQuotas(context.store, bars, since);
   return bars;
 }
 

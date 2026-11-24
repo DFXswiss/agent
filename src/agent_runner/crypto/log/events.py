@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/events.py at 9d06f916bd4d.
+"""Copied from agent-core src/agent_hub/log/events.py at 3392035c31d1.
 
 Event rules E1-E9 (04-crypto.md sections 4.3, 5.12, 6.4) and the kind matrix (CON-03).
 
@@ -98,7 +98,7 @@ KIND_RULES: tuple[KindRule, ...] = (
     KindRule("prompt", "wg", (USER,), WG_WRITE, _WG_TASK),
     *(
         KindRule(f"session.{name}", "wg", (DEVICE,), DEVICE_ASSIGNED_WG_SESSION, _SESSION)
-        for name in ("output", "tool", "hook", "file", "terminal", "status")
+        for name in ("output", "tool", "hook", "file", "terminal", "status", "error")
     ),
     KindRule("operation.params", "wg", (DEVICE,), DEVICE_ASSIGNED_WG, {"wg": "scope_id", "ref": "operation"}),
     KindRule("operation.result", "wg", (DEVICE,), DEVICE_ASSIGNED_WG, {"wg": "scope_id", "ref": "operation"}),

@@ -67,6 +67,15 @@ def test_device_wraps_for_entitled_principals(world: World, fleet: Fleet, publis
     assert frames == sorted([(("device", scene.other_device.id), "wraps"), (("user", scene.writer.id), "wraps")])
     again = fleet.client(device).post("/v1/device/wraps", json={"wraps": wraps})
     assert again.json() == {"stored": 0, "ignored": 2}
+    audited = fleet.rows(
+        "SELECT actor_kind, device_id::text, detail FROM hub.audit WHERE action = 'wrap.put' AND actor_id = %s"
+        " ORDER BY seq",
+        device.id,
+    )
+    assert audited == [
+        ("device", device.id, {"stored": 2, "ignored": 0}),
+        ("device", device.id, {"stored": 0, "ignored": 2}),
+    ]
     assert Audience("device", UUID(scene.other_device.id)) in [item.audience for item in published.items()]
 
 

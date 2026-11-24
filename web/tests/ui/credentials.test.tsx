@@ -623,6 +623,10 @@ describe('quotas', () => {
     expect(await screen.findByTestId('quotas.unavailable')).toBeVisible();
     expect(screen.queryByTestId('quotas.load-failed')).toBeNull();
     act(() => setQuotas(t.store, []));
+    // KOR-40: a subscription that refuses the read is "not readable", not "not available"
+    act(() => setQuotas(t.store, [], Date.parse('2026-11-21T12:00:00.000Z')));
+    expect(screen.getByTestId('quotas.unreadable')).toHaveTextContent('Quotas cannot be read');
+    expect(screen.queryByTestId('quotas.unavailable')).toBeNull();
   });
 });
 

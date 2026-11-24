@@ -36,7 +36,7 @@ from agent_hub.http.context import HubContext
 from agent_hub.http.headers import SecurityHeaders
 from agent_hub.http.limits import RateLimiter
 from agent_hub.http.pipeline import HubPipeline
-from agent_hub.http.readlog import MAX_DELAY_SECONDS, ReadLog
+from agent_hub.http.readlog import READ_WINDOW_SECONDS, ReadLog
 from agent_hub.http.routing import HubRouter, route_spec
 from agent_hub.jobs import Job, JobRunner, check_jobs
 from agent_hub.registry import JOBS, KEY_RESOLVERS, ROUTERS, RegistryError, concat_sequences, discover, merge_mappings
@@ -80,7 +80,7 @@ def create_app(
     resolvers: Mapping[str, KeyResolver] | None = None,
     jobs: Iterable[Job] | None = None,
     run_jobs: bool = True,
-    read_log_delay: float = MAX_DELAY_SECONDS,
+    read_log_window: float = READ_WINDOW_SECONDS,
 ) -> FastAPI:
     """The hub app; the defaults discover every extension point (tests pass their own)."""
     key_resolvers = dict(merge_mappings(KEY_RESOLVERS) if resolvers is None else resolvers)
@@ -97,7 +97,7 @@ def create_app(
             active = await asyncio.to_thread(open_pool, config.database, timeout=POOL_OPEN_TIMEOUT_SECONDS)
         else:
             active = pool
-        read_log = ReadLog(active, max_delay=read_log_delay)
+        read_log = ReadLog(active, window=read_log_window, clock=clock)
         context = HubContext(
             config=config,
             pool=active,

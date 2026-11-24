@@ -23,6 +23,7 @@ Interface: ``CHECKS`` (name -> function of ``Context``), ``EXPECTED``, ``accepts
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import errno
 import functools
@@ -49,6 +50,8 @@ NONZERO_EXIT = "exit:nonzero"
 HIDDEN = ("mode:0", "errno:ENOENT")  # replaced by an inaccessible node, or absent
 SO_ACCEPTCON = 0x10000
 UNIX_UNCONNECTED = 7
+SO_PASSCRED = 16
+SYS_IO_URING_SETUP = 425  # generic system call table (aarch64 and x86_64)
 
 
 @dataclass(frozen=True)
@@ -100,6 +103,43 @@ def _connect(host: str, port: int) -> str:
 def _bind() -> str:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
+    return "ok"
+
+
+def _unix_bind_abstract() -> str:
+    """Bind an abstract unix name: another session of the VM could reach it (ADR-064 section 4)."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+        sock.bind(f"\0agent-selftest-{os.getpid()}")
+    return "ok"
+
+
+def _unix_listen() -> str:
+    """``listen`` on a socket with an automatic abstract name (Linux refuses ``listen`` on an unbound unix socket with
+    ``EINVAL``): the name comes from ``bind`` with an empty address, which the unit refuses as well - ``listen`` is
+    then still tried, so the outcome is the one of ``listen`` alone."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        with contextlib.suppress(OSError):
+            sock.bind("")
+        sock.listen(1)
+    return "ok"
+
+
+def _unix_passcred() -> str:
+    """``SO_PASSCRED`` makes ``connect``/``sendmsg`` bind the socket to an abstract name automatically."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, SO_PASSCRED, 1)
+    return "ok"
+
+
+def _io_uring() -> str:
+    """``io_uring_setup``: newer kernels bind and listen through io_uring."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    params = ctypes.create_string_buffer(120)  # struct io_uring_params
+    descriptor = libc.syscall(SYS_IO_URING_SETUP, 1, params)
+    if descriptor < 0:
+        code = ctypes.get_errno()
+        raise OSError(code, os.strerror(code))
+    os.close(descriptor)
     return "ok"
 
 
@@ -223,11 +263,16 @@ CHECKS: dict[str, Callable[[Context], str]] = {
     "unshare_user_namespace": lambda ctx: _unshare(),
     "memfd_exec": lambda ctx: _memfd_exec(),
     "unix_sockets": _unix_sockets,
+    "unix_bind_abstract": lambda ctx: _unix_bind_abstract(),
+    "unix_listen": lambda ctx: _unix_listen(),
+    "unix_passcred": lambda ctx: _unix_passcred(),
+    "io_uring": lambda ctx: _io_uring(),
 }
 
 # Accepted outcomes per check (05 section 4.5 plus positive controls and further checks, decisions SBX-02 15/16).
-# Where possible the outcome names the layer: EACCES on connect/bind/`/dev/shm` is Landlock, ENOENT for the other
-# session is the unit's mount namespace, mode 0 is InaccessiblePaths, EPERM for UDP is the egress filter.
+# Where possible the outcome names the layer: EACCES on connect/`/dev/shm` is Landlock, ENOENT for the other
+# session is the unit's mount namespace, mode 0 is InaccessiblePaths, EPERM for UDP is the egress filter, EPERM for
+# bind/listen/io_uring/SO_PASSCRED the system-call filters of unit and launcher (ADR-064).
 EXPECTED: dict[str, tuple[str, ...]] = {
     "layer2": ("ok",),
     "exec_sh": ("errno:EACCES",),
@@ -253,12 +298,17 @@ EXPECTED: dict[str, tuple[str, ...]] = {
     "tcp_external": ("errno:EACCES",),
     "udp_external": ("errno:EPERM",),
     "tcp_other_local_port": ("errno:EACCES",),
-    "tcp_bind": ("errno:EACCES",),
+    "tcp_bind": ("errno:EPERM",),
     "dns": ("gaierror",),
     "tcp_platform": ("ok",),
     "unshare_user_namespace": ("errno:EPERM",),
     "memfd_exec": ("errno:EACCES",),
     "unix_sockets": ("none",),
+    # ADR-064 section 4: the unit refuses bind, listen and io_uring, the launcher SO_PASSCRED (all EPERM)
+    "unix_bind_abstract": ("errno:EPERM",),
+    "unix_listen": ("errno:EPERM",),
+    "unix_passcred": ("errno:EPERM",),
+    "io_uring": ("errno:EPERM",),
 }
 
 

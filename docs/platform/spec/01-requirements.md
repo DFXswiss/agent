@@ -107,11 +107,11 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 |---|---|---|---|---|---|---|
 | R-6.1 | [§6 b1](../KONZEPT.md#k-6-b1) | All relevant events are stored immediately locally on the execution device in its database. | Guest journal (SQLite) and runner outbox (PostgreSQL) before any network send. | GST, RUN | 02 §4, §5 | E2E-14 |
 | R-6.2 | [§6 b1](../KONZEPT.md#k-6-b1) | … and synchronised encrypted to the hub with minimal delay. | Outbox push on every new item; hints over WebSocket. | RUN, HUB | 03 §6 | E2E-14, PERF-03 |
-| R-6.3 | [§6 b2](../KONZEPT.md#k-6-b2) | Covered: prompts, answers, tool events, results, status, errors, file changes. | Event kinds `prompt`, `session.output/tool/hook/file/status`, `operation.*`. | GST, RUN, HUB | 03 §7.2, §10 | E2E-13, E2E-21, E2E-40 |
+| R-6.3 | [§6 b2](../KONZEPT.md#k-6-b2) | Covered: prompts, answers, tool events, results, status, errors, file changes. | Event kinds `prompt`, `session.output/tool/hook/file/status`, `operation.*`. | GST, RUN, HUB | 03 §7.2, §10 | E2E-13, E2E-21, E2E-40, E2E-47 |
 | R-6.4 | [§6 b2](../KONZEPT.md#k-6-b2) | Covered: token usage, costs, context-window utilisation. | Gateway usage records; OpenRouter cost from the stream; context % from model catalog. ADR-025. | GST, RUN, HUB, WEB | 02 §2.8, 03 §6.1 | E2E-16 |
 | R-6.5 | [§6 b2](../KONZEPT.md#k-6-b2) | Covered: Claude subscriptions and available quotas, as far as technically readable. | Usage endpoint polled per subscription credential (≥ 900 s); `quota_snapshot`. | RUN, HUB, WEB | 02 §2.8 | E2E-16, LIVE-03 |
 | R-6.6 | [§6 b3](../KONZEPT.md#k-6-b3) | `agent.dfx.swiss` shows current state and time-precise events also on smartphones. | Responsive UI, mobile emulation tests; event times shown as absolute local `HH:MM:SS.mmm` (relative only as secondary label, 06 §12.4). | WEB | 06 | E2E-29 |
-| R-6.7 | [§6 b4](../KONZEPT.md#k-6-b4) | Every action, change and execution is logged with actor, time, task, session, workgroup, device, target, result and changes. | Hash-chained `audit` table (metadata) + reference to the encrypted event holding the change. | HUB, RUN | 02 §2.9 | E2E-15  (asserts `audit.event_id` links to the encrypted change event) |
+| R-6.7 | [§6 b4](../KONZEPT.md#k-6-b4) | Every action, change and execution is logged with actor, time, task, session, workgroup, device, target, result and changes. | Hash-chained `audit` table (metadata) + reference to the encrypted event holding the change. | HUB, RUN | 02 §2.9 | E2E-15  (asserts `audit.event_id` links to the encrypted change event), E2E-47 |
 | R-6.8 | [§6 b5](../KONZEPT.md#k-6-b5) (proposal) | Append-only event log with replay after connection interruptions. | **Adopted**: append-only events, gapless outbox `origin_seq`, per-scope cursors, resume. ADR-013. | HUB, RUN, WEB | 03 §5, §6, 02 §3 | E2E-14, E2E-33 |
 | R-6.9 | [§6 b5](../KONZEPT.md#k-6-b5) | Absolutely delay-free network synchronisation cannot be guaranteed. | Expressed as latency targets: SSE p95 < 300 ms on LAN, terminal live < 1 s. | HUB, WEB | 03 §5 | PERF-03, PERF-04, E2E-14 |
 | R-6.10 | [§6 b6](../KONZEPT.md#k-6-b6) | Default view: chat with prompts and results. | | WEB | 06 | E2E-13 |
@@ -123,7 +123,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 | ID | Ref | Requirement | Decision / interpretation | Comp | Spec | Tests |
 |---|---|---|---|---|---|---|
 | R-7.1 | [§7 b1](../KONZEPT.md#k-7-b1) | Full resource monitoring on the levels device → Lima VM → AI session. | | RUN, GST, HUB, MON | 08 | E2E-17 |
-| R-7.2 | [§7 b2](../KONZEPT.md#k-7-b2) | CPU, RAM, storage, network, runtime, reachability, state and free capacity are visible. | | RUN, HUB, WEB | 08, 02 §2.8 | E2E-17 |
+| R-7.2 | [§7 b2](../KONZEPT.md#k-7-b2) | CPU, RAM, storage, network, runtime, reachability, state and free capacity are visible. | | RUN, HUB, WEB | 08, 02 §2.8 | E2E-17, E2E-47 |
 | R-7.3 | [§7 b2](../KONZEPT.md#k-7-b2) | … and historised. | Raw 48 h, 5-min rollups 90 d at the hub; Prometheus retention as in the existing stack. | HUB, MON | 02 §2.8 | E2E-17 |
 | R-7.4 | [§7 b3](../KONZEPT.md#k-7-b3) | Reuse the monitoring stack of `DFXswiss/server`, in particular Grafana and proven components. | node_exporter textfile collector, Alloy push, Grafana provisioning files. ADR-018. | MON | 08 | E2E-17 |
 | R-7.5 | [§7 b4](../KONZEPT.md#k-7-b4) | Monitoring systems may run separately but must be technologically consistent. | Same exposition format, label and file conventions; patch for the infrastructure repo prepared, not pushed. | MON | 08 | E2E-17 |
@@ -164,7 +164,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 | R-10.1 | [§10 b1](../KONZEPT.md#k-10-b1) | Every session automatically gets a standardised harness with org, workgroup, task and session context and documented platform APIs. | Fixed rules text + generated context file per session. | GST, SBX | 05 | E2E-23 |
 | R-10.2 | [§10 b2](../KONZEPT.md#k-10-b2) | The harness states the prohibitions and the duty to request every action via `agent.dfx.swiss`. | | SBX | 05 | E2E-23 |
 | R-10.3 | [§10 b3](../KONZEPT.md#k-10-b3) | Claude Code must not run programs, scripts, shell commands, git commands, tests or builds. | | SBX, GST | 05 §4 | E2E-23, ATK-01..ATK-12 |
-| R-10.4 | [§10 b3](../KONZEPT.md#k-10-b3) | Claude Code must not start subagents. | Agent/Task tools denied. | SBX, GST | 05 §4 | E2E-23, ATK-05 |
+| R-10.4 | [§10 b3](../KONZEPT.md#k-10-b3) | Claude Code must not start subagents. | Agent/Task tools denied. | SBX, GST | 05 §4 | E2E-23, ATK-02, ATK-03 |
 | R-10.5 | [§10 b4](../KONZEPT.md#k-10-b4) | Manipulating or circumventing hooks and security rules is forbidden. | Managed settings only; settings/harness read-only; edits denied. | SBX, GST | 05 §4, §5 | E2E-34, ATK-13..ATK-20 |
 | R-10.6 | [§10 b3 s2](../KONZEPT.md#k-10-b3) | Subagents may be requested via a controlled platform operation and started by the platform. | `subagent.request`. | GST, RUN, HUB | 03 §9 | E2E-24 |
 | R-10.7 | [§10 b5](../KONZEPT.md#k-10-b5) | Hooks block forbidden actions before execution. | PreToolUse policy. | GST | 05 §5 | E2E-23, ATK-13 |
@@ -209,7 +209,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 |---|---|---|---|---|---|---|
 | R-13.1 | [Idee 26](../KONZEPT.md#k-idee-26) | A running session can request a subagent via the platform (e.g. PR review). | | GST | 03 §9 | E2E-24 |
 | R-13.2 | [Idee 26](../KONZEPT.md#k-idee-26) | The request is logged as its own uniquely identified operation and checked deterministically for rights and admissible parameters. | | RUN, HUB | 03 §8.3 | E2E-24 |
-| R-13.3 | [Idee 26](../KONZEPT.md#k-idee-26) | Only the platform may start the subagent; Claude Code never directly. | | SBX, RUN | 05 §4 | E2E-24, ATK-05 |
+| R-13.3 | [Idee 26](../KONZEPT.md#k-idee-26) | Only the platform may start the subagent; Claude Code never directly. | | SBX, RUN | 05 §4 | E2E-24, ATK-02, ATK-03 |
 | R-13.4 | [Idee 26](../KONZEPT.md#k-idee-26) | Every approved subagent is a full Claude Code session in its own sandbox with own harness, hooks, real-time sync, audit logging and resource monitoring. | | RUN, GST, SBX | 05 | E2E-24, E2E-17  (asserts the child session appears in the monitoring overview) |
 | R-13.5 | [Idee 26](../KONZEPT.md#k-idee-26) | The new session is linked to the parent task and the requesting session. | `parent_session_id`, same `task_id`. | HUB | 02 §2.4 | E2E-24 |
 | R-13.6 | [Idee 26](../KONZEPT.md#k-idee-26) | Users can view the complete subagent session at any time in the web UI incl. read-only terminal view and history. | | WEB | 06 | E2E-24 |

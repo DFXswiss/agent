@@ -23,6 +23,7 @@ import psycopg
 
 from agent_core.signing import ed25519_public_key_valid
 from agent_hub.audit.chain import AuditRow, append_audit
+from agent_hub.audit.recorder import unchanged
 from agent_hub.config import LIMITS
 from agent_hub.crypto.encoding import b64u_decode, format_time, parse_time
 from agent_hub.errors import HubError
@@ -84,6 +85,7 @@ def create(
             key,
         ):
             raise HubError("id_conflict")
+        unchanged()
         return False
     connection.execute(
         "INSERT INTO hub.invite (id, scope, kind, created_by, created_at, expires_at, pk_inv)"
@@ -146,6 +148,7 @@ def revoke(connection: psycopg.Connection[Any], user: UUID, invite_id: str, now:
     if used_at is not None:
         raise HubError("invite_consumed")
     if revoked_at is not None:
+        unchanged()
         return
     connection.execute("UPDATE hub.invite SET revoked_at = %s, package_ct = NULL WHERE id = %s", (now, invite_id))
     _audit(connection, "invite.revoke", user, invite_id, now)

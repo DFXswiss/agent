@@ -32,6 +32,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
 from agent_hub.audit.chain import AuditRow, append_audit
+from agent_hub.audit.recorder import unchanged
 from agent_hub.crypto import enroll as enroll_text
 from agent_hub.crypto.encoding import b64u_decode
 from agent_hub.crypto.errors import CryptoError
@@ -211,6 +212,7 @@ def _check_accept(body: EnrollRequest) -> dict[str, Any]:
 
 
 def _replayed_org(connection: Connection, body: EnrollRequest, entry: dict[str, Any]) -> Enrolled:
+    unchanged()  # a repeat answers the original enrollment (a refusal below is audited as such)
     known = _known_device(connection, body.device_id)
     org = None if known is None else known[1]
     stored = (
@@ -256,6 +258,7 @@ def enroll_org(connection: Connection, body: EnrollRequest, *, now: datetime, ro
 
 
 def _replayed_platform(connection: Connection, body: EnrollRequest, signed: dict[str, Any]) -> Enrolled:
+    unchanged()  # a repeat answers the original enrollment (a refusal below is audited as such)
     row = connection.execute(
         "SELECT request FROM hub.device_enrollment WHERE device_id = %s AND invite_id = %s",
         (body.device_id, body.invite_id),

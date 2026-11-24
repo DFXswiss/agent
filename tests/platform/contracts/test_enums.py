@@ -68,6 +68,8 @@ SPEC_SESSION_FAILURES = (
     " prompt_refused delivery_failed device_offline device_shutdown capacity_exhausted runtime_exceeded budget_exceeded"
     " credit_exhausted"  # 12-billing.md section 7 (contracts/changes/KOR-31.md)
     " oom unassigned"
+    # KOR-40, ADR-064 section 2: the guest ended the session because a decision hook failed
+    " hook_unavailable"
 )
 # 03-api.md section 6.1 / 02-data-model.md section 4.
 SPEC_OUTBOX_KINDS = (
@@ -111,6 +113,10 @@ SPEC_AUDIT_PATTERNS = {
 DECIDED_AUDIT = (
     "invite.lookup invite.create invite.revoke invite.register invite.release invite.use invite.expire"
     " credential.rotate outbox.rejected agent.confirm agent.claim agent.revoke notification.read"
+    # KOR-40, ADR-063: the request pipeline's rows, read repeats, terminal watching, batched session events and the
+    # rows of the formerly unaudited writes.
+    " request.refused request.write audit.repeat read.stream.terminal event.append_batch settings.put"
+    " auth.passkey_bundle wrap.put agent.pairing"
 )
 # 12-billing.md sections 8 and 10 (contracts/changes/KOR-31.md): credit changes, USD/CHF rates and the export.
 KOR31_AUDIT = "credit.changed billing.fx_set billing.export"
@@ -137,6 +143,7 @@ SPEC_EVENT_MATRIX = [
     ("session.file", "wg", "device", "device_assigned_wg_session"),
     ("session.terminal", "wg", "device", "device_assigned_wg_session"),
     ("session.status", "wg", "device", "device_assigned_wg_session"),
+    ("session.error", "wg", "device", "device_assigned_wg_session"),  # KOR-40, ADR-064 section 5
     ("operation.params", "wg", "device", "device_assigned_wg"),
     ("operation.result", "wg", "device", "device_assigned_wg"),
     ("platform.read", "wg", "device", "device_assigned_wg"),
@@ -148,7 +155,7 @@ SPEC_EVENT_MATRIX = [
 SPEC_EVENT_KINDS = (
     "org.profile wg.profile member.profile device.profile task.meta prompt whiteboard.entry whiteboard.edit"
     " whiteboard.delete settings.workgroup session.output session.tool session.hook session.file session.terminal"
-    " session.status operation.params operation.result platform.read workvm.run workvm.state"
+    " session.status session.error operation.params operation.result platform.read workvm.run workvm.state"
 )
 
 

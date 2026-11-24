@@ -95,7 +95,9 @@ def test_a_member_sees_readable_workgroups_and_own_actions(watch: Watch) -> None
     assert {readable, own_hidden, own_org} <= set(found)
     assert foreign_hidden not in found
     assert foreign_org not in found
-    assert seqs(rows(watch, watch.admin))[:5] == [foreign_org, foreign_hidden, own_org, own_hidden, readable]
+    # the member's read itself is recorded before its answer (ADR-063 section 3): actions only here
+    actions = [row for row in rows(watch, watch.admin) if not row["action"].startswith("read.")]
+    assert seqs(actions)[:5] == [foreign_org, foreign_hidden, own_org, own_hidden, readable]
 
 
 def test_a_revoked_grant_hides_the_workgroup_rows(watch: Watch) -> None:

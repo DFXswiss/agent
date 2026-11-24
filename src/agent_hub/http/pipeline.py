@@ -15,7 +15,14 @@ For an HTTP request it
    wrong kind of key),
 6. calls the route with the body replayed, signs every non-streaming response to a signed request with
    `agent-response-v1`, answers an exception of the route with `503 unavailable` (never its text),
-7. records the read log row of an authenticated `GET` with a `read_resource`.
+7. records the read of an authenticated `GET` with a `read_resource` before its answer leaves the hub (the first read
+   of a key in its window is written, repeats are counted: `agent_hub.http.readlog`; a read that cannot be recorded
+   is answered `503 unavailable` instead),
+8. settles the audit of a write (`POST`, `PUT`, `PATCH`, `DELETE`) before its answer leaves the hub: the route ran
+   under `agent_hub.audit.recorder.recording()`, and `agent_hub.http.writelog.settle` adds `request.write` or
+   `request.refused` when the route's committed rows do not record the outcome. A write refused after its principal
+   was known (wrong key kind, an undeclared query parameter) is settled the same way; one refused before (signature,
+   limits, body) or answered `429` is not (ADR-063 section 1).
 
 A WebSocket upgrade passes steps 1, 2, 4 and 5 and is closed with code 1008 when it fails; streams are never
 response-signed.
@@ -37,6 +44,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from agent_hub.agents.keys import touch
 from agent_hub.agents.scope import agent_allowed
 from agent_hub.audit.chain import ACTING_AGENT
+from agent_hub.audit.recorder import Recording, recording
 from agent_hub.auth.gate import PendingSignature, SignedHeaders, response_headers, signed_headers, verify_request
 from agent_hub.auth.keys import AGENT_PREFIX, ANONYMOUS, DEVICE_PREFIX, SESSION_PREFIX, Principal
 from agent_hub.clock import epoch_seconds
@@ -44,8 +52,9 @@ from agent_hub.errors import INTERNAL_ERROR, HubError, error_bytes
 from agent_hub.http.context import PENDING_KEY, PRINCIPAL_KEY, SIGNED_KEY, HubContext
 from agent_hub.http.forwarded import client_address
 from agent_hub.http.headers import json_response_messages
-from agent_hub.http.readlog import read_row
-from agent_hub.http.routing import API_PREFIX, REQUEST_BODY_BYTES, RouteSpec, match_route
+from agent_hub.http.readlog import query_key, read_row
+from agent_hub.http.routing import API_PREFIX, REQUEST_BODY_BYTES, RouteMatch, RouteSpec, match_route
+from agent_hub.http.writelog import WRITE_METHODS, error_code, guard_row, settle
 
 LOG = logging.getLogger("agent_hub.http")
 UNROUTED = RouteSpec(auth="anon", rights=("anon",), read_resource=None, max_body=REQUEST_BODY_BYTES, streaming=False)
@@ -68,6 +77,10 @@ def acting_agent(principal: Principal) -> UUID | None:
 
 class ClientGone(Exception):
     """The client disconnected while the body was read."""
+
+
+class ReadNotRecorded(Exception):
+    """The read log could not record a read: the answer must not leave the hub."""
 
 
 def key_kind(key_id: str) -> str:
@@ -166,6 +179,13 @@ def prepend(first: Message, receive: Receive) -> Receive:
     return receive_again
 
 
+def single_query(scope: Scope) -> dict[str, str]:
+    """The query parameters that occur exactly once (a repeated one names nothing for the audit)."""
+    pairs = parse_qsl(scope.get("query_string", b"").decode("latin-1"))
+    names = [name for name, _ in pairs]
+    return {name: value for name, value in pairs if names.count(name) == 1}
+
+
 def peer_address(scope: Scope) -> str:
     """The peer address of the connection."""
     client = scope.get("client")
@@ -250,6 +270,7 @@ class HubPipeline:
             raise
         scope[SIGNED_KEY] = signed
         self._limit(context, principal.kind, str(principal.key_id))
+        scope[PRINCIPAL_KEY] = principal  # known from here on: a refusal of a write is audited (ADR-063)
         check_auth(spec, principal, signed=True, method=scope.get("method", "GET"), path=path)
         agent = acting_agent(principal)
         if agent is not None and principal.attributes.get("state") == "active":
@@ -262,27 +283,52 @@ class HubPipeline:
         resolve_source(context, scope)
         match = match_route(self.hub.router.routes, scope)
         spec = match.spec or UNROUTED
+        write = match.route is not None and scope.get("method") in WRITE_METHODS
         try:
             signed = signed_headers(scope)
             self._precheck(context, scope, spec, signed)
             body = await read_body(scope, receive, spec.max_body)
             principal = await self._authenticate(context, scope, spec, signed, body, path=route_path(match.route))
+            scope[PRINCIPAL_KEY] = principal
             check_query(match.route, scope)
         except ClientGone:
             return
         except HubError as error:
+            if write and error.code != "rate_limited" and isinstance(scope.get(PRINCIPAL_KEY), Principal):
+                await self._settle(context, scope, match, Recording(), status=error.status, code=error.code)
             await self._send_error(context, scope, send, error)
             return
-        scope[PRINCIPAL_KEY] = principal
         request: Message = {"type": "http.request", "body": body, "more_body": False}
         acting = ACTING_AGENT.set(acting_agent(principal))
         try:
-            status = await self._run(context, scope, spec, prepend(request, receive), send)
+            if write:
+                with recording() as recorded:
+                    await self._run(context, scope, spec, prepend(request, receive), send, match=match, noted=recorded)
+            else:
+                await self._run(context, scope, spec, prepend(request, receive), send, match=match)
         finally:
             ACTING_AGENT.reset(acting)
-        principal = scope[PRINCIPAL_KEY]
-        if spec.read_resource is not None and principal.kind != "anonymous":
-            self._read_log(context, scope, spec.read_resource, principal, status)
+
+    async def _settle(
+        self, context: HubContext, scope: Scope, match: RouteMatch, noted: Recording, *, status: int, code: str
+    ) -> None:
+        """Settle the audit of a write (module docstring step 8); a failure is logged, the answer still goes out."""
+        principal: Principal = scope[PRINCIPAL_KEY]
+        row = guard_row(
+            principal,
+            method=str(scope.get("method")),
+            route=str(route_path(match.route)),
+            status=status,
+            code=code,
+            path_params=match.path_params,
+            query=single_query(scope),
+            at=context.clock(),
+        )
+        try:
+            query = query_key(scope.get("query_string", b""))
+            await asyncio.to_thread(settle, context.pool, context.read_log, noted, row, status=status, query=query)
+        except Exception:
+            LOG.error("audit: the write %s %s could not be settled", row.detail["method"], row.detail["route"])
 
     async def _send_error(self, context: HubContext, scope: Scope, send: Send, error: HubError) -> None:
         status = error.status
@@ -294,60 +340,92 @@ class HubPipeline:
         for message in json_response_messages(status, body, extra):
             await send(message)
 
-    async def _run(self, context: HubContext, scope: Scope, spec: RouteSpec, receive: Receive, send: Send) -> int:
+    async def _run(
+        self,
+        context: HubContext,
+        scope: Scope,
+        spec: RouteSpec,
+        receive: Receive,
+        send: Send,
+        *,
+        match: RouteMatch,
+        noted: Recording | None = None,
+    ) -> int:
+        """Run the route. A response is held until its last chunk when it must be signed or, for a write (`noted` is
+        its recorder), settled; a read with a `read_resource` is recorded before its first byte leaves."""
         status = 500
         started = False
-        held: tuple[Message, SignedHeaders] | None = None
+        held: Message | None = None
         chunks: list[bytes] = []
+        write = noted is not None
 
-        async def send_signed(message: Message) -> None:
+        async def release(start: Message) -> None:
+            nonlocal started
+            body = b"" if scope.get("method") == "HEAD" else b"".join(chunks)
+            headers = list(start.get("headers", []))
+            signed = scope.get(SIGNED_KEY)
+            if isinstance(signed, SignedHeaders):
+                headers += response_headers(context.signer, signed, status, body, epoch_seconds(context.clock))
+            if noted is not None:
+                await self._settle(context, scope, match, noted, status=status, code=error_code(status, body))
+            else:
+                await self._admit_read(context, scope, spec, status)
+            started = True
+            await send({**start, "headers": headers})
+            await send({"type": "http.response.body", "body": body})
+
+        async def send_held(message: Message) -> None:
             nonlocal status, started, held
             if message["type"] == "http.response.start":
                 status = int(message["status"])
-                signed = scope.get(SIGNED_KEY)
-                if isinstance(signed, SignedHeaders) and not spec.streaming:
-                    held = (message, signed)
+                if write or (isinstance(scope.get(SIGNED_KEY), SignedHeaders) and not spec.streaming):
+                    held = message
                     return
+                if status >= 300 or not spec.streaming:
+                    # an accepted stream records its own reads, so it can drop the stream when that fails (review M3)
+                    await self._admit_read(context, scope, spec, status)
                 started = True
             elif message["type"] == "http.response.body" and held is not None:
                 chunks.append(message.get("body", b""))
                 if message.get("more_body", False):
                     return
-                body = b"" if scope.get("method") == "HEAD" else b"".join(chunks)
-                start, signed = held
-                signature = response_headers(context.signer, signed, status, body, epoch_seconds(context.clock))
-                held = None
-                started = True
-                await send({**start, "headers": [*start.get("headers", []), *signature]})
-                message = {"type": "http.response.body", "body": body}
+                start, held = held, None
+                await release(start)
+                return
             await send(message)
 
         try:
-            await self.app(scope, receive, send_signed)
-        except Exception:
-            LOG.error("request %s %s: the route failed", scope.get("method"), scope["path"], exc_info=True)
+            await self.app(scope, receive, send_held)
+        except Exception as exc:
+            if isinstance(exc, ReadNotRecorded):
+                LOG.error("request %s %s: the read could not be recorded", scope.get("method"), scope["path"])
+            else:
+                LOG.error("request %s %s: the route failed", scope.get("method"), scope["path"], exc_info=True)
             if not started:
                 error = HubError(INTERNAL_ERROR)
                 status = error.status
+                if noted is not None:
+                    await self._settle(context, scope, match, noted, status=status, code=error.code)
                 await self._send_error(context, scope, send, error)
         return status
 
-    def _read_log(self, context: HubContext, scope: Scope, resource: str, principal: Principal, status: int) -> None:
-        pairs = parse_qsl(scope.get("query_string", b"").decode("latin-1"))
-        names = [name for name, _ in pairs]
-        query = {name: value for name, value in pairs if names.count(name) == 1}
+    async def _admit_read(self, context: HubContext, scope: Scope, spec: RouteSpec, status: int) -> None:
+        """Record the read before its answer leaves the hub (`ReadNotRecorded` when that fails)."""
+        principal = scope.get(PRINCIPAL_KEY)
+        if spec.read_resource is None or not isinstance(principal, Principal) or principal.kind == "anonymous":
+            return
         try:
             row = read_row(
                 principal,
-                resource=resource,
+                resource=spec.read_resource,
                 status=status,
                 path_params=scope.get("path_params", {}),
-                query=query,
+                query=single_query(scope),
                 at=context.clock(),
             )
-            context.read_log.record(row)
-        except Exception:
-            LOG.error("read log: the row of %s could not be recorded", resource, exc_info=True)
+            await asyncio.to_thread(context.read_log.admit, row, query_key(scope.get("query_string", b"")))
+        except Exception as exc:
+            raise ReadNotRecorded from exc
 
     async def _websocket(self, scope: Scope, receive: Receive, send: Send) -> None:
         context: HubContext = self.hub.state.hub

@@ -52,6 +52,13 @@ def test_member_wraps_for_a_new_member_and_lists_them(world: World, published: M
     ]
     again = admin.browser.post("/v1/wraps", json={"wraps": wraps[:1]})
     assert again.json() == {"stored": 0, "ignored": 1}
+    # every submission is audited with its counts (ADR-063 section 2)
+    assert world.rows(
+        "SELECT actor_kind, actor_id::text, detail FROM hub.audit WHERE action = 'wrap.put' ORDER BY seq"
+    ) == [
+        ("user", admin.id, {"stored": 2, "ignored": 0}),
+        ("user", admin.id, {"stored": 0, "ignored": 1}),
+    ]
     listed = member.browser.get("/v1/wraps").json()["wraps"]
     assert {(item["scope"], item["scope_id"], item["epoch"], item["wrapped_by"]) for item in listed} == {
         ("org", draft.id, 1, admin.id),

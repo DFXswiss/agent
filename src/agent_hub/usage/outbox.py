@@ -68,6 +68,12 @@ UPSERT_QUOTA = (
     " WHERE hub.quota_snapshot.fetched_at <= EXCLUDED.fetched_at"
 )
 DROP_QUOTA = "DELETE FROM hub.quota_snapshot WHERE owner_id = %s AND fetched_at <= %s"
+MARK_UNREADABLE = (
+    "INSERT INTO hub.quota_unreadable (owner_id, since, device_id) SELECT %s, %s, %s"
+    " WHERE NOT EXISTS (SELECT 1 FROM hub.quota_snapshot WHERE owner_id = %s AND fetched_at > %s)"
+    " ON CONFLICT (owner_id) DO NOTHING"
+)
+CLEAR_UNREADABLE = "DELETE FROM hub.quota_unreadable WHERE owner_id = %s AND since <= %s"
 PLATFORM = "platform"
 PROVIDER_COST = "provider"
 
@@ -107,7 +113,10 @@ def handle_quota(item: ItemContext, body: QuotaBody) -> None:
     fetched = moment(body.fetched_at)
     if body.unavailable:
         item.connection.execute(DROP_QUOTA, (body.owner_id, fetched))
+        # a late report after a newer successful read leaves no marker (review L5)
+        item.connection.execute(MARK_UNREADABLE, (body.owner_id, fetched, item.device, body.owner_id, fetched))
         return
+    item.connection.execute(CLEAR_UNREADABLE, (body.owner_id, fetched))
     values = [
         (
             body.owner_id,

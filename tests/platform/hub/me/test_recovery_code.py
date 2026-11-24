@@ -107,7 +107,10 @@ def test_a_new_recovery_code_replaces_the_old_one(browser: FakeBrowser, account:
         "SELECT actor_kind, actor_id, target_kind, detail FROM hub.audit WHERE action = 'auth.recovery'"
         " AND actor_kind = 'user'",
     )
-    assert audit == [("user", uuid.UUID(account.user_id), "passkey", {"step": "rotate"})]
+    assert audit == [
+        ("user", uuid.UUID(account.user_id), "ceremony", {"step": "rotate_begin"}),
+        ("user", uuid.UUID(account.user_id), "passkey", {"step": "rotate"}),
+    ]
     text = format_recovery_code(code)
     dump = str(rows(hub, "SELECT * FROM hub.identity_bundle")) + str(rows(hub, "SELECT * FROM hub.user_identity"))
     assert text not in dump

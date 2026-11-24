@@ -132,12 +132,16 @@ def test_path_parameters(index: dict[str, Any], contracts: Contracts) -> None:
 
 
 def test_read_resources(index: dict[str, Any]) -> None:
-    """Every authenticated, non-streaming GET appends `read.<resource>` (03-api.md section 1)."""
+    """Every authenticated, non-streaming GET appends `read.<resource>` (03-api.md section 1); a streaming GET may
+    (the browser live channel, ADR-063 section 3)."""
     resources = [e["read_resource"] for e in endpoints(index) if e["read_resource"]]
     assert len(set(resources)) == len(resources)
     for e in endpoints(index):
-        reads = e["method"] == "GET" and e["auth"] != "anon" and not e["streaming"]
-        assert (e["read_resource"] is not None) is reads, e
+        authenticated_get = e["method"] == "GET" and e["auth"] != "anon"
+        if e["read_resource"] is None:
+            assert not authenticated_get or e["streaming"], e
+        else:
+            assert authenticated_get, e
         if e["read_resource"]:
             assert re.fullmatch(r"[a-z_]+(\.[a-z_]+)*", e["read_resource"]), e
             assert e["read_resource"].startswith("device.") == e["path"].startswith("/v1/device/"), e

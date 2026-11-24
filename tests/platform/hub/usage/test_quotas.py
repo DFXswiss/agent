@@ -150,7 +150,7 @@ def test_me_quotas_shows_only_own_rows_newest_first(meter: Meter) -> None:
     assert body["quotas"][2]["resets_at"] is not None
     assert body["quotas"][0]["resets_at"] is None
     assert body["quotas"][1]["severity"] == "warning"
-    assert scene.admin.browser.get("/v1/me/quotas").json() == {"quotas": []}
+    assert scene.admin.browser.get("/v1/me/quotas").json() == {"quotas": [], "unreadable": None}
     meter.hub.flush_read_log()
     reads = meter.rows("SELECT actor_id::text, result FROM hub.audit WHERE action = 'read.me.quotas' ORDER BY seq")
     assert reads == [(scene.writer.id, "ok"), (scene.admin.id, "ok")]
@@ -181,15 +181,27 @@ def test_an_unavailable_quota_drops_the_older_windows_of_the_owner(meter: Meter)
     unavailable = {"owner_id": writer, "unavailable": True, "fetched_at": meter.time(-60)}
     assert meter.status("quota", unavailable, meter.low) == ("ok", None)
     assert meter.rows('SELECT "window" FROM hub.quota_snapshot WHERE owner_id = %s', writer) == [("weekly:opus",)]
+    # KOR-40: a window read after the refusal means the subscription was readable then: no marker
+    assert meter.rows("SELECT count(*) FROM hub.quota_unreadable WHERE owner_id = %s", writer) == [(0,)]
     # only the polling device may report it
     assert meter.status("quota", {**unavailable, "fetched_at": meter.time()}, meter.high) == ("rejected", "forbidden")
     assert meter.rows("SELECT count(*) FROM hub.quota_snapshot WHERE owner_id = %s", writer) == [(1,)]
     assert meter.status("quota", {**unavailable, "fetched_at": meter.time()}, meter.low) == ("ok", None)
     assert meter.rows("SELECT count(*) FROM hub.quota_snapshot WHERE owner_id = %s", writer) == [(0,)]
+    # the newest report is a refusal: the web says "not readable"
+    assert len(meter.rows("SELECT since FROM hub.quota_unreadable WHERE owner_id = %s", writer)) == 1
+    answer = meter.scene.writer.browser.get("/v1/me/quotas").json()
+    contracts_registry().validate("api/me-quotas.response.json", answer)
+    assert answer["unreadable"] is not None
     assert meter.quota(writer, window("five_hour", 20), fetched=meter.time(1)) == ("ok", None)
     assert meter.rows('SELECT "window", used_percent FROM hub.quota_snapshot WHERE owner_id = %s', writer) == [
         ("five_hour", 20.0)
     ]
+    assert meter.rows("SELECT count(*) FROM hub.quota_unreadable WHERE owner_id = %s", writer) == [(0,)]
+    # a late report of a refusal older than that read leaves no marker
+    late = {"owner_id": writer, "unavailable": True, "fetched_at": meter.time(0)}
+    assert meter.status("quota", late, meter.low) == ("ok", None)
+    assert meter.rows("SELECT count(*) FROM hub.quota_unreadable WHERE owner_id = %s", writer) == [(0,)]
     # windows and the marker together break the contract (and the hub's own body check)
     both = {**meter.quota_body(writer, window("five_hour", 1)), "unavailable": True}
     response = meter.push("quota", both, meter.low, extensions={"contract": False})

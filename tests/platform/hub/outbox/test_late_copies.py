@@ -17,12 +17,13 @@ from tests.platform.hub.outbox.support import NOT_CONTRACT, Outbox, item, new_vm
 
 
 def written(outbox: Outbox, published: MemoryPublisher) -> tuple[Any, ...]:
-    """Everything a push could have written: position, receipts, audit, events, effects and live frames."""
+    """Everything a push could have written: position, receipts, audit, events, effects and live frames. The request
+    pipeline's own rows (`request.*`, ADR-063: a replay or refusal of the push itself) are no effect of the items."""
     desk = outbox.desk
     return (
         outbox.position(),
         outbox.receipts(),
-        desk.rows("SELECT seq, action, detail::text FROM hub.audit ORDER BY seq"),
+        desk.rows("SELECT seq, action, detail::text FROM hub.audit WHERE action NOT LIKE 'request.%%' ORDER BY seq"),
         desk.rows("SELECT id, origin_seq FROM hub.event ORDER BY id"),
         desk.rows("SELECT session_id, requests FROM hub.usage_counter ORDER BY session_id"),
         desk.rows("SELECT id, state FROM hub.vm ORDER BY id"),

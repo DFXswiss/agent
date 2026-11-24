@@ -8,6 +8,8 @@ the push and checked by the rig's hub against the contracts) and outbox items ar
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -30,6 +32,8 @@ from .kit import TASK, WG, Kit, desired, kit, session_id
 
 CLAUDE_ID = "11111111-2222-4333-8444-555555555555"
 OTHER_CLAUDE_ID = "11111111-2222-4333-8444-666666666666"
+OTHER_SESSION = "01a1ee56-6000-7003-8f1b-3406910000aa"
+CONTRACTS = Path(__file__).resolve().parents[4] / "contracts"
 AT = "2026-11-21T12:00:05.000Z"
 # the journal loop of a daemon sees the handlers of every area; `usage` belongs to the model area (RUN-12)
 HANDLERS = {**SESSION_HANDLERS, **MODEL_HANDLERS}
@@ -521,3 +525,32 @@ def test_pages_out_of_order_or_range_are_refused_before_handling(rig: Rig, seqs:
         assert "ack" not in found.guest.names()
 
     run(rig, body)
+
+
+def test_a_sessions_guest_error_becomes_a_session_error_event(rig: Rig) -> None:
+    """ADR-064 section 5: a code of the closed list for a session on this VM is synchronised as `session.error`;
+    VM-level records and unknown codes stay in the log."""
+
+    async def body(env: Any) -> None:
+        found, reader = await started(env)
+        sid = session_id()
+        found.guest.emit(sid, "guest.error", {"code": "turn_unconfirmed"})
+        found.guest.emit(sid, "guest.error", {"code": "not_a_code"})
+        found.guest.emit(None, "guest.error", {"code": "hook_handler_failed"})
+        found.guest.emit(OTHER_SESSION, "guest.error", {"code": "hook_handler_failed"})  # not this VM's session
+        await consume(found, reader)
+        events = await found.pushed_events()
+        errors = [(header["kind"], payload) for header, payload in events if header["kind"] == "session.error"]
+        assert errors == [("session.error", {"code": "turn_unconfirmed"})]
+        assert sum("guest_error vm_id=vm-00000001" in line for line in found.lines) == 4
+
+    run(rig, body)
+
+
+def test_the_guest_error_codes_are_those_of_the_contract() -> None:
+    record = json.loads((CONTRACTS / "guest" / "journal" / "record.json").read_text(encoding="utf-8"))
+    assert set(record["$defs"]["body_guest_error"]["properties"]["code"]["enum"]) == journal_module.GUEST_ERROR_CODES
+
+
+def test_a_hook_outage_is_a_failure_a_guest_may_report() -> None:
+    assert "hook_unavailable" in journal_module.GUEST_FAILURES

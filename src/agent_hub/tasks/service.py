@@ -35,6 +35,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.audit.recorder import unchanged
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.crypto.ids import uuid7
 from agent_hub.errors import HubError
@@ -108,6 +109,7 @@ def _replayed_create(
     connection: Connection, user: UUID, task_id: UUID, wg_id: UUID, events: Sequence[dict[str, Any]]
 ) -> dict[str, Any]:
     """The answer to a repeated `POST /v1/tasks` (module docstring), `409 id_conflict` for other content."""
+    unchanged()
     found = connection.execute("SELECT wg_id, owner_id FROM hub.task WHERE id = %s", (task_id,)).fetchone()
     if found is None or (found[0], found[1]) != (wg_id, user):
         raise HubError("id_conflict")
@@ -235,6 +237,7 @@ def add_prompt(context: HubContext, user: UUID, task_id: UUID, event: dict[str, 
         )[0]
         if item.replayed:
             session_id = prompts.session_of(connection, task_id, received)
+            unchanged()
             return Outcome(body={"scope_seq": item.scope_seq, "session_id": session_id, "replayed": True})
         task = cast(TaskRow, lock_task(connection, task_id))
         outcome = Outcome(body={}, stored=stored)
@@ -293,6 +296,8 @@ def close(context: HubContext, user: UUID, task_id: UUID) -> Outcome:
             stop_sessions(connection, closed, now, actor, outcome.effects)
             audit(connection, actor, "task.close", closed, now, detail={"by": "user"})
             outcome.effects.org_frame(closed.org_id, "task", rows.task_json(connection, task_id) or {})
+        else:
+            unchanged()  # closing a closed task again
         outcome.body = {"task": rows.task_json(connection, task_id)}
     return outcome
 

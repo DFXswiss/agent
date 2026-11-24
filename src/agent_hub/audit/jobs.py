@@ -1,5 +1,6 @@
-"""Background job of the audit area (ADR-027 section 4): the hourly signed checkpoint of the audit head
-(02-data-model.md section 2.9, `agent_hub.audit.checkpoint`).
+"""Background jobs of the audit area (ADR-027 section 4): the hourly signed checkpoint of the audit head
+(02-data-model.md section 2.9, `agent_hub.audit.checkpoint`) and the summary rows of the session's own events
+(`agent_hub.audit.eventbatch`, ADR-063 section 4).
 
 The job runs every `CHECK_SECONDS` and writes a checkpoint of the current head when the newest checkpoint of the hub
 key is at least `CHECKPOINT_INTERVAL` (one hour) old by the hub clock, or when there is none; a head that a checkpoint
@@ -17,6 +18,7 @@ import psycopg
 
 from agent_core.signing import HubSigner
 from agent_hub.audit.checkpoint import AuditCheckpoint, newest_checkpoint, write_checkpoint
+from agent_hub.audit.eventbatch import INTERVAL_SECONDS, run_summary
 from agent_hub.jobs import Job
 
 CHECKPOINT_INTERVAL = timedelta(hours=1)
@@ -41,4 +43,7 @@ def run_checkpoint(context: Any) -> AuditCheckpoint | None:
         return hourly_checkpoint(connection, context.signer, context.clock())
 
 
-JOBS = [Job("audit.checkpoint", CHECK_SECONDS, run_checkpoint, initial_delay_seconds=CHECK_SECONDS)]
+JOBS = [
+    Job("audit.checkpoint", CHECK_SECONDS, run_checkpoint, initial_delay_seconds=CHECK_SECONDS),
+    Job("audit.event_batch", INTERVAL_SECONDS, run_summary, initial_delay_seconds=INTERVAL_SECONDS),
+]

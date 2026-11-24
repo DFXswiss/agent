@@ -18,6 +18,7 @@ from uuid import UUID
 import psycopg
 
 from agent_hub.stream.publish import Audience, AudienceKind, publish
+from agent_hub.wraps.audit import audit_wraps
 from agent_hub.wraps.rules import Stored, store_wraps, wraps_for
 
 Connection = psycopg.Connection[Any]
@@ -36,6 +37,7 @@ def store(
 ) -> tuple[Stored, dict[str, str]]:
     """Store the wraps of the device (W3) and return them with the principal kinds of their recipients."""
     stored = store_wraps(connection, wraps, wrapper=str(device), **options)
+    audit_wraps(connection, stored, actor_kind="device", actor_id=device, now=options["now"])
     kinds = {
         str(row[0]): str(row[1])
         for row in connection.execute(

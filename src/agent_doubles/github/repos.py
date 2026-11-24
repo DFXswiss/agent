@@ -414,6 +414,11 @@ class World:
     def add_token(self, login: str, token: str) -> None:
         self.tokens[token] = login
 
+    def revoke_token(self, token: str) -> bool:
+        """Forget a token (``POST /credentials/revoke``); True when it was known."""
+        self.personal.discard(token)
+        return self.tokens.pop(token, None) is not None
+
     def is_personal(self, token: str) -> bool:
         return token in self.personal
 

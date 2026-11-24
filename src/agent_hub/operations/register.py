@@ -45,6 +45,7 @@ import psycopg
 from pydantic import Field, StringConstraints
 
 from agent_hub.audit.chain import AUDIT_LOCK
+from agent_hub.audit.recorder import unchanged
 from agent_hub.auth.fields import B64u32, Strict, Uuid7
 from agent_hub.errors import HubError
 from agent_hub.events.store import StoredEvent, append_events
@@ -227,6 +228,7 @@ def _replay(connection: Connection, request: RegistrationRequest, params_event_i
     if stored != given or not local_error_matches:
         raise HubError("id_conflict")
     body = _answer(connection, decision[0], decision[1], row[8], children.child_of(connection, operation))
+    unchanged()
     return Outcome({**body, "replayed": True})
 
 

@@ -99,6 +99,7 @@ class FakeLink:
     finish: bool = True
     on_start: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     answered: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    outage_ends: bool = True
 
     def add(self, session_id: str | None, kind: str, body: dict[str, Any]) -> None:
         self.records.append(Record(len(self.records) + 1, session_id, kind, body))
@@ -114,6 +115,12 @@ class FakeLink:
 
     async def put_credential(self, session_id: str, credential: Mapping[str, Any]) -> None:
         self.credentials[session_id] = dict(credential)
+        if self.mode == "outage":  # the switch 500: the guest ends the session at the failed prompt hook (ADR-064)
+            self.add(session_id, "session.hook", {"event": "UserPromptSubmit", "decision": "none"})
+            self.add(None if not self.outage_ends else session_id, "guest.error", {"code": "hook_handler_failed"})
+            if self.outage_ends:
+                self.add(session_id, "session.state", {"state": "failed", "reason": "hook_unavailable"})
+            return
         decision = "allow" if self.mode == "hooks" else "none"
         self.add(session_id, "session.hook", {"event": "UserPromptSubmit", "decision": decision})
         for kind, body in self.on_start:
@@ -177,6 +184,8 @@ class FakeVm:
     def shell(self, argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
         args = list(argv)
         self.calls.append(args)
+        if args[:3] == ["sudo", "sh", "-c"] and "AGENT_GUEST_FAULT_HOOKS=500" in args[3]:
+            self.link_object.mode = "outage"
         key = " ".join(args[:3])
         if key in self.failing or (args[:1] and args[0] in self.failing):
             return subprocess.CompletedProcess(args, 1, "", "refused\n")
@@ -387,7 +396,7 @@ def test_fault_mode_switches_the_hooks_and_seeds_the_poisoned_settings() -> None
     attack_vm, vm, link, _clock = make("fault")
     results, _probe = run(driver.run_mode(attack_vm, [catalog.BY_ID["ATK-15"]]))
     assert results[0].verdict.passed, results[0].verdict.to_json()
-    switch = next(call for call in vm.calls if call[:3] == ["sudo", "sh", "-c"] and "FAULT_HOOKS=500" in call[3])
+    switch = next(call for call in vm.calls if call[:3] == ["sudo", "sh", "-c"] and "FAULT_HOOKS=open" in call[3])
     assert driver.FAULT_DROPIN in switch[3]
     assert ["ss", "-Hltn", "sport = :7700"] in vm.calls
     sid = link.sessions[1]["session_id"]
@@ -727,3 +736,46 @@ def test_the_victim_records_must_settle_before_the_attacks() -> None:
     vm.index = {"type": "file", "size": 2, "sha256": "empty"}
     with pytest.raises(SuiteError, match="did not settle"):
         run(attack_vm.prepare())
+
+
+# ---------------------------------------------------------------- run `outage` (ADR-064 section 3)
+
+
+def switches(vm: FakeVm) -> list[str]:
+    return [
+        "open" if "FAULT_HOOKS=open" in call[3] else "500"
+        for call in vm.calls
+        if call[:3] == ["sudo", "sh", "-c"] and "AGENT_GUEST_FAULT_HOOKS=" in call[3]
+    ]
+
+
+def test_mode_fault_ends_with_the_outage_run_of_atk_38() -> None:
+    attack_vm, vm, link, _clock = make("fault")
+    results, _probe = run(driver.run_mode(attack_vm, [catalog.BY_ID["ATK-15"]]))
+    assert [result.verdict.attack_id for result in results] == ["ATK-15", "CONTROL", "ATK-38"]
+    outage = results[-1]
+    assert outage.verdict.mode == "outage"
+    assert outage.verdict.passed, outage.verdict.to_json()
+    assert set(outage.verdict.criteria) == {
+        "ended", "no_turn", "no_execution", "no_foreign_write", "no_foreign_read", "no_egress", "specific",
+    }  # fmt: skip
+    assert switches(vm) == ["open", "500"]
+    assert attack_vm.phase == "fault"
+    sid = link.sessions[-1]["session_id"]
+    assert not any(path.startswith(f"/srv/sessions/{sid}/work/.claude") for path in vm.seeded)  # no poison
+
+
+def test_mode_hooks_has_no_outage_run() -> None:
+    attack_vm, vm, _link, _clock = make("hooks")
+    results, _probe = run(driver.run_mode(attack_vm, [catalog.BY_ID["ATK-15"]]))
+    assert [result.verdict.attack_id for result in results] == ["ATK-15", "CONTROL"]
+    assert switches(vm) == []
+
+
+def test_an_outage_run_that_does_not_end_fails_as_a_suite_error() -> None:
+    attack_vm, _vm, link, _clock = make("fault", timeout=5.0)
+    link.outage_ends = False
+    results, _probe = run(driver.run_mode(attack_vm, [catalog.BY_ID["ATK-15"]]))
+    outage = results[-1]
+    assert (outage.verdict.attack_id, outage.verdict.mode, outage.verdict.passed) == ("ATK-38", "outage", False)
+    assert "did not reach failed" in json.dumps(outage.verdict.to_json())

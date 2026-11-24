@@ -35,7 +35,7 @@ async function world(): Promise<World> {
   return { ...t, device };
 }
 
-async function record(t: World) {
+async function record(t: World, token: string = 'gho_x') {
   const header = newHeader({
     id: '0190f000-0000-7000-8000-0000000000c1',
     owner: t.me.id,
@@ -45,7 +45,7 @@ async function record(t: World) {
     author: t.device.id,
     ts: '2026-11-21T12:00:00.000Z',
   });
-  const body = { token: 'gho_x', login: 'octo-cat', user_id: 1, scopes: [], created_at: '2026-11-21T12:00:00.000Z' };
+  const body = { token, login: 'octo-cat', user_id: 1, scopes: [], created_at: '2026-11-21T12:00:00.000Z' };
   return sealCredential(t.credKey, header, bodyJson(body), t.device.identity.sig.privateKey);
 }
 
@@ -130,13 +130,32 @@ describe('GitHub section', () => {
     fireEvent.keyDown(screen.getByTestId('github.disconnect.dialog'), { key: 'Escape' });
     expect(screen.queryByTestId('github.disconnect.dialog')).toBeNull();
     fireEvent.click(screen.getByTestId('github.disconnect'));
+    // a token from elsewhere (the operator's account, a transferred access) stays valid at GitHub: the UI says so
+    expect(screen.getByTestId('github.disconnect.body')).toHaveAttribute('data-revocable', 'false');
+    expect(screen.getByTestId('github.disconnect.body')).toHaveTextContent('stays valid at GitHub');
     fireEvent.click(screen.getByTestId('github.disconnect.confirm'));
     expect(await screen.findByTestId('github.disconnected')).toBeVisible();
+    expect(screen.getByTestId('github.disconnected-note')).toHaveAttribute('data-revoked', 'false');
     expect(screen.getByTestId('github.settings-link')).toHaveAttribute(
       'href',
       'https://github.com/settings/applications',
     );
     expect(screen.getByTestId('github.settings-link')).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('says that a token the platform minted is revoked at GitHub', async () => {
+    const t = await world();
+    connected(t, await record(t, 'ghu_minted'));
+    t.client.on('DELETE /v1/me/credentials/github', () => ({}));
+    page(t);
+    fireEvent.click(await screen.findByTestId('github.disconnect'));
+    expect(screen.getByTestId('github.disconnect.body')).toHaveAttribute('data-revocable', 'true');
+    expect(screen.getByTestId('github.disconnect.body')).toHaveTextContent(
+      'the device that made the connection revokes it there',
+    );
+    fireEvent.click(screen.getByTestId('github.disconnect.confirm'));
+    expect(await screen.findByTestId('github.disconnected-note')).toHaveAttribute('data-revoked', 'true');
+    expect(screen.queryByTestId('github.settings-link')).toBeNull();
   });
 
   it('reports a failed disconnect in the dialog', async () => {
@@ -345,7 +364,7 @@ describe('composer GitHub chip', () => {
     expect(screen.getByTestId('composer.github-hint')).toBeVisible();
     fireEvent.click(screen.getByTestId('composer.chip.github'));
     expect(t.client.of('GET /v1/me/credentials')).toHaveLength(1);
-    act(() => setGithub(t.store, { status: 'connected', login: 'octo', createdAt: 'x', version: 1 }));
+    act(() => setGithub(t.store, { status: 'connected', login: 'octo', createdAt: 'x', version: 1, revocable: true }));
     expect(screen.queryByTestId('composer.github-hint')).toBeNull();
   });
 

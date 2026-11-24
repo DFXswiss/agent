@@ -140,12 +140,14 @@ def test_me_of_a_session_without_identity_is_not_found(browser: FakeBrowser) -> 
 
 
 def test_reads_are_logged(browser: FakeBrowser, account: Account, client: SignedClient) -> None:
+    browser.hub.flush_read_log()  # the windows of the reads before (ADR-063 section 3)
     assert client.get("/v1/me").status_code == 200
     assert client.get("/v1/me/bundles/recovery").status_code == 200
-    assert browser.hub.flush_read_log() == 2
+    # recorded before the answers left the hub, no flush needed
     logged = rows(
-        browser.hub, "SELECT action, actor_id, result FROM hub.audit WHERE action LIKE 'read.%%' ORDER BY seq"
-    )
+        browser.hub,
+        "SELECT action, actor_id, result FROM hub.audit WHERE action LIKE 'read.%%' ORDER BY seq DESC LIMIT 2",
+    )[::-1]
     user = uuid.UUID(account.user_id)
     assert logged == [("read.me", user, "ok"), ("read.me.bundles.recovery", user, "ok")]
 
@@ -181,6 +183,12 @@ def test_the_own_passkey_slot_is_stored_and_marks_prf(
     stored = rows(browser.hub, "SELECT ct, updated_at FROM hub.identity_bundle WHERE slot = %s", slot)
     assert [(bytes(ct), at) for ct, at in stored] == [(b64url_decode(replaced), browser.hub.clock())]
     assert rows(browser.hub, "SELECT prf_seen FROM hub.passkey") == [(True,)]
+    # both writes are audited with the passkey as target (ADR-063 section 2)
+    audited = rows(
+        browser.hub, "SELECT actor_id::text, target_kind, target_id FROM hub.audit WHERE action = 'auth.passkey_bundle'"
+    )
+    reference = b64url_encode(account.credential_id)
+    assert audited == [(account.user_id, "passkey", reference)] * 2
 
 
 def test_a_foreign_or_removed_passkey_slot_is_forbidden(
@@ -327,6 +335,8 @@ def test_settings_are_stored(browser: FakeBrowser, client: SignedClient, access:
     assert (response.status_code, response.json()) == (200, settings)
     assert client.get("/v1/me").json()["settings"] == settings
     assert rows(browser.hub, "SELECT updated_at FROM hub.user_settings") == [(browser.hub.clock(),)]
+    # the new values are audited (metadata the hub stores in clear, ADR-063 section 2)
+    assert rows(browser.hub, "SELECT detail FROM hub.audit WHERE action = 'settings.put'") == [(settings,)]
 
 
 @pytest.mark.parametrize(

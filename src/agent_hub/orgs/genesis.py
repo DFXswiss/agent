@@ -31,6 +31,7 @@ from uuid import UUID
 import psycopg
 
 from agent_hub.audit.invites import audit_invite_use
+from agent_hub.audit.recorder import unchanged
 from agent_hub.crypto.encoding import canonical
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.errors import HubError
@@ -145,6 +146,7 @@ def create_org(
     body = _genesis_body(genesis, appender)
     org_id, default_wg = UUID(body["org"]), UUID(body["default_wg"])
     if _existing(connection, org_id, default_wg, genesis, appender):
+        unchanged()
         return Created(org_id, default_wg, replayed=True, result=None)
     identity = logs.identity_keys(connection, appender.id)
     pub = cast(dict[str, str], body["pub"])

@@ -2287,6 +2287,19 @@
           "device"
         ],
         "header": {
+          "session": "set",
+          "task": "set",
+          "wg": "scope_id"
+        },
+        "kind": "session.error",
+        "right": "device_assigned_wg_session",
+        "scope": "wg"
+      },
+      {
+        "authors": [
+          "device"
+        ],
+        "header": {
           "ref": "operation",
           "wg": "scope_id"
         },

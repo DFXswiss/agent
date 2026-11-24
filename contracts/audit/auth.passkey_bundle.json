@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/auth.passkey_bundle.json",
+  "title": "audit detail auth.passkey_bundle",
+  "description": "detail of audit rows with action auth.passkey_bundle: the identity bundle of one of the user's passkeys was stored or replaced (PUT /v1/me/bundles/passkey:<credential>); the target is the passkey's credential reference. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "$ref": "../common.json#/$defs/empty"
+}

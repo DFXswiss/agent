@@ -213,6 +213,10 @@ class StreamService:
         self.by_user.setdefault(stream.user_id, set()).add(stream)
         self._orgs = frozenset(self.by_org)
 
+    def abandon(self, stream: BrowserStream) -> None:
+        """Forget a stream that was opened but will never be served (its route failed after `open_browser`)."""
+        self._remove(stream)
+
     def _remove(self, stream: BrowserStream) -> None:
         for table, key in ((self.by_org, stream.org), (self.by_user, stream.user_id)):
             streams = table.get(key)

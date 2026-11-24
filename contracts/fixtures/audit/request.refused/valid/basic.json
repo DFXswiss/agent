@@ -1,0 +1,6 @@
+{
+  "method": "PUT",
+  "route": "/v1/me/bundles/{slot}",
+  "status": 403,
+  "code": "forbidden"
+}

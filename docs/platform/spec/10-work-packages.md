@@ -308,7 +308,7 @@ least one E2E test or gate; ACC-FINAL re-checks the matrix with `e2e/platform/te
 | R-10.1 | GST-02, SBX-01 | E2E-23 | SCN-02 |
 | R-10.2 | SBX-01 | E2E-23 | SCN-02 |
 | R-10.3 | SBX-01, SBX-02, GST-03 | E2E-23, ATK-01..ATK-12 | SCN-02, ATS-01 |
-| R-10.4 | SBX-01, GST-03 | E2E-23, ATK-05 | SCN-02, ATS-01 |
+| R-10.4 | SBX-01, GST-03 | E2E-23, ATK-02, ATK-03 | SCN-02, ATS-01 |
 | R-10.5 | SBX-01, SBX-02, GST-03 | E2E-34, ATK-13..ATK-20 | SCN-02, ATS-01 |
 | R-10.6 | GST-07, RUN-07, RUN-11, HUB-12 | E2E-24 | SCN-04 |
 | R-10.7 | GST-03 | E2E-23, ATK-13 | SCN-02, ATS-01 |
@@ -338,7 +338,7 @@ least one E2E test or gate; ACC-FINAL re-checks the matrix with `e2e/platform/te
 | R-12.10 | RUN-14, RUN-08 | E2E-26  (asserts a working session's turn continues without a new prompt and the tmux pane receives no input) | SCN-06 |
 | R-13.1 | GST-07 | E2E-24 | SCN-04 |
 | R-13.2 | RUN-07, HUB-12 | E2E-24 | SCN-04 |
-| R-13.3 | SBX-01, RUN-11 | E2E-24, ATK-05 | SCN-04, ATS-01 |
+| R-13.3 | SBX-01, RUN-11 | E2E-24, ATK-02, ATK-03 | SCN-04, ATS-01 |
 | R-13.4 | RUN-11, GST-02, RUN-15 | E2E-24, E2E-17  (asserts the child session appears in the monitoring overview) | SCN-04, SCN-07 |
 | R-13.5 | HUB-12 | E2E-24 | SCN-04 |
 | R-13.6 | WEB-09 | E2E-24 | SCN-04 |

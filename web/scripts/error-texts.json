@@ -1390,5 +1390,17 @@
       "body": "Eine Kontokennung hat 12 Zeichen (Buchstaben und die Ziffern 2–7).",
       "action": "Prüfe die Kennung und gib sie erneut ein."
     }
+  },
+  "hook_unavailable": {
+    "en": {
+      "title": "Safety check unavailable",
+      "body": "The check that clears every step of the session before it runs could not be reached. The session was ended so that nothing runs unchecked.",
+      "action": "Start the task again."
+    },
+    "de": {
+      "title": "Sicherheitsprüfung ausgefallen",
+      "body": "Die Prüfung, die jeden Schritt der Session vor der Ausführung freigibt, war nicht erreichbar. Die Session wurde deshalb beendet, damit nichts ungeprüft läuft.",
+      "action": "Starte den Task noch einmal."
+    }
   }
 }

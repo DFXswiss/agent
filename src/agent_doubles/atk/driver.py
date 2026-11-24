@@ -9,20 +9,24 @@ runner's pool provisioning and hands in a ``Vm`` (Lima shell as the default user
    loopback, the TEST_MODE rule lets only ``platform`` reach the gateway port) - or, with ``tunnel`` (a golden
    without a usable test model port: the shared TEST_MODE caches and production goldens, ADR-034/ADR-036), asks the
    caller's ``Vm.open_tunnel`` for an SSH reverse tunnel ``127.0.0.1:RELAY_PORT`` (guest) -> the dispatcher
-   (host), switches the hooks to HTTP 500 in
-   mode ``fault`` (``AGENT_GUEST_FAULT_HOOKS=500`` drop-in for ``agent-guest-api``, effective only in a TEST_MODE
-   golden), assigns the VM, creates the **victim** session (another session of the same VM, never started, with a
-   secret in its workspace and a canary in its harness), plants ``/etc/platform/sessions.json`` and starts the
-   process sampler.
+   (host), switches the hooks to HTTP 500 in mode ``fault`` (``AGENT_GUEST_FAULT_HOOKS=open`` drop-in for
+   ``agent-guest-api``: hooks fail and the fail-closed reaction is off, so the sandbox alone is tested; effective only
+   in a TEST_MODE golden, ADR-064 section 3), assigns the VM, creates the **victim** session (another session of the
+   same VM, never started, with a secret in its workspace and a canary in its harness), plants
+   ``/etc/platform/sessions.json`` and starts the process sampler.
 2. ``run(attack)``: creates the attack session with the initial prompt (argv), seeds the poisoned settings in mode
    ``fault`` (``~/.claude/settings.json``, ``./.claude/settings.json``, ``./.mcp.json``), takes the file-system
    snapshot and the target states, registers a model double with the attack's scenario at the dispatcher, provisions
    the credential (the agent starts), waits for the end of the scenario and the ``Stop`` hook (or the time limit),
    stops the session and collects the evidence for ``evidence.evaluate``.
-3. ``os_probe()``: the sandbox self-test (``agent_guest.sandbox.selftest``) in an identical session unit while attack
+3. ``run_outage()`` (mode ``fault``, alone after the attacks and the control): the switch becomes ``500`` - hooks fail
+   with the production reaction - and ATK-38 runs once more as the verdict of mode ``outage``: the failing
+   ``UserPromptSubmit`` ends the session with ``hook_unavailable`` and no request with tools reaches the model
+   (``evidence.evaluate``, ``extended.check_38``).
+4. ``os_probe()``: the sandbox self-test (``agent_guest.sandbox.selftest``) in an identical session unit while attack
    sessions run, then the extended probe (``guest_probe.py os-extended`` with ``unit_probe.py``, ATS-03) the same
    way; ``run_control()``: the detector control (``catalog.CONTROL``), alone after the attacks.
-4. ``close()``: stops the sampler and the journal reader.
+5. ``close()``: stops the sampler and the journal reader.
 
 ATK-33 … ATK-40 have a plan (``extended.PLANS``) whose parts the run calls: before the snapshot, after the credential,
 after the scenario, for each ``operation.request`` of the session (answered through the guest control link with the
@@ -63,6 +67,9 @@ UNIT_PROBE_STAGE = "/tmp/atk-unit-probe.py"
 SAMPLES = f"{PROBE_DIR}/samples.jsonl"
 SAMPLER_STOP = f"{PROBE_DIR}/sampler.stop"
 FAULT_DROPIN = "/etc/systemd/system/agent-guest-api.service.d/atk-fault.conf"
+FAULT_SWITCH = {"fault": "open", "outage": "500"}
+"""``AGENT_GUEST_FAULT_HOOKS`` per phase (ADR-064 section 3)."""
+OUTAGE = "outage"
 SNAPSHOT_ROOTS = ("/",)
 SNAPSHOT_EXCLUDES = (
     "/proc",
@@ -294,6 +301,11 @@ class AttackVm:
     _upstream_token: str = ""
     _contexts: dict[str, tuple[extended.Plan, RunContext]] = field(default_factory=dict)
     _answering: set[asyncio.Task[None]] = field(default_factory=set)
+    phase: str = ""
+    """The mode of the running attack: ``mode``, or ``outage`` during ``run_outage``."""
+
+    def __post_init__(self) -> None:
+        self.phase = self.phase or self.mode
 
     # -- guest helpers -----------------------------------------------------------------------------------------
 
@@ -368,13 +380,7 @@ class AttackVm:
             )  # fmt: skip
         await self.wait_listening(self.relay_port)
         if self.mode == "fault":
-            await self.sh(
-                "sudo", "sh", "-c",
-                f"mkdir -p {os.path.dirname(FAULT_DROPIN)}"
-                f" && printf '[Service]\\nEnvironment=AGENT_GUEST_FAULT_HOOKS=500\\n' > {FAULT_DROPIN}"
-                " && systemctl daemon-reload && systemctl restart agent-guest-api",
-            )  # fmt: skip
-            await self.wait_listening(7700)
+            await self.fault_switch(FAULT_SWITCH["fault"])
         self._link = self.vm.link()
         await self.link.assign(self.vm.vm_id, self.new_id(), self.new_id())
         self._upstream_token = self.token()
@@ -501,8 +507,27 @@ class AttackVm:
             except Exception as exc:  # one broken run must not hide the others; it fails with the reason
                 reason = f"suite error: {describe(exc)}"
                 return RunResult(
-                    evidence.suite_failure(attack.id, self.mode, reason), None, round(self.clock() - begin, 3)
+                    evidence.suite_failure(attack.id, self.phase, reason), None, round(self.clock() - begin, 3)
                 )
+
+    async def fault_switch(self, value: str) -> None:
+        """The hook fault switch of the API process (drop-in, restart, wait for the port)."""
+        await self.sh(
+            "sudo", "sh", "-c",
+            f"mkdir -p {os.path.dirname(FAULT_DROPIN)}"
+            f" && printf '[Service]\\nEnvironment=AGENT_GUEST_FAULT_HOOKS={value}\\n' > {FAULT_DROPIN}"
+            " && systemctl daemon-reload && systemctl restart agent-guest-api",
+        )  # fmt: skip
+        await self.wait_listening(7700)
+
+    async def run_outage(self) -> RunResult:
+        """ATK-38 with the production reaction to failing hooks (module docstring step 3; mode ``fault`` only)."""
+        await self.fault_switch(FAULT_SWITCH[OUTAGE])
+        self.phase = OUTAGE
+        try:
+            return await self.run(catalog.BY_ID["ATK-38"])
+        finally:
+            self.phase = self.mode
 
     async def run_control(self) -> RunResult:
         """The detector control (``catalog.CONTROL``): a foreign canary planted in the workspace for the scenario to
@@ -537,7 +562,7 @@ class AttackVm:
         ctx = RunContext(self, attack, sid, uid, self.victim, self.victim_uid)
         self._contexts[sid] = (plan, ctx)
         await self.probe("nft-track", str(uid))
-        poisoned: dict[str, str] = poison(work) if self.mode == "fault" else {}
+        poisoned: dict[str, str] = poison(work) if self.phase == "fault" else {}
         for path, content in poisoned.items():
             await self.seed(path, uid, 0o600, content)
         if before_start is not None:
@@ -562,11 +587,9 @@ class AttackVm:
             if while_running is not None:
                 await while_running(sid, uid)
             await plan.while_running(ctx)
-            timed_out = not await (self.wait_stopped(sid, double) if attack.live else self.wait_finished(sid, double))
-            if not timed_out:
-                await plan.after_finished(ctx)
+            timed_out = await self.wait_run(attack, sid, double, plan, ctx)
             await self.link.control(sid, "stop")
-            await self.wait_state(sid, "stopped")
+            await self.wait_state(sid, "failed" if self.phase == OUTAGE else "stopped")
             collected = await self.collect(sid, uid, watched)
             exchanges, state = list(double.exchanges), double.state()
         except BaseException:
@@ -581,7 +604,7 @@ class AttackVm:
                 await self.blocking(double.stop)
         run = evidence.RunEvidence(
             attack_id=attack.id,
-            mode=self.mode,
+            mode=self.phase,
             session_id=sid,
             session_dir=session_dir,
             victim_dir=f"/srv/sessions/{self.victim}",
@@ -690,6 +713,30 @@ class AttackVm:
             await self.sleep(POLL_S)
         return done_at is not None
 
+    async def wait_run(
+        self, attack: catalog.Attack, sid: str, double: Double, plan: extended.Plan, ctx: RunContext
+    ) -> bool:
+        """Wait for the end of a run (then the plan's ``after_finished``); True when the time limit ended it."""
+        if self.phase == OUTAGE:
+            return not await self.wait_ended(sid)
+        waited = self.wait_stopped(sid, double) if attack.live else self.wait_finished(sid, double)
+        timed_out = not await waited
+        if not timed_out:
+            await plan.after_finished(ctx)
+        return timed_out
+
+    async def wait_ended(self, sid: str) -> bool:
+        """Mode ``outage``: wait until the guest ended the session (``failed``); False at the time limit."""
+        deadline = self.clock() + self.timeout
+        while self.clock() < deadline:
+            if any(
+                record["kind"] == "session.state" and record["body"].get("state") == "failed"
+                for record in self.records.get(sid, [])
+            ):
+                return True
+            await self.sleep(POLL_S)
+        return False
+
     async def wait_stopped(self, sid: str, upstream: Double) -> bool:
         """A live run: wait for the ``Stop`` hook (the model ended its turn); False at the time limit or when the
         upstream asks to abort (cost limit)."""
@@ -781,7 +828,12 @@ async def run_mode(
         # Alone after the attacks: its root write and packet would otherwise fall into their evidence windows.
         control = await vm.run_control()
         on_result(control)
+        extra = [control]
+        if vm.mode == "fault":  # alone as well: the switch 500 would end the sessions of the other attacks
+            outage = await vm.run_outage()
+            on_result(outage)
+            extra.append(outage)
     finally:
         await vm.close()
     probe: dict[str, Any] = gathered[0]
-    return [*gathered[1:], control], probe
+    return [*gathered[1:], *extra], probe

@@ -26,7 +26,8 @@ Then storage: the org rows of the call are held `FOR SHARE` in sorted order, the
 are created if missing and locked in sorted order (no deadlock between two calls that touch the same scopes), E9 is
 repeated under that lock (a concurrent identical submission that committed meanwhile is a replay, not a unique
 violation), every new event gets `scope_seq = seq + 1` by `UPDATE ... RETURNING` (gapless per scope: a rollback undoes
-the increment), the extracted columns of 02-data-model.md section 2.3, the audit row `event.append` (metadata only)
+the increment), the extracted columns of 02-data-model.md section 2.3, the audit row `event.append` (metadata only;
+not for the session's own output kinds, which the audit job summarises: `agent_hub.audit.eventbatch`)
 and a `pg_notify` on `agent_hub.events.notify.CHANNEL` (delivered by PostgreSQL only at commit). Last, the registered
 post-processors run in the same transaction (`agent_hub.events.hooks`). After the commit the caller passes the result
 to `agent_hub.events.notify.announce` (live frames, device hints and the internal signal `event.appended`).
@@ -49,13 +50,15 @@ from uuid import UUID
 import psycopg
 
 from agent_hub.audit.chain import AuditRow, append_audit
+from agent_hub.audit.eventbatch import BATCHED_KINDS
+from agent_hub.audit.recorder import deferred, unchanged
 from agent_hub.crypto import event as event_format
 from agent_hub.crypto.encoding import b64u_decode, b64u_encode, canonical, parse_time, require_keys
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.errors import ERROR_STATUSES, HubError
 from agent_hub.events import hooks
 from agent_hub.events import notify as event_notify
-from agent_hub.log.events import NOTIFY_ALLOWED, check_event_hub, check_replay
+from agent_hub.log.events import DEVICE_ASSIGNED_WG_SESSION, KIND_RULES, NOTIFY_ALLOWED, check_event_hub, check_replay
 from agent_hub.log.platform import PlatformState
 from agent_hub.log.state import DEVICE
 from agent_hub.log.verify import VerifiedLog
@@ -63,7 +66,7 @@ from agent_hub.orgs import logs
 
 Connection = psycopg.Connection[Any]
 EVENT_KEYS = frozenset({"header", "ct", "sig"})
-SESSION_KINDS = frozenset(f"session.{name}" for name in ("output", "tool", "hook", "file", "terminal", "status"))
+SESSION_KINDS = frozenset(rule.kind for rule in KIND_RULES if rule.right == DEVICE_ASSIGNED_WG_SESSION)
 """The device-authored session kinds (right `device_assigned_wg_session`, E7)."""
 CRYPTO_FALLBACK = {"log_fork": "header_invalid"}
 """Reader-only codes and their hub form (an `lh` beyond the hub's head is a malformed header at the hub)."""
@@ -220,6 +223,7 @@ def _check(
 
 
 def _replayed(header: Mapping[str, Any], event: dict[str, Any], scope_id: str, scope_seq: int) -> StoredEvent:
+    unchanged()
     return StoredEvent(
         id=cast(str, header["id"]),
         org_id=cast(str, header["org"]),
@@ -288,25 +292,28 @@ def _store(connection: Connection, item: _Checked, *, now: datetime, origin_seq:
             now,
         ),
     )
-    append_audit(
-        connection,
-        AuditRow(
-            at=now,
-            actor_kind=item.author_kind,
-            actor_id=UUID(author),
-            action="event.append",
-            result="ok",
-            org_id=UUID(cast(str, header["org"])),
-            wg_id=None if wg is None else UUID(wg),
-            task_id=None if task is None else UUID(task),
-            session_id=None if session is None else UUID(session),
-            device_id=UUID(author) if item.author_kind == DEVICE else None,
-            target_kind="event",
-            target_id=event_id,
-            detail={"kind": kind, "scope": scope, "scope_seq": scope_seq, "ct_bytes": len(ct)},
-            event_id=UUID(event_id),
-        ),
-    )
+    if kind in BATCHED_KINDS:  # the session's own output is summarised by the audit job (ADR-063 section 4)
+        deferred()
+    else:
+        append_audit(
+            connection,
+            AuditRow(
+                at=now,
+                actor_kind=item.author_kind,
+                actor_id=UUID(author),
+                action="event.append",
+                result="ok",
+                org_id=UUID(cast(str, header["org"])),
+                wg_id=None if wg is None else UUID(wg),
+                task_id=None if task is None else UUID(task),
+                session_id=None if session is None else UUID(session),
+                device_id=UUID(author) if item.author_kind == DEVICE else None,
+                target_kind="event",
+                target_id=event_id,
+                detail={"kind": kind, "scope": scope, "scope_seq": scope_seq, "ct_bytes": len(ct)},
+                event_id=UUID(event_id),
+            ),
+        )
     stored = StoredEvent(
         id=event_id,
         org_id=cast(str, header["org"]),

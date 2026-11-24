@@ -96,7 +96,7 @@ KIND_RULES: tuple[KindRule, ...] = (
     KindRule("prompt", "wg", (USER,), WG_WRITE, _WG_TASK),
     *(
         KindRule(f"session.{name}", "wg", (DEVICE,), DEVICE_ASSIGNED_WG_SESSION, _SESSION)
-        for name in ("output", "tool", "hook", "file", "terminal", "status")
+        for name in ("output", "tool", "hook", "file", "terminal", "status", "error")
     ),
     KindRule("operation.params", "wg", (DEVICE,), DEVICE_ASSIGNED_WG, {"wg": "scope_id", "ref": "operation"}),
     KindRule("operation.result", "wg", (DEVICE,), DEVICE_ASSIGNED_WG, {"wg": "scope_id", "ref": "operation"}),

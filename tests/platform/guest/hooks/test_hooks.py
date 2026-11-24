@@ -22,7 +22,7 @@ from typing import Any, cast
 
 import pytest
 
-from agent_guest import hooks, registry
+from agent_guest import hooks, registry, sessions
 from agent_guest.apisock import ApiClient, ApiSockError
 from agent_guest.config import ConfigError, GuestConfig, load_config
 from agent_guest.control import ControlContext
@@ -624,15 +624,33 @@ def fault_client(guest_config: GuestConfig, session: Session) -> Iterator[Callab
         server.close()
 
 
+class Ended:
+    """Stands in for the session manager of the control process: records the sessions the guest ends."""
+
+    def __init__(self) -> None:
+        self.ended: list[tuple[str, str]] = []
+
+    def fail_running(self, session_id: str, reason: str) -> bool:
+        self.ended.append((session_id, reason))
+        return True
+
+
 def test_fault_switch_answers_500_in_a_test_golden(
-    fault_client: Callable[[str, str], HookClient], context: ControlContext, tmp_path: Path
+    fault_client: Callable[[str, str], HookClient],
+    context: ControlContext,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    ended = Ended()
+    monkeypatch.setattr(sessions, "manager", lambda _context: ended)
     client = fault_client("500", golden(tmp_path, '{"test_mode": true, "test_model_port": 18080}'))
     before = hooks.STATS.snapshot()["faults"]
     for event in ("PreToolUse", "UserPromptSubmit", "Stop"):
         reply = client.post(event, tool_body(event, "Bash", {}))
         assert (reply.status, reply.json()) == (500, {"error": "unavailable"})
     assert hooks.STATS.snapshot()["faults"] == before + 3
+    # ADR-064 section 2: each failed decision hook ends the session through the control process
+    assert ended.ended == [(make_session().id, "hook_unavailable")] * 3
     assert bodies(context, "session.hook")[0] == {"event": "PreToolUse", "decision": "none", "reason": "fault injected"}
     assert len(bodies(context, "guest.error")) == 3
     assert client.post("Stop", hook_body("Stop"), token="wrong").status == 401

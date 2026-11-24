@@ -372,7 +372,7 @@ class FakeLibc:
         return self._result(self.results.get(number, 3 if number == ll.SYS_LANDLOCK_CREATE_RULESET else 0))
 
     def prctl(self, option: int, *raw: Any) -> int:
-        self.calls.append(("prctl", option, *(arg.value for arg in raw)))
+        self.calls.append(("prctl", option, *(arg.value if isinstance(arg, ctypes.c_long) else arg for arg in raw)))
         return self._result(self.prctl_result)
 
 
@@ -476,6 +476,9 @@ class RecordingKernel(ll.Kernel):
 
     def no_new_privs(self) -> None:
         self._record("nnp")
+
+    def seccomp(self, program: Sequence[tuple[int, int, int, int]]) -> None:
+        self._record("seccomp", len(program))
 
     def restrict_self(self, ruleset_fd: int) -> None:
         self._record("restrict", ruleset_fd)
@@ -605,3 +608,69 @@ def test_module_is_standard_library_only() -> None:
     source = Path(ll.__file__).read_text()
     imports = {line.split()[1].split(".")[0] for line in source.splitlines() if line.startswith(("import ", "from "))}
     assert imports <= {"__future__", "ctypes", "os", "struct", "sys", "collections", "dataclasses", "typing"}
+
+
+# ---------------------------------------------------------------- seccomp: no socket name for another session
+
+
+def run_filter(program: list[tuple[int, int, int, int]], data: bytes) -> int:
+    """Evaluate the classic BPF program over a ``seccomp_data`` buffer (the three instructions it uses)."""
+    pc, accumulator = 0, 0
+    while True:
+        code, jt, jf, k = program[pc]
+        if code == ll.BPF_LD_W_ABS:
+            accumulator = struct.unpack_from("<I", data, k)[0]
+            pc += 1
+        elif code == ll.BPF_JEQ_K:
+            pc += 1 + (jt if accumulator == k else jf)
+        else:
+            assert code == ll.BPF_RET_K
+            return k
+
+
+def seccomp_data(arch: int, nr: int, *args: int) -> bytes:
+    values = [*args, *([0] * (6 - len(args)))]
+    return struct.pack("<iIQ6Q", nr, arch, 0, *values)
+
+
+@pytest.mark.parametrize("machine", ["aarch64", "arm64", "x86_64"])
+def test_the_filter_refuses_passcred_and_passpidfd(machine: str) -> None:
+    program = ll.socket_filter(machine)
+    arch, setsockopt = ll.ARCHES[machine]
+    refused = ll.SECCOMP_RET_ERRNO | ll.EPERM
+    for option in (ll.SO_PASSCRED, ll.SO_PASSPIDFD):
+        assert run_filter(program, seccomp_data(arch, setsockopt, 3, ll.SOL_SOCKET, option)) == refused
+    allowed = [
+        seccomp_data(arch, setsockopt, 3, ll.SOL_SOCKET, 2),  # SO_REUSEADDR
+        seccomp_data(arch, setsockopt, 3, 6, ll.SO_PASSCRED),  # another level (IPPROTO_TCP)
+        seccomp_data(arch, setsockopt + 1, 3, ll.SOL_SOCKET, ll.SO_PASSCRED),  # another system call
+        seccomp_data(arch ^ 1, setsockopt, 3, ll.SOL_SOCKET, ll.SO_PASSCRED),  # another architecture
+    ]
+    for data in allowed:
+        assert run_filter(program, data) == ll.SECCOMP_RET_ALLOW
+
+
+def test_no_filter_for_an_unknown_architecture() -> None:
+    with pytest.raises(ll.LauncherError, match="riscv64"):
+        ll.socket_filter("riscv64")
+
+
+def test_kernel_seccomp_installs_the_program() -> None:
+    libc = FakeLibc()
+    ll.Kernel(libc).seccomp(ll.socket_filter("aarch64"))
+    option, mode = libc.calls[0][1], libc.calls[0][2]
+    assert (libc.calls[0][0], option, mode) == ("prctl", ll.PR_SET_SECCOMP, ll.SECCOMP_MODE_FILTER)
+
+
+def test_kernel_seccomp_failure_raises() -> None:
+    with pytest.raises(OSError, match="PR_SET_SECCOMP"):
+        ll.Kernel(FakeLibc(prctl_result=-1)).seccomp(ll.socket_filter("x86_64"))
+
+
+def test_main_installs_the_filter_after_landlock(root: Path) -> None:
+    kernel = RecordingKernel()
+    argv = ["--session-dir", f"{root}/sessions/s1", "--exec", f"{root}/bin/claude", "--", f"{root}/bin/claude"]
+    with pytest.raises(Executed):
+        ll.main(argv, kernel=kernel, execv=recording_execv([]))
+    names = [call[0] for call in kernel.calls]
+    assert names.index("seccomp") > names.index("restrict")

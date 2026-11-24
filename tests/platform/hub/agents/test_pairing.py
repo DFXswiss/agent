@@ -272,8 +272,11 @@ def test_the_gesture_session_confirms_within_300_seconds(hub: HubHarness, publis
     assert (row["state"], row["user_id"], row["source"], row["replaces"]) == ("confirmed", user, None, None)
     assert row["confirmed_at"] == hub.clock()
     assert bytes(row["claim_hash"]) == agent_format.claim_hash(confirm.claim)
-    assert rows(hub, "SELECT action, actor_id, target_kind, target_id, agent_id FROM hub.audit") == [
-        ("agent.confirm", user, "agent", str(agent.agent_id), None)
+    assert rows(hub, "SELECT action, actor_id, target_kind, target_id, agent_id FROM hub.audit ORDER BY seq") == [
+        ("agent.pairing", None, "agent", str(agent.agent_id), None),
+        # the two identical refused confirmations leave one refusal, the second is a repeat (ADR-063 sections 1, 3)
+        ("request.refused", user, None, None, None),
+        ("agent.confirm", user, "agent", str(agent.agent_id), None),
     ]
     assert published.items() == []  # a passkey gesture notifies nobody
     # an identical repeat is idempotent, other values are a conflict
@@ -337,7 +340,8 @@ def test_a_new_confirmation_replaces_the_main_orchestrator(hub: HubHarness, publ
     assert (old["state"], old["bundle_ct"], old["revoked_at"]) == ("revoked", None, hub.clock())
     assert (new["state"], new["replaces"]) == ("confirmed", first.agent_id)
     assert first.client(hub).get("/v1/agent/me").json() == {"error": "key_revoked"}
-    assert rows(hub, "SELECT action, target_id, agent_id FROM hub.audit ORDER BY seq") == [
+    assert rows(hub, "SELECT action, target_id, agent_id FROM hub.audit WHERE action LIKE 'agent.%%' ORDER BY seq") == [
+        ("agent.pairing", str(second.agent_id), None),
         ("agent.revoke", str(first.agent_id), None),
         ("agent.confirm", str(second.agent_id), None),
     ]

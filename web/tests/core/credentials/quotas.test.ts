@@ -80,6 +80,14 @@ describe('quota bars', () => {
     t.client.on('GET /v1/me/quotas', () => ({ quotas: [row()] }));
     expect(await loadQuotas(t.context)).toHaveLength(1);
     expect(t.store.getState().quotas.bars).toHaveLength(1);
+    expect(t.store.getState().quotas.unreadableSince).toBeNull();
+    // KOR-40: the subscription refused the read (a setup token): since when, a malformed marker counts as none
+    t.client.on('GET /v1/me/quotas', () => ({ quotas: [], unreadable: { since: '2026-11-21T12:00:00.000Z' } }));
+    await loadQuotas(t.context);
+    expect(t.store.getState().quotas.unreadableSince).toBe(Date.parse('2026-11-21T12:00:00.000Z'));
+    t.client.on('GET /v1/me/quotas', () => ({ quotas: [], unreadable: { since: 'never' } }));
+    await loadQuotas(t.context);
+    expect(t.store.getState().quotas.unreadableSince).toBeNull();
     t.client.on('GET /v1/me/quotas', () => ({ quotas: 'x' }));
     await expect(loadQuotas(t.context)).rejects.toBeInstanceOf(HubError);
     t.client.on('GET /v1/me/quotas', () => null);

@@ -1,0 +1,6 @@
+{
+  "action": "request.refused",
+  "repeats": 3,
+  "first_seq": 77,
+  "window_s": 300
+}

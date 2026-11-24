@@ -25,7 +25,7 @@ export function GithubSection() {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
-  const [disconnected, setDisconnected] = useState(false);
+  const [disconnected, setDisconnected] = useState<'revoked' | 'kept' | null>(null);
   const load = useCallback(() => {
     loadGithub(app.tasks).catch((error: unknown) => setLoadError(requestErrorCode(error)));
   }, [app]);
@@ -35,16 +35,17 @@ export function GithubSection() {
     load();
   };
   const connected = useCallback(() => {
-    setDisconnected(false);
+    setDisconnected(null);
     setConnecting(false);
     load();
   }, [load]);
+  const revocable = connection.status === 'connected' && connection.revocable;
   const disconnect = async () => {
     setBusy(true);
     setDisconnectError(null);
     try {
       await disconnectGithub(app.tasks);
-      setDisconnected(true);
+      setDisconnected(revocable ? 'revoked' : 'kept');
       setConfirming(false);
     } catch (error) {
       setDisconnectError(requestErrorCode(error));
@@ -76,9 +77,14 @@ export function GithubSection() {
           {t('github.unverifiable', { code: connection.code })}
         </p>
       )}
-      {disconnected && (
-        <p role="status" data-testid="github.disconnected-note">
-          {t('github.disconnected-note')}{' '}
+      {disconnected === 'revoked' && (
+        <p role="status" data-testid="github.disconnected-note" data-revoked="true">
+          {t('github.disconnected-note.revoked')}
+        </p>
+      )}
+      {disconnected === 'kept' && (
+        <p role="status" data-testid="github.disconnected-note" data-revoked="false">
+          {t('github.disconnected-note.kept')}{' '}
           <a
             className="underline"
             href={GITHUB_SETTINGS_URL}
@@ -115,7 +121,9 @@ export function GithubSection() {
           busy={busy}
           onClose={() => setConfirming(false)}
         >
-          <p>{t('github.disconnect.body')}</p>
+          <p data-testid="github.disconnect.body" data-revocable={revocable}>
+            {t(revocable ? 'github.disconnect.body.revoked' : 'github.disconnect.body.kept')}
+          </p>
           {disconnectError !== null && (
             <p role="alert" data-testid="github.disconnect.failed">
               {t('github.disconnect.failed', { reason: reason(disconnectError) })}

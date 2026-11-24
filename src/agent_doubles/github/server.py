@@ -8,6 +8,8 @@ Routes (`ROUTES`, the REST subset the runner uses, 05-runner.md §11.4 and §12.
 - REST on the API host: user, installations and the user's repositories (``GET /user/repos``), repositories,
   commits, tarball (``302`` to the codeload-like route ``GET /codeload/{owner}/{repo}/legacy.tar.gz/{ref}``), refs,
   the Git Data API, compare, pull requests and issue comments.
+- ``POST /credentials/revoke`` (``{"credentials": [token, ...]}``, KOR-40): unauthenticated like GitHub's (a request
+  with ``Authorization`` is ``403`` and a failure); known tokens are forgotten, answered ``202 {}``.
 
 API requests must carry ``Accept: application/vnd.github+json``, ``X-GitHub-Api-Version: 2022-11-28`` and
 ``Authorization: Bearer <token>`` (``token <token>`` is accepted too, as by GitHub). A missing or different header is
@@ -140,6 +142,7 @@ ROUTES = (
     Route("GET", "/repos/{owner}/{repo}/pulls/{number}/files", "api", "pull_files"),
     Route("GET", "/repos/{owner}/{repo}/issues/{number}/comments", "api", "list_comments"),
     Route("POST", "/repos/{owner}/{repo}/issues/{number}/comments", "api", "create_comment"),
+    Route("POST", "/credentials/revoke", "revoke", "revoke_credentials"),
 )
 ROUTE_KEYS = frozenset(route.key for route in ROUTES)
 # What an API route handler returns: status, JSON payload (bytes for an empty redirect body) and extra headers.
@@ -701,6 +704,20 @@ class _Handler(DoubleHandler):
             links += [link(page + 1, "next"), link(last, "last")]
         headers = [("link", ", ".join(links))] if links else []
         return items[(page - 1) * per_page : page * per_page], headers
+
+    # --- credential revocation ----------------------------------------------------------------------
+
+    def _r_revoke_credentials(self, call: Call) -> None:
+        if call.headers.get("authorization"):
+            self.double.fail(f"{call.route.key}: request with credentials")
+            raise Reply(403, render.error_body(403, "Must not be authenticated"))
+        credentials = call.json_body().get("credentials")
+        if not isinstance(credentials, list) or not credentials or not all(isinstance(t, str) for t in credentials):
+            raise unprocessable("Invalid request.")
+        with self.double.world.lock:
+            known = sum(self.double.world.revoke_token(token) for token in credentials)
+        call.entry.extra["revoked"] = known
+        self._answer(call, 202, {})
 
     # --- device flow --------------------------------------------------------------------------------
 

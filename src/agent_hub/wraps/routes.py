@@ -20,6 +20,7 @@ from agent_hub.log.wraps import CRED
 from agent_hub.orgs import logs, rights
 from agent_hub.orgs.routes import parse_id, user_id
 from agent_hub.stream.publish import Audience, AudienceKind, publish
+from agent_hub.wraps.audit import audit_wraps
 from agent_hub.wraps.catchup import catch_up
 from agent_hub.wraps.rules import Stored, store_wraps, wraps_for
 
@@ -64,9 +65,9 @@ async def get_wraps(
 
 def _store(context: HubContext, user: UUID, wraps: list[dict[str, Any]]) -> tuple[Stored, dict[str, str]]:
     with context.pool.connection() as connection, connection.transaction():
-        stored = store_wraps(
-            connection, wraps, wrapper=str(user), now=context.clock(), root_key=context.config.platform_root_key
-        )
+        now = context.clock()
+        stored = store_wraps(connection, wraps, wrapper=str(user), now=now, root_key=context.config.platform_root_key)
+        audit_wraps(connection, stored, actor_kind="user", actor_id=user, now=now)
         kinds = {
             str(row[0]): str(row[1])
             for row in connection.execute(

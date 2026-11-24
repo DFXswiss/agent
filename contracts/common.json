@@ -276,7 +276,8 @@
         "budget_exceeded",
         "credit_exhausted",
         "oom",
-        "unassigned"
+        "unassigned",
+        "hook_unavailable"
       ],
       "description": "enums/session-failure-reasons.json"
     },
@@ -473,6 +474,7 @@
         "session.file",
         "session.terminal",
         "session.status",
+        "session.error",
         "operation.params",
         "operation.result",
         "platform.read",
@@ -883,6 +885,7 @@
             "session.hook",
             "session.file",
             "session.status",
+            "session.error",
             "operation.params",
             "operation.result",
             "platform.read",

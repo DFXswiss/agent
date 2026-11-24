@@ -16,6 +16,7 @@
     "budget_exceeded",
     "credit_exhausted",
     "oom",
-    "unassigned"
+    "unassigned",
+    "hook_unavailable"
   ]
 }

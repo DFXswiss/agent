@@ -5,9 +5,10 @@ Every request:
 1. ``Authorization: Bearer <session token>`` -> ``session.resolve`` over ``api.sock`` (constant-time in the control
    process, bound to the UID of the connecting process, ``peer.py``); a missing, unknown or foreign token answers
    ``401 unauthorized``, and after too many failed checks of that UID ``429 rate_limited`` (``authguard.py``).
-2. Fault switch: with ``AGENT_GUEST_FAULT_HOOKS=500`` in a TEST_MODE golden (``test_mode`` true in the golden's
-   ``install.json``) the hook is journaled with ``decision: "none"`` and answered ``500`` (attack suite: the OS layer
-   alone must hold, 05 section 5.5). Elsewhere the switch has no effect.
+2. Fault switch (``fault.py``): with ``AGENT_GUEST_FAULT_HOOKS`` ``500`` or ``open`` in a TEST_MODE golden
+   (``test_mode`` true in the golden's ``install.json``) the hook is journaled with ``decision: "none"`` and answered
+   ``500``; ``500`` keeps the fail-closed reaction of step 6, ``open`` suppresses it (attack suite: the OS layer alone
+   must hold). Elsewhere the switch has no effect.
 3. The body (at most ``HOOK_MAX_BODY`` bytes, strict JSON, ``contracts/mcp/hooks/<Event>.request.json``) is read. A
    body that cannot be read fails closed (decision 36 of CTR-02): PreToolUse ``deny`` ``input_invalid`` (rule 4),
    UserPromptSubmit ``block``, every other event ``{}``; it never answers with an error.
@@ -28,6 +29,12 @@ Every request:
    exactly as decided, and an addon must not consume anything it could not deliver. An addon that raises, returns
    text where it cannot be attached, or makes the answer violate its response schema is skipped (its text dropped),
    counted and journaled as ``guest.error hook_handler_failed``; the decision itself never changes.
+6. Fail closed (ADR-064 section 2): a decision hook (``DECISION_EVENTS``: ``UserPromptSubmit``, ``PreToolUse``,
+   ``Stop``, ``StopFailure``) that fails - the fault switch ``500``, a control call that failed, an unexpected
+   exception, a failing addon of ``Stop``/``StopFailure`` (it ends the turn), or an answer that took
+   ``HOOK_TIMEOUT_SECONDS`` or longer (Claude Code went on without it) - is reported to the control process
+   (``session.hook_failed``), which ends the session with ``hook_unavailable``. ``PreToolUse`` and
+   ``UserPromptSubmit`` still get their closed answers; the other events only journal ``guest.error``.
 
 If the control process cannot be reached or an op fails, PreToolUse and UserPromptSubmit still fail closed (deny
 ``input_invalid`` / block, nothing journaled); every other event answers ``503`` (Claude Code then continues: layer
@@ -42,16 +49,17 @@ import contextlib
 import json
 import sys
 import threading
+import time
 import traceback
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from email.message import Message
-from functools import lru_cache
 from typing import Any, cast
 
 from agent_guest import peer, registry
 from agent_guest.apisock import ApiClient, ApiSockError, AuthLimited
 from agent_guest.config import GuestConfig
+from agent_guest.fault import fault_mode, guard_suppressed
 from agent_guest.policy import BLOCK_REASON, PATH_KEYS, PATTERN_KEYS, TOOL_NAME_RE, WRITE_TOOLS, deny_reason
 from agent_guest.routing import (
     CHUNK,
@@ -64,6 +72,7 @@ from agent_guest.routing import (
     parse_json,
     rate_limited,
 )
+from agent_guest.sandbox.settings import HOOK_TIMEOUT_SECONDS
 from agent_guest.server import ApiContext
 
 EVENTS: tuple[str, ...] = (
@@ -149,19 +158,9 @@ def load_addons(package: str = registry.HOOK_ADDONS) -> list[tuple[str, HookAddo
     return found
 
 
-@lru_cache(maxsize=8)
-def golden_test_mode(path: str) -> bool:
-    """``True`` only if the golden's install record exists and says ``"test_mode": true``."""
-    try:
-        with open(path, encoding="utf-8") as handle:
-            record = json.load(handle)
-    except (OSError, ValueError):
-        return False
-    return isinstance(record, dict) and record.get("test_mode") is True
-
-
 def fault_active(config: GuestConfig) -> bool:
-    return config.fault_hooks == "500" and golden_test_mode(config.golden_install_file)
+    """The hooks answer 500 (``fault.fault_mode``: ``500`` or ``open`` in a TEST_MODE golden)."""
+    return fault_mode(config) is not None
 
 
 def bearer(headers: Message) -> str | None:
@@ -188,6 +187,15 @@ def _note(context: ApiContext, kind: str, body: dict[str, Any], session_id: str)
 def _failure(context: ApiContext, session_id: str) -> None:
     STATS.count("errors")
     _note(context, "guest.error", {"code": "hook_handler_failed"}, session_id)
+
+
+def _hook_failed(context: ApiContext, session_id: str, event: str) -> None:
+    """A decision hook failed (ADR-064 section 2): the control process ends the session (``hook_unavailable``). Not
+    for the other events, and not with the fault switch ``open``; an unreachable control process changes nothing."""
+    if event not in DECISION_EVENTS or guard_suppressed(context.config):
+        return
+    with contextlib.suppress(ApiSockError):
+        context.control.call("session.hook_failed", {"session_id": session_id, "event": event})
 
 
 def _read_body(context: ApiContext, event: str, request: Request) -> dict[str, Any] | None:
@@ -317,6 +325,16 @@ def _decide(
     return _other(context, event, session, body)
 
 
+DECISION_EVENTS = frozenset({"UserPromptSubmit", "PreToolUse", "Stop", "StopFailure"})
+"""The hooks whose failure leaves Claude Code without a decision (or the turn without its end): a failure ends the
+session (ADR-064 section 2)."""
+TURN_EVENTS = frozenset({"Stop", "StopFailure"})
+"""The hooks whose addon (``hook_addons/idle.py``) ends the turn: a failing addon is a failure of the hook."""
+MONOTONIC: Callable[[], float] = time.monotonic
+LATE_MARGIN_SECONDS = 1.0
+"""An answer this close to Claude Code's hook timeout may arrive after it gave up (transport, its own clock): late."""
+
+
 def _decorate(
     context: ApiContext, call: HookCall, answer: dict[str, Any], addons: Sequence[tuple[str, HookAddon]]
 ) -> dict[str, Any]:
@@ -330,6 +348,8 @@ def _decorate(
             sys.stderr.write(f"agent-guest-api: hook addon {name} failed\n")
             traceback.print_exc(file=sys.stderr)
             _failure(context, call.session_id)
+            if call.event in TURN_EVENTS:
+                _hook_failed(context, call.session_id, call.event)
             continue
         if text is None:
             continue
@@ -349,6 +369,7 @@ def _decorate(
 
 
 def handle(context: ApiContext, request: Request, event: str, addons: Sequence[tuple[str, HookAddon]]) -> Response:
+    started = MONOTONIC()
     token = bearer(request.headers)
     closed = closed_answer(event)
     try:
@@ -371,18 +392,28 @@ def handle(context: ApiContext, request: Request, event: str, addons: Sequence[t
         STATS.count("faults")
         _note(context, "session.hook", {"event": event, "decision": "none", "reason": FAULT_REASON}, session_id)
         _note(context, "guest.error", {"code": "hook_handler_failed"}, session_id)
+        _hook_failed(context, session_id, event)
         return json_response({"error": "unavailable"}, FAULT_STATUS)
     body = _read_body(context, event, request)
     try:
         answer, decision = _decide(context, event, session, body)
-    except ApiSockError:
+    except Exception as error:
+        if not isinstance(error, ApiSockError):
+            sys.stderr.write(f"agent-guest-api: hook {event} failed\n")
+            traceback.print_exc(file=sys.stderr)
         _failure(context, session_id)
+        _hook_failed(context, session_id, event)
         if closed is not None:
             return json_response(closed)
         raise HttpError("unavailable") from None
     decorate = event in DECORATED_EVENTS and decision != "block"
     call = HookCall(event=event, session_id=session_id, body=body, decision=decision, decorate=decorate)
-    return json_response(_decorate(context, call, answer, addons))
+    answer = _decorate(context, call, answer, addons)
+    if MONOTONIC() - started >= HOOK_TIMEOUT_SECONDS - LATE_MARGIN_SECONDS:
+        # Claude Code waited no longer and went on without this answer (ADR-064 section 2)
+        _failure(context, session_id)
+        _hook_failed(context, session_id, event)
+    return json_response(answer)
 
 
 def routes(addons: Sequence[tuple[str, HookAddon]]) -> list[Route]:

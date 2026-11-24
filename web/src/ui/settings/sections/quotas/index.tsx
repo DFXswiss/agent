@@ -1,6 +1,7 @@
 // Settings section "Quotas" (06-web.md section 8.2, ADR-010): the subscription windows the execution device last read
 // (`GET /v1/me/quotas`): 5 hours, week and per model, each as a bar with the used share and the reset time. Without
-// rows the quota is "not available" (no subscription, or the usage endpoint did not answer). Spend of API keys and the
+// rows the quota is "not readable" when the subscription refused the read (KOR-40), else "not available" (no
+// subscription, or the usage endpoint did not answer). Spend of API keys and the
 // platform is in monitoring.
 import { useCallback, useEffect, useState } from 'react';
 import { barShare, loadQuotas } from '../../../../core/credentials/quotas';
@@ -53,6 +54,7 @@ export function QuotasSection() {
   const { t } = useI18n();
   const reason = useReason();
   const bars = useStore((state) => state.quotas.bars, app.store);
+  const unreadable = useStore((state) => state.quotas.unreadableSince, app.store);
   const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(() => {
     loadQuotas(app.tasks).catch((error: unknown) => setLoadError(requestErrorCode(error)));
@@ -70,7 +72,12 @@ export function QuotasSection() {
         </p>
       )}
       {loadError === null && bars === null && <p data-testid="quotas.loading">{t('model.quotas.loading')}</p>}
-      {bars !== null && bars.length === 0 && <p data-testid="quotas.unavailable">{t('model.quotas.unavailable')}</p>}
+      {bars !== null && bars.length === 0 && unreadable === null && (
+        <p data-testid="quotas.unavailable">{t('model.quotas.unavailable')}</p>
+      )}
+      {bars !== null && bars.length === 0 && unreadable !== null && (
+        <p data-testid="quotas.unreadable">{t('model.quotas.unreadable')}</p>
+      )}
       {bars !== null && bars.length > 0 && (
         <ul className="flex flex-col gap-3" data-testid="quotas.bars">
           {bars.map((bar) => (

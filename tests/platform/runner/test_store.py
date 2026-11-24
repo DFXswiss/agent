@@ -182,6 +182,8 @@ TABLES = {
     "billing_meter": ["vm_id", "measured_through"],
     "operator_origin": ["session_id", "bound_at"],
     "credit_pause": ["session_id", "org_id", "interrupted", "paused_at", "resumed_at"],
+    # tokens this device minted through the device flow (KOR-40, migration 0014)
+    "github_minted": ["owner_id", "token_sha256", "minted_at"],
     "schema_version": ["version", "name", "checksum", "applied_at"],
 }
 OUTBOX_KINDS = [

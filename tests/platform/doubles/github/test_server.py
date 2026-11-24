@@ -825,3 +825,25 @@ def test_comments_on_seeded_issues(start_github: Callable[..., Any], seed: Calla
     pull = gh.api("POST", f"{REPO}/pulls", {"title": "t", "head": "feature", "base": "main"}).json()
     assert pull["number"] == 2
     assert gh.api("GET", f"{REPO}/pulls/1").status == 404
+
+
+# ---------------------------------------------------------------- credential revocation (KOR-40)
+
+
+def test_revocation_forgets_the_tokens_without_credentials(github: Any) -> None:
+    assert github.api("GET", "/user").status == 200
+    answer = github.api(
+        "POST", "/credentials/revoke", {"credentials": ["double-user-token", "ghu_unknown"]}, token=None
+    )
+    assert (answer.status, answer.json()) == (202, {})
+    assert github.api("GET", "/user").status == 401
+    assert github.state()["failures"] == []
+
+
+def test_revocation_refuses_credentials_and_malformed_bodies(github: Any) -> None:
+    assert github.api("POST", "/credentials/revoke", {"credentials": ["double-user-token"]}).status == 403
+    assert github.state()["failures"] == ["POST /credentials/revoke: request with credentials"]
+    bodies: list[dict[str, Any]] = [{}, {"credentials": []}, {"credentials": [1]}, {"credentials": "x"}]
+    for body in bodies:
+        assert github.api("POST", "/credentials/revoke", body, token=None).status == 422
+    assert github.api("GET", "/user").status == 200

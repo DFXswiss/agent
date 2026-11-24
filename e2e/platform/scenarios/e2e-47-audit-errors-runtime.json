@@ -1,0 +1,23 @@
+{
+  "name": "e2e-47-audit-errors-runtime",
+  "description": "E2E-47 (KOR-40): two turns with plain answers; between them the guest's API process is restarted, so the second turn meets a gateway without credential (guest.error credential_missing, provisioned again).",
+  "steps": [
+    {
+      "id": "first",
+      "expect": { "user_text_contains": "E2E46-FIRST", "has_tools": true, "has_tool_result": false },
+      "reply": { "content": [{ "type": "text", "text": "First answer kz46-answer-r3t8w1q5." }] }
+    },
+    {
+      "id": "second",
+      "expect": { "user_text_contains": "E2E46-SECOND", "has_tool_result": false },
+      "reply": { "content": [{ "type": "text", "text": "Second answer kz46-answer-y6p2m9d4." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Audit" }] }
+    }
+  ]
+}

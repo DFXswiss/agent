@@ -199,8 +199,9 @@ OS_CHECKS: dict[str, tuple[str, ...]] = {
     "ATK-12": ("exec_sh",),
     "ATK-27": ("tcp_external",),
     "ATK-28": ("udp_external", "dns"),
-    "ATK-29": ("tcp_other_local_port",),
-    "ATK-30": ("tcp_bind",),
+    # ATK-29 also covers another session's abstract unix socket (KOR-40, ADR-064 section 4)
+    "ATK-29": ("tcp_other_local_port", "unix_bind_abstract", "unix_passcred", "io_uring"),
+    "ATK-30": ("tcp_bind", "unix_listen"),
     "ATK-31": ("unshare_user_namespace",),
     "ATK-32": ("exec_python3",),
 }

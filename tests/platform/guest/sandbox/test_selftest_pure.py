@@ -13,6 +13,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -188,6 +189,24 @@ def test_unshare_reports_the_errno(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(ctypes, "CDLL", lambda name, use_errno: Libc())
     assert probe.observe(probe._unshare) == "errno:EPERM"
+
+
+def test_io_uring_reports_the_errno(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Libc:
+        def syscall(self, number: int, entries: int, params: object) -> int:
+            assert (number, entries) == (probe.SYS_IO_URING_SETUP, 1)
+            ctypes.set_errno(errno.EPERM)
+            return -1
+
+    monkeypatch.setattr(ctypes, "CDLL", lambda name, use_errno: Libc())
+    assert probe.observe(probe._io_uring) == "errno:EPERM"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="abstract unix names are Linux only")
+def test_unix_listen_outside_the_unit_listens() -> None:
+    """Outside the unit the check reaches ``listen`` on an automatically named socket and succeeds; inside, the unit
+    refuses it (tests/platform/guest_linux)."""
+    assert probe.observe(probe._unix_listen) == "ok"
 
 
 def test_stat_and_sendto_helpers(tmp_path: Path) -> None:

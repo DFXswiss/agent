@@ -20,7 +20,11 @@ gateway is the only way to a model provider (nftables lets only the ``platform``
    waits and reports, again every ``CREDENTIAL_REPORT_SECONDS``: the runner ignores a report within its 10 s cooldown
    after a provisioning. Without the hold Claude Code gave up after three retries of the ``503`` (about 4.5 s) and the
    turn ended with an API error.
-4. **Model** - must be in the session's allow-list: else ``400 model_not_allowed`` in the Anthropic error shape.
+4. **Turn** - a ``/v1/messages`` request that can make the agent act (a non-empty ``tools``, a ``tool_choice`` or an
+   ``mcp_servers``) only while the session's turn is confirmed (op ``turn.check``: the ``UserPromptSubmit`` hook
+   accepted a registered prompt): else ``403 permission_error`` and ``guest.error turn_unconfirmed`` (ADR-064 section
+   1; a failing op refuses as well). Suppressed only by the fault switch ``open`` of a TEST_MODE golden.
+   **Model** - must be in the session's allow-list: else ``400 model_not_allowed`` in the Anthropic error shape.
 5. **Budget** - daily platform budget of the provisioning plus the cost observed since: else ``429 budget_exceeded``.
 6. **Forward** - to ``<upstream base><path>`` plus the query parameters of ``FORWARDED_QUERY`` (Claude Code's
    ``beta=true``; any other parameter is dropped, so a session cannot add provider options, ATK-39) with the
@@ -265,6 +269,15 @@ class _Refusal(Exception):
         self.response = response
 
 
+MESSAGES_PATH = "/v1/messages"
+
+
+def can_act(data: dict[str, Any]) -> bool:
+    """The request can make the agent act: tools, a tool choice or provider-side MCP servers."""
+    tools, servers = data.get("tools"), data.get("mcp_servers")
+    return bool(tools) or data.get("tool_choice") is not None or bool(servers)
+
+
 @dataclass
 class _Call:
     """One authenticated model request on its way through the gateway."""
@@ -273,6 +286,7 @@ class _Call:
     model: str
     body: bytes
     record_usage: bool
+    acts: bool = False
     request_id: str = ""
     context_window: int = 0
 
@@ -289,11 +303,13 @@ class Gateway:
         read_timeout: float = READ_TIMEOUT,
         tls: Callable[[], ssl.SSLContext] = ssl.create_default_context,
         peer_table: str = "",
+        fail_open: bool = False,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.control = control
         self.peer_table = peer_table
+        self.fail_open = fail_open
         self.store = store or CredentialStore()
         self.connect_timeout = connect_timeout
         self.read_timeout = read_timeout
@@ -315,6 +331,9 @@ class Gateway:
             return _overloaded()
         try:
             call = self._call(request, record_usage)
+            if path == MESSAGES_PATH and call.acts and not self._confirmed(call.session_id):
+                self._append("guest.error", {"code": "turn_unconfirmed"}, call.session_id)
+                self._refuse(call, 403, "permission_error", "The platform did not confirm a prompt for this turn.")
             found = self._credential(call.session_id)
             if found is None:
                 # The wait for a new provisioning holds no slot: it must not block the other sessions of the VM.
@@ -378,7 +397,17 @@ class Gateway:
         if ROUTING_FIELDS & set(data):
             message = "Model or provider routing fields are not allowed."
             raise _Refusal(anthropic_error(400, "invalid_request_error", message))
-        return _Call(session_id, model, body, record_usage)
+        return _Call(session_id, model, body, record_usage, acts=can_act(data))
+
+    def _confirmed(self, session_id: str) -> bool:
+        """The session's turn is confirmed (op ``turn.check``); a failing op confirms nothing."""
+        if self.fail_open:
+            return True
+        try:
+            answer = self.control.call("turn.check", {"session_id": session_id})
+        except ApiSockError:
+            return False
+        return answer.get("confirmed") is True
 
     def _admit(self, call: _Call, found: tuple[Credential, float] | None) -> Credential:
         """The session's credential if there is one, the model is allowed and the budget not used up; else
@@ -601,10 +630,11 @@ _GATEWAYS: weakref.WeakKeyDictionary[ApiClient, Gateway] = weakref.WeakKeyDictio
 _GATEWAYS_LOCK = threading.Lock()
 
 
-def gateway_for(control: ApiClient, peer_table: str = "") -> Gateway:
-    """The gateway of the API process that owns ``control`` (one credential store per process)."""
+def gateway_for(control: ApiClient, peer_table: str = "", *, fail_open: bool = False) -> Gateway:
+    """The gateway of the API process that owns ``control`` (one credential store per process); ``fail_open`` only for
+    the fault switch ``open`` of a TEST_MODE golden (``fault.guard_suppressed``)."""
     with _GATEWAYS_LOCK:
         found = _GATEWAYS.get(control)
         if found is None:
-            found = _GATEWAYS[control] = Gateway(control, peer_table=peer_table)
+            found = _GATEWAYS[control] = Gateway(control, peer_table=peer_table, fail_open=fail_open)
         return found

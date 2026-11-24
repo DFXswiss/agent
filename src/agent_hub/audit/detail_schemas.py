@@ -26,6 +26,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["agent"],
     },
+    "agent.pairing": {"properties": {}, "required": []},
     "agent.revoke": {
         "properties": {
             "agent": [
@@ -33,6 +34,17 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             ]
         },
         "required": ["agent"],
+    },
+    "audit.repeat": {
+        "properties": {
+            "action": [
+                {"type": "string", "pattern": "^(read\\.[a-z_]+(\\.[a-z_]+)*|request\\.write|request\\.refused)$"}
+            ],
+            "repeats": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
+            "first_seq": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
+            "window_s": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
+        },
+        "required": ["action", "repeats", "first_seq", "window_s"],
     },
     "auth.login": {
         "properties": {"passkey_id": [{"type": "string", "pattern": "^(?:[A-Za-z0-9_-]{1,128}|sha256:[0-9a-f]{32})$"}]},
@@ -42,12 +54,13 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"passkey_id": [{"type": "string", "pattern": "^(?:[A-Za-z0-9_-]{1,128}|sha256:[0-9a-f]{32})$"}]},
         "required": ["passkey_id"],
     },
+    "auth.passkey_bundle": {"properties": {}, "required": []},
     "auth.passkey_remove": {
         "properties": {"passkey_id": [{"type": "string", "pattern": "^(?:[A-Za-z0-9_-]{1,128}|sha256:[0-9a-f]{32})$"}]},
         "required": ["passkey_id"],
     },
     "auth.recovery": {
-        "properties": {"step": [{"type": "string", "enum": ["begin", "finish", "rotate"]}]},
+        "properties": {"step": [{"type": "string", "enum": ["begin", "finish", "rotate", "rotate_begin"]}]},
         "required": ["step"],
     },
     "auth.refused": {
@@ -280,6 +293,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "session.file",
                         "session.terminal",
                         "session.status",
+                        "session.error",
                         "operation.params",
                         "operation.result",
                         "platform.read",
@@ -293,6 +307,16 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "ct_bytes": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
         },
         "required": ["kind", "scope", "scope_seq", "ct_bytes"],
+    },
+    "event.append_batch": {
+        "properties": {
+            "scope": [{"type": "string", "enum": ["org", "wg"]}],
+            "count": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
+            "first_scope_seq": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
+            "last_scope_seq": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
+            "ct_bytes": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+        },
+        "required": ["scope", "count", "first_scope_seq", "last_scope_seq", "ct_bytes"],
     },
     "hook.denied": {
         "properties": {
@@ -1036,6 +1060,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["result_count"],
     },
+    "read.stream": {"properties": {}, "required": []},
+    "read.stream.terminal": {"properties": {}, "required": []},
     "read.task.charges": {"properties": {}, "required": []},
     "read.task": {"properties": {}, "required": []},
     "read.task.operations": {"properties": {}, "required": []},
@@ -1048,6 +1074,24 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.workgroup": {"properties": {}, "required": []},
     "read.workgroup.tasks": {"properties": {}, "required": []},
     "read.wraps": {"properties": {}, "required": []},
+    "request.refused": {
+        "properties": {
+            "method": [{"type": "string", "enum": ["POST", "PUT", "PATCH", "DELETE"]}],
+            "route": [{"type": "string", "pattern": "^/v1/[ -~]{0,250}$"}],
+            "status": [{"type": "integer", "minimum": 400, "maximum": 599}],
+            "code": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}],
+        },
+        "required": ["method", "route", "status", "code"],
+    },
+    "request.write": {
+        "properties": {
+            "method": [{"type": "string", "enum": ["POST", "PUT", "PATCH", "DELETE"]}],
+            "route": [{"type": "string", "pattern": "^/v1/[ -~]{0,250}$"}],
+            "status": [{"type": "integer", "minimum": 200, "maximum": 399}],
+            "code": [{"type": "string", "enum": ["ok"]}],
+        },
+        "required": ["method", "route", "status", "code"],
+    },
     "runner.alert": {
         "properties": {
             "alert": [{"type": "string", "pattern": "^[a-z][a-z0-9_]*$", "minLength": 1, "maxLength": 64}],
@@ -1115,6 +1159,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "credit_exhausted",
                         "oom",
                         "unassigned",
+                        "hook_unavailable",
                     ],
                 }
             ],
@@ -1214,6 +1259,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["reason", "model_access", "model_id"],
     },
+    "settings.put": {
+        "properties": {
+            "model_access": [{"type": "string", "enum": ["auto", "subscription", "api_key", "platform"]}],
+            "model_id": [{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"}, {"type": "null"}],
+            "locale": [{"type": "string", "enum": ["de", "en"]}],
+        },
+        "required": ["model_access", "model_id", "locale"],
+    },
     "task.close": {"properties": {"by": [{"type": "string", "enum": ["user", "hub"]}]}, "required": ["by"]},
     "task.create": {
         "properties": {"origin": [{"type": "string", "enum": ["browser", "device"]}]},
@@ -1225,5 +1278,12 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "recipients": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
         },
         "required": ["level", "recipients"],
+    },
+    "wrap.put": {
+        "properties": {
+            "stored": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "ignored": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+        },
+        "required": ["stored", "ignored"],
     },
 }

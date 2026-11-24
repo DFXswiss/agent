@@ -1,0 +1,17 @@
+{
+  "prefix": "Session error:",
+  "subagent_hook_seen": "Claude Code tried to start a subagent itself; only the platform starts subagents.",
+  "gateway_route": "A model call on an unknown route was refused.",
+  "hook_handler_failed": "A safety check (hook) failed.",
+  "transcript_unreadable": "The conversation record of the session could not be read.",
+  "recorder_failed": "The terminal recording stopped.",
+  "scanner_failed": "The detection of changed files stopped.",
+  "journal_write_failed": "An entry of the session could not be stored.",
+  "pending_expired": "A request to the platform went unanswered for an hour and was dropped.",
+  "session_unit_failed": "The sandbox of the session failed.",
+  "credential_missing": "The model access was briefly missing and has been provided again.",
+  "auth_failed": "An access with a wrong session key was refused.",
+  "auth_rate_limited": "Repeated accesses with wrong keys were slowed down.",
+  "turn_unconfirmed": "A model call without a confirmed prompt was refused.",
+  "unknown": "Unknown error ({code})."
+}

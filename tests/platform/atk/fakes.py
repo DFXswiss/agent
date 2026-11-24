@@ -33,8 +33,10 @@ def skip_unselected(attack_id: str | None, mode: str | None) -> None:
     only = [item for item in os.environ.get("AGENT_ATK_ONLY", "").split(",") if item]
     if attack_id is not None and only and attack_id not in only:
         pytest.skip(f"{attack_id} is not selected by AGENT_ATK_ONLY")
-    if mode is not None and mode not in selected_modes():
-        pytest.skip(f"mode {mode} is not selected by AGENT_ATK_MODES")
+    # the run `outage` belongs to mode `fault` (driver.run_outage, ADR-064 section 3)
+    selected = "fault" if mode == "outage" else mode
+    if selected is not None and selected not in selected_modes():
+        pytest.skip(f"mode {selected} is not selected by AGENT_ATK_MODES")
 
 
 def assert_attack(results: Mapping[str, Any], attack_id: str, mode: str) -> None:

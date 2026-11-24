@@ -17,6 +17,8 @@ export interface QuotaBar {
 
 export interface QuotasState {
   readonly bars: readonly QuotaBar[] | null;
+  /** Unix ms since when the subscription refuses the read of its quotas (KOR-40), null when it does not. */
+  readonly unreadableSince: number | null;
 }
 
 declare module '../store' {
@@ -25,8 +27,8 @@ declare module '../store' {
   }
 }
 
-export const slice: Slice<'quotas'> = { name: 'quotas', initial: () => ({ bars: null }) };
+export const slice: Slice<'quotas'> = { name: 'quotas', initial: () => ({ bars: null, unreadableSince: null }) };
 
-export function setQuotas(store: Store, bars: readonly QuotaBar[]): void {
-  store.update('quotas', () => ({ bars }));
+export function setQuotas(store: Store, bars: readonly QuotaBar[], unreadableSince: number | null = null): void {
+  store.update('quotas', () => ({ bars, unreadableSince }));
 }

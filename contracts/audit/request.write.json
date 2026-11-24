@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/request.write.json",
+  "title": "audit detail request.write",
+  "description": "detail of audit rows with action request.write: a successful write request left no audit row of its own; written by the request pipeline (ADR-063 section 1). For the routes of agent_hub.audit.generic_routes (WebAuthn begin ceremonies, idempotent replays) it is their audit; for any other route it marks a defect. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "method": {
+      "type": "string",
+      "enum": [
+        "POST",
+        "PUT",
+        "PATCH",
+        "DELETE"
+      ]
+    },
+    "route": {
+      "type": "string",
+      "pattern": "^/v1/[ -~]{0,250}$"
+    },
+    "status": {
+      "type": "integer",
+      "minimum": 200,
+      "maximum": 399
+    },
+    "code": {
+      "type": "string",
+      "enum": [
+        "ok"
+      ]
+    }
+  },
+  "required": [
+    "method",
+    "route",
+    "status",
+    "code"
+  ],
+  "additionalProperties": false
+}

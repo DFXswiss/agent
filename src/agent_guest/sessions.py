@@ -49,6 +49,8 @@ Extension points (modules of ``control_routes/``, ADR-027 section 4, discovered 
 * ``CONTROL_ACTIONS``: mapping action -> ``handler(context, session_id)`` for the control actions other than
   ``stop`` (GST-06: ``interrupt``, ``suspend``); see ``control_routes/sessions.py``.
 
+A guest decision ends a live session with ``SessionManager.fail_running`` (``hook_unavailable``, ADR-064).
+
 Interface: ``SessionManager``, ``manager(context)``, ``install(context, manager)``, ``credential_provisioned``,
 ``stop_session``, ``deferred_prompt``, ``free_uid``, ``Paths``, ``System``, ``LinuxSystem``.
 """
@@ -644,6 +646,21 @@ class SessionManager:
             self.system.stop_unit(unit.UNIT_PREFIX + session_id)
             self.tmux.kill_session(tmux.session_name(session_id))
         self._emit("agent_ended", session_id)
+
+    def fail_running(self, session_id: str, reason: str) -> bool:
+        """End a live session ``failed`` with ``reason`` (the guest's own decision, e.g. ``hook_unavailable``): unit
+        stopped, pane closed. False when the session is unknown, has ended or is being stopped."""
+        with self._lock:
+            session = self.context.state.session(session_id)
+            if session is None or session.state in ENDED_STATES or session_id in self._stopping:
+                return False
+            running = self._running.get(session_id)
+            if running is not None:
+                running.stopped = True  # the watcher must not report the end it sees as an exit of the agent
+            self._fail(session, reason)
+        self.system.stop_unit(unit.UNIT_PREFIX + session_id)
+        self.tmux.kill_session(tmux.session_name(session_id))
+        return True
 
     def _fail(self, session: Session, reason: str) -> None:
         with self.context.journal.transaction() as db:

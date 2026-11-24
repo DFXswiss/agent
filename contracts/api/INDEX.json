@@ -1170,7 +1170,7 @@
       "request_kind": "stream",
       "request": "ws/sse/query.json",
       "response": "ws/sse/frame.json",
-      "read_resource": null,
+      "read_resource": "stream",
       "streaming": true,
       "owner": "CTR-03"
     },

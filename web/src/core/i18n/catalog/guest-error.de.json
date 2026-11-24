@@ -1,0 +1,17 @@
+{
+  "prefix": "Fehler in der Session:",
+  "subagent_hook_seen": "Claude Code wollte selbst einen Subagenten starten; Subagenten startet nur die Plattform.",
+  "gateway_route": "Ein Modellaufruf auf einem unbekannten Weg wurde abgelehnt.",
+  "hook_handler_failed": "Eine Sicherheitsprüfung (Hook) ist fehlgeschlagen.",
+  "transcript_unreadable": "Das Gesprächsprotokoll der Session war nicht lesbar.",
+  "recorder_failed": "Die Aufzeichnung des Terminals ist ausgefallen.",
+  "scanner_failed": "Die Erkennung geänderter Dateien ist ausgefallen.",
+  "journal_write_failed": "Ein Eintrag der Session konnte nicht gespeichert werden.",
+  "pending_expired": "Eine Anfrage an die Plattform blieb eine Stunde unbeantwortet und wurde verworfen.",
+  "session_unit_failed": "Die Sandbox der Session ist ausgefallen.",
+  "credential_missing": "Der Modellzugang fehlte kurz und wurde neu bereitgestellt.",
+  "auth_failed": "Ein Zugriff mit einem falschen Session-Schlüssel wurde abgewiesen.",
+  "auth_rate_limited": "Wiederholte Zugriffe mit falschen Schlüsseln wurden gebremst.",
+  "turn_unconfirmed": "Ein Modellaufruf ohne bestätigten Prompt wurde abgelehnt.",
+  "unknown": "Unbekannter Fehler ({code})."
+}

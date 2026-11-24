@@ -5,14 +5,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { closeTask, loadChat } from '../../../core/chat/actions';
+import { formatDuration } from '../../../core/monitoring/units';
 import { selectNewestTitle, selectRenamed } from '../../../core/operations/renamed';
+import { runtimeSeconds } from '../../../core/sessions/runtime';
 import type { TaskRow } from '../../../core/store/slices/tasks';
 import { loadTask, sendErrorCode } from '../../../core/tasks/send';
+import { useNow } from '../../countdown/useNow';
 import { useLiveReload } from '../../hooks/useLiveReload';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { taskTabs } from '../../registries/task-tabs';
 import { useAppEnv } from '../../shell/context';
+import { RUNTIME_TICK_MS } from '../../task-tabs/sessions/SessionsTab';
 import { LoadError } from '../errors/pages';
 import { useDirectory, useOrgView, useTitle } from '../tasks/hooks';
 import { activeTab, Tabs } from './Tabs';
@@ -117,6 +121,7 @@ function TaskView({ row }: { readonly row: TaskRow }) {
           <span className="text-sm text-gray-600" data-testid="task.state" data-state={row.state}>
             {t(`tasks.state.${row.state}`)}
           </span>
+          <TaskRuntime start={row.created_at} end={row.closed_at} />
         </div>
         {writer && <TaskMenu task={row} />}
       </header>
@@ -125,6 +130,19 @@ function TaskView({ row }: { readonly row: TaskRow }) {
         <active.Component orgId={row.org_id} taskId={row.task_id} />
       </Unlocking>
     </main>
+  );
+}
+
+/** The runtime of the task: from its creation to its close, or to now while it is open (KOR-40). */
+export function TaskRuntime({ start, end }: { readonly start: string; readonly end: string | null }) {
+  const { t } = useI18n();
+  const now = useNow(end === null, RUNTIME_TICK_MS);
+  const seconds = runtimeSeconds(start, end, true, now);
+  if (seconds === null) return null;
+  return (
+    <span className="text-xs text-gray-600" data-testid="task.runtime">
+      {t('task.runtime', { duration: formatDuration(seconds) })}
+    </span>
   );
 }
 

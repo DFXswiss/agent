@@ -349,12 +349,14 @@ def test_repetition_returns_the_original_decision(ops: Ops) -> None:
     body = ops.request(session, dedupe="r")
     first = ops.register(body).json()
     result = ops.finish(holder, "failed")
-    audit_count = ops.desk.rows("SELECT count(*) FROM hub.audit")
+    actions = "SELECT count(*) FROM hub.audit WHERE action NOT LIKE 'request.%%'"
+    audit_count = ops.desk.rows(actions)
     again = ops.register(body)
     assert again.status_code == 200
     assert first == {"state": "duplicate", "duplicate_of": holder, "original": {"state": "accepted"}}
     assert again.json() == {**first, "original": {"state": "failed", "result_event_id": result}, "replayed": True}
-    assert ops.desk.rows("SELECT count(*) FROM hub.audit") == audit_count
+    assert ops.desk.rows(actions) == audit_count  # the repeat leaves only the pipeline's generic row (ADR-063)
+    assert ops.desk.rows("SELECT count(*) FROM hub.audit WHERE action = 'request.write'") == [(1,)]
     assert len(ops.transitions(body["operation_id"])) == 2
     rejected = ops.request(session, local_check="rejected", error_code="size_exceeded")
     assert ops.register(rejected).json() == {"state": "rejected", "error_code": "size_exceeded"}

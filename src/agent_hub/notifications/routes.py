@@ -24,7 +24,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from agent_hub.audit.chain import ACTING_AGENT, AuditRow, append_audit
+from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.auth.fields import Strict, Uuid7
 from agent_hub.device.tasks import decode_cursor, encode_cursor
 from agent_hub.errors import HubError
@@ -119,19 +119,18 @@ def _read(context: HubContext, user: UUID, ids: list[str] | None, account: bool)
     now = context.clock()
     with context.pool.connection() as connection, connection.transaction():
         marked = mark_read(connection, user, ids, now, account=account)
-        if ACTING_AGENT.get() is not None:
-            # an agent marked notifications read (it could hide an account notification): audited (KOR-24)
-            append_audit(
-                connection,
-                AuditRow(
-                    at=now,
-                    actor_kind="user",
-                    actor_id=user,
-                    action=READ_ACTION,
-                    result="ok",
-                    detail={"marked": marked, "scope": _scope(ids, account)},
-                ),
-            )
+        # every marking is audited (ADR-063 section 2); the row of an agent's request names the agent (KOR-24)
+        append_audit(
+            connection,
+            AuditRow(
+                at=now,
+                actor_kind="user",
+                actor_id=user,
+                action=READ_ACTION,
+                result="ok",
+                detail={"marked": marked, "scope": _scope(ids, account)},
+            ),
+        )
 
 
 @router.post("/v1/notifications/read", auth="browser", right="user")

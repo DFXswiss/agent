@@ -1,0 +1,6 @@
+{
+  "action": "read.me",
+  "repeats": 12,
+  "first_seq": 4711,
+  "window_s": 300
+}

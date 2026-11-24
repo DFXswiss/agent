@@ -106,9 +106,10 @@ def test_enrollments_list_verified_pending_requests_with_the_log(plat: Platform,
         "created_at": "2026-11-21T12:00:00.123Z",
     }
     hub.flush_read_log()
-    assert plat.query("SELECT actor_kind FROM hub.audit WHERE action = 'read.platform.enrollments'") == [
-        ("operator",),
-        ("operator",),
+    # the same read twice in one window: one row and its repeat (ADR-063 section 3)
+    assert plat.query("SELECT actor_kind FROM hub.audit WHERE action = 'read.platform.enrollments'") == [("operator",)]
+    assert plat.query("SELECT actor_kind, detail->>'action' FROM hub.audit WHERE action = 'audit.repeat'") == [
+        ("operator", "read.platform.enrollments")
     ]
 
 

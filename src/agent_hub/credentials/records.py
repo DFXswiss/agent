@@ -36,6 +36,7 @@ import psycopg
 import psycopg.errors
 
 from agent_hub.audit.chain import AuditRow, append_audit
+from agent_hub.audit.recorder import unchanged
 from agent_hub.credentials import notices
 from agent_hub.crypto import credential as credential_format
 from agent_hub.crypto.encoding import b64u_decode, b64u_encode, canonical, format_time
@@ -185,6 +186,7 @@ def put_record(
     ct, sig = b64u_decode(record["ct"]), b64u_decode(record["sig"])
     stored = _stored(connection, owner, kind, lock=True)
     if stored is not None and (stored.header_text, stored.ct, stored.sig) == (header_text, ct, sig):
+        unchanged()
         return Change(version=stored.version, devices=())
     current = 0 if stored is None else stored.version
     if expected_version != current:

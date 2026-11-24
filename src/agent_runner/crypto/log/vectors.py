@@ -1,4 +1,4 @@
-"""Copied from agent-core src/agent_hub/log/vectors.py at 9d06f916bd4d.
+"""Copied from agent-core src/agent_hub/log/vectors.py at 3392035c31d1.
 
 Log vectors of 04-crypto.md section 10 (`contracts/vectors/log*.json`, `platform-log.json`), discovered by the
 generator of `agent_hub.crypto.vectors` through `SECTIONS`.

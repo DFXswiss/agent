@@ -67,6 +67,7 @@
             "session.hook",
             "session.file",
             "session.status",
+            "session.error",
             "operation.params",
             "operation.result",
             "platform.read",
@@ -1349,6 +1350,10 @@
         "runtime_ms"
       ],
       "additionalProperties": false
+    },
+    "body_session_error": {
+      "description": "an error the guest reported for the session (KOR-40, ADR-064 section 5): the code of the closed list of the guest journal's guest.error record (contracts/guest/journal/record.json), never free text",
+      "$ref": "../guest/journal/record.json#/$defs/body_guest_error"
     }
   }
 }

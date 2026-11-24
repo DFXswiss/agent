@@ -28,6 +28,7 @@ import psycopg
 import psycopg.errors
 
 from agent_hub.audit.chain import AuditRow, append_audit
+from agent_hub.audit.recorder import unchanged
 from agent_hub.crypto import agent as agent_format
 from agent_hub.crypto.encoding import b64u_decode, b64u_encode, format_time
 from agent_hub.crypto.errors import CryptoError
@@ -154,6 +155,7 @@ def create_pairing(
         stored = _pairing(found)
         if stored.kem_pub != kem_pub or stored.sig_pub != sig_pub:
             raise HubError("id_conflict")
+        unchanged()
         return stored
     key = source_key(source)
     parsed = _address(source)
@@ -169,6 +171,17 @@ def create_pairing(
     except psycopg.errors.UniqueViolation:
         # the keys of an agent that is not revoked (`agent_sig_pub`)
         raise HubError("id_conflict") from None
+    append_audit(
+        connection,
+        AuditRow(
+            at=now,
+            actor_kind="anonymous",
+            action="agent.pairing",
+            result="ok",
+            target_kind="agent",
+            target_id=str(pairing_id),
+        ),
+    )
     return Pairing(id=pairing_id, kem_pub=kem_pub, sig_pub=sig_pub, state="open", expires_at=expires_at)
 
 
@@ -265,6 +278,7 @@ def confirm(connection: Connection, user: UUID, key_id: str, body: Confirmation,
             body.claim_hash,
         )
         if same:
+            unchanged()
             return Confirmed(changed=False)
         raise HubError("id_conflict")
     if state != "open":
@@ -332,6 +346,8 @@ def claim(connection: Connection, agent_id: UUID, claim_raw: bytes, now: datetim
             (now, now, agent_id),
         )
         _audit(connection, "agent.claim", user, agent_id, now)
+    else:
+        unchanged()  # the repeat of an active agent's claim
     return me(connection, agent_id)
 
 
@@ -386,6 +402,7 @@ def revoke(connection: Connection, user: UUID, agent_id: UUID, now: datetime) ->
     if row is None:
         raise HubError("not_found")
     if row[0] == "revoked":
+        unchanged()
         return False
     connection.execute(
         "UPDATE hub.agent SET state = 'revoked', revoked_at = %s, bundle_ct = NULL WHERE id = %s", (now, agent_id)
@@ -400,6 +417,8 @@ def revoke_all(connection: Connection, user: UUID, now: datetime) -> list[UUID]:
         "SELECT id FROM hub.agent WHERE user_id = %s AND state IN ('confirmed', 'active') ORDER BY id FOR UPDATE",
         (user,),
     ).fetchall()
+    if not rows:
+        unchanged()
     for (agent_id,) in rows:
         revoke(connection, user, agent_id, now)
     return [agent_id for (agent_id,) in rows]

@@ -1,10 +1,17 @@
-"""The read log (03-api.md section 1, 02-data-model.md section 2.9): every authenticated `GET` appends an audit row
-`read.<resource>`, batched and written within one second.
+"""The read log (03-api.md section 1, 02-data-model.md section 2.9, ADR-063 section 3): every authenticated `GET`
+with a `read_resource` is recorded before its answer leaves the hub, and repeats are counted instead of listed. The
+rows the request pipeline writes for writes (`agent_hub.http.writelog`) go through the same windows.
 
-The request pipeline calls `ReadLog.record` after the response; the writer task wakes on the first queued row, waits
-until that row is `max_delay` seconds old, then writes every queued row through `append_audit` in one transaction. A
-failed write keeps the rows and retries after `max_delay`; at most `max_rows` rows are kept (the oldest are dropped
-with an error line). Rows are validated when recorded, so one malformed row never blocks a batch.
+A **read key** is everything an audit row of a read says except its time - action, result, actor kind and ID, agent,
+device, organization, workgroup, task, session, target and detail - plus a fingerprint of the whole query (`query_key`),
+so reading many pages, cursors or filters is many rows. The first read of a key opens a window of `window` seconds (300
+by default) and is appended at once (`ReadLog.admit`, a worker thread of the request; the request pipeline answers `503
+unavailable` when that fails, so no read leaves without its row). Every further read of the key inside the window waits
+until the first row is stored and only counts. When the window ends - the sweeper runs every `sweep` seconds, `flush`
+and `stop` end all windows - a key with repeats gets one row `audit.repeat` with the IDs of the first row and the detail
+`{action, repeats, first_seq, window_s}`. At most `max_keys` windows are open: beyond that the oldest are ended early.
+Nothing is dropped; a process that is killed (not stopped) loses the repeat counts of its open windows, never the first
+row of a key.
 
 Placement: most reads name only a task, a session, an operation or an event scope (`/v1/tasks/{task}/operations`,
 `/v1/operations/{id}`, `/v1/scopes/{scope}/events?task=`), but the organization's audit view lists rows by `org_id`
@@ -20,39 +27,32 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
-import re
 import threading
 import time
-from collections import deque
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
+from urllib.parse import parse_qsl, urlencode
 from uuid import UUID
 
 import psycopg
 from psycopg_pool import ConnectionPool
 
 from agent_hub.audit.chain import AuditRow, append_audit, validate_row
+from agent_hub.audit.placement import named_ids, place, target
 from agent_hub.auth.keys import Principal
+from agent_hub.clock import Clock, system_clock
 from agent_hub.db.pool import transaction
 
 LOG = logging.getLogger("agent_hub.readlog")
-MAX_DELAY_SECONDS = 1.0
-MAX_ROWS = 10_000
-UUID_VERSION = 7
-ID_PARAMETERS = ("org", "wg", "task", "session")
-_TARGET_KIND_RE = re.compile(r"[a-z_]{1,32}")
-_TARGET_ID_RE = re.compile(r"[ -~]{1,128}")
-
-
-def _uuid7(value: object) -> UUID | None:
-    try:
-        parsed = UUID(str(value))
-    except ValueError:
-        return None
-    return parsed if parsed.version == UUID_VERSION and str(parsed) == str(value) else None
+READ_WINDOW_SECONDS = 300.0
+SWEEP_SECONDS = 5.0
+MAX_KEYS = 50_000
+FIRST_WAIT_SECONDS = 30.0
+REPEAT_ACTION = "audit.repeat"
 
 
 def _result(status: int) -> str:
@@ -80,17 +80,8 @@ def read_row(
     single query parameters of those names, when they are UUIDv7 text. The target is the last path parameter (kind =
     its name, or the resource for `{id}`); the detail is empty (`contracts/audit/read.*.json`).
     """
-    ids = {
-        name: _uuid7(path_params[name]) if name in path_params else _uuid7(query.get(name)) for name in ID_PARAMETERS
-    }
-    target_kind: str | None = None
-    target_id: str | None = None
-    if path_params:
-        name, value = list(path_params.items())[-1]
-        text = str(value)
-        kind = (resource if name == "id" else name).replace(".", "_")[:32]
-        if _TARGET_KIND_RE.fullmatch(kind) and _TARGET_ID_RE.fullmatch(text):
-            target_kind, target_id = kind, text
+    ids = named_ids(path_params, query)
+    target_kind, target_id = target(path_params, resource)
     device_id = principal.principal_id if principal.kind == "device" else None
     agent_id = principal.attributes.get("agent_id") if principal.kind == "agent" else None
     return AuditRow(
@@ -110,148 +101,188 @@ def read_row(
     )
 
 
-_PLACEMENT = {
-    "session": "SELECT org_id, wg_id, task_id, id FROM hub.session WHERE id = %s",
-    "operation": "SELECT org_id, wg_id, task_id, session_id FROM hub.operation WHERE id = %s",
-    "task": "SELECT org_id, wg_id, id, NULL::uuid FROM hub.task WHERE id = %s",
-    "wg": "SELECT org_id, id, NULL::uuid, NULL::uuid FROM hub.wg WHERE id = %s",
-    "org": "SELECT id, NULL::uuid, NULL::uuid, NULL::uuid FROM hub.org WHERE id = %s",
-}
-# Targets of `{id}` routes and event scopes that name the read resource itself.
-_TARGET_ANCHORS = {"session": ("session",), "operation": ("operation",), "scope": ("wg", "org")}
+Key = tuple[Any, ...]
 
 
-def _anchor(row: AuditRow) -> tuple[tuple[str, ...], UUID] | None:
-    """The tables and the most specific ID of the row to place it by (module docstring)."""
-    for kind, value in (("session", row.session_id), ("task", row.task_id), ("wg", row.wg_id)):
-        if value is not None:
-            return (kind,), value
-    tables = _TARGET_ANCHORS.get(row.target_kind or "")
-    target = _uuid7(row.target_id)
-    return None if tables is None or target is None else (tables, target)
+def query_key(query_string: bytes) -> str:
+    """A fingerprint of the whole query (order of the parameters ignored): pages, cursors and filters are different
+    reads."""
+    if not query_string:
+        return ""
+    pairs = sorted(parse_qsl(query_string.decode("latin-1"), keep_blank_values=True))
+    return hashlib.sha256(urlencode(pairs).encode("latin-1")).hexdigest()[:32]
 
 
-def place(connection: psycopg.Connection[Any], row: AuditRow) -> AuditRow:
-    """The row with its missing organization, workgroup, task and session from the hub's rows (module docstring)."""
-    anchor = None if row.result != "ok" else _anchor(row)
-    if anchor is None:
-        return row
-    tables, value = anchor
-    found = None
-    for table in tables:
-        found = connection.execute(_PLACEMENT[table], (value,)).fetchone()
-        if found is not None:
-            break
-    if found is None:
-        return row
-    named = (row.org_id, row.wg_id, row.task_id, row.session_id)
-    if any(
-        mine is not None and theirs is not None and mine != theirs for mine, theirs in zip(named, found, strict=True)
-    ):
-        return row
-    org, wg, task, session = (mine or theirs for mine, theirs in zip(named, found, strict=True))
-    return replace(row, org_id=org, wg_id=wg, task_id=task, session_id=session)
+def read_key(row: AuditRow, query: str = "") -> Key:
+    """Everything a row says except its time, and the fingerprint of its query (the detail of a read is empty; the one
+    of a pipeline row names route, status and code, so different requests never count as repeats of each other)."""
+    return (
+        query,
+        tuple(sorted(row.detail.items())),
+        row.action,
+        row.result,
+        row.actor_kind,
+        row.actor_id,
+        row.agent_id,
+        row.device_id,
+        row.org_id,
+        row.wg_id,
+        row.task_id,
+        row.session_id,
+        row.target_kind,
+        row.target_id,
+    )
+
+
+class ReadNotStored(RuntimeError):
+    """The first row of the read's key is not stored (its write failed or did not finish in time)."""
+
+
+@dataclass
+class _Window:
+    """The open window of one read key."""
+
+    opened: float
+    first: AuditRow
+    first_seq: int | None = None
+    repeats: int = 0
+    failed: bool = False
+    stored: threading.Event = field(default_factory=threading.Event)
 
 
 class ReadLog:
-    """The batching writer of read-log rows."""
+    """The read log of one hub process (module docstring)."""
 
     def __init__(
         self,
         pool: ConnectionPool[psycopg.Connection[Any]],
         *,
-        max_delay: float = MAX_DELAY_SECONDS,
-        max_rows: int = MAX_ROWS,
+        window: float = READ_WINDOW_SECONDS,
+        sweep: float = SWEEP_SECONDS,
+        max_keys: int = MAX_KEYS,
+        first_wait: float = FIRST_WAIT_SECONDS,
         monotonic: Callable[[], float] = time.monotonic,
+        clock: Clock = system_clock,
     ) -> None:
         self._pool = pool
-        self.max_delay = max_delay
-        self._max_rows = max_rows
+        self.window = window
+        self.sweep = sweep
+        self._max_keys = max_keys
+        self._first_wait = first_wait
         self._monotonic = monotonic
-        self._rows: deque[AuditRow] = deque()
-        self._first_at: float | None = None
+        self._clock = clock
         self._lock = threading.Lock()
-        self._wake: asyncio.Event | None = None
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._open: dict[Key, _Window] = {}
+        self._ended: list[_Window] = []  # windows with repeats whose row is not written yet
         self._task: asyncio.Task[None] | None = None
 
     def pending(self) -> int:
-        """The number of rows not yet written."""
+        """The number of windows whose repeats are not written yet (open or ended)."""
         with self._lock:
-            return len(self._rows)
+            return sum(1 for item in self._open.values() if item.repeats) + len(self._ended)
 
-    def record(self, row: AuditRow) -> None:
-        """Queue one row (validated now) and wake the writer."""
+    def admit(self, row: AuditRow, query: str = "") -> None:
+        """Record one read (validated now; `query` is its `query_key`): append the first row of its key, or count a
+        repeat once that row is stored. Raises when the read is not recorded (the answer must not leave the hub)."""
         validate_row(row)
+        key = read_key(row, query)
+        now = self._monotonic()
         with self._lock:
-            self._keep([row])
-        self._notify()
+            found = self._open.get(key)
+            if found is not None and now - found.opened >= self.window:
+                self._end(key, found)
+                found = None
+            if found is None:
+                mine = self._open[key] = _Window(opened=now, first=row)
+                self._trim()
+            else:
+                mine = None
+                found.repeats += 1
+        if mine is None:
+            assert found is not None
+            if not found.stored.wait(self._first_wait) or found.failed:
+                with self._lock:
+                    found.repeats -= 1
+                raise ReadNotStored(row.action)
+            return
+        try:
+            with transaction(self._pool) as connection:
+                stored = append_audit(connection, place(connection, row))
+        except BaseException:
+            with self._lock:
+                mine.failed = True
+                if self._open.get(key) is mine:
+                    del self._open[key]
+            mine.stored.set()
+            raise
+        mine.first = stored.row  # placed: the repeats carry exactly the IDs of the first row (review M1)
+        mine.first_seq = stored.seq
+        mine.stored.set()
 
-    def _keep(self, rows: list[AuditRow]) -> None:
-        if self._first_at is None:
-            self._first_at = self._monotonic()
-        self._rows.extend(rows)
-        dropped = 0
-        while len(self._rows) > self._max_rows:
-            self._rows.popleft()
-            dropped += 1
-        if dropped:
-            LOG.error("read log: %d rows dropped (queue full)", dropped)
+    def _end(self, key: Key, window: _Window) -> None:
+        """End an open window (under the lock); one with repeats waits for its row in `_ended`."""
+        del self._open[key]
+        if window.repeats:
+            self._ended.append(window)
 
-    def _notify(self) -> None:
-        if self._loop is not None and self._wake is not None:
-            self._loop.call_soon_threadsafe(self._wake.set)
+    def _trim(self) -> None:
+        while len(self._open) > self._max_keys:
+            oldest = min(self._open, key=lambda key: self._open[key].opened)
+            self._end(oldest, self._open[oldest])
 
-    def flush(self) -> int:
-        """Write every queued row in one transaction; the number written. On failure the rows stay queued."""
+    def _repeat_row(self, window: _Window) -> AuditRow:
+        return replace(
+            window.first,
+            at=self._clock(),
+            action=REPEAT_ACTION,
+            detail={
+                "action": window.first.action,
+                "repeats": window.repeats,
+                "first_seq": window.first_seq,
+                "window_s": int(self.window),
+            },
+        )
+
+    def flush(self, *, all_windows: bool = True) -> int:
+        """End the windows (all, or only the expired ones) and write the `audit.repeat` rows of those with repeats in
+        one transaction; the number written. On failure the rows wait for the next call."""
+        now = self._monotonic()
         with self._lock:
-            batch = list(self._rows)
-            self._rows.clear()
-            self._first_at = None
+            for key, window in list(self._open.items()):
+                if window.first_seq is not None and (all_windows or now - window.opened >= self.window):
+                    self._end(key, window)
+            # a window ended (beyond `max_keys`) while its first row was still being written waits for that write; one
+            # whose first row failed has nothing to repeat (its repeats were refused)
+            settled = [window for window in self._ended if window.stored.is_set()]
+            self._ended = [window for window in self._ended if not window.stored.is_set()]
+            batch = [window for window in settled if not window.failed and window.repeats]
         if not batch:
             return 0
         try:
             with transaction(self._pool) as connection:
-                for row in batch:
-                    append_audit(connection, place(connection, row))
+                for window in batch:
+                    append_audit(connection, self._repeat_row(window))
         except BaseException:
             with self._lock:
-                later = list(self._rows)
-                self._rows.clear()
-                self._first_at = None
-                self._keep(batch + later)
+                self._ended = batch + self._ended
             raise
         return len(batch)
 
-    def _delay(self) -> float:
-        with self._lock:
-            first_at = self._first_at
-        return 0.0 if first_at is None else self.max_delay - (self._monotonic() - first_at)
-
-    async def _run(self, wake: asyncio.Event) -> None:
+    async def _run(self) -> None:
         while True:
-            await wake.wait()
-            wake.clear()
-            delay = self._delay()
-            if delay > 0:
-                await asyncio.sleep(delay)
+            await asyncio.sleep(self.sweep)
             try:
-                await asyncio.to_thread(self.flush)
+                await asyncio.to_thread(self.flush, all_windows=False)
             except Exception:
-                LOG.error("read log: writing failed; %d rows kept for the next attempt", self.pending())
-                wake.set()
+                LOG.error("read log: writing the repeats failed; %d windows kept for the next attempt", self.pending())
 
     async def start(self) -> None:
-        """Start the writer task on the running loop (rows queued before are written within `max_delay`)."""
-        self._loop = asyncio.get_running_loop()
-        self._wake = asyncio.Event()
-        self._task = asyncio.create_task(self._run(self._wake), name="agent-hub-read-log")
-        if self.pending():
-            self._wake.set()
+        """Start the sweeper on the running loop."""
+        self._task = asyncio.create_task(self._run(), name="agent-hub-read-log")
 
     async def stop(self) -> None:
-        """Stop the writer and write what is left."""
-        task, self._task, self._loop, self._wake = self._task, None, None, None
+        """Stop the sweeper and write the repeats of every window."""
+        task, self._task = self._task, None
         if task is not None:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -259,4 +290,4 @@ class ReadLog:
         try:
             await asyncio.to_thread(self.flush)
         except Exception:
-            LOG.error("read log: final write failed; %d rows lost", self.pending())
+            LOG.error("read log: final write failed; the repeats of %d windows are lost", self.pending())

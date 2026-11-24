@@ -168,7 +168,7 @@ def test_marking_notifications_read_by_an_agent_is_audited(browser: FakeBrowser)
             )
     session = browser.client(browser.login(account))
     assert session.get("/v1/me").json()["unread_notifications"] == 1
-    # a session's read is not audited; `all` without `account` leaves the account notification unread
+    # every marking is audited (ADR-063); `all` without `account` leaves the account notification unread
     assert session.post("/v1/notifications/read", json={"all": True}).status_code == 200
     unread = rows(hub, "SELECT kind FROM hub.notification WHERE read_at IS NULL")
     assert unread == [("agent.account_change",)]
@@ -182,6 +182,7 @@ def test_marking_notifications_read_by_an_agent_is_audited(browser: FakeBrowser)
         hub, "SELECT actor_id, detail, agent_id FROM hub.audit WHERE action = 'notification.read' ORDER BY seq"
     )
     assert audit == [
+        (user, {"marked": 1, "scope": "all"}, None),
         (user, {"marked": 1, "scope": "all_account"}, agent.agent_id),
         (user, {"marked": 0, "scope": "ids"}, agent.agent_id),
         (user, {"marked": 0, "scope": "all"}, agent.agent_id),

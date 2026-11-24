@@ -230,11 +230,26 @@ test('@E2E-15 @R-6.7 @R-8.9 @R-9.5 @R-10.12 @R-11.7 @R-P.5 @needs-vm audit rows 
   expect(JSON.stringify(denied!.detail)).not.toContain('/usr/bin');
   expect(sessionRead).toMatchObject({ result: 'ok', actor_kind: 'device' });
 
-  // Change rows reference the encrypted change event; the admin decrypts every one of them.
-  const orgRows = await auditApi(admin, org, {});
+  // Change rows reference the encrypted change event (a summary of the session's own events its first one, ADR-063);
+  // the admin decrypts every one of them.
+  // The session's output is summarised by the job `audit.event_batch` (every 60 s): wait for its row.
+  let orgRows: ApiRow[] = [];
+  await expect
+    .poll(
+      async () => {
+        orgRows = await auditApi(admin, org, {});
+        return orgRows.some((row) => row.session_id === sessionId && row.action === 'event.append_batch');
+      },
+      { timeout: 150_000, intervals: [5_000] },
+    )
+    .toBe(true);
   const changes = orgRows.filter((row) => row.event_id !== null);
   expect(changes.length).toBeGreaterThan(5);
-  expect(changes.every((row) => row.action === 'event.append' && row.target_id === row.event_id)).toBe(true);
+  expect(
+    changes.every(
+      (row) => ['event.append', 'event.append_batch'].includes(row.action) && row.target_id === row.event_id,
+    ),
+  ).toBe(true);
   const scopes = new Map<string, Map<string, Record<string, unknown>>>([
     [org, await decryptScope(page, orchestrator, onboarded, ORG, org)],
     [wg, await decryptScope(page, orchestrator, onboarded, WG, wg)],
@@ -275,8 +290,9 @@ test('@E2E-15 @R-6.7 @R-8.9 @R-9.5 @R-10.12 @R-11.7 @R-P.5 @needs-vm audit rows 
     page.locator(`[data-testid="audit.row"][data-seq="${seq}"]`).getByTestId('audit.row.event');
   await showRow(page, titleRow!.seq);
   await expect(eventLink(titleRow!.seq)).toHaveAttribute('href', `/o/${org}/t/${task}`);
-  const outputRow = changes.find((row) => row.session_id === sessionId && row.detail.kind === 'session.output');
-  expect(outputRow, 'the session.output event of the answer').toBeDefined();
+  const outputRow = changes.find((row) => row.session_id === sessionId && row.action === 'event.append_batch');
+  expect(outputRow, 'the summary row of the session output').toBeDefined();
+  expect(Number(outputRow!.detail.count)).toBeGreaterThan(0);
   await showRow(page, outputRow!.seq);
   await expect(eventLink(outputRow!.seq)).toHaveAttribute('href', `/o/${org}/s/${sessionId}`);
   // The session filter shows exactly the session's rows: the same rows as the API's answer for that filter (the

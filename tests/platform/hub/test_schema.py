@@ -409,6 +409,10 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     ],
     # what the rollup job has seen (HUB-16, migration 0005)
     "metric_rollup_cursor": [("id", SI), ("received_through", TS)],
+    # how far the audit job summarised the session's own events per scope (KOR-40, migration 0015, ADR-063)
+    "event_audit_cover": [("scope_id", U), ("covered_seq", BI)],
+    # the subscription refuses the read of its quotas (KOR-40, migration 0016)
+    "quota_unreadable": [("owner_id", U), ("since", TS), ("device_id", U)],
     "metric_rollup": [
         ("entity_kind", T),
         ("entity_id", T),
@@ -816,6 +820,8 @@ def test_writer_rights(migrated_db: HubDatabase, owner: psycopg.Connection[Any])
         granted = _privileges(owner, migrated_db.writer_role, table)
         if table == "schema_version":
             assert granted == {"SELECT"}
+        elif table == "event_audit_cover":  # a cursor the audit job moves; rows are never removed (ADR-063)
+            assert granted == {"SELECT", "INSERT", "UPDATE"}
         elif table in APPEND_ONLY:
             assert granted == {"SELECT", "INSERT"}, table
         else:

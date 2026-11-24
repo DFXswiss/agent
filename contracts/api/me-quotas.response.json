@@ -58,6 +58,26 @@
       },
       "minItems": 0,
       "maxItems": 100
+    },
+    "unreadable": {
+      "description": "KOR-40: since when the user's subscription refuses the read of its quotas (the device reported quota unavailable), null when it does not; absent from an older hub",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "since": {
+              "$ref": "../common.json#/$defs/time"
+            }
+          },
+          "required": [
+            "since"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [

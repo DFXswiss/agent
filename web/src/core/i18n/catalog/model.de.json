@@ -37,5 +37,6 @@
   "usage.basis.list_price": "Listenpreis",
   "usage.basis.subscription_equivalent": "Abo-Gegenwert",
   "usage.context": "Kontext:",
-  "usage.context.unknown": "unbekannt"
+  "usage.context.unknown": "unbekannt",
+  "quotas.unreadable": "Kontingente sind nicht lesbar: Der verbundene Zugang (zum Beispiel ein Jahres-Token aus „claude setup-token“) erlaubt das Auslesen nicht. Die Sessions laufen trotzdem."
 }
