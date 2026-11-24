@@ -277,8 +277,8 @@ describe('connectDevices', () => {
     }));
     const found = await connectDevices(t.context);
     expect(found.devices).toEqual([
-      { device: t.device.id, kind: 'org', online: true, defaultWg: true, deviceFlow: true },
-      { device: other.id, kind: 'org', online: false, defaultWg: true, deviceFlow: true },
+      { device: t.device.id, kind: 'org', online: true, defaultWg: true, deviceFlow: true, oauthApp: false },
+      { device: other.id, kind: 'org', online: false, defaultWg: true, deviceFlow: true, oauthApp: false },
     ]);
     expect(found.preselected).toBe(t.device.id);
   });
@@ -369,6 +369,11 @@ describe('startConnect and connectProgress', () => {
       fromUtf8(await openRequest(t.device.identity.kem, prepared.envelope, t.me.identity.sigPublic())),
     );
     expect(opened).toEqual({ token: 'ghp_not_a_real_token' });
+    const signIn = await startConnect(t.context, t.device.id, undefined, 'oauth_app');
+    const named = JSON.parse(
+      fromUtf8(await openRequest(t.device.identity.kem, signIn.envelope, t.me.identity.sigPublic())),
+    );
+    expect(named).toEqual({ app: 'oauth_app' });
     expect(JSON.stringify(t.client.calls)).not.toContain('ghp_not_a_real_token');
     await expect(startConnect(t.context, t.device.id, 'with space')).rejects.toMatchObject({
       code: 'params_invalid',
@@ -467,6 +472,13 @@ describe('GitHub ways of the devices (KOR-65)', () => {
       devices: [device(['github.ways', 'github.device_flow']), { ...device(['github.ways']), org_id: 'x' }],
     }));
     expect((await connectDevices(t.context)).devices.map((d) => d.deviceFlow)).toEqual([true]);
+    t.client.on('GET /v1/me/devices', () => ({
+      devices: [
+        device(['github.ways', 'github.device_flow', 'github.oauth_app']),
+        { ...device(['github.ways']), org_id: 'x' },
+      ],
+    }));
+    expect((await connectDevices(t.context)).devices.map((d) => d.oauthApp)).toEqual([true]);
     t.client.on('GET /v1/me/devices', () => ({ devices: [device(['github.ways'])] }));
     expect((await connectDevices(t.context)).devices.map((d) => d.deviceFlow)).toEqual([false]);
   });

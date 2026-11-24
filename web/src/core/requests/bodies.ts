@@ -43,6 +43,9 @@ export const TOKEN_RE = /^[!-~]{1,4096}$/;
 /** A scope of a classic token (`X-OAuth-Scopes`). */
 export const SCOPE_RE = /^[a-z0-9:_-]{1,64}$/;
 export const SOURCES = ['device_flow', 'token'] as const;
+/** The device flows `github.connect` may name (`app`, KOR-65). */
+export const APPS = ['oauth_app', 'github_app'] as const;
+export type App = (typeof APPS)[number];
 export type Source = (typeof SOURCES)[number];
 
 export type ResponseBody =
@@ -90,8 +93,14 @@ export function validRequestBody(kind: RequestKind, body: unknown, followUp: boo
   if (!isRecord(body)) return false;
   switch (kind) {
     case 'github.connect':
-      // without `token` the device flow runs; with it the device checks and stores an existing token (KOR-25)
-      return !followUp && keysAre(body, [], ['token']) && (body.token === undefined || matches(body.token, TOKEN_RE));
+      // without `token` the device flow runs (of the app `app` names, KOR-65); with it the device checks and stores an
+      // existing token (KOR-25); never both
+      return (
+        !followUp &&
+        keysAre(body, [], ['token', 'app']) &&
+        (body.token === undefined || matches(body.token, TOKEN_RE)) &&
+        (body.app === undefined || (body.token === undefined && (APPS as readonly unknown[]).includes(body.app)))
+      );
     case 'mailbox.check':
       return !followUp && keysAre(body, []);
     case 'credential.check':

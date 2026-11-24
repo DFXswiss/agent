@@ -42,7 +42,7 @@ import { setGithub } from '../store/slices/github';
 import type { Store } from '../store/store';
 import { ensureDevice } from '../tasks/send';
 import type { TasksContext } from '../tasks/pull';
-import { isScopes, LOGIN_RE, REQUEST_FAILED, type Source, SOURCES, TOKEN_RE } from '../requests/bodies';
+import { type App, isScopes, LOGIN_RE, REQUEST_FAILED, type Source, SOURCES, TOKEN_RE } from '../requests/bodies';
 import {
   deviceKeys,
   type EligibleDevice,
@@ -64,6 +64,8 @@ export const TOKEN_URL = 'https://github.com/settings/tokens/new?scopes=repo,wor
 /** Feature tokens of `GET /v1/me/devices` (KOR-65). */
 export const WAYS_FEATURE = 'github.ways';
 export const SIGN_IN_FEATURES: readonly string[] = ['github.device_flow', 'github.operator'];
+/** The device runs the OAuth App's sign-in, whose token reaches every repository of the account. */
+export const OAUTH_FEATURE = 'github.oauth_app';
 /** Where the user revokes the app authorization (06-web.md section 8.1). */
 export const GITHUB_SETTINGS_URL = 'https://github.com/settings/applications';
 
@@ -218,6 +220,8 @@ export interface DeviceChoice {
   readonly defaultWg: boolean;
   /** The device runs a GitHub sign-in (module comment). */
   readonly deviceFlow: boolean;
+  /** The device runs the OAuth App's sign-in (`github.oauth_app`, KOR-65). */
+  readonly oauthApp: boolean;
 }
 
 /** Whether a device item announces a GitHub sign-in, or announces no GitHub ways at all (an older runner). */
@@ -263,6 +267,7 @@ export async function connectDevices(
       online: item.online || (known?.online ?? false),
       defaultWg: inDefault || (known?.defaultWg ?? false),
       deviceFlow: offersSignIn(item) || (known?.deviceFlow ?? false),
+      oauthApp: (item.features ?? []).includes(OAUTH_FEATURE) || (known?.oauthApp ?? false),
     });
   }
   const devices = [...byDevice.values()].sort(
@@ -280,9 +285,15 @@ export function tokenInput(text: string): string | null {
   return TOKEN_RE.test(token) ? token : null;
 }
 
-/** Seals and posts the `github.connect` request to `device` (with `token`: store that token, module comment). */
-export async function startConnect(context: RequestsContext, device: string, token?: string): Promise<PreparedRequest> {
-  const body = token === undefined ? {} : { token };
+/** Seals and posts the `github.connect` request to `device` (with `token`: store that token; with `app`: that device
+ *  flow, KOR-65; module comment). */
+export async function startConnect(
+  context: RequestsContext,
+  device: string,
+  token?: string,
+  app?: App,
+): Promise<PreparedRequest> {
+  const body = token !== undefined ? { token } : app !== undefined ? { app } : {};
   const prepared = await prepareRequest(context, { device, kind: 'github.connect', body });
   await submitRequest(context, prepared);
   return prepared;

@@ -65,7 +65,9 @@ async def repo_access(request: PrecheckRequest) -> PrecheckResult:
     client: GitHubClient | None = None
     try:
         async with ops.actor_client(request.context, request.operation) as client:
-            await client.request("GET", f"/repos/{repo}")
+            answer = await client.request("GET", f"/repos/{repo}")
+            if request.operation.type in reach.PUSH_TYPES:
+                await reach.check_write(client, repo, ops.obj(answer.data))
     except ops.NotConnected:
         raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
     except GitHubError as error:

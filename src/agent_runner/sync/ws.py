@@ -45,17 +45,23 @@ FEATURES = ("log.admit", "log.org_assign", "vm.choice", "github.ways")
 `user_certify`/`user_decertify` (the copied verifier of `agent_runner.crypto.log`); `github.ways` - it announces the
 ways of "Connect GitHub" it can run (`features`, KOR-65), so a device without them offers only an existing token."""
 DEVICE_FLOW = "github.device_flow"
+OAUTH_APP = "github.oauth_app"
 OPERATOR_GITHUB = "github.operator"
 
 
 def features(context: Any) -> tuple[str, ...]:
     """`FEATURES` and the GitHub ways set up on this device (KOR-65): `github.device_flow` - a device flow (the OAuth
-    App or the GitHub App) has its client ID; `github.operator` - the operator's GitHub account is configured (users
-    approved for it connect without a device flow, ADR-053)."""
+    App or the GitHub App) has its client ID; `github.oauth_app` - the OAuth App's (its token reaches every
+    repository of the account; the web sends the step "connect" of a held operation only to such a device);
+    `github.operator` - the operator's GitHub account is configured (users approved for it connect without a device
+    flow, ADR-053)."""
     config = getattr(context, "config", None)
     found = list(FEATURES)
-    if getattr(config, "github_oauth_client_id", None) or getattr(config, "github_client_id", None):
+    oauth = getattr(config, "github_oauth_client_id", None)
+    if oauth or getattr(config, "github_client_id", None):
         found.append(DEVICE_FLOW)
+    if oauth:
+        found.append(OAUTH_APP)
     if getattr(config, "operator_github_token_file", None) is not None:
         found.append(OPERATOR_GITHUB)
     return tuple(found)

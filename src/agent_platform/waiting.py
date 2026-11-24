@@ -8,11 +8,12 @@ one `session.status` event `{state:"waiting", waiting_for, operation_id, operati
 until}`. `task show` and `task follow` fold them as the chat does:
 
 - `parse_waiting`: the body exactly as the contract allows it (no further key, a known reason, a UUIDv7, a dotted
-  type, `owner/name`, a UUIDv7 addressee, a next step of the closed list with a checked URL, a time); anything else is
-  no card (the event stays as it is, the web shows a neutral row);
-- `fold_waiting`: the waiting events of one reason and addressee are one card at the place of the newest of them
-  (`waiting` on that event), with every operation it stands for, the operation type of the newest, the repository of
-  the newest that named one, the next step of the newest and the latest `until`; the older ones leave the list;
+  type, `owner/name`, a UUIDv7 addressee, a next step of the closed list whose URL leads to github.com, a time);
+  anything else is no card (the event stays as it is, the web shows a neutral row);
+- `fold_waiting`: the waiting events of one reason, addressee and owner of the step are one card at the place of the
+  newest of them (`waiting` on that event), with every operation it stands for, the operation type of the newest, the
+  repository of the newest that named one, the next step of the newest and the latest `until`; the older ones leave
+  the list;
 - `wait_status`: `done` once every operation of the card is registered at the hub or, for `github_connection`, once
   the viewer is the addressee and has a GitHub connection made at or after the newest waiting event (an older one is
   the connection the runner could not use); `expired` after `until` or when every registered operation was refused;
@@ -75,6 +76,11 @@ def _fields(body: dict[str, Any]) -> bool:
     )
 
 
+def on_github(url: str) -> bool:
+    """A link of a step leads to GitHub only (or the loopback host of the doubles, the only http the pattern allows)."""
+    return url.startswith(("https://github.com/", "http://"))
+
+
 def _next_step(value: object) -> bool:
     """`next` of `contracts/events/objects.json` `github_next_step`."""
     if not isinstance(value, dict) or not {"action", "owner"} <= set(value) <= {"action", "owner", "url"}:
@@ -84,7 +90,10 @@ def _next_step(value: object) -> bool:
         value["action"] in ACTIONS
         and isinstance(value["owner"], str)
         and LOGIN_RE.fullmatch(value["owner"]) is not None
-        and (url is None or (isinstance(url, str) and len(url) <= 2048 and URL_RE.fullmatch(url) is not None))
+        and (
+            url is None
+            or (isinstance(url, str) and len(url) <= 2048 and URL_RE.fullmatch(url) is not None and on_github(url))
+        )
     )
 
 
@@ -123,7 +132,8 @@ def fold_waiting(events: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
         found = _waiting_of(event)
         if found is None:
             continue
-        reason = f"{found['reason']}:{found['for_user'] or ''}"
+        step_owner = "" if found["next"] is None else found["next"]["owner"]
+        reason = f"{found['reason']}:{found['for_user'] or ''}:{step_owner}"
         reasons[index] = reason
         known = cards.get(reason)
         operations = [] if known is None else known["operations"]
@@ -228,7 +238,7 @@ def next_of(step: Mapping[str, Any] | None) -> dict[str, Any]:
     if "url" in step:
         found["url"] = step["url"]
     if step["action"] == "connect":
-        found["next"] = CONNECT
+        found["next"] = f"{CONNECT} --app oauth_app"
     elif step["action"] == "new_token":
         found["next"] = f"create a token at {step['url']}, then: {TOKEN_COMMAND}"
     else:

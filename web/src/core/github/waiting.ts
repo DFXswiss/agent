@@ -9,11 +9,12 @@
 // repository of the connection, ADR-054). The chat shows it as a card with the platform's own text only:
 //
 // - `parseWaiting`: the body exactly as the contract allows it (no further key, a known reason, a UUIDv7, a dotted
-//   type, `owner/name` of 03-api.md section 9, a next step of the closed list whose link is https (or the loopback
-//   host of the doubles), a time). Anything else is no card – the session cannot slip text into it, and the step comes
+//   type, `owner/name` of 03-api.md section 9, a next step of the closed list whose link leads to github.com (or the
+//   loopback host of the doubles, which the URL pattern allows as the only http), a time). Anything else is no card – the session cannot slip text into it, and the step comes
 //   from the device that runs the operation, never from the session; the chat shows a neutral row instead.
 // - `foldWaiting`: waiting items of the same reason and addressee are one card at the place of the newest of them, with every
-//   operation it stands for, the operation type of the newest item, the repository of the newest item that named one
+//   operation it stands for (an access card per owner of its step), the operation type of the newest item, the
+//   repository of the newest item that named one
 //   and the latest `until` (a session cannot flood the chat with cards); the step of the newest item that named one.
 // - `waitStatus`: `done` once every operation of the card is registered at the hub or, for `github_connection`, once the
 //   viewer is the addressee and has a GitHub connection made at or after the newest waiting item (an older one is the
@@ -40,6 +41,10 @@ export const NEXT_ACTIONS = [
 ] as const;
 export type NextAction = (typeof NEXT_ACTIONS)[number];
 
+/** A link of a step leads to GitHub only (or the loopback host of the doubles): a device cannot put a look-alike
+ *  login page on the card. */
+export const onGithub = (url: string): boolean => url.startsWith('https://github.com/') || url.startsWith('http://');
+
 /** The one step that gives the connection access to the repository (KOR-65). */
 export interface NextStep {
   readonly action: NextAction;
@@ -60,7 +65,7 @@ export function parseNext(value: unknown): NextStep | null {
   const { action, owner, url } = value;
   if (!(NEXT_ACTIONS as readonly unknown[]).includes(action)) return null;
   if (typeof owner !== 'string' || !LOGIN_RE.test(owner)) return null;
-  if (url !== undefined && (typeof url !== 'string' || !URL_RE.test(url))) return null;
+  if (url !== undefined && (typeof url !== 'string' || !URL_RE.test(url) || !onGithub(url))) return null;
   return { action: action as NextAction, owner, url: (url as string | undefined) ?? null };
 }
 
@@ -146,7 +151,8 @@ export function foldWaiting(items: readonly TimelineItem[]): TimelineItem[] {
   items.forEach((item, index) => {
     const waiting = isWaitingItem(item) ? parseWaiting(item.body) : null;
     if (waiting === null) return;
-    const key = `${waiting.reason}:${waiting.forUser ?? ''}`;
+    // a card per owner of an access step: steps for different owners (approve here, install there) both stay visible
+    const key = `${waiting.reason}:${waiting.forUser ?? ''}:${waiting.next?.owner ?? ''}`;
     parsed.set(index, key);
     const known = cards.get(key)?.card;
     const operations = known?.operations ?? [];

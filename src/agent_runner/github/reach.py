@@ -19,6 +19,8 @@ depends on what refused and on the kind of token (`client.token_kind`, from GitH
   else `install_app` (`<web>/apps/<slug>/installations/new`) when the App's URL name is set, else `new_token`
   (`classic_url`);
 - `404` with a fine-grained token: `new_token` with a pre-filled fine-grained token for the owner;
+- a token step (`new_token`) becomes `connect` whenever the OAuth App is set up and the token is not its own: one
+  sign-in reaches every owner, while a token for one owner would replace the connection that reaches the others;
 - `404` with any other token (OAuth App, classic, unknown): `check_access` with `<web>/<owner>/<name>` - the account
   itself does not reach it (or it does not exist).
 
@@ -50,7 +52,12 @@ CLASSIC_FORBIDDEN = "personal access token (classic)"
 NOT_ACCESSIBLE_BY = "resource not accessible by"
 """GitHub's `403` when the token lacks the right for the request: "... by integration" (a GitHub App without the
 installation's permission) or "... by personal access token" (a token without the scope or permission)."""
-TOKEN_NAME = "agent.dfx.swiss"
+TOKEN_NAME = "agent"
+"""The pre-filled name of a token is `agent <owner>` (GitHub wants a name per token that is unique for the user)."""
+TOKEN_DAYS = "90"
+"""Pre-filled lifetime: within the token-lifetime policy organisations commonly set (`none` may be refused)."""
+PUSH_TYPES = frozenset({"github.create_branch", "github.commit", "github.push"})
+"""Types that write to the repository itself: the pre-check also needs the right to push (`check_write`)."""
 FINE_GRAINED_PERMISSIONS = (
     ("contents", "write"),
     ("pull_requests", "write"),
@@ -85,16 +92,39 @@ MESSAGES = {
         "The GitHub account of the person who gave this instruction has no access to {repo} (or it does not exist)."
         " Next step for that person: open {url} and ask its owner for access, or connect another GitHub account."
     ),
+    "check_write": (
+        "The GitHub account of the person who gave this instruction may read but not write {repo}. Next step for that"
+        " person: open {url} and ask its owner for write access, or work in a fork."
+    ),
 }
 
 
+def _token_name(owner: str) -> str:
+    return f"{TOKEN_NAME} {owner}"[:40]
+
+
 def fine_grained_url(web_url: str, owner: str) -> str:
-    query = [("name", TOKEN_NAME), ("target_name", owner), ("expires_in", "none"), *FINE_GRAINED_PERMISSIONS]
+    query = [
+        ("name", _token_name(owner)),
+        ("target_name", owner),
+        ("expires_in", TOKEN_DAYS),
+        *FINE_GRAINED_PERMISSIONS,
+    ]
     return f"{web_url}/settings/personal-access-tokens/new?{urlencode(query)}"
 
 
-def classic_url(web_url: str) -> str:
-    return f"{web_url}/settings/tokens/new?{urlencode([('scopes', CLASSIC_SCOPES), ('description', TOKEN_NAME)])}"
+def classic_url(web_url: str, owner: str) -> str:
+    query = [("scopes", CLASSIC_SCOPES), ("description", _token_name(owner))]
+    return f"{web_url}/settings/tokens/new?{urlencode(query)}"
+
+
+def _token_step(client: GitHubClient, owner: str, url: str) -> dict[str, str]:
+    """`connect` when the OAuth App is set up and the token is not its own (one sign-in reaches every owner and is
+    not touched by an organisation's ban of classic tokens; a token for one owner would replace the connection that
+    reaches the others), else `new_token` with `url`."""
+    if client.oauth_client_id is not None and client.token_kind != "oauth_app":
+        return {"action": "connect", "owner": owner}
+    return {"action": "new_token", "owner": owner, "url": url}
 
 
 def _approval_url(client: GitHubClient) -> str:
@@ -107,13 +137,11 @@ def _missing(client: GitHubClient, repo: str, owner: str) -> dict[str, str]:
     """The step for a repository the token does not see (`404`)."""
     web = client.web_url
     if client.token_kind == "github_app":
-        if client.oauth_client_id is not None:
-            return {"action": "connect", "owner": owner}
-        if client.app_slug is not None:
+        if client.oauth_client_id is None and client.app_slug is not None:
             return {"action": "install_app", "owner": owner, "url": f"{web}/apps/{client.app_slug}/installations/new"}
-        return {"action": "new_token", "owner": owner, "url": classic_url(web)}
+        return _token_step(client, owner, classic_url(web, owner))
     if client.token_kind == "fine_grained":
-        return {"action": "new_token", "owner": owner, "url": fine_grained_url(web, owner)}
+        return _token_step(client, owner, fine_grained_url(web, owner))
     return {"action": "check_access", "owner": owner, "url": f"{web}/{repo}"}
 
 
@@ -127,7 +155,7 @@ def next_step(client: GitHubClient, repo: str, error: GitHubError) -> dict[str, 
     if error.kind == "forbidden" and OAUTH_RESTRICTED in message:
         return {"action": "approve_app", "owner": owner, "url": _approval_url(client)}
     if error.kind == "forbidden" and CLASSIC_FORBIDDEN in message:
-        return {"action": "new_token", "owner": owner, "url": fine_grained_url(web, owner)}
+        return _token_step(client, owner, fine_grained_url(web, owner))
     if error.kind == "not_found" or (error.kind == "forbidden" and NOT_ACCESSIBLE_BY in message):
         return _missing(client, repo, owner)
     return None
@@ -135,9 +163,44 @@ def next_step(client: GitHubClient, repo: str, error: GitHubError) -> dict[str, 
 
 def message(step: Mapping[str, Any], repo: str) -> str:
     """The fixed sentence of a step (at most 1024 printable ASCII characters: the URL is cut at the contract's limit
-    of a message, never in the step itself)."""
-    text = MESSAGES[step["action"]].format(repo=repo, owner=step["owner"], url=step.get("url", ""))
+    of a message, never in the step itself); `write` marks the step of a missing right to push."""
+    key = "check_write" if step.get("write") else step["action"]
+    text = MESSAGES[key].format(repo=repo, owner=step["owner"], url=step.get("url", ""))
     return text[:1024]
+
+
+async def _installed(client: GitHubClient, repo: str) -> bool | None:
+    """Whether an installation the GitHub App user token reaches covers `repo`; None when the token cannot list
+    installations (not an App token after all)."""
+    try:
+        installations = await client.items("/user/installations", key="installations")
+    except GitHubError as error:
+        if error.kind in {"forbidden", "not_found"}:
+            return None
+        raise
+    for installation in installations:
+        found = installation.get("id") if isinstance(installation, dict) else None
+        if not isinstance(found, int) or isinstance(found, bool):
+            continue
+        listed = await client.items(f"/user/installations/{found}/repositories", key="repositories")
+        if any(isinstance(item, dict) and str(item.get("full_name", "")).lower() == repo.lower() for item in listed):
+            return True
+    return False
+
+
+async def check_write(client: GitHubClient, repo: str, answer: Mapping[str, Any]) -> None:
+    """The right to push for the types of `PUSH_TYPES` (KOR-65): a public repository is readable with nearly any
+    token, so `GET /repos` passing is not enough. `permissions.push` false -> `repo_not_accessible` with the step
+    `check_access` (ask for write access or work in a fork); a GitHub App user token whose installations do not cover
+    the repository -> the step of a repository the token does not see. Both are held like every access refusal."""
+    owner = repo.split("/", 1)[0]
+    permissions = answer.get("permissions")
+    if isinstance(permissions, dict) and permissions.get("push") is False:
+        step = {"action": "check_access", "owner": owner, "url": f"{client.web_url}/{repo}"}
+        raise CheckFailed("repo_not_accessible", message=message({**step, "write": True}, repo), next_step=step)
+    if client.token_kind == "github_app" and await _installed(client, repo) is False:
+        step = _missing(client, repo, owner)
+        raise CheckFailed("repo_not_accessible", message=message(step, repo), next_step=step)
 
 
 def refusal(client: GitHubClient, repo: str, error: GitHubError) -> CheckFailed | None:

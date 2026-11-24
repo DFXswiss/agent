@@ -23,6 +23,7 @@ from agent_runner.github import reach
 from agent_runner.github.client import GitHubClient, GitHubError, GitHubOptions, RateGate, sso_link, token_kind
 from agent_runner.github.executors import EXECUTORS
 from agent_runner.github.op_prechecks import PRECHECKS
+from agent_runner.operations.extensions import CheckFailed
 from agent_runner.operations.pipeline import ACCESS_RECHECK_S, HOLD_S, TIMEOUT_MESSAGES, install
 from agent_runner.orgs.db import session
 from agent_runner.orgs.keys import store_scope_key
@@ -148,10 +149,11 @@ CLASSIC_REFUSED = GitHubError(
     "forbidden", status=403, message="`strict-org` forbids access via a personal access token (classic)."
 )
 FINE_URL = (
-    "https://github.com/settings/personal-access-tokens/new?name=agent.dfx.swiss&target_name=third-org"
-    "&expires_in=none&contents=write&pull_requests=write&issues=write&workflows=write&metadata=read"
+    "https://github.com/settings/personal-access-tokens/new?name=agent+third-org&target_name=third-org"
+    "&expires_in=90&contents=write&pull_requests=write&issues=write&workflows=write&metadata=read"
 )
-CLASSIC_URL = "https://github.com/settings/tokens/new?scopes=repo%2Cworkflow&description=agent.dfx.swiss"
+CLASSIC_URL = "https://github.com/settings/tokens/new?scopes=repo%2Cworkflow&description=agent+third-org"
+INTEGRATION = GitHubError("forbidden", status=403, message="Resource not accessible by integration")
 
 
 @pytest.mark.parametrize(
@@ -189,6 +191,21 @@ CLASSIC_URL = "https://github.com/settings/tokens/new?scopes=repo%2Cworkflow&des
             {"action": "approve_app", "owner": "third-org", "url": "https://github.com/settings/applications"},
         ),
         (CLASSIC, {}, CLASSIC_REFUSED, {"action": "new_token", "owner": "third-org", "url": FINE_URL}),
+        # with the OAuth App set up a token step is its sign-in: one connection for every owner
+        (CLASSIC, {"oauth_client_id": OAUTH_ID}, CLASSIC_REFUSED, {"action": "connect", "owner": "third-org"}),
+        (FINE, {"oauth_client_id": OAUTH_ID}, NOT_FOUND, {"action": "connect", "owner": "third-org"}),
+        (
+            APP,
+            {"oauth_client_id": OAUTH_ID, "app_slug": SLUG},
+            INTEGRATION,
+            {"action": "connect", "owner": "third-org"},
+        ),
+        (
+            OAUTH,
+            {"oauth_client_id": OAUTH_ID},
+            NOT_FOUND,
+            {"action": "check_access", "owner": "third-org", "url": "https://github.com/third-org/app"},
+        ),
         (
             CLASSIC,
             {},
@@ -224,7 +241,7 @@ def test_every_access_refusal_has_one_next_step(
 @pytest.mark.parametrize(
     "error",
     [
-        GitHubError("forbidden", status=403, message="Resource not accessible by integration"),
+        GitHubError("forbidden", status=403, message="Must have admin rights to Repository."),
         GitHubError("unauthorized", status=401),
         GitHubError("server_error", status=502, retryable=True),
     ],
@@ -405,9 +422,8 @@ def test_sso_and_a_forbidden_classic_token_are_held_with_their_steps(store_dsn: 
         assert sso.held_next == {"action": "authorize_sso", "owner": "sso-org", "url": f"{places.url}/orgs/sso-org/sso"}
         await connect(CLASSIC, 2, "token")
         strict = await kit.run(sid, "github.list_issues", {"repo": STRICT})
-        assert strict.held_next is not None
-        assert strict.held_next["action"] == "new_token"
-        assert "target_name=strict-org" in strict.held_next["url"]
+        # the organisation refuses classic tokens: the OAuth App's sign-in is the one step
+        assert strict.held_next == {"action": "connect", "owner": "strict-org"}
 
     access_run(store_dsn, places, OAUTH_SSO, body, oauth=OAUTH_ID)
 
@@ -506,3 +522,69 @@ def test_an_executor_without_a_repository_keeps_the_plain_failure(
         assert failed.code == "upstream_error"
 
     with_env(store_dsn, github, body, token=APP)
+
+
+# -- the right to push (KOR-65 review): a readable repository is not yet a writable one -------------------------------
+
+
+def test_a_branch_without_the_right_to_push_is_held_with_the_step(store_dsn: str, places: GitHub) -> None:
+    async def body(kit: OKit, connect: Connect) -> None:
+        sid = await kit.session()
+        await connect("ghp_double-gist", 2, "token")
+        held = await kit.run(sid, "github.create_branch", {"repo": OWN, "branch": "work", "from": "main"})
+        assert (held.state, held.held_reason) == ("received", "github_access")
+        assert held.held_next == {"action": "check_access", "owner": "octo-org", "url": f"{places.url}/{OWN}"}
+        assert "may read but not write" in reach.message({**held.held_next, "write": True}, OWN)
+
+    seeded = world()
+    seeded["users"][0]["tokens"].append({"token": "ghp_double-gist", "kind": "classic", "scopes": ["gist"]})
+    places.control.request("POST", "/_double/reset", {})
+    places.control.request("POST", "/_double/seed", seeded)
+    access_run(store_dsn, places, APP, body, oauth=OAUTH_ID)
+
+
+def mocked(answers: dict[str, tuple[int, object]]) -> GitHubClient:
+    """A GitHub App user token's client whose answers come from `answers` (`path` -> status, JSON)."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        status, data = answers.get(request.url.path, (404, {"message": "Not Found"}))
+        return httpx.Response(status, json=data)
+
+    async def sleep(_seconds: float) -> None:
+        return None
+
+    made = GitHubClient(
+        api_url="https://api.github.com",
+        web_url="https://github.com",
+        token=APP,
+        wall=lambda: 0.0,
+        sleep=sleep,
+        gate=RateGate(),
+        transport=httpx.MockTransport(handle),
+    )
+    made.oauth_client_id = OAUTH_ID
+    return made
+
+
+def test_a_github_app_token_writes_only_where_an_installation_covers_the_repository() -> None:
+    async def main() -> None:
+        listed = {"installations": [{"id": "x"}, {"id": 7}, "junk"]}
+        covered = {
+            "/user/installations": (200, listed),
+            "/user/installations/7/repositories": (200, {"repositories": [{"full_name": "Third-Org/App"}, "junk"]}),
+        }
+        async with mocked(covered) as client:
+            await reach.check_write(client, THIRD, {"permissions": {"push": True}})
+        elsewhere = {**covered, "/user/installations/7/repositories": (200, {"repositories": []})}
+        async with mocked(elsewhere) as client:
+            with pytest.raises(CheckFailed) as caught:
+                await reach.check_write(client, THIRD, {})
+            assert caught.value.next_step == {"action": "connect", "owner": "third-org"}
+        # not an App token after all (the endpoint refuses it): the write is left to GitHub
+        async with mocked({"/user/installations": (403, {"message": "no"})}) as client:
+            await reach.check_write(client, THIRD, {"permissions": "unknown"})
+        async with mocked({"/user/installations": (502, {"message": "down"})}) as client:
+            with pytest.raises(GitHubError):
+                await reach.check_write(client, THIRD, {})
+
+    asyncio.run(main())

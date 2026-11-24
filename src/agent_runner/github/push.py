@@ -30,7 +30,7 @@ NOT_FAST_FORWARD = "The branch is not an ancestor of the commit."
 
 async def check(request: PrecheckRequest) -> PrecheckResult:
     async with access.client(request) as github:
-        info = await access.repository(github, str(request.params["repo"]))
+        info = await access.repository(github, str(request.params["repo"]), write=True)
         url = ops.text(info.get("html_url"), ops.URL_RE)
     return PrecheckResult(data={"html_url": url})
 

@@ -34,7 +34,7 @@ async def client(request: PrecheckRequest) -> AsyncIterator[GitHubClient]:
         raise CheckFailed("upstream_error", message=ops.SSO_REQUIRED if error.sso else ACCESS_FAILED) from None
 
 
-async def repository(github: GitHubClient, repo: str) -> dict[str, Any]:
+async def repository(github: GitHubClient, repo: str, *, write: bool = False) -> dict[str, Any]:
     try:
         answer = await github.request("GET", f"/repos/{repo}")
     except GitHubError as error:
@@ -42,4 +42,7 @@ async def repository(github: GitHubClient, repo: str) -> dict[str, Any]:
         if refused is not None:
             raise refused from None
         raise
-    return ops.obj(answer.data)
+    found = ops.obj(answer.data)
+    if write:
+        await reach.check_write(github, repo, found)
+    return found

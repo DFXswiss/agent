@@ -7,8 +7,8 @@
 // workgroup's optional list is refused as before (ADR-054).
 //
 // A `github_access` card (KOR-65, rule E-29): the connection does not reach the repository. It names the one next step
-// the runner found (`next`): "connect" offers the sign-in right in the card (it reaches every repository of the
-// account); "new_token" the link to create a token pre-filled for the owner plus the token way in the card; every
+// the runner found (`next`): "connect" offers the OAuth App's sign-in right in the card, on a device that runs it (it
+// reaches every repository of the account); "new_token" the link to create a token pre-filled for the owner plus the token way in the card; every
 // other step (install the GitHub App for the owner, request the organisation's approval, authorise SSO, open the
 // repository) is one link that opens GitHub in a new tab. Once the step is done at GitHub the runner sees it by itself
 // and the operation goes on; the card turns "done" when the operation is registered.
@@ -46,7 +46,8 @@ function AccessStep({ step }: { readonly step: NextStep }) {
           {t(`github.waiting.access.link.${step.action}`, { owner: step.owner })}
         </a>
       )}
-      {(step.action === 'connect' || step.action === 'new_token') && <GithubConnect />}
+      {step.action === 'connect' && <GithubConnect app="oauth_app" />}
+      {step.action === 'new_token' && <GithubConnect />}
     </div>
   );
 }

@@ -209,14 +209,17 @@ function TokenField({ field }: { readonly field: RefObject<HTMLInputElement> }) 
 
 export function ConnectFlow({
   method = 'device_flow',
+  app,
   onConnected,
   onClose,
 }: {
   readonly method?: ConnectMethod;
+  /** The OAuth App's sign-in only (the step "connect" of a held operation, KOR-65). */
+  readonly app?: 'oauth_app';
   readonly onConnected: () => void;
   readonly onClose: () => void;
 }) {
-  const { app } = useAppEnv();
+  const { app: env } = useAppEnv();
   const { t } = useI18n();
   const reason = useReason();
   const deviceName = useProfileDeviceNames();
@@ -227,16 +230,19 @@ export function ConnectFlow({
   useEffect(() => {
     if (phase.kind !== 'devices') return;
     // while the devices load the flow offers only "Close", which unmounts it: a late answer changes nothing
-    connectDevices(app.tasks).then(
+    connectDevices(env.tasks).then(
       (found) => {
-        const devices = method === 'token' ? found.devices : found.devices.filter((item) => item.deviceFlow);
+        const devices =
+          method === 'token'
+            ? found.devices
+            : found.devices.filter((item) => (app === undefined ? item.deviceFlow : item.oauthApp));
         const selected = devices.find((item) => item.online)?.device;
         if (devices.length === 0 && found.devices.length > 0) setPhase({ kind: 'no_sign_in' });
         else setPhase(selected === undefined ? { kind: 'none' } : { kind: 'choose', devices, selected });
       },
       (error: unknown) => setPhase({ kind: 'error', code: requestErrorCode(error) }),
     );
-  }, [app, phase, method]);
+  }, [env, phase, method, app]);
   const start = async (device: string) => {
     let token: string | undefined;
     if (method === 'token') {
@@ -249,7 +255,7 @@ export function ConnectFlow({
     }
     setPhase({ kind: 'starting' });
     try {
-      setPhase({ kind: 'request', prepared: await startConnect(app.tasks, device, token) });
+      setPhase({ kind: 'request', prepared: await startConnect(env.tasks, device, token, app) });
     } catch (error) {
       setPhase({ kind: 'error', code: requestErrorCode(error) });
     }

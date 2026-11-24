@@ -186,7 +186,7 @@ async def check(request: PrecheckRequest) -> PrecheckResult:
     repo, branch = str(request.params["repo"]), str(request.params["branch"])
     context, op_id = request.context, request.operation.id
     async with access.client(request) as github:
-        await access.repository(github, repo)
+        await access.repository(github, repo, write=True)
         parent = await _parent(github, request, repo, branch)
         parent_tree, base = await _parent_files(github, repo, parent)
     snapshot.sweep(context)

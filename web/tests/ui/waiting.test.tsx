@@ -3,7 +3,7 @@
 // "connect again" for an unusable connection, and the short rows once GitHub is connected, the operations are
 // registered or `until` has passed. A body the contract does not allow (the removed approval reason, free text) stays
 // a neutral row. The Playwright spec `e2e/devices/waiting.spec.ts` runs it against the hub, also on a phone.
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { HubError } from '../../src/core/net/signedFetch';
 import { type EventEntry, putEvents } from '../../src/core/store/slices/events';
@@ -310,9 +310,38 @@ describe('waiting card', () => {
         t,
         entry(t, 'session.status', access({ action: 'new_token', owner: 'third-org', url }, { operation_id: OP2 })),
       );
-      await waitFor(() => expect(screen.getByTestId('waiting.step')).toHaveAttribute('data-action', 'new_token'));
-      expect(screen.getByTestId('waiting.step.link')).toHaveTextContent('Create a token for third-org');
-      expect(screen.getByTestId('github.token')).toBeVisible();
+      // another owner: a card of its own, so both steps stay visible
+      await waitFor(() => expect(screen.getAllByTestId('waiting.step')).toHaveLength(2));
+      const token = screen.getAllByTestId('waiting.card')[1]!;
+      expect(within(token).getByTestId('waiting.step')).toHaveAttribute('data-action', 'new_token');
+      expect(within(token).getByTestId('waiting.step.link')).toHaveTextContent('Create a token for third-org');
+      expect(within(token).getByTestId('github.token')).toBeVisible();
+    });
+
+    it('signs in for "connect" only on a device that runs the OAuth App', async () => {
+      const t = await page();
+      const device = (features: string[]) => ({
+        devices: [
+          {
+            device_id: t.devices[0]!.id,
+            kind: 'platform',
+            org_id: t.org,
+            wg_ids: [t.wg],
+            online: true,
+            last_seen_at: null,
+            features,
+          },
+        ],
+      });
+      t.client.on('GET /v1/me/devices', () => device(['github.ways', 'github.device_flow']));
+      put(t, entry(t, 'session.status', access({ action: 'connect', owner: 'octo-user' })));
+      const card = await screen.findByTestId('waiting.card');
+      fireEvent.click(within(card).getByTestId('github.connect'));
+      expect(await within(card).findByTestId('github.ways.none')).toBeVisible();
+      fireEvent.click(within(card).getByTestId('github.flow.close'));
+      t.client.on('GET /v1/me/devices', () => device(['github.ways', 'github.device_flow', 'github.oauth_app']));
+      fireEvent.click(within(card).getByTestId('github.connect'));
+      expect(await within(card).findByTestId('github.devices.select')).toHaveValue(t.devices[0]!.id);
     });
 
     it('shows others whom it waits for, without a step', async () => {

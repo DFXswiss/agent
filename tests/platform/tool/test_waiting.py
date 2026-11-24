@@ -271,11 +271,15 @@ def test_access_cards_name_the_one_next_step(tool: Tool, hub: HubFake, account: 
     connect = {"action": "connect", "owner": "third-org"}
     device_event(hub, account, device, "session.status", access(uuid7(), connect, for_user=account.id), **place)
     (card,) = cards(tool.run("task", "show", "--task", task)[1])
-    assert (card["action"], card["next"], "url" in card) == ("connect", "github connect", False)
+    assert (card["action"], card["next"], "url" in card) == ("connect", "github connect --app oauth_app", False)
     token = {"action": "new_token", "owner": "third-org", "url": "https://github.com/settings/tokens/new"}
     device_event(hub, account, device, "session.status", access(uuid7(), token, for_user=account.id), **place)
     (card,) = cards(tool.run("task", "show", "--task", task)[1])
     assert card["next"].startswith("create a token at https://github.com/settings/tokens/new, then: printf")
+    # a step for another owner is a card of its own
+    other = {"action": "connect", "owner": "other-org"}
+    device_event(hub, account, device, "session.status", access(uuid7(), other, for_user=account.id), **place)
+    assert [card["action"] for card in cards(tool.run("task", "show", "--task", task)[1])] == ["new_token", "connect"]
 
 
 def test_an_access_card_for_another_person_shows_no_step(tool: Tool, hub: HubFake, account: User) -> None:
@@ -303,5 +307,7 @@ def test_parse_waiting_checks_the_next_step() -> None:
         {**good, "next": {**APPROVE, "owner": 5}},
         {**good, "next": {**APPROVE, "url": "javascript:alert(1)"}},
         {**good, "next": {**APPROVE, "url": 5}},
+        {**good, "next": {**APPROVE, "url": "https://github.com.evil.example/login"}},
+        {**good, "next": {**APPROVE, "url": "https://evil.example/settings/applications"}},
     ):
         assert waiting.parse_waiting(broken) is None, broken

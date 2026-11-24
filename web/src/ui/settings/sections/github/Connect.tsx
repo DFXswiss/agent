@@ -12,7 +12,14 @@ import { type ConnectMethod, ConnectFlow } from './ConnectFlow';
 
 const BUTTON = 'min-h-11 rounded border border-gray-400 px-4';
 
-export function GithubConnect({ onConnected }: { readonly onConnected?: () => void }) {
+export function GithubConnect({
+  onConnected,
+  app,
+}: {
+  readonly onConnected?: () => void;
+  /** Sign in through the OAuth App only (the step "connect" of a held operation, KOR-65). */
+  readonly app?: 'oauth_app';
+}) {
   const { app } = useAppEnv();
   const { t } = useI18n();
   const [method, setMethod] = useState<ConnectMethod | null>(null);
@@ -25,7 +32,8 @@ export function GithubConnect({ onConnected }: { readonly onConnected?: () => vo
     if (onConnected !== undefined) onConnected();
     else loadGithub(app.tasks).catch(() => undefined);
   }, [app, onConnected]);
-  if (method !== null) return <ConnectFlow method={method} onConnected={connected} onClose={() => setMethod(null)} />;
+  if (method !== null)
+    return <ConnectFlow method={method} app={app} onConnected={connected} onClose={() => setMethod(null)} />;
   return (
     <div className="flex flex-wrap gap-2" data-testid="github.ways">
       {signIn === false ? (

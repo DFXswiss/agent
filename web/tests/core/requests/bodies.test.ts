@@ -39,6 +39,11 @@ describe('validRequestBody', () => {
     expect(validRequestBody('github.connect', { token: 'a b' }, false)).toBe(false);
     expect(validRequestBody('github.connect', { token: 5 }, false)).toBe(false);
     expect(validRequestBody('github.connect', { token: 'x'.repeat(4097) }, false)).toBe(false);
+    // the device flow of a named app (KOR-65), never together with a token
+    expect(validRequestBody('github.connect', { app: 'oauth_app' }, false)).toBe(true);
+    expect(validRequestBody('github.connect', { app: 'github_app' }, false)).toBe(true);
+    expect(validRequestBody('github.connect', { app: 'gitlab' }, false)).toBe(false);
+    expect(validRequestBody('github.connect', { app: 'oauth_app', token: 'ghp_x' }, false)).toBe(false);
     expect(validRequestBody('github.connect', { token: 'x', extra: 1 }, false)).toBe(false);
     expect(validRequestBody('mailbox.check', {}, false)).toBe(true);
     expect(validRequestBody('credential.check', { kind: 'anthropic_api_key' }, false)).toBe(true);

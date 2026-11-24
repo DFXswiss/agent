@@ -211,6 +211,9 @@ describe('github_access (KOR-65)', () => {
       { ...STEP, owner: 7 },
       { ...STEP, url: 'javascript:alert(1)' },
       { ...STEP, url: 'http://evil.example/' },
+      // a link leads to GitHub only, never to a look-alike login page
+      { ...STEP, url: 'https://github.com.evil.example/login' },
+      { ...STEP, url: 'https://evil.example/settings/applications' },
       { ...STEP, url: 7 },
     ]) {
       expect(parseNext(bad), JSON.stringify(bad)).toBeNull();
@@ -233,6 +236,19 @@ describe('github_access (KOR-65)', () => {
     ]);
     expect(folded[1]!.waiting).toMatchObject({ next: { ...STEP }, operations: [OP1, OP2, OP3] });
     expect(foldWaiting([item(1, withoutStep)])[0]!.waiting).toMatchObject({ next: null });
+  });
+
+  it('keeps a card per owner of the step', () => {
+    const install = { action: 'install_app', owner: 'other-org', url: 'https://github.com/apps/x/installations/new' };
+    const folded = foldWaiting([
+      item(1, ACCESS),
+      item(2, { ...ACCESS, operation_id: OP2, repo: 'other-org/app', next: install }),
+      item(3, { ...ACCESS, operation_id: OP3 }),
+    ]);
+    expect(folded.map((entry) => [entry.key, entry.waiting?.next?.owner, entry.waiting?.operations])).toEqual([
+      ['e2', 'other-org', [OP2]],
+      ['e3', 'third-org', [OP1, OP3]],
+    ]);
   });
 
   it('is not settled by a new connection, only by the registered operations or the time', () => {

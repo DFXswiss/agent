@@ -161,10 +161,10 @@ FULL_MESSAGES = {
     "github_access": "The person who gave this instruction is already being asked to give GitHub access. Wait for"
     " the pending GitHub operations of this session before you request more.",
 }
+"""The answer to an operation beyond `HOLD_MAX` (a fixed platform text)."""
 ACCESS_RECHECK_S = 30.0
 """An operation held for repository access asks GitHub again at most this often while the acting user's credential
 is unchanged (an installation, an organisation's approval or an SSO authorisation changes nothing the runner sees)."""
-"""The answer to an operation beyond `HOLD_MAX` (a fixed platform text)."""
 NOT_CONNECTED_MESSAGE = checks.NOT_CONNECTED
 SESSION_ENDED = frozenset({"stopping", "stopped", "failed"})
 """Session states in which a held operation is not run any more (a closed task stops its sessions)."""
@@ -413,6 +413,7 @@ class Pipeline:
             held = await self._hold(op, session, error, version, step)
             if held is None:
                 return None
+            self._access_checked.pop(op.id, None)
             op, error = held
         return op, error, checked
 
