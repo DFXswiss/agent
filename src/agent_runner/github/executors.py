@@ -1,7 +1,7 @@
 """Executors of the GitHub area, parts I and II (`<area>/executors.py:EXECUTORS`, ADR-027 section 4; 05-runner.md
-section 12.1): REST only, with the task owner's credential; checkout, commit and push (RUN-10) in their own modules;
-the issue types, the pull-request list and the connection request (KOR-25) in `issues`, `pull_list` and
-`connection`."""
+section 12.1): REST only, with the acting user's credential (`ops.actor_client`, HOT-14); checkout, commit and push
+(RUN-10) in their own modules; the issue types, the pull-request list and the connection request (KOR-25) in `issues`,
+`pull_list` and `connection`."""
 
 from __future__ import annotations
 

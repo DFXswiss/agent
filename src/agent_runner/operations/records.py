@@ -120,7 +120,7 @@ class Operation:
 
     @property
     def held(self) -> bool:
-        """The operation is held for the task owner (KOR-25)."""
+        """The operation is held for its acting user's GitHub connection (KOR-25, HOT-14)."""
         return self.held_until is not None and self.held_ended_at is None
 
 

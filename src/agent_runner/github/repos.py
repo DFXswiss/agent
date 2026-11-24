@@ -1,7 +1,7 @@
 """Executor `github.list_repositories` (05-runner.md section 12.1, 03-api.md section 9).
 
 `GET /user/installations` -> for each installation `GET /user/installations/{id}/repositories` (both paginated):
-every repository the task owner reaches through the GitHub App, once, sorted by name, with `allowed` from the
+every repository the acting user reaches through the GitHub App, once, sorted by name, with `allowed` from the
 workgroup's allow-list (pre-check data); without a list (`restricted` false) every listed repository is `allowed`
 (KOR-30; data of an older runner without `restricted`: restricted when its list is not empty). A
 repository entry that does not fit the result contract is left out and logged; a malformed list is `upstream_error`.

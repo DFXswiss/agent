@@ -1,5 +1,5 @@
 """Executors of the issue operation types (KOR-25; 05-runner.md section 12.1, 03-api.md section 9,
-`contracts/ops/objects.json`): REST with the task owner's credential, one GitHub page per listing
+`contracts/ops/objects.json`): REST with the acting user's credential (HOT-14), one GitHub page per listing
 (`github.list_issues`: as many as it takes to fill a page of issues, bounded).
 
 - `github.list_issues`: `per_page` and `page` count **issues** (HOT-09). GitHub lists pull requests among the issues

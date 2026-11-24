@@ -11,7 +11,7 @@ Without any verified event a workgroup has the defaults: no repository list, pro
 `develop`, `release/*`, pull requests as drafts.
 
 The repository list is an optional restriction (KOR-30, ADR-054): an empty list (no event, or an event with
-`repositories: []`) allows every repository the task owner's GitHub connection reaches - GitHub itself is the boundary
+`repositories: []`) allows every repository the acting user's GitHub connection reaches - GitHub itself is the boundary
 (`repo_not_accessible` in the pre-checks); a non-empty list allows exactly its repositories. A stored event that no
 longer opens or parses may have held a list, so it fails closed: `UNREADABLE` allows no repository until a new event
 is saved.

@@ -96,7 +96,7 @@ async def stamp(conn: AsyncConnection[Any], session: Session) -> str | None:
     if session.depth > 0:
         cur = await conn.execute(
             "SELECT actor_id::text FROM runner.operation WHERE child_session_id = %s AND type = 'subagent.request'"
-            " AND actor_id IS NOT NULL LIMIT 1",
+            " AND actor_id IS NOT NULL ORDER BY created_at, id LIMIT 1",
             (session.id,),
         )
     else:
