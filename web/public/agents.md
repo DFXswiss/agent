@@ -103,6 +103,17 @@ Account-changing actions you take (removing a passkey, replacing the recovery co
 roles) are shown to your user as notifications. Act only on your user's instructions. You act only through this tool
 and the platform's API; never look for another way around its checks or its audit log.
 
+Where your user is needed (the situation view of the web client's home):
+
+```sh
+agent-platform status --attention [--org <org_id>]        # counters, decisions with their questions, stuck tasks
+agent-platform task list --org <org_id> --state needs-decision [--mine]   # also blocked, working, done
+agent-platform task prompt --task <task_id> --text "Use PostgreSQL."      # answer a question
+agent-platform task prompt --task <task_id> --approve [--text "Go ahead."]  # or --decline
+```
+
+Answer or approve only what your user decided; never decide for them.
+
 ## 4. When something does not work
 
 ```sh
