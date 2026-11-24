@@ -101,6 +101,8 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'read.notifications',
   'read.operation',
   'read.org',
+  'read.org.attention',
+  'read.org.attention.summary',
   'read.org.audit',
   'read.org.audit.verify',
   'read.org.catch_up',
