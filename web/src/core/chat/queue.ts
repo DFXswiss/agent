@@ -8,13 +8,14 @@
 // - `withdrawPrompt`: `POST /v1/tasks/{task}/prompts/{event}/withdraw` (`task:write`, only the prompt's author) →
 //   `withdrawn` (the session had no device) or `withdrawing` (the device decides); the queue shows the outcome at
 //   once and is read again;
-// - `watchQueue`: reads the queue when the chat opens and again, debounced, whenever the task row, its sessions or
-//   its prompt events change (live frames and the reader write them to the store; the hub sends a `session` frame of
-//   the holding session when the queue changed), and every `QUEUE_POLL_MS` while prompts wait. One read at a time;
-//   nothing is written after a sign-out.
+// - `watchQueue`: reads the queue when the chat opens and again, debounced, whenever the task row or its session
+//   entries change (the hub sends a `session` frame of the holding session when the queue changed) or the chat
+//   reports another number of prompts (`QueueWatch.prompts`, counted once per timeline by `promptCount`), and every
+//   `QUEUE_POLL_MS` while prompts wait. The check per store update compares a few references and never scans the
+//   events, so a burst of thousands of events costs nothing here (E-19). One read at a time; nothing is written after
+//   a sign-out.
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
-import type { EventEntry, ScopeEvents } from '../store/slices/events';
 import {
   putQueue,
   type QueuedPrompt,
@@ -27,6 +28,7 @@ import type { SessionEntry, TaskRow, TasksState } from '../store/slices/tasks';
 import { memoize } from '../store/selectors';
 import { type StoreState, subscribe } from '../store/store';
 import { requestErrorCode, type RequestsContext } from '../requests/client';
+import type { TimelineItem } from './timeline';
 
 /** Pause after the last change before the queue is read again. */
 export const QUEUE_DEBOUNCE_MS = 400;
@@ -124,18 +126,10 @@ export async function withdrawPrompt(
   return state;
 }
 
-const rawHeader = (entry: EventEntry): Readonly<Record<string, unknown>> =>
-  isRecord(entry.event) && isRecord(entry.event.header) ? entry.event.header : {};
-
-/** Task ID → number of `prompt` events of a workgroup scope (by the unchecked header: only a trigger to read). */
-const promptCounts = memoize((scope: ScopeEvents): ReadonlyMap<unknown, number> => {
-  const counts = new Map<unknown, number>();
-  for (const entry of scope.entries.values()) {
-    const header = rawHeader(entry);
-    if (header.kind === 'prompt') counts.set(header.task, (counts.get(header.task) ?? 0) + 1);
-  }
-  return counts;
-});
+/** The number of `prompt` items of a timeline (once per timeline array). */
+export const promptCount = memoize((items: readonly TimelineItem[]): number =>
+  items.reduce((count, item) => (item.kind === 'prompt' ? count + 1 : count), 0),
+);
 
 /** Task ID → its session entries (a `session` frame replaces the entry, also when the row is unchanged). */
 const sessionsByTask = memoize((sessions: TasksState['sessions']): ReadonlyMap<string, readonly SessionEntry[]> => {
@@ -150,28 +144,20 @@ const sessionsByTask = memoize((sessions: TasksState['sessions']): ReadonlyMap<s
 
 const NO_SESSIONS: readonly SessionEntry[] = [];
 
-/** What a change of which reads the queue again: the task row, its sessions, the number of its prompt events. */
+/** What a change of which reads the queue again: the task row and its session entries. */
 export interface QueueInputs {
   readonly row: TaskRow | undefined;
   readonly sessions: readonly SessionEntry[];
-  readonly prompts: number;
 }
 
 export function queueInputs(state: StoreState, task: string): QueueInputs {
-  const row = state.tasks.tasks[task];
-  const scope = row === undefined ? undefined : state.events[row.wg_id];
-  return {
-    row,
-    sessions: sessionsByTask(state.tasks.sessions).get(task) ?? NO_SESSIONS,
-    prompts: scope === undefined ? 0 : (promptCounts(scope).get(task) ?? 0),
-  };
+  return { row: state.tasks.tasks[task], sessions: sessionsByTask(state.tasks.sessions).get(task) ?? NO_SESSIONS };
 }
 
-/** Equal inputs: the same task row and session entries (by identity) and the same number of prompts. */
+/** Equal inputs: the same task row and session entries (by identity). */
 export function sameInputs(a: QueueInputs, b: QueueInputs): boolean {
   return (
     a.row === b.row &&
-    a.prompts === b.prompts &&
     a.sessions.length === b.sessions.length &&
     a.sessions.every((entry, index) => entry === b.sessions[index])
   );
@@ -183,9 +169,16 @@ export interface QueueWatchOptions {
   readonly pollMs?: number;
 }
 
-/** Starts watching the queue of `task` (module comment); the returned function stops it. */
-export function watchQueue(context: RequestsContext, task: string, options: QueueWatchOptions = {}): () => void {
+export interface QueueWatch {
+  /** The chat's number of prompts: another number than before reads the queue again. */
+  readonly prompts: (count: number) => void;
+  readonly stop: () => void;
+}
+
+/** Starts watching the queue of `task` (module comment). */
+export function watchQueue(context: RequestsContext, task: string, options: QueueWatchOptions = {}): QueueWatch {
   let stopped = false;
+  let seen: number | null = null;
   let running = false;
   let again = false;
   let pending: ReturnType<typeof setTimeout> | null = null;
@@ -220,10 +213,16 @@ export function watchQueue(context: RequestsContext, task: string, options: Queu
     if (waiting > 0) void read();
   }, options.pollMs ?? QUEUE_POLL_MS);
   void read();
-  return () => {
-    stopped = true;
-    unsubscribe();
-    clearInterval(poll);
-    if (pending !== null) clearTimeout(pending);
+  return {
+    prompts: (count) => {
+      if (seen !== null && seen !== count) later();
+      seen = count;
+    },
+    stop: () => {
+      stopped = true;
+      unsubscribe();
+      clearInterval(poll);
+      if (pending !== null) clearTimeout(pending);
+    },
   };
 }

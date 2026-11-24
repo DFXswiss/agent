@@ -5,8 +5,8 @@
 // withdrawn. A writer withdraws their own prompts that are not already being withdrawn ("Withdraw"); a refusal is
 // shown with its reason (`peer_outdated`: the device must be updated first). The queue is read when the chat opens
 // and again after changes of the task, its sessions and its prompts (`core/chat/queue.ts`).
-import { useEffect, useState } from 'react';
-import { watchQueue, withdrawPrompt } from '../../../core/chat/queue';
+import { memo, useEffect, useRef, useState } from 'react';
+import { type QueueWatch, watchQueue, withdrawPrompt } from '../../../core/chat/queue';
 import { requestErrorCode } from '../../../core/requests/client';
 import type { QueuedPrompt } from '../../../core/store/slices/queue';
 import type { TaskRow } from '../../../core/store/slices/tasks';
@@ -29,14 +29,27 @@ function Sender({ org, prompt }: { readonly org: string; readonly prompt: Queued
   return <span data-testid="chat.queue.author">{text}</span>;
 }
 
-export function PromptQueue({ task, writer }: { readonly task: TaskRow; readonly writer: boolean }) {
+interface PromptQueueProps {
+  readonly task: TaskRow;
+  readonly writer: boolean;
+  /** The number of prompts in the chat's timeline (another number reads the queue again). */
+  readonly prompts: number;
+}
+
+export const PromptQueue = memo(function PromptQueue({ task, writer, prompts }: PromptQueueProps) {
   const { app } = useAppEnv();
   const { t, error, locale } = useI18n();
   const queue = useStore((state) => state.queue.byTask[task.task_id] ?? null, app.store);
   const me = useStore((state) => state.me.userId, app.store);
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
-  useEffect(() => watchQueue(app.tasks, task.task_id), [app, task.task_id]);
+  const watch = useRef<QueueWatch | null>(null);
+  useEffect(() => {
+    const started = watchQueue(app.tasks, task.task_id);
+    watch.current = started;
+    return started.stop;
+  }, [app, task.task_id]);
+  useEffect(() => watch.current!.prompts(prompts), [prompts]);
   if (queue === null || queue.prompts.length === 0) return null;
   const count = queue.prompts.length;
   const withdraw = (event: string) => {
@@ -98,4 +111,4 @@ export function PromptQueue({ task, writer }: { readonly task: TaskRow; readonly
       </ol>
     </section>
   );
-}
+});

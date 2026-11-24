@@ -5,6 +5,7 @@ import {
   loadQueue,
   QUEUE_DEBOUNCE_MS,
   QUEUE_POLL_MS,
+  promptCount,
   queueInputs,
   sameInputs,
   taskQueue,
@@ -16,6 +17,7 @@ import { createStore } from '../../../src/core/store';
 import type { EventEntry } from '../../../src/core/store/slices/events';
 import { putQueue, selectWithdrawal } from '../../../src/core/store/slices/queue';
 import { putSession, putTasks, type SessionRow, type TaskRow } from '../../../src/core/store/slices/tasks';
+import type { TimelineItem } from '../../../src/core/chat/timeline';
 import { FakeClient } from '../tasks/world';
 
 const TASK = '0190f000-0000-7000-8000-000000000001';
@@ -181,6 +183,17 @@ describe('loadQueue and withdrawPrompt', () => {
     ]);
     expect(selectWithdrawal('e1')(store.getState())).toBe('withdrawing');
     expect(selectWithdrawal('e2')(store.getState())).toBeNull();
+    // the newest withdrawal of an event wins, also over the queue of another task
+    putQueue(store, 'other', {
+      prompts: [],
+      withdrawals: [
+        { eventId: 'e9', state: 'too_late', requestedAt: 'y' },
+        { eventId: 'e9', state: 'withdrawn', requestedAt: 'x' },
+        { eventId: 'e1', state: 'withdrawn', requestedAt: 'x' },
+      ],
+    });
+    expect(selectWithdrawal('e9')(store.getState())).toBe('too_late');
+    expect(selectWithdrawal('e1')(store.getState())).toBe('withdrawing');
     answer = { state: 'withdrawn' };
     expect(await withdrawPrompt(context, TASK, 'e1')).toBe('withdrawn');
     queue = store.getState().queue.byTask[TASK]!;
@@ -201,34 +214,23 @@ describe('loadQueue and withdrawPrompt', () => {
   });
 });
 
-describe('queueInputs', () => {
-  it('follows the task row, its session entries and the number of its prompt events', () => {
+describe('queueInputs and promptCount', () => {
+  it('follow the task row and its session entries, and count prompts once per timeline', () => {
     const { store } = world();
     const read = () => queueInputs(store.getState(), TASK);
-    expect(read()).toEqual({ row: undefined, sessions: [], prompts: 0 });
+    expect(read()).toEqual({ row: undefined, sessions: [] });
     putTasks(store, [task()]);
     const bare = read();
     expect(bare.row?.task_id).toBe(TASK);
     expect(sameInputs(bare, read())).toBe(true);
-    store.update('events', () => ({
-      [WG]: {
-        entries: new Map([
-          [1, entry(1, { kind: 'prompt', task: TASK })],
-          [2, entry(2, { kind: 'prompt', task: 'other' })],
-          [3, entry(3, { kind: 'session.output', task: TASK })],
-          [4, { ...entry(4, null), event: null }],
-          [5, entry(5, null)],
-        ]),
-      },
-    }));
-    const one = read();
-    expect(one.prompts).toBe(1);
-    expect(sameInputs(bare, one)).toBe(false);
+    // events never change the inputs
+    store.update('events', () => ({ [WG]: { entries: new Map([[1, entry(1, { kind: 'prompt', task: TASK })]]) } }));
+    expect(sameInputs(bare, read())).toBe(true);
     putSession(store, session(), [], 0);
     putSession(store, session({ session_id: 'elsewhere', task_id: 'other' }), [], 0);
     const first = read();
     expect(first.sessions.map((item) => item.row.session_id)).toEqual([SESSION]);
-    expect(sameInputs(one, first)).toBe(false);
+    expect(sameInputs(bare, first)).toBe(false);
     // a session frame with an unchanged row replaces the entry: a new read
     putSession(store, session(), [], 0);
     expect(sameInputs(first, read())).toBe(false);
@@ -237,9 +239,10 @@ describe('queueInputs', () => {
     expect(two.sessions).toHaveLength(2);
     expect(sameInputs(two, { ...two, sessions: [two.sessions[0]!, first.sessions[0]!] })).toBe(false);
     expect(sameInputs(two, { ...two, row: task() })).toBe(false);
-    store.update('events', () => ({ [WG]: { entries: new Map() } }));
-    expect(read().prompts).toBe(0);
     expect(queueInputs(store.getState(), 'other').row).toBeUndefined();
+    const items = [{ kind: 'prompt' }, { kind: 'session.output' }, { kind: 'prompt' }] as TimelineItem[];
+    expect(promptCount(items)).toBe(2);
+    expect(promptCount([])).toBe(0);
   });
 });
 
@@ -263,7 +266,7 @@ describe('watchQueue', () => {
       open?.();
       await vi.advanceTimersByTimeAsync(0);
     };
-    const stop = watchQueue(context, TASK);
+    const { stop, prompts: seen } = watchQueue(context, TASK);
     expect(reads()).toBe(1);
     // two changes within the pause: one read after the pause, queued behind the running one
     putTasks(store, [task({ state: 'idle', state_at: '2026-11-24T10:01:00.000Z' })]);
@@ -286,11 +289,20 @@ describe('watchQueue', () => {
     await vi.advanceTimersByTimeAsync(QUEUE_POLL_MS);
     expect(reads()).toBe(4);
     await finish();
+    // the chat's number of prompts: the first is the baseline, the same number reads nothing, another one reads
+    seen(3);
+    seen(3);
+    await vi.advanceTimersByTimeAsync(QUEUE_DEBOUNCE_MS);
+    expect(reads()).toBe(4);
+    seen(4);
+    await vi.advanceTimersByTimeAsync(QUEUE_DEBOUNCE_MS);
+    expect(reads()).toBe(5);
+    await finish();
     // a pending change is dropped when the watch stops
     putTasks(store, [task({ state: 'running', state_at: '2026-11-24T10:04:00.000Z' })]);
     stop();
     await vi.advanceTimersByTimeAsync(QUEUE_POLL_MS);
-    expect(reads()).toBe(4);
+    expect(reads()).toBe(5);
   });
 
   it('reports failed reads while watching, not after the stop', async () => {
@@ -302,7 +314,7 @@ describe('watchQueue', () => {
     client.on(`GET /v1/tasks/${TASK}/queue`, () => {
       throw new HubError('not_found', 404);
     });
-    const stop = watchQueue(context, TASK, { onError, debounceMs: 10, pollMs: 50 });
+    const { stop } = watchQueue(context, TASK, { onError, debounceMs: 10, pollMs: 50 });
     await vi.advanceTimersByTimeAsync(0);
     expect(onError).toHaveBeenCalledWith('not_found');
     // the poll reads nothing while no queue was ever loaded
@@ -319,7 +331,7 @@ describe('watchQueue', () => {
     client.on(`GET /v1/tasks/${TASK}/queue`, () => {
       throw new HubError('not_found', 404);
     });
-    const quiet = watchQueue(context, TASK);
+    const quiet = watchQueue(context, TASK).stop;
     await vi.advanceTimersByTimeAsync(0);
     quiet();
   });

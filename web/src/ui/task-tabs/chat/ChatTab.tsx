@@ -5,6 +5,7 @@
 // (`ModelAccessCard`, ADR-079).
 import { useMemo } from 'react';
 import { loadChat } from '../../../core/chat/actions';
+import { promptCount } from '../../../core/chat/queue';
 import { selectTimeline } from '../../../core/chat/timeline';
 import type { TaskRow } from '../../../core/store/slices/tasks';
 import { useStore } from '../../hooks/useStore';
@@ -48,7 +49,7 @@ function ChatView({ task }: { readonly task: TaskRow }) {
       )}
       <Timeline items={items} empty={t(load?.status === 'loading' ? 'task.chat.loading' : 'task.chat.empty')} />
       <ModelAccessCard task={task} main={main} userId={userId} />
-      <PromptQueue task={task} writer={writer} />
+      <PromptQueue task={task} writer={writer} prompts={promptCount(items)} />
       {writer ? (
         <ChatComposer task={task} main={main} />
       ) : (
