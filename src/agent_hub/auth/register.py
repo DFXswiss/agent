@@ -227,14 +227,9 @@ def _insert_passkey(
         raise HubError("credential_invalid")
 
 
-def _store_first(
-    context: HubContext, body: RegisterFinish, ceremony: Ceremony, registration: Registration, now: datetime
-) -> None:
-    identity = cast(IdentityKeys, body.identity)
-    recovery = cast(RecoverySlot, body.recovery)
-    wrap = cast(CredWrap, body.cred_wrap)
-    user_id = cast(uuid.UUID, ceremony.user_id)
-    invite_id = cast(str, ceremony.invite_id)
+def check_identity(identity: IdentityKeys, wrap: CredWrap, user_id: uuid.UUID) -> tuple[bytes, bytes]:
+    """The identity's raw public keys after the checks of a first registration: a valid Ed25519 key
+    (`params_invalid`) and the self-wrap of `CK_1` signed by it (`wrap_unauthorized`, rule W1)."""
     kem_pub, sig_pub = decode(identity.kem_pub), decode(identity.sig_pub)
     if not ed25519_public_key_valid(sig_pub):
         raise HubError("params_invalid", detail={"pointers": ["/identity/sig_pub"]})
@@ -250,44 +245,83 @@ def _store_first(
         )
     except CryptoError:
         raise HubError("wrap_unauthorized") from None
+    return kem_pub, sig_pub
+
+
+def locked_invitation_key(connection: psycopg.Connection[Any], invite_id: str, now: datetime) -> bytes:
+    """`pk_inv` of an open user invitation, locked for this transaction (`invite_unknown` otherwise)."""
+    invite = connection.execute(
+        f"SELECT pk_inv, org_id, log_seq FROM hub.invite WHERE id = %(id)s AND {OPEN_INVITE} FOR UPDATE",
+        {"id": invite_id, "now": now},
+    ).fetchone()
+    if invite is None:
+        raise HubError("invite_unknown")
+    return _invitation_key(connection, *invite)
+
+
+def store_account(
+    connection: psycopg.Connection[Any],
+    user_id: uuid.UUID,
+    *,
+    keys: tuple[bytes, bytes],
+    recovery: RecoverySlot,
+    wrap: CredWrap,
+    invite_id: str,
+    now: datetime,
+) -> None:
+    """The rows of a new user, without any passkey: principal, identity, settings, the recovery slot, `CK_1` with its
+    self-wrap, and the invitation bound to the user (`id_conflict` for a taken user or recovery ID). Shared by the
+    passkey registration and the account of an agent alone (KOR-62)."""
+    found = connection.execute(
+        "INSERT INTO hub.principal (id, kind, created_at) VALUES (%s, 'user', %s) ON CONFLICT (id) DO NOTHING"
+        " RETURNING id",
+        (user_id, now),
+    ).fetchone()
+    if found is None:
+        raise HubError("id_conflict")
+    stored = connection.execute(
+        "INSERT INTO hub.user_identity (user_id, kem_pub, sig_pub, recovery_id, created_at)"
+        " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (recovery_id) DO NOTHING RETURNING user_id",
+        (user_id, keys[0], keys[1], recovery.recovery_id, now),
+    ).fetchone()
+    if stored is None:
+        raise HubError("id_conflict")
+    connection.execute("INSERT INTO hub.user_settings (user_id, updated_at) VALUES (%s, %s)", (user_id, now))
+    connection.execute(
+        "INSERT INTO hub.identity_bundle (user_id, slot, ct, updated_at) VALUES (%s, 'recovery', %s, %s)",
+        (user_id, decode(recovery.bundle_ct), now),
+    )
+    connection.execute(
+        "INSERT INTO hub.scope_epoch (scope, scope_id, epoch, created_at) VALUES ('cred', %s, 1, %s)",
+        (user_id, now),
+    )
+    connection.execute(
+        "INSERT INTO hub.key_wrap (scope, scope_id, epoch, recipient_id, wrap, wrapped_by, sig, created_at)"
+        " VALUES ('cred', %s, 1, %s, %s, %s, %s, %s)",
+        (user_id, user_id, decode(wrap.wrap), user_id, decode(wrap.sig), now),
+    )
+    connection.execute(
+        "UPDATE hub.invite SET registered_user = %s, registered_at = %s WHERE id = %s", (user_id, now, invite_id)
+    )
+
+
+def _store_first(
+    context: HubContext, body: RegisterFinish, ceremony: Ceremony, registration: Registration, now: datetime
+) -> None:
+    identity = cast(IdentityKeys, body.identity)
+    recovery = cast(RecoverySlot, body.recovery)
+    wrap = cast(CredWrap, body.cred_wrap)
+    user_id = cast(uuid.UUID, ceremony.user_id)
+    invite_id = cast(str, ceremony.invite_id)
+    keys = check_identity(identity, wrap, user_id)
     with transaction(context.pool) as connection:
-        invite = connection.execute(
-            f"SELECT pk_inv, org_id, log_seq FROM hub.invite WHERE id = %(id)s AND {OPEN_INVITE} FOR UPDATE",
-            {"id": invite_id, "now": now},
-        ).fetchone()
-        if invite is None:
-            raise HubError("invite_unknown")
-        pk_inv = _invitation_key(connection, *invite)
+        pk_inv = locked_invitation_key(connection, invite_id, now)
         try:
             verify_register(pk_inv, str(user_id), ceremony.challenge, body.inv_sig)
         except CryptoError:
             raise HubError("signature_invalid") from None
-        connection.execute("INSERT INTO hub.principal (id, kind, created_at) VALUES (%s, 'user', %s)", (user_id, now))
-        stored = connection.execute(
-            "INSERT INTO hub.user_identity (user_id, kem_pub, sig_pub, recovery_id, created_at)"
-            " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (recovery_id) DO NOTHING RETURNING user_id",
-            (user_id, kem_pub, sig_pub, recovery.recovery_id, now),
-        ).fetchone()
-        if stored is None:
-            raise HubError("id_conflict")
-        connection.execute("INSERT INTO hub.user_settings (user_id, updated_at) VALUES (%s, %s)", (user_id, now))
-        connection.execute(
-            "INSERT INTO hub.identity_bundle (user_id, slot, ct, updated_at) VALUES (%s, 'recovery', %s, %s)",
-            (user_id, decode(recovery.bundle_ct), now),
-        )
+        store_account(connection, user_id, keys=keys, recovery=recovery, wrap=wrap, invite_id=invite_id, now=now)
         _insert_passkey(connection, user_id, registration, list(body.credential.transports), now)
-        connection.execute(
-            "INSERT INTO hub.scope_epoch (scope, scope_id, epoch, created_at) VALUES ('cred', %s, 1, %s)",
-            (user_id, now),
-        )
-        connection.execute(
-            "INSERT INTO hub.key_wrap (scope, scope_id, epoch, recipient_id, wrap, wrapped_by, sig, created_at)"
-            " VALUES ('cred', %s, 1, %s, %s, %s, %s, %s)",
-            (user_id, user_id, decode(wrap.wrap), user_id, decode(wrap.sig), now),
-        )
-        connection.execute(
-            "UPDATE hub.invite SET registered_user = %s, registered_at = %s WHERE id = %s", (user_id, now, invite_id)
-        )
         reference = credential_reference(registration.credential_id)
         for action, kind, target, detail in (
             ("auth.register", "passkey", reference, {"passkey_id": reference, "invite_id": invite_id}),

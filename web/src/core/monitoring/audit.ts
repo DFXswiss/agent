@@ -15,6 +15,7 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'agent.claim',
   'agent.confirm',
   'agent.pairing',
+  'agent.register',
   'agent.revoke',
   'audit.repeat',
   'auth.login',

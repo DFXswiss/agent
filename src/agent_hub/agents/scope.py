@@ -7,13 +7,14 @@ that match no route, which get the same `404` as a browser's), with the same rig
 body or query; the user's own rights apply in every handler, so an agent is never more and never less than its user.
 Equality is the default: a browser route added later is open to agents without any change here.
 
-The only exceptions are the WebAuthn ceremonies themselves, which cannot be performed without an authenticator, and
-the confirmation of a main orchestrator, whose essence is the user's passkey approval (concept idea 34: one main
-orchestrator per user, approved with a passkey; an agent never pairs or replaces an agent); each entry of
-`EXCEPTIONS` names its reason. Where the web client needs a passkey gesture (adding a passkey), the agent
-tool opens the page in the user's browser. A `confirmed` agent (paired, not yet claimed) may only claim and fetch
-the handover of a remote pairing (`CONFIRMED_ROUTES`, ADR-067); agents
-also have their own routes (authentication class `agent`). `tests/platform/hub/agents/test_scope.py` checks every
+The only exceptions are the WebAuthn ceremonies themselves, which cannot be performed without an authenticator; each
+entry of `EXCEPTIONS` names its reason. The confirmation of a main orchestrator (`POST /v1/me/agents`) is admitted
+too, and its handler decides: for an account with a passkey its essence is the person's passkey approval (concept
+idea 34), so an agent gets `403 forbidden` there; the agent of an account without a passkey (an account of an agent
+alone, rule E-27, KOR-62) replaces its main orchestrator itself. Where the web client needs a passkey gesture
+(adding a passkey), the agent tool opens the page in the user's browser. A `confirmed` agent (paired, not yet
+claimed) may only claim and fetch the handover of a remote pairing (`CONFIRMED_ROUTES`, ADR-067); agents also have
+their own routes (authentication class `agent`). `tests/platform/hub/agents/test_scope.py` checks every
 registered route against this rule.
 """
 
@@ -35,8 +36,6 @@ EXCEPTIONS: Mapping[tuple[str, str], str] = {
     ("POST", "/v1/passkeys/register/finish"): "finishes the create() ceremony of a new passkey (authenticator)",
     ("POST", "/v1/me/recovery/begin"): "starts a WebAuthn get() ceremony for a passkey assertion (authenticator); "
     "an agent replaces the recovery code with its signed request instead",
-    ("POST", "/v1/me/agents"): "confirms (and so replaces) the user's main orchestrator: the concept requires the "
-    "user's passkey approval for it (idea 34); the agent tool opens the pairing page in the user's browser",
 }
 
 

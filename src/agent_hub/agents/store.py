@@ -314,18 +314,36 @@ class Confirmed:
     remote: bool = False
 
 
-def _lock_user(connection: Connection, user: UUID) -> None:
+def has_passkey(connection: Connection, user: UUID) -> bool:
+    """Whether the user has an active passkey: an account of a person. An account without one is an account of an
+    agent alone (rule E-27, KOR-62), whose agent may replace its main orchestrator itself."""
+    row = connection.execute(
+        "SELECT 1 FROM hub.passkey WHERE user_id = %s AND removed_at IS NULL LIMIT 1", (user,)
+    ).fetchone()
+    return row is not None
+
+
+def lock_user(connection: Connection, user: UUID) -> None:
     """Serialise the confirmations of one user (the rule of one main orchestrator holds under concurrency)."""
     connection.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (PAIRING_LOCK, str(user)))
 
 
-def confirm(connection: Connection, user: UUID, key_id: str, body: Confirmation, now: datetime) -> Confirmed:
-    """Confirm an open pairing for `user` by the browser session of the pairing-tagged login (the passkey gesture;
-    an agent never confirms, scope.EXCEPTIONS). The user's previous confirmed or active agent is revoked and named
-    in `replaces`. A repeat with identical values is idempotent (`changed` False, nothing replaced). A remote pairing
-    needs `handover_ct` (`400 handover_required`), a loopback pairing refuses it (`400 handover_unexpected`)."""
-    gesture_session(connection, key_id, body.pairing_id, now)
-    _lock_user(connection, user)
+def confirm(
+    connection: Connection, user: UUID, key_id: str, body: Confirmation, now: datetime, *, by_agent: bool = False
+) -> Confirmed:
+    """Confirm an open pairing for `user` by the browser session of the pairing-tagged login (the passkey gesture),
+    or - `by_agent` - by the active agent of an account without a passkey (KOR-62: nobody's approval to ask; refused
+    with `403 forbidden` once the account has a passkey, concept idea 34). The user's previous confirmed or active
+    agent is revoked and named in `replaces`. A repeat with identical values is idempotent (`changed` False,
+    nothing replaced). A remote pairing needs `handover_ct` (`400 handover_required`), a loopback pairing refuses it
+    (`400 handover_unexpected`)."""
+    if by_agent:
+        lock_user(connection, user)
+        if has_passkey(connection, user):
+            raise HubError("forbidden")
+    else:
+        gesture_session(connection, key_id, body.pairing_id, now)
+        lock_user(connection, user)
     row = connection.execute(
         "SELECT state, user_id, expires_at, bundle_ct, label_ct, claim_hash, remote, handover_ct FROM hub.agent"
         " WHERE id = %s FOR UPDATE",
@@ -381,6 +399,63 @@ def confirm(connection: Connection, user: UUID, key_id: str, body: Confirmation,
     )
     _audit(connection, "agent.confirm", user, body.pairing_id, now, remote=remote)
     return Confirmed(changed=True, replaced=tuple(previous), remote=remote)
+
+
+@dataclass(frozen=True)
+class Installed:
+    """An agent the hub activates at once, without a pairing (an account of an agent alone, KOR-62): its keys and
+    the identity and label it sealed itself under a handover secret it drew itself (`claim_hash` from that secret)."""
+
+    agent_id: UUID
+    kem_pub: bytes
+    sig_pub: bytes
+    bundle_ct: bytes
+    label_ct: bytes
+    claim_hash: bytes
+
+
+def install(connection: Connection, user: UUID, agent: Installed, now: datetime, *, replace: bool) -> tuple[UUID, ...]:
+    """Store `agent` as the user's active main orchestrator. With `replace` the user's previous confirmed or active
+    agents are revoked first (named in `replaces`); the agents revoked. A taken agent ID or key is `409 id_conflict`.
+    The caller has verified the agent's proof of possession and holds the user's lock (`lock_user`)."""
+    previous: list[UUID] = []
+    if replace:
+        previous = [
+            agent_id
+            for (agent_id,) in connection.execute(
+                "SELECT id FROM hub.agent WHERE user_id = %s AND state IN ('confirmed', 'active') ORDER BY id"
+                " FOR UPDATE",
+                (user,),
+            ).fetchall()
+        ]
+        for agent_id in previous:
+            revoke(connection, user, agent_id, now)
+    try:
+        with connection.transaction():
+            connection.execute(
+                "INSERT INTO hub.agent (id, user_id, kem_pub, sig_pub, state, bundle_ct, label_ct, claim_hash,"
+                " created_at, expires_at, confirmed_at, claimed_at, last_used_at, replaces)"
+                " VALUES (%s, %s, %s, %s, 'active', %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    agent.agent_id,
+                    user,
+                    agent.kem_pub,
+                    agent.sig_pub,
+                    agent.bundle_ct,
+                    agent.label_ct,
+                    agent.claim_hash,
+                    now,
+                    now + timedelta(seconds=PAIRING_SECONDS),
+                    now,
+                    now,
+                    now,
+                    previous[-1] if previous else None,
+                ),
+            )
+    except psycopg.errors.UniqueViolation:
+        # the agent ID, or the keys of an agent that is not revoked (`agent_sig_pub`)
+        raise HubError("id_conflict") from None
+    return tuple(previous)
 
 
 def _agent_json(row: tuple[Any, ...]) -> dict[str, Any]:

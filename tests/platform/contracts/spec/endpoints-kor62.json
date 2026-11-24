@@ -1,0 +1,19 @@
+{
+  "description": "Endpoints of the account of an agent alone (11-agent-access.md sections 4 and 5.5, KOR-62, rule E-27): an agent creates a user account through an invitation without a passkey.",
+  "rights": [
+    "anon"
+  ],
+  "auth": [
+    "anon"
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/v1/agent-accounts",
+      "rights": [
+        "anon"
+      ],
+      "section": "11.4"
+    }
+  ]
+}

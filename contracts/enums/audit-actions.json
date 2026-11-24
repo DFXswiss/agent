@@ -42,6 +42,10 @@
       "group": "agent"
     },
     {
+      "action": "agent.register",
+      "group": "agent"
+    },
+    {
       "action": "notification.read",
       "group": "notification"
     },

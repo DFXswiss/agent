@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/agent.register.json",
+  "title": "audit detail agent.register",
+  "description": "detail of audit rows with action agent.register: an agent became the main orchestrator of an account without a pairing - it created the account through an invitation (`invite_id`) or recovered an account without a passkey with the recovery code (no `invite_id`); rule E-27, KOR-62. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "agent": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "invite_id": {
+      "$ref": "../common.json#/$defs/invite_id"
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "agent-signature-v1"
+      ],
+      "description": "the proof-of-possession method of the agent (11-agent-access.md section 3)"
+    }
+  },
+  "required": [
+    "agent",
+    "method"
+  ],
+  "additionalProperties": false
+}

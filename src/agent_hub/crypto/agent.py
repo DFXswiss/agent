@@ -34,8 +34,19 @@ Pairing from another computer (ADR-067, 11-agent-access.md sections 3 and 5.4):
 - `parse_code`: the typed form of either code (lower case, spaces and dashes allowed, `I`/`L` read as `1`, `O` as
   `0`); `format_code` shows it in two groups (`XXXXX-XXXXX`, `XXXX-XXXX`).
 
-The hub uses only `verify_pop`, `claim_hash` and the format checks; sealing and opening belong to the browser and the
-agent tool (this module is the reference for the vectors).
+An account of an agent alone (rule E-27, KOR-62, 11-agent-access.md sections 3 and 5.5): the agent tool creates the
+user's identity itself, with no passkey, and proves possession with signatures instead of WebAuthn. The proof names
+its method (`method`, today only `PROOF_METHODS` = `agent-signature-v1`):
+
+- `account_text`: `P || "agent-account\0" || canonical({"agent", "agent_pub": {kem, sig}, "invite_id", "method",
+  "pub": {kem, sig}, "user"})`, signed by the invitation key `sk_inv` (the holder of the code), the new identity and
+  the new agent key (`sign_text`, `verify_text`); the hub checks all three before it creates the account.
+- `recover_text`: `P || "agent-recover\0" || canonical({"agent", "agent_pub": {kem, sig}, "challenge", "method",
+  "user"})` with the 32-byte challenge of `recovery/begin`, signed by the identity opened with the recovery code and
+  by the new agent key; it binds the new main orchestrator to that recovery.
+
+The hub uses only `verify_pop`, `verify_text`, `claim_hash` and the format checks; sealing and opening belong to the
+browser and the agent tool (this module is the reference for the vectors).
 """
 
 from __future__ import annotations
@@ -73,6 +84,11 @@ LABEL_AGENT_CLAIM_HASH = b"agent-claim-hash\x00"
 LABEL_AGENT_CODE = b"agent-code\x00"
 LABEL_AGENT_HANDOVER = b"agent-handover\x00"
 LABEL_AGENT_RETURN = b"agent-return\x00"
+LABEL_AGENT_ACCOUNT = b"agent-account\x00"
+LABEL_AGENT_RECOVER = b"agent-recover\x00"
+METHOD_AGENT_SIGNATURE = "agent-signature-v1"
+PROOF_METHODS = (METHOD_AGENT_SIGNATURE,)
+CHALLENGE_BYTES = 32
 MODE_REMOTE = "remote"
 NONCE_BYTES = 16
 AGENT_CODE_LENGTH = 10
@@ -311,3 +327,64 @@ def open_handover(agent_kem: X25519PrivateKey, agent_id: str, user_id: str, seal
 def new_agent() -> Identity:
     """Fresh agent key pairs (X25519 and Ed25519)."""
     return Identity(X25519PrivateKey.generate(), Ed25519PrivateKey.generate())
+
+
+def _public(kem_pub: bytes, sig_pub: bytes) -> dict[str, str]:
+    require_bytes(kem_pub, RAW_KEY_BYTES)
+    require_bytes(sig_pub, RAW_KEY_BYTES)
+    return {"kem": b64u_encode(kem_pub), "sig": b64u_encode(sig_pub)}
+
+
+def check_method(method: object) -> str:
+    """A proof method of `PROOF_METHODS` (`header_invalid` otherwise)."""
+    if method not in PROOF_METHODS:
+        fail("header_invalid")
+    return str(method)
+
+
+def account_text(
+    *,
+    agent_id: str,
+    agent_kem: bytes,
+    agent_sig: bytes,
+    invite_id: str,
+    method: str,
+    user_id: str,
+    user_kem: bytes,
+    user_sig: bytes,
+) -> bytes:
+    """The text the invitation key, the new identity and the new agent key sign for an account of an agent alone."""
+    fields = {
+        "agent": agent_id,
+        "agent_pub": _public(agent_kem, agent_sig),
+        "invite_id": invite_id,
+        "method": check_method(method),
+        "pub": _public(user_kem, user_sig),
+        "user": user_id,
+    }
+    return P + LABEL_AGENT_ACCOUNT + canonical(fields)
+
+
+def recover_text(
+    *, agent_id: str, agent_kem: bytes, agent_sig: bytes, challenge: bytes, method: str, user_id: str
+) -> bytes:
+    """The text the recovered identity and the new agent key sign to make the new agent the main orchestrator."""
+    require_bytes(challenge, CHALLENGE_BYTES)
+    fields = {
+        "agent": agent_id,
+        "agent_pub": _public(agent_kem, agent_sig),
+        "challenge": b64u_encode(challenge),
+        "method": check_method(method),
+        "user": user_id,
+    }
+    return P + LABEL_AGENT_RECOVER + canonical(fields)
+
+
+def sign_text(key: Ed25519PrivateKey, text: bytes) -> str:
+    """The b64u Ed25519 signature of `key` over `text`."""
+    return b64u_encode(ed25519_sign(key, text))
+
+
+def verify_text(sig_pub: bytes, signature: object, text: bytes) -> None:
+    """`signature_invalid` unless `signature` is the signature of `sig_pub` over `text`."""
+    ed25519_verify_b64u(sig_pub, signature, text)

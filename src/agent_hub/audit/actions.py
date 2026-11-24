@@ -11,6 +11,7 @@ AUDIT_ACTIONS = frozenset(
         "agent.claim",
         "agent.confirm",
         "agent.pairing",
+        "agent.register",
         "agent.revoke",
         "audit.repeat",
         "auth.login",

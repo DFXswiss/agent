@@ -17,6 +17,17 @@
    `recovery` ceremony without `hub_value` and the creation options (excluding the user's active passkeys), finished by
    `POST /v1/passkeys/register/finish` (`agent_hub.auth.register`, audited there as `auth.recovery {step: "finish"}`).
 
+An account without an active passkey (an account of an agent alone, rule E-27, KOR-62) recovers without WebAuthn:
+`recovery/finish` then carries `agent` - a new agent with the identity and label it sealed itself, the proof method
+(`method`, today only `agent-signature-v1`) and the agent key's signature `agent_sig` - and `proof` is the identity's
+signature over `crypto.agent.recover_text` (challenge, user, the new agent and its keys) instead of the recovery
+proof; `agent_sig` covers the same text. A valid proof makes the new agent the user's active main orchestrator in the
+same transaction (`agents.store.install`, the previous one revoked), marks the proof ceremony used, audits
+`auth.recovery {step: finish}` and `agent.register {agent, method}`, notifies the user (`recovery_finished`, target
+the new agent) and answers `{user_id, agent_id}`. The agent then replaces the recovery code with its signed request
+(`PUT /v1/me/bundles/recovery`). An account with an active passkey is `403 forbidden` for this form before anything
+is consumed: its main orchestrator changes only with the person's passkey approval (concept idea 34).
+
 The used registration ceremony is what then allows the browser to replace the recovery slot with a new recovery code
 once (`PUT /v1/me/bundles/recovery {bundle_ct, new_recovery_id}`, `agent_hub.me.routes`). Proof ceremonies are never
 marked used, so a refused proof never allows that replacement.
@@ -35,6 +46,10 @@ from typing import Annotated, Any, cast
 from pydantic import StringConstraints
 
 from agent_core.signing import b64url_encode
+from agent_hub.agents import store as agents
+from agent_hub.agents.accounts import Method, NewAgent, audit_register, installed
+from agent_hub.agents.keys import key_id_of
+from agent_hub.agents.notify import recovery_notice
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.auth.ceremonies import (
     CEREMONY_SECONDS,
@@ -44,11 +59,14 @@ from agent_hub.auth.ceremonies import (
     new_id,
 )
 from agent_hub.auth.fields import B64u16Id, B64u32, B64u64, Strict, decode
+from agent_hub.crypto import agent as agent_format
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.crypto.recovery import verify_proof
 from agent_hub.db.pool import transaction
 from agent_hub.errors import HubError
 from agent_hub.http.context import HubContext
+from agent_hub.notifications.rules import publish_rows
+from agent_hub.stream.publish import close_keys
 
 PER_SOURCE = 5
 SOURCE_WINDOW_SECONDS = 3600.0
@@ -65,10 +83,18 @@ class RecoveryBegin(Strict):
     recovery_id: B64u16Id
 
 
+class RecoveryAgent(NewAgent):
+    """The new main orchestrator of a recovery without a passkey (KOR-62)."""
+
+    method: Method
+    agent_sig: B64u64
+
+
 class RecoveryFinish(Strict):
     user_id: Uuid
     challenge: B64u32
     proof: B64u64
+    agent: RecoveryAgent | None = None
 
 
 class SourceLimit:
@@ -157,11 +183,33 @@ def _audit(connection: Any, user_id: uuid.UUID, step: str, result: str, now: dat
     )
 
 
+def _agent_proof_valid(body: RecoveryFinish, agent: agents.Installed, sig_pub: bytes, challenge: bytes) -> bool:
+    """The identity's `proof` and the agent's `agent_sig` over the recover text (module docstring)."""
+    request = cast(RecoveryAgent, body.agent)
+    text = agent_format.recover_text(
+        agent_id=str(agent.agent_id),
+        agent_kem=agent.kem_pub,
+        agent_sig=agent.sig_pub,
+        challenge=challenge,
+        method=request.method,
+        user_id=body.user_id,
+    )
+    try:
+        agent_format.verify_text(sig_pub, body.proof, text)
+        agent_format.verify_text(agent.sig_pub, request.agent_sig, text)
+    except CryptoError:
+        return False
+    return True
+
+
 def finish(context: HubContext, body: RecoveryFinish) -> dict[str, Any]:
     """`POST /v1/recovery/finish`."""
     now = context.clock()
     user_id = uuid.UUID(body.user_id)
     challenge = decode(body.challenge)
+    agent = None if body.agent is None else installed(body.agent, "/agent")
+    replaced: tuple[uuid.UUID, ...] = ()
+    notices: list[Any] = []
     with transaction(context.pool) as connection:
         found = connection.execute(
             "SELECT c.id, i.sig_pub FROM hub.ceremony c JOIN hub.user_identity i ON i.user_id = c.user_id"
@@ -173,16 +221,28 @@ def finish(context: HubContext, body: RecoveryFinish) -> dict[str, Any]:
         if found is None:
             raise HubError("ceremony_invalid")
         ceremony_id, sig_pub = found
-        try:
-            verify_proof(bytes(sig_pub), body.user_id, challenge, body.proof)
-            valid = True
-        except CryptoError:
-            valid = False
+        if agent is not None and agents.has_passkey(connection, user_id):
+            raise HubError("forbidden")
+        if agent is None:
+            try:
+                verify_proof(bytes(sig_pub), body.user_id, challenge, body.proof)
+                valid = True
+            except CryptoError:
+                valid = False
+        else:
+            valid = _agent_proof_valid(body, agent, bytes(sig_pub), challenge)
         connection.execute(
             "UPDATE hub.ceremony SET challenge = %s WHERE id = %s", (secrets.token_bytes(CHALLENGE_BYTES), ceremony_id)
         )
         if not valid:
             _audit(connection, user_id, "finish", "denied", now)
+        elif agent is not None:
+            connection.execute("UPDATE hub.ceremony SET used_at = %s WHERE id = %s", (now, ceremony_id))
+            agents.lock_user(connection, user_id)
+            replaced = agents.install(connection, user_id, agent, now, replace=True)
+            _audit(connection, user_id, "finish", "ok", now)
+            audit_register(connection, user_id, agent.agent_id, now, {"method": cast(RecoveryAgent, body.agent).method})
+            notices = recovery_notice(connection, user_id, now, str(agent.agent_id))
         exclude = [
             bytes(row[0])
             for row in connection.execute(
@@ -193,6 +253,10 @@ def finish(context: HubContext, body: RecoveryFinish) -> dict[str, Any]:
         ]
     if not valid:
         raise HubError("signature_invalid")
+    if agent is not None:
+        publish_rows(notices)
+        close_keys(user_id, [key_id_of(old) for old in replaced])
+        return {"user_id": body.user_id, "agent_id": str(agent.agent_id)}
     ceremony = create_ceremony(context.pool, kind="recovery", now=now, user_id=user_id)
     return {
         "ceremony_id": str(ceremony.id),

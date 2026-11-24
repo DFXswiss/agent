@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/agent-accounts-create.request.json",
+  "title": "POST /v1/agent-accounts request",
+  "description": "Body of POST /v1/agent-accounts (11-agent-access.md sections 4 and 5.5, KOR-62): an account of an agent alone through an invitation, without a passkey. identity, recovery and cred_wrap as for the first passkey of POST /v1/passkeys/register/finish; the agent becomes the active main orchestrator; proof: signatures of sk_inv, the identity and the agent key over P||'agent-account\\0'||canonical({agent,agent_pub,invite_id,method,pub,user}).",
+  "type": "object",
+  "properties": {
+    "invite_id": {
+      "$ref": "../common.json#/$defs/invite_id"
+    },
+    "user_id": {
+      "$ref": "../common.json#/$defs/uuid",
+      "description": "the new user's ID, drawn by the agent tool"
+    },
+    "identity": {
+      "type": "object",
+      "properties": {
+        "kem_pub": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        },
+        "sig_pub": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        }
+      },
+      "required": [
+        "kem_pub",
+        "sig_pub"
+      ],
+      "additionalProperties": false
+    },
+    "recovery": {
+      "type": "object",
+      "properties": {
+        "recovery_id": {
+          "$ref": "../common.json#/$defs/recovery_id"
+        },
+        "bundle_ct": {
+          "$ref": "../common.json#/$defs/bundle_ct"
+        }
+      },
+      "required": [
+        "recovery_id",
+        "bundle_ct"
+      ],
+      "additionalProperties": false
+    },
+    "cred_wrap": {
+      "type": "object",
+      "description": "self-wrap of CK_1, signed by the new identity",
+      "properties": {
+        "epoch": {
+          "type": "integer",
+          "const": 1
+        },
+        "wrap": {
+          "$ref": "../common.json#/$defs/b64u_80"
+        },
+        "sig": {
+          "$ref": "../common.json#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "epoch",
+        "wrap",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "agent": {
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "pub": {
+          "type": "object",
+          "properties": {
+            "kem": {
+              "$ref": "../common.json#/$defs/b64u_32"
+            },
+            "sig": {
+              "$ref": "../common.json#/$defs/b64u_32"
+            }
+          },
+          "required": [
+            "kem",
+            "sig"
+          ],
+          "additionalProperties": false
+        },
+        "bundle_ct": {
+          "$ref": "../common.json#/$defs/bundle_ct",
+          "description": "the user's identity sealed to the agent under a handover secret the agent drew itself (11-agent-access.md section 3, agent-bundle); at least 48 bytes"
+        },
+        "label_ct": {
+          "$ref": "../common.json#/$defs/bundle_ct",
+          "description": "the label {host,name} sealed to the user's identity (agent-label); at least 48 bytes"
+        },
+        "claim_hash": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        }
+      },
+      "required": [
+        "agent_id",
+        "pub",
+        "bundle_ct",
+        "label_ct",
+        "claim_hash"
+      ],
+      "additionalProperties": false
+    },
+    "proof": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "agent-signature-v1"
+          ],
+          "description": "the proof-of-possession method (today one value; 11-agent-access.md section 3)"
+        },
+        "inv_sig": {
+          "$ref": "../common.json#/$defs/b64u_64"
+        },
+        "id_sig": {
+          "$ref": "../common.json#/$defs/b64u_64"
+        },
+        "agent_sig": {
+          "$ref": "../common.json#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "method",
+        "inv_sig",
+        "id_sig",
+        "agent_sig"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "invite_id",
+    "user_id",
+    "identity",
+    "recovery",
+    "cred_wrap",
+    "agent",
+    "proof"
+  ],
+  "additionalProperties": false
+}

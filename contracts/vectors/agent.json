@@ -1,5 +1,5 @@
 {
-  "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056, remote pairing ADR-067).",
+  "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056, remote pairing ADR-067, account of an agent alone KOR-62).",
   "agent": {
     "id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
     "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
@@ -296,6 +296,179 @@
       "error": "header_invalid",
       "name": "handover_not_canonical",
       "op": "open_handover"
+    },
+    {
+      "args": {
+        "agent_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "agent_pub": {
+          "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
+          "sig": "US95_1AMn2HKYFIbXTGwcV408C16txMItrbvvFWnlao"
+        },
+        "invite_id": "Pzv2PBkzVkg2K2O3WsMAbQ",
+        "method": "agent-signature-v1",
+        "pub": {
+          "kem": "X3xkD9W588YXHe8sKzDPPiJcr3BuchqsjAfFoDHl2W8",
+          "sig": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk"
+        },
+        "signature": "4CqApSu-IzGCgf5P6QGdhLyK9s7oZmblgL0aJoRyCd5hJgChh8Myi2s3UC9Pr2z_Pc9Xt9-seKYI0C2SHLYTBA",
+        "signer": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "user_id": "01a1ee56-5e00-7476-87e0-4918c293c341"
+      },
+      "error": "signature_invalid",
+      "name": "account_other_user",
+      "op": "verify_account"
+    },
+    {
+      "args": {
+        "agent_id": "01a1ee56-5e00-79bc-ad68-1fafbfc5d917",
+        "agent_pub": {
+          "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
+          "sig": "US95_1AMn2HKYFIbXTGwcV408C16txMItrbvvFWnlao"
+        },
+        "invite_id": "Pzv2PBkzVkg2K2O3WsMAbQ",
+        "method": "agent-signature-v1",
+        "pub": {
+          "kem": "X3xkD9W588YXHe8sKzDPPiJcr3BuchqsjAfFoDHl2W8",
+          "sig": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk"
+        },
+        "signature": "4CqApSu-IzGCgf5P6QGdhLyK9s7oZmblgL0aJoRyCd5hJgChh8Myi2s3UC9Pr2z_Pc9Xt9-seKYI0C2SHLYTBA",
+        "signer": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "signature_invalid",
+      "name": "account_other_agent",
+      "op": "verify_account"
+    },
+    {
+      "args": {
+        "agent_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "agent_pub": {
+          "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
+          "sig": "US95_1AMn2HKYFIbXTGwcV408C16txMItrbvvFWnlao"
+        },
+        "invite_id": "Pzv2PBkzVkg2K2O3WsMAbQ",
+        "method": "agent-signature-v1",
+        "pub": {
+          "kem": "X3xkD9W588YXHe8sKzDPPiJcr3BuchqsjAfFoDHl2W8",
+          "sig": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk"
+        },
+        "signature": "InV2WTEo2mnYHmu-FkWUF86g_tau_Oc5BzAuXVqVFJ0gxe94DG0NV1vnMiQ0PZHkq3syZmQ_dE_OWq-WHqSvBA",
+        "signer": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "signature_invalid",
+      "name": "account_agent_sig_as_identity",
+      "op": "verify_account"
+    },
+    {
+      "args": {
+        "agent_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "agent_pub": {
+          "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
+          "sig": "US95_1AMn2HKYFIbXTGwcV408C16txMItrbvvFWnlao"
+        },
+        "invite_id": "AAAAAAAAAAAAAAAAAAAAAA",
+        "method": "agent-signature-v1",
+        "pub": {
+          "kem": "X3xkD9W588YXHe8sKzDPPiJcr3BuchqsjAfFoDHl2W8",
+          "sig": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk"
+        },
+        "signature": "mAcVf7oUYAFi-MyXPup1N2dx5pBjIW-5nWTKI-m1iOHlFv1-tOwoTR8gVa7QPH8ovoqNdHXJTLQww-eQsFVpDA",
+        "signer": "woJO1AD-4D9qc5Nle9Y01awxexd2DWuck81N3j6_nBY",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "signature_invalid",
+      "name": "account_inv_sig_other_invite",
+      "op": "verify_account"
+    },
+    {
+      "args": {
+        "agent_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "agent_pub": {
+          "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
+          "sig": "US95_1AMn2HKYFIbXTGwcV408C16txMItrbvvFWnlao"
+        },
+        "invite_id": "Pzv2PBkzVkg2K2O3WsMAbQ",
+        "method": "webauthn",
+        "pub": {
+          "kem": "X3xkD9W588YXHe8sKzDPPiJcr3BuchqsjAfFoDHl2W8",
+          "sig": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk"
+        },
+        "signature": "4CqApSu-IzGCgf5P6QGdhLyK9s7oZmblgL0aJoRyCd5hJgChh8Myi2s3UC9Pr2z_Pc9Xt9-seKYI0C2SHLYTBA",
+        "signer": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "header_invalid",
+      "name": "account_unknown_method",
+      "op": "verify_account"
+    },
+    {
+      "args": {
+        "agent_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "agent_pub": {
+          "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
+          "sig": "US95_1AMn2HKYFIbXTGwcV408C16txMItrbvvFWnlao"
+        },
+        "challenge": "6lq02SUJW4rS4l7x92vtzPeZnA9_5vYAfJboelI3_go",
+        "method": "agent-signature-v1",
+        "signature": "VSjAaoT6wblZYaYLt1teFaUZU6N8dZaggPGtE5crgqwlqYy6JJ8ZY1oFKYFkslwEdYLEs_gjoQi2uVKsIf98Ag",
+        "signer": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "signature_invalid",
+      "name": "recover_other_challenge",
+      "op": "verify_recover"
+    },
+    {
+      "args": {
+        "agent_id": "01a1ee56-5e00-79bc-ad68-1fafbfc5d917",
+        "agent_pub": {
+          "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
+          "sig": "US95_1AMn2HKYFIbXTGwcV408C16txMItrbvvFWnlao"
+        },
+        "challenge": "GkyMxSfn71Se2PgjY_s2gxvaF1xhdju1MyRprEAqEzE",
+        "method": "agent-signature-v1",
+        "signature": "VSjAaoT6wblZYaYLt1teFaUZU6N8dZaggPGtE5crgqwlqYy6JJ8ZY1oFKYFkslwEdYLEs_gjoQi2uVKsIf98Ag",
+        "signer": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "signature_invalid",
+      "name": "recover_other_agent",
+      "op": "verify_recover"
+    },
+    {
+      "args": {
+        "agent_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "agent_pub": {
+          "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
+          "sig": "US95_1AMn2HKYFIbXTGwcV408C16txMItrbvvFWnlao"
+        },
+        "challenge": "h6sVpHdBi15gh5J2VU36EA",
+        "method": "agent-signature-v1",
+        "signature": "VSjAaoT6wblZYaYLt1teFaUZU6N8dZaggPGtE5crgqwlqYy6JJ8ZY1oFKYFkslwEdYLEs_gjoQi2uVKsIf98Ag",
+        "signer": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "header_invalid",
+      "name": "recover_short_challenge",
+      "op": "verify_recover"
+    },
+    {
+      "args": {
+        "agent_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "agent_pub": {
+          "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
+          "sig": "US95_1AMn2HKYFIbXTGwcV408C16txMItrbvvFWnlao"
+        },
+        "challenge": "GkyMxSfn71Se2PgjY_s2gxvaF1xhdju1MyRprEAqEzE",
+        "method": "",
+        "signature": "VSjAaoT6wblZYaYLt1teFaUZU6N8dZaggPGtE5crgqwlqYy6JJ8ZY1oFKYFkslwEdYLEs_gjoQi2uVKsIf98Ag",
+        "signer": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+        "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+      },
+      "error": "header_invalid",
+      "name": "recover_unknown_method",
+      "op": "verify_recover"
     }
   ],
   "label": {
@@ -305,6 +478,44 @@
     "value": {
       "host": "Büro-Mac",
       "name": "Claude Code"
+    }
+  },
+  "own_account": {
+    "account": {
+      "agent_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+      "agent_pub": {
+        "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
+        "sig": "US95_1AMn2HKYFIbXTGwcV408C16txMItrbvvFWnlao"
+      },
+      "agent_sig": "InV2WTEo2mnYHmu-FkWUF86g_tau_Oc5BzAuXVqVFJ0gxe94DG0NV1vnMiQ0PZHkq3syZmQ_dE_OWq-WHqSvBA",
+      "id_sig": "4CqApSu-IzGCgf5P6QGdhLyK9s7oZmblgL0aJoRyCd5hJgChh8Myi2s3UC9Pr2z_Pc9Xt9-seKYI0C2SHLYTBA",
+      "inv_sig": "mAcVf7oUYAFi-MyXPup1N2dx5pBjIW-5nWTKI-m1iOHlFv1-tOwoTR8gVa7QPH8ovoqNdHXJTLQww-eQsFVpDA",
+      "invite_code": "nL4lcakNqbZCseqQ-69Gbw",
+      "invite_id": "Pzv2PBkzVkg2K2O3WsMAbQ",
+      "method": "agent-signature-v1",
+      "pk_inv": "woJO1AD-4D9qc5Nle9Y01awxexd2DWuck81N3j6_nBY",
+      "pub": {
+        "kem": "X3xkD9W588YXHe8sKzDPPiJcr3BuchqsjAfFoDHl2W8",
+        "sig": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk"
+      },
+      "text": "YWdlbnQuZGZ4LnN3aXNzL3YxL2FnZW50LWFjY291bnQAeyJhZ2VudCI6IjAxYTFlZTU2LTVlMDAtNzI0Mi05ZTI0LWY4NzYyOWFkMjk3NyIsImFnZW50X3B1YiI6eyJrZW0iOiJXZDJSeWYtU2NJdUtyNDdhMHBiSVNWaVVPQk9HOWlmei10Rm93UUZ1YjJRIiwic2lnIjoiVVM5NV8xQU1uMkhLWUZJYlhUR3djVjQwOEMxNnR4TUl0cmJ2dkZXbmxhbyJ9LCJpbnZpdGVfaWQiOiJQenYyUEJrelZrZzJLMk8zV3NNQWJRIiwibWV0aG9kIjoiYWdlbnQtc2lnbmF0dXJlLXYxIiwicHViIjp7ImtlbSI6IlgzeGtEOVc1ODhZWEhlOHNLekRQUGlKY3IzQnVjaHFzakFmRm9ESGwyVzgiLCJzaWciOiJfak5wR2FRcFJhUzdaa0g0QnU1Mk1ob2h6TjZxVkNVV0ZIajB1Wl9Wek5rIn0sInVzZXIiOiIwMWExZWU1Ni01ZTAwLTc3YmUtOGNmMy0xZjI3YmIwZTkyYTIifQ",
+      "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
+    },
+    "methods": [
+      "agent-signature-v1"
+    ],
+    "recover": {
+      "agent_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+      "agent_pub": {
+        "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
+        "sig": "US95_1AMn2HKYFIbXTGwcV408C16txMItrbvvFWnlao"
+      },
+      "agent_sig": "uBsKMBMenCs_B5E2fXqKOy4wKpYt4UngU5dImdLs2vUt6QnOIuvlBlX1eLyURcEVelC8iaV9ku1VipQ3LdGoDg",
+      "challenge": "GkyMxSfn71Se2PgjY_s2gxvaF1xhdju1MyRprEAqEzE",
+      "id_sig": "VSjAaoT6wblZYaYLt1teFaUZU6N8dZaggPGtE5crgqwlqYy6JJ8ZY1oFKYFkslwEdYLEs_gjoQi2uVKsIf98Ag",
+      "method": "agent-signature-v1",
+      "text": "YWdlbnQuZGZ4LnN3aXNzL3YxL2FnZW50LXJlY292ZXIAeyJhZ2VudCI6IjAxYTFlZTU2LTVlMDAtNzI0Mi05ZTI0LWY4NzYyOWFkMjk3NyIsImFnZW50X3B1YiI6eyJrZW0iOiJXZDJSeWYtU2NJdUtyNDdhMHBiSVNWaVVPQk9HOWlmei10Rm93UUZ1YjJRIiwic2lnIjoiVVM5NV8xQU1uMkhLWUZJYlhUR3djVjQwOEMxNnR4TUl0cmJ2dkZXbmxhbyJ9LCJjaGFsbGVuZ2UiOiJHa3lNeFNmbjcxU2UyUGdqWV9zMmd4dmFGMXhoZGp1MU15UnByRUFxRXpFIiwibWV0aG9kIjoiYWdlbnQtc2lnbmF0dXJlLXYxIiwidXNlciI6IjAxYTFlZTU2LTVlMDAtNzdiZS04Y2YzLTFmMjdiYjBlOTJhMiJ9",
+      "user_id": "01a1ee56-5e00-77be-8cf3-1f27bb0e92a2"
     }
   },
   "pop": {

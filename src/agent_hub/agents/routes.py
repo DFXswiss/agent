@@ -3,9 +3,12 @@
 - `POST /v1/agent-pairings` (anon): the agent registers its public keys with a proof of possession.
 - `GET /v1/agent-pairings/{id}` (anon): public keys and state while open or confirmed (the browser's fingerprint
   check), else `404 pairing_unknown`.
-- `POST /v1/me/agents` (browser session only): the user confirms with the session of the pairing-tagged login (the
-  passkey gesture). The new agent replaces the user's previous main orchestrator, which is revoked at once
-  (concept idea 34, `store.confirm`); an agent never confirms (scope.EXCEPTIONS).
+- `POST /v1/me/agents` (browser session; agent of an account without a passkey): the user confirms with the session
+  of the pairing-tagged login (the passkey gesture). The new agent replaces the user's previous main orchestrator,
+  which is revoked at once (concept idea 34, `store.confirm`). The agent of an account without a passkey (an account
+  of an agent alone, KOR-62) confirms itself, with no gesture; the agent of an account with a passkey gets
+  `403 forbidden`.
+- `POST /v1/agent-accounts` (anon): an account of an agent alone through an invitation (`agents/accounts.py`).
 - `GET /v1/me/agents`, `DELETE /v1/me/agents/{id}`, `DELETE /v1/me/agents` (user: browser session or agent): list,
   revoke one, revoke all. Account-changing actions of an agent notify the user (`agents/notify.py`).
 - `POST /v1/agent/claim` (agent key, `confirmed`): the agent proves the claim from the loopback (or from the
@@ -25,7 +28,7 @@ from uuid import UUID
 from fastapi import Request
 from pydantic import StringConstraints
 
-from agent_hub.agents import store
+from agent_hub.agents import accounts, store
 from agent_hub.agents.keys import key_id_of
 from agent_hub.agents.notify import remote_notice
 from agent_hub.agents.revocation import revoke_agents
@@ -137,7 +140,7 @@ def _sealed(text: str, pointer: str) -> bytes:
 
 
 def _confirm(context: HubContext, principal: Principal, body: AgentConfirm) -> dict[str, Any]:
-    if principal.kind != "session" or principal.principal_id is None or principal.key_id is None:
+    if principal.kind not in ("session", "agent") or principal.principal_id is None or principal.key_id is None:
         raise HubError("forbidden")
     user = principal.principal_id
     confirmation = store.Confirmation(
@@ -149,7 +152,9 @@ def _confirm(context: HubContext, principal: Principal, body: AgentConfirm) -> d
     )
     now = context.clock()
     with transaction(context.pool) as connection:
-        confirmed = store.confirm(connection, user, principal.key_id, confirmation, now)
+        confirmed = store.confirm(
+            connection, user, principal.key_id, confirmation, now, by_agent=principal.kind == "agent"
+        )
         changed_remote = confirmed.changed and confirmed.remote
         notices = remote_notice(connection, user, now, confirmation.pairing_id) if changed_remote else []
     publish_rows(notices)
@@ -226,3 +231,8 @@ def _handover(context: HubContext, principal: Principal) -> dict[str, Any]:
 @router.get("/v1/agent/handover", auth="agent", right="agent:confirmed", read_resource="agent.handover")
 async def agent_handover(principal: CurrentPrincipal, context: Context) -> dict[str, Any]:
     return await asyncio.to_thread(_handover, context, principal)
+
+
+@router.post("/v1/agent-accounts", auth="anon", right="anon")
+async def create_account(body: accounts.AgentAccountCreate, context: Context) -> dict[str, Any]:
+    return await asyncio.to_thread(accounts.create, context, body)

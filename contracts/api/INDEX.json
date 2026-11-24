@@ -1795,6 +1795,23 @@
     },
     {
       "method": "POST",
+      "path": "/v1/agent-accounts",
+      "name": "agent-accounts-create",
+      "section": "11.4",
+      "auth": "anon",
+      "rights": [
+        "anon"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/agent-accounts-create.request.json",
+      "response": "api/agent-accounts-create.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-62"
+    },
+    {
+      "method": "POST",
       "path": "/v1/me/agents",
       "name": "me-agents-confirm",
       "section": "11.4",

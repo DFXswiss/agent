@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/recovery-finish.request.json",
   "title": "POST /v1/recovery/finish request",
-  "description": "Body of POST /v1/recovery/finish (03-api.md section 4.1).",
+  "description": "Body of POST /v1/recovery/finish (03-api.md section 4.1). With `agent` (an account without an active passkey, KOR-62, 11-agent-access.md section 5.5): `proof` is the identity's signature over P||'agent-recover\\0'||canonical({agent,agent_pub,challenge,method,user}) and the agent becomes the main orchestrator.",
   "type": "object",
   "properties": {
     "user_id": {
@@ -13,6 +13,62 @@
     },
     "proof": {
       "$ref": "../common.json#/$defs/b64u_64"
+    },
+    "agent": {
+      "type": "object",
+      "description": "the new main orchestrator of a recovery without a passkey (KOR-62)",
+      "properties": {
+        "agent_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "pub": {
+          "type": "object",
+          "properties": {
+            "kem": {
+              "$ref": "../common.json#/$defs/b64u_32"
+            },
+            "sig": {
+              "$ref": "../common.json#/$defs/b64u_32"
+            }
+          },
+          "required": [
+            "kem",
+            "sig"
+          ],
+          "additionalProperties": false
+        },
+        "bundle_ct": {
+          "$ref": "../common.json#/$defs/bundle_ct",
+          "description": "the user's identity sealed to the agent under a handover secret the agent drew itself (11-agent-access.md section 3, agent-bundle); at least 48 bytes"
+        },
+        "label_ct": {
+          "$ref": "../common.json#/$defs/bundle_ct",
+          "description": "the label {host,name} sealed to the user's identity (agent-label); at least 48 bytes"
+        },
+        "claim_hash": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "agent-signature-v1"
+          ],
+          "description": "the proof-of-possession method (today one value; 11-agent-access.md section 3)"
+        },
+        "agent_sig": {
+          "$ref": "../common.json#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "agent_id",
+        "pub",
+        "bundle_ct",
+        "label_ct",
+        "claim_hash",
+        "method",
+        "agent_sig"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

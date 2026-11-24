@@ -2,7 +2,8 @@
 
 Fingerprint, proof of possession, the handover secret with its bundle key, claim and claim hash, the identity sealed
 to the agent and the label sealed to the user, and for a pairing from another computer (ADR-067) the agent code, the
-handover sealed to the agent, the return code and the typed forms of a code, all with fixed keys, nonces and HPKE
+handover sealed to the agent, the return code and the typed forms of a code, and for an account of an agent alone
+(rule E-27, KOR-62) the registration and recovery texts with their signatures, all with fixed keys, nonces and HPKE
 ephemeral keys. Negative vectors
 name an operation of `OPS` (this module), its arguments and the expected error code; the generator refuses a vector
 whose code differs.
@@ -13,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from agent_hub.crypto import agent, hpke, keys
+from agent_hub.crypto import agent, hpke, invite, keys
 from agent_hub.crypto.bundle import bundle_plaintext
 from agent_hub.crypto.encoding import b64u_decode, b64u_encode
 from agent_hub.crypto.errors import CryptoError
@@ -23,6 +24,7 @@ Json = dict[str, Any]
 AGENT_ID = fixed_id("agent/one")
 OTHER_AGENT = fixed_id("agent/two")
 ORIGIN = "https://agent.example"
+OTHER_INVITE = "AAAAAAAAAAAAAAAAAAAAAA"
 
 
 def _b(value: object) -> bytes:
@@ -48,6 +50,34 @@ OPS: dict[str, Callable[[Json], object]] = {
         keys.x25519_private(_b(a["agent_kem_sk"])), a["agent_id"], a["user_id"], a["sealed"]
     ),
 }
+
+
+def _account_text(a: Json) -> bytes:
+    return agent.account_text(
+        agent_id=a["agent_id"],
+        agent_kem=_b(a["agent_pub"]["kem"]),
+        agent_sig=_b(a["agent_pub"]["sig"]),
+        invite_id=a["invite_id"],
+        method=a["method"],
+        user_id=a["user_id"],
+        user_kem=_b(a["pub"]["kem"]),
+        user_sig=_b(a["pub"]["sig"]),
+    )
+
+
+def _recover_text(a: Json) -> bytes:
+    return agent.recover_text(
+        agent_id=a["agent_id"],
+        agent_kem=_b(a["agent_pub"]["kem"]),
+        agent_sig=_b(a["agent_pub"]["sig"]),
+        challenge=_b(a["challenge"]),
+        method=a["method"],
+        user_id=a["user_id"],
+    )
+
+
+OPS["verify_account"] = lambda a: agent.verify_text(_b(a["signer"]), a["signature"], _account_text(a))
+OPS["verify_recover"] = lambda a: agent.verify_text(_b(a["signer"]), a["signature"], _recover_text(a))
 
 
 def negative(name: str, op: str, args: Json, error: str) -> Json:
@@ -126,6 +156,73 @@ def build_remote(bot: keys.Identity, user: str, secret: bytes) -> tuple[Json, li
     return remote, invalid
 
 
+def build_own_account(bot: keys.Identity, alice: keys.Identity, user: str) -> tuple[Json, list[Json]]:
+    """The section of an account of an agent alone (KOR-62) and its negative vectors."""
+    code = fixed("agent-account-invite", 16)
+    secrets = invite.invite_secrets(code)
+    method = agent.METHOD_AGENT_SIGNATURE
+    agent_pub, pub = bot.public(), alice.public()
+    account = {"agent_id": AGENT_ID, "agent_pub": agent_pub, "invite_id": secrets.invite_id, "method": method}
+    account |= {"user_id": user, "pub": pub}
+    text = _account_text(account)
+    inv_sig = agent.sign_text(secrets.signing, text)
+    id_sig = agent.sign_text(alice.sig, text)
+    agent_sig = agent.sign_text(bot.sig, text)
+    challenge = fixed("agent-recover-challenge")
+    recover = {"agent_id": AGENT_ID, "agent_pub": agent_pub, "challenge": b64u_encode(challenge), "method": method}
+    recover |= {"user_id": user}
+    recover_text = _recover_text(recover)
+    recover_id = agent.sign_text(alice.sig, recover_text)
+    recover_agent = agent.sign_text(bot.sig, recover_text)
+    section = {
+        "methods": list(agent.PROOF_METHODS),
+        "account": {
+            **account,
+            "invite_code": b64u_encode(code),
+            "pk_inv": secrets.pk_inv,
+            "text": b64u_encode(text),
+            "inv_sig": inv_sig,
+            "id_sig": id_sig,
+            "agent_sig": agent_sig,
+        },
+        "recover": {**recover, "text": b64u_encode(recover_text), "id_sig": recover_id, "agent_sig": recover_agent},
+    }
+    signed = {**account, "signer": pub["sig"], "signature": id_sig}
+    recovered = {**recover, "signer": pub["sig"], "signature": recover_id}
+    invalid = [
+        negative("account_other_user", "verify_account", {**signed, "user_id": ACTORS["bob"]}, "signature_invalid"),
+        negative("account_other_agent", "verify_account", {**signed, "agent_id": OTHER_AGENT}, "signature_invalid"),
+        negative(
+            "account_agent_sig_as_identity",
+            "verify_account",
+            {**signed, "signature": agent_sig},
+            "signature_invalid",
+        ),
+        negative(
+            "account_inv_sig_other_invite",
+            "verify_account",
+            {**signed, "signer": secrets.pk_inv, "signature": inv_sig, "invite_id": OTHER_INVITE},
+            "signature_invalid",
+        ),
+        negative("account_unknown_method", "verify_account", {**signed, "method": "webauthn"}, "header_invalid"),
+        negative(
+            "recover_other_challenge",
+            "verify_recover",
+            {**recovered, "challenge": b64u_encode(fixed("agent-recover-other"))},
+            "signature_invalid",
+        ),
+        negative("recover_other_agent", "verify_recover", {**recovered, "agent_id": OTHER_AGENT}, "signature_invalid"),
+        negative(
+            "recover_short_challenge",
+            "verify_recover",
+            {**recovered, "challenge": b64u_encode(fixed("c", 16))},
+            "header_invalid",
+        ),
+        negative("recover_unknown_method", "verify_recover", {**recovered, "method": ""}, "header_invalid"),
+    ]
+    return section, invalid
+
+
 def build_agent() -> Json:
     """Every format of 11-agent-access.md section 3."""
     bot, alice, user = identity("agent"), identity("alice"), ACTORS["alice"]
@@ -151,8 +248,10 @@ def build_agent() -> Json:
     secret_text = b64u_encode(secret)
     opened = {"agent_kem_sk": agent_sk, "secret": secret_text, "agent_id": AGENT_ID, "user_id": user, "sealed": sealed}
     remote, remote_invalid = build_remote(bot, user, secret)
+    own, own_invalid = build_own_account(bot, alice, user)
     return {
-        "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056, remote pairing ADR-067).",
+        "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056, remote pairing ADR-067, account "
+        "of an agent alone KOR-62).",
         "agent": {"id": AGENT_ID, "kem_sk": agent_sk, "sig_sk": b64u_encode(fixed("agent/sig")), **bot.public()},
         "user": {"id": user, "kem_sk": alice_sk, **alice.public()},
         "fingerprint": agent.fingerprint(kem_pub, sig_pub),
@@ -177,6 +276,7 @@ def build_agent() -> Json:
             "sealed": sealed_label,
         },
         "remote": remote,
+        "own_account": own,
         "invalid": [
             negative(
                 "pop_other_pairing",
@@ -227,6 +327,7 @@ def build_agent() -> Json:
                 "label_extra_key", "check_label", {"label": {"host": "h", "name": "n", "x": "y"}}, "header_invalid"
             ),
             *remote_invalid,
+            *own_invalid,
         ],
     }
 

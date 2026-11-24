@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/agent-accounts-create.response.json",
+  "title": "POST /v1/agent-accounts response",
+  "description": "Body of a successful response to POST /v1/agent-accounts (11-agent-access.md section 4, KOR-62).",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "agent_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "user_id",
+    "agent_id"
+  ],
+  "additionalProperties": false
+}

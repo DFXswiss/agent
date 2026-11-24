@@ -2,19 +2,40 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/recovery-finish.response.json",
   "title": "POST /v1/recovery/finish response",
-  "description": "Body of a successful response to POST /v1/recovery/finish (03-api.md section 4.1).",
-  "type": "object",
-  "properties": {
-    "ceremony_id": {
-      "$ref": "../common.json#/$defs/uuid"
+  "description": "Body of a successful response to POST /v1/recovery/finish (03-api.md section 4.1): the registration of a new passkey, or with `agent` in the request (KOR-62) the new main orchestrator.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "ceremony_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "options": {
+          "$ref": "objects.json#/$defs/creation_options"
+        }
+      },
+      "required": [
+        "ceremony_id",
+        "options"
+      ],
+      "additionalProperties": false
     },
-    "options": {
-      "$ref": "objects.json#/$defs/creation_options"
+    {
+      "type": "object",
+      "description": "recovery with an agent (KOR-62)",
+      "properties": {
+        "user_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "agent_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        }
+      },
+      "required": [
+        "user_id",
+        "agent_id"
+      ],
+      "additionalProperties": false
     }
-  },
-  "required": [
-    "ceremony_id",
-    "options"
-  ],
-  "additionalProperties": false
+  ]
 }

@@ -29,6 +29,16 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["agent"],
     },
     "agent.pairing": {"properties": {}, "required": []},
+    "agent.register": {
+        "properties": {
+            "agent": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ],
+            "invite_id": [{"type": "string", "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$"}],
+            "method": [{"type": "string", "enum": ["agent-signature-v1"]}],
+        },
+        "required": ["agent", "method"],
+    },
     "agent.revoke": {
         "properties": {
             "agent": [
