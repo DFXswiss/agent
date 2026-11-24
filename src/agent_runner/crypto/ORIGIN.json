@@ -148,7 +148,7 @@
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/events.py",
-      "sha256": "49fde913e6a61b3456b16501d055c997dad866d3230f7d18fc3d8b01e83e66e0",
+      "sha256": "66ba787b80648b36ca98f443786516afb7259d65b3009b2033804bb49f3cfad1",
       "source": "src/agent_hub/log/events.py"
     },
     {
