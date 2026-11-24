@@ -1,4 +1,4 @@
-# ADR-073: GitHub reaches every repository of the account, and a repository it does not reach ends with one next step
+# ADR-077: GitHub reaches every repository of the account, and a repository it does not reach ends with one next step
 
 Status: Accepted (2026-11-24)
 

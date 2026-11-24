@@ -69,7 +69,7 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `CONTEXT_INTERVAL_SECONDS` / `CONTEXT_CACHE_MIB` / `CONTEXT_WORKSPACE_MIB` / `CONTEXT_TRANSCRIPT_MIB` | 600 / 20480 / 4096 / 4096 | context checkpoints (§6.6, KOR-33): interval while working (30–86400), local encrypted cache cap (every object; the newest of each task is always kept), workspace above the limit is left out, transcript above the limit cannot be checkpointed |
 | `CONTEXT_WAIT_SECONDS` | 180 | how long a restore waits for the final checkpoint of the session it continues and retries transient hub failures (0–3600, §6.6) |
 | `GITHUB_CLIENT_ID` | required for the device flow | public client ID of the GitHub App; users approved for the operator's GitHub account (§11.4) connect without it |
-| `GITHUB_OAUTH_CLIENT_ID` | empty | public client ID of the OAuth App (device flow enabled, no secret) whose device flow "Connect GitHub" prefers (scopes `repo workflow`; KOR-65, ADR-073); without it the GitHub App's |
+| `GITHUB_OAUTH_CLIENT_ID` | empty | public client ID of the OAuth App (device flow enabled, no secret) whose device flow "Connect GitHub" prefers (scopes `repo workflow`; KOR-65, ADR-077); without it the GitHub App's |
 | `GITHUB_APP_SLUG` | empty | URL name of the GitHub App (`https://github.com/apps/<slug>`), for the install link of a held operation's next step (KOR-65) |
 | `GITHUB_API_URL` / `GITHUB_WEB_URL` | `https://api.github.com` / `https://github.com` | doubles in tests |
 | `MODEL_UPSTREAM_ANTHROPIC` / `MODEL_UPSTREAM_OPENROUTER` | `https://api.anthropic.com` / `https://openrouter.ai/api` | doubles in tests |
@@ -846,7 +846,7 @@ double + auth-page double + mail double); live tests of logins are forbidden.
 
 ### 11.4 GitHub connect (ADR-015)
 
-Which device flow (KOR-65, ADR-073): `{}` runs the OAuth App's (`GITHUB_OAUTH_CLIENT_ID`, form field `scope=repo workflow`)
+Which device flow (KOR-65, ADR-077): `{}` runs the OAuth App's (`GITHUB_OAUTH_CLIENT_ID`, form field `scope=repo workflow`)
 when it is set up, else the GitHub App's (`GITHUB_CLIENT_ID`); `{app:"oauth_app"|"github_app"}` names one; one that is
 not set up ends `{step:"failed", code:"flow_unavailable"}`. Both tokens are remembered as minted and revoked on
 disconnect (KOR-40). The live channel's `Agent-Features` header names `github.ways` and, when set up,
@@ -935,7 +935,7 @@ Pipeline for every `request_operation`:
    60 s. The registration expiry (10 min in `received`) counts for a held operation from the end of the hold.
    A held operation whose session ended meanwhile (`stopping`, `stopped`, `failed`; closing a task stops its sessions)
    is rejected with `not_found` without running its checks.
-   **Held for access (KOR-65, ADR-073).** A repository-level pre-check that GitHub refuses for access (`404`; `403`
+   **Held for access (KOR-65, ADR-077).** A repository-level pre-check that GitHub refuses for access (`404`; `403`
    for an organisation's OAuth App restriction, its ban of classic tokens, or SAML single sign-on) fails with
    `repo_not_accessible` and the one next step (`github.reach`), and is held the same way with the reason
    `github_access`; the `waiting` event carries `next {action, owner, url?}`. While the acting user's credential is

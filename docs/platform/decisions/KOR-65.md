@@ -2,7 +2,7 @@
 
 1. **Solution with the fewest steps that holds:** "Connect GitHub" signs in with an **OAuth App** (device flow, scopes
    `repo workflow`), like the GitHub CLI; the GitHub App and the existing token stay. Evidence from GitHub's
-   documentation (2026-11-24) in [ADR-073](../adr/073-github-every-repository.md): a GitHub App user token reaches
+   documentation (2026-11-24) in [ADR-077](../adr/077-github-every-repository.md): a GitHub App user token reaches
    only accounts where the app is installed (only owners install on organisations); the OAuth device flow needs no
    client secret; `repo` covers what the account reaches; new organisations restrict OAuth Apps by default, members
    request approval. The GitHub App alone would need an owner for every third-party organisation and an installation

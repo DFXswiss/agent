@@ -117,7 +117,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | session-view | screens/session | `session show --session` | done |
 | session-workvm | screens/session (work VM panel and runtime, KOR-29) | `session workvm --session` | done |
 | task-workvm-items | screens/task (work VM runs and states in the chat) | `task show`, `task follow` | done |
-| task-waiting | screens/task (held operations: the waiting card that asks the person who gave the instruction to connect GitHub, ADR-066, or to take the one step that gives the connection access to the repository, ADR-073) | `task show`, `task follow`, `github connect` | done |
+| task-waiting | screens/task (held operations: the waiting card that asks the person who gave the instruction to connect GitHub, ADR-066, or to take the one step that gives the connection access to the repository, ADR-077) | `task show`, `task follow`, `github connect` | done |
 | task-guest-errors | screens/task (errors the guest reported, `session.error`, ADR-064) | `task show`, `task follow` | done |
 | task-runtime | screens/task (runtime of the task and its sessions, reachability of the session's device, KOR-40) | `task show`, `session show --session` | done |
 | session-terminal | screens/session (terminal) | `session terminal --session --after` | done |

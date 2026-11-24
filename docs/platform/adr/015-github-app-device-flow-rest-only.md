@@ -28,7 +28,7 @@ App's repository permissions stay Contents, Pull requests and Issues "Read and w
 ## Addendum (2026-11-24, KOR-65)
 By rule E-29 "Connect GitHub" signs in with an **OAuth App** first (scopes `repo workflow`, device flow without a
 secret), because a GitHub App user token reaches only owners where the app is installed; the GitHub App stays as a
-second way and an access refusal is held with one next step ([ADR-073](073-github-every-repository.md)).
+second way and an access refusal is held with one next step ([ADR-077](077-github-every-repository.md)).
 
 ## Alternatives considered
 OAuth App with `repo` scope (too broad), web flow via hub callback (token at hub), `git` CLI on host (executes repository-controlled config), fine-grained PATs pasted by users (poor UX, manual expiry).

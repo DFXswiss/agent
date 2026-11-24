@@ -728,7 +728,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   funktionieren, egal mit welchen repos er arbeitet“ (Antwort auf die Frage, ob auch mit eigenen Kopien unter dem
   persönlichen GitHub-Konto gearbeitet wird)
 - **Bezug:** ergänzt [§9](#k-9) und [E-05](#e-05).
-- **Umsetzung:** gebaut – [ADR-073](adr/073-github-every-repository.md) (KOR-65).
+- **Umsetzung:** gebaut – [ADR-077](adr/077-github-every-repository.md) (KOR-65).
 
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 

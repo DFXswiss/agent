@@ -1,6 +1,6 @@
 {
-  "name": "e2e-56-every-repository",
-  "description": "E2E-56 (KOR-65, rule E-29): with one sign-in through the OAuth App the session reads the newest issue of a repository in the user's own account, of the user's fork, of an organisation with the GitHub App and of a third party's organisation without an installation; every result arrives at once and the session answers.",
+  "name": "e2e-59-every-repository",
+  "description": "E2E-59 (KOR-65, rule E-29): with one sign-in through the OAuth App the session reads the newest issue of a repository in the user's own account, of the user's fork, of an organisation with the GitHub App and of a third party's organisation without an installation; every result arrives at once and the session answers.",
   "steps": [
     {
       "id": "own",

@@ -50,7 +50,7 @@ an unknown name or an invalid value stops the process with `config_invalid <NAME
 Required for the daemon: `AGENT_RUNNER_HUB_URL` (`https://`), `AGENT_RUNNER_PLATFORM_ROOT_KEY`; connecting GitHub with the device flow
 needs `AGENT_RUNNER_GITHUB_CLIENT_ID` (the GitHub App of ADR-015 with the repository permissions Contents, Pull
 requests and Issues "Read and write" and Metadata "Read-only") and, so that one sign-in reaches every repository of
-the account (rule E-29, ADR-073), `AGENT_RUNNER_GITHUB_OAUTH_CLIENT_ID`: the public client ID of an OAuth App the
+the account (rule E-29, ADR-077), `AGENT_RUNNER_GITHUB_OAUTH_CLIENT_ID`: the public client ID of an OAuth App the
 operator registers once at GitHub (Settings → Developer settings → OAuth Apps → New OAuth App; any homepage and
 callback URL, the callback is not used; tick "Enable Device Flow"; no client secret is created or stored). With it
 "Connect GitHub" uses the OAuth App (scopes `repo workflow`), without it the GitHub App. `AGENT_RUNNER_GITHUB_APP_SLUG`

@@ -151,10 +151,10 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 
 | ID | Ref | Requirement | Decision / interpretation | Comp | Spec | Tests |
 |---|---|---|---|---|---|---|
-| R-9.1 | [§9 b1](../KONZEPT.md#k-9-b1) | Users can connect and disconnect their GitHub account. | Device flow on the execution device, or an existing GitHub token (GitHub CLI login, personal access token) checked by the execution device (KOR-25, ADR-065); disconnect hard-deletes the credential everywhere. A `github.*` operation without a usable connection is held up to 15 min while the task owner is asked in the task's chat (KOR-25, ADR-066). | WEB, RUN, HUB | 03 §4.8, §4.10 | E2E-20, E2E-56 |
-| R-9.2 | [§9 b2](../KONZEPT.md#k-9-b2) | Authorised repository access. | `github.checkout`, `github.get_pull_request`, `github.list_repositories`, `github.list_pull_requests`, `github.list_issues`, `github.get_issue` (KOR-25). | RUN | 03 §9 | E2E-21, LIVE-02, E2E-56 |
+| R-9.1 | [§9 b1](../KONZEPT.md#k-9-b1) | Users can connect and disconnect their GitHub account. | Device flow on the execution device, or an existing GitHub token (GitHub CLI login, personal access token) checked by the execution device (KOR-25, ADR-065); disconnect hard-deletes the credential everywhere. A `github.*` operation without a usable connection is held up to 15 min while the task owner is asked in the task's chat (KOR-25, ADR-066). | WEB, RUN, HUB | 03 §4.8, §4.10 | E2E-20, E2E-59 |
+| R-9.2 | [§9 b2](../KONZEPT.md#k-9-b2) | Authorised repository access. | `github.checkout`, `github.get_pull_request`, `github.list_repositories`, `github.list_pull_requests`, `github.list_issues`, `github.get_issue` (KOR-25). | RUN | 03 §9 | E2E-21, LIVE-02, E2E-59 |
 | R-9.3 | [§9 b2](../KONZEPT.md#k-9-b2) | Branches, commits, pushes, pull requests, issues and comments. | Operation types of 03 §9 (`github.comment` on issues and pull requests; `github.create_issue`, `github.update_issue`, KOR-25), REST/Git Data API only. | RUN | 03 §9 | E2E-21, LIVE-02 |
-| R-9.4 | [§9 b3](../KONZEPT.md#k-9-b3) | Rights limited to the connected account and released repositories. | GitHub App installation or the connected account's access + optional workgroup repository allow-list (ADR-054). | RUN | 03 §9 | E2E-22  (incl. `repo_not_accessible`), E2E-56 |
+| R-9.4 | [§9 b3](../KONZEPT.md#k-9-b3) | Rights limited to the connected account and released repositories. | GitHub App installation or the connected account's access + optional workgroup repository allow-list (ADR-054). | RUN | 03 §9 | E2E-22  (incl. `repo_not_accessible`), E2E-59 |
 | R-9.5 | [§9 b3](../KONZEPT.md#k-9-b3) | All actions are audited. | | HUB, RUN | 02 §2.9 | E2E-15, E2E-21 |
 | R-9.6 | [§9 b4](../KONZEPT.md#k-9-b4) (recommendation) | Check GitHub App with granular permissions. | **Adopted**: GitHub App with user-to-server tokens. ADR-015. | RUN, DBL | 05 | E2E-20, LIVE-02 |
 | R-9.7 | [§9 b5](../KONZEPT.md#k-9-b5) | Claude Code must not run git commands itself; GitHub actions only as controlled platform operations. | No git in the sandbox (no Bash, Landlock exec allow-list); operations executed by RUN on the host. | SBX, RUN | 05 §4, 03 §9 | E2E-23, ATK-02 |
@@ -307,7 +307,7 @@ interpretations A1–A18 (part C) have no rows of their own; the rows above and 
 | E-26 | [E-26](../KONZEPT.md#e-26) | AI agents are users like humans: operating the platform is simple and efficient for them. | offen | KOR-63 |
 | E-27 | [E-27](../KONZEPT.md#e-27) | An AI agent can do everything, also without a human (own account by invitation, own key). | gebaut | [ADR-071](../adr/071-agent-own-account.md) |
 | E-28 | [E-28](../KONZEPT.md#e-28) | Personal message of the requester wherever someone grants access. | offen | KOR-64 |
-| E-29 | [E-29](../KONZEPT.md#e-29) | GitHub works for every customer with every repository their GitHub account can access (own account, own or third-party organization, fork). | gebaut | [ADR-073](../adr/073-github-every-repository.md) |
+| E-29 | [E-29](../KONZEPT.md#e-29) | GitHub works for every customer with every repository their GitHub account can access (own account, own or third-party organization, fork). | gebaut | [ADR-077](../adr/077-github-every-repository.md) |
 
 ## R-P Assignment guardrails (`PROJECT.md`)
 

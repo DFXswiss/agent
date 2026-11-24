@@ -1,4 +1,4 @@
-// E2E-56 (07-testing.md section 2.1; rule E-29, ADR-073; 03-api.md section 9; 05-runner.md sections 11.4 and 12):
+// E2E-59 (07-testing.md section 2.1; rule E-29, ADR-077; 03-api.md section 9; 05-runner.md sections 11.4 and 12):
 // GitHub works with every repository the user's account can reach, and a repository it does not reach ends with one
 // next step that goes on by itself.
 // - The fork case with the GitHub App only (the run's default device): the App is not installed on the user's own
@@ -116,13 +116,13 @@ test.afterAll(async ({ orchestrator }) => {
   await orchestrator.startRunner(RUNNER, {});
 });
 
-test('@E2E-56 @R-9.1 @R-9.4 @needs-vm the fork case with the GitHub App only is held with one next step and goes on with a token from the card', async ({
+test('@E2E-59 @R-9.1 @R-9.4 @needs-vm the fork case with the GitHub App only is held with one next step and goes on with a token from the card', async ({
   page,
   orchestrator,
   authenticator,
 }) => {
   test.setTimeout(480_000);
-  await orchestrator.loadScenario('model', scenarioOf('e2e-56-fork-app'));
+  await orchestrator.loadScenario('model', scenarioOf('e2e-59-fork-app'));
   await seedGitHub(orchestrator, world());
   await platformDevice(orchestrator);
   await poolReady(orchestrator);
@@ -159,14 +159,14 @@ test('@E2E-56 @R-9.1 @R-9.4 @needs-vm the fork case with the GitHub App only is 
   await expectGitHubOk(orchestrator);
 });
 
-test('@E2E-56 @R-9.1 @R-9.2 @R-9.4 @needs-vm one sign-in through the OAuth App reaches the own account, a fork, an organisation with the App and a third party organisation', async ({
+test('@E2E-59 @R-9.1 @R-9.2 @R-9.4 @needs-vm one sign-in through the OAuth App reaches the own account, a fork, an organisation with the App and a third party organisation', async ({
   page,
   orchestrator,
   authenticator,
 }) => {
   test.setTimeout(600_000);
   await restartRunner(orchestrator, { oauth_client_id: OAUTH_CLIENT_ID, app_slug: APP_SLUG });
-  await orchestrator.loadScenario('model', scenarioOf('e2e-56-every-repository'));
+  await orchestrator.loadScenario('model', scenarioOf('e2e-59-every-repository'));
   await seedGitHub(orchestrator, world());
   await platformDevice(orchestrator);
   await poolReady(orchestrator);
@@ -194,13 +194,13 @@ test('@E2E-56 @R-9.1 @R-9.2 @R-9.4 @needs-vm one sign-in through the OAuth App r
   await expectGitHubOk(orchestrator);
 });
 
-test('@E2E-56 @R-9.1 @R-9.4 @needs-vm an organisation that restricts OAuth Apps is held with the approval link and goes on after the approval', async ({
+test('@E2E-59 @R-9.1 @R-9.4 @needs-vm an organisation that restricts OAuth Apps is held with the approval link and goes on after the approval', async ({
   page,
   orchestrator,
   authenticator,
 }) => {
   test.setTimeout(480_000);
-  await orchestrator.loadScenario('model', scenarioOf('e2e-56-restricted'));
+  await orchestrator.loadScenario('model', scenarioOf('e2e-59-restricted'));
   await seedGitHub(orchestrator, world());
   await platformDevice(orchestrator);
   await poolReady(orchestrator);

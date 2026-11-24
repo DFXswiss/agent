@@ -1,6 +1,6 @@
 {
-  "name": "e2e-56-restricted",
-  "description": "E2E-56 (KOR-65): an organisation that restricts OAuth Apps. The session requests the issue list at once; the runner holds it with the next step 'request the approval'; once an owner approved the OAuth App at GitHub the runner checks again and the operation goes on; the session waits with get_operation and answers - without a new prompt.",
+  "name": "e2e-59-restricted",
+  "description": "E2E-59 (KOR-65): an organisation that restricts OAuth Apps. The session requests the issue list at once; the runner holds it with the next step 'request the approval'; once an owner approved the OAuth App at GitHub the runner checks again and the operation goes on; the session waits with get_operation and answers - without a new prompt.",
   "steps": [
     {
       "id": "list",

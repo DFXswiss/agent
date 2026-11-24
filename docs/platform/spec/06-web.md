@@ -380,7 +380,7 @@ user).
     `<owner/name>` for this workgroup" with the allow action for users who may write the workgroup settings. It shows
     only platform text and the checked repository name, never text of the session, and disappears once the condition
     is met (GitHub connected, repository allowed), the operation is registered or `until` has passed.
-    `waiting_for` `github_access` (KOR-65, ADR-073): "GitHub access needed for the repository" with the one next step
+    `waiting_for` `github_access` (KOR-65, ADR-077): "GitHub access needed for the repository" with the one next step
     of `next` – Connect right in the card (`connect`), a link that opens GitHub in a new tab (install the GitHub App
     for the owner, request the organisation's approval, authorise SSO, open the repository), or the pre-filled token
     link plus the token way (`new_token`); a new connection does not end it, the registered operation does.

@@ -1,6 +1,6 @@
 {
-  "name": "e2e-56-fork-app",
-  "description": "E2E-56 (KOR-65): the fork case with the GitHub App only. The App is not installed on the user's account, so the fork is not reachable; the runner holds the operation with the next step 'create a token'; the user stores a token right in the card and the operation goes on without a new prompt.",
+  "name": "e2e-59-fork-app",
+  "description": "E2E-59 (KOR-65): the fork case with the GitHub App only. The App is not installed on the user's account, so the fork is not reachable; the runner holds the operation with the next step 'create a token'; the user stores a token right in the card and the operation goes on without a new prompt.",
   "steps": [
     {
       "id": "list",

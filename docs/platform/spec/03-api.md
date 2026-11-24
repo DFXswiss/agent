@@ -607,7 +607,7 @@ with `github_not_connected` ("The person who gave this instruction did not conne
 per session (more are rejected at once) and at most one `waiting` event per session per 60 s. `github.request_connection` lets a session ask for the connection without another type: held
 while the acting user is not connected, else `{login}` at once.
 
-Held for access (KOR-65, rule E-29, ADR-073): a repository-level pre-check that GitHub refuses for access - `404`, or
+Held for access (KOR-65, rule E-29, ADR-077): a repository-level pre-check that GitHub refuses for access - `404`, or
 a `403` for an organisation's OAuth App restriction, its ban of classic tokens or SAML single sign-on - is held the
 same way with `waiting_for:"github_access"` and `next {action, owner, url?}`: `connect` (a GitHub App token while the
 OAuth App is set up), `install_app`, `approve_app`, `authorize_sso`, `new_token` or `check_access` (the account itself
