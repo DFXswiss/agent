@@ -990,6 +990,53 @@
       "error": "wrap_unauthorized",
       "name": "cred_wrapper_not_eligible",
       "op": "check_cred_wrap"
+    },
+    {
+      "args": {
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 13,
+          "name": "edge"
+        },
+        "wrap": {
+          "epoch": 1,
+          "recipient_id": "01a1ee56-5e00-740b-8803-c7ea5d113b0f",
+          "scope": "org",
+          "scope_id": "01a1ee56-5e00-73e9-8b24-6445d80ea4cc",
+          "sig": "zZZIDVPJZHyvUKmcxzj-Os3gGyS3pe0wswbqvVgRMOiXPcVcQ_DpQ_uNbUL1IoYujDKBKXwmSQFVeWfL3sQPBg",
+          "wrap": "y6GZyzqHMZZW2AUYlYaq4evZ6vBNSTP_-oeVmsornQw7w7KFgGF9eROgsLIqgJf6tX9w8vK6-sHAHZt1h1RyrWTSst8w9mJwqS5ek72lBFk"
+        },
+        "wrapped_by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+      },
+      "error": "wrap_unauthorized",
+      "name": "org_key_for_device_without_workgroup",
+      "op": "check_wrap"
+    },
+    {
+      "args": {
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 27,
+          "name": "main"
+        },
+        "platform": {
+          "count": 11,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        },
+        "wrap": {
+          "epoch": 2,
+          "recipient_id": "01a1ee56-5e00-71d5-9ce6-34f1136222f1",
+          "scope": "wg",
+          "scope_id": "01a1ee56-5e00-7342-8ef3-e59bb5fa9e61",
+          "sig": "zJsgE6Pej0u73yX1MrStPg-XedWzhfazpUkMnWQPkhycq5uLhkAa9nNXP9VdmH-ApcLMApIkR64PPGEr34O9AA",
+          "wrap": "y0ei-VRABToES_7c5-DNTBIBnH16sNrotvh93yiJMgtqC_lGwhQze4DsvJX_B-nMe5DtBrw90aZMJpi1TRwQxCXldwitTfvTBq7Mk9em9Bo"
+        },
+        "wrapped_by": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+      },
+      "error": "wrap_unauthorized",
+      "name": "principal_outside_log_is_no_recipient",
+      "op": "check_wrap"
     }
   ],
   "logs": {

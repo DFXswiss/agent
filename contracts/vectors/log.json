@@ -3781,6 +3781,33 @@
       "error": "log_admit",
       "name": "admit_batch_without_wraps",
       "op": "check_batch"
+    },
+    {
+      "args": {
+        "current_epoch": 1,
+        "founder": "kXFuuhKH_nn8LR95VybiWX0P_cQGsOZ60__pYMTiIPs",
+        "log": {
+          "count": 30,
+          "name": "admit"
+        },
+        "platform": {
+          "count": 17,
+          "name": "platform",
+          "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+        },
+        "wrap": {
+          "epoch": 1,
+          "recipient_id": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+          "scope": "cred",
+          "scope_id": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72",
+          "sig": "1PTCeb5-SaYFz9yfQGwaTmlc06i_QLrdMQu0qLHHXHAw6LrHq9wDWos2dj7coPMjYBU-AdCGLa3bL3aKvziqAw",
+          "wrap": "NrpBWkKX38dHDnpVvhaTLUdP64XVO8Dz_DN6DztrUDaUQijlVbIeX08gx17ssqr_jQjMNkFj_3u4f4heLSThWGVhb5gqHP12Ve83WZbs-Bk"
+        },
+        "wrapped_by": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+      },
+      "error": "wrap_unauthorized",
+      "name": "cred_device_of_org_without_consent",
+      "op": "check_cred_wrap"
     }
   ],
   "lh": {
