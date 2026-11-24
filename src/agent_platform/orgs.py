@@ -19,6 +19,7 @@ from agent_platform.account import Account, check_package_head, needs_platform, 
 from agent_platform.batch import Built, build_batch, make_wrap
 from agent_platform.errors import PlatformError
 from agent_platform.hub import anon_request, segment
+from agent_runner.crypto import agent as agent_crypto
 from agent_runner.crypto import identity as identity_format
 from agent_runner.crypto import invite as invite_format
 from agent_runner.crypto.encoding import b64u_decode, b64u_encode, body_json, format_time, parse_time
@@ -267,9 +268,16 @@ def parse_wgs(values: list[str]) -> dict[str, str]:
     return found
 
 
-def org_invite(account: Account, org: str, role: str, wgs: dict[str, str], hours: int) -> dict[str, Any]:
+def org_invite(
+    account: Account, org: str, role: str, wgs: dict[str, str], hours: int, *, message: str | None = None
+) -> dict[str, Any]:
     if not 1 <= hours <= EXPIRY_HOURS_MAX:
         raise PlatformError("invalid_argument")
+    try:
+        if message is not None:
+            agent_crypto.check_message(message)
+    except CryptoError:
+        raise PlatformError("invalid_argument") from None
     code = invite_format.generate_code()
     secrets = invite_format.invite_secrets(code)
 
@@ -314,6 +322,8 @@ def org_invite(account: Account, org: str, role: str, wgs: dict[str, str], hours
             "hub_key": dict(account.state["hub_key"]),
             "v": 1,
         }
+        if message is not None:
+            package["message"] = message
         sealed = invite_format.seal_package(secrets, package)
         answer = account.call(
             "POST", f"/v1/orgs/{segment(org)}/invites", {"entry": built.entries[0], "package_ct": sealed}
@@ -403,6 +413,8 @@ def org_join(account: Account, link: str, given_display_name: str | None) -> dic
             ]
         )
         result = {"org_id": org, "role": found.role, "org_name": package.get("org_name") or None}
+        if "message" in package:
+            result["message"] = package["message"]
         try:
             answer = account.call("POST", f"/v1/orgs/{segment(org)}/log", built.body(events))
             require_head(answer, built.log)

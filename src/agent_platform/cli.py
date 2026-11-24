@@ -32,8 +32,22 @@ METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 # --- commands ---
 
 
+def _message(args: argparse.Namespace, context: Context, *, stdin_taken: bool = False) -> str | None:
+    """`--message <text>` or `--message -` (stdin): the requester's personal message (rule E-28), trimmed; stdin only
+    when nothing else is read from it (`invalid_argument`)."""
+    if args.message is None:
+        return None
+    if args.message != "-":
+        return str(args.message).strip()
+    if stdin_taken:
+        raise PlatformError("invalid_argument")
+    return context.read_stdin().strip()
+
+
 def cmd_register(args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    link = context.environ.get("AGENT_PLATFORM_INVITE", "") or context.read_stdin()
+    from_env = context.environ.get("AGENT_PLATFORM_INVITE", "")
+    message = _message(args, context, stdin_taken=not from_env)
+    link = from_env or context.read_stdin()
     if not link.strip():
         raise PlatformError("invalid_argument")
     if args.remote:
@@ -44,12 +58,19 @@ def cmd_register(args: argparse.Namespace, context: Context) -> dict[str, Any]:
             name=args.name,
             host=args.host,
             replace=args.replace_pending,
+            message=message,
         )
     elif args.replace_pending:
         raise PlatformError("invalid_argument")
     else:
         result = register(
-            context.home, context.environ, invite=link, display_name=args.display_name, name=args.name, host=args.host
+            context.home,
+            context.environ,
+            invite=link,
+            display_name=args.display_name,
+            name=args.name,
+            host=args.host,
+            message=message,
         )
     return {**result, "display_name": args.display_name.strip()}
 
@@ -67,7 +88,7 @@ def _with_display_name(result: dict[str, Any], context: Context) -> dict[str, An
 
 def cmd_pair(args: argparse.Namespace, context: Context) -> dict[str, Any]:
     if args.wait:
-        if args.hub is not None or args.remote or args.replace_pending:
+        if args.hub is not None or args.remote or args.replace_pending or args.message is not None:
             raise PlatformError("invalid_argument")
         result = remote.wait(context.home, return_code=args.return_code, timeout=args.timeout)
         connected = result["state"] == "connected" and result["kind"] == "pair"
@@ -78,12 +99,23 @@ def cmd_pair(args: argparse.Namespace, context: Context) -> dict[str, Any]:
         if args.no_browser:
             raise PlatformError("invalid_argument")
         return remote.start_pair(
-            context.home, hub=args.hub, name=args.name, host=args.host, replace=args.replace_pending
+            context.home,
+            hub=args.hub,
+            name=args.name,
+            host=args.host,
+            replace=args.replace_pending,
+            message=_message(args, context),
         )
     if args.replace_pending:
         raise PlatformError("invalid_argument")
     result = pair(
-        context.home, context.environ, hub=args.hub, name=args.name, host=args.host, browser=not args.no_browser
+        context.home,
+        context.environ,
+        hub=args.hub,
+        name=args.name,
+        host=args.host,
+        browser=not args.no_browser,
+        message=_message(args, context),
     )
     return _with_display_name(result, context)
 
@@ -196,7 +228,8 @@ def cmd_org_show(account: Account, args: argparse.Namespace, context: Context) -
 
 
 def cmd_org_invite(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    return orgs.org_invite(account, args.org, args.role, orgs.parse_wgs(args.wg), args.expires_hours)
+    wgs = orgs.parse_wgs(args.wg)
+    return orgs.org_invite(account, args.org, args.role, wgs, args.expires_hours, message=_message(args, context))
 
 
 def cmd_org_join(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -262,6 +295,9 @@ def writing(work: Work) -> Handler:
     return with_account(work, upkeep.around)
 
 
+MESSAGE_HELP = "a personal message shown where the request is approved (one line, up to 500 characters), or - for stdin"
+
+
 def _account_commands(tree: Tree) -> None:
     sub = tree.add(tree.commands, "pair", cmd_pair, "connect this agent to the user's account", common=False)
     sub.add_argument("--hub")
@@ -273,6 +309,7 @@ def _account_commands(tree: Tree) -> None:
     sub.add_argument("--wait", action="store_true", help="finish the pending remote pairing")
     sub.add_argument("--return-code", help="with --wait: the code the page showed the user")
     sub.add_argument("--timeout", type=int, default=remote.WAIT_DEFAULT_S, help="with --wait: seconds (0-600)")
+    sub.add_argument("--message", help=MESSAGE_HELP)
     sub = tree.add(
         tree.commands, "register", cmd_register, "a new account through an invitation (link on stdin)", common=False
     )
@@ -281,6 +318,7 @@ def _account_commands(tree: Tree) -> None:
     sub.add_argument("--host", default=(socket.gethostname().split(".")[0] or "computer")[:64])
     sub.add_argument("--remote", action="store_true", help="the agent runs on another computer than the browser")
     sub.add_argument("--replace-pending", action="store_true", help="delete a pending remote pairing first")
+    sub.add_argument("--message", help=MESSAGE_HELP)
     tree.add(tree.commands, "status", writing(cmd_status), "the account as the agent sees it")
     sub = tree.add(tree.commands, "api", with_account(cmd_api), "a signed request to any route")
     sub.add_argument("method")
@@ -347,6 +385,7 @@ def _org_commands(tree: Tree) -> None:
     sub.add_argument("--role", choices=["admin", "member"], default="member")
     sub.add_argument("--wg", action="append", default=[], help="<wg_id>[:read|write], repeatable")
     sub.add_argument("--expires-hours", type=int, default=72)
+    sub.add_argument("--message", help=MESSAGE_HELP)
     sub = tree.add(group, "admit", writing(cmd_org_admit), "admit an existing account directly (no step on its side)")
     sub.add_argument("--org", required=True)
     sub.add_argument("--user", required=True, help="user ID or account code (XXXX-XXXX-XXXX)")

@@ -109,9 +109,11 @@ def _begin(home: Home, pairing: Pairing, replace: bool, extra: Mapping[str, Any]
     )
 
 
-def start_pair(home: Home, *, hub: str, name: str, host: str, replace: bool) -> dict[str, Any]:
+def start_pair(
+    home: Home, *, hub: str, name: str, host: str, replace: bool, message: str | None = None
+) -> dict[str, Any]:
     """`pair --remote` (module comment, step 1)."""
-    pairing = Pairing(home, hub, name, host, remote=True)
+    pairing = Pairing(home, hub, name, host, remote=True, message=message)
     with _locked(home):
         _begin(home, pairing, replace, {"kind": "pair"})
     return {
@@ -125,7 +127,7 @@ def start_pair(home: Home, *, hub: str, name: str, host: str, replace: bool) -> 
 
 
 def start_register(
-    home: Home, *, invite: str, display_name: str, name: str, host: str, replace: bool
+    home: Home, *, invite: str, display_name: str, name: str, host: str, replace: bool, message: str | None = None
 ) -> dict[str, Any]:
     """`register --remote` (module comment, step 1): the invitation link with the pairing, marked secret."""
     origin, code = parse_invite(invite)
@@ -137,7 +139,7 @@ def start_register(
     )
     if lookup.get("registered") is True:
         raise refused("invite_registered", 409)
-    pairing = Pairing(home, origin, name, host, remote=True)
+    pairing = Pairing(home, origin, name, host, remote=True, message=message)
     scope = lookup.get("scope") if isinstance(lookup.get("scope"), str) else None
     with _locked(home):
         _begin(home, pairing, replace, {"kind": "register", "display_name": member, "scope": scope})

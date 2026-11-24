@@ -133,16 +133,21 @@ class _WrongSecret(Exception):
 class Pairing:
     """One pairing: keys, the hub's pinned key and the claim."""
 
-    def __init__(self, home: Home, hub: str, name: str, host: str, *, remote: bool = False) -> None:
+    def __init__(
+        self, home: Home, hub: str, name: str, host: str, *, remote: bool = False, message: str | None = None
+    ) -> None:
         try:
             self.origin = hub_origin(hub).base_url
         except ValueError:
             raise PlatformError("invalid_argument") from None
         try:
             agent_crypto.check_label({"name": name, "host": host})
+            if message is not None:
+                agent_crypto.check_message(message)
         except CryptoError:
             raise PlatformError("invalid_argument") from None
         self.home, self.name, self.host, self.remote = home, name, host, remote
+        self.message = message
         self.agent: Identity = agent_crypto.new_agent()
         self.pairing_id = uuid7()
         self.nonce = b""
@@ -207,10 +212,14 @@ class Pairing:
     def fingerprint(self) -> str:
         return agent_crypto.fingerprint(self.agent.kem_public(), self.agent.sig_public())
 
+    def _message_parameter(self) -> str:
+        """`&t=<message>`, the agent's personal message to the user (rule E-28), or nothing."""
+        return "" if self.message is None else f"&t={quote(self.message, safe='')}"
+
     def remote_fragment(self) -> str:
-        """`p=<id>&f=<fp>&m=remote&a=<name>&h=<host>`: the five parameters of a remote pairing link."""
+        """`p=<id>&f=<fp>&m=remote&a=<name>&h=<host>[&t=<message>]`: the parameters of a remote pairing link."""
         name, host = quote(self.name, safe=""), quote(self.host, safe="")
-        return f"p={self.pairing_id}&f={self.fingerprint()}&m=remote&a={name}&h={host}"
+        return f"p={self.pairing_id}&f={self.fingerprint()}&m=remote&a={name}&h={host}{self._message_parameter()}"
 
     def agent_code(self) -> str:
         """The agent code the user types on the page, shown as `XXXXX-XXXXX`."""
@@ -233,7 +242,8 @@ class Pairing:
 
     def fragment(self, port: int) -> str:
         fp = self.fingerprint()
-        return f"p={self.pairing_id}&f={fp}&c={port}&a={quote(self.name, safe='')}&h={quote(self.host, safe='')}"
+        name, host = quote(self.name, safe=""), quote(self.host, safe="")
+        return f"p={self.pairing_id}&f={fp}&c={port}&a={name}&h={host}{self._message_parameter()}"
 
     def link(self, port: int) -> str:
         return f"{self.origin}/connect#{self.fragment(port)}"
@@ -371,8 +381,17 @@ def listen(pairing: Pairing, on_ready: Callable[[int], None], timeout: float | N
         server.server_close()
 
 
-def pair(home: Home, environ: Mapping[str, str], *, hub: str, name: str, host: str, browser: bool) -> dict[str, Any]:
-    pairing = Pairing(home, hub, name, host)
+def pair(
+    home: Home,
+    environ: Mapping[str, str],
+    *,
+    hub: str,
+    name: str,
+    host: str,
+    browser: bool,
+    message: str | None = None,
+) -> dict[str, Any]:
+    pairing = Pairing(home, hub, name, host, message=message)
     pairing.register()
     opened: list[str] = []
 
@@ -408,7 +427,14 @@ def parse_invite(text: str) -> tuple[str, bytes]:
 
 
 def register(
-    home: Home, environ: Mapping[str, str], *, invite: str, display_name: str, name: str, host: str
+    home: Home,
+    environ: Mapping[str, str],
+    *,
+    invite: str,
+    display_name: str,
+    name: str,
+    host: str,
+    message: str | None = None,
 ) -> dict[str, Any]:
     """A new account through an invitation, with this agent paired (module comment, 11-agent-access.md section 5.2)."""
     origin, code = parse_invite(invite)
@@ -419,7 +445,7 @@ def register(
     lookup = anon_request(origin, "POST", "/v1/invites/lookup", {"invite_id": invite_id})
     if lookup.get("registered") is True:
         raise refused("invite_registered", 409)
-    pairing = Pairing(home, origin, name, host)
+    pairing = Pairing(home, origin, name, host, message=message)
     pairing.register()
     code_text = invite_format.format_code(code)
 
