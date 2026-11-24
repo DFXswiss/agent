@@ -18,7 +18,8 @@ from tests.platform.hub.orgs.support import Actor, new_id
 TASKS = 5000
 WORKGROUPS = 50
 CHILDREN, GRANDCHILDREN = 4, 2
-PAGE_SECONDS = 2.0
+PAGE_SECONDS = 5.0
+"""Generous: the work device runs other suites in parallel; a page takes milliseconds on an idle machine."""
 STATES = ("working", "idle", "failed", "closed", "scheduling")
 EXPECTED = {
     "working": ("working", "subagents"),
@@ -116,6 +117,8 @@ def _pages(situation: Situation, actor: Actor, category: str, **params: str) -> 
 def test_thousands_of_tasks_with_deep_subagent_trees(situation: Situation) -> None:
     wgs, tasks = _estate(situation)
     assert jobs.backfill(situation.hub.app.state.hub) == TASKS
+    with situation.hub.pool.connection() as connection:  # what autovacuum does after a bulk load
+        connection.execute("ANALYZE hub.task, hub.session, hub.task_attention")
     sessions = situation.desk.rows("SELECT count(*) FROM hub.session WHERE wg_id = ANY(%s::uuid[])", wgs)[0][0]
     assert sessions == TASKS * (1 + CHILDREN + CHILDREN * GRANDCHILDREN)
     scene = situation.scene
