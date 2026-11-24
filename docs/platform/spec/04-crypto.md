@@ -73,6 +73,7 @@ their vectors: [key model](../key-model.md)** (§11).
 | `k_cred` **(new)** | `HKDF(ikm=CK_e, salt=header.salt, info=P‖"credential")` |
 | `k_ctx` **(new, KOR-33)** | `HKDF(ikm=WK_e, salt=manifest.salt (32 B random per object), info=P‖"context\0"‖object_id)`: the key of one context checkpoint (§4.11) |
 | `pk_e` **(new, KOR-33)** | `HKDF(ikm=WK_e, info=P‖"pr-link")`: the HMAC key of pull-request tags (§4.11) |
+| `k_frame` **(new, KOR-44)** | `HKDF(ikm=WK_e, salt=frame.salt (32 B random per frame), info=P‖"browser-frame\0"‖browser_id)`: the key of one live frame of a browser session (§4.13) |
 | `k_log` **(new, KOR-43)** | `HKDF(ikm=WK_e, salt=manifest.salt (32 B random per object), info=P‖"run-log\0"‖object_id)`: the key of one log of a test run or work VM job (§4.12) |
 | `k_body` **(new, KOR-48)** | `HKDF(ikm=WK_e, info=P‖"pr-link-body")`: the AES-256-GCM key of sealed pull-request link bodies (§4.11a) |
 | storage key **(new)** | `HKDF(ikm=device_sig_seed, info=P‖"runner-storage")` |
@@ -379,6 +380,26 @@ equals the run or job ID of the encrypted event that named the log and `object` 
 chunk with `k_log` of the manifest's epoch. Same check order as §4.11. Implementations: `agent_hub.crypto.runlog`,
 the runner's copy `agent_runner.crypto.runlog`, the web's `src/core/crypto/runlog.ts`; vectors
 `contracts/vectors/runlog.json`.
+
+### 4.13 Live frame of a browser session **(new, KOR-44)**
+
+A live frame (ADR-085 §6) is one JPEG picture of the page a session's platform browser shows, sent only while someone
+watches and never stored beyond the latest frame per session:
+
+- `k_frame = HKDF(ikm=WK_e, salt=salt (32 B random per frame), info=P‖"browser-frame\0"‖browser_id)`;
+- `ct = b64u(nonce12‖AES-256-GCM(k_frame, jpeg, AAD))`, `AAD = P‖"browser-frame\0"‖canonical({"browser":browser_id,
+  "epoch":e,"seq":n,"session":session_id,"ts":ts,"wg":wg_id})`;
+- frame (JSON, in clear except `ct`): exactly `{"v":1,"browser","session","wg","epoch","seq","ts","salt","ct"}`;
+  `browser` = `br-<12 hex>`, `seq` 0…2^53−1 increasing per browser session, `ts` the device time of the picture,
+  `ct` 29 B to 512 KiB + 28 B decoded.
+
+No signature (ADR-085 §6, E-25): only the session's device can post a frame, and the hub cannot make or change one
+without `WK_e`. A viewer checks the key set (`header_invalid`), the formats (`header_invalid`), that `session` and
+`wg` are the watched session's, the size (`size_exceeded`), opens it (`decrypt_failed`) and drops a frame whose `seq`
+is not above the last shown one of that browser session. The label is its own, so a frame can never pass for an
+event, a log chunk or a checkpoint chunk. Implementations: `agent_hub.crypto.browserframe`, the runner's copy
+`agent_runner.crypto.browserframe`, the web's `src/core/crypto/browserframe.ts`; vectors
+`contracts/vectors/browserframe.json`.
 
 ## 5. Flows
 

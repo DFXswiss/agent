@@ -73,6 +73,9 @@ has no account).
   a run VM go to their session. A stopped VM (paused session) costs nothing. Without credit no new work or run VM
   starts, running runs end `cancelled` and running work VMs are stopped (13-work-vm.md §7). Granularity of the meter
   as for session VMs: a VM is counted from the first tick that sees it until the last (at most 5 s at each end).
+- Browser VMs (KOR-44, ADR-085 §2): a browser VM (scope `browser`) is billed like a run VM – `vm_kind` `work`, size
+  `standard`, to its session – through the same extension point; without credit no browser opens and an open one is
+  closed (`credit_exhausted`).
 - `runtime` (new): `{session_id, vm_id, vm_kind: "session"|"work", size, from, to, runtime_ms}` with `0 < runtime_ms ≤
   to − from` (ms) and `runtime_ms ≤ 3 600 000`, `to` at most 300 s after the receive time. Scope: a session of an
   org the device serves (`403 forbidden` otherwise, `404 not_found` for an unknown session). Charged only when the
