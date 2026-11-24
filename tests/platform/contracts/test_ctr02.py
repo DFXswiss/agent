@@ -101,7 +101,7 @@ SPEC_GUEST_NESTED = {
     ("guest/sessions-create.request.json", "/properties/model"): "access model_id env",
     ("guest/sessions-create.request.json", "/properties/initial_prompt"): "prompt_id text",
     ("guest/sessions-create.request.json", "/properties/limits"): "memory_max cpu_quota tasks_max runtime_max_sec",
-    ("guest/sessions-create.request.json", "/properties/restore"): "claude_session_id object_id",
+    ("guest/sessions-create.request.json", "/properties/restore"): "claude_session_id object_id note",
     ("guest/objects.json", "/$defs/vm_metrics"): "cpu_usage_usec mem_used_bytes mem_total_bytes disk_used_bytes"
     " disk_total_bytes net_rx_bytes net_tx_bytes uptime_seconds load1",
     # The optional counters after `state` were added by RUN-15 (contracts/changes/RUN-15.md).

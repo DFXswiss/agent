@@ -27,7 +27,7 @@ def _previous(tmp_path: Path) -> Path:
     previous = tmp_path / "previous"
     previous.mkdir()
     for path in sorted(MIGRATIONS.glob("*.sql")):
-        if path.name < "0011_":
+        if path.name < "0011_":  # the migrations before 0011 (later ones need 0011)
             shutil.copy(path, previous / path.name)
     return previous
 
@@ -92,7 +92,7 @@ def _seed(writer: psycopg.Connection[Any]) -> None:
 def test_0011_back_fills_the_inherited_read_of_admins(hub_db: HubDatabase, tmp_path: Path) -> None:
     previous = _previous(tmp_path)
     count = len(load_migrations())
-    assert run_migrate(hub_db.migrate_env(), directory=previous) == (f"applied {count - 1}", 0)
+    assert run_migrate(hub_db.migrate_env(), directory=previous) == (f"applied {len(list(previous.iterdir()))}", 0)
     with hub_db.connect(hub_db.writer_role, autocommit=True) as writer:
         _seed(writer)
     assert run_migrate(hub_db.migrate_env()) == (f"applied {count}", 0)
