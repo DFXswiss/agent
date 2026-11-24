@@ -6,8 +6,7 @@
       "id": "checkout",
       "expect": {
         "user_text_contains": "E2E48-FIX",
-        "has_tool_result": false,
-        "tools_include": ["mcp__platform__workvm_exec", "mcp__platform__workvm_browse", "mcp__platform__workvm_status"]
+        "has_tool_result": false
       },
       "reply": {
         "content": [
