@@ -47,7 +47,8 @@
    starts (the daemon stopped during the executor) ends `failed` `timeout`, `retryable:true`: it is never executed
    twice.
 5. **Result** (`_finish`): in **one** transaction the outbox `event` `operation.result` (encrypted `{operation_id,
-   status, result|error}`), then the `operation_transition` (`succeeded`/`failed` with `result_event_id`), and the
+   status, connection_of?, result|error}`; `connection_of`: the acting user whose personal connection an executed
+   operation used, HOT-14), then the `operation_transition` (`succeeded`/`failed` with `result_event_id`), and the
    answer stored with the row; then `POST /v1/pending/{id}/answer`. A result that does not fit into an event (E8)
    ends `failed` `size_exceeded`. A result with `existing:true` (an open pull request found by the executor) is
    answered `status:"duplicate"` without `duplicate_of`.
@@ -143,7 +144,7 @@ FULL_MESSAGES = {
 NOT_CONNECTED_MESSAGE = checks.NOT_CONNECTED
 SESSION_ENDED = frozenset({"stopping", "stopped", "failed"})
 """Session states in which a held operation is not run any more (a closed task stops its sessions)."""
-SESSION_ENDED_MESSAGE = "The session ended while the operation waited for the task owner."
+SESSION_ENDED_MESSAGE = "The session ended while the operation waited for a GitHub connection."
 HOLD_LATE = "late"
 HOLD_FULL = "full"
 ERROR_KEYS = frozenset({"code", "message", "pointers", "retryable"})
@@ -722,10 +723,13 @@ class Pipeline:
     ) -> Operation:
         """`operation.result` event, then the transition, and the stored answer, in one transaction."""
         at, event_id = self.env.at(), uuid7()
+        # whose personal connection the executor used (HOT-14): the acting user, once the operation executed
+        used = op.actor_id if op.state == "executing" and acting.needs(op.type) is not None else None
+        connection = {} if used is None else {"connection_of": used}
         if failure is None:
             assert result is not None
             draft = self._result_draft(
-                op, event_id, {"operation_id": op.id, "status": "succeeded", "result": result}, at
+                op, event_id, {"operation_id": op.id, "status": "succeeded", **connection, "result": result}, at
             )
             try:
                 check_draft(draft)
@@ -743,7 +747,7 @@ class Pipeline:
             message = message_text(failure.message)
             if message is not None:
                 error["message"] = message
-            body = {"operation_id": op.id, "status": "failed", "error": error}
+            body = {"operation_id": op.id, "status": "failed", **connection, "error": error}
             draft = self._result_draft(op, event_id, body, at)
             answer = {"operation_id": op.id, "status": "failed", "error": error}
             transition = {

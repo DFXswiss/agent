@@ -1,0 +1,8 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-00000000002d",
+  "status": "failed",
+  "connection_of": "the task owner",
+  "error": {
+    "code": "upstream_error"
+  }
+}

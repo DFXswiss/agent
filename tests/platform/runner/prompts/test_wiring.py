@@ -200,7 +200,7 @@ def test_the_area_is_registered() -> None:
     assert "prompts.events" in [consumer.name for consumer in inbox_consumers()]
     assert consumers.CONSUMERS[0].kinds == frozenset({"prompt"})
     assert first_prompt_provider().__module__ == "agent_runner.prompts.first"
-    assert next(observer.name for observer in state_observers()) == "prompts.delivery"
+    assert "prompts.delivery" in [observer.name for observer in state_observers()]
     assert next(amender.name for amender in request_amenders()) == "prompts.restart"
 
 

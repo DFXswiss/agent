@@ -14,6 +14,7 @@ from agent_runner.config import (
     DEFAULT_LOGIN_ARGV,
     HUB_NAMES,
     NAMES,
+    OPERATOR_GITHUB_ONE_USER,
     PREFIX,
     Config,
     check_platform,
@@ -347,11 +348,19 @@ USER_B = "01a1ee56-5e00-73da-a86c-5c56722cfde3"
 @pytest.mark.parametrize("kind", [None, "platform"])
 def test_operator_github_settings_on_platform_devices(kind: str | None, base: dict[str, str], tmp_path: Path) -> None:
     base["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"] = str(tmp_path / "not-yet-there.token")
-    base["AGENT_RUNNER_OPERATOR_GITHUB_USERS"] = f" {USER_A.upper()} , {USER_B},{USER_A}"
+    base["AGENT_RUNNER_OPERATOR_GITHUB_USERS"] = f" {USER_A.upper()} , {USER_A}"
     found = load(base, device_kind=kind)
     # the file is checked at each read, not here: the operator may place it after the start
     assert found.operator_github_token_file == tmp_path / "not-yet-there.token"
-    assert found.operator_github_users == frozenset({USER_A, USER_B})
+    assert found.operator_github_users == frozenset({USER_A})
+
+
+@pytest.mark.parametrize("kind", [None, "platform"])
+def test_the_operators_github_is_for_exactly_one_user(kind: str | None, base: dict[str, str], tmp_path: Path) -> None:
+    # a personal connection is never shared: a second user is refused, also on a platform device
+    base["AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE"] = str(tmp_path / "github.token")
+    base["AGENT_RUNNER_OPERATOR_GITHUB_USERS"] = f"{USER_A},{USER_B}"
+    refused(base, OPERATOR_GITHUB_ONE_USER, device_kind=kind)
 
 
 def test_operator_github_settings_default_off(base: dict[str, str]) -> None:
@@ -473,7 +482,7 @@ def test_environment_round_trip_everything(base: dict[str, str], tmp_path: Path,
             "AGENT_RUNNER_LOGIN_AUTOMATION": "on",
             "AGENT_RUNNER_VM_PREFIX": "wp-run01-",
             "AGENT_RUNNER_OPERATOR_GITHUB_TOKEN_FILE": str(tmp_path / "github.token"),
-            "AGENT_RUNNER_OPERATOR_GITHUB_USERS": f"{USER_B},{USER_A}",
+            "AGENT_RUNNER_OPERATOR_GITHUB_USERS": USER_A,
         }
     )
     cfg = load(base)

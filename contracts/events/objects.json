@@ -1086,6 +1086,10 @@
             "operation_id": {
               "$ref": "../common.json#/$defs/uuid"
             },
+            "connection_of": {
+              "$ref": "../common.json#/$defs/uuid",
+              "description": "the user whose own personal connection (GitHub) the operation used: the person who gave the instruction (HOT-14); absent when it used none"
+            },
             "status": {
               "type": "string",
               "const": "succeeded"
@@ -1106,6 +1110,10 @@
           "properties": {
             "operation_id": {
               "$ref": "../common.json#/$defs/uuid"
+            },
+            "connection_of": {
+              "$ref": "../common.json#/$defs/uuid",
+              "description": "the user whose own personal connection (GitHub) the operation used: the person who gave the instruction (HOT-14); absent when it used none"
             },
             "status": {
               "type": "string",

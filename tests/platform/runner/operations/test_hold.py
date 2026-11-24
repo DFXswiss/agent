@@ -15,7 +15,14 @@ from typing import Any
 from agent_guest.schema import SchemaSet
 from agent_runner.credentials import cache
 from agent_runner.operations.extensions import CheckFailed, OperationContext, PrecheckRequest, PrecheckResult
-from agent_runner.operations.pipeline import FULL_MESSAGES, HOLD_MAX, HOLD_S, Pipeline, pipeline_for
+from agent_runner.operations.pipeline import (
+    FULL_MESSAGES,
+    HOLD_MAX,
+    HOLD_S,
+    SESSION_ENDED_MESSAGE,
+    Pipeline,
+    pipeline_for,
+)
 from agent_runner.sessions import records as session_records
 
 from ..reconcile.rig import Rig
@@ -27,7 +34,7 @@ CONTRACTS = Path(__file__).resolve().parents[4] / "contracts"
 SCHEMAS = SchemaSet(CONTRACTS)
 REPO = "example-org/example-repo"
 COMMENT = {"repo": REPO, "number": 7, "body": "Looks good."}
-TIMEOUT = "The task owner did not connect GitHub within 15 minutes."
+TIMEOUT = "The person who gave this instruction did not connect GitHub within 15 minutes."
 Json = dict[str, Any]
 
 
@@ -83,6 +90,7 @@ def test_a_comment_without_connection_is_held_then_runs_once_github_is_connected
             "operation_id": op_id,
             "operation_type": "github.comment",
             "repo": REPO,
+            "for_user": OWNER,
             "until": status["until"],
         }
         assert abs(until_of(status) - op.held_until.timestamp()) < 0.001
@@ -259,7 +267,7 @@ def test_a_request_older_than_the_hold_and_a_hold_that_ended_are_rejected_as_bef
         op = await kit_.op(ended)
         assert (op.state, op.error_code) == ("rejected", "github_not_connected")
         assert op.answer is not None
-        assert op.answer["error"]["message"] == "The task owner has not connected GitHub."
+        assert op.answer["error"]["message"] == "The person who gave this instruction has not connected GitHub."
 
     run(rig, body)
 
@@ -313,7 +321,7 @@ def test_a_session_cannot_put_free_text_into_the_waiting_event(rig: Rig) -> None
         title = await kit_.run(sid, "task.set_title", {"title": ""})
         assert title.held_until is None
         (status,) = await waiting(kit_)
-        assert set(status) == {"state", "waiting_for", "operation_id", "operation_type", "repo", "until"}
+        assert set(status) == {"state", "waiting_for", "operation_id", "operation_type", "repo", "for_user", "until"}
         assert (status["operation_id"], status["repo"]) == (op_id, REPO)
         assert all(text not in str(value) and "evil" not in str(value) for value in status.values())
 
@@ -367,7 +375,10 @@ def test_a_held_operation_of_an_ended_session_never_runs(rig: Rig) -> None:
             await kit_.pipeline.process(op_id)
             op = await kit_.op(op_id)
             assert (op.state, op.held) == ("rejected", False)
-            error = {"code": "not_found", "message": "The session ended while the operation waited for the task owner."}
+            error = {
+                "code": "not_found",
+                "message": "The session ended while the operation waited for a GitHub connection.",
+            }
             assert op.answer == {"operation_id": op_id, "status": "rejected", "error": error}
             assert kit_.hub.requests[-1]["local_check"] == "rejected"
             assert any(f"hold_session_ended operation_id={op_id} session_state={state}" in x for x in kit_.lines)

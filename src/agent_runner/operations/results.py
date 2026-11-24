@@ -40,10 +40,14 @@ class Outcome:
 def outcome_of(body: Mapping[str, Any]) -> Outcome | None:
     """The outcome of an `operation.result` body, None when it is not a well-formed final result."""
     status, result, error = body.get("status"), body.get("result"), body.get("error")
-    if status == "succeeded" and isinstance(result, dict) and set(body) == {"operation_id", "status", "result"}:
+    connection = body.get("connection_of")
+    if "connection_of" in body and not (isinstance(connection, str) and _UUID_RE.fullmatch(connection)):
+        return None
+    keys = set(body) - {"connection_of"}
+    if status == "succeeded" and isinstance(result, dict) and keys == {"operation_id", "status", "result"}:
         return Outcome("succeeded", result=result)
     well_formed = isinstance(error, dict) and isinstance(error.get("code"), str) and _CODE_RE.fullmatch(error["code"])
-    if status in ERROR_STATUSES and well_formed and set(body) == {"operation_id", "status", "error"}:
+    if status in ERROR_STATUSES and well_formed and keys == {"operation_id", "status", "error"}:
         assert isinstance(error, dict)
         return Outcome(str(status), error=error)
     return None

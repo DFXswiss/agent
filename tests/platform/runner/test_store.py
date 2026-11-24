@@ -73,6 +73,9 @@ TABLES = {
         "ready_at",
         "ended_at",
         "last_prompt_at",
+        # 0016 (HOT-14): the acting user of the current turn
+        "turn_actor",
+        "turn_open",
     ],
     # 0003 (RUN-05) adds task_id, scope_seq, channel and attempts
     "prompt_delivery": ["event_id", "session_id", "state", "updated_at", "task_id", "scope_seq", "channel", "attempts"],
@@ -112,6 +115,8 @@ TABLES = {
         "held_notified_at",
         "held_ended_at",
         "held_credential",
+        # 0016 (HOT-14): the acting user stamped at the receipt
+        "actor_id",
     ],
     "guest_cursor": ["vm_id", "journal_seq"],
     "credential_cache": ["owner_id", "kind", "version", "record"],
@@ -147,7 +152,18 @@ TABLES = {
     # 0002 (RUN-04): latest profile events for the harness context of a session; 0009 (KOR-03): keyed per scope
     "profile_event": ["kind", "org_id", "object_id", "event_id", "ts", "author_sig", "sealed", "scope_id"],
     # 0003 (RUN-05): verified prompt events of the device's workgroups
-    "prompt_event": ["event_id", "org_id", "wg_id", "task_id", "scope_seq", "author_sig", "sealed", "received_at"],
+    # 0016 (HOT-14) adds author_id
+    "prompt_event": [
+        "event_id",
+        "org_id",
+        "wg_id",
+        "task_id",
+        "scope_seq",
+        "author_sig",
+        "sealed",
+        "received_at",
+        "author_id",
+    ],
     # 0004 (RUN-07): latest verified workgroup settings and the result events of original operations
     "workgroup_settings": ["wg_id", "org_id", "event_id", "scope_seq", "author_sig", "sealed"],
     "operation_result": ["operation_id", "event_id", "org_id", "wg_id", "author_sig", "sealed", "received_at"],
