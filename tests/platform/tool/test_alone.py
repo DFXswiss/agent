@@ -354,3 +354,11 @@ def test_an_org_invitation_is_joined(home: Home, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(account_module.Account, "open", classmethod(lambda cls, home: Closing()))
     monkeypatch.setattr(alone, "org_join", lambda account, link, member: {"org_id": "team", "role": "member"})
     assert register(home)["role"] == "member"
+
+
+def test_the_register_command_refuses_mixed_options(tmp_path: Path) -> None:
+    environ = {"AGENT_PLATFORM_HOME": str(tmp_path / "home"), "AGENT_PLATFORM_INVITE": invite_link()}
+    for extra in (["--own-account", "--remote"], ["--own-account", "--replace-pending"], ["--platform-root-key", ROOT]):
+        out = io.StringIO()
+        assert cli.run(["register", "--display-name", "Bot", *extra], environ, io.StringIO(""), out) == 1
+        assert '"error": "invalid_argument"' in out.getvalue()
