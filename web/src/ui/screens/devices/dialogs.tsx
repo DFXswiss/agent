@@ -20,6 +20,7 @@ import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { ActionDialog } from '../members/ActionDialog';
 import { deviceName } from './parts';
+import { NoName } from '../../names/names';
 
 function WorkgroupSelect(props: {
   readonly choices: readonly string[];
@@ -76,7 +77,7 @@ function Candidates(props: {
               checked={props.chosen === row.device_id}
               onChange={() => props.onChoose(row.device_id)}
             />
-            <span>{t('devices.unnamed', { id: row.device_id.slice(-6) })}</span>
+            <NoName t={t} text={t('names.device.unknown')} id={row.device_id} showId />
             <span>{row.online ? t('devices.online') : t('devices.offline')}</span>
             {use !== null && <span>{t('devices.capacity', { used: use.used, total: use.total })}</span>}
             {row.capacity_low && <span>{t('devices.capacity-low')}</span>}

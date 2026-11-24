@@ -133,26 +133,24 @@ describe('audit view', () => {
     expect(second.getByTestId('audit.row.actor')).toHaveTextContent('Mac Studio');
     expect(second.getByTestId('audit.row.result')).toHaveAttribute('data-result', 'failed');
     expect(second.getByTestId('audit.row.device')).toHaveTextContent('Device: Mac Studio');
-    expect(second.getByTestId('audit.row.wg')).toHaveTextContent(`Workgroup: Workgroup …${UNKNOWN_WG.slice(-6)}`);
-    expect(second.getByTestId('audit.row.task')).toHaveTextContent(`Task …${TASK2.slice(-6)}`);
+    expect(second.getByTestId('audit.row.wg')).toHaveTextContent('Workgroup: Workgroup without a name');
+    expect(second.getByTestId('audit.row.task')).toHaveTextContent('Task without a readable title');
     expect(second.queryByTestId('audit.row.event')).toBeNull();
     expect(second.queryByTestId('audit.row.detail')).toBeNull();
     expect(second.queryByTestId('audit.row.target')).toBeNull();
     expect(within(row(7)).getByTestId('audit.row.actor')).toHaveTextContent('Hub');
     expect(within(row(7)).getByTestId('audit.row.target')).toHaveTextContent('Target: invite inv-1');
-    expect(within(row(6)).getByTestId('audit.row.actor')).toHaveTextContent(`User …${w.others.bob.id.slice(-6)}`);
+    expect(within(row(6)).getByTestId('audit.row.actor')).toHaveTextContent('Name not known yet');
     expect(within(row(6)).getByTestId('audit.row.target')).toHaveTextContent('Target: Ada');
     const fifth = within(row(5));
-    expect(fifth.getByTestId('audit.row.actor')).toHaveTextContent(`Device …${w.others.dev2.id.slice(-6)}`);
-    expect(fifth.getByTestId('audit.row.device')).toHaveTextContent(`Device: ${w.others.dev2.id.slice(-6)}`);
+    expect(fifth.getByTestId('audit.row.actor')).toHaveTextContent('Device without a name');
+    expect(fifth.getByTestId('audit.row.device')).toHaveTextContent('Device: Device without a name');
     expect(fifth.getByTestId('audit.row.target')).toHaveTextContent('Target: device');
     // the filter options: actors (users and devices of the log) and workgroups by name
     const actors = within(screen.getByTestId('audit.filter.actor'))
       .getAllByRole('option')
       .map((o) => o.textContent);
-    expect(actors).toEqual(
-      expect.arrayContaining(['Anyone', 'Ada', 'Mac Studio', `User …${w.others.bob.id.slice(-6)}`]),
-    );
+    expect(actors).toEqual(expect.arrayContaining(['Anyone', 'Ada', 'Mac Studio', 'Name not known yet']));
     const wgs = within(screen.getByTestId('audit.filter.wg'))
       .getAllByRole('option')
       .map((o) => o.textContent);

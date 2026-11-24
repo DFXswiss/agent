@@ -40,6 +40,7 @@ import { useDirectory, useOrgView } from '../tasks/hooks';
 import { EntityCharts } from './EntityCharts';
 import { FreshnessNote, Metric, orNone, Toggle } from './parts';
 import { useUnits } from './units';
+import { NoName } from '../../names/names';
 
 /** The overview is read again this often (new devices, VMs, sessions and presence). */
 export const POLL_MS = 60_000;
@@ -137,7 +138,7 @@ function WorkvmItem(props: { readonly item: MonitoredWorkvm; readonly now: numbe
     >
       <Header item={item} now={props.now} prefix="monitoring.workvm">
         <span className="font-medium" data-testid="monitoring.workvm.name">
-          {t('monitoring.workvm', { id: item.workvm_id })}
+          <NoName t={t} text={t('monitoring.workvm')} id={item.workvm_id} showId />
         </span>
         <span
           className="rounded bg-gray-100 px-2 text-sm"
@@ -190,7 +191,7 @@ function SessionItem(props: {
           to={`/o/${encodeURIComponent(props.org)}/t/${encodeURIComponent(item.task_id)}`}
           data-testid="monitoring.session.task"
         >
-          {title.status === 'verified' ? title.text : t('monitoring.session.task', { id: item.task_id.slice(-6) })}
+          {title.status === 'verified' ? title.text : <NoName t={t} text={t('names.task.unknown')} id={item.task_id} />}
         </Link>
         <span
           className="rounded bg-gray-100 px-2 text-sm"

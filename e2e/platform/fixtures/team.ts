@@ -29,6 +29,7 @@ export async function inviteMember(
   await admin.getByTestId('members.invite.role').selectOption(role);
   for (const [wg, right] of Object.entries(access))
     await admin.getByTestId(`members.invite.wg.${wg}`).selectOption(right);
+  await admin.getByTestId('members.invite.name').fill('Invited person');
   await admin.getByTestId('members.invite.submit').click();
   const code = (await admin.getByTestId('members.invite.code').textContent())!;
   await admin.getByTestId('members.invite.done').click();

@@ -9,15 +9,19 @@ import { useI18n } from '../i18n';
 import { useAppEnv } from '../shell/context';
 import { EventTime } from '../task-tabs/chat/EventTime';
 import { useClipped } from './file/Clipped';
+import { knownPersonName } from '../names/names';
 
 function Prompt({ item }: ChatItemProps) {
   const { at, author, body } = item as TimelineItem;
   const { app } = useAppEnv();
   const { t } = useI18n();
   const org = useStore((state) => state.session.activeOrg ?? '', app.store);
-  const members = useStore(selectDirectory(org), app.store).members;
+  const directory = useStore(selectDirectory(org), app.store);
   const me = useStore((state) => state.me.userId, app.store);
-  const name = author === me ? t('task.chat.author.you') : (members.get(author!) ?? t('task.chat.author.unknown'));
+  const name =
+    author === me
+      ? t('task.chat.author.you')
+      : (knownPersonName(t, directory, author!) ?? t('task.chat.author.unknown'));
   const { shown, more } = useClipped(isRecord(body) && typeof body.text === 'string' ? body.text : '');
   return (
     <div className="ml-auto flex max-w-[85%] flex-col items-end gap-1" data-testid="chat.prompt">

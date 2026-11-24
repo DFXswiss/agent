@@ -32,6 +32,7 @@ import { HubFailure, ORIGIN, SimHub } from '../core/account/hub';
 import { idOf } from '../core/log/world';
 import { orgWorld, type OrgWorld } from '../core/org/world';
 import { type makeApp, renderApp } from './harness';
+import { EMPTY_DIRECTORY } from '../../src/core/tasks/directory';
 
 type Made = Awaited<ReturnType<typeof makeApp>>;
 
@@ -67,6 +68,7 @@ async function orgWithInvite(hub: SimHub, names = true, message?: string): Promi
       ...(message === undefined ? {} : { message }),
     },
     directory: {
+      ...EMPTY_DIRECTORY,
       orgName: names ? 'Grüße AG' : '',
       workgroups: names
         ? new Map([

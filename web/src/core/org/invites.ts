@@ -18,7 +18,7 @@ import { formatTime } from '../encoding/time';
 import { isMessageText } from '../crypto/agent';
 import { formatCode, generateCode, inviteSecrets, sealPackage } from '../crypto/invite';
 import { buildEntries, type LogFields } from '../log/entries';
-import { ORG, type OrgState, WG } from '../log/state';
+import { ORG, type OrgState, USER, WG } from '../log/state';
 import { extendLog } from '../log/verify';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
@@ -182,6 +182,8 @@ export interface InviteRow {
   readonly registered?: boolean;
   /** First lookup of the invitation (hubs since KOR-36; null: never opened, absent: older hub). */
   readonly opened_at?: string | null;
+  /** The account that registered with it (hubs since ADR-067; null: none, absent: older hub). */
+  readonly registered_user?: string | null;
 }
 
 const STATES = ['open', 'used', 'revoked', 'expired'];
@@ -225,17 +227,22 @@ export async function openInvites(
 }
 
 /**
- * Where an invitation stands for the inviter (KOR-36): `accepted` (the verified log has the accept), `registered` (a
- * person created an account with it, the join is missing), `opened` (the link was opened), `open`.
+ * Where an invitation stands for the inviter (KOR-36): `accepted` (the verified log has the accept), `settled` (the
+ * account that registered with it is a member of the org now – admitted directly, ADR-067 – so it is no longer
+ * needed), `registered` (a person created an account with it, the join is missing), `opened` (the link was opened),
+ * `open`.
  */
-export type InviteStatus = 'open' | 'opened' | 'registered' | 'accepted';
+export type InviteStatus = 'open' | 'opened' | 'registered' | 'settled' | 'accepted';
 
 export interface InviteStatusRow {
   readonly inviteId: string;
   readonly status: InviteStatus;
   readonly expires: string;
   readonly seq: number;
-  /** The member who joined with it (from the verified log: the principal admitted by the accept), for `accepted`. */
+  /**
+   * The member who joined with it (from the verified log: the principal admitted by the accept), for `accepted`; the
+   * member the hub names as its registered account, for `settled`.
+   */
   readonly acceptedBy: string | undefined;
   readonly openedAt: string | null;
 }
@@ -261,20 +268,25 @@ export async function inviteStatuses(context: OrgContext, org: string): Promise<
       const accepted = known.acceptedSeq !== null;
       // an open invitation the hub does not list as open (used, revoked, unknown) is not shown
       if (!accepted && row?.state !== 'open') return [];
+      const registeredUser = row?.registered_user;
+      const member = typeof registeredUser === 'string' ? state.member(registeredUser) : null;
+      const settled = !accepted && member?.kind === USER;
       const status: InviteStatus = accepted
         ? 'accepted'
-        : row!.registered === true
-          ? 'registered'
-          : typeof row!.opened_at === 'string'
-            ? 'opened'
-            : 'open';
+        : settled
+          ? 'settled'
+          : row!.registered === true
+            ? 'registered'
+            : typeof row!.opened_at === 'string'
+              ? 'opened'
+              : 'open';
       return [
         {
           inviteId: known.inviteId,
           status,
           expires: known.expires,
           seq: known.seq,
-          acceptedBy: accepted ? joined.get(known.acceptedSeq!) : undefined,
+          acceptedBy: accepted ? joined.get(known.acceptedSeq!) : settled ? member!.id : undefined,
           openedAt: typeof row?.opened_at === 'string' ? row.opened_at : null,
         },
       ];

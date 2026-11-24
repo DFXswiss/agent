@@ -24,7 +24,6 @@
   "delete.no": "Behalten",
   "edited": "bearbeitet",
   "deleted": "Dieser Eintrag wurde gelöscht.",
-  "author.unnamed": "Mitglied …{id}",
   "item.unverifiable": "Nicht prüfbarer Eintrag (Fehlercode: {code})",
   "item.locked": "Dieser Eintrag ist für dich nicht lesbar.",
   "item.missing": "Dieser Eintrag ist nicht verfügbar.",

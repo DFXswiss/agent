@@ -26,9 +26,9 @@
   "verify.head": "Head: row {seq}, hash {hash}…",
   "verify.checkpoint": "Newest checkpoint: row {seq}, published {time} by key {key}",
   "verify.no-checkpoint": "No checkpoint published yet.",
-  "actor.user": "User …{id}",
-  "actor.device": "Device …{id}",
-  "actor.session": "Session …{id}",
+  "actor.user": "Name not known yet",
+  "actor.device": "Device without a name",
+  "actor.session": "a session",
   "actor.hub": "Hub",
   "actor.operator": "Operator",
   "actor.anonymous": "Anonymous",
@@ -39,10 +39,8 @@
   "result.failed": "Failed",
   "row.target": "Target: {name}",
   "row.wg": "Workgroup: {name}",
-  "row.task": "Task …{id}",
   "row.device": "Device: {name}",
   "row.event": "Referenced event",
-  "wg.unnamed": "Workgroup …{id}",
   "row.by-agent": "by agent {name}",
   "row.by-unknown-agent": "by agent"
 }

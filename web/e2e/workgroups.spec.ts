@@ -15,6 +15,7 @@ test('an admin creates, renames and archives a workgroup @R-2.4 @R-8.2', async (
   // a second member to grant access to (joined through the API; the member screen's invitation is used)
   await page.getByTestId('shell.nav.members').click();
   await page.getByTestId('members.invite.open').click();
+  await page.getByTestId('members.invite.name').fill('Invited person');
   await page.getByTestId('members.invite.submit').click();
   const code = (await page.getByTestId('members.invite.code').textContent())!;
   await page.getByTestId('members.invite.done').click();

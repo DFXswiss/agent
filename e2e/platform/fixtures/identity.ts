@@ -142,6 +142,7 @@ export async function inviteMember(
   else await page.getByTestId('members.invite.role').selectOption(options.role);
   for (const [wg, access] of Object.entries(options.wgs ?? {}))
     await page.getByTestId(`members.invite.wg.${wg}`).selectOption(access);
+  await page.getByTestId('members.invite.name').fill('Invited person');
   await page.getByTestId('members.invite.submit').click();
   await expect(page.getByTestId('members.invite.warning')).toBeVisible();
   const code = (await page.getByTestId('members.invite.code').textContent())!;

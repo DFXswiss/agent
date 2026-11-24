@@ -48,6 +48,7 @@ async function invite(page: Page, org: string, role: 'member' | 'admin' = 'membe
   await page.getByTestId('members.invite.role').selectOption(role);
   if (message !== undefined) await page.getByTestId('members.invite.message').fill(message);
   await expect(page.getByTestId('members.invite.expiry')).toHaveValue('72');
+  await page.getByTestId('members.invite.name').fill('Invited person');
   await page.getByTestId('members.invite.submit').click();
   await expect(page.getByTestId('members.invite.warning')).toBeVisible();
   const code = (await page.getByTestId('members.invite.code').textContent())!;

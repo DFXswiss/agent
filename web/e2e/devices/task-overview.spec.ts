@@ -74,6 +74,7 @@ test('a member sees the tasks of the workgroups they can read, never those of an
   const adaUser = await PageUser.open(adaPage, ada.recoveryCode);
   await adaPage.getByTestId('shell.nav.members').click();
   await adaPage.getByTestId('members.invite.open').click();
+  await adaPage.getByTestId('members.invite.name').fill('Invited person');
   await adaPage.getByTestId('members.invite.submit').click();
   const code = (await adaPage.getByTestId('members.invite.code').textContent())!;
   await adaPage.getByTestId('members.invite.done').click();

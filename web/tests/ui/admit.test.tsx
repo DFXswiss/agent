@@ -60,8 +60,20 @@ describe('add an existing account', () => {
     fireEvent.change(screen.getByTestId(`members.admit.wg.${one}`), { target: { value: 'write' } });
     fireEvent.change(screen.getByTestId(`members.admit.wg.${two}`), { target: { value: 'read' } });
     fireEvent.change(screen.getByTestId(`members.admit.wg.${two}`), { target: { value: '' } });
+    // the name is required (ADR-067): every member sees it at once
+    expect(screen.getByTestId('members.admit.submit')).toBeDisabled();
+    fireEvent.change(screen.getByTestId('members.admit.name'), { target: { value: '  Bob Example ' } });
     fireEvent.click(screen.getByTestId('members.admit.submit'));
-    expect(await screen.findByTestId('members.admit.done')).toHaveTextContent(`Account ${code} is now a member.`);
+    expect(await screen.findByTestId('members.admit.done')).toHaveTextContent(
+      `Bob Example (account ${code}) is a member now.`,
+    );
+    expect(screen.getByTestId('members.admit.done')).not.toHaveTextContent('could not be saved');
+    // the name went out as a `member.name` event about bob, sealed for the org (the hub sees no name)
+    const sent = w.ingested
+      .flatMap((batch) => batch.items)
+      .map((item) => (item.event as { header: Record<string, unknown> }).header);
+    expect(sent.filter((header) => header.kind === 'member.name').map((header) => header.ref)).toEqual([bob.id]);
+    expect(JSON.stringify(w.ingested)).not.toContain('Bob Example');
     expect(screen.queryByTestId('members.admit.form')).toBeNull();
     expect(w.world.state.isAdmin(bob.id)).toBe(true);
     expect(w.world.state.wgAccess(bob.id, one)).toBe('write');
@@ -98,9 +110,32 @@ describe('add an existing account', () => {
     type(code.toLowerCase());
     expect(await screen.findByTestId('members.admit.found')).toHaveTextContent(code);
     expect(screen.queryByTestId('members.admit.error')).toBeNull();
+    fireEvent.change(screen.getByTestId('members.admit.name'), { target: { value: 'Bob' } });
     fireEvent.click(screen.getByTestId('members.admit.submit'));
     expect(await screen.findByTestId('members.admit.done')).toBeInTheDocument();
     expect(w.world.state.member(bob.id)).toMatchObject({ role: 'member', consented: false });
+  });
+
+  it('admits even when the name cannot be saved and the settled invitations cannot be read (ADR-067)', async () => {
+    const { w, answer } = await world();
+    const { bob } = w.others;
+    w.client.on('POST /v1/events', () => {
+      throw new HubError('unavailable', 503);
+    });
+    w.client.on(`GET /v1/orgs/${w.org}/invites`, () => {
+      throw new HubError('unavailable', 503);
+    });
+    mount(w, members('/x'), `/o/${w.org}/members`);
+    fireEvent.click(screen.getByTestId('members.admit.open'));
+    fireEvent.change(screen.getByTestId('members.admit.code'), { target: { value: answer(bob).account_code } });
+    fireEvent.click(screen.getByTestId('members.admit.find'));
+    await screen.findByTestId('members.admit.found');
+    fireEvent.change(screen.getByTestId('members.admit.name'), { target: { value: 'Bob' } });
+    fireEvent.click(screen.getByTestId('members.admit.submit'));
+    expect(await screen.findByTestId('members.admit.done')).toHaveTextContent(
+      'The name could not be saved – add it at the entry with "Enter name".',
+    );
+    expect(w.world.state.member(bob.id)).not.toBeNull();
   });
 
   it('shows a refused admission and closes on cancel', async () => {
@@ -116,6 +151,7 @@ describe('add an existing account', () => {
     });
     fireEvent.click(screen.getByTestId('members.admit.find'));
     await screen.findByTestId('members.admit.found');
+    fireEvent.change(screen.getByTestId('members.admit.name'), { target: { value: 'Bob' } });
     fireEvent.click(screen.getByTestId('members.admit.submit'));
     await waitFor(() => expect(screen.getByTestId('members.admit.error')).toHaveAttribute('data-code', 'forbidden'));
     expect(screen.getByTestId('members.admit.error')).toHaveTextContent('No access');

@@ -98,7 +98,7 @@ describe('pullNames', () => {
     ];
     await pullNames(w.context, rows);
     const kinds = w.client.calls.map((call) => new URL(call.target, 'https://h').searchParams.get('kinds'));
-    expect(kinds.sort()).toEqual(['device.profile', 'org.profile,wg.profile,member.profile', 'task.meta']);
+    expect(kinds.sort()).toEqual(['device.profile', 'org.profile,wg.profile,member.profile,member.name', 'task.meta']);
   });
 
   it('loads the agents once for account-level rows and skips their missing org', async () => {

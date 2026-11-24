@@ -553,7 +553,7 @@ describe('Operations tab', () => {
     await waitFor(() => expect(within(detail).getAllByTestId('operations.transition')).toHaveLength(3));
     const transitions = within(detail).getAllByTestId('operations.transition');
     // the device by its neutral name until its label is read, then by its label (KOR-05, B-23)
-    expect(transitions[0]).toHaveTextContent(`Device …${DEVICE.slice(-6)}`);
+    expect(transitions[0]).toHaveTextContent('Device without a name');
     act(() => labelDevice(t.store, t.org, DEVICE, 'Build box'));
     expect(transitions[0]).toHaveTextContent('Build box');
     expect(transitions[1]).toHaveTextContent('hub');

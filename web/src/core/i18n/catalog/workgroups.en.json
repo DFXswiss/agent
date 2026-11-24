@@ -11,8 +11,6 @@
   "access.read": "Read",
   "access.write": "Write",
   "devices": "Devices: {count}",
-  "device.org": "Device …{id}",
-  "device.platform": "Platform device …{id}",
   "create.open": "Create workgroup",
   "create.title": "Create workgroup",
   "create.confirm": "Create",

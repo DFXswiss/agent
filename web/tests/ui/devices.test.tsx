@@ -108,7 +108,7 @@ describe('device list', () => {
     expect(within(first).getByTestId('devices.item.wgs')).toHaveTextContent('One');
     expect(within(first).getByTestId('devices.item.wgs').querySelector(`[data-wg="${one}"]`)).not.toBeNull();
     const second = item(w.others.dev2.id);
-    expect(within(second).getByTestId('devices.item.name')).toHaveTextContent(`Device …${w.others.dev2.id.slice(-6)}`);
+    expect(within(second).getByTestId('devices.item.name')).toHaveTextContent('Device without a name');
     expect(within(second).getByTestId('devices.item.online')).toHaveTextContent('Offline');
     expect(within(second).getByTestId('devices.item.last-seen')).toHaveTextContent('Never seen');
     expect(within(second).getByTestId('devices.item.capacity')).toHaveTextContent('2 of 8 VM slots in use');
@@ -460,7 +460,7 @@ describe('unassign, unpair, rename', () => {
     const dev1 = w.others.dev1;
     mount(w, at, `/o/${w.org}/devices`);
     const chip = within(item(dev1.id)).getAllByTestId('devices.item.unassign')[1]!;
-    expect(chip).toHaveAccessibleName(`Remove Device …${dev1.id.slice(-6)} from One`);
+    expect(chip).toHaveAccessibleName('Remove Device without a name from One');
     fireEvent.click(chip);
     expect(screen.getByTestId('devices.unassign')).toHaveTextContent('Content it already read stays on the device.');
     fireEvent.click(screen.getByTestId('devices.unassign.confirm'));

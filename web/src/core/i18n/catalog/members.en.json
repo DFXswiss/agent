@@ -4,7 +4,6 @@
   "loading": "Loading members…",
   "not-found": "This organization was not found.",
   "me": "(you)",
-  "unnamed": "Member …{id}",
   "wg.unnamed": "Workgroup",
   "role.admin": "Admin",
   "role.member": "Member",
@@ -24,7 +23,7 @@
   "admit.invitees": "Invited by you",
   "admit.found": "Account {code} found and verified",
   "admit.submit": "Add",
-  "admit.done": "Account {code} is now a member. They will see the organization the next time they open the app.",
+  "admit.done": "{name} (account {code}) is a member now. Every member sees the name at once; the person sees the organization the next time they open the app.",
   "admit.already": "This account is a member already.",
   "invite.open": "Invite user",
   "invite.role": "Role",
@@ -73,5 +72,12 @@
   "invites.status.opened": "Link opened – not joined yet",
   "invites.status.registered": "Account created – not joined yet",
   "invites.status.accepted": "Accepted – {name} is a member",
-  "invites.someone": "the invited person"
+  "invites.someone": "the invited person",
+  "admit.name-hint": "Every member sees this name at once. When the person opens the organization, their own name replaces it by itself.",
+  "admit.unnamed": "The name could not be saved – add it at the entry with \"Enter name\".",
+  "invite.name": "The invited person's name",
+  "invites.for": "Invitation for {name}",
+  "invites.for-unnamed": "Invitation without a name",
+  "invites.status.settled": "{name} is a member now – this invitation is no longer needed",
+  "invites.close": "Close invitation"
 }

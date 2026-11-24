@@ -6,7 +6,7 @@ import { HubError } from '../../../src/core/net/signedFetch';
 import { setLog } from '../../../src/core/store/slices/orgs';
 import { type EventEntry, putEvents } from '../../../src/core/store/slices/events';
 import { listLoading, taskList, type TaskRow } from '../../../src/core/store/slices/tasks';
-import { selectDirectory, selectOwner, selectTitle } from '../../../src/core/tasks/directory';
+import { EMPTY_DIRECTORY, selectDirectory, selectOwner, selectTitle } from '../../../src/core/tasks/directory';
 import { listTarget, loadTasks, PAGE_SIZE, selectListRows, titles } from '../../../src/core/tasks/list';
 import { pullEvents, pullOnce, pullTarget } from '../../../src/core/tasks/pull';
 import { actor } from '../log/world';
@@ -193,11 +193,7 @@ describe('pulls', () => {
 describe('directory and titles', () => {
   it('reads names from the newest verified profile events of the org scope', () => {
     return taskWorld().then((t: TaskWorld) => {
-      expect(selectDirectory(t.org)(t.store.getState())).toEqual({
-        orgName: null,
-        workgroups: new Map(),
-        members: new Map(),
-      });
+      expect(selectDirectory(t.org)(t.store.getState())).toEqual(EMPTY_DIRECTORY);
       putEvents(t.store, t.org, [
         entry(t.org, 1, { kind: 'org.profile' }, { name: 'Old' }),
         entry(t.org, 2, { kind: 'org.profile' }, { name: 'Private' }),

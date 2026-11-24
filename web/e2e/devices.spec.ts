@@ -124,6 +124,7 @@ test('a revoked device invitation enrolls nothing; a member sees the devices wit
   // Bob joins as a member and opens the device screen
   await page.getByTestId('shell.nav.members').click();
   await page.getByTestId('members.invite.open').click();
+  await page.getByTestId('members.invite.name').fill('Invited person');
   await page.getByTestId('members.invite.submit').click();
   const bobCode = (await page.getByTestId('members.invite.code').textContent())!;
   const context = await newContext();

@@ -24,7 +24,6 @@
   "delete.no": "Keep",
   "edited": "edited",
   "deleted": "This entry was deleted.",
-  "author.unnamed": "Member …{id}",
   "item.unverifiable": "Unverifiable item (error code: {code})",
   "item.locked": "This entry is not readable for you.",
   "item.missing": "This entry is not available.",

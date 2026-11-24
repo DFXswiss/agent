@@ -328,8 +328,8 @@ describe('GitHub section', () => {
     fireEvent.click(await screen.findByTestId('github.connect'));
     const options = within(await screen.findByTestId('github.devices.select')).getAllByRole('option');
     expect(options[1]).toBeDisabled();
-    // without a label read: the neutral name with the end of the ID
-    expect(options[1]).toHaveTextContent(`Device …${other.id.slice(-6)} (offline)`);
+    // without a label read: a sentence, never an ID (ADR-067)
+    expect(options[1]).toHaveTextContent('Device without a name (offline)');
   });
 });
 

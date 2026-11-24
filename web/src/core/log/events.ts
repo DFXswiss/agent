@@ -48,7 +48,8 @@ const EVENT_KEYS = ['header', 'ct', 'sig'];
 /**
  * One row of the matrix: `kind` in `scope`, written by one of `authors`, needs `right`; `header` constrains header
  * fields (`empty` = "", `set` = a UUID, `scope_id` = equals scope_id, `target` = a workgroup of the org, `author` =
- * equals the author, `device`/`entry`/`operation` = a UUID, `read_target` = not empty).
+ * equals the author, `device`/`entry`/`operation` = a UUID, `read_target` = not empty, `subject` = a user of the org
+ * or a user invitation of its log at `lh`).
  */
 export interface KindRule {
   readonly kind: string;
@@ -80,6 +81,8 @@ export const KIND_RULES: readonly KindRule[] = [
   rule('wg.profile', 'org', [USER], ORG_ADMIN, { wg: 'target' }),
   rule('member.profile', 'org', [USER], ORG_MEMBER_SELF, { wg: 'empty', ref: 'author' }),
   rule('device.profile', 'org', [USER], ORG_ADMIN, { wg: 'empty', ref: 'device' }),
+  // an admin-given name of a member or of an invitation's person (ADR-067)
+  rule('member.name', 'org', [USER], ORG_ADMIN, { wg: 'empty', ref: 'subject' }),
   ...['whiteboard.entry', 'whiteboard.edit', 'whiteboard.delete'].flatMap((kind) => [
     rule(kind, 'org', [USER], ORG_ADMIN, ORG_ENTRY, ORG_LEVEL),
     rule(kind, 'wg', [USER], WG_WRITE, WG_ENTRY, WG_LEVEL),
@@ -121,6 +124,12 @@ export function kindRule(kind: string, scope: string, authorKind: string): KindR
   return BY_KEY.get(`${kind} ${scope} ${authorKind}`) ?? fail('kind_not_allowed');
 }
 
+/** A user of the org (active or not) or a user invitation of its log, in the state at `lh`. */
+function isSubject(value: unknown, state: OrgState): boolean {
+  const id = value as string;
+  return state.principals.get(id)?.kind === USER || state.invites.get(id)?.kind === USER;
+}
+
 function fieldValid(check: string, value: unknown, header: F.Fields, state: OrgState): boolean {
   switch (check) {
     case 'empty':
@@ -133,6 +142,8 @@ function fieldValid(check: string, value: unknown, header: F.Fields, state: OrgS
       return value === header.author;
     case 'read_target':
       return value !== '';
+    case 'subject':
+      return isSubject(value, state);
     default: // set, device, entry, operation: a UUID
       return isUuid7(value);
   }

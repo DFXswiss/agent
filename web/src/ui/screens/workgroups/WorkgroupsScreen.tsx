@@ -6,6 +6,7 @@ import { useId, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { uuid7 } from '../../../core/encoding/ids';
 import { submitBatch } from '../../../core/org/batch';
+import { selectDeviceLabels } from '../../../core/org/devices';
 import { type Access, canManage, memberRows } from '../../../core/org/members';
 import {
   archivePlan,
@@ -23,6 +24,8 @@ import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { ActionDialog, BUTTON, PRIMARY } from '../members/ActionDialog';
 import { memberName } from '../members/MembersScreen';
+import { NoName } from '../../names/names';
+import { useDeviceNames } from '../devices/labels';
 import { useDirectory, useOrgView } from '../tasks/hooks';
 
 type Open =
@@ -50,6 +53,13 @@ function CreateDialog({ org, state, userId, directory, onClose }: CreateProps) {
   const [devices, setDevices] = useState<string[]>([]);
   const others = memberRows(state, userId, directory).filter((row) => !row.isMe);
   const choices = assignableDevices(state, platform);
+  // devices by their label (`device.profile`, read with the org's profiles), else a sentence – never an ID (ADR-067)
+  useDeviceNames([org]); // pulls the org's device labels once
+  const labels = useStore(selectDeviceLabels(org), app.store);
+  const labelled = (device: string) => labels.has(device);
+  const deviceNames = (device: string) =>
+    labels.get(device) ??
+    t(state.member(device)?.platformSeq == null ? 'names.device.unknown' : 'names.device.platform.unknown');
   const choose = (user: string, value: string) => {
     const next = { ...grants };
     if (value === '') delete next[user];
@@ -113,11 +123,7 @@ function CreateDialog({ org, state, userId, directory, onClose }: CreateProps) {
                 onChange={(event) => toggle(device.id, event.target.checked)}
                 data-testid={`workgroups.create.device.${device.id}`}
               />
-              <span>
-                {t(device.platformSeq === null ? 'workgroups.device.org' : 'workgroups.device.platform', {
-                  id: device.id.slice(-6),
-                })}
-              </span>
+              <NoName t={t} text={deviceNames(device.id)} id={device.id} showId={!labelled(device.id)} />
             </label>
           ))}
         </fieldset>

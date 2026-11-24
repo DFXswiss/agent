@@ -11,7 +11,7 @@
 // an `ungrant` of an admin's explicit access leaves the inherited read). A grant needs no key of the granting admin:
 // the key holders deliver it by catch-up. Demoting an admin is a normal batch; `buildBatch` adds the rotation.
 import { ADMIN, MEMBER, type OrgState, READ, USER, WRITE } from '../log/state';
-import { type Directory, selectDirectory } from '../tasks/directory';
+import { type Directory, type NameSource, selectDirectory } from '../tasks/directory';
 import type { StoreState } from '../store/store';
 import { type Planner, refuse } from './batch';
 
@@ -30,8 +30,10 @@ export interface MemberAccess {
 /** One row of the member list. */
 export interface MemberRow {
   readonly id: string;
-  /** Display name from the newest verified `member.profile` of the member, null if none was read. */
+  /** The name to show (own profile, else admin-given, `core/tasks/directory.ts`), null if none is known. */
   readonly name: string | null;
+  /** Where `name` comes from, null without a name. */
+  readonly nameSource: NameSource | null;
   readonly role: Role;
   /** Workgroups with access (default workgroup first, then by ID), archived ones included. */
   readonly access: readonly MemberAccess[];
@@ -61,6 +63,7 @@ export function memberRows(state: OrgState, me: string, directory: Directory): M
     .map((p): MemberRow => ({
       id: p.id,
       name: directory.members.get(p.id) ?? null,
+      nameSource: directory.sources.get(p.id) ?? null,
       role: p.role as Role,
       access: order.flatMap((wg) => {
         const access = state.wgAccess(p.id, wg) as Access | null;
@@ -161,8 +164,11 @@ export function leavePlan(): Planner {
   };
 }
 
-/** The user's display name in `org` (newest verified `member.profile`), '' if unknown (no org, not read yet). */
+/**
+ * The user's own display name in `org` (newest verified own `member.profile`, never a name an admin gave), '' if
+ * unknown (no org, not read yet).
+ */
 export const selectOwnName =
   (org: string | null, userId: string | null) =>
   (state: StoreState): string =>
-    org === null || userId === null ? '' : (selectDirectory(org)(state).members.get(userId) ?? '');
+    org === null || userId === null ? '' : (selectDirectory(org)(state).ownNames.get(userId) ?? '');

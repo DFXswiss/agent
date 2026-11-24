@@ -9,6 +9,7 @@ import type { TaskRow } from '../../../core/store/slices/tasks';
 import type { Directory } from '../../../core/tasks/directory';
 import { useI18n } from '../../i18n';
 import { useOwner, useTitle } from './hooks';
+import { knownPersonName } from '../../names/names';
 
 const BADGE: Readonly<Record<string, string>> = {
   scheduling: 'bg-amber-100 text-amber-900',
@@ -76,7 +77,7 @@ export function TaskItem({
           {t(`tasks.state.${row.state}`)}
         </span>
         <span className="text-sm text-gray-700" data-testid="tasks.row.owner">
-          {(owner === null ? undefined : directory.members.get(owner)) ?? t('tasks.owner.unknown')}
+          {knownPersonName(t, directory, owner) ?? t('tasks.owner.unknown')}
         </span>
         <span className="text-xs text-gray-600">
           <time dateTime={row.last_activity_at} data-testid="tasks.row.activity">

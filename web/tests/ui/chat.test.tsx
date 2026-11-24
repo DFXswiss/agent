@@ -470,7 +470,7 @@ describe('sessions tab', () => {
     expect(within(nodes[0]!).getAllByTestId('session.model')[0]).toHaveTextContent('Modell claude-x');
     // the device by its label (until one is read: the neutral name), the usage of each session (KOR-05, B-23)
     const device = within(nodes[0]!).getAllByTestId('session.device')[0]!;
-    expect(device).toHaveTextContent('Auf Gerät …0000d1');
+    expect(device).toHaveTextContent('Auf Gerät ohne Namen');
     act(() => labelDevice(t.store, t.org, '0190f000-0000-7000-8000-0000000000d1', 'Build box'));
     expect(device).toHaveTextContent('Auf Build box');
     const usage = within(nodes[0]!).getAllByTestId('session.usage')[0]!;

@@ -4,7 +4,6 @@
   "loading": "Mitglieder werden geladen…",
   "not-found": "Diese Organisation wurde nicht gefunden.",
   "me": "(du)",
-  "unnamed": "Mitglied …{id}",
   "wg.unnamed": "Workgroup",
   "role.admin": "Admin",
   "role.member": "Mitglied",
@@ -24,7 +23,7 @@
   "admit.invitees": "Von dir eingeladen",
   "admit.found": "Konto {code} gefunden und geprüft",
   "admit.submit": "Aufnehmen",
-  "admit.done": "Konto {code} ist jetzt Mitglied. Die Person sieht die Organisation beim nächsten Öffnen.",
+  "admit.done": "{name} (Konto {code}) ist jetzt Mitglied. Alle Mitglieder sehen den Namen sofort; die Person sieht die Organisation beim nächsten Öffnen.",
   "admit.already": "Dieses Konto ist schon Mitglied.",
   "invite.open": "Person einladen",
   "invite.role": "Rolle",
@@ -73,5 +72,12 @@
   "invites.status.opened": "Link geöffnet – noch nicht beigetreten",
   "invites.status.registered": "Konto angelegt – noch nicht beigetreten",
   "invites.status.accepted": "Angenommen – {name} ist Mitglied",
-  "invites.someone": "die eingeladene Person"
+  "invites.someone": "die eingeladene Person",
+  "admit.name-hint": "Alle Mitglieder sehen diesen Namen sofort. Öffnet die Person die Organisation, ersetzt ihr eigener Name ihn von selbst.",
+  "admit.unnamed": "Der Name konnte nicht gespeichert werden – trage ihn am Eintrag mit „Namen eintragen“ nach.",
+  "invite.name": "Name der eingeladenen Person",
+  "invites.for": "Einladung für {name}",
+  "invites.for-unnamed": "Einladung ohne Namen",
+  "invites.status.settled": "{name} ist inzwischen Mitglied – diese Einladung wird nicht mehr gebraucht",
+  "invites.close": "Einladung schließen"
 }

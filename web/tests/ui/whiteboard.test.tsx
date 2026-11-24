@@ -66,7 +66,7 @@ describe('org board', () => {
     await waitFor(() => expect(within(entry).getByTestId('markdown')).toHaveTextContent('First note'));
     const sent = w.client.of('POST /v1/events')[0]!.body as { events: { notify?: boolean }[] };
     expect(sent.events[0]!.notify).toBe(true);
-    expect(within(entry).getByTestId('whiteboard.item.author')).toHaveTextContent(`Member …${w.ada.id.slice(0, 8)}`);
+    expect(within(entry).getByTestId('whiteboard.item.author')).toHaveTextContent('Name not known yet');
     // edit: a failure keeps the editor with the message, then the edit succeeds
     fireEvent.click(within(entry).getByTestId('whiteboard.item.edit'));
     expect(screen.queryByTestId('whiteboard.editor.notify')).toBeNull();

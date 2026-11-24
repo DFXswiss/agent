@@ -4,7 +4,6 @@
   "loading": "Geräte werden geladen…",
   "not-found": "Diese Organisation wurde nicht gefunden.",
   "empty": "Noch keine Ausführungsgeräte.",
-  "unnamed": "Gerät …{id}",
   "wg.unnamed": "Workgroup",
   "kind.org": "Eigenes Gerät",
   "kind.platform": "Plattformgerät",

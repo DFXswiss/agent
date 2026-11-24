@@ -1,6 +1,6 @@
 // Device names outside the device screen (06-web.md sections 5.3, 5.4, 8.1, 8.2): a device is named by its label from
 // the newest verified `device.profile` event of its org (`selectDeviceLabels`, pulled once per org when the org's log
-// is verified), and only while none was read by a neutral name with the end of its ID – never by a bare ID prefix.
+// is verified), and only while none was read by "Device without a name" – never by an ID (ADR-067).
 import { useEffect, useMemo, useRef } from 'react';
 import { meOrgs } from '../../../core/account/session';
 import { DEVICE_PROFILE, selectDeviceLabels } from '../../../core/org/devices';
@@ -10,7 +10,7 @@ import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 
-/** The name of device `id`: its label, else the neutral name with the end of its ID. */
+/** The name of device `id`: its label, else "Device without a name". */
 export type DeviceNamer = (id: string) => string;
 
 /** Names devices by their labels in `orgs`; the profiles of each verified org are pulled once. */
@@ -45,7 +45,7 @@ export function useDeviceNames(orgs: readonly string[]): DeviceNamer {
         const label = labels.get(id);
         if (label !== undefined) return label;
       }
-      return t('devices.unnamed', { id: id.slice(-6) });
+      return t('names.device.unknown');
     },
     [maps, t],
   );

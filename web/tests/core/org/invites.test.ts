@@ -23,6 +23,7 @@ import { orgEntry } from '../../../src/core/store/slices/orgs';
 import type { Actor } from '../log/world';
 import { idOf, T0 } from '../log/world';
 import { orgWorld } from './world';
+import { EMPTY_DIRECTORY } from '../../../src/core/tasks/directory';
 
 const HUB_KEY = { id: 'hub-test', public_key: b64uEncode(new Uint8Array(32).fill(9)) };
 
@@ -42,6 +43,7 @@ async function setup(as: 'ada' | 'bob' = 'ada') {
   (w.store.getState().orgs.byId[w.org]!.keys as Map<string, unknown>).delete(`wg ${hidden} 1`);
   const a = w.others as Record<string, Actor>;
   const directory = {
+    ...EMPTY_DIRECTORY,
     orgName: 'Grüße AG',
     workgroups: new Map([
       [w.world.defaultWg, 'Default'],
@@ -97,7 +99,7 @@ describe('createInvite', () => {
     const blank = { ...input({ kind: 'user', role: 'admin', wgs: { [w.world.defaultWg]: 'read' }, hours: 1 }) };
     const created = await createInvite(w.context, w.org, {
       ...blank,
-      directory: { orgName: null, workgroups: new Map(), members: new Map() },
+      directory: EMPTY_DIRECTORY,
       code: undefined as never,
     });
     expect(w.world.state.invites.get(created.inviteId)!.wgs).toEqual({});

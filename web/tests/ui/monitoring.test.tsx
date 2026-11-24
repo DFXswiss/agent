@@ -106,7 +106,7 @@ describe('monitoring screen', () => {
     await screen.findAllByTestId('monitoring.device');
     expect(screen.getByTestId('monitoring.capacity-warning')).toHaveTextContent('Capacity low on 1 device(s)');
     const first = within(device(DEV));
-    expect(first.getByTestId('monitoring.device.name')).toHaveTextContent(`Device …${DEV.slice(-6)}`);
+    expect(first.getByTestId('monitoring.device.name')).toHaveTextContent('Device without a name');
     expect(first.getByTestId('monitoring.device.reachable')).toHaveTextContent('Unreachable');
     expect(first.getByTestId('monitoring.device.uptime')).toHaveTextContent('–');
     expect(first.getByTestId('monitoring.device.capacity')).toHaveTextContent('0 of 8 VM slots, – memory, 1 warm VMs');
@@ -139,7 +139,8 @@ describe('monitoring screen', () => {
     expect(s1.getByTestId('monitoring.session.tokens')).toHaveTextContent('1,200 in / 300 out');
     expect(s1.getByTestId('monitoring.session.cost')).toHaveTextContent('$0.0123');
     expect(s1.getByTestId('monitoring.session.context')).toHaveTextContent('–');
-    expect(s1.getByTestId('monitoring.session.task')).toHaveTextContent(`Task …${TASK.slice(-6)}`);
+    expect(s1.getByTestId('monitoring.session.task')).toHaveTextContent('Task without a readable title');
+    expect(s1.getByTestId('monitoring.session.task').querySelector('[data-id]')).toHaveAttribute('data-id', TASK);
     fireEvent.click(within(vm('vm-00000002')).getByTestId('monitoring.vm.sessions-toggle'));
     expect(within(vm('vm-00000002')).getByTestId('monitoring.vm.no-sessions')).toBeInTheDocument();
 
@@ -355,7 +356,7 @@ describe('work VMs (KOR-29)', () => {
     const items = within(session(S1)).getAllByTestId('monitoring.workvm');
     expect(items.map((node) => node.dataset.workvm)).toEqual(['wvm-0000000a', 'wvm-0000000b']);
     const first = within(items[0]!);
-    expect(first.getByTestId('monitoring.workvm.name')).toHaveTextContent('Work VM wvm-0000000a');
+    expect(first.getByTestId('monitoring.workvm.name')).toHaveTextContent('Work VMID: wvm-0000000a');
     expect(first.getByTestId('monitoring.workvm.state')).toHaveTextContent('running');
     expect(first.getByTestId('monitoring.workvm.uptime')).toHaveTextContent('1 min');
     expect(first.getByTestId('monitoring.workvm.memory')).toHaveTextContent('2.0 GiB / 8.0 GiB (25%)');

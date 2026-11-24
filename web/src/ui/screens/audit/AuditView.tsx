@@ -43,6 +43,7 @@ import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { BUTTON, PRIMARY } from '../members/ActionDialog';
 import { useDirectory, useOrgView } from '../tasks/hooks';
+import { knownPersonName, NoName } from '../../names/names';
 
 const pad = (value: number) => String(value).padStart(2, '0');
 
@@ -295,7 +296,7 @@ function Row(props: {
   useEffect(() => {
     if (wg !== null && task !== null) pullOnce(app.tasks, org, wg, { kinds: [TITLE_KIND], task }).catch(() => 0);
   }, [app, org, wg, task]);
-  const actor = actorName(row, names) ?? t(`audit.actor.${row.actor_kind}`, { id: (row.actor_id ?? '').slice(-6) });
+  const actor = actorName(row, names) ?? t(`audit.actor.${row.actor_kind}`);
   const target =
     row.target_kind === null ? null : (targetName(row, names) ?? `${row.target_kind} ${row.target_id ?? ''}`.trim());
   const link = eventLink(org, row);
@@ -340,12 +341,12 @@ function Row(props: {
             to={`/o/${encodeURIComponent(org)}/t/${encodeURIComponent(task)}`}
             data-testid="audit.row.task"
           >
-            {title.status === 'verified' ? title.text : t('audit.row.task', { id: task.slice(-6) })}
+            {title.status === 'verified' ? title.text : <NoName t={t} text={t('names.task.unknown')} id={task} />}
           </Link>
         )}
         {row.device_id !== null && (
           <span data-testid="audit.row.device">
-            {t('audit.row.device', { name: names.device(row.device_id) ?? row.device_id.slice(-6) })}
+            {t('audit.row.device', { name: names.device(row.device_id) ?? t('names.device.unknown') })}
           </span>
         )}
         {link !== null && (
@@ -393,17 +394,17 @@ export function AuditView({ org, task }: { readonly org: string; readonly task: 
     setSearch(params);
   };
   const names = {
-    member: (id: string) => directory.members.get(id) ?? null,
+    member: (id: string) => knownPersonName(t, directory, id) ?? null,
     device: (id: string) => labels.get(id) ?? null,
-    wg: (id: string) => directory.workgroups.get(id) ?? t('audit.wg.unnamed', { id: id.slice(-6) }),
+    wg: (id: string) => directory.workgroups.get(id) ?? t('names.workgroup.unknown'),
   };
   const principals = state === null ? [] : [...state.principals.values()].filter((p) => p.removedSeq === null);
   const actors = principals
     .map((p) => ({
       id: p.id,
       name:
-        (p.role === DEVICE ? labels.get(p.id) : directory.members.get(p.id)) ??
-        t(p.role === DEVICE ? 'audit.actor.device' : 'audit.actor.user', { id: p.id.slice(-6) }),
+        (p.role === DEVICE ? labels.get(p.id) : knownPersonName(t, directory, p.id)) ??
+        t(p.role === DEVICE ? 'names.device.unknown' : 'names.person.unknown'),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
   const workgroups = state === null ? [] : [...state.workgroups.keys()].map((id) => ({ id, name: names.wg(id) }));

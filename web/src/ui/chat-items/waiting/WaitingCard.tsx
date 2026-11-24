@@ -24,6 +24,7 @@ import { GithubConnect } from '../../settings/sections/github/Connect';
 import { useAppEnv } from '../../shell/context';
 import { EventTime } from '../../task-tabs/chat/EventTime';
 import { useTypeLabel } from '../operation/Card';
+import { knownPersonName } from '../../names/names';
 
 function TaskCard({ item, card, task }: { readonly item: TimelineItem; readonly card: Card; readonly task: TaskRow }) {
   const { app } = useAppEnv();
@@ -61,7 +62,7 @@ function TaskCard({ item, card, task }: { readonly item: TimelineItem; readonly 
       </p>
     );
   const ownerName =
-    (addressee === null ? undefined : directory.members.get(addressee)) ??
+    knownPersonName(t, directory, addressee) ??
     t(card.forUser === null ? 'github.waiting.owner.unknown' : 'github.waiting.person.unknown');
   const stale = github.status === 'unverifiable' || connectedAt !== null;
   return (

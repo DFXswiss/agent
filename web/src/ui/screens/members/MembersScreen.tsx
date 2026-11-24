@@ -1,5 +1,7 @@
 // Members and rights (06-web.md section 7.1, route `/o/:org/members`, right org:member, edit: admin). The list comes
-// from the verified log (display names from `member.profile`); admins see the controls – invite, change role (hidden for
+// from the verified log (names: the member's own `member.profile`, else a provisional name an admin gave – marked with
+// who gave it –, else "Name not known yet" with what happens next; the ID only on request, ADR-067); admins see the
+// controls – enter or change a provisional name, – invite, change role (hidden for
 // the last admin), grant workgroup access (optionally with history; every writable workgroup, the key holders deliver
 // the key), ungrant an explicit access, remove – each change through the confirmation dialog ("Saving …",
 // `submitBatch`). An access an admin has only by its role shows "reads as admin" and has nothing to ungrant (ADR-058).
@@ -28,6 +30,8 @@ import { useDirectory, useOrgView } from '../tasks/hooks';
 import { ActionDialog, BUTTON } from './ActionDialog';
 import { AdmitSection } from './AdmitSection';
 import { InviteSection } from './InviteSection';
+import { NameDialog } from './NameDialog';
+import { givenBy } from '../../names/names';
 
 /** The dialog that is open, with what it acts on. */
 type Open =
@@ -35,11 +39,13 @@ type Open =
   | { readonly kind: 'remove'; readonly member: MemberRow }
   | { readonly kind: 'ungrant'; readonly member: MemberRow; readonly wg: string }
   | { readonly kind: 'grant'; readonly member: MemberRow }
+  | { readonly kind: 'name'; readonly member: MemberRow }
   | { readonly kind: 'leave' };
 
-/** A member's display name, or a neutral label with the start of the ID. */
+/** A member's name as text: the own name, "<name> (provisional)", or "Name not known yet" (never an ID). */
 export function memberName(t: (key: string, params?: Record<string, string>) => string, row: MemberRow): string {
-  return row.name ?? t('members.unnamed', { id: row.id.slice(-6) });
+  if (row.name === null) return t('names.person.unknown');
+  return row.nameSource?.source === 'own' ? row.name : t('names.person.provisional', { name: row.name });
 }
 
 interface GrantDialogProps {
@@ -126,17 +132,38 @@ function MemberItem({
 }) {
   const { t } = useI18n();
   const manage = admin && !row.lastAdmin;
+  const own = row.nameSource?.source === 'own';
+  const given = row.name === null || own ? null : givenBy(t, directory, row.id);
   return (
     <li className="flex flex-col gap-2 border-b border-gray-200 py-3" data-testid="members.item" data-member={row.id}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium" data-testid="members.item.name">
-          {memberName(t, row)}
+        <span
+          className="font-medium"
+          data-testid="members.item.name"
+          data-source={row.nameSource?.source ?? 'none'}
+          title={t('names.id.value', { id: row.id })}
+        >
+          {row.name ?? t('names.person.unknown')}
         </span>
         {row.isMe && <span className="text-sm text-gray-600">{t('members.me')}</span>}
         <span className="rounded bg-gray-100 px-2 text-sm" data-testid="members.item.role">
           {t(`members.role.${row.role}`)}
         </span>
       </div>
+      {row.name === null && (
+        <p className="text-sm text-gray-700" data-testid="members.item.unnamed">
+          {t(admin ? 'names.person.unknown.hint.admin' : 'names.person.unknown.hint')}
+        </p>
+      )}
+      {given !== null && (
+        <p className="text-sm text-gray-700" data-testid="members.item.given">
+          {given}
+        </p>
+      )}
+      <details className="text-sm text-gray-600" data-testid="members.item.id">
+        <summary className="min-h-11 cursor-pointer">{t('names.id.show')}</summary>
+        <code className="break-all">{row.id}</code>
+      </details>
       <ul className="flex flex-wrap gap-2 text-sm" data-testid="members.item.access">
         {row.access.map((item) => (
           <li key={item.wg} className="flex items-center gap-1 rounded border border-gray-200 px-2">
@@ -163,6 +190,16 @@ function MemberItem({
       </ul>
       {admin && (
         <div className="flex flex-wrap gap-2">
+          {!own && !row.isMe && (
+            <button
+              type="button"
+              className={BUTTON}
+              onClick={() => onOpen({ kind: 'name', member: row })}
+              data-testid="members.item.give-name"
+            >
+              {row.name === null ? t('names.give.open') : t('names.give.change')}
+            </button>
+          )}
           {manage && (
             <button
               type="button"
@@ -285,6 +322,9 @@ export function MembersScreen() {
         >
           <p>{open.member.role === 'admin' ? t('members.ungrant.admin-body') : t('members.remove.body')}</p>
         </ActionDialog>
+      )}
+      {open?.kind === 'name' && (
+        <NameDialog org={org} subject={open.member.id} current={open.member.name ?? ''} onClose={close} />
       )}
       {open?.kind === 'grant' && (
         <GrantDialog org={org} member={open.member} state={state} directory={directory} onClose={close} />

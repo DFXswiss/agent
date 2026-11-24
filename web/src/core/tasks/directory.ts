@@ -1,7 +1,12 @@
 // Names and titles for the task screens, read from verified events only (06-web.md section 1: unverifiable items are
 // shown as such, never as content):
 // - the org scope: `org.profile` (org name), `wg.profile` (workgroup names, `header.wg`), `member.profile` (display
-//   names, `ref` = author); the newest verified event of each wins;
+//   names, `ref` = author), `member.name` (a name an admin gave, `ref` = a member or an invitation, ADR-067); the
+//   verified event with the highest `scope_seq` of each wins. A member's name is its own `member.profile` first, else
+//   the admin-given name of the member, else the admin-given name of the invitation its current membership started
+//   with (the log's `accept`); an admin-given name counts only while its author is an admin in the current verified
+//   log and – for a member – only from the member's current membership on (`lh` ≥ its `joinedSeq`). Only the own name
+//   is the member's own (`ownNames`: proposed when joining another org, written into an org opened without one);
 // - a workgroup scope: the task titles, `task.meta` of a task (the row's `title_event_id` when present, else the
 //   newest verified one of the task, never another task's event; a session's `task.set_title` writes a newer one);
 // - the owner of a task: the author of its first verified user-authored `task.meta` (the one `POST /v1/tasks` sends
@@ -9,25 +14,58 @@
 //   KOR-04, AUD-01 A-16). Not the signed `ts`: its writer chooses it, so a writer of the workgroup could backdate a
 //   `task.meta` of someone else's task. Device-authored ones (`task.set_title`) are skipped; an author the verified org
 //   state does not know ends the search (no owner rather than a later one).
-import { DEVICE, USER } from '../log/state';
+import { DEVICE, type OrgState, USER } from '../log/state';
 import { orgEntry } from '../store/slices/orgs';
 import { memoize } from '../store/selectors';
 import type { EventEntry, ScopeEvents } from '../store/slices/events';
 import { isRecord } from '../registry';
 import type { StoreState } from '../store/store';
 
-export const PROFILE_KINDS = ['org.profile', 'wg.profile', 'member.profile'] as const;
+export const MEMBER_NAME = 'member.name';
+export const PROFILE_KINDS = ['org.profile', 'wg.profile', 'member.profile', MEMBER_NAME] as const;
 export const TITLE_KIND = 'task.meta';
+
+/** Where a member's shown name comes from: its own profile, an admin (`by`), or its invitation's name (`by`). */
+export interface NameSource {
+  readonly source: 'own' | 'admin' | 'invitation';
+  /** The admin who gave the name (null for the own name). */
+  readonly by: string | null;
+}
+
+/** A name an admin gave (`member.name`). */
+export interface GivenName {
+  readonly name: string;
+  readonly by: string;
+}
+
+interface GivenEvent extends GivenName {
+  /** The log head the event was written at. */
+  readonly lh: number;
+}
 
 export interface Directory {
   readonly orgName: string | null;
   /** Workgroup ID → name. */
   readonly workgroups: ReadonlyMap<string, string>;
-  /** Principal ID → display name. */
+  /** Principal ID → the name to show (module comment). */
   readonly members: ReadonlyMap<string, string>;
+  /** Principal ID → the member's own display name (`member.profile`). */
+  readonly ownNames: ReadonlyMap<string, string>;
+  /** Principal ID → where the name in `members` comes from. */
+  readonly sources: ReadonlyMap<string, NameSource>;
+  /** Invitation ID → the name an admin gave the invited person. */
+  readonly invitations: ReadonlyMap<string, GivenName>;
 }
 
-const EMPTY: Directory = { orgName: null, workgroups: new Map(), members: new Map() };
+/** A directory without any name (also the start of test fixtures). */
+export const EMPTY_DIRECTORY: Directory = {
+  orgName: null,
+  workgroups: new Map(),
+  members: new Map(),
+  ownNames: new Map(),
+  sources: new Map(),
+  invitations: new Map(),
+};
 
 const text = (body: unknown, field: string): string | null =>
   isRecord(body) && typeof body[field] === 'string' ? body[field] : null;
@@ -36,10 +74,19 @@ const text = (body: unknown, field: string): string | null =>
 const verified = (scope: ScopeEvents): EventEntry[] =>
   [...scope.entries.values()].filter((entry) => entry.status === 'verified').sort((a, b) => a.scopeSeq - b.scopeSeq);
 
-const directoryOf = memoize((scope: ScopeEvents): Directory => {
+interface Profiles {
+  readonly orgName: string | null;
+  readonly workgroups: ReadonlyMap<string, string>;
+  readonly own: ReadonlyMap<string, string>;
+  /** `ref` → the admin-given names in `scope_seq` order (the verifier checked E5: an admin at `lh`). */
+  readonly given: ReadonlyMap<string, readonly GivenEvent[]>;
+}
+
+const profilesOf = memoize((scope: ScopeEvents): Profiles => {
   let orgName: string | null = null;
   const workgroups = new Map<string, string>();
-  const members = new Map<string, string>();
+  const own = new Map<string, string>();
+  const given = new Map<string, GivenEvent[]>();
   for (const entry of verified(scope)) {
     const header = entry.header!;
     if (header.kind === 'org.profile') orgName = text(entry.body, 'name') ?? orgName;
@@ -47,20 +94,78 @@ const directoryOf = memoize((scope: ScopeEvents): Directory => {
       const name = text(entry.body, 'name');
       if (name !== null) workgroups.set(header.wg as string, name);
     }
-    if (header.kind === 'member.profile' && header.ref === header.author) {
-      const name = text(entry.body, 'display_name');
-      if (name !== null) members.set(header.ref as string, name);
+    const name = text(entry.body, 'display_name');
+    if (name === null) continue;
+    if (header.kind === 'member.profile' && header.ref === header.author) own.set(header.ref as string, name);
+    if (header.kind === MEMBER_NAME) {
+      const named = { name, by: header.author as string, lh: header.lh as number };
+      given.set(header.ref as string, [...(given.get(header.ref as string) ?? []), named]);
     }
   }
-  return { orgName, workgroups, members };
+  return { orgName, workgroups, own, given };
 });
 
-/** The names of an org from its org scope (empty until the profiles were read). */
+/** The newest of `events` by an admin of `state` written at `lh` ≥ `from` (any author without a verified log). */
+function newest(
+  events: readonly GivenEvent[] | undefined,
+  state: OrgState | null,
+  from: number,
+): GivenName | undefined {
+  const valid = (events ?? []).filter((event) => state === null || (state.isAdmin(event.by) && event.lh >= from));
+  const found = valid.at(-1);
+  return found === undefined ? undefined : { name: found.name, by: found.by };
+}
+
+/** The names of the org's users (module comment); without a verified log only the own and directly given names. */
+function directoryOf(profiles: Profiles, state: OrgState | null): Directory {
+  const members = new Map(profiles.own);
+  const sources = new Map<string, NameSource>([...profiles.own.keys()].map((id) => [id, { source: 'own', by: null }]));
+  const invitations = new Map<string, GivenName>();
+  const give = (id: string, name: GivenName | undefined, source: NameSource['source']) => {
+    if (name === undefined || members.has(id)) return;
+    members.set(id, name.name);
+    sources.set(id, { source, by: name.by });
+  };
+  const { orgName, workgroups, own: ownNames } = profiles;
+  if (state === null) {
+    for (const [ref, events] of profiles.given) give(ref, newest(events, null, 0), 'admin');
+    return { orgName, workgroups, members, ownNames, sources, invitations };
+  }
+  for (const invite of state.invites.values()) {
+    const name = newest(profiles.given.get(invite.inviteId), state, 0);
+    if (invite.kind === USER && name !== undefined) invitations.set(invite.inviteId, name);
+  }
+  const users = [...state.principals.values()].filter((p) => p.kind === USER);
+  for (const user of users) give(user.id, newest(profiles.given.get(user.id), state, user.joinedSeq), 'admin');
+  const joinedBy = new Map(users.map((user) => [user.joinedSeq, user.id]));
+  for (const invite of state.invites.values()) {
+    const member = invite.acceptedSeq === null ? undefined : joinedBy.get(invite.acceptedSeq);
+    if (member !== undefined) give(member, invitations.get(invite.inviteId), 'invitation');
+  }
+  return { orgName, workgroups, members, ownNames, sources, invitations };
+}
+
+const NO_STATE = {};
+const directories = new WeakMap<Profiles, WeakMap<object, Directory>>();
+
+function cachedDirectory(profiles: Profiles, state: OrgState | null): Directory {
+  let byState = directories.get(profiles);
+  if (byState === undefined) {
+    byState = new WeakMap();
+    directories.set(profiles, byState);
+  }
+  const key = state ?? NO_STATE;
+  if (!byState.has(key)) byState.set(key, directoryOf(profiles, state));
+  return byState.get(key)!;
+}
+
+/** The names of an org from its org scope and its verified log (empty until the profiles were read). */
 export const selectDirectory =
   (org: string) =>
   (state: StoreState): Directory => {
     const scope = state.events[org];
-    return scope === undefined ? EMPTY : directoryOf(scope);
+    if (scope === undefined) return EMPTY_DIRECTORY;
+    return cachedDirectory(profilesOf(scope), orgEntry(state.orgs, org).log?.state ?? null);
   };
 
 /** The title of a task: `verified` with the text, `unverifiable` with the code, or `missing` (not read yet). */

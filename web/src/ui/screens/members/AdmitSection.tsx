@@ -1,32 +1,44 @@
 // "Add an existing account" (06-web.md section 7.1, ADR-060): the admin types the account code the person sees in its
 // settings, or picks one of the accounts registered through the admin's own platform invitations; chooses the role and
-// the workgroups (the default workgroup is always write) and admits with one button. The person does nothing; it finds
-// the organization the next time it opens the app. The identity shown before the button is the proven one (checked
+// the workgroups (the default workgroup is always write), enters the person's name and admits with one button. The
+// name is the provisional name every member sees until the person's own one is written (ADR-067, `member.name`); an
+// open invitation the same account registered with is closed right after. The person does nothing; it finds the
+// organization the next time it opens the app. The identity shown before the button is the proven one (checked
 // against the platform log in `core/org/admit.ts`), never the hub's word.
 import { useEffect, useId, useState } from 'react';
 import { formatAccountCode } from '../../../core/crypto/identity';
 import { admitAccount, findAccount, type Invitee, loadInvitees, type ProvenIdentity } from '../../../core/org/admit';
 import { actionErrorCode, refuse, verifiedPlatform } from '../../../core/org/batch';
 import { type Access, type Role } from '../../../core/org/members';
+import { closeSettledInvites, giveName } from '../../../core/org/names';
+import { displayName } from '../../../core/account/genesis';
 import type { OrgState } from '../../../core/log/state';
 import type { Directory } from '../../../core/tasks/directory';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { BUTTON, PRIMARY } from './ActionDialog';
 
+/** An admitted account with its name and whether the name could be saved (else it can be entered at the entry). */
+interface Admitted {
+  readonly identity: ProvenIdentity;
+  readonly name: string;
+  readonly named: boolean;
+}
+
 interface AdmitFormProps {
   readonly org: string;
   readonly state: OrgState;
   readonly directory: Directory;
-  readonly onDone: (admitted: ProvenIdentity) => void;
+  readonly onDone: (admitted: Admitted) => void;
   readonly onCancel: () => void;
 }
 
 function AdmitForm({ org, state, directory, onDone, onCancel }: AdmitFormProps) {
   const { app } = useAppEnv();
   const { t, error } = useI18n();
-  const ids = { code: useId(), role: useId() };
+  const ids = { code: useId(), role: useId(), name: useId() };
   const [text, setText] = useState('');
+  const [name, setName] = useState('');
   const [found, setFound] = useState<ProvenIdentity | null>(null);
   const [invitees, setInvitees] = useState<Invitee[]>([]);
   const [role, setRole] = useState<Role>('member');
@@ -60,7 +72,13 @@ function AdmitForm({ org, state, directory, onDone, onCancel }: AdmitFormProps) 
     setCode(null);
     try {
       await admitAccount(app.tasks, org, subject, role, wgs);
-      onDone(subject);
+      // the admission stands; the name and the settled invitation follow (a failure leaves "Enter name" at the entry)
+      const named = await giveName(app.tasks, org, subject.userId, name).then(
+        () => true,
+        () => false,
+      );
+      await closeSettledInvites(app.tasks, org, subject.userId).catch(() => []);
+      onDone({ identity: subject, name: displayName(name)!, named });
     } catch (failure) {
       setCode(actionErrorCode(failure));
     }
@@ -121,6 +139,19 @@ function AdmitForm({ org, state, directory, onDone, onCancel }: AdmitFormProps) 
           {t('members.admit.found', { code: formatAccountCode(found.accountCode) })}
         </p>
       )}
+      <label htmlFor={ids.name} className="flex flex-col gap-1 font-medium">
+        {t('names.give.label')}
+        <input
+          id={ids.name}
+          className="min-h-11 rounded border border-gray-300 px-2"
+          value={name}
+          maxLength={200}
+          autoComplete="off"
+          onChange={(event) => setName(event.target.value)}
+          data-testid="members.admit.name"
+        />
+      </label>
+      <p className="text-sm text-gray-700">{t('members.admit.name-hint')}</p>
       <label htmlFor={ids.role} className="font-medium">
         {t('members.invite.role')}
       </label>
@@ -164,7 +195,7 @@ function AdmitForm({ org, state, directory, onDone, onCancel }: AdmitFormProps) 
         <button
           type="button"
           className={PRIMARY}
-          disabled={busy || found === null}
+          disabled={busy || found === null || displayName(name) === null}
           onClick={() => found !== null && void admit(found)}
           data-testid="members.admit.submit"
         >
@@ -190,12 +221,13 @@ export function AdmitSection({
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
-  const [admitted, setAdmitted] = useState<ProvenIdentity | null>(null);
+  const [admitted, setAdmitted] = useState<Admitted | null>(null);
   return (
     <div className="flex flex-col gap-3">
       {admitted !== null && (
         <p role="status" className="rounded bg-green-50 p-3 text-green-900" data-testid="members.admit.done">
-          {t('members.admit.done', { code: formatAccountCode(admitted.accountCode) })}
+          {t('members.admit.done', { name: admitted.name, code: formatAccountCode(admitted.identity.accountCode) })}
+          {!admitted.named && ` ${t('members.admit.unnamed')}`}
         </p>
       )}
       {!open && (

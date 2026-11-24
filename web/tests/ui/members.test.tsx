@@ -46,7 +46,11 @@ describe('member screen', () => {
     mount(w, at('/x'), `/o/${w.org}/members`);
     const items = await screen.findAllByTestId('members.item');
     expect(items.map((item) => item.getAttribute('data-member'))).toEqual([ada.id, cy.id, bob.id]);
-    expect(within(items[1]!).getByTestId('members.item.name')).toHaveTextContent(`Member …${cy.id.slice(-6)}`);
+    // no name known: a sentence with what happens next, never an ID (ADR-067); the ID on request
+    expect(within(items[1]!).getByTestId('members.item.name')).toHaveTextContent('Name not known yet');
+    expect(within(items[1]!).getByTestId('members.item.name')).toHaveAttribute('data-source', 'none');
+    expect(within(items[1]!).getByTestId('members.item.unnamed')).toHaveTextContent('as soon as the person opens');
+    expect(within(items[1]!).getByTestId('members.item.id')).toHaveTextContent(cy.id);
     expect(within(items[2]!).getByTestId('members.item.access')).toHaveTextContent('StandardWrite');
     expect(within(items[2]!).getByTestId('members.item.access')).toHaveTextContent('WorkgroupRead');
     expect(within(items[0]!).queryByTestId('members.item.remove')).toBeNull();
@@ -166,6 +170,7 @@ describe('invitations', () => {
     fireEvent.change(screen.getByTestId(`members.invite.wg.${one}`), { target: { value: 'read' } });
     fireEvent.change(screen.getByTestId('members.invite.expiry'), { target: { value: '720' } });
     expect(screen.getByTestId('members.invite.expiry')).toHaveDisplayValue('30 days');
+    fireEvent.change(screen.getByTestId('members.invite.name'), { target: { value: 'Dora' } });
     fireEvent.click(screen.getByTestId('members.invite.submit'));
     const code = (await screen.findByTestId('members.invite.code')).textContent!;
     expect(screen.getByTestId('members.invite.link')).toHaveTextContent(`https://hub.example/invite#${code}`);
@@ -188,9 +193,11 @@ describe('invitations', () => {
     mount(w, at('/x'), `/o/${w.org}/members`);
     fireEvent.click(await screen.findByTestId('members.invite.open'));
     fireEvent.change(screen.getByTestId('members.invite.message'), { target: { value: 'a\u202eb' } });
+    fireEvent.change(screen.getByTestId('members.invite.name'), { target: { value: 'Dora' } });
     fireEvent.click(screen.getByTestId('members.invite.submit'));
     expect(await screen.findByTestId('members.invite.error')).toHaveAttribute('data-code', 'params_invalid');
     fireEvent.change(screen.getByTestId('members.invite.message'), { target: { value: '  Hallo <b>Erin</b>  ' } });
+    fireEvent.change(screen.getByTestId('members.invite.name'), { target: { value: 'Dora' } });
     fireEvent.click(screen.getByTestId('members.invite.submit'));
     const code = (await screen.findByTestId('members.invite.code')).textContent!;
     const secrets = await inviteSecrets(parseCode(code));
@@ -212,6 +219,7 @@ describe('invitations', () => {
     w.client.on(route, () => {
       throw new HubError('forbidden', 403);
     });
+    fireEvent.change(screen.getByTestId('members.invite.name'), { target: { value: 'Dora' } });
     fireEvent.click(screen.getByTestId('members.invite.submit'));
     expect(await screen.findByTestId('members.invite.error')).toHaveAttribute('data-code', 'forbidden');
     fireEvent.click(screen.getByTestId('members.invite.cancel'));
@@ -221,6 +229,7 @@ describe('invitations', () => {
     w.client.routes.delete(`GET /v1/orgs/${w.org}/invites`);
     w.client.on(`GET /v1/orgs/${w.org}/invites`, () => ({ invites: [...w.hub.invites.values()] }));
     fireEvent.click(screen.getByTestId('members.invite.open'));
+    fireEvent.change(screen.getByTestId('members.invite.name'), { target: { value: 'Dora' } });
     fireEvent.click(screen.getByTestId('members.invite.submit'));
     fireEvent.click(await screen.findByTestId('members.invite.done'));
     expect(await screen.findAllByTestId('members.invites.item')).toHaveLength(1);
@@ -259,6 +268,7 @@ describe('invitations', () => {
     // only accepted ones: "no open invitations"
     expect(screen.getByTestId('members.invites.empty')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('members.invite.open'));
+    fireEvent.change(screen.getByTestId('members.invite.name'), { target: { value: 'Dora' } });
     fireEvent.click(screen.getByTestId('members.invite.submit'));
     fireEvent.click(await screen.findByTestId('members.invite.done'));
     const item = await screen.findByTestId('members.invites.item');

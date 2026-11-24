@@ -4,7 +4,6 @@
   "loading": "Loading devices…",
   "not-found": "This organization was not found.",
   "empty": "No execution devices yet.",
-  "unnamed": "Device …{id}",
   "wg.unnamed": "Workgroup",
   "kind.org": "Own device",
   "kind.platform": "Platform device",

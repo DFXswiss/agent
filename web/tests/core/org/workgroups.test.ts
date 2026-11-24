@@ -18,6 +18,7 @@ import { orgEntry } from '../../../src/core/store/slices/orgs';
 import type { Actor } from '../log/world';
 import { idOf } from '../log/world';
 import { holds, orgWorld } from './world';
+import { EMPTY_DIRECTORY } from '../../../src/core/tasks/directory';
 
 async function setup(options: { as?: 'ada' | 'bob'; private?: boolean } = {}) {
   const one = await idOf('wg one');
@@ -47,7 +48,7 @@ async function setup(options: { as?: 'ada' | 'bob'; private?: boolean } = {}) {
 describe('workgroup rows and devices', () => {
   it('lists the default workgroup first and archived ones last, with access and devices', async () => {
     const { w, a, one, old } = await setup({ as: 'bob' });
-    const directory = { orgName: null, workgroups: new Map([[one, 'One']]), members: new Map() };
+    const directory = { ...EMPTY_DIRECTORY, workgroups: new Map([[one, 'One']]) };
     const rows = workgroupRows(w.world.state, a.bob!.id, directory);
     expect(rows.map((r) => r.id)).toEqual([w.world.defaultWg, one, old]);
     expect(rows[0]).toMatchObject({ name: null, isDefault: true, archived: false, myAccess: 'write', devices: [] });

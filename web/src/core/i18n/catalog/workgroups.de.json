@@ -11,8 +11,6 @@
   "access.read": "Lesen",
   "access.write": "Schreiben",
   "devices": "Geräte: {count}",
-  "device.org": "Gerät …{id}",
-  "device.platform": "Plattform-Gerät …{id}",
   "create.open": "Workgroup anlegen",
   "create.title": "Workgroup anlegen",
   "create.confirm": "Anlegen",

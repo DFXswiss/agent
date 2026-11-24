@@ -14,6 +14,7 @@ import { useAppEnv } from '../shell/context';
 import { Editor } from './Editor';
 import { EntryItem } from './EntryItem';
 import { History } from './History';
+import { personName } from '../names/names';
 
 /** `location` must be stable (memoized by the caller): a new object reloads the board. */
 export function Board({ location }: { readonly location: BoardLocation }) {
@@ -34,8 +35,7 @@ export function Board({ location }: { readonly location: BoardLocation }) {
   const checked = load?.checked ?? null;
   const view = useMemo(() => projectBoard(scope, location, rows ?? [], checked), [scope, location, rows, checked]);
   const writer = canWriteBoard(state, userId, location);
-  const name = (principal: string) =>
-    directory.members.get(principal) ?? t('whiteboard.author.unnamed', { id: principal.slice(0, 8) });
+  const name = (principal: string) => personName(t, directory, principal);
   const actions = {
     writer,
     name,

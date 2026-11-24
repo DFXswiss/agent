@@ -1,7 +1,7 @@
 // U-WEB-ui-members (core part): rows of the member list from the verified log and the profiles, the rights that decide
 // which controls exist (06-web.md section 1.2), and every planner's checks (null when done, refusals as the log rules).
 import { describe, expect, it } from 'vitest';
-import type { Directory } from '../../../src/core/tasks/directory';
+import { type Directory, EMPTY_DIRECTORY } from '../../../src/core/tasks/directory';
 import {
   canManage,
   grantable,
@@ -20,6 +20,7 @@ import { idOf } from '../log/world';
 import { orgWorld } from './world';
 
 const names = (members: Record<string, string>, workgroups: Record<string, string> = {}): Directory => ({
+  ...EMPTY_DIRECTORY,
   orgName: 'Acme',
   workgroups: new Map(Object.entries(workgroups)),
   members: new Map(Object.entries(members)),

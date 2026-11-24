@@ -1,8 +1,10 @@
 // "Invite user" and the open invitations (06-web.md section 7.1; ADR-005): role (member by default), further
 // workgroups with read or write (the default workgroup is always write; only workgroups whose key the admin holds),
 // expiry 1 h – 30 d (72 h default). The result shows the link `<origin>/invite#<code>` and the code once, with copy
-// buttons and the warning to pass them on confidentially; "Done" forgets them. Open invitations (checked against the
-// verified log) can be revoked.
+// buttons and the warning to pass them on confidentially; "Done" forgets them. The admin names the invited person; the
+// name is a `member.name` event for the invitation (ADR-067), shown in the list ("Invitation for <name>") and – once the
+// person joins with it – as the member's provisional name. Open invitations (checked against the verified log) can be
+// revoked; one whose account was meanwhile admitted directly is shown as settled with one action to close it.
 import { useEffect, useId, useState } from 'react';
 import { type Access, type Role } from '../../../core/org/members';
 import {
@@ -16,6 +18,10 @@ import {
   USER_EXPIRY_HOURS,
 } from '../../../core/org/invites';
 import { actionErrorCode, keyRing } from '../../../core/org/batch';
+import { giveName } from '../../../core/org/names';
+import { displayName } from '../../../core/account/genesis';
+import { personName } from '../../names/names';
+import { NameDialog } from './NameDialog';
 import type { OrgState } from '../../../core/log/state';
 import type { Directory } from '../../../core/tasks/directory';
 import { formatEventTime } from '../../../core/i18n';
@@ -44,7 +50,8 @@ interface InviteFormProps {
 function InviteForm({ org, state, directory, onCreated, onCancel }: InviteFormProps) {
   const { app, origin } = useAppEnv();
   const { t, error } = useI18n();
-  const ids = { role: useId(), expiry: useId(), message: useId(), hint: useId() };
+  const ids = { role: useId(), expiry: useId(), message: useId(), hint: useId(), name: useId() };
+  const [name, setName] = useState('');
   const [role, setRole] = useState<Role>('member');
   const [hours, setHours] = useState<number>(USER_EXPIRY_HOURS);
   const [wgs, setWgs] = useState<Record<string, Access>>({});
@@ -65,6 +72,8 @@ function InviteForm({ org, state, directory, onCreated, onCancel }: InviteFormPr
         hubKey: app.config.hub_key,
         origin,
       });
+      // the invitation stands; a name that could not be saved can be entered in the list
+      await giveName(app.tasks, org, created.inviteId, name).catch(() => null);
       onCreated(created);
     } catch (failure) {
       setCode(actionErrorCode(failure));
@@ -86,6 +95,18 @@ function InviteForm({ org, state, directory, onCreated, onCancel }: InviteFormPr
       }}
       data-testid="members.invite.form"
     >
+      <label htmlFor={ids.name} className="flex flex-col gap-1 font-medium">
+        {t('members.invite.name')}
+        <input
+          id={ids.name}
+          className="min-h-11 rounded border border-gray-300 px-2"
+          value={name}
+          maxLength={200}
+          autoComplete="off"
+          onChange={(event) => setName(event.target.value)}
+          data-testid="members.invite.name"
+        />
+      </label>
       <label htmlFor={ids.role} className="font-medium">
         {t('members.invite.role')}
       </label>
@@ -160,7 +181,12 @@ function InviteForm({ org, state, directory, onCreated, onCancel }: InviteFormPr
         </p>
       )}
       <div className="flex flex-wrap gap-3">
-        <button type="submit" className={PRIMARY} disabled={busy} data-testid="members.invite.submit">
+        <button
+          type="submit"
+          className={PRIMARY}
+          disabled={busy || displayName(name) === null}
+          data-testid="members.invite.submit"
+        >
           {t('members.invite.submit')}
         </button>
         <button type="button" className={BUTTON} onClick={onCancel} data-testid="members.invite.cancel">
@@ -232,6 +258,7 @@ function OpenInvites({
   const [rows, setRows] = useState<InviteStatusRow[] | null>(null);
   const [code, setCode] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<string | null>(null);
+  const [naming, setNaming] = useState<string | null>(null);
   const [reload, setReload] = useState(0);
   const now = useNow(false);
   useEffect(() => {
@@ -256,6 +283,14 @@ function OpenInvites({
   };
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const time = (text: string) => formatEventTime(Date.parse(text), { locale, timeZone, now });
+  const invited = (id: string) => {
+    const name = directory.invitations.get(id)?.name;
+    return name === undefined ? t('members.invites.for-unnamed') : t('members.invites.for', { name });
+  };
+  const joined = (row: InviteStatusRow) =>
+    row.acceptedBy === undefined || !directory.members.has(row.acceptedBy)
+      ? (directory.invitations.get(row.inviteId)?.name ?? t('members.invites.someone'))
+      : personName(t, directory, row.acceptedBy);
   return (
     <section className="flex flex-col gap-2" data-testid="members.invites">
       <h2 className="font-semibold">{t('members.invites.title')}</h2>
@@ -277,16 +312,29 @@ function OpenInvites({
             data-testid={row.status === 'accepted' ? 'members.invites.accepted' : 'members.invites.item'}
             data-status={row.status}
           >
-            <span className="rounded bg-gray-100 px-2 py-1 font-medium" data-testid="members.invites.status">
-              {row.status === 'accepted'
-                ? t('members.invites.status.accepted', {
-                    name: (row.acceptedBy && directory.members.get(row.acceptedBy)) || t('members.invites.someone'),
-                  })
+            {row.status !== 'accepted' && (
+              <span className="font-medium" data-testid="members.invites.for">
+                {invited(row.inviteId)}
+              </span>
+            )}
+            <span className="rounded bg-gray-100 px-2 py-1" data-testid="members.invites.status">
+              {row.status === 'accepted' || row.status === 'settled'
+                ? t(`members.invites.status.${row.status}`, { name: joined(row) })
                 : t(`members.invites.status.${row.status}`)}
             </span>
             {row.status !== 'accepted' && (
               <>
-                <span>{t('members.invites.expires', { time: time(row.expires) })}</span>
+                {row.status !== 'settled' && <span>{t('members.invites.expires', { time: time(row.expires) })}</span>}
+                {!directory.invitations.has(row.inviteId) && row.status !== 'settled' && (
+                  <button
+                    type="button"
+                    className={BUTTON}
+                    onClick={() => setNaming(row.inviteId)}
+                    data-testid="members.invites.give-name"
+                  >
+                    {t('names.give.open')}
+                  </button>
+                )}
                 <button
                   type="button"
                   className={BUTTON}
@@ -294,13 +342,25 @@ function OpenInvites({
                   onClick={() => void revoke(row.inviteId)}
                   data-testid="members.invites.revoke"
                 >
-                  {t('members.invites.revoke')}
+                  {row.status === 'settled' ? t('members.invites.close') : t('members.invites.revoke')}
                 </button>
               </>
             )}
           </li>
         ))}
       </ul>
+      {naming !== null && (
+        <NameDialog
+          org={org}
+          subject={naming}
+          current=""
+          invite
+          onClose={() => {
+            setNaming(null);
+            setReload((n) => n + 1);
+          }}
+        />
+      )}
     </section>
   );
 }

@@ -32,6 +32,7 @@ import { HubError } from '../../../src/core/net/signedFetch';
 import { createInvite } from '../../../src/core/org/invites';
 import { type Actor, actor, EXPIRES, idOf, T0, TS, World } from '../log/world';
 import { orgWorld, type OrgWorld } from '../org/world';
+import { EMPTY_DIRECTORY } from '../../../src/core/tasks/directory';
 
 const HUB_KEY = { id: 'hub-test', public_key: b64uEncode(new Uint8Array(32).fill(9)) };
 const CODE_BYTES = new Uint8Array(16).fill(3);
@@ -67,6 +68,7 @@ async function invited(options: { setup?: Parameters<typeof orgWorld>[0]; messag
       ...(options.message === undefined ? {} : { message: options.message }),
     },
     directory: {
+      ...EMPTY_DIRECTORY,
       orgName: 'Grüße AG',
       workgroups: new Map([
         [w.world.defaultWg, 'Default'],
@@ -175,7 +177,7 @@ describe('openInvitation', () => {
     });
     const created = await createInvite(w.context, w.org, {
       request: { kind: 'user', role: 'admin', wgs: { [three]: 'read', [two]: 'write' }, hours: 1 },
-      directory: { orgName: '', workgroups: new Map(), members: new Map() },
+      directory: { ...EMPTY_DIRECTORY, orgName: '' },
       hubKey: HUB_KEY,
       origin: 'https://hub.example',
       code: () => CODE_BYTES,

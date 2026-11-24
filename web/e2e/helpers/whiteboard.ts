@@ -45,6 +45,7 @@ export { navigateInApp };
 async function invite(page: Page, org: string): Promise<string> {
   await navigateInApp(page, `/o/${org}/members`);
   await page.getByTestId('members.invite.open').click();
+  await page.getByTestId('members.invite.name').fill('Invited person');
   await page.getByTestId('members.invite.submit').click();
   const code = (await page.getByTestId('members.invite.code').textContent())!;
   await page.getByTestId('members.invite.done').click();

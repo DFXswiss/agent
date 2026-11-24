@@ -8,12 +8,12 @@ import { expiryLabel } from '../members/InviteSection';
 
 const clipboardWrite = (text: string) => navigator.clipboard.writeText(text);
 
-/** A device's label, or a neutral name with the end of its ID. */
+/** A device's label, or "Device without a name" (ADR-067). */
 export function deviceName(
   t: (key: string, params?: Record<string, string>) => string,
   row: { id: string; label: string | null },
 ) {
-  return row.label ?? t('devices.unnamed', { id: row.id.slice(-6) });
+  return row.label ?? t('names.device.unknown');
 }
 
 /** Copies `text`; the label turns into `copiedLabel` once the clipboard took it. */
