@@ -30,3 +30,41 @@ Architecture: [ADR-064](../adr/064-situation-view-and-attention-categories.md). 
    an empty balance says that the operator sets it (E-14) and offers "Continue".
 10. **Numbers**: migration `0011_task_attention`, E2E scenario `E2E-47` (numbers 41–46 are taken by parallel
     packages); the ADR number 064 avoids the numbers 058–062 used on parallel branches.
+
+## Hub
+
+- **Lock order of the refresh.** `agent_hub.attention.store.refresh` takes the global audit lock (re-entrant; nearly
+  every writer already holds it through `append_events` / `append_audit`) before it locks the attention row. So the
+  row stays "the last lock" in the sense of ADR-064 §4 even where a writer appends audit rows after
+  `refresh_task` (closing a task, the outbox items after a session transition): no transaction ever waits for the
+  audit lock while it holds an attention row, and the refresh can sit inside `refresh_task` / `close_task` without
+  every caller having to call it last.
+- **Refresh points.** `refresh_task` refreshes also for a closed task (it does not re-derive the task state there), so
+  the subagent counters follow the sessions that stop after closing. Operation writers refresh at their end:
+  registration, the outbox item `operation_transition`, the expiry job.
+- **Clocks of "last turn".** An operation belongs to the main session's last turn when its `created_at` (the
+  runner's `requested_at`) is at or after the device time `at` of the main session's newest `working` transition
+  (both device clock), and when its hub decision time `decided_at` is after the newest `prompt` event's
+  `received_at` (both hub clock). The SQL already drops refused operations superseded by a later successful one of the
+  same type, so at most one operation reaches `derive`.
+- **Refs only for occasions.** Only `needs_decision` and `blocked` records carry a ref: the operation (rule 3) or the
+  main session (rules 2 and 6); `device_missing` / `device_unreachable` of a scheduling task name nothing. A
+  `working`/`done` record has no ref, so a new running operation is no change worth a frame beyond the phase.
+- **Counters.** `subagents_total` counts the sessions of depth > 0, `subagents_active` those not `stopped`/`failed`.
+- **A new row** starts with `seq` 1 and `since` = the task's `state_at` (for a new task the creation, for a backfilled
+  or lost row the last state change, so "Recently finished" keeps its real order).
+- **Backfill announces nothing**: no frame and no `task.attention` notification for pre-migration tasks; batches of
+  200 tasks per transaction (each holds the audit lock briefly), every 60 s, first run 5 s after the start.
+- **Reasons in the schema** are a pattern (`attention_reason`), not an enum: the closed list lives in
+  `contracts/enums/attention.json`, so a later package adds a reason without breaking older clients' validation.
+- **Cursor**: `next_before` has the form of the task lists (`since` in microseconds and the task ID) and continues in
+  the category's order (ascending for `needs_decision`). `mine` accepts `0` and `1`; `since` is a contract time.
+- **Notifications**: the rule notifies only while the record still has the signalled occasion (`seq`), so an
+  occasion that already passed (answered within the same second) sends nothing; `created_at` is the rule's hub time.
+  The workgroup-wide dedupe looks for an unread `task.attention` of the owner with the same workgroup and
+  `<category>:<reason>:wg` ref. `task.idle` is suppressed by reading the committed record (both signals are sent after
+  the same commit).
+- **Export**: `task_attention` is exported with the org (its `since`/`seq` are history, not derivable); there is no
+  projection rebuilder for it (`rebuild --check` would always differ on `since`), the backfill derives lost rows.
+- **Stream filter**: the `attention` frame is published with `wg_id=`; without it the stream drops it (it is listed
+  with the row frames, whose rows name their workgroup), so a frame never reaches a non-reader.

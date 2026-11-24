@@ -147,8 +147,10 @@ it already holds and refreshed at the end of every transaction that changes an i
 prompts, operation states). `attention_row` = `{task_id,category,reason,ref_kind,ref_id,since,seq,subagents_total,
 subagents_active,updated_at}`; categories and reasons: `contracts/enums/attention.json`; derivation: ADR-064 §2
 (normative). Every change is sent to the org's browsers as the stream frame `attention` (the `attention_row`) for
-users who read the task's workgroup. A task without a record (older than the migration) gets one from the job
-`attention.backfill` within a minute; until then it appears in no group.
+users who read the task's workgroup; a refresh that changes nothing sends nothing. Only `needs_decision` and `blocked`
+records carry a ref (`operation` or `session`). A task without a record (older than the migration) gets one from the
+job `attention.backfill` within a minute (a backfilled record sends no frame and no notification); until then it
+appears in no group. Query values outside their form are `400 request_invalid` with the parameter's pointer.
 
 #### 4.6.1 First-task flow (normative sequence)
 
@@ -272,6 +274,7 @@ active org), optional `terminal=<session_id>` (repeatable, max 3), `cursors=<sco
 | `notification` | notification row |
 | `device_response` | `{request_id,seq}` |
 | `metrics` | latest samples of visible entities (every 15 s, only while `monitoring=1` query flag is set) |
+| `attention` | `attention_row` after a change (KOR-39, §4.6.0), only to readers of the task's workgroup |
 | `resync` | `{reason}` – client MUST re-pull with its cursors (sent after a buffer overflow or hub restart) |
 
 Delivery: at-least-once; the client de-duplicates by `(scope_id, scope_seq)`. On connect the hub replays events
