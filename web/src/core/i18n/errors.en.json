@@ -459,6 +459,11 @@
     "body": "The prompt could not be verified and was not delivered.",
     "action": "Send the prompt again."
   },
+  "quota_exceeded": {
+    "title": "Storage limit reached",
+    "body": "The saved context of this task exceeds the storage limit.",
+    "action": "Ask the operator to raise the limit; the device keeps its local copy."
+  },
   "rate_limited": {
     "title": "Too many attempts",
     "body": "Too many requests in a short time.",

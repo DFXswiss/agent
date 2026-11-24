@@ -409,3 +409,51 @@ def test_ids_and_actions_are_checked_before_sending() -> None:
 
     run(body())
     assert seen == []
+
+
+def test_context_export_and_stage() -> None:
+    # KOR-33: the context archive streams out to `write`; a stage streams in with its length
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/context/export"):
+            return httpx.Response(200, content=b"tar-bytes", headers={"Content-Type": "application/x-tar"})
+        return httpx.Response(200, json={"files": 2, "bytes": 4})
+
+    async def pieces() -> Any:
+        for piece in (b"ab", b"cd"):
+            yield piece
+
+    chunks: list[bytes] = []
+
+    async def body() -> Any:
+        async with mock(handler) as client:
+            await client.export_context(SESSION, chunks.append, workspace_max_bytes=5, transcript_max_bytes=6)
+            return await client.stage_context(SESSION, pieces(), 4)
+
+    assert run(body()) == {"files": 2, "bytes": 4}
+    assert b"".join(chunks) == b"tar-bytes"
+    assert seen[0].url.path == f"/v1/sessions/{SESSION}/context/export"
+    assert json.loads(seen[0].content) == {"workspace_max_bytes": 5, "transcript_max_bytes": 6}
+    assert seen[1].url.path == f"/v1/contexts/{SESSION}/stage"
+    assert seen[1].headers["Content-Length"] == "4"
+    assert seen[1].content == b"abcd"
+
+
+def test_context_export_failures() -> None:
+    async def body(response: httpx.Response | Exception) -> Any:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        async with mock(handler) as client:
+            with pytest.raises(GuestError) as caught:
+                await client.export_context(SESSION, lambda _b: None, workspace_max_bytes=0, transcript_max_bytes=1)
+            return caught.value
+
+    refused = run(body(httpx.Response(413, json={"error": "size_exceeded"})))
+    assert isinstance(refused, GuestRefused)
+    assert refused.error == "size_exceeded"
+    assert isinstance(run(body(httpx.ConnectError("refused"))), GuestUnreachable)

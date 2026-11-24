@@ -6,7 +6,7 @@
   "oneOf": [
     {
       "type": "object",
-      "description": "{} or, with pending pings, the notice",
+      "description": "{} or, with pending pings or a pending session notice, the context",
       "properties": {
         "hookSpecificOutput": {
           "type": "object",
@@ -16,7 +16,7 @@
               "const": "UserPromptSubmit"
             },
             "additionalContext": {
-              "$ref": "../objects.json#/$defs/notice"
+              "$ref": "../objects.json#/$defs/hook_context"
             }
           },
           "required": [

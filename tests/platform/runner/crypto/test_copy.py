@@ -23,7 +23,11 @@ import pytest
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[3]
 PACKAGE = REPO_ROOT / "src" / "agent_runner" / "crypto"
-RUNNER_ONLY = {"src/agent_runner/crypto/storage.py", "src/agent_runner/crypto/agents/__init__.py"}
+RUNNER_ONLY = {
+    "src/agent_runner/crypto/storage.py",
+    "src/agent_runner/crypto/agents/__init__.py",
+    "src/agent_runner/crypto/contexts/__init__.py",
+}
 RUNNER_ONLY_TESTS = {
     f"tests/platform/runner/crypto/{name}"
     for name in (

@@ -117,6 +117,29 @@
     "resume_claude_session_id": {
       "$ref": "objects.json#/$defs/claude_session_id"
     },
+    "restore": {
+      "type": "object",
+      "description": "restore the staged context (POST /v1/contexts/{id}/stage) and resume its conversation (ADR-072 section 7); not together with resume_claude_session_id",
+      "properties": {
+        "claude_session_id": {
+          "$ref": "objects.json#/$defs/claude_session_id"
+        },
+        "object_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "note": {
+          "type": "string",
+          "description": "the runner's one sentence about what changed (new VM or device, checkpoint time, workspace restored fully, partly or not, a work VM must be requested again); the guest attaches it once, with the current session facts, to the first decorated hook answer of the resumed conversation (KOR-33)",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "claude_session_id",
+        "object_id"
+      ],
+      "additionalProperties": false
+    },
     "initial_prompt": {
       "type": "object",
       "properties": {

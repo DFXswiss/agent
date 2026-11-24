@@ -86,7 +86,10 @@ def schema_names(directory: str) -> set[str]:
 def test_device_rows_are_complete(index: dict[str, Any], contracts: Contracts) -> None:
     assert "CTR-03" not in index["pending_owners"]
     rows = [e for e in index["endpoints"] if e["owner"] == "CTR-03"]
-    assert {e["path"] for e in rows} >= {e["path"] for e in index["endpoints"] if e["path"].startswith("/v1/device/")}
+    later = {e["path"] for e in index["endpoints"] if e["owner"] == "KOR-33"}
+    assert {e["path"] for e in rows} | later >= {
+        e["path"] for e in index["endpoints"] if e["path"].startswith("/v1/device/")
+    }
     assert len(rows) == 17
     for e in rows:
         assert e["request"] in contracts.schemas, e
@@ -94,7 +97,9 @@ def test_device_rows_are_complete(index: dict[str, Any], contracts: Contracts) -
         if e["streaming"]:
             assert (e["request"], e["response"]) == SPEC_CHANNELS[e["path"]]
     on_disk = {p for p in schema_names("api") if p.startswith("api/device-")}
-    assert on_disk == {e[part] for e in rows if not e["streaming"] for part in ("request", "response")}
+    # later packages add device rows of their own (KOR-33: the context checkpoints and pull-request links)
+    device_rows = [e for e in index["endpoints"] if e["name"].startswith("device-")]
+    assert on_disk == {e[part] for e in device_rows if not e["streaming"] for part in ("request", "response")}
 
 
 def test_live_channel_index(contracts: Contracts) -> None:

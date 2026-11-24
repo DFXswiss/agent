@@ -7,7 +7,8 @@
 
 Both tasks share one `VmManager` per daemon context: `manager_for(context)` builds it on first use from the
 configuration (`limactl` from `PATH`, the daemon's store pool, `$AGENT_RUNNER_HOME/vm/` for the tokens) and keeps it
-on the context, so the session start (RUN-04) calls `manager_for(context).ensure_vm(...)` on the same instance.
+on the context, so the session start (RUN-04) calls `manager_for(context).ensure_vm(...)` on the same instance; the
+manager gets the retire hooks of `vm.extensions` bound to the context (KOR-33).
 Every VM state change becomes an outbox item `vm_state` (RUN-02 `runtime(context).enqueue`, then the pusher is
 woken) and brings the next heartbeat forward (`WsClient.beat_soon`: the capacity, e.g. `pool_ready`, changed); a
 device that is not enrolled has no outbox, its `vm_state` items are written as fact lines to the log. Once the daemon
@@ -25,6 +26,7 @@ from agent_runner.registry import TaskSpec
 from agent_runner.sync.runtime import runtime
 from agent_runner.vm import lima
 from agent_runner.vm.capacity import physical_memory_mib
+from agent_runner.vm.extensions import Retire, retire_hooks
 from agent_runner.vm.lifecycle import VmManager
 from agent_runner.vm.pool import VmEnv, VmSettings
 from agent_runner.vm.records import TokenStore
@@ -68,7 +70,7 @@ def build_manager(context: Any) -> VmManager:
         clock=context.host.clock,
         stopping=context.stopping.is_set,
     )
-    return VmManager(env)
+    return VmManager(env, retire=Retire(context, retire_hooks(), log))
 
 
 def manager_for(context: Any) -> VmManager:

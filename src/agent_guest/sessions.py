@@ -41,8 +41,31 @@ file are kept ``RETENTION_SECONDS`` (7 days) and then removed by the cleanup job
 so the suspend is recorded in the session's root-only meta file (``"suspending": true``) until then, and a restarted
 control process finishes it as ``suspended`` (``reattach``; KOR-09, AUD-02 NA-03).
 
+A request with ``restore {claude_session_id, object_id}`` (ADR-072 section 7) creates the sandbox from the context
+staged before with ``POST /v1/contexts/{id}/stage`` (``contexts.py``): without a staging of this session ID whose
+``context.json`` names the same Claude session the request is ``state_conflict`` and nothing is created. The stage
+already rewrote the transcript for this session's directory and wrote the record keys of the restored transcript;
+the create only moves the staged transcript, workspace and ``transcript-baseline.json`` into the new directories and
+hands them to the session user (``contexts.restore``, KOR-33 review no. 9: no heavy work under the manager's lock or
+inside the runner's create timeout) - before ``sandbox_ready``, so the workspace scanner takes the restored files as
+its baseline and the transcript follower does not journal the earlier turns again -, removes the staging and starts
+the agent with ``--resume <claude_session_id>``. A ``suspended`` session of this ID (it ran here before, moved to
+another VM and comes back, review no. 14) is resumed the same way: its conversation files and workspace are replaced
+by the staged ones first. ``restore`` and ``resume_claude_session_id`` together are ``request_invalid``.
+
 A ``suspended`` session is started again by a new ``POST /v1/sessions`` with the same ID (resume, normally with
-``resume_claude_session_id``): same user and directories, a new token and harness file. Repeating the request of an
+``resume_claude_session_id``): same user and directories, a new token and harness file.
+
+The session notice (KOR-33, ADR-072 section 7): Claude Code keeps the system prompt of a conversation in its
+transcript and ignores ``--append-system-prompt-file`` on ``--resume``, so the harness file reaches the model only
+when a conversation starts fresh. The meta file therefore records the fact lines the conversation knows (``facts``,
+``harness.fact_lines``) and a pending notice (``notice {sentences, facts}``), see ``notice_keys``: a fresh start
+knows the current facts; a restore (or a resume into a new sandbox) knows nothing certain - its notice carries the
+runner's ``restore.note`` (or ``CONTINUED_SENTENCE``) and every current fact line; a resume of this sandbox's own
+conversation keeps what it knows and gets ``RESUMED_SENTENCE`` with the changed lines only when a fact changed.
+``take_notice`` (api.sock op ``session.notice``, ``hook_addons/notice.py``) hands the notice out once - the first
+decorated hook answer after the start - and records its facts as known; the meta file is root-only and replaced
+atomically, so a restart of the control process neither loses nor repeats it. Repeating the request of an
 active session answers again (the runner may retry; a pending start lost with a restart of the control process is
 prepared again when the request arrives before the start-up hook ended the session, see ``reattach``); a different
 request, or a resume with another task, parent or depth, is ``id_conflict``; a ``stopped`` or ``failed`` session is
@@ -59,7 +82,8 @@ Extension points (modules of ``control_routes/``, ADR-027 section 4, discovered 
 A guest decision ends a live session with ``SessionManager.fail_running`` (``hook_unavailable``, ADR-064).
 
 Interface: ``SessionManager``, ``manager(context)``, ``install(context, manager)``, ``credential_provisioned``,
-``stop_session``, ``restart_session``, ``deferred_prompt``, ``free_uid``, ``Paths``, ``System``, ``LinuxSystem``.
+``stop_session``, ``restart_session``, ``deferred_prompt``, ``take_notice``, ``notice_keys``, ``free_uid``, ``Paths``,
+``System``, ``LinuxSystem``.
 """
 
 from __future__ import annotations
@@ -83,7 +107,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from agent_guest import harness, registry, tmux, toolsready
+from agent_guest import contexts, harness, registry, tmux, toolsready
 from agent_guest.clock import iso_ms
 from agent_guest.control import ControlContext
 from agent_guest.driver import AgentDriver, ClaudeCodeDriver, DriverError, Launch
@@ -116,6 +140,11 @@ UNIT_SLICE = "system.slice"
 OOM_RESULT = "oom-kill"
 # States of a session whose agent runs (the watcher owns its end); re-attached after a restart of the control process.
 RUNNING_STATES = frozenset({"agent_starting", "prompt_delivering", "working", "idle"})
+RESUMED_SENTENCE = (
+    "Your session was paused and runs again on the same VM; your conversation and workspace are as you left them."
+)
+CONTINUED_SENTENCE = "Your conversation continues in a new sandbox of the platform."
+"""The sentence of a restore without the runner's ``restore.note`` and of a resume into a new sandbox."""
 
 
 class SessionError(Exception):
@@ -315,7 +344,7 @@ class SessionManager:
         with self._lock:
             existing = self.context.state.session(session_id)
             if existing is None:
-                self._create(session_id, data, digest)
+                self._create(session_id, data, digest, self._staged(session_id, data))
                 return
             if existing.state in FINAL_STATES:
                 raise SessionError("state_conflict")
@@ -323,7 +352,7 @@ class SessionManager:
             if meta.get("identity") != _identity(data):
                 raise SessionError("id_conflict")
             if existing.state == "suspended":
-                self._resume(existing, data, digest, restarted=True)
+                self._resume(existing, data, digest, restarted=True, staged=self._staged(session_id, data))
                 return
             if meta.get("request_sha256") != digest:
                 raise SessionError("id_conflict")
@@ -331,8 +360,20 @@ class SessionManager:
                 # The pending start was lost with a restart of the control process: prepare it again.
                 self._resume(existing, data, digest, restarted=data.get("resume_claude_session_id") is not None)
 
+    def _staged(self, session_id: str, data: Mapping[str, Any]) -> contexts.Staged | None:
+        """The staged context a ``restore`` request needs (``state_conflict`` without it); None without ``restore``."""
+        restore = data.get("restore")
+        if restore is None:
+            return None
+        found = contexts.staged(self.paths.sessions_root, session_id)
+        if found is None or found.context["claude_session_id"] != restore["claude_session_id"]:
+            raise SessionError("state_conflict")
+        return found
+
     def _check(self, data: Mapping[str, Any]) -> None:
         if (data["depth"] == 0) != (data["parent_session_id"] is None):
+            raise SessionError("request_invalid")
+        if data.get("restore") is not None and data.get("resume_claude_session_id") is not None:
             raise SessionError("request_invalid")
         model = data["model"]
         try:
@@ -360,6 +401,9 @@ class SessionManager:
             restarted=restarted,
         )
 
+    def _fact_lines(self, data: Mapping[str, Any]) -> list[str]:
+        return harness.fact_lines(self._facts(data, restarted=False), data["harness"]["context_markdown"])
+
     def _prepare(self, data: Mapping[str, Any], restarted: bool, resume: str | None) -> tuple[_Start, str]:
         """Token, harness text and a checked unit definition; ``sandbox_failed`` when the image is incomplete."""
         try:
@@ -386,11 +430,17 @@ class SessionManager:
             raise SessionError("sandbox_failed") from None
         return start, text
 
-    def _create(self, session_id: str, data: Mapping[str, Any], digest: str) -> None:
+    def _create(
+        self, session_id: str, data: Mapping[str, Any], digest: str, staged: contexts.Staged | None = None
+    ) -> None:
         resume = data.get("resume_claude_session_id")
+        if staged is not None:
+            resume = data["restore"]["claude_session_id"]
         try:
             start, text = self._prepare(data, restarted=resume is not None, resume=resume)
         except SessionError as error:
+            if staged is not None:
+                contexts.discard(staged)
             if error.code == "sandbox_failed":
                 self._fail_new(session_id)
             raise
@@ -415,14 +465,26 @@ class SessionManager:
             os.chmod(seeded, 0o600)
             for path in (f"{base}/work", f"{base}/home", f"{base}/home/.claude", seeded):
                 self.system.chown(path, uid)
+            if staged is not None:
+                contexts.restore(staged, base, lambda path: self.system.chown(path, uid))
             harness.write(self.paths.harness_file(session_id), text)
             undo.append(lambda: Path(self.paths.harness_file(session_id)).unlink(missing_ok=True))
-            self._write_meta(session_id, {"request_sha256": digest, "identity": _identity(data), "stopped_at": None})
+            keys = notice_keys(
+                {},
+                self._fact_lines(data),
+                start="fresh" if resume is None else "replaced",
+                sentence=_note(data),
+            )
+            meta = {"request_sha256": digest, "identity": _identity(data), "stopped_at": None, **keys}
+            self._write_meta(session_id, meta)
         except (OSError, SessionError):
             for step in reversed(undo):
                 step()
             self._fail_new(session_id)
             raise SessionError("sandbox_failed") from None
+        finally:
+            if staged is not None:
+                contexts.discard(staged)
         now = self.context.journal.clock.now()
         session = Session(
             id=session_id,
@@ -452,16 +514,51 @@ class SessionManager:
             body = {"state": "failed", "reason": "sandbox_failed", "at": iso_ms(now)}
             self.context.journal.insert(db, "session.state", body, session_id)
 
-    def _resume(self, existing: Session, data: Mapping[str, Any], digest: str, restarted: bool) -> None:
-        """A suspended session (or one whose pending start was lost) gets a new token and harness file."""
+    def _resume(
+        self,
+        existing: Session,
+        data: Mapping[str, Any],
+        digest: str,
+        restarted: bool,
+        staged: contexts.Staged | None = None,
+    ) -> None:
+        """A suspended session (or one whose pending start was lost) gets a new token and harness file; with a
+        ``restore`` (``staged``) its conversation files and workspace are first replaced by the staged ones."""
+        try:
+            self._resume_prepared(existing, data, digest, restarted, staged)
+        finally:
+            if staged is not None:
+                contexts.discard(staged)
+
+    def _resume_prepared(
+        self,
+        existing: Session,
+        data: Mapping[str, Any],
+        digest: str,
+        restarted: bool,
+        staged: contexts.Staged | None,
+    ) -> None:
         resume = data.get("resume_claude_session_id") or existing.claude_session_id
+        if staged is not None:
+            resume = data["restore"]["claude_session_id"]
         start, text = self._prepare(data, restarted=restarted, resume=resume)
         name = unit.user_name(existing.id)
         if self.system.user_uid(name) != existing.uid:
             raise SessionError("sandbox_failed")
+        if resume is None:
+            start_kind, sentence = "fresh", None
+        elif staged is not None:
+            start_kind, sentence = "replaced", _note(data)
+        else:
+            # this sandbox's own conversation; a start lost with a restart of the control process adds no sentence
+            start_kind, sentence = "kept", RESUMED_SENTENCE if existing.state == "suspended" else None
+        keys = notice_keys(self._meta(existing.id), self._fact_lines(data), start=start_kind, sentence=sentence)
         try:
+            if staged is not None:
+                base = self.paths.session_dir(existing.id)
+                contexts.restore(staged, base, lambda path: self.system.chown(path, existing.uid))
             harness.write(self.paths.harness_file(existing.id), text)
-            meta = {"request_sha256": digest, "identity": _identity(data), "stopped_at": None}
+            meta = {"request_sha256": digest, "identity": _identity(data), "stopped_at": None, **keys}
             self._write_meta(existing.id, meta)
         except OSError:
             raise SessionError("sandbox_failed") from None
@@ -643,6 +740,20 @@ class SessionManager:
         with self._lock:
             Path(self._deferred_file(session_id)).unlink(missing_ok=True)
             return self._deferred.pop(session_id, None)
+
+    def take_notice(self, session_id: str) -> str | None:
+        """The pending session notice (see the module docstring), handed out once; its facts become known."""
+        with self._lock:
+            meta = self._meta(session_id)
+            pending = meta.get("notice")
+            if not isinstance(pending, dict):
+                return None
+            current = _lines(pending.get("facts")) or []
+            text = harness.notice(_lines(pending.get("sentences")) or [], current, _lines(meta.get("facts")))
+            del meta["notice"]
+            meta["facts"] = current
+            self._write_meta(session_id, meta)
+            return text
 
     # -- end of the agent ---------------------------------------------------------------------------------
 
@@ -873,7 +984,9 @@ class SessionManager:
     # -- retention --------------------------------------------------------------------------------------
 
     def cleanup(self) -> list[str]:
-        """Remove directories, harness file and user of sessions that ended (``stopped``/``failed``) 7 days ago."""
+        """Remove directories, harness file and user of sessions that ended (``stopped``/``failed``) 7 days ago, and
+        context stagings that were never used (``contexts.prune``)."""
+        contexts.prune(self.paths.sessions_root, time.time())
         now = self.context.journal.clock.now()
         removed = []
         for session in self.context.state.sessions():
@@ -912,6 +1025,12 @@ class SessionManager:
 
     # -- helpers ----------------------------------------------------------------------------------------
 
+    def task_id(self, session_id: str) -> str | None:
+        """The task of a session (its recorded identity), None when unknown."""
+        identity = self._meta(session_id).get("identity")
+        task = identity.get("task_id") if isinstance(identity, dict) else None
+        return task if isinstance(task, str) else None
+
     def _at(self) -> str:
         return iso_ms(self.context.journal.clock.now())
 
@@ -944,6 +1063,43 @@ class SessionManager:
 def _identity(data: Mapping[str, Any]) -> dict[str, Any]:
     """What a session is and stays: a resume or retry with other values is ``id_conflict``."""
     return {key: data[key] for key in ("task_id", "parent_session_id", "depth")}
+
+
+def _lines(value: object) -> list[str] | None:
+    """A list of texts from the meta file; None for anything else (unknown)."""
+    if isinstance(value, list) and all(isinstance(item, str) for item in value):
+        return list(value)
+    return None
+
+
+def _note(data: Mapping[str, Any]) -> str:
+    """The sentence of a restore (the runner's ``restore.note``) or of a resume into a new sandbox."""
+    restore = data.get("restore")
+    note = restore.get("note") if restore is not None else None
+    return note if isinstance(note, str) else CONTINUED_SENTENCE
+
+
+def notice_keys(previous: Mapping[str, Any], current: list[str], *, start: str, sentence: str | None) -> dict[str, Any]:
+    """The ``facts`` and ``notice`` keys of a session's new meta file (see the module docstring).
+
+    ``start`` is ``fresh`` (no ``--resume``: the harness file reaches the model, which then knows ``current``),
+    ``replaced`` (the conversation files came from elsewhere: what it knows is unknown, an earlier pending notice is
+    void, ``sentence`` is always told) or ``kept`` (this sandbox's own conversation: the known facts and a pending
+    notice of ``previous`` stay, ``sentence`` is told only when a fact line changed).
+    """
+    if start == "fresh":
+        return {"facts": current}
+    kept = start == "kept"
+    known = _lines(previous.get("facts")) if kept else None
+    pending = previous.get("notice") if kept else None
+    sentences = (_lines(pending.get("sentences")) if isinstance(pending, dict) else None) or []
+    changed = known is None or any(line not in known for line in current)
+    if sentence is not None and sentence not in sentences and (not kept or changed):
+        sentences.append(sentence)
+    keys: dict[str, Any] = {} if known is None else {"facts": known}
+    if sentences or changed:
+        keys["notice"] = {"sentences": sentences, "facts": current}
+    return keys
 
 
 def _encodable(text: str) -> bool:
@@ -1051,3 +1207,7 @@ def restart_session(context: ControlContext, session_id: str) -> bool:
 
 def deferred_prompt(context: ControlContext, session_id: str) -> tuple[str, str] | None:
     return manager(context).deferred_prompt(session_id)
+
+
+def take_notice(context: ControlContext, session_id: str) -> str | None:
+    return manager(context).take_notice(session_id)

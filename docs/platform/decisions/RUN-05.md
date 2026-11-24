@@ -62,10 +62,14 @@ Small decisions of the package (05-runner.md §2.2 step 6, §2.4, §6.1 step 5, 
     answered in < 1 s (acceptance/RUN-05.md).
 18. Model access of a resume: the owner's preferences from the desired-state entry when listed, else the session's
     recorded access and model.
-19. A VM replaced meanwhile (golden replacement, deletion) has no transcript: the session fails `vm_start_failed`, the
-    prompt goes back to `pending` for the session the hub routes it to next.
-20. Restarted sessions (ADR-033): `resume_from` in the desired entry, or a first prompt with an earlier stored prompt of
-    the task → one harness context line pointing to `get_task_messages`; no `--resume` across sessions.
+19. ~~A VM replaced meanwhile (golden replacement, deletion) has no transcript: the session fails `vm_start_failed`, the
+    prompt goes back to `pending` for the session the hub routes it to next.~~ **Replaced by KOR-33** (ADR-072 §7,
+    decisions/KOR-33.md): the session moves to the workgroup's VM and is restored there from its newest checkpoint.
+20. ~~Restarted sessions (ADR-033): `resume_from` in the desired entry, or a first prompt with an earlier stored prompt
+    of the task → one harness context line pointing to `get_task_messages`; no `--resume` across sessions.~~
+    **Replaced by KOR-33** (ADR-072, decisions/KOR-33.md): such a session continues the original conversation from the
+    task's context checkpoint (`contexts.restore`); the `get_task_messages` line remains only as the reported
+    emergency path (`session.context_fallback`).
 
 ## Idle and controls
 21. Idle times are kept in memory (no column in the schema): from the journal's `idle` record, or from the first time a

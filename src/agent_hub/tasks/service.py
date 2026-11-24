@@ -17,8 +17,11 @@ lock, then the hub time, always later than the newest main session), so of two c
 session both reach the new main session (A-09). The prompt goes to the main session: a live session gets the hint
 `prompt {session_id, scope_id, scope_seq}` from its device (idle: delivered; suspended: resumed first; still starting or
 working: queued by the runner); after `stopping`/`stopped`/`failed` (or on a closed task, which is reopened) the hub
-creates a new main session placed by the scheduler (`resume_from` is derived in the device state when it lands on the
-same device). Replays answer the original `scope_seq` and session.
+creates a new main session placed by the scheduler on any suitable device. That session continues the **same
+conversation**: the device state names the previous main session (`resume_from`) and the task's newest context
+checkpoint (`context`), which the runner restores before it resumes the agent (03-api.md section 4.6.3, ADR-072);
+only when no checkpoint can be used does the session start a new conversation, and the runner reports that.
+Replays answer the original `scope_seq` and session.
 
 **`close_task`** (`POST /v1/tasks/{task}/close`, `task:write`): the task becomes `closed` (audit `task.close`), every
 live session `stopping` (the device gets `session.control {action:"stop"}`), a session that never got a device

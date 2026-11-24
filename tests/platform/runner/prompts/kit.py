@@ -16,9 +16,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from agent_runner.contexts import session_request
 from agent_runner.guestlink.client import JournalRecord
 from agent_runner.inbox.pull import inbox_for
-from agent_runner.prompts import first, session_request, session_state
+from agent_runner.prompts import first, session_state
 from agent_runner.prompts.deliver import Deliverer, Routing, install
 from agent_runner.prompts.queue import Delivery
 from agent_runner.sessions import records
@@ -188,6 +189,9 @@ async def setup(env: Env, *, guest: PromptGuest | None = None, idle_seconds: flo
     found = await kit(env, guest=guest, refresh=refresh, **options)
     found.session_env.first_prompt = first.first_prompt
     found.session_env.amenders = list(session_request.AMENDERS)
+    from ..contexts.kit import install_contexts  # noqa: PLC0415 - the context kit builds on this kit
+
+    install_contexts(env, found)
     stops: list[str] = []
     deliverer = install(env.context, Deliverer(found.session_env, idle_seconds=idle_seconds, stop=stops.append))
     return PKit(env=env, kit=found, guest=guest, deliverer=deliverer, stops=stops)

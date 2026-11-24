@@ -1,0 +1,10 @@
+{
+  "action": "session.context_fallback",
+  "result": "failed",
+  "session_id": "01930014-0000-7000-8000-000000000022",
+  "target_kind": "session",
+  "target_id": "01930014-0000-7000-8000-000000000022",
+  "detail": {
+    "reason": "version_incompatible"
+  }
+}

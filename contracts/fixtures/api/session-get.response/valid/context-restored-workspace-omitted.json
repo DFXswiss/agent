@@ -1,0 +1,65 @@
+{
+  "session": {
+    "session_id": "01930004-0000-7000-8000-000000000004",
+    "task_id": "01930003-0000-7000-8000-000000000003",
+    "org_id": "01930001-0000-7000-8000-000000000001",
+    "wg_id": "01930002-0000-7000-8000-000000000002",
+    "owner_id": "0193000a-0000-7000-8000-00000000000a",
+    "device_id": "01930014-0000-7000-8000-000000000014",
+    "vm_id": "vm-0a1b2c3d",
+    "parent_session_id": null,
+    "origin_operation_id": null,
+    "depth": 0,
+    "state": "working",
+    "state_reason": null,
+    "model_access": "platform",
+    "model_id": "deepseek/deepseek-v4.1-flash-1017",
+    "agent_kind": "claude-code",
+    "agent_version": "2.1.330",
+    "estimate_ms": 3000,
+    "created_at": "2026-11-21T12:00:00.000Z",
+    "ready_at": "2026-11-21T12:00:00.000Z",
+    "first_working_at": "2026-11-21T12:00:05.250Z",
+    "ended_at": null,
+    "context_restore": "restored",
+    "context_reason": "workspace_omitted"
+  },
+  "transitions": [
+    {
+      "seq": 1,
+      "state": "working",
+      "reason": null,
+      "at": "2026-11-21T12:00:05.250Z",
+      "received_at": "2026-11-21T12:00:05.250Z"
+    }
+  ],
+  "usage": {
+    "requests": 3,
+    "input_tokens": 1200,
+    "output_tokens": 300,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "thinking_tokens": 0,
+    "cost_micro_usd": 1500,
+    "cost_basis": "provider",
+    "context_used_tokens": 1500,
+    "context_window_tokens": 128000,
+    "last_provider": "DeepSeek",
+    "updated_at": "2026-11-21T12:00:05.250Z"
+  },
+  "vm": {
+    "vm_id": "vm-0a1b2c3d",
+    "device_id": "01930014-0000-7000-8000-000000000014",
+    "wg_id": "01930002-0000-7000-8000-000000000002",
+    "state": "running",
+    "golden_version": "g-2026-11-21",
+    "cpus": 4,
+    "memory_mib": 8192,
+    "disk_gib": 40,
+    "created_at": "2026-11-21T12:00:00.000Z",
+    "state_at": "2026-11-21T12:00:00.000Z"
+  },
+  "children": [
+    "01930005-0000-7000-8000-000000000005"
+  ]
+}

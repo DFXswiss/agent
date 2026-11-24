@@ -55,7 +55,6 @@ from __future__ import annotations
 import contextlib
 import errno
 import hashlib
-import io
 import os
 import pwd
 import shutil
@@ -239,7 +238,21 @@ def _copy(reader: IO[bytes], size: int, fd: int) -> None:
         left -= len(data)
 
 
-def _extract_member(archive: tarfile.TarFile, member: tarfile.TarInfo, tree: int, owner: Owner, path: str) -> None:
+Modes = Callable[[str, tarfile.TarInfo], int]
+"""The file mode an extracted regular member gets (default ``FILE_MODE``)."""
+LinkCheck = Callable[[str, str], bool]
+"""Whether a symbolic link member ``(path, target)`` may be created (default: none may)."""
+
+
+def _extract_member(
+    archive: tarfile.TarFile,
+    member: tarfile.TarInfo,
+    tree: int,
+    owner: Owner,
+    path: str,
+    *,
+    modes: Modes | None = None,
+) -> None:
     parts = path.split("/")
     parent = -1
     try:
@@ -253,16 +266,21 @@ def _extract_member(archive: tarfile.TarFile, member: tarfile.TarInfo, tree: int
             finally:
                 os.close(fd)
             return
-        fd = os.open(parts[-1], CREATE_FLAGS, FILE_MODE, dir_fd=parent)
+        if member.issym():
+            os.symlink(member.linkname, parts[-1], dir_fd=parent)
+            os.chown(parts[-1], owner.uid, owner.gid, dir_fd=parent, follow_symlinks=False)
+            return
+        mode = FILE_MODE if modes is None else modes(path, member)
+        fd = os.open(parts[-1], CREATE_FLAGS, mode, dir_fd=parent)
         try:
-            _own(fd, owner, FILE_MODE)
+            _own(fd, owner, mode)
             reader = archive.extractfile(member)
             assert reader is not None
             _copy(reader, member.size, fd)
         finally:
             os.close(fd)
     except FilesError as error:
-        # a member below a path that is a file (`a`, then `a/b`)
+        # a member below a path that is a file (`a`, then `a/b`) or a link
         raise FilesError("request_invalid") from error
     except OSError:
         # the same file twice, or a directory over a file
@@ -295,7 +313,18 @@ def _open_archive(stream: Readable) -> tarfile.TarFile:
         raise FilesError("request_invalid") from None
 
 
-def _extract(stream: Readable, tree: int, owner: Owner) -> _Extracted:
+def _extract(
+    stream: Readable,
+    tree: int,
+    owner: Owner,
+    limit: int = MAX_IMPORT_BYTES,
+    *,
+    modes: Modes | None = None,
+    link_ok: LinkCheck | None = None,
+) -> _Extracted:
+    """Extract every member below ``tree`` (see the module docstring); at most ``limit`` bytes of content. A context
+    staging (``contexts.stage``, KOR-33) passes ``modes`` (execute bits kept) and ``link_ok`` (symbolic links it
+    allows; never followed afterwards: every later member is opened through ``walk`` without following links)."""
     done = _Extracted()
     with _open_archive(stream) as archive:
         while True:
@@ -309,7 +338,8 @@ def _extract(stream: Readable, tree: int, owner: Owner) -> _Extracted:
             if done.entries > MAX_ENTRIES:
                 raise FilesError("size_exceeded")
             path = _member_path(member.name)
-            if not (member.isreg() or member.isdir()) or member.issparse():
+            link = member.issym() and link_ok is not None and path is not None and link_ok(path, member.linkname)
+            if not (member.isreg() or member.isdir() or link) or member.issparse():
                 raise FilesError("request_invalid")
             if path is None:
                 continue
@@ -319,10 +349,10 @@ def _extract(stream: Readable, tree: int, owner: Owner) -> _Extracted:
             if member.isreg():
                 done.files += 1
                 done.bytes += member.size
-                if done.bytes > MAX_IMPORT_BYTES:
+                if done.bytes > limit:
                     raise FilesError("size_exceeded")
             try:
-                _extract_member(archive, member, tree, owner, path)
+                _extract_member(archive, member, tree, owner, path, modes=modes)
             except tarfile.TarError:
                 raise FilesError("request_invalid") from None
 
@@ -376,7 +406,7 @@ def import_tar(
             tree = open_dir(stage, "tree")
             try:
                 _own(tree, owner, DIR_MODE)
-                done = _extract(stream, tree, owner)
+                done = _extract(stream, tree, owner, MAX_IMPORT_BYTES)
                 moving = contextlib.nullcontext() if guard is None else guard("/".join(parts), tree)
             finally:
                 os.close(tree)
@@ -394,9 +424,14 @@ def import_tar(
 
 @dataclass
 class _Export:
+    """One walk into ``archive``: member names are ``prefix`` + path, files get ``mode``, at most ``limit`` bytes."""
+
     session: Session
     stage: str
     archive: tarfile.TarFile
+    prefix: str = ""
+    limit: int = MAX_EXPORT_BYTES
+    mode: int = FILE_MODE
     files: list[dict[str, Any]] = field(default_factory=list)
     skipped: list[dict[str, str]] = field(default_factory=list)
     added: set[str] = field(default_factory=set)
@@ -432,12 +467,12 @@ class _Export:
                 if not data:
                     break
                 size += len(data)
-                if self.bytes + size > MAX_EXPORT_BYTES:
+                if self.bytes + size > self.limit:
                     raise FilesError("size_exceeded")
                 digest.update(data)
                 spool.write(data)
             spool.seek(0)
-            self.archive.addfile(member_info(path, size), spool)
+            self.archive.addfile(member_info(self.prefix + path, size, self.mode), spool)
         self.bytes += size
         self.added.add(path)
         self.files.append({"path": path, "size": size, "sha256": digest.hexdigest()})
@@ -511,29 +546,45 @@ class _Export:
             os.close(parent)
 
 
-def member_info(path: str, size: int) -> tarfile.TarInfo:
+def member_info(path: str, size: int, mode: int = FILE_MODE) -> tarfile.TarInfo:
     info = tarfile.TarInfo(path)
     info.size = size
-    info.mode = FILE_MODE
+    info.mode = mode
     info.mtime = 0
     info.uid = info.gid = 0
     info.uname = info.gname = ""
     return info
 
 
-class Stream:
-    """The answer body: the manifest member, then the staged files. The staging directory is removed when the stream
-    ends, is closed, or is collected without ever being read (the client went away before the body was sent)."""
+def member_bytes(path: str, data: bytes, mode: int = FILE_MODE) -> bytes:
+    """A complete tar member (PAX header and padded content) of a small file built in memory."""
+    head = member_info(path, len(data), mode).tobuf(tarfile.PAX_FORMAT, "utf-8", "surrogateescape")
+    return head + data + b"\0" * (-len(data) % tarfile.BLOCKSIZE)
 
-    def __init__(self, head: bytes, body: str, stage: str) -> None:
-        self._head, self._body, self._stage = head, body, stage
+
+class Stream:
+    """The answer body: ``head`` (the first member), then the staged parts - each a file of which the first ``length``
+    bytes are sent (``None``: all of it) -, then ``tail``. The staging directory is removed when the stream ends, is
+    closed, or is collected without ever being read (the client went away before the body was sent)."""
+
+    def __init__(self, head: bytes, parts: Sequence[tuple[str, int | None]], stage: str, tail: bytes = b"") -> None:
+        self._head, self._parts, self._stage, self._tail = head, list(parts), stage, tail
 
     def __iter__(self) -> Iterator[bytes]:
         try:
             yield self._head
-            with open(self._body, "rb") as source:
-                while chunk := source.read(CHUNK):
-                    yield chunk
+            for path, length in self._parts:
+                left = length
+                with open(path, "rb") as source:
+                    while left is None or left > 0:
+                        chunk = source.read(CHUNK if left is None else min(CHUNK, left))
+                        if not chunk:
+                            break
+                        if left is not None:
+                            left -= len(chunk)
+                        yield chunk
+            if self._tail:
+                yield self._tail
         finally:
             self.close()
 
@@ -569,7 +620,7 @@ def export_tar(session: Session, directory: str, paths: Sequence[str] | None = N
         body = os.path.join(stage, "body.tar")
         try:
             with tarfile.open(body, mode="w", format=tarfile.PAX_FORMAT) as archive:
-                export = _Export(session, stage, archive)
+                export = _Export(session, stage, archive, limit=MAX_EXPORT_BYTES)
                 if paths is None:
                     export.children(root, "", 0)
                 else:
@@ -582,11 +633,8 @@ def export_tar(session: Session, directory: str, paths: Sequence[str] | None = N
             "skipped": sorted(export.skipped, key=lambda item: item["path"]),
         }
         data = canonical(manifest).encode("utf-8")
-        head = io.BytesIO()
-        info = member_info(MANIFEST, len(data))
-        head.write(info.tobuf(tarfile.PAX_FORMAT, "utf-8", "surrogateescape"))
-        head.write(data + b"\0" * (-len(data) % tarfile.BLOCKSIZE))
+        head = member_bytes(MANIFEST, data)
     except BaseException:
         remove_stage(stage)
         raise
-    return Exported(hashlib.sha256(data).hexdigest(), manifest, Stream(head.getvalue(), body, stage))
+    return Exported(hashlib.sha256(data).hexdigest(), manifest, Stream(head, [(body, None)], stage))

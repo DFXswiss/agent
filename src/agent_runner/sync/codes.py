@@ -72,6 +72,7 @@ HUB_ERROR_CODES = frozenset(
         "peer_outdated",
         "platform_access_denied",
         "platform_invite_required",
+        "quota_exceeded",
         "prf_length",
         "rate_limited",
         "recovery_code_length",

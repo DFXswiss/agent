@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-pr-links-post.response.json",
+  "title": "POST /v1/device/pr-links response",
+  "description": "Body of a successful response to POST /v1/device/pr-links (03-api.md section 6.1); replayed: the tag was linked to this task before.",
+  "type": "object",
+  "properties": {
+    "replayed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "replayed"
+  ],
+  "additionalProperties": false
+}

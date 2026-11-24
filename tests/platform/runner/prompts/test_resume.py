@@ -1,5 +1,6 @@
-"""U-RUN-prompts: idle -> suspend, follow-up prompts that resume a suspended session with `--resume`, and the harness
-hint of restarted sessions (05-runner.md sections 6.3, 3.5; 03-api.md sections 4.6.3, 7.1)."""
+"""U-RUN-prompts: idle -> suspend, follow-up prompts that resume a suspended session with `--resume` on its VM, and a
+suspended session whose VM changed (05-runner.md sections 6.3, 3.5; 03-api.md sections 4.6.3, 7.1). The restore and
+the emergency path of restarted sessions are tested in `contexts/` (KOR-33)."""
 
 from __future__ import annotations
 
@@ -8,8 +9,7 @@ from typing import Any
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestRefused, GuestUnreachable
 from agent_runner.prompts import resume
-from agent_runner.prompts.resume import RESTART_LINE, Resumer, desired_of, restart_hint
-from agent_runner.sessions.start import Starter
+from agent_runner.prompts.resume import RESTART_LINE, Resumer, desired_of
 
 from ..reconcile.rig import Rig
 from ..sessions.kit import TASK, desired, session_id, wire
@@ -174,9 +174,17 @@ def test_resume_failure_reasons(rig: Rig) -> None:
         assert await Resumer(pk.kit.session_env).resume(await pk.session(sid2)) == "vm_start_failed"
 
     async def other_vm(env: Any) -> None:
+        # the session's VM is gone: it moves to the workgroup's VM and - without a checkpoint - takes the reported
+        # emergency path instead of failing `vm_start_failed` (KOR-33)
         pk = await setup(env)
         sid = await pk.add_session(state="suspended", vm_id="vm-0000ffff")
-        assert await Resumer(pk.kit.session_env).resume(await pk.session(sid)) == "vm_start_failed"
+        assert await Resumer(pk.kit.session_env).resume(await pk.session(sid)) == "resumed"
+        assert (await pk.session(sid)).vm_id == (await pk.vm()).id
+        request = next(value for name, value in pk.guest.calls if name == "create_session")
+        assert "resume_claude_session_id" not in request
+        assert request["harness"]["context_markdown"].endswith(RESTART_LINE.format(task_id=TASK))
+        fallback = [item for item in await env.audits() if item["action"] == "session.context_fallback"]
+        assert [item["detail"] for item in fallback] == [{"reason": "context_missing"}]
 
     async def unreachable_vm(env: Any) -> None:
         pk = await setup(env)
@@ -260,78 +268,6 @@ def test_the_desired_entry_gives_the_owner_preferences_of_a_resume(rig: Rig) -> 
         assert desired_of(senv, session).model_access_pref == "platform"
         senv.desired = {"sessions": [{"session_id": sid, "depth": "x"}, "junk"]}
         assert desired_of(senv, session).model_access_pref == "platform"
-
-    run(rig, body)
-
-
-# -- restarted sessions ---------------------------------------------------------------------------------------------
-
-
-def test_a_restarted_session_is_told_to_read_the_history(rig: Rig) -> None:
-    async def body(env: Any) -> None:
-        pk = await setup(env)
-        first = add_prompt(env, 1, "first")
-        follow = add_prompt(env, 2, "follow")
-        await pull(env)
-        senv = pk.kit.session_env
-        sid = await pk.add_session(state="requested")
-        session = await pk.session(sid)
-
-        def request(prompt: str | None) -> dict[str, Any]:
-            found: dict[str, Any] = {"harness": {"context_markdown": "- Task: x\n"}}
-            if prompt is not None:
-                found["initial_prompt"] = {"prompt_id": prompt, "text": "t"}
-            return found
-
-        # the task's first prompt: no hint
-        plain = request(first)
-        await restart_hint(senv, session, plain)
-        assert plain["harness"]["context_markdown"] == "- Task: x\n"
-        # a later prompt starts the session: it continues the task
-        later = request(follow)
-        await restart_hint(senv, session, later)
-        assert later["harness"]["context_markdown"] == "- Task: x\n" + RESTART_LINE.format(task_id=TASK)
-        # no initial prompt and not named by the hub: no hint; an unknown prompt neither
-        for prompt in (None, session_id(9)):
-            found = request(prompt)
-            await restart_hint(senv, session, found)
-            assert RESTART_LINE[:20] not in found["harness"]["context_markdown"]
-        # the hub names the previous session (`resume_from`)
-        senv.desired = {"sessions": [{**wire(desired(1)), "resume_from": session_id(7)}]}
-        named = request(None)
-        await restart_hint(senv, session, named)
-        assert "get_task_messages" in named["harness"]["context_markdown"]
-        # never for a subagent session
-        child = await pk.session(await pk.add_session(2, depth=1))
-        sub = request(follow)
-        await restart_hint(senv, child, sub)
-        assert "get_task_messages" not in sub["harness"]["context_markdown"]
-        assert resume.listed(senv, session_id(3)) is None
-        senv.desired = None
-        assert resume.listed(senv, sid) is None
-
-    run(rig, body)
-
-
-def test_the_start_of_a_restarted_session_carries_the_hint(rig: Rig) -> None:
-    async def body(env: Any) -> None:
-        pk = await setup(env)
-        add_prompt(env, 1, "first")
-        follow = add_prompt(env, 2, "follow")
-        await pull(env)
-        sid = session_id(1)
-        pk.kit.session_env.desired = {
-            "sessions": [wire(desired(1))],
-            "pending_prompts": [
-                {"task_id": TASK, "session_id": sid, "scope_id": desired(1).wg_id, "scope_seq": 2, "event_id": follow}
-            ],
-            "delivered_prompt_event_ids": {},
-        }
-        report = await Starter(pk.kit.session_env).start(desired(1))
-        assert report.started
-        request = next(value for name, value in pk.guest.calls if name == "create_session")
-        assert request["initial_prompt"]["prompt_id"] == follow
-        assert request["harness"]["context_markdown"].endswith(RESTART_LINE.format(task_id=TASK))
 
     run(rig, body)
 

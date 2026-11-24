@@ -35,7 +35,9 @@ this document for semantics. Both implementations validate inbound messages agai
 `PUBLIC_URL` (origin; host = WebAuthn RP ID), `DATABASE` (writer DSN), `OWNER_DATABASE` (migrate only; forbidden
 in the hub process), `SIGNING_KEY` (Ed25519 seed hex), `HUB_KEY_ID`, `PLATFORM_ROOT_KEY` (b64u), `HOST`, `PORT`
 (default 8788), `STATIC_DIR` (default package `static/`), `DEVICE_ONLINE_SECONDS` (30), `PLATFORM_BUDGET_USD_PER_ORG_DAY`
-(empty = unlimited), `MODEL_CATALOG` (path of the model catalog file, same format as the runner's, source of `/v1/config.models`). `HUB_KEY_ID` MUST match `[a-z0-9-]{1,64}` (required by the reused `HubSigner`). Tests: `AGENT_HUB_TEST_POSTGRES`.
+(empty = unlimited), `MODEL_CATALOG` (path of the model catalog file, same format as the runner's, source of `/v1/config.models`),
+`CONTEXT_MAX_OBJECT_BYTES` (8 GiB per context checkpoint), `CONTEXT_KEEP` (3 complete checkpoints per task, 1–1000),
+`CONTEXT_ORG_BYTES` (200 GiB of checkpoints per organisation; all three ADR-072 §6, 1 to 2^53−1 bytes). `HUB_KEY_ID` MUST match `[a-z0-9-]{1,64}` (required by the reused `HubSigner`). Tests: `AGENT_HUB_TEST_POSTGRES`.
 `TRUSTED_PROXIES` (comma-separated addresses or networks; empty = none) and `FORWARDED_HEADER` (`x-forwarded-for`
 default, or `forwarded`; refused without trusted proxies): behind a trusted reverse proxy the source address of the
 per-source limits is the rightmost untrusted address of that one header (KOR-06). Any other `AGENT_HUB_*` name is
@@ -130,6 +132,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 |---|---|---|
 | `GET /v1/workgroups/{wg}` | wg:read | → `{wg_id,org_id,is_default,epoch,devices:[{device_id,kind,online,capacity}],members:[{user_id,access}]}` – `members` and `my_access` (of `GET /v1/orgs/{org}`) carry the effective access, so every admin appears with `read` unless it has explicit access (ADR-058); no marker, a client derives the source from the verified log |
 | `GET /v1/workgroups/{wg}/device-candidates` | wg:write | → platform devices `{device_id,platform_seq,pub,online,capacity}` ordered by free capacity (§4.6.2) |
+| `GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag}` | wg:read | → `{task_id,session_id,created_at}` of the pull request whose opaque tag (`04-crypto.md` §4.11) a runner registered for an epoch of the workgroup; `404 not_found` for an unknown or malformed epoch or tag (ADR-072 §8; the button on the pull request is a later package) |
 | `GET /v1/orgs/{org}/devices` | org:member | → devices of the org and platform devices assigned to its workgroups: `{device_id,kind,state,online,last_seen_at,agent_version,capacity,assigned_wgs}` |
 
 ### 4.6 Tasks and sessions
@@ -143,6 +146,12 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `POST /v1/tasks/{task}/close` | task:write | `{}` → task (`closed`; all sessions `stopping`) |
 | `POST /v1/sessions/{session}/control` | task:write | `{action:"interrupt"|"stop"}` → `{}` |
 | `GET /v1/sessions/{session}` | task:read | → session incl. transitions, usage, device, vm, parent, children |
+| `GET /v1/tasks/{task}/contexts` | task:read | → `{contexts:[{object_id,session_id,author_id,epoch,chunks,size,digest,created_at,completed_at}]}`: the complete context checkpoints of the task (metadata only, newest first as in §4.6.3, at most 1000); uploads in progress are never listed (ADR-072 §5) |
+
+Session rows (`GET /v1/tasks/{task}`, `GET /v1/sessions/{session}`, the `session` frame) carry `context_restore`
+(`restored`, `fallback` or null) and `context_reason` (closed list `common.json#/$defs/context_reason`): what the
+runner reported for a main session that continued an earlier one (§4.6.3). The user's agent reads all of this through
+the same endpoints (`11-agent-access.md`, KOR-24 parity); continuing is `POST /v1/tasks/{task}/prompts`.
 
 #### 4.6.1 First-task flow (normative sequence)
 
@@ -173,17 +182,36 @@ scheduler. A device that refused counts with `vm_slots_free = 0` until its next 
 workgroup a stopped VM no longer exempts it from needing a free slot until it reports one (a running VM still does),
 so the attempt goes to another device with room or waits `scheduling` (`capacity_exhausted`). Not after the user
 stopped the session, and at most 3 refusals in a row for the same prompts (sessions refused before they ever worked):
-the third refusal fails the task with `capacity_exhausted` ("Retry"). The attempt resumes from the last session on
-the same device that ran (a refused session never ran an agent).
+the third refusal fails the task with `capacity_exhausted` ("Retry"). The attempt resumes from the last session that
+ran, on whichever device (§4.6.3; a refused session never ran an agent).
 Capacity warning: when `vm_slots_free / vm_slots_total < 0.1` the device carries `capacity_low:true` in all
 device lists (UI badge) and in metrics (alert rule, `08-monitoring.md`).
 
 #### 4.6.3 Follow-up prompts
 
 The prompt is routed to the main session. Main session `idle` → device delivers it; `suspended` → device
-resumes (`claude --resume`) then delivers; `stopped`/`failed` → hub creates a new main session (depth 0, same
-task) on the scheduler's device with `resume_from` = previous session when it is the same device, else a fresh
-session whose harness tells it to read the chat history with `get_task_messages`.
+resumes (`claude --resume`) then delivers (when the session's VM is gone, the runner restores it from its newest
+checkpoint on another VM first); `stopping`/`stopped`/`failed`, or a closed task (reopened) → the hub creates a new
+main session (depth 0, same task) on the scheduler's device, **on any device of the workgroup**. That session
+**continues the same conversation** (ADR-072): its device state names `resume_from` = the task's previous main
+session once it had ended (a session refused for lack of capacity before it worked is skipped) and `context
+{object_id,session_id,created_at,size}` = the task's newest complete context checkpoint. Newest means ordered by the
+creation of the checkpoint's session at the hub, then by the object ID (UUIDv7) - never by a device clock or the time
+of the commit, so a late upload of an earlier session never supersedes its successor's. When `context.session_id` is
+not `resume_from`, the final checkpoint of that session has not arrived yet; the runner waits for it a bounded time
+(same device: its local copy; another device: it reads the device state again) and otherwise restores the newest one
+and says so (`stale`). The runner restores the transcript and the workspace into the new sandbox and starts `claude
+--resume` with the **same** Claude session ID; the session is told in one sentence what changed (VM or device,
+checkpoint time, workspace restored fully, partly or not, a work VM to be requested again) - as `restore.note`,
+which the guest attaches with the current session facts once to the first hook answer of the resumed conversation;
+Claude Code ignores a new harness file on `--resume` (05-runner.md §8). It reports the outcome
+as the outbox audit `session.context_restored {object_id,workspace,stale}`; the hub stores `context_restore =
+restored` on the session row, with `context_reason` `workspace_partial`/`workspace_omitted` when the workspace came
+back only partly or not at all (too large). **Only** when no checkpoint can be used does the session start a new
+conversation whose harness tells it to read the chat history with `get_task_messages` - the reported emergency path:
+audit `session.context_fallback {reason}` (`context_missing`, `context_invalid`, `context_unavailable`,
+`version_incompatible`, `restore_failed`), `context_restore = fallback` with that reason, the log metric
+`agent_hub_session_context_total{result,reason}` and a notice on the task (`06-web.md` §4.4). Never silent.
 
 Prompts a main session did not deliver before it ended `stopping`/`stopped` are carried over to the next main
 session of the task and delivered first, in event order; a `failed` session keeps them ("Retry" sends the newest
@@ -288,7 +316,7 @@ receive → browser frame: p95 < 300 ms on LAN.
 | Endpoint | Right | Request → Response |
 |---|---|---|
 | `POST /v1/device/enroll` | signature by the key in the body (proof of possession) + invite proof | `{device_id,kind:"org"|"platform",invite_id,pub:{kem,sig},entry?` (org: `accept` entry with `sig`+`inv_sig`)`,enroll_sig?,inv_sig?` (platform)`,agent_version,os,arch,capacity}` → `{state:"active"|"pending_certification",org_id?}` |
-| `GET /v1/device/state` | device:any | pending device → `{state:"pending_certification",hub_time}`; active device → desired state: `{state:"active",last_origin_seq,orgs:[{org_id,log_head}],assigned:[{org_id,wg_id}],sessions:[{session_id,task_id,org_id,wg_id,state,parent_session_id,depth,owner_id,model_access_pref,model_id_pref,resume_from?}],pending_prompts:[{task_id,session_id,scope_id,scope_seq,event_id}],delivered_prompt_event_ids:{session_id:[event_id]}` (last 100 per active session)`,requests:[{request_id}],pings:[{ping_id,session_id,kind,level,ref,created_at}]` (undelivered rows of `session_ping`)`,credentials_changed:[owner_id],rotation_pending:[…],quota_poll_owners:[owner_id],platform_budget:{usd_per_org_day,spent_today_by_org}|null,hub_time}`; `quota_poll_owners` = subscription owners whose quota this device polls (the eligible online device with the smallest ID). After a local store wipe the runner continues its outbox at `last_origin_seq + 1` and never re-delivers the prompts in `delivered_prompt_event_ids`. |
+| `GET /v1/device/state` | device:any | pending device → `{state:"pending_certification",hub_time}`; active device → desired state: `{state:"active",last_origin_seq,orgs:[{org_id,log_head}],assigned:[{org_id,wg_id}],sessions:[{session_id,task_id,org_id,wg_id,state,parent_session_id,depth,owner_id,model_access_pref,model_id_pref,resume_from?,context?:{object_id,session_id,created_at,size}}],pending_prompts:[{task_id,session_id,scope_id,scope_seq,event_id}],delivered_prompt_event_ids:{session_id:[event_id]}` (last 100 per active session)`,requests:[{request_id}],pings:[{ping_id,session_id,kind,level,ref,created_at}]` (undelivered rows of `session_ping`)`,credentials_changed:[owner_id],rotation_pending:[…],quota_poll_owners:[owner_id],platform_budget:{usd_per_org_day,spent_today_by_org}|null,hub_time}`; `quota_poll_owners` = subscription owners whose quota this device polls (the eligible online device with the smallest ID). After a local store wipe the runner continues its outbox at `last_origin_seq + 1` and never re-delivers the prompts in `delivered_prompt_event_ids`. `resume_from` and `context` only on main sessions (§4.6.3). |
 | `POST /v1/device/outbox` | device (+ item rights) | `{items:[{origin_seq,item_kind,body}]}` (≤ 500 items, ≤ 4 MiB; pushes paced per device by a token bucket of one push per 100 ms with a reserve of 10 pushes, beyond it `429 rate_limited` with `Retry-After: 1`, ADR-048) → `{acked_through,results:[{origin_seq,status:"ok"|"replayed"|"rejected"|"reseal",error?}]}` |
 | `GET /v1/device/pull` | device:wg / org | `?cursor=<scope_id>:<seq>` (repeatable) `&kinds=` `&limit=` → every event kind except `session.terminal` in the wg scopes of assigned workgroups, plus `org.profile`, `wg.profile`, `member.profile`, `device.profile` and org-level `whiteboard.*` in the org scope (needed for `get_task_messages`, restarted sessions and duplicate results) |
 | `GET /v1/device/workgroups/{wg}/tasks` | device:wg | `?state=&before=&limit=` → task metadata as `GET /v1/workgroups/{wg}/tasks` |
@@ -299,6 +327,10 @@ receive → browser frame: p95 < 300 ms on LAN.
 | `GET /v1/device/credentials/{owner}/{kind}` | device eligible for owner's CK | → record |
 | `PUT /v1/device/credentials/{owner}/{kind}` | same, only while answering a device request of `owner` | `{record,expected_version,request_id}` → `{version}` |
 | `GET /v1/device/requests/{id}` / `POST /v1/device/requests/{id}/responses` | device addressed | → envelope / `{envelope}` → `{}` |
+| `PUT /v1/device/contexts/{object}/chunks/{index}` | device:session | `{session_id,ct}` (`ct` = one sealed chunk, 29 B – 2 MiB + 28 B, `04-crypto.md` §4.11; the body may use the 4 MiB batch limit) → `{replayed}`. The session must be a main session (`400 request_invalid` at `/session_id`) that runs or ran on the calling device in a workgroup it is assigned to (`403 forbidden`); the first chunk creates the object (`uploading`) for that session and device, another session or device under the same ID is `409 id_conflict`; identical bytes again `replayed: true`, other bytes at a stored index or a new chunk after the commit `409 id_conflict`. Quotas (`413 quota_exceeded`, `detail.quota {scope:"object"|"org",limit,used}`): `AGENT_HUB_CONTEXT_MAX_OBJECT_BYTES` per object, `AGENT_HUB_CONTEXT_ORG_BYTES` for every object of the organisation (serialised per organisation); each refusal is audited as `session.context_refused` |
+| `POST /v1/device/contexts/{object}/commit` | device:session | `{manifest,sig}` → `{completed_at,replayed}`: only the author device of an assigned workgroup (`403`); the manifest (`04-crypto.md` §4.11) names exactly the object's IDs and an epoch of the workgroup (`400 request_invalid` at the field), its signature verifies with the device key (`401 signature_invalid`), `chunks`/`size`/`digest` equal the stored chunks `0..chunks-1` (`400` at the field). Atomically `complete`; the same manifest and signature again `replayed`, anything else afterwards `409 id_conflict`. In the same transaction (one commit per task at a time) the task's complete checkpoints beyond the newest `AGENT_HUB_CONTEXT_KEEP` (order §4.6.3; never the one just committed) are deleted; audit `session.context_saved {chunks,size,pruned}` |
+| `GET /v1/device/contexts/{object}` / `GET /v1/device/contexts/{object}/chunks/{index}` | device:wg | → `{manifest,sig,created_at,completed_at}` / `{ct}` of a **complete** object of a workgroup the device is assigned to (a restore may run on any device of the workgroup); an upload in progress, an object of another workgroup or a missing chunk is `404 not_found` |
+| `POST /v1/device/pr-links` | device:session | `{session_id,epoch,tag}` → `{replayed}`: the opaque tag of a pull request the main session created (ADR-072 §8), rights as for a chunk; the epoch must be one of the workgroup (`400` at `/epoch`); the same tag for the same task again `replayed`, for another task `409 id_conflict` (the first task keeps it) |
 
 Outbox item kinds and their effect at the hub (closed list `contracts/enums/outbox-item-kinds.json`; credentials, operation registrations and device responses use their own endpoints, never the outbox):
 
@@ -311,7 +343,7 @@ Outbox item kinds and their effect at the hub (closed list `contracts/enums/outb
 | `usage` | `{session_id,delta:{requests,input_tokens,…,cost_micro_usd},cost_basis,context_used_tokens,context_window_tokens,last_provider,model?,access_origin?,at?}` | `usage_counter` += delta; token charge (`12-billing.md` §4) |
 | `quota` | `{owner_id,windows:[{window,used_percent,resets_at,severity}],fetched_at}` or `{owner_id,unavailable:true,fetched_at}` (the usage endpoint refused the token, KOR-05) | `quota_snapshot` (an `unavailable` report deletes the owner's rows with `fetched_at` ≤ its own) |
 | `metrics` | `{samples:[metric sample]}` | `metric_sample` |
-| `audit` | `{action,result,task_id?,session_id?,target_kind,target_id,detail}` (closed list `contracts/enums/outbox-audit-actions.json`: `hook.denied`, `read.session.<tool>`, `ping.delivered` (for a hub ping, `whiteboard.entry`, also marks the `session_ping` row delivered; the runner's own `subagent.finished`/`operation.finished` pings are audited without a hub row, KOR-07), `session.prompt_refused`, `model.provider_outside_allowlist`, `runner.inbound_rejected`, `runner.log_rollback`, `runner.log_fork`, `runner.alert`) | audit row |
+| `audit` | `{action,result,task_id?,session_id?,target_kind,target_id,detail}` (closed list `contracts/enums/outbox-audit-actions.json`: `hook.denied`, `read.session.<tool>`, `ping.delivered` (for a hub ping, `whiteboard.entry`, also marks the `session_ping` row delivered; the runner's own `subagent.finished`/`operation.finished` pings are audited without a hub row, KOR-07), `session.prompt_refused`, `model.provider_outside_allowlist`, `runner.inbound_rejected`, `runner.log_rollback`, `runner.log_fork`, `runner.alert`, `session.context_restored`, `session.context_fallback` (both also set `context_restore`/`context_reason` on the main session and send its `session` frame, §4.6.3)) | audit row |
 | `wrap` | `{wrap}` | as `POST /v1/device/wraps` |
 | `runtime` | `{session_id,vm_id,vm_kind:"session"|"work",size,from,to,runtime_ms}` | runtime charge of a platform device (`12-billing.md` §4) |
 
@@ -362,12 +394,14 @@ JSON bodies except tar streams.
 |---|---|
 | `GET /v1/health` | → `{guest_version,claude_version,state:"unassigned"|"assigned"|"broken",org_id?,wg_id?,sessions:[{session_id,state}],landlock_abi,boot_id}` |
 | `POST /v1/assign` | `{vm_id,org_id,wg_id}` → `{}`; refused if already assigned to another wg (`already_assigned`) |
-| `POST /v1/sessions` | `{session_id,task_id,parent_session_id,depth,harness:{context_markdown},model:{access,model_id,env:{…}},resume_claude_session_id?,initial_prompt?:{prompt_id,text},limits:{memory_max,cpu_quota,tasks_max,runtime_max_sec}}` → `{state:"sandbox_ready"}`; further transitions via journal |
+| `POST /v1/sessions` | `{session_id,task_id,parent_session_id,depth,harness:{context_markdown},model:{access,model_id,env:{…}},resume_claude_session_id?,restore?:{claude_session_id,object_id,note?},initial_prompt?:{prompt_id,text},limits:{memory_max,cpu_quota,tasks_max,runtime_max_sec}}` → `{state:"sandbox_ready"}`; further transitions via journal. `restore` (ADR-072 §7, not with `resume_claude_session_id`) creates the sandbox from the context staged for this session ID and resumes its conversation (`note`: the sentence about what changed, delivered as the session notice of 05-runner.md §8); without a matching staging `409 state_conflict` |
 | `PUT /v1/sessions/{id}/credential` | `{upstream_base_url,auth_header,auth_value,extra_headers:{…},provider_allowlist?:[…]}` → `{}`; memory only, replaced on refresh; a model request that finds no credential is held until the next provisioning (`05-runner.md` §10.2) |
 | `POST /v1/sessions/{id}/prompts` | `{prompt_id,text}` → `{state:"registered"}`; delivery result via journal (`session.state` with `prompt_accepted`/`prompt_refused`) |
 | `POST /v1/sessions/{id}/control` | `{action:"interrupt"|"stop"|"suspend"}` → `{}` |
 | `POST /v1/sessions/{id}/files/import` | `?dir=<relative dir>&replace=true|false`, body `application/x-tar` (regular files and directories only; no links, devices, absolute or `..` paths; ≤ 512 MiB) → `{files,bytes}` |
 | `POST /v1/sessions/{id}/files/export` | `{dir,paths?:[…]}` → `application/x-tar` + header `X-Manifest-Sha256`; regular files only, symlinks are reported in the manifest as skipped |
+| `POST /v1/sessions/{id}/context/export` | `{workspace_max_bytes,transcript_max_bytes}` → `application/x-tar`: context archive v1 (ADR-072 §2: `context.json`, `transcript/…`, `work/…`); any state with directories; workspace over its limit left out (`omitted_too_large`), transcript over its limit `413 size_exceeded`, no conversation or no complete turn yet (no `user` and `assistant` record, after a bounded wait for a quiet transcript) `409 state_conflict` |
+| `POST /v1/contexts/{id}/stage` | body `application/x-tar` (a context archive, ≤ 16 GiB; every transcript `.jsonl` line complete JSON) → `{files,bytes}`; root-only staging for the session `{id}` that `POST /v1/sessions` with `restore` creates; an existing session that is not `suspended` `409 state_conflict` |
 | `POST /v1/sessions/{id}/pings` | `{ping_id,kind:"whiteboard.entry"|"subagent.finished"|"operation.finished",level?,ref}` → `{}` |
 | `GET /v1/journal` | `?after=<seq>&limit=<n>&wait=<s ≤ 25>` → `{records:[{seq,ts,session_id,kind,body}],head}` (long poll) |
 | `POST /v1/journal/ack` | `{through}` → `{}` |
@@ -444,6 +478,9 @@ PreToolUse → `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionD
 UserPromptSubmit → `{}` (accepted) or `{"decision":"block","reason":"Prompts are accepted only from agent.dfx.swiss."}`;
 PreToolUse / PostToolUse / UserPromptSubmit with pending pings (never `Stop`) → additionally
 `{"hookSpecificOutput":{"hookEventName":<event>,"additionalContext":"agent.dfx.swiss notice: <n> new item(s) available (<kinds>). Use mcp__platform__get_notifications to see them."}}`;
+the first of these answers after a resume or restore carries the session notice once (`additionalContext` starting
+with `agent.dfx.swiss session notice: `, the sentence about what changed and the session facts the conversation does
+not know; a ping notice follows after a blank line; KOR-33, 05-runner.md §§5.5, 8);
 all others → `{}`.
 
 ### 8.3 Operation registration (runner → hub)
@@ -563,7 +600,7 @@ of `agent_core.passkey.errors` (`client_data_invalid`, `challenge_mismatch`, `or
 `nonce_replayed`, `session_expired`, `unauthorized`. 403: `forbidden`, `last_admin`, `last_passkey`,
 `device_not_assigned`. 404: `not_found`, `invite_unknown`. 409: `id_conflict`, `event_conflict`, `seq_conflict`,
 `version_conflict`, `origin_seq_gap`, `origin_seq_conflict`, `no_device`, `already_assigned`, `rotation_required`.
-410: `invite_expired`. 413: `size_exceeded`. 429: `rate_limited`. 503: `unavailable`. Additional: `platform_invite_required` (403), `platform_access_denied` (403), `no_device_available` (409), `invite_registered` (409, invitation already bound to another user), and every code of `04-crypto.md` §8 (e.g. `author_not_writer`, `invite_not_in_log`) with status 400 unless listed above. Delegated agent access (`11-agent-access.md` §4): `pairing_unknown` (404), `pairing_gesture_required` (403), `claim_invalid` (401); pairing from another computer (§5.4 there, ADR-067): `handover_required` (400), `handover_unexpected` (400). Client-only codes (never sent by the hub): `login_automation_failed`, `prf_missing`, `log_rollback`, `log_fork`, `platform_root_mismatch`, `pairing_mismatch`.
+410: `invite_expired`. 413: `size_exceeded`, `quota_exceeded` (a context checkpoint over its quota, `detail.quota`, ADR-072 §6). 429: `rate_limited`. 503: `unavailable`. Additional: `platform_invite_required` (403), `platform_access_denied` (403), `no_device_available` (409), `invite_registered` (409, invitation already bound to another user), and every code of `04-crypto.md` §8 (e.g. `author_not_writer`, `invite_not_in_log`) with status 400 unless listed above. Delegated agent access (`11-agent-access.md` §4): `pairing_unknown` (404), `pairing_gesture_required` (403), `claim_invalid` (401); pairing from another computer (§5.4 there, ADR-072): `handover_required` (400), `handover_unexpected` (400). Client-only codes (never sent by the hub): `login_automation_failed`, `prf_missing`, `log_rollback`, `log_fork`, `platform_root_mismatch`, `pairing_mismatch`.
 All enumerations of this section are closed lists in `contracts/enums/` (`error-codes.json`, `operation-error-codes.json`, `session-failure-reasons.json`); every document and implementation references them.
 Operation codes (in operation results): `unknown_type`, `params_invalid`, `repo_not_allowed`,
 `repo_not_accessible`, `branch_protected`, `branch_exists`, `non_fast_forward`, `path_invalid`, `secret_detected`,
@@ -591,3 +628,4 @@ Operation codes (in operation results): `unknown_type`, `params_invalid`, `repo_
 | Session idle → suspend | 30 min (config `AGENT_RUNNER_SESSION_IDLE_SECONDS`) |
 | VM idle → stop | 30 min (config `AGENT_RUNNER_VM_IDLE_SECONDS`) |
 | Subagents | depth ≤ 2, running per task ≤ 3, total per task ≤ 10 (ADR-017) |
+| Context checkpoints (ADR-072 §6) | chunk ≤ 2 MiB of compressed plaintext (sealed + 28 B); per checkpoint 8 GiB, kept 3 per task, 200 GiB per organisation (config `AGENT_HUB_CONTEXT_*`); an upload without a new chunk for 6 h is removed (job `contexts.expire`, every 10 min) |

@@ -727,7 +727,8 @@ def test_main_reports_a_journal_error(
 
     monkeypatch.setattr(control_module.Journal, "open", refuse)  # type: ignore[attr-defined]
     assert main([], guest_env) == 1
-    assert capsys.readouterr().err == "agent-guest-control: journal_schema_mismatch\n"
+    # stray daemon threads of earlier tests in the same worker may write to stderr meanwhile
+    assert "agent-guest-control: journal_schema_mismatch" in capsys.readouterr().err.splitlines()
 
 
 def test_module_runs_as_a_process(guest_env: dict[str, str]) -> None:

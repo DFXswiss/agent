@@ -5,6 +5,13 @@ rules ``/opt/agent-guest/harness/RULES.md`` + the context of this session; Claud
 ``--append-system-prompt-file``. ``harness_version`` is the SHA-256 hex of ``RULES.md`` (journaled in
 ``session.state``).
 
+The file reaches the model only when a conversation starts. Claude Code (2.1.330) keeps the system prompt of a
+conversation in its transcript and reuses it on ``--resume``, ignoring a new ``--append-system-prompt-file``: a
+resumed or restored conversation still sees the facts of its first start (KOR-33 E2E). What changed since then
+reaches it as a session notice instead (``notice``; ``sessions.py`` keeps it pending in the session's root-only meta
+file, ``hook_addons/notice.py`` attaches it once to the first decorated hook answer): the sentence about what
+changed and every fact line (``fact_lines``) the conversation does not know yet.
+
 The context block has a fixed structure (decisions/GST-02.md):
 
 1. ``# Context of this session``
@@ -14,7 +21,9 @@ The context block has a fixed structure (decisions/GST-02.md):
    of this module
 3. ``## Session``: what the guest knows itself (session and task ID, parent session and depth, model, resource limits)
 4. ``## Platform tools``: every MCP tool of 03-api.md section 8.1 with one example call
-5. ``## Restarted session`` (only for a restarted session): read the history with ``get_task_messages``
+5. ``## Restarted session`` (only for a restarted session): read the history with ``get_task_messages`` - written
+   into the file of a session started with ``--resume``, which Claude Code does not read (see below); a resumed
+   session learns what changed from the session notice
 
 Interface:
 
@@ -25,6 +34,10 @@ Interface:
   form, every name collapsed to one line (``inline``)
 * ``write(path, text)`` - atomic write, root 0444, directory 0711
 * ``TOOLS`` - ``(name, purpose, example arguments)`` of every platform tool
+* ``fact_lines(facts, context_markdown) -> list[str]`` - the fact lines of blocks 2 and 3 (headings and blank lines
+  left out)
+* ``notice(sentences, current, known) -> str`` - the session notice: ``NOTICE_PREFIX``, the sentences, and the lines
+  of ``current`` that are not in ``known`` (all of them when ``known`` is None: the conversation's facts are unknown)
 """
 
 from __future__ import annotations
@@ -33,6 +46,7 @@ import hashlib
 import json
 import os
 import tempfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -47,6 +61,11 @@ GITHUB_NOT_CONNECTED = (
     " platform asks the task owner to connect and then continues it. Do not explain what is missing and do not offer"
     " workarounds."
 )
+NOTICE_PREFIX = "agent.dfx.swiss session notice: "
+"""Start of a session notice (``contracts/mcp/objects.json#/$defs/session_notice``)."""
+FACTS_HEADING = "Current facts of this session (they replace the ones in your instructions):"
+CHANGED_SENTENCE = "Facts of this session changed since your instructions were written."
+"""The sentence of a notice that has changed facts but no sentence of its own."""
 
 TOOLS: tuple[tuple[str, str, dict[str, Any]], ...] = (
     ("get_context", "organization, workgroup, task, session, your rights and limits", {}),
@@ -157,6 +176,22 @@ def render(rules: Rules, facts: SessionFacts, context_markdown: str) -> str:
             f"This session was restarted. Read the earlier messages of the task with {example} before you continue.",
         ]
     return "\n".join(lines) + "\n"
+
+
+def fact_lines(facts: SessionFacts, context_markdown: str) -> list[str]:
+    """The facts the harness tells the model (blocks 2 and 3 of the module docstring), one per line; headings and
+    blank lines are left out."""
+    lines = [*context_markdown.strip().splitlines(), *_session_block(facts)]
+    return [line.rstrip() for line in lines if line.strip() and not line.startswith("#")]
+
+
+def notice(sentences: Sequence[str], current: Sequence[str], known: Sequence[str] | None) -> str:
+    """The session notice (see the module docstring); every line of ``current`` when ``known`` is None."""
+    changed = [line for line in current if known is None or line not in known]
+    text = NOTICE_PREFIX + " ".join(sentences or [CHANGED_SENTENCE])
+    if changed:
+        text += "\n\n" + "\n".join([FACTS_HEADING, *changed])
+    return text
 
 
 def context_markdown(

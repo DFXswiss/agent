@@ -6,7 +6,9 @@ A route belongs here only when a success may leave nothing worth a row of its ow
   the registration ceremony; the recovery itself is audited when that registration finishes, `auth.recovery finish`);
 * it carries data whose own records are their trace: `POST /v1/device/outbox` (telemetry items - usage, metrics,
   quotas, VM states - stored with the outbox receipt; events, transitions and audit items write their own rows) and
-  `POST /v1/device/requests/{id}/responses` (encrypted response parts; the state changes write `device_request.*`);
+  `POST /v1/device/requests/{id}/responses` (encrypted response parts; the state changes write `device_request.*`), and
+  `PUT /v1/device/contexts/{object}/chunks/{index}` (sealed chunks of a context checkpoint, possibly thousands per
+  checkpoint; the commit writes `session.context_saved`, a quota refusal `session.context_refused`, ADR-072);
 * it only marks the caller: joining the community and its read position (`POST /v1/community/join`,
   `PUT /v1/community/read`, KOR-26); the posts, deletions, keys and moderation write their own `community.*` rows.
 
@@ -26,5 +28,6 @@ GENERIC: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/v1/device/requests/{id}/responses"),
         ("POST", "/v1/community/join"),
         ("PUT", "/v1/community/read"),
+        ("PUT", "/v1/device/contexts/{object}/chunks/{index}"),
     }
 )

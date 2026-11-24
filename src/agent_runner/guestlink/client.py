@@ -8,12 +8,14 @@ Transport: the Unix socket `<lima instance dir>/sock/agent-guest.sock` that Lima
 |---|---|
 | `health()` | `GET /v1/health` -> `Health` |
 | `assign(vm_id, org_id, wg_id)` | `POST /v1/assign` |
-| `create_session(request)` | `POST /v1/sessions` (request built by the session start, RUN-04) |
+| `create_session(request)` | `POST /v1/sessions` (request of the session start, RUN-04; `restore`: longer timeout) |
 | `put_credential(session_id, credential)` | `PUT /v1/sessions/{id}/credential` |
 | `register_prompt(session_id, prompt_id, text)` | `POST /v1/sessions/{id}/prompts` |
 | `control(session_id, action)` | `POST /v1/sessions/{id}/control` |
 | `import_files(session_id, dir, data, replace=)` | `POST /v1/sessions/{id}/files/import` (tar body) |
 | `export_files(session_id, dir, write, paths=)` | `POST /v1/sessions/{id}/files/export` (tar chunks to `write`) |
+| `export_context(session_id, write, ...)` | `POST /v1/sessions/{id}/context/export` (tar chunks to `write`, KOR-33) |
+| `stage_context(session_id, data, size)` | `POST /v1/contexts/{id}/stage` (tar body, KOR-33) |
 | `ping(session_id, ping)` | `POST /v1/sessions/{id}/pings` |
 | `journal(after, limit=, wait=)` | `GET /v1/journal` (long poll) -> `JournalPage` |
 | `ack(through)` | `POST /v1/journal/ack` |
@@ -42,6 +44,12 @@ JOURNAL_WAIT_MAX_S = 25
 JOURNAL_MARGIN_S = 10.0
 DEFAULT_JOURNAL_LIMIT = 200
 FILES_TIMEOUT_S = 600.0
+CONTEXT_TIMEOUT_S = 3600.0
+"""Read and write limit of a context export or stage (archives of several GiB through the forwarded socket)."""
+RESTORE_CREATE_TIMEOUT_S = 300.0
+"""Limit of a `POST /v1/sessions` with `restore`: the guest renames the staged tree and hands every entry to the
+session user (the rewriting happened at the stage, KOR-33 review no. 9), which takes longer than a plain create for a
+workspace of many files."""
 BASE_URL = "http://agent-guest"
 HEALTH_STATES = frozenset({"unassigned", "assigned", "broken"})
 CONTROL_ACTIONS = frozenset({"interrupt", "stop", "suspend"})
@@ -211,7 +219,8 @@ class GuestClient:
         await self._json("assign", "POST", "/v1/assign", json=body, **extra)
 
     async def create_session(self, request: Mapping[str, Any]) -> dict[str, Any]:
-        return await self._json("sessions", "POST", "/v1/sessions", json=dict(request))
+        extra = {"timeout": RESTORE_CREATE_TIMEOUT_S} if request.get("restore") is not None else {}
+        return await self._json("sessions", "POST", "/v1/sessions", json=dict(request), **extra)
 
     async def put_credential(self, session_id: str, credential: Mapping[str, Any]) -> None:
         path = f"/v1/sessions/{_segment(session_id, 'credential')}/credential"
@@ -284,6 +293,31 @@ class GuestClient:
         except httpx.TransportError:
             raise GuestUnreachable("files_export") from None
         return manifest
+
+    async def export_context(
+        self,
+        session_id: str,
+        write: Callable[[bytes], object],
+        *,
+        workspace_max_bytes: int,
+        transcript_max_bytes: int,
+    ) -> None:
+        """Stream the context archive of the session (ADR-072 section 2) chunk by chunk to `write`."""
+        path = f"/v1/sessions/{_segment(session_id, 'context_export')}/context/export"
+        body = {"workspace_max_bytes": workspace_max_bytes, "transcript_max_bytes": transcript_max_bytes}
+        try:
+            async with self._client.stream("POST", path, json=body, timeout=CONTEXT_TIMEOUT_S) as response:
+                await self._check("context_export", response)
+                async for chunk in response.aiter_bytes():
+                    write(chunk)
+        except httpx.TransportError:
+            raise GuestUnreachable("context_export") from None
+
+    async def stage_context(self, session_id: str, data: AsyncIterable[bytes], size: int) -> dict[str, Any]:
+        """Send a verified context archive (`size` bytes, streamed) into the guest's staging for `session_id`."""
+        path = f"/v1/contexts/{_segment(session_id, 'context_stage')}/stage"
+        headers = {"Content-Type": "application/x-tar", "Content-Length": str(size)}
+        return await self._json("context_stage", "POST", path, content=data, headers=headers, timeout=CONTEXT_TIMEOUT_S)
 
     async def journal(
         self, after: int, *, limit: int = DEFAULT_JOURNAL_LIMIT, wait: int = JOURNAL_WAIT_MAX_S

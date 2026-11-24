@@ -272,7 +272,30 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("ready_at", TS),
         ("first_working_at", TS),
         ("ended_at", TS),
+        ("context_restore", T),
+        ("context_reason", T),
     ],
+    # 2.4.2 context checkpoints and pull-request links (KOR-33, ADR-072)
+    "context_object": [
+        ("id", U),
+        ("org_id", U),
+        ("wg_id", U),
+        ("task_id", U),
+        ("session_id", U),
+        ("author_id", U),
+        ("state", T),
+        ("chunks", INT),
+        ("size", BI),
+        ("epoch", INT),
+        ("digest", T),
+        ("manifest_text", T),
+        ("sig", B),
+        ("created_at", TS),
+        ("updated_at", TS),
+        ("completed_at", TS),
+    ],
+    "context_chunk": [("object_id", U), ("chunk_index", INT), ("ct", B), ("sha256", B)],
+    "pr_link": [("wg_id", U), ("epoch", INT), ("tag", T), ("task_id", U), ("session_id", U), ("created_at", TS)],
     "session_transition": [
         ("session_id", U),
         ("seq", INT),
@@ -629,6 +652,8 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "usage_daily": ("org_id", "day", "device_id"),
     "credit_entry": ("org_id", "n"),
     "charge_daily": ("org_id", "day", "wg_id", "device_id", "kind"),
+    "context_chunk": ("object_id", "chunk_index"),
+    "pr_link": ("wg_id", "epoch", "tag"),
     "outbox_receipt": ("device_id", "origin_seq"),
     "audit_checkpoint": ("hub_key_id", "seq"),
     "community_wrap": ("epoch", "user_id"),
@@ -676,6 +701,8 @@ def test_no_project_level_and_no_pull_request_table(owner: psycopg.Connection[An
     ).fetchall()
     for (name,) in names:
         assert "project" not in name
+        if name.startswith("pr_link"):
+            continue  # an opaque HMAC tag of a pull request, no pull-request data (KOR-33, ADR-072 section 8)
         assert not re.search(r"(^|_)(pr|pull|pulls|pull_request)(_|$)", name), name
 
 
@@ -785,6 +812,23 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
         ("scope_epoch", "scope", ["org", "wg", "cred"]),
         ("task", "state", ["scheduling", "starting", "working", "idle", "failed", "closed"]),
         ("session", "model_access", ["subscription", "api_key", "platform"]),
+        # the rule that ties the two columns names the reasons as well (test_context_reasons_equal_the_contract)
+        (
+            "session",
+            "context_restore",
+            [
+                "restored",
+                "fallback",
+                "context_missing",
+                "context_invalid",
+                "context_unavailable",
+                "version_incompatible",
+                "restore_failed",
+                "workspace_partial",
+                "workspace_omitted",
+            ],
+        ),
+        ("context_object", "state", ["uploading", "complete"]),
         ("vm", "state", ["pool", "assigning", "running", "stopping", "stopped", "deleted"]),
         (
             "operation",
@@ -819,6 +863,17 @@ def test_closed_value_lists(owner: psycopg.Connection[Any], table: str, column: 
     listed = re.findall(r"'([^']*)'::text", definition)
     assert set(values) <= set(listed)
     assert set(listed) - set(values) <= {"session.state"}  # no other value is allowed
+
+
+def test_context_reasons_equal_the_contract(owner: psycopg.Connection[Any], repo_root: Any) -> None:
+    """The reasons of a session's continuation (KOR-33) are the closed lists of the contracts: a fallback names a
+    fallback reason, a restore at most what was missing of the workspace."""
+    definitions = json.loads((repo_root / "contracts/common.json").read_text())["$defs"]
+    reasons = definitions["context_reason"]["enum"]
+    fallback = definitions["context_fallback_reason"]["enum"]
+    assert reasons == [*fallback, "workspace_partial", "workspace_omitted"]
+    listed = re.findall(r"'([^']*)'::text", _check_values(owner, "session", "context_reason"))
+    assert set(listed) == {*reasons, "fallback", "restored"}
 
 
 def test_session_states_equal_the_contract(owner: psycopg.Connection[Any], repo_root: Any) -> None:

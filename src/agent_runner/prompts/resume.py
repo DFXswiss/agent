@@ -4,13 +4,18 @@
 `Resumer.resume(session)` - a follow-up prompt for a `suspended` session (or one left `resuming` by a daemon restart):
 
 1. `resuming` (transition);
-2. the workgroup's VM is made ready again (`VmManager.ensure_vm`: a VM stopped by the VM idle rule is restarted); a
-   VM other than the session's - the session's directories and transcript are gone - fails the session
-   (`vm_start_failed`);
+2. the workgroup's VM is made ready again (`VmManager.ensure_vm`: a VM stopped by the VM idle rule is restarted). On a
+   VM other than the session's (deleted, replaced by a new golden, another VM of the workgroup) the session's
+   directories and transcript are not there: the session moves to that VM and is restored there from its newest
+   context checkpoint by the request amenders (`contexts.restore`, ADR-072 section 7), or - when that is not possible -
+   takes the reported emergency path; it no longer fails `vm_start_failed`. The session's `vm_id` changes only once
+   the guest accepted that `POST /v1/sessions` (KOR-33 review no. 4): a retry after a failed create therefore sees
+   the move again and restores again instead of sending `--resume` to a VM that never had the transcript;
 3. guest health assigned to the workgroup, model access and credential as for a start (the owner's preference from
    the desired state, else the session's recorded access);
 4. `POST /v1/sessions` with the same session ID and `resume_claude_session_id` (the guest keeps user, directories and
-   transcript and starts `claude --resume <id>`), then `PUT .../credential`, which starts the agent.
+   transcript and starts `claude --resume <id>`) - on another VM with what the amenders set instead (`restore`) -,
+   then `PUT .../credential`, which starts the agent.
 
 The prompt itself is delivered afterwards by `deliver.Deliverer` through `POST .../prompts`; the guest waits for the
 resumed TUI before it types (GST-06). A guest that cannot be reached (or is not healthy for the workgroup) leaves the
@@ -22,17 +27,18 @@ A repeated resume of a session the guest already resumed is answered by the gues
 The steps reuse the start's building blocks (`sessions.start.Starter`: VM and guest checks, model choice, harness
 context, guest calls), so a resumed session gets exactly what a started one gets.
 
-`restart_hint` (request amender, `session_request.py`): a **new** main session of a task that had earlier messages
-(03-api.md section 4.6.3: the hub names the previous session in `resume_from`, or the session's first prompt is not
-the task's first prompt) gets one more line in its harness context telling it to read the history with
-`get_task_messages`. The transcript of the previous session belongs to that session's user and directories in the
-guest, so a new session never resumes it with `--resume` (decisions/RUN-05.md).
+`restarted` tells whether a new main session continues a task that had earlier messages (03-api.md section 4.6.3: the
+hub names the previous session in `resume_from`, or the session's first prompt is not the task's first prompt).
+Such a session continues the original conversation from its context checkpoint (`contexts.restore`, KOR-33, ADR-072;
+this replaces decisions/RUN-05.md no. 20); `RESTART_LINE` - read the task's messages - remains only as the reported
+emergency path when no checkpoint can be restored.
 """
 
 from __future__ import annotations
 
 import contextlib
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any
 
 from agent_runner.errors import RunnerError
@@ -136,9 +142,12 @@ class Resumer:
             row = await env.vms.ensure_vm(session.org_id, session.wg_id)
         except RunnerError as exc:
             raise StartFailed(exc.code if exc.code in VM_REASONS else "vm_start_failed") from None
-        if row.id != session.vm_id:
-            # another VM: the session's directories and transcript are not there
-            raise StartFailed("vm_start_failed")
+        moved = row.id != session.vm_id
+        if moved:
+            # another VM: the session's directories and transcript are not there; it is restored there (KOR-33). The
+            # row keeps the old VM until the guest took the request (a retry restores again).
+            session = replace(session, vm_id=row.id, state="resuming")
+            env.line(f"resume_moved session_id={session.id} vm_id={row.id}")
         env.watch(row)  # a restarted VM: its journal is read at once
         try:
             guest = await env.client(row)
@@ -156,9 +165,16 @@ class Resumer:
                 "model": {"access": choice.access, "model_id": choice.model_id, "env": dict(choice.env)},
                 "limits": harness.MAIN_LIMITS.body(),
             }
-            if session.claude_session_id is not None:
+            if moved:
+                # nothing to resume there: the amenders restore the conversation (or take the emergency path)
+                for amender in env.amenders:
+                    await amender.amend(env.context, session, request)
+            elif session.claude_session_id is not None:
                 request["resume_claude_session_id"] = session.claude_session_id
             await self._create(guest, session, request)
+            if moved:
+                async with env.transaction() as conn:
+                    await records.update(conn, session.id, vm_id=row.id)
             await self.starter._provision(guest, session.id, credential)
             async with env.transaction() as conn:
                 await records.update(conn, session.id, model_access=choice.access, model_id=choice.model_id)
@@ -205,16 +221,6 @@ async def restarted(env: SessionEnv, session: LocalSession, request: Mapping[str
     async with env.transaction() as conn:
         prompt = await queue.event(conn, str(initial.get("prompt_id")))
         return prompt is not None and await queue.earlier_of_task(conn, prompt.task_id, prompt.scope_seq)
-
-
-async def restart_hint(env: SessionEnv, session: LocalSession, request: dict[str, Any]) -> None:
-    if not await restarted(env, session, request):
-        return
-    harness_part = request["harness"]
-    harness_part["context_markdown"] = (
-        str(harness_part["context_markdown"]).rstrip("\n") + "\n" + RESTART_LINE.format(task_id=session.task_id)
-    )
-    env.line(f"restarted session_id={session.id}")
 
 
 async def vm_running(env: SessionEnv, session: LocalSession) -> vm_records.VmRow | None:

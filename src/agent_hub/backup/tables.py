@@ -70,7 +70,8 @@ AGENT_EXPORT: Mapping[str, str] = {
 }
 
 RULES: tuple[TableRule, ...] = (
-    # Principals first: user_identity, user_settings and device reference principal (the only foreign keys).
+    # Principals first: user_identity, user_settings and device reference principal; the context tables reference
+    # task and context_object (the only other foreign keys, KOR-33).
     TableRule("principal", "id = ANY(%(principals)s)"),
     TableRule("user_identity", USER_ROWS),
     TableRule("user_settings", USER_ROWS),
@@ -139,6 +140,10 @@ RULES: tuple[TableRule, ...] = (
     TableRule("community_member", ALL_ROWS),
     TableRule("community_moderator", ALL_ROWS),
     TableRule("community_message", ALL_ROWS),
+    # context checkpoints and pull-request links reference their task (and the chunks their object): after `task`
+    TableRule("context_object", ORG_ROWS),
+    TableRule("context_chunk", "object_id IN (SELECT id FROM hub.context_object WHERE org_id = %(org)s)"),
+    TableRule("pr_link", WG_ROWS),
     TableRule("audit", ALL_ROWS, append_only=True),
     TableRule("audit_checkpoint", ALL_ROWS, append_only=True),
 )

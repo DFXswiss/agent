@@ -10,7 +10,11 @@ file (`kind="file"`) and directory (`kind="dir"`), in archive order:
   leading `./` is removed and a member `.` or `./` is ignored;
 - symbolic links, hard links, devices, FIFOs and other member types are `UnsafeArchive("path_invalid")` with
   `links="refuse"` (the export of a guest, which must contain regular files only), and are skipped and counted with
-  `links="skip"` (a GitHub tarball: a repository may contain links; they are never created);
+  `links="skip"` (a GitHub tarball: a repository may contain links; they are never created); with
+  `links="symlinks"` (a context archive, KOR-33) a symbolic link is yielded as `kind="symlink"` with its `target`
+  for the caller to check - nothing is ever created from it here - and every other type is refused as with
+  `"refuse"`;
+- `Entry.mode` is the member's permission bits (the caller decides what it keeps of them);
 - sparse members are refused (`archive_invalid`), and so is the same path twice;
 - at most `limits.max_entries` members and `limits.max_bytes` bytes of file content (`size_exceeded`);
 - an extended header (PAX, GNU long name) larger than `MAX_HEADER` is `size_exceeded` before it is read;
@@ -70,9 +74,12 @@ class Stats:
 @dataclass(frozen=True)
 class Entry:
     path: str
-    kind: Literal["file", "dir"]
+    kind: Literal["file", "dir", "symlink"]
     size: int
     reader: IO[bytes] | None
+    mode: int = 0
+    target: str | None = None
+    """The link target of a `symlink` entry (`links="symlinks"`)."""
 
 
 def safe_path(name: str) -> str | None:
@@ -115,7 +122,7 @@ def entries(
     source: BinaryIO,
     *,
     limits: Limits,
-    links: Literal["refuse", "skip"] = "refuse",
+    links: Literal["refuse", "skip", "symlinks"] = "refuse",
     compressed: bool = False,
     stats: Stats | None = None,
 ) -> Iterator[Entry]:
@@ -137,9 +144,9 @@ def entries(
                 raise UnsafeArchive("size_exceeded")
             path = safe_path(member.name)
             if not (member.isreg() or member.isdir()):
-                if links == "refuse":
-                    raise UnsafeArchive("path_invalid")
-                stats.skipped += 1
+                link = _other(member, path, links, stats, seen)
+                if link is not None:
+                    yield link
                 continue
             if member.issparse():
                 raise UnsafeArchive("archive_invalid")
@@ -150,15 +157,29 @@ def entries(
             seen.add(path)
             if member.isdir():
                 stats.dirs += 1
-                yield Entry(path, "dir", 0, None)
+                yield Entry(path, "dir", 0, None, member.mode & 0o7777)
                 continue
             stats.files += 1
             stats.bytes += member.size
             if stats.bytes > limits.max_bytes:
                 raise UnsafeArchive("size_exceeded")
-            yield Entry(path, "file", member.size, archive.extractfile(member))
+            yield Entry(path, "file", member.size, archive.extractfile(member), member.mode & 0o7777)
     finally:
         archive.close()
+
+
+def _other(member: tarfile.TarInfo, path: str | None, links: str, stats: Stats, seen: set[str]) -> Entry | None:
+    """A member that is no regular file or directory (see the module docstring): the symlink entry, None when it is
+    skipped, `UnsafeArchive` when it is refused."""
+    if links == "symlinks" and member.issym() and path is not None:
+        if path in seen:
+            raise UnsafeArchive("archive_invalid")
+        seen.add(path)
+        return Entry(path, "symlink", 0, None, member.mode & 0o7777, member.linkname)
+    if links != "skip":
+        raise UnsafeArchive("path_invalid")
+    stats.skipped += 1
+    return None
 
 
 def copy_exact(reader: IO[bytes], size: int, write: Callable[[bytes], object]) -> None:
@@ -175,7 +196,7 @@ def copy_exact(reader: IO[bytes], size: int, write: Callable[[bytes], object]) -
         left -= len(data)
 
 
-def _info(path: str, kind: Literal["file", "dir"], size: int) -> tarfile.TarInfo:
+def _info(path: str, kind: Literal["file", "dir", "symlink"], size: int) -> tarfile.TarInfo:
     info = tarfile.TarInfo(path)
     info.type = tarfile.REGTYPE if kind == "file" else tarfile.DIRTYPE
     info.mode = FILE_MODE if kind == "file" else DIR_MODE

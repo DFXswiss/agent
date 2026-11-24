@@ -1,6 +1,7 @@
 // The task page (06-web.md sections 2.4 and 5, route `/o/:org/t/:task`, right `task:read`): title and state, the task
 // menu with "Close task" for writers, "Renamed by session" after a `task.set_title` (WEB-09), and the tab frame. Tabs are discovered at `ui/task-tabs/<area>/index.tsx`
 // (ADR-027 section 4): Chat (default) and Sessions here; Operations, Whiteboard and Audit join from their packages.
+// Below the header, how the current main session took over the context after a resume (ContextNotice, KOR-33).
 // The send sequence of the home screen navigates here at once (WEB-04); the countdown is part of the chat.
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
@@ -19,6 +20,7 @@ import { useAppEnv } from '../../shell/context';
 import { RUNTIME_TICK_MS } from '../../task-tabs/sessions/SessionsTab';
 import { LoadError } from '../errors/pages';
 import { useDirectory, useOrgView, useTitle } from '../tasks/hooks';
+import { ContextNotice } from './ContextNotice';
 import { activeTab, Tabs } from './Tabs';
 import { Unlocking } from '../../unlock/Unlocking';
 
@@ -125,6 +127,7 @@ function TaskView({ row }: { readonly row: TaskRow }) {
         </div>
         {writer && <TaskMenu task={row} />}
       </header>
+      <ContextNotice sessionId={row.main_session_id} />
       <Tabs tabs={tabs} label={t('task.tabs.label')} testId="task.tabs" />
       <Unlocking org={row.org_id} wg={row.wg_id}>
         <active.Component orgId={row.org_id} taskId={row.task_id} />

@@ -303,6 +303,30 @@
               "type": "null"
             }
           ]
+        },
+        "context_restore": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "restored",
+                "fallback"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "context_reason": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/context_reason"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [

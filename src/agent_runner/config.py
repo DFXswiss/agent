@@ -75,6 +75,11 @@ NAMES = (
     "WORKVM_MAX_PER_OWNER",
     "WORKVM_SSH_PORT_BASE",
     "WORKVM_TEMPLATE",
+    "CONTEXT_INTERVAL_SECONDS",
+    "CONTEXT_CACHE_MIB",
+    "CONTEXT_WORKSPACE_MIB",
+    "CONTEXT_TRANSCRIPT_MIB",
+    "CONTEXT_WAIT_SECONDS",
 )
 # Required for the daemon (`run`, `service install`); commands that never talk to the hub load without them.
 HUB_NAMES = frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"})
@@ -97,6 +102,12 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     "WORKVM_MAX_PER_ORG": (16, 1, 100),
     "WORKVM_MAX_PER_OWNER": (8, 1, 100),
     "WORKVM_SSH_PORT_BASE": (47200, 1024, 65_435),
+    # KOR-33 context checkpoints (ADR-072 sections 4 and 6): generous defaults, never a precondition.
+    "CONTEXT_INTERVAL_SECONDS": (600, 30, 86_400),
+    "CONTEXT_CACHE_MIB": (20_480, 0, 999_999_999),
+    "CONTEXT_WORKSPACE_MIB": (4096, 0, 999_999_999),
+    "CONTEXT_TRANSCRIPT_MIB": (4096, 1, 999_999_999),
+    "CONTEXT_WAIT_SECONDS": (180, 0, 3600),
 }
 WORKVM_SIZES = ("standard", "large", "xlarge")
 _URL_DEFAULTS = {
@@ -153,6 +164,16 @@ class Config:
     """The operator's GitHub token file (platform devices only; KOR-27, ADR-053)."""
     operator_github_users: frozenset[str] = frozenset()
     """Users whose `github.connect` uses the operator's token; only together with the file."""
+    context_interval_seconds: int = 600
+    """Checkpoint interval of a working main session (KOR-33, ADR-072 section 4)."""
+    context_cache_mib: int = 20_480
+    """Size cap of the local encrypted checkpoint cache `<home>/contexts/`."""
+    context_workspace_mib: int = 4096
+    """A workspace above this size is left out of a checkpoint (the transcript is still saved)."""
+    context_transcript_mib: int = 4096
+    """A transcript above this size cannot be checkpointed (audited, never silent)."""
+    context_wait_seconds: int = 180
+    """How long a restore waits for the final checkpoint of the session it continues and retries the hub."""
 
     @property
     def pg_dir(self) -> Path:
@@ -179,6 +200,11 @@ class Config:
     workvm_max_per_owner: int = 8
     workvm_ssh_port_base: int = 47200
     workvm_template: Path | None = None
+
+    @property
+    def contexts_dir(self) -> Path:
+        """The encrypted checkpoint cache (KOR-33)."""
+        return self.home / "contexts"
 
 
 def check_platform(platform: str) -> None:
@@ -255,6 +281,11 @@ def load_config(
         operator_github_token_file=github_file,
         operator_github_users=github_users,
         **_workvm(raw, require, integers, test_mode),
+        context_interval_seconds=integers["CONTEXT_INTERVAL_SECONDS"],
+        context_cache_mib=integers["CONTEXT_CACHE_MIB"],
+        context_workspace_mib=integers["CONTEXT_WORKSPACE_MIB"],
+        context_transcript_mib=integers["CONTEXT_TRANSCRIPT_MIB"],
+        context_wait_seconds=integers["CONTEXT_WAIT_SECONDS"],
     )
 
 

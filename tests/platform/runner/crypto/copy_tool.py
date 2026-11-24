@@ -8,6 +8,7 @@
 | `src/agent_hub/crypto/<m>.py`    | `src/agent_runner/crypto/<m>.py`              |
 | `src/agent_hub/log/<m>.py`       | `src/agent_runner/crypto/log/<m>.py`          |
 | `src/agent_hub/agents/vectors.py`| `src/agent_runner/crypto/agents/vectors.py`   |
+| `src/agent_hub/contexts/vectors.py`| `src/agent_runner/crypto/contexts/vectors.py` |
 | `tests/platform/hub/crypto/...`  | `tests/platform/runner/crypto/...`            |
 | `tests/platform/hub/log/...`     | `tests/platform/runner/crypto/log/...`        |
 
@@ -51,13 +52,19 @@ SOURCE_DIRS = (
     ("src/agent_hub/log", "src/agent_runner/crypto/log"),
 )
 # Single reference modules of other hub areas: their vector sections (KOR-24, `contracts/vectors/agent.json`).
-SOURCE_FILES = (("src/agent_hub/agents/vectors.py", "src/agent_runner/crypto/agents/vectors.py"),)
+# KOR-33: the vector section of the context checkpoints (`contracts/vectors/context.json`).
+SOURCE_FILES = (
+    ("src/agent_hub/agents/vectors.py", "src/agent_runner/crypto/agents/vectors.py"),
+    ("src/agent_hub/contexts/vectors.py", "src/agent_runner/crypto/contexts/vectors.py"),
+)
 TEST_DIRS = (
     ("tests/platform/hub/crypto", "tests/platform/runner/crypto"),
     ("tests/platform/hub/log", "tests/platform/runner/crypto/log"),
 )
 # Longest prefix first; the copy side is matched the same way when a copy is normalised.
 MODULE_NAMES = (
+    ("agent_hub.contexts.vectors", "agent_runner.crypto.contexts.vectors"),
+    ("agent_hub.contexts", "agent_runner.crypto.contexts"),
     ("agent_hub.agents.vectors", "agent_runner.crypto.agents.vectors"),
     ("agent_hub.agents", "agent_runner.crypto.agents"),
     ("agent_hub.log", "agent_runner.crypto.log"),

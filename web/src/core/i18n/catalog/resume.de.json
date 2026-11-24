@@ -1,0 +1,12 @@
+{
+  "fallback": "Diese Aufgabe wurde mit einer neuen KI fortgesetzt, weil {reason}.",
+  "reason.context_missing": "für die frühere Sitzung kein gesicherter Kontext vorliegt",
+  "reason.context_invalid": "der gesicherte Kontext beschädigt oder nicht prüfbar war",
+  "reason.context_unavailable": "der gesicherte Kontext nicht abgerufen werden konnte",
+  "reason.version_incompatible": "der gesicherte Kontext zu einer nicht verträglichen Version gehört",
+  "reason.restore_failed": "die Wiederherstellung auf der VM fehlschlug",
+  "reason.unknown": "der frühere Kontext nicht wiederhergestellt werden konnte",
+  "restored": "Fortgesetzt mit vollem Kontext der ursprünglichen Sitzung",
+  "restored.workspace_omitted": "Fortgesetzt mit dem vollständigen Gesprächsverlauf; der Arbeitsstand war zu groß und wurde nicht wiederhergestellt.",
+  "restored.workspace_partial": "Fortgesetzt mit dem vollständigen Gesprächsverlauf; der Arbeitsstand wurde nur teilweise wiederhergestellt."
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/session.context_refused.json",
+  "title": "audit detail session.context_refused",
+  "description": "detail of audit rows with action session.context_refused: the hub refused a chunk of a context checkpoint of the session (ADR-072 section 6): the reason, the quota reached (per checkpoint or per organisation), its limit, the sealed bytes already used and the bytes of the refused chunk. The device keeps its local copy. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "reason": {
+      "type": "string",
+      "enum": [
+        "quota_exceeded"
+      ]
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "object",
+        "org"
+      ]
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "used": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "requested": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "reason",
+    "scope",
+    "limit",
+    "used",
+    "requested"
+  ],
+  "additionalProperties": false
+}

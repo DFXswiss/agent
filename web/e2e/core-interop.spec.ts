@@ -66,7 +66,7 @@ test('Chromium reproduces every shared crypto vector with its own WebCrypto', as
     (total, name) => total + invalidCount(name === 'title' ? 'tasks' : 'vectors', name),
     0,
   );
-  expect(consumed.length).toBe(15);
+  expect(consumed.length).toBe(16);
   expect(outcomes.length).toBe(consumed.length + negatives);
 });
 

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-context-chunk-get.response.json",
+  "title": "GET /v1/device/contexts/{object}/chunks/{index} response",
+  "description": "Body of a successful response to GET /v1/device/contexts/{object}/chunks/{index} (03-api.md section 6.1): one sealed chunk.",
+  "type": "object",
+  "properties": {
+    "ct": {
+      "type": "string",
+      "$ref": "../common.json#/$defs/b64u",
+      "minLength": 39,
+      "maxLength": 2796240
+    }
+  },
+  "required": [
+    "ct"
+  ],
+  "additionalProperties": false
+}

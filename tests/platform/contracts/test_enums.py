@@ -47,6 +47,7 @@ SPEC_ERRORS: dict[int, str] = {
     # 14-community.md section 4.1 (KOR-26)
     " community_not_member community_epoch_exists community_no_key",
     410: "invite_expired",
+    413: "quota_exceeded",  # KOR-33 (ADR-072 section 6): a context checkpoint over its quota
     429: "rate_limited",
     503: "unavailable",
 }
@@ -84,7 +85,8 @@ SPEC_OUTBOX_KINDS = (
 )
 SPEC_OUTBOX_AUDIT = (
     "hook.denied read.session.<tool> ping.delivered session.prompt_refused model.provider_outside_allowlist"
-    " runner.inbound_rejected runner.log_rollback runner.log_fork runner.alert"
+    " runner.inbound_rejected runner.log_rollback runner.log_fork runner.alert session.context_restored"
+    " session.context_fallback"
 )
 # 03-api.md section 8.1: the session platform tools that read (request_operation writes).
 SPEC_MCP_TOOLS = (
@@ -97,7 +99,8 @@ SPEC_AUDIT_FIXED = (
     " event.append task.create task.close session.control credential.put credential.delete device.enroll"
     " device.certify device.connect device.disconnect whiteboard.notify ping.delivered hook.denied"
     " session.prompt_refused model.provider_outside_allowlist runner.inbound_rejected runner.log_rollback"
-    " runner.log_fork runner.alert"
+    " runner.log_fork runner.alert session.context_restored session.context_fallback session.context_saved"
+    " session.context_refused session.pr_linked"
 )
 SPEC_AUDIT_PATTERNS = {
     # 04-crypto.md section 4.7

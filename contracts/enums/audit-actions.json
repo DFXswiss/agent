@@ -342,6 +342,26 @@
       "group": "runner"
     },
     {
+      "action": "session.context_restored",
+      "group": "runner"
+    },
+    {
+      "action": "session.context_fallback",
+      "group": "runner"
+    },
+    {
+      "action": "session.context_saved",
+      "group": "session"
+    },
+    {
+      "action": "session.context_refused",
+      "group": "session"
+    },
+    {
+      "action": "session.pr_linked",
+      "group": "session"
+    },
+    {
       "action": "model.provider_outside_allowlist",
       "group": "runner"
     },
@@ -639,6 +659,22 @@
     },
     {
       "action": "read.wraps",
+      "group": "read"
+    },
+    {
+      "action": "read.device.context",
+      "group": "read"
+    },
+    {
+      "action": "read.device.context.chunk",
+      "group": "read"
+    },
+    {
+      "action": "read.task.contexts",
+      "group": "read"
+    },
+    {
+      "action": "read.workgroup.pr_link",
       "group": "read"
     },
     {

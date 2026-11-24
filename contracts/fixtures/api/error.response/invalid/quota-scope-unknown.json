@@ -1,0 +1,10 @@
+{
+  "error": "quota_exceeded",
+  "detail": {
+    "quota": {
+      "scope": "task",
+      "limit": 1,
+      "used": 1
+    }
+  }
+}

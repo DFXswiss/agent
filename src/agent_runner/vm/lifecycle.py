@@ -5,7 +5,8 @@
 
 1. running VM of the workgroup -> use it;
 2. stopped VM of the workgroup -> restart it (`limactl start`, health `assigned` to this workgroup), unless its golden
-   is not the newest ready one and it has no `suspended` session: then it is deleted and the next steps apply;
+   is not the newest ready one, it has no `suspended` session and no retire hook keeps it (`vm.extensions`: e.g.
+   context checkpoints still due, KOR-33): then it is deleted and the next steps apply;
 3. warm pool -> assign (`Pool.take`);
 4. clone + start on the hot path (`Provisioner.create`).
 
@@ -25,6 +26,9 @@ Further rules:
   `touch(vm_id)`, which the session start calls on every session transition) and the session timestamps.
 - `delete_workgroup(wg_id)`: the VM of an unassigned or archived workgroup (trigger: RUN-06) is deleted
   (`limactl delete -f`, row `deleted`, token file and journal cursor removed).
+- Before a running workgroup VM is stopped (`_stop`: idle, LRU, unhealthy) or deleted (`delete_workgroup`) the retire
+  hooks of `vm.extensions` run (`Retire.flush`, bounded in time; KOR-33 takes the due context checkpoints of its
+  sessions there).
 - `reconcile()` (start of task `vm-pool`, before any other VM work): `limactl list --json` against `runner.vm`.
   Rows whose instance is gone become `deleted`; `assigning` rows of a crashed process and pool VMs that do not run
   are deleted; states follow the instance (`running` <-> `stopped`); unknown `<prefix>arp-<8 hex>` instances are
@@ -48,6 +52,7 @@ from agent_runner.guestlink.client import GuestClient, Health
 from agent_runner.guestlink.errors import GuestError
 from agent_runner.vm import records
 from agent_runner.vm.capacity import Capacity, lru_victim
+from agent_runner.vm.extensions import Retire
 from agent_runner.vm.lima import LimaError, LimaNotFound
 from agent_runner.vm.pool import HEALTH_CALL_S, Pool, Provisioner, VmEnv, failure_fields
 from agent_runner.vm.records import GoldenRef, VmRow
@@ -64,9 +69,10 @@ async def _ignore(_row: VmRow) -> None:
 
 
 class VmManager:
-    def __init__(self, env: VmEnv, *, on_unreachable: Unreachable = _ignore) -> None:
+    def __init__(self, env: VmEnv, *, on_unreachable: Unreachable = _ignore, retire: Retire | None = None) -> None:
         self.env = env
         self.on_unreachable = on_unreachable
+        self.retire = retire if retire is not None else Retire()
         self.provisioner = Provisioner(env)
         self.pool = Pool(env, self.provisioner, on_change=self.wake_refill, reserved=lambda: self.reserved)
         # Slots claimed by a running restart or hot-path clone (counted as used until it finished).
@@ -137,6 +143,7 @@ class VmManager:
                     golden is not None
                     and row.golden_version != golden.version
                     and not await records.has_suspended(env.db, row.id)
+                    and not await self.retire.pending(row)
                 ):
                     env.log("vm.golden_replaced", {"vm_id": row.id, "golden_version": golden.version})
                     self._forget(row.id)
@@ -308,6 +315,7 @@ class VmManager:
         """`running` -> `stopping` -> `limactl stop` -> `stopped` (caller holds the workgroup lock)."""
         env = self.env
         self._recovered.discard(row.id)
+        await self.retire.flush(row)
         stopping = await env.set_state(row, "stopping")
         try:
             await env.blocking(env.lima.stop, row.lima_name)
@@ -334,6 +342,8 @@ class VmManager:
             row = await records.for_workgroup(self.env.db, wg_id)
             if row is None:
                 return None
+            if row.state == "running":
+                await self.retire.flush(row)
             self._forget(row.id)
             return await self.env.delete(row)
 

@@ -427,6 +427,14 @@
       "source": "03-api \u00a711"
     },
     {
+      "code": "quota_exceeded",
+      "statuses": [
+        413
+      ],
+      "origin": "hub",
+      "source": "03-api \u00a711"
+    },
+    {
       "code": "rate_limited",
       "statuses": [
         429

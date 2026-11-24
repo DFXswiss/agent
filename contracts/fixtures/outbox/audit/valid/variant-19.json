@@ -1,0 +1,12 @@
+{
+  "action": "session.context_restored",
+  "result": "ok",
+  "session_id": "01930014-0000-7000-8000-000000000022",
+  "target_kind": "context",
+  "target_id": "01930014-0000-7000-8000-000000000021",
+  "detail": {
+    "object_id": "01930014-0000-7000-8000-000000000021",
+    "workspace": "partial",
+    "stale": false
+  }
+}

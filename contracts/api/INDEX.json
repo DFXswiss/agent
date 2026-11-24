@@ -848,6 +848,46 @@
     },
     {
       "method": "GET",
+      "path": "/v1/tasks/{task}/contexts",
+      "name": "task-contexts",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "task:read"
+      ],
+      "path_params": {
+        "task": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/task-contexts.request.json",
+      "response": "api/task-contexts.response.json",
+      "read_resource": "task.contexts",
+      "streaming": false,
+      "owner": "KOR-33"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/pr-links/{epoch}/{tag}",
+      "name": "workgroup-pr-link",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "wg:read"
+      ],
+      "path_params": {
+        "wg": "uuid",
+        "epoch": "q_epoch",
+        "tag": "b64u_32"
+      },
+      "request_kind": "query",
+      "request": "api/workgroup-pr-link.request.json",
+      "response": "api/workgroup-pr-link.response.json",
+      "read_resource": "workgroup.pr_link",
+      "streaming": false,
+      "owner": "KOR-33"
+    },
+    {
+      "method": "GET",
       "path": "/v1/tasks/{task}/operations",
       "name": "task-operations",
       "section": "4.7",
@@ -1443,6 +1483,101 @@
       "read_resource": null,
       "streaming": false,
       "owner": "CTR-03"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/device/contexts/{object}/chunks/{index}",
+      "name": "device-context-chunk-put",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:session"
+      ],
+      "path_params": {
+        "object": "uuid",
+        "index": "q_index"
+      },
+      "request_kind": "body",
+      "request": "api/device-context-chunk-put.request.json",
+      "response": "api/device-context-chunk-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-33"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/contexts/{object}/commit",
+      "name": "device-context-commit",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:session"
+      ],
+      "path_params": {
+        "object": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/device-context-commit.request.json",
+      "response": "api/device-context-commit.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-33"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/contexts/{object}",
+      "name": "device-context-get",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:wg"
+      ],
+      "path_params": {
+        "object": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/device-context-get.request.json",
+      "response": "api/device-context-get.response.json",
+      "read_resource": "device.context",
+      "streaming": false,
+      "owner": "KOR-33"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/contexts/{object}/chunks/{index}",
+      "name": "device-context-chunk-get",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:wg"
+      ],
+      "path_params": {
+        "object": "uuid",
+        "index": "q_index"
+      },
+      "request_kind": "query",
+      "request": "api/device-context-chunk-get.request.json",
+      "response": "api/device-context-chunk-get.response.json",
+      "read_resource": "device.context.chunk",
+      "streaming": false,
+      "owner": "KOR-33"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/pr-links",
+      "name": "device-pr-links-post",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:session"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/device-pr-links-post.request.json",
+      "response": "api/device-pr-links-post.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-33"
     },
     {
       "method": "GET",

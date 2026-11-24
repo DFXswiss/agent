@@ -77,7 +77,7 @@ Retention: events are kept for the lifetime of the organization (no deletion in 
 |---|---|---|
 | `task` | `id` PK, `org_id`, `wg_id`, `owner_id`, `state` CHECK in (`scheduling`,`starting`,`working`,`idle`,`failed`,`closed`), `state_reason` NULL, `created_at`, `state_at`, `last_activity_at`, `closed_at` NULL | title only in `task.meta` events |
 | `task_transition` [AO] | (`task_id`,`seq`) PK, `state`, `reason`, `at`, `by_id` | |
-| `session` | `id` PK, `task_id`, `org_id`, `wg_id`, `owner_id` (task owner), `device_id` NULL, `vm_id` NULL, `parent_session_id` NULL, `origin_operation_id` NULL, `depth` int (0 = main), `state` (§2.4.1), `state_reason` NULL, `model_access` CHECK in (`subscription`,`api_key`,`platform`) NULL, `model_id` NULL, `agent_kind` default `claude-code`, `agent_version` NULL, `estimate_ms` int NULL, `created_at`, `ready_at` NULL, `first_working_at` NULL, `ended_at` NULL | |
+| `session` | `id` PK, `task_id`, `org_id`, `wg_id`, `owner_id` (task owner), `device_id` NULL, `vm_id` NULL, `parent_session_id` NULL, `origin_operation_id` NULL, `depth` int (0 = main), `state` (§2.4.1), `state_reason` NULL, `model_access` CHECK in (`subscription`,`api_key`,`platform`) NULL, `model_id` NULL, `agent_kind` default `claude-code`, `agent_version` NULL, `estimate_ms` int NULL, `created_at`, `ready_at` NULL, `first_working_at` NULL, `ended_at` NULL, `context_restore` CHECK in (`restored`,`fallback`) NULL, `context_reason` NULL (closed list `contracts/common.json#/$defs/context_reason`) | `context_*`: how a main session continued the conversation (ADR-072 §7, KOR-33): `fallback` always with a fallback reason (`context_missing`, `context_invalid`, `context_unavailable`, `version_incompatible`, `restore_failed`); `restored` with no reason or `workspace_partial`/`workspace_omitted`; null with no reason (checked by the constraint `session_context_reason`) |
 | `session_transition` [AO] | (`session_id`,`seq`) PK, `state`, `reason`, `at` (device clock), `received_at`, `reported_by` | drives the countdown status list |
 | `vm` | `id` text PK (`vm-<8 hex>`), `device_id`, `wg_id` NULL, `state` CHECK in (`pool`,`assigning`,`running`,`stopping`,`stopped`,`deleted`), `golden_version`, `cpus`, `memory_mib`, `disk_gib`, `created_at`, `state_at` | reported by runner |
 
@@ -89,6 +89,14 @@ Retention: events are kept for the lifetime of the organization (no deletion in 
 UserPromptSubmit hook). Task state is derived: any session `working` ⇒ task `working`; main session `idle`
 ⇒ `idle`; main session before `working` ⇒ `starting` (`scheduling` while no device chosen); `failed` if the
 main session failed and no retry is pending; `closed` only by user action.
+
+#### 2.4.2 Context checkpoints and pull-request links (KOR-33, ADR-072)
+
+| Table | Columns | Notes |
+|---|---|---|
+| `context_object` | `id` uuid PK (UUIDv7 of the author device), `org_id`, `wg_id`, `task_id` → `task` **on delete cascade**, `session_id` (a main session), `author_id` (device), `state` CHECK in (`uploading`,`complete`), `chunks`, `size` (sealed bytes stored so far), `epoch` NULL, `digest` NULL, `manifest_text` NULL, `sig` bytea NULL, `created_at`, `updated_at` (last chunk), `completed_at` NULL | `complete` ⇔ `completed_at` set, and then epoch, digest, manifest and signature are set. Only complete objects are listed or downloaded. Newest first = (`session.created_at` of its session, `id`) descending (`03-api.md` §4.6.3); beyond `AGENT_HUB_CONTEXT_KEEP` per task they are deleted at the next commit; uploads without a chunk for 6 h are deleted by the job `contexts.expire`. Quota sums count every object of the org |
+| `context_chunk` | (`object_id` → `context_object` on delete cascade, `chunk_index`) PK, `ct` bytea (sealed chunk, `04-crypto.md` §4.11), `sha256` bytea | ciphertext only; inside the transactional backup |
+| `pr_link` | (`wg_id`,`epoch`,`tag`) PK, `task_id` → `task` on delete cascade, `session_id`, `created_at` | opaque HMAC tag of a pull request (repository and number never reach the hub); the first task keeps a tag. The only table matching the "no pull-request table" guard of ADR-014 |
 
 ### 2.5 Operations
 
@@ -135,7 +143,7 @@ main session failed and no retry is pending; `closed` only by user action.
 log appends (`log.<type>`), `event.append`, `task.create`, `task.close`, `session.<state>`, `session.control`,
 `operation.<state>`, `credential.put`, `credential.delete`, `device_request.<state>`, `device.enroll`,
 `device.certify`, `device.connect`, `device.disconnect`, `whiteboard.notify`, `ping.delivered`,
-`hook.denied` (metadata only: session, tool name), `request.refused`, `request.write`, `audit.repeat` (ADR-063), `event.append_batch` (the session's own events of one session and scope, summarised by the audit job; `event_audit_cover` (`scope_id` PK, `covered_seq`) keeps its progress, migration 0012), `session.prompt_refused`, `model.provider_outside_allowlist`, `runner.inbound_rejected`, `runner.log_rollback`, `runner.log_fork`, `runner.alert`, `platform.<entry type>`, `read.<resource>` (every authenticated read endpoint and
+`hook.denied` (metadata only: session, tool name), `request.refused`, `request.write`, `audit.repeat` (ADR-072), `event.append_batch` (the session's own events of one session and scope, summarised by the audit job; `event_audit_cover` (`scope_id` PK, `covered_seq`) keeps its progress, migration 0012), `session.prompt_refused`, `model.provider_outside_allowlist`, `runner.inbound_rejected`, `runner.log_rollback`, `runner.log_fork`, `runner.alert`, context checkpoints (ADR-072: `session.context_saved {chunks,size,pruned}` and `session.context_refused {reason,scope,limit,used,requested}` written by the hub for a commit and for a chunk refused for a quota, `session.context_restored {object_id,workspace,stale}` and `session.context_fallback {reason}` sent by the runner), `platform.<entry type>`, `read.<resource>` (every authenticated read endpoint and
 every session platform read reported by a runner). `detail` schemas per action list only metadata fields.
 
 ## 3. Event log format

@@ -39,6 +39,13 @@ CASES: list[tuple[str, object, bool]] = [
     ("uuid_or_empty", "", True),
     ("uuid_or_empty", "01936f0e-8a2b-7c3d-9e4f-0a1b2c3d4e5f", True),
     ("uuid_or_empty", " ", False),
+    # path parameter text of a context chunk index (KOR-33)
+    ("q_index", "0", True),
+    ("q_index", "999999", True),
+    ("q_index", "1000000", False),
+    ("q_index", "01", False),
+    ("q_index", "-1", False),
+    ("q_index", "", False),
     # times: UTC with milliseconds
     ("time", "2026-11-21T12:00:00.000Z", True),
     ("time", "2026-12-31T23:59:59.999Z", True),

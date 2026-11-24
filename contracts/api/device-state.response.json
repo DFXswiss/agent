@@ -128,6 +128,31 @@
               },
               "resume_from": {
                 "$ref": "../common.json#/$defs/uuid"
+              },
+              "context": {
+                "type": "object",
+                "description": "the newest complete context checkpoint of the task's main sessions (ADR-072 section 5: ordered by the creation of its session at the hub, then by object ID); session_id tells whether it is the checkpoint of resume_from; main sessions only",
+                "properties": {
+                  "object_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "session_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "created_at": {
+                    "$ref": "../common.json#/$defs/time"
+                  },
+                  "size": {
+                    "$ref": "../common.json#/$defs/positive"
+                  }
+                },
+                "required": [
+                  "object_id",
+                  "session_id",
+                  "created_at",
+                  "size"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [

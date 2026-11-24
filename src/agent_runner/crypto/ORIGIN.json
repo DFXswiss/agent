@@ -33,6 +33,18 @@
     },
     {
       "adaptations": [],
+      "copy": "src/agent_runner/crypto/context.py",
+      "sha256": "64f6beb5c943f7a6ddd077456e6daad062fec0c689f427e87a3b5140230f878d",
+      "source": "src/agent_hub/crypto/context.py"
+    },
+    {
+      "adaptations": [],
+      "copy": "src/agent_runner/crypto/contexts/vectors.py",
+      "sha256": "ba587eddb87ec7353c0927e98d5cf983985dc0d16eff5bd96d0388be0f38ce79",
+      "source": "src/agent_hub/contexts/vectors.py"
+    },
+    {
+      "adaptations": [],
       "copy": "src/agent_runner/crypto/credential.py",
       "sha256": "2039942d4402228d250e748d84937b102dfa0bf034f5308bacda2a5a50cae0a5",
       "source": "src/agent_hub/crypto/credential.py"

@@ -66,7 +66,9 @@ SPEC_GUEST = {
     ("GET", "/v1/health"): ("", "guest_version claude_version state org_id wg_id sessions landlock_abi boot_id"),
     ("POST", "/v1/assign"): ("vm_id org_id wg_id", ""),
     ("POST", "/v1/sessions"): (
-        "session_id task_id parent_session_id depth harness model resume_claude_session_id initial_prompt limits",
+        # restore: contracts/changes/KOR-33.md
+        "session_id task_id parent_session_id depth harness model resume_claude_session_id restore initial_prompt"
+        " limits",
         "state",
     ),
     ("PUT", "/v1/sessions/{id}/credential"): (
@@ -78,6 +80,13 @@ SPEC_GUEST = {
     ("POST", "/v1/sessions/{id}/control"): ("action", ""),
     ("POST", "/v1/sessions/{id}/files/import"): ("dir replace", "files bytes"),
     ("POST", "/v1/sessions/{id}/files/export"): ("dir paths", "files skipped"),
+    # context checkpoints: contracts/changes/KOR-33.md
+    ("POST", "/v1/sessions/{id}/context/export"): (
+        "workspace_max_bytes transcript_max_bytes",
+        "v agent_kind agent_version claude_session_id session_id task_id cwd created_at transcript_files workspace"
+        " workspace_files workspace_bytes",
+    ),
+    ("POST", "/v1/contexts/{id}/stage"): ("", "files bytes"),
     ("POST", "/v1/sessions/{id}/pings"): ("ping_id kind level ref", ""),
     ("GET", "/v1/journal"): ("after limit wait", "records head"),
     ("POST", "/v1/journal/ack"): ("through", ""),
@@ -85,13 +94,14 @@ SPEC_GUEST = {
     ("GET", "/v1/metrics"): ("", "vm sessions"),
 }
 # The export response schema describes the manifest member of the tar stream (decision), not a JSON body.
-SPEC_GUEST_TAR = {("POST", "/v1/sessions/{id}/files/export")}
+SPEC_GUEST_TAR = {("POST", "/v1/sessions/{id}/files/export"), ("POST", "/v1/sessions/{id}/context/export")}
 # 03-api.md section 7.1, nested objects.
 SPEC_GUEST_NESTED = {
     ("guest/sessions-create.request.json", "/properties/harness"): "context_markdown",
     ("guest/sessions-create.request.json", "/properties/model"): "access model_id env",
     ("guest/sessions-create.request.json", "/properties/initial_prompt"): "prompt_id text",
     ("guest/sessions-create.request.json", "/properties/limits"): "memory_max cpu_quota tasks_max runtime_max_sec",
+    ("guest/sessions-create.request.json", "/properties/restore"): "claude_session_id object_id note",
     ("guest/objects.json", "/$defs/vm_metrics"): "cpu_usage_usec mem_used_bytes mem_total_bytes disk_used_bytes"
     " disk_total_bytes net_rx_bytes net_tx_bytes uptime_seconds load1",
     # The optional counters after `state` were added by RUN-15 (contracts/changes/RUN-15.md), `sandbox_denials` by

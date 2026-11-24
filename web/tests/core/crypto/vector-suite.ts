@@ -13,6 +13,7 @@ import { formatTime, parseTime } from '../../../src/core/encoding/time';
 import { aesKey, seal as aeadSeal } from '../../../src/core/crypto/aead';
 import * as agent from '../../../src/core/crypto/agent';
 import * as bundle from '../../../src/core/crypto/bundle';
+import * as context from '../../../src/core/crypto/context';
 import * as credential from '../../../src/core/crypto/credential';
 import * as dedupe from '../../../src/core/crypto/dedupe';
 import * as enroll from '../../../src/core/crypto/enroll';
@@ -66,6 +67,7 @@ export const TITLE_CASES: Any = parseJson(
 export const CONSUMED = [
   'agent',
   'bundle',
+  'context',
   'credential',
   'dedupe',
   'encoding',
@@ -207,6 +209,11 @@ export const OPS: Record<string, (a: Any) => Promise<unknown>> = {
   open_handover: async (a) => agent.openHandover(await kem(a.agent_kem_sk), a.agent_id, a.user_id, a.sealed),
   verify_account: async (a) => agent.verifyText(b(a.signer), a.signature, agent.accountText(accountFields(a))),
   verify_recover: async (a) => agent.verifyText(b(a.signer), a.signature, agent.recoverText(recoverFields(a))),
+  verify_context_manifest: async (a) => context.verifyManifest(a.manifest, a.sig, b(a.author_sig_pk)),
+  open_context: async (a) =>
+    context.openContext(Secret.of(b(a.workgroup_key)), a.manifest, a.sig, b(a.author_sig_pk), a.chunks.map(b)),
+  open_context_chunk: async (a) => context.openChunk(await aesKey(b(a.key)), a.object, a.index, b(a.sealed)),
+  pr_link_tag: async (a) => context.prLinkTag(await context.prLinkKey(Secret.of(b(a.workgroup_key))), a.repo, a.number),
 };
 
 /** Operations whose name one vector file uses for its own function (`agent.json` `parse_code`: the agent and return
@@ -576,6 +583,44 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
         : await dedupe.idempotencyFields(tag.idempotency_key, tag.task);
       same(fields, tag.fields, `fields ${tag.type}`);
       same(await dedupe.dedupeTag(dk, tag.type, fields), tag.tag, `tag ${tag.type}`);
+    }
+  },
+  context: async (data) => {
+    const wk = Secret.of(b(data.workgroup_key));
+    const manifest = data.manifest;
+    const key = await context.contextKey(wk, b(data.salt), manifest.object);
+    await sameAesKey(key, data.k_ctx, 'k_ctx');
+    same(
+      [data.limits.chunk_bytes, data.limits.chunk_ct_bytes],
+      [context.CHUNK_BYTES, context.CHUNK_CT_BYTES],
+      'chunk limits',
+    );
+    same(
+      await context.sealChunk(key, manifest.object, 0, b(data.compressed), b(data.nonces[0])),
+      data.chunks[0],
+      'chunk',
+    );
+    same(fromUtf8(context.manifestText(context.checkManifest(manifest))), data.manifest_text, 'manifest text');
+    same(await context.digest(data.chunks.map(b)), manifest.digest, 'digest');
+    same(await context.verifyManifest(manifest, data.sig, b(data.author_sig_pk)), manifest, 'verified manifest');
+    same(
+      await context.openContext(wk, manifest, data.sig, b(data.author_sig_pk), data.chunks.map(b)),
+      data.compressed,
+      'opened context',
+    );
+    for (const part of data.parts.chunks) {
+      same(fromUtf8(context.chunkAad(manifest.object, part.index)), part.aad, `chunk AAD ${part.index}`);
+      const sealed = await context.sealChunk(key, manifest.object, part.index, b(part.plaintext), b(part.nonce));
+      same(sealed, part.sealed, `sealed chunk ${part.index}`);
+      same(await context.openChunk(key, manifest.object, part.index, sealed), part.plaintext, `chunk ${part.index}`);
+    }
+    same(await context.digest(data.parts.chunks.map((part: Any) => b(part.sealed))), data.parts.digest, 'parts digest');
+    const links = data.pr_links;
+    const linkKey = await context.prLinkKey(wk);
+    await sameHmacKey(linkKey, links.link_key, 'pr-link key');
+    for (const link of links.links) {
+      same(fromUtf8(context.prLinkText(link.repo, link.number)), link.text, `pr-link text ${link.repo}`);
+      same(await context.prLinkTag(linkKey, link.repo, link.number), link.tag, `pr-link tag ${link.repo}`);
     }
   },
   title: async (data) => {

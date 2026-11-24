@@ -911,6 +911,18 @@
       "action": "Sende den Prompt noch einmal."
     }
   },
+  "quota_exceeded": {
+    "en": {
+      "title": "Storage limit reached",
+      "body": "The saved context of this task exceeds the storage limit.",
+      "action": "Ask the operator to raise the limit; the device keeps its local copy."
+    },
+    "de": {
+      "title": "Speichergrenze erreicht",
+      "body": "Der gesicherte Kontext dieser Aufgabe überschreitet die Speichergrenze.",
+      "action": "Bitte den Betreiber, die Grenze zu erhöhen; das Gerät behält seine lokale Kopie."
+    }
+  },
   "rate_limited": {
     "en": {
       "title": "Too many attempts",

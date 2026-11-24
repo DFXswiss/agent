@@ -1,0 +1,37 @@
+{
+  "name": "e2e-55-context-fallback",
+  "description": "E2E-55 (KOR-33, ADR-072 section 7): the reported emergency path. One turn that writes ledger.md and answers; after the stop the hub's checkpoint is damaged or gone and the device holds no copy, so the follow-up starts a NEW conversation (no earlier turn in the request; the spec checks the journal) that answers without tools.",
+  "steps": [
+    {
+      "id": "work",
+      "expect": { "user_text_contains": "E2E40-WORK", "has_tools": true, "has_tool_result": false, "stream": true },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "I will keep the ledger first." },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": { "file_path": "${cwd}/ledger.md", "content": "# Ledger\nkz40r-file-p3w8n5c1\n" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "worked",
+      "expect": { "tool_result_is_error": false, "tool_result_contains": "ledger.md" },
+      "reply": { "content": [{ "type": "text", "text": "The ledger is written kz40r-answer-g6t2m9x4." }] }
+    },
+    {
+      "id": "fresh",
+      "expect": { "user_text_contains": "E2E40-AGAIN", "has_tool_result": false },
+      "reply": { "content": [{ "type": "text", "text": "A new conversation kz40r-fresh-b7q1z5k8." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Ledger" }] }
+    }
+  ]
+}

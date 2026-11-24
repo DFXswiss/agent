@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "agent_kind": "claude-code",
+  "agent_version": "2.1.330",
+  "claude_session_id": "5d0c9a3e-7f61-4b6e-9a42-3c1d2e4f5a6b",
+  "session_id": "01a1ee56-5e00-7003-8f1b-340691d99f03",
+  "task_id": "01a1ee56-5e00-7005-8f1b-340691d99f05",
+  "cwd": "/srv/sessions/01a1ee56-5e00-7003-8f1b-340691d99f03/work",
+  "created_at": "2026-11-23T10:00:00.000Z",
+  "transcript_files": [
+    "projects/-srv-sessions-01a1ee56-5e00-7003-8f1b-340691d99f03-work/5d0c9a3e-7f61-4b6e-9a42-3c1d2e4f5a6b.jsonl"
+  ],
+  "workspace": "omitted_too_large",
+  "workspace_files": 0,
+  "workspace_bytes": 0
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-pr-link.response.json",
+  "title": "GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag} response",
+  "description": "Body of a successful response to GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag} (03-api.md section 4.6, ADR-072 section 8): the task and session that created the pull request.",
+  "type": "object",
+  "properties": {
+    "task_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "session_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "created_at": {
+      "$ref": "../common.json#/$defs/time"
+    }
+  },
+  "required": [
+    "task_id",
+    "session_id",
+    "created_at"
+  ],
+  "additionalProperties": false
+}

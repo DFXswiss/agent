@@ -42,6 +42,9 @@ def test_complete_configuration() -> None:
     assert config.bind_port == 8788
     assert config.static_dir == DEFAULT_STATIC_DIR
     assert config.device_online_seconds == 30
+    assert config.context_max_object_bytes == 8 * 1024**3
+    assert config.context_keep == 3
+    assert config.context_org_bytes == 200 * 1024**3
     assert config.platform_budget_usd_per_org_day is None
     assert config.model_catalog.platform_default == "deepseek/deepseek-v4.1-flash-1017"
     assert config.signer().key_id == "hub-test"
@@ -55,6 +58,9 @@ def test_optional_values(tmp_path: Path) -> None:
             AGENT_HUB_PORT="20240",
             AGENT_HUB_STATIC_DIR=str(tmp_path),
             AGENT_HUB_DEVICE_ONLINE_SECONDS="45",
+            AGENT_HUB_CONTEXT_MAX_OBJECT_BYTES="1048576",
+            AGENT_HUB_CONTEXT_KEEP="5",
+            AGENT_HUB_CONTEXT_ORG_BYTES="9007199254740991",
             AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY="12.5",
             AGENT_HUB_HOST="localhost",
         )
@@ -62,6 +68,9 @@ def test_optional_values(tmp_path: Path) -> None:
     assert config.bind_port == 20240
     assert config.static_dir == tmp_path.resolve()
     assert config.device_online_seconds == 45
+    assert config.context_max_object_bytes == 1048576
+    assert config.context_keep == 5
+    assert config.context_org_bytes == 2**53 - 1
     assert config.platform_budget_usd_per_org_day == Decimal("12.5")
     assert config.bind_host == "localhost"
 
@@ -121,6 +130,10 @@ def test_owner_database_is_forbidden_in_the_hub_process(value: str) -> None:
         ("AGENT_HUB_PORT", "80a", "from 1 to 65535"),
         ("AGENT_HUB_DEVICE_ONLINE_SECONDS", "0", "from 1 to 3600"),
         ("AGENT_HUB_DEVICE_ONLINE_SECONDS", "3601", "from 1 to 3600"),
+        ("AGENT_HUB_CONTEXT_MAX_OBJECT_BYTES", "0", "from 1 to 9007199254740991"),
+        ("AGENT_HUB_CONTEXT_KEEP", "0", "from 1 to 1000"),
+        ("AGENT_HUB_CONTEXT_KEEP", "1001", "from 1 to 1000"),
+        ("AGENT_HUB_CONTEXT_ORG_BYTES", "8GiB", "from 1 to 9007199254740991"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "-1", "non-negative amount"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "1.1234567", "non-negative amount"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "01", "non-negative amount"),

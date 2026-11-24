@@ -36,6 +36,11 @@ session ID - the name of the transcript file being followed - is first seen, the
 row (``tui_up``); a session past ``agent_starting`` journals its current state again with the ID. A starting session
 is only stored: the move ``agent_starting`` -> ``prompt_delivering`` belongs to the watcher of ``delivery.py`` alone,
 which waits for the platform tools as well (HOT-09, ADR-068), and its record carries the stored ID.
+
+A transcript restored from a context checkpoint (``contexts.py``, ADR-072) holds the earlier turns of the
+conversation, which the chat already shows. The session manager writes their record keys (``baseline_keys``) to the
+root-only ``<session base>/transcript-baseline.json`` (``write_baseline``) before the session is ready; the follower
+counts them as journaled (``load_baseline``), so a restore never posts the earlier turns again.
 """
 
 from __future__ import annotations
@@ -66,6 +71,7 @@ MAX_LINE = 32 * 1024 * 1024
 MAX_READ = 8 * 1024 * 1024
 READ_CHUNK = 1024 * 1024
 MAX_COUNT = 9007199254740991
+BASELINE_FILE = "transcript-baseline.json"
 HOOK_TOOLS = frozenset({"Write", "Edit"})
 SUMMARY_KEYS = ("file_path", "path", "pattern", "glob", "type")
 INTERRUPTED = "interrupted"
@@ -333,7 +339,8 @@ def entries(lines: list[bytes]) -> list[dict[str, Any]]:
     for line in lines:
         try:
             value = json.loads(line)
-        except ValueError:
+        except (ValueError, RecursionError):
+            # not JSON, or nested deeper than the parser takes (KOR-33 review no. 20): never a record
             continue
         if isinstance(value, dict):
             found.append(value)
@@ -388,6 +395,41 @@ def hook_wrote(journal: Journal, session_id: str, tool_use_id: str) -> bool:
     return row is not None
 
 
+def baseline_keys(paths: list[str]) -> set[str]:
+    """The keys (``<kind>:<message_id|tool_use_id>``) of every record the transcript files ``paths`` yield."""
+    keys: set[str] = set()
+    for path in paths:
+        parser = TranscriptParser()
+        records: list[Record] = []
+        with open(path, "rb") as source:
+            for line in source:
+                for entry in entries([line]):
+                    records.extend(parser.feed(entry))
+        records.extend(parser.finish())
+        keys.update(f"{record.kind}:{record.key}" for record in records)
+    return keys
+
+
+def write_baseline(base: str, keys: set[str]) -> None:
+    """``<base>/transcript-baseline.json`` (root 0600) with ``keys``."""
+    path = f"{base}/{BASELINE_FILE}"
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump({"keys": sorted(keys)}, handle)
+
+
+def load_baseline(base: str) -> set[str]:
+    """The keys of ``write_baseline``; empty without a (readable, well-formed) file."""
+    try:
+        descriptor = os.open(f"{base}/{BASELINE_FILE}", os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, ValueError):
+        return set()
+    keys = value.get("keys") if isinstance(value, dict) else None
+    return {key for key in keys if isinstance(key, str)} if isinstance(keys, list) else set()
+
+
 @dataclass
 class _Deferred:
     record: Record
@@ -418,7 +460,7 @@ class TranscriptFollower:
         self.parser = TranscriptParser()
         self.reader = LineReader()
         self.current: str | None = None
-        self._keys = journaled_keys(journal, session_id)
+        self._keys = journaled_keys(journal, session_id) | load_baseline(base)
         self._deferred: list[_Deferred] = []
         self._last_data = monotonic()
         self._reported: str | None = None

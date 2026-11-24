@@ -43,6 +43,8 @@ CATEGORIES: dict[str, str] = {
     "billing": "Usage charges and prepaid credit (ADR-062, AUD-04 A4): amounts, token and runtime quantities, model, "
     "access origin and VM size of each charge, balances, credit history, the price list versions, the USD/CHF rates "
     "and the CHF equivalent of each booking (books)",
+    "contexts": "Context checkpoints (ADR-072): IDs, epoch, chunk counts, sizes, digest and chunk hashes, the signed "
+    "manifest, times; pull-request links: opaque tag, epoch, task and session; restore outcomes",
 }
 
 # Content type → SQL types it may have.
@@ -85,6 +87,10 @@ community_reject: community | wrapper_id:uuid user_id:uuid rejected_at:time
 community_request: community | user_id:uuid id:uuid kem_pub:bytes sig:bytes created_at:time offered_at:time
   epoch:number wrap:bytes@ciphertext wrapped_by:uuid wrap_sig:bytes wrapped_at:time
 community_wrap: community | epoch:number user_id:uuid wrap:bytes@ciphertext sig:bytes created_at:time
+context_chunk: contexts | object_id:uuid chunk_index:number ct:bytes@ciphertext sha256:bytes
+context_object: contexts | id:uuid@ids org_id:uuid@ids wg_id:uuid@ids task_id:uuid@ids session_id:uuid@ids
+  author_id:uuid@ids state:code chunks:number size:number epoch:number digest:code manifest_text:json sig:bytes
+  created_at:time updated_at:time completed_at:time
 credential: credentials | id:uuid owner_id:uuid kind:code version:number epoch:number header_text:json
   ct:bytes@ciphertext sig:bytes updated_at:time
 credential_notice: credentials | device_id:uuid owner_id:uuid kind:code changed_at:time
@@ -137,6 +143,7 @@ passkey: auth | credential_id:bytes user_id:uuid@ids public_key:bytes sign_count
   prf_seen:flag created_at:time last_used_at:time removed_at:time
 platform_entry: logs | seq:number entry_text:json entry_hash:code type:code subject_id:uuid received_at:time
 platform_role: logs | user_id:uuid role:code granted_seq:number revoked_seq:number
+pr_link: contexts | wg_id:uuid@ids epoch:number tag:code task_id:uuid@ids session_id:uuid@ids created_at:time
 principal: ids | id:uuid kind:code created_at:time disabled_at:time
 quota_snapshot: metrics | owner_id:uuid window:code used_percent:number resets_at:time severity:code
   fetched_at:time device_id:uuid
@@ -148,7 +155,7 @@ scope_head: events | scope_id:uuid scope:code seq:number
 session: tasks | id:uuid task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid device_id:uuid vm_id:code
   parent_session_id:uuid origin_operation_id:uuid depth:number state:code state_reason:code model_access:code
   model_id:code agent_kind:code agent_version:code estimate_ms:number created_at:time ready_at:time
-  first_working_at:time ended_at:time
+  first_working_at:time ended_at:time context_restore:code@contexts context_reason:code@contexts
 session_ping: notifications | id:uuid session_id:uuid kind:code level:code ref:code created_at:time
   delivered_at:time
 session_transition: tasks | session_id:uuid seq:number state:code reason:code at:time received_at:time

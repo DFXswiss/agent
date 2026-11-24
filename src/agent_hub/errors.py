@@ -69,6 +69,7 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "community_epoch_exists": (409,),
     "community_no_key": (409,),
     "invite_expired": (410,),
+    "quota_exceeded": (413,),
     "rate_limited": (429,),
     "unavailable": (503,),
     "decrypt_failed": (400,),
@@ -98,7 +99,7 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
 }
 
 # The detail keys of `contracts/common.json#/$defs/error` (closed).
-DETAIL_KEYS = frozenset({"pointers", "expected_seq", "expected", "candidates_available", "devices"})
+DETAIL_KEYS = frozenset({"pointers", "expected_seq", "expected", "candidates_available", "devices", "quota"})
 INTERNAL_ERROR = "unavailable"
 
 

@@ -12,10 +12,11 @@ from typing import Any
 import pytest
 
 from agent_runner import registry
+from agent_runner.contexts import session_request
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestUnreachable
 from agent_runner.inbox.dispatch import consumers as inbox_consumers
-from agent_runner.prompts import consumers, deliver, hints, reconcile, session_request, tasks
+from agent_runner.prompts import consumers, deliver, hints, reconcile, tasks
 from agent_runner.prompts.deliver import Deliverer, deliverer_for, parse_delivered, parse_pending
 from agent_runner.reconcile.wire import ResponseInvalid
 from agent_runner.sessions.extensions import (
@@ -201,7 +202,7 @@ def test_the_area_is_registered() -> None:
     assert consumers.CONSUMERS[0].kinds == frozenset({"prompt"})
     assert first_prompt_provider().__module__ == "agent_runner.prompts.first"
     assert "prompts.delivery" in [observer.name for observer in state_observers()]
-    assert next(amender.name for amender in request_amenders()) == "prompts.restart"
+    assert next(amender.name for amender in request_amenders()) == "contexts.restore"
 
 
 @pytest.mark.parametrize(
@@ -253,7 +254,7 @@ def test_amenders_change_the_start_request_and_need_a_deliverer(rig: Rig) -> Non
         request = next(value for name, value in pk.guest.calls if name == "create_session")
         assert request["harness"]["context_markdown"].endswith("- Extra\n")
         assert seen == [session_id(1)]
-        # the registered amender without a deliverer (device not enrolled) changes nothing
+        # the registered amender of the context area without an enrolled device changes nothing
         found: dict[str, Any] = {"harness": {"context_markdown": "x"}}
         await session_request.amend(SimpleNamespace(identity=None), await pk.session(session_id(1)), found)
         assert found == {"harness": {"context_markdown": "x"}}
