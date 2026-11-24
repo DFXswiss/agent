@@ -10,10 +10,10 @@
 
 `GET /v1/me/devices` lists one item per device and org with the workgroups that make the device eligible, its
 presence and the features it announced on its last live-channel connection (`agent_hub.device.features`; KOR-65: the
-web offers only the GitHub ways a device can run). The rules live in `agent_hub.requests.store`. After the commit a new request sends the hint
-`request {request_id}` to its device (after `reconcile {}` when it replaced an active request, so the runner drops
-the replaced flow), a new response the browser frame `device_response {request_id, seq}` to the
-user's browsers. Reads are read-logged by the pipeline.
+web offers only the GitHub ways a device can run). The rules live in `agent_hub.requests.store`. After the commit a
+new request sends the hint `request {request_id}` to its device (after `reconcile {}` when it replaced an active
+request, so the runner drops the replaced flow), a new response the browser frame `device_response {request_id, seq}`
+to the user's browsers. Reads are read-logged by the pipeline.
 """
 
 from __future__ import annotations
