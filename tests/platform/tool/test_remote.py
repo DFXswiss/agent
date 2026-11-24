@@ -16,7 +16,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 import pytest
 
 from agent_platform import remote
-from agent_platform.errors import NEXT, PlatformError
+from agent_platform.errors import NEXT, NEXT_FOR_REASON, PlatformError
 from agent_platform.pairing import Pairing
 from agent_platform.state import Home
 from agent_runner.crypto import agent as agent_crypto
@@ -303,6 +303,33 @@ def test_expiry_before_the_claim_is_a_timeout(tool: Tool, hub: HubFake, route: t
     hub.hooks[route] = lambda body, request: (404, {"error": "pairing_unknown"})
     _code, document = wait(tool, "--return-code", back)
     failed(tool, document, pairing_id, "pairing_timeout")
+
+
+def test_a_claim_whose_answer_was_lost_is_not_a_timeout(tool: Tool, hub: HubFake) -> None:
+    """The claim succeeded at the hub but its answer was lost: the retry finds the pairing gone (`pairing_unknown`),
+    which is `pairing_failed` / `claim_lost` with the step to disconnect that agent, not `pairing_timeout`."""
+    user = hub.add_user()
+    start(tool, hub)
+    pairing_id = pending(tool)["pairing_id"]
+    back = hub.confirm_remote(pairing_id, user, SECRET)
+    original = hub.r_claim
+
+    def lost(request: Request, body: Json) -> tuple[int, Any]:
+        original(request, body)
+        return 503, {"error": "unavailable"}
+
+    hub.override("r_claim", lost)
+    code, document = wait(tool, "--return-code", back)
+    assert (code, document["error"], document["hub_error"]) == (1, "hub_refused", "unavailable")
+    assert pending(tool)["claim_sent"] is True
+    assert hub.agents[pairing_id].state == "active"
+    hub.restore("r_claim")
+    _code, document = wait(tool, "--return-code", back)
+    assert (document["error"], document["reason"]) == ("pairing_failed", "claim_lost")
+    assert document["next"] == NEXT_FOR_REASON[("pairing_failed", "claim_lost")]
+    assert "disconnect" in document["next"]
+    assert not (tool.home / "pending.json").exists()
+    assert not (tool.home / "state.json").exists()
 
 
 @pytest.mark.parametrize(

@@ -18,94 +18,22 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from agent_platform import devicereq
 from agent_platform.account import Account
 from agent_platform.commands import Context, Tree
-from agent_platform.credentials import put_record
-from agent_platform.devicereq import EMAIL_RE, LOGIN_RE, choose_device, finish, resume, show_in_browser, submit, wait
+from agent_platform.credentials import KINDS, put_record, valid_body, valid_mailbox
+from agent_platform.devicereq import choose_device, finish, resume, show_in_browser, submit, wait
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import rows_of
 from agent_runner.crypto.credential import open_credential, verify_credential
-from agent_runner.crypto.encoding import parse_json, parse_time
+from agent_runner.crypto.encoding import parse_json
 from agent_runner.crypto.errors import CryptoError
 
-KINDS = ("github", "anthropic_api_key", "claude_subscription", "mailbox")
 CHECK_KINDS = ("anthropic_api_key", "claude_subscription", "mailbox")
 GITHUB_SETTINGS_URL = "https://github.com/settings/applications"
-PRINTABLE_RE = re.compile(r"[!-~]{1,4096}")
-HOST_RE = re.compile(r"[A-Za-z0-9.-]{1,253}")
-IMAP_USER_RE = re.compile(r"[ -~]{1,256}")
-SCOPE_RE = re.compile(r"[a-z0-9:_-]{1,64}")
-ORIGINS = ("setup_token", "login_token")
 DEFAULT_WAIT_S = 60
-
-
-def _text(value: object, pattern: re.Pattern[str], most: int = 4096) -> bool:
-    return isinstance(value, str) and len(value) <= most and pattern.fullmatch(value) is not None
-
-
-def is_email(value: object) -> bool:
-    return _text(value, EMAIL_RE, 254)
-
-
-def _time(value: object) -> bool:
-    try:
-        parse_time(value)
-    except CryptoError:
-        return False
-    return True
-
-
-def _int(value: object, low: int, high: int) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
-
-
-def _github(body: dict[str, Any]) -> bool:
-    scopes = body.get("scopes")
-    return (
-        sorted(body) == ["created_at", "login", "scopes", "token", "user_id"]
-        and _text(body["token"], PRINTABLE_RE)
-        and _text(body["login"], LOGIN_RE)
-        and _int(body["user_id"], 1, 2**53 - 1)
-        and isinstance(scopes, list)
-        and len(scopes) <= 64
-        and all(_text(scope, SCOPE_RE) for scope in scopes)
-        and _time(body["created_at"])
-    )
-
-
-def _api_key(body: dict[str, Any]) -> bool:
-    return sorted(body) == ["key"] and _text(body["key"], PRINTABLE_RE)
-
-
-def _subscription(body: dict[str, Any]) -> bool:
-    keys = ["email", "kind", "token"] + (["expires_at"] if "expires_at" in body else [])
-    return (
-        sorted(body) == sorted(keys)
-        and ("expires_at" not in body or _time(body["expires_at"]))
-        and _text(body["token"], PRINTABLE_RE)
-        and (body["email"] is None or is_email(body["email"]))
-        and body["kind"] in ORIGINS
-    )
-
-
-def _mailbox(body: dict[str, Any]) -> bool:
-    password = body.get("imap_password")
-    return (
-        sorted(body) == ["email", "imap_host", "imap_password", "imap_port", "imap_user"]
-        and _text(body["imap_host"], HOST_RE)
-        and _int(body["imap_port"], 1, 65535)
-        and _text(body["imap_user"], IMAP_USER_RE)
-        and isinstance(password, str)
-        and 1 <= len(password) <= 1024
-        and is_email(body["email"])
-    )
-
-
-BODIES = {"github": _github, "anthropic_api_key": _api_key, "claude_subscription": _subscription, "mailbox": _mailbox}
 
 
 def summary(kind: str, body: dict[str, Any]) -> dict[str, Any]:
@@ -150,7 +78,7 @@ def open_record(account: Account, kind: str, record: object) -> dict[str, Any]:
         body = parse_json(open_credential(ck, record, key))
     except CryptoError as error:
         raise Unverifiable(error.code) from None
-    if not isinstance(body, dict) or not BODIES[kind](body):
+    if not isinstance(body, dict) or not valid_body(kind, body):
         raise Unverifiable("params_invalid")
     return {"version": checked["version"], "author": header["author"], **summary(kind, body)}
 
@@ -200,7 +128,7 @@ def set_mailbox(account: Account, args: Any, password: str) -> dict[str, Any]:
         "imap_password": password.removesuffix("\n"),
         "email": args.email.strip(),
     }
-    if not _mailbox(body):
+    if not valid_mailbox(body):
         raise PlatformError("invalid_argument")
     return {**put_record(account, "mailbox", body), "kind": "mailbox"}
 
@@ -313,23 +241,27 @@ def _flow_options(sub: Any) -> None:
 def register(tree: Tree) -> None:
     group = tree.group("credentials", "credential records")
     tree.command(group, "list", _list, "the user's credentials (summaries only, never a secret)")
-    sub = tree.command(group, "set-mailbox", _mailbox_command, "store the login mailbox (password on stdin)")
+    sub = tree.command(
+        group, "set-mailbox", _mailbox_command, "store the login mailbox (password on stdin)", writes=True
+    )
     sub.add_argument("--imap-host", required=True)
     sub.add_argument("--imap-port", type=int, default=993)
     sub.add_argument("--imap-user", required=True)
     sub.add_argument("--email", required=True)
-    sub = tree.command(group, "delete", _delete, "delete a credential")
+    sub = tree.command(group, "delete", _delete, "delete a credential", writes=True)
     sub.add_argument("--kind", required=True, choices=list(KINDS))
     sub = tree.command(group, "check", _check, "let a device check a stored credential")
     sub.add_argument("--kind", choices=list(CHECK_KINDS))
     _flow_options(sub)
     group = tree.group("github", "the GitHub connection")
     tree.command(group, "status", _github_status, "connected GitHub login, if any")
-    sub = tree.command(group, "connect", _github_connect, "connect GitHub through a device (opens the browser)")
+    sub = tree.command(
+        group, "connect", _github_connect, "connect GitHub through a device (opens the browser)", writes=True
+    )
     _flow_options(sub)
-    tree.command(group, "disconnect", _github_disconnect, "remove the GitHub connection")
+    tree.command(group, "disconnect", _github_disconnect, "remove the GitHub connection", writes=True)
     group = tree.group("claude", "the Claude subscription")
-    sub = tree.command(group, "login", _claude_login, "log a device in to the Claude subscription (relay)")
+    sub = tree.command(group, "login", _claude_login, "log a device in to the Claude subscription (relay)", writes=True)
     sub.add_argument("--mode", choices=["manual", "automatic"], default="manual")
     sub.add_argument("--code", action="store_true", help="send the authorization code from stdin (with --request)")
     _flow_options(sub)

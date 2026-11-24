@@ -11,13 +11,22 @@ when a device lost that eligibility:
 - `removal_losses`: devices entitled only through a log the run holds for an org that `GET /v1/me` no longer lists
   (the org the user just left), lost now;
 - `holder_losses`: devices that `GET /v1/me` names as holders of the current `CK` (`cred_holders`, counted only when
-  its epoch is the newest own `CK`) and that no verified log entitles, lost now. An org whose log does not verify
-  entitles nobody. The hub can cause a rotation this way, never prevent one the logs owe.
+  its epoch is the newest own `CK`) and that no verified log entitles, lost now.
 
-It is owed for a loss not clearly older than the start of the current epoch (the hub's `created_at` of the user's own
-self-wrap, `SKEW` margin; unknown or future: owed). The browser remembers handled losses per sign-in; the tool runs one
-command at a time, so a check shortly (within `SKEW`) after a rotation for the same loss rotates once more, which only
-costs a re-encryption. `--force` rotates without a loss.
+An org whose log the hub served but that does not verify (`LogUnverifiable`) entitles nobody, like the web's blocked
+org. An org whose log the hub refuses (any other `hub_refused`, e.g. a `403` or `500`) has no verdict yet, like an org
+the web is still verifying: the check waits (`not_owed` with `reason: org_log_unavailable` and the `orgs`; `--force`
+fails with the refusal), so a flaky or malicious hub cannot make the tool rotate `CK` away from entitled devices or
+delete their records.
+
+It is owed for a loss not clearly older than the start of the current epoch (`SKEW` margin; unknown or future:
+owed). The start is the hub's `created_at` of the user's own self-wrap, which nothing signs: like the web client
+(`spec-deviations.md`, 06 §11 job 5), a hub that dates the self-wrap after a loss makes the loss look handled and so
+withholds a rotation the logs owe, as it can by refusing the rotation request; it cannot make the new key reach a
+device the verified logs do not entitle. A loss is handled once: like the browser per sign-in, the tool keeps the keys
+of the losses a rotation handled with its pairing (`handled_losses` in `state.json`, the newest `HANDLED_MAX`), so the
+checks around every writing command (`upkeep`) do not rotate again for the same loss. `--force` rotates without a
+loss.
 
 The rotation: a fresh `CK_{e+1}`, wrapped for the user and every device entitled now; every record re-encrypted by the
 user under it (same ID and kind, `version + 1`), all in one `POST /v1/me/credentials/rotate`. A record written by a
@@ -29,18 +38,18 @@ nothing is deleted. A `409 version_conflict` is retried once from the start.
 from __future__ import annotations
 
 import argparse
-import re
 import secrets
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from agent_platform.account import Account, unverified
+from agent_platform.account import Account, LogUnverifiable, unverified
 from agent_platform.batch import make_wrap
 from agent_platform.commands import Context, Tree
+from agent_platform.credentials import KINDS, valid_body
 from agent_platform.errors import PlatformError
-from agent_runner.crypto.credential import KINDS, new_header, open_credential, seal_credential, verify_credential
+from agent_runner.crypto.credential import new_header, open_credential, seal_credential, verify_credential
 from agent_runner.crypto.encoding import b64u_decode, body_json, format_time, parse_json, parse_time
 from agent_runner.crypto.errors import CryptoError, fail
 from agent_runner.crypto.log.platform import VerifiedPlatformLog
@@ -49,87 +58,7 @@ from agent_runner.crypto.log.verify import VerifiedLog
 from agent_runner.crypto.log.wraps import CRED, WrapSlot, cred_readers
 
 SKEW = timedelta(seconds=300)
-KIND_ORDER = ("github", "anthropic_api_key", "claude_subscription", "mailbox")
-_PRINTABLE = re.compile(r"[!-~]{1,4096}")
-_HOST = re.compile(r"[A-Za-z0-9.-]{1,253}")
-_IMAP_USER = re.compile(r"[ -~]{1,256}")
-_EMAIL = re.compile(r"[!-?A-~]{1,64}@[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63}){0,8}")
-_LOGIN = re.compile(r"[A-Za-z0-9-]{1,39}")
-_SCOPE = re.compile(r"[a-z0-9:_-]{1,64}")
-
-
-# --- bodies (contracts/credentials/*.json, as `credentials/records.ts` checks them) ---
-
-
-def _text(value: object, pattern: re.Pattern[str]) -> bool:
-    return isinstance(value, str) and pattern.fullmatch(value) is not None
-
-
-def _email(value: object) -> bool:
-    return isinstance(value, str) and len(value) <= 254 and _EMAIL.fullmatch(value) is not None
-
-
-def _time(value: object) -> bool:
-    try:
-        parse_time(value)
-    except CryptoError:
-        return False
-    return True
-
-
-def _count(value: object, low: int, high: int) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
-
-
-def _github(body: dict[str, Any]) -> bool:
-    scopes = body.get("scopes")
-    return (
-        set(body) == {"token", "login", "user_id", "scopes", "created_at"}
-        and _text(body["token"], _PRINTABLE)
-        and _text(body["login"], _LOGIN)
-        and _count(body["user_id"], 1, 2**53 - 1)
-        and isinstance(scopes, list)
-        and len(scopes) <= 64
-        and all(_text(scope, _SCOPE) for scope in scopes)
-        and _time(body["created_at"])
-    )
-
-
-def _mailbox(body: dict[str, Any]) -> bool:
-    password = body.get("imap_password")
-    return (
-        set(body) == {"imap_host", "imap_port", "imap_user", "imap_password", "email"}
-        and _text(body["imap_host"], _HOST)
-        and _count(body["imap_port"], 1, 65535)
-        and _text(body["imap_user"], _IMAP_USER)
-        and isinstance(password, str)
-        and 1 <= len(password) <= 1024
-        and _email(body["email"])
-    )
-
-
-def _subscription(body: dict[str, Any]) -> bool:
-    keys = {"token", "email", "kind", *(("expires_at",) if "expires_at" in body else ())}
-    return (
-        set(body) == keys
-        and ("expires_at" not in body or _time(body["expires_at"]))
-        and _text(body["token"], _PRINTABLE)
-        and (body["email"] is None or _email(body["email"]))
-        and body["kind"] in ("setup_token", "login_token")
-    )
-
-
-def valid_body(kind: str, body: object) -> bool:
-    """Whether `body` is exactly what `contracts/credentials/<kind>.json` allows."""
-    if not isinstance(body, dict):
-        return False
-    if kind == "anthropic_api_key":
-        return set(body) == {"key"} and _text(body["key"], _PRINTABLE)
-    if kind == "github":
-        return _github(body)
-    if kind == "mailbox":
-        return _mailbox(body)
-    return _subscription(body)
+HANDLED_MAX = 256
 
 
 class BodyInvalid(Exception):
@@ -137,6 +66,17 @@ class BodyInvalid(Exception):
 
 
 # --- losses ---
+
+
+@dataclass(frozen=True)
+class Loss:
+    """A device's loss of eligibility: when, and the key that marks it handled (the web's `Loss`)."""
+
+    at: datetime
+    key: str
+
+
+Losses = dict[str, Loss]
 
 
 @dataclass(frozen=True)
@@ -150,17 +90,15 @@ def _excluded(platform: VerifiedPlatformLog | None, states: Iterable[OrgState]) 
     return [] if platform is None else [device for state in states for device in platform.state.excluded(state)]
 
 
-def credential_losses(
-    logs: Sequence[VerifiedLog], platform: VerifiedPlatformLog | None, owner: str
-) -> dict[str, datetime]:
+def credential_losses(logs: Sequence[VerifiedLog], platform: VerifiedPlatformLog | None, owner: str) -> Losses:
     """Devices that lost eligibility in the verified logs and are not entitled now, with the time of the loss."""
     states = [log.state for log in logs]
     now = cred_readers(states, owner, _excluded(platform, states))
-    losses: dict[str, datetime] = {}
+    losses: Losses = {}
 
     def note(device: str, at: datetime) -> None:
-        if device not in now and (device not in losses or at > losses[device]):
-            losses[device] = at
+        if device not in now and (device not in losses or at > losses[device].at):
+            losses[device] = Loss(at, f"{device} {format_time(at)}")
 
     for log in logs:
         for seq in range(1, len(log.states)):
@@ -175,11 +113,11 @@ def credential_losses(
     return losses
 
 
-def removal_losses(logs: Sequence[VerifiedLog], member: set[str], owner: str, now: datetime) -> dict[str, datetime]:
+def removal_losses(logs: Sequence[VerifiedLog], member: set[str], owner: str, now: datetime) -> Losses:
     """Devices entitled only through logs of orgs the user no longer belongs to (lost now)."""
     remaining = cred_readers([log.state for log in logs if log.state.org in member], owner)
     return {
-        device: now
+        device: Loss(now, f"{device} left {log.state.org}")
         for log in logs
         if log.state.org not in member
         for device in cred_readers([log.state], owner)
@@ -189,19 +127,35 @@ def removal_losses(logs: Sequence[VerifiedLog], member: set[str], owner: str, no
 
 def holder_losses(
     states: Sequence[OrgState], platform: VerifiedPlatformLog | None, holders: Sequence[str], owner: str, now: datetime
-) -> dict[str, datetime]:
+) -> Losses:
     """Holders of the current `CK` that no verified log of an org the user belongs to entitles (lost now)."""
     readers = cred_readers(states, owner, _excluded(platform, states))
-    return {device: now for device in holders if device != owner and device not in readers}
+    return {device: Loss(now, f"{device} holds") for device in holders if device != owner and device not in readers}
 
 
-def rotation_owed(losses: Mapping[str, datetime], start: datetime | None, now: datetime) -> bool:
-    """A loss not clearly older than the start of the current epoch; an unknown or future start fails closed."""
-    if not losses:
+def rotation_owed(losses: Iterable[Loss], start: datetime | None, now: datetime, handled: Collection[str] = ()) -> bool:
+    """A loss not handled yet and not clearly older than the start of the current epoch; an unknown or future start
+    fails closed."""
+    pending = [loss for loss in losses if loss.key not in handled]
+    if not pending:
         return False
     if start is None or start > now + SKEW:
         return True
-    return any(at >= start - SKEW for at in losses.values())
+    return any(loss.at >= start - SKEW for loss in pending)
+
+
+def handled_losses(account: Account) -> list[str]:
+    """The keys of the losses a rotation of this pairing handled (`state.json`, `handled_losses`)."""
+    found = account.state.get("handled_losses")
+    return [key for key in found if isinstance(key, str)] if isinstance(found, list) else []
+
+
+def remember_handled(account: Account, losses: Iterable[Loss]) -> None:
+    """Keep the handled losses (the newest `HANDLED_MAX`) so that later checks do not rotate again for them."""
+    known = handled_losses(account)
+    keys = [*known, *(loss.key for loss in losses if loss.key not in known)][-HANDLED_MAX:]
+    account.state["handled_losses"] = keys
+    account.home.save(account.state)
 
 
 def own_keys(account: Account) -> list[OwnKey]:
@@ -238,7 +192,7 @@ def _listed(account: Account) -> list[str]:
     items = answer.get("credentials")
     if not isinstance(items, list) or not all(isinstance(i, dict) and i.get("kind") in KINDS for i in items):
         raise unverified("response_invalid")
-    return sorted({str(item["kind"]) for item in items}, key=KIND_ORDER.index)
+    return sorted({str(item["kind"]) for item in items}, key=KINDS.index)
 
 
 def _fetch(account: Account, kind: str) -> dict[str, Any] | None:
@@ -288,12 +242,14 @@ def open_record(
 
 @dataclass
 class _View:
-    """One snapshot: the verified logs of the user's orgs, the former ones held by the run and the platform log."""
+    """One snapshot: the verified logs of the user's orgs, the former ones held by the run, the platform log, the
+    holders and the orgs whose log the hub refused (no verdict yet)."""
 
     member: list[VerifiedLog]
     former: list[VerifiedLog]
     platform: VerifiedPlatformLog | None
     holders: tuple[int, list[str]] | None
+    unavailable: list[tuple[str, PlatformError]]
 
     @property
     def states(self) -> list[OrgState]:
@@ -307,18 +263,22 @@ class _View:
 def _view(account: Account, former: Sequence[VerifiedLog]) -> _View:
     me = account.me()
     member: list[VerifiedLog] = []
+    unavailable: list[tuple[str, PlatformError]] = []
     ids: set[str] = set()
     for item in me.get("orgs", []):
         org = str(item.get("org_id")) if isinstance(item, dict) else ""
         ids.add(org)
         try:
             member.append(account.org_log(org))
+        except LogUnverifiable:
+            continue  # served but does not verify: entitles nobody
         except PlatformError as error:
             if error.code != "hub_refused":
                 raise
+            unavailable.append((org, error))
     platform = account.platform_log() if account.platform_root else None
     kept = [log for log in former if log.state.org not in ids]
-    return _View(member, kept, platform, _holders(me))
+    return _View(member, kept, platform, _holders(me), unavailable)
 
 
 def _kem(view: _View, account: Account, recipient: str) -> bytes:
@@ -331,13 +291,18 @@ def _kem(view: _View, account: Account, recipient: str) -> bytes:
 def _attempt(account: Account, force: bool, former: Sequence[VerifiedLog]) -> dict[str, Any]:
     account.refresh_wraps()
     view = _view(account, former)
+    if view.unavailable:
+        if force:
+            raise view.unavailable[0][1]
+        orgs = sorted(org for org, _ in view.unavailable)
+        return {"status": "not_owed", "reason": "org_log_unavailable", "orgs": orgs, "lost_devices": []}
     now = datetime.now(UTC)
     user = account.user_id
     logs = [*view.member, *view.former]
-    from_logs = {
-        **credential_losses(logs, view.platform, user),
-        **removal_losses(logs, {log.state.org for log in view.member}, user, now),
-    }
+    from_logs = [
+        credential_losses(logs, view.platform, user),
+        removal_losses(logs, {log.state.org for log in view.member}, user, now),
+    ]
     holders = [] if view.holders is None else view.holders[1]
     from_holders = holder_losses(view.states, view.platform, holders, user, now)
     keys = own_keys(account)
@@ -347,9 +312,10 @@ def _attempt(account: Account, force: bool, former: Sequence[VerifiedLog]) -> di
         return {"status": "not_owed", "lost_devices": []}
     latest = keys[0]
     lost_holders = from_holders if view.holders is not None and view.holders[0] == latest.epoch else {}
-    losses = {**from_logs, **lost_holders}
-    if not force and not rotation_owed(losses, latest.created_at, now):
-        return {"status": "not_owed", "lost_devices": sorted(losses)}
+    # a device may have lost eligibility in several ways (a log entry, leaving, holding the key): each loss counts
+    groups = [*from_logs, lost_holders]
+    if not force and not rotation_owed(_every(groups), latest.created_at, now, handled_losses(account)):
+        return {"status": "not_owed", "lost_devices": _devices(groups)}
     opened: list[tuple[dict[str, Any], object]] = []
     dropped: list[str] = []
     blocked: list[str] = []
@@ -395,17 +361,26 @@ def _attempt(account: Account, force: bool, former: Sequence[VerifiedLog]) -> di
         records.append(seal_credential(key, fields, body_json(body), account.identity.sig))
     account.call("POST", "/v1/me/credentials/rotate", {"epoch": epoch, "wraps": wraps, "records": records})
     account.refresh_wraps()
+    remember_handled(account, _every(groups))
     return {
         "status": "rotated",
         "epoch": epoch,
         "records": len(records),
         "dropped": dropped,
         "recipients": len(recipients),
-        "lost_devices": sorted(losses),
+        "lost_devices": _devices(groups),
     }
 
 
-def _author_key(account: Account, view: _View, author: object, lost_holders: Mapping[str, datetime]) -> bytes | None:
+def _every(groups: Sequence[Losses]) -> list[Loss]:
+    return [loss for found in groups for loss in found.values()]
+
+
+def _devices(groups: Sequence[Losses]) -> list[str]:
+    return sorted({device for found in groups for device in found})
+
+
+def _author_key(account: Account, view: _View, author: object, lost_holders: Mapping[str, Loss]) -> bytes | None:
     """The key of a device author entitled now; None for a device that lost eligibility (its record is dropped);
     `author_not_writer` for any other author (the record blocks the rotation)."""
     try:

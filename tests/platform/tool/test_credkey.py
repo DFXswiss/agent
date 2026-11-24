@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from agent_platform import credkey
+from agent_platform import credentials, credkey
 from agent_runner.crypto.credential import new_header, open_credential, seal_credential
 from agent_runner.crypto.encoding import body_json, parse_json
 from agent_runner.crypto.ids import uuid7
@@ -102,16 +102,22 @@ def holders(hub: HubFake, epoch: int, devices: list[str]) -> None:
     ],
 )
 def test_bodies(kind: str, body: object, valid: bool) -> None:
-    assert credkey.valid_body(kind, body) is valid
+    assert credentials.valid_body(kind, body) is valid
 
 
 def test_rotation_owed() -> None:
     now = datetime.now(UTC)
-    assert credkey.rotation_owed({}, None, now) is False
-    assert credkey.rotation_owed({"d": now}, None, now) is True
-    assert credkey.rotation_owed({"d": now - timedelta(days=1)}, now + timedelta(hours=1), now) is True
-    assert credkey.rotation_owed({"d": now - timedelta(days=1)}, now, now) is False
-    assert credkey.rotation_owed({"d": now - timedelta(seconds=10)}, now, now) is True
+
+    def lost(at: datetime) -> list[credkey.Loss]:
+        return [credkey.Loss(at, "d at")]
+
+    assert credkey.rotation_owed([], None, now) is False
+    assert credkey.rotation_owed(lost(now), None, now) is True
+    assert credkey.rotation_owed(lost(now - timedelta(days=1)), now + timedelta(hours=1), now) is True
+    assert credkey.rotation_owed(lost(now - timedelta(days=1)), now, now) is False
+    assert credkey.rotation_owed(lost(now - timedelta(seconds=10)), now, now) is True
+    # a loss a rotation handled is not owed again (even within the margin)
+    assert credkey.rotation_owed(lost(now - timedelta(seconds=10)), now, now, ["d at"]) is False
 
 
 def test_force_rotates_and_reencrypts(tool: Tool, hub: HubFake, account: User) -> None:
@@ -284,6 +290,33 @@ def test_orgs_that_do_not_verify_entitle_nobody(tool: Tool, hub: HubFake, accoun
     assert tool.run("credentials", "rotate", "--force")[1]["recipients"] == 1
     hub.hooks[("GET", f"/v1/orgs/{target}/log")] = lambda b, r: (401, {"error": "key_unknown"})
     assert tool.run("credentials", "rotate", "--force")[1]["error"] == "not_paired"
+
+
+@pytest.mark.parametrize(("status", "code"), [(403, "forbidden"), (500, "unavailable")])
+def test_a_refused_org_log_makes_the_check_wait(
+    tool: Tool, hub: HubFake, account: User, status: int, code: str
+) -> None:
+    """Only a log that does not verify entitles nobody; a refusal says nothing about the log: no holder loss, no
+    record dropped, `--force` fails."""
+    target = private_org(hub, account)
+    stranger = uuid7()
+    holders(hub, 1, [stranger])
+    seal(hub, account, "mailbox", MAILBOX, author=stranger, signer=Identity.generate())
+    hub.hooks[("GET", f"/v1/orgs/{target}/log")] = lambda b, r: (status, {"error": code})
+    waiting = tool.run("credentials", "rotate")[1]
+    assert waiting == {
+        "ok": True,
+        "status": "not_owed",
+        "reason": "org_log_unavailable",
+        "orgs": [target],
+        "lost_devices": [],
+    }
+    assert tool.run("credentials", "rotate", "--force")[1]["hub_error"] == code
+    assert (account.id, "mailbox") in hub.credentials
+    assert account.cred_epoch == 1
+    del hub.hooks[("GET", f"/v1/orgs/{target}/log")]
+    rotated = tool.run("credentials", "rotate")[1]
+    assert (rotated["status"], rotated["dropped"]) == ("rotated", ["mailbox"])
 
 
 def test_hub_refuses_a_wrong_rotation(tool: Tool, hub: HubFake, account: User) -> None:

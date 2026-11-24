@@ -24,14 +24,13 @@ from agent_platform.account import Account, unverified
 from agent_platform.batch import build_batch
 from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
+from agent_platform.eventio import post_event, seal
 from agent_platform.hub import segment
 from agent_platform.orgs import EXPIRY_HOURS_MAX, crypto_refusal, find_org, now_text, with_retry
 from agent_platform.reader import VERIFIED, scope_events, settle
 from agent_runner.crypto import invite as invite_format
-from agent_runner.crypto.encoding import b64u_encode, body_json, format_time
+from agent_runner.crypto.encoding import b64u_encode, format_time
 from agent_runner.crypto.errors import CryptoError
-from agent_runner.crypto.event import new_header, seal_event
-from agent_runner.crypto.ids import uuid7
 from agent_runner.crypto.log.state import DEVICE, ORG, WG, OrgState
 from agent_runner.crypto.log.verify import VerifiedLog
 
@@ -143,29 +142,8 @@ def device_rename(account: Account, device: str, name: str, org: str | None) -> 
     membership.require_admin(state, account.user_id)
     if getattr(state.member(device), "kind", None) != DEVICE:
         raise PlatformError("not_found")
-    epoch = state.epoch(ORG, org)
-    key = account.keys(org).get((ORG, org, epoch))
-    if key is None:
-        raise PlatformError("hub_refused", reason="epoch_stale")
-    header = new_header(
-        id=uuid7(),
-        org=org,
-        scope=ORG,
-        scope_id=org,
-        epoch=epoch,
-        author=account.user_id,
-        kind=DEVICE_PROFILE,
-        ts=now_text(),
-        lh=log.head.seq,
-        ref=device,
-    )
-    event = seal_event(key, header, body_json({"label": label}), account.identity.sig)
-    answer = account.call("POST", "/v1/events", {"events": [{"event": event}]})
-    results = answer.get("results")
-    result = results[0] if isinstance(results, list) and results else None
-    if not isinstance(result, dict) or result.get("scope_id") != org or not isinstance(result.get("scope_seq"), int):
-        raise unverified("response_invalid")
-    return {"org_id": org, "device_id": device, "label": label, "scope_seq": result["scope_seq"]}
+    event = seal(account, org, (ORG, org), DEVICE_PROFILE, {"label": label}, ref=device)
+    return {"org_id": org, "device_id": device, "label": label, "scope_seq": post_event(account, event)}
 
 
 # --- invite ---
@@ -262,14 +240,14 @@ def register(tree: Tree) -> None:
     group = tree.group("device", "execution devices")
     sub = tree.command(group, "list", _list, "devices of the organizations (verified log, labels, presence)")
     sub.add_argument("--org")
-    sub = tree.command(group, "unassign", _unassign, "take a device off a workgroup (rotates the keys)")
+    sub = tree.command(group, "unassign", _unassign, "take a device off a workgroup (rotates the keys)", writes=True)
     sub.add_argument("--wg", required=True)
     sub.add_argument("--device", required=True)
-    sub = tree.command(group, "rename", _rename, "set a device's label (device.profile)")
+    sub = tree.command(group, "rename", _rename, "set a device's label (device.profile)", writes=True)
     sub.add_argument("--device", required=True)
     sub.add_argument("--name", required=True)
     sub.add_argument("--org", help="the organization (default: the only one the device belongs to)")
-    sub = tree.command(group, "invite", _invite, "invite an org device (prints the enrollment code once)")
+    sub = tree.command(group, "invite", _invite, "invite an org device (prints the enrollment code once)", writes=True)
     sub.add_argument("--org", required=True)
     sub.add_argument("--wg", action="append", default=[], help="workgroup to assign, repeatable")
     sub.add_argument("--expires-hours", type=int, default=DEVICE_EXPIRY_HOURS)

@@ -4,10 +4,10 @@
 The tool seals what the web client seals: a new task is `POST /v1/tasks` with the events `task.meta` (`{"title"}`,
 derived from the prompt as `web/src/core/tasks/title.ts`, vectors `contracts/tasks/title.json`) and `prompt`
 (`{"attachments": [], "text"}`), a further prompt is `POST /v1/tasks/{task}/prompts`. Events are sealed for the
-workgroup under its current epoch (the key from the user's own wraps, checked against the verified org log) and
-signed by the user's identity. Reading opens the task's events of the workgroup scope after the reader checks of
-`check_event` (author, kind rule, signature, write right); an event whose key the user does not hold is `locked`, one
-that does not verify is left out and counted. The chat includes the work VM events of the task's sessions
+workgroup under its current epoch (`eventio.seal`: the key from the user's own wraps, checked against the verified
+org log; refused while the workgroup's rotation is owed) and signed by the user's identity. Reading opens the task's
+events of the workgroup scope with the one reader (`reader.settle`); an event whose key the user does not hold is
+`locked`, one that does not verify is left out and counted. The chat includes the work VM events of the task's sessions
 (`workvm.run`, `workvm.state`); `task show` keeps only the latest `workvm.run` of a job, as the web's timeline. After
 a lost answer (`hub_unreachable`) `task list` shows whether the task exists; the tool does not resend on its own.
 """
@@ -19,21 +19,18 @@ import time
 from typing import Any, cast
 from urllib.parse import urlencode
 
-from agent_platform.account import Account
+from agent_platform.account import Account, KeyRing
 from agent_platform.errors import PlatformError
+from agent_platform.eventio import open_item, seal
 from agent_platform.hub import segment
-from agent_platform.orgs import find_org, now_text
+from agent_platform.orgs import find_org
+from agent_platform.reader import scope_events
 from agent_platform.workvm import latest_runs
-from agent_runner.crypto.encoding import b64u_decode, body_json, parse_json
-from agent_runner.crypto.errors import CryptoError
-from agent_runner.crypto.event import new_header, open_event, seal_event
 from agent_runner.crypto.ids import is_uuid7, uuid7
-from agent_runner.crypto.log.events import check_event
 from agent_runner.crypto.log.state import WG
 
 PROMPT_MAX = 65536
 TITLE_MAX = 80
-PAGE = 1000
 FOLLOW_POLL_S = 2.0
 FOLLOW_WAIT_MAX_S = 600
 STATES = ("open", "closed")
@@ -78,27 +75,9 @@ def _id(value: str) -> str:
 
 
 def _seal(account: Account, place: tuple[str, str, str], kind: str, body: dict[str, object]) -> dict[str, object]:
-    """One event of `kind` for the task `place` = (org, workgroup, task), sealed and signed."""
+    """One event of `kind` for the task `place` = (org, workgroup, task), sealed and signed (`eventio.seal`)."""
     org, wg, task = place
-    log = account.org_log(org)
-    epoch = log.state.epoch(WG, wg)
-    key = account.keys(org).get((WG, wg, epoch))
-    if key is None:
-        raise PlatformError("hub_refused", reason="epoch_stale")
-    header = new_header(
-        id=uuid7(),
-        org=org,
-        scope=WG,
-        scope_id=wg,
-        epoch=epoch,
-        author=account.user_id,
-        kind=kind,
-        ts=now_text(),
-        lh=log.head.seq,
-        wg=wg,
-        task=task,
-    )
-    return seal_event(key, header, body_json(body), account.identity.sig)
+    return seal(account, org, (WG, wg), kind, body, wg=wg, task=task)
 
 
 def task_create(account: Account, wg: str, text: str) -> dict[str, Any]:
@@ -144,43 +123,14 @@ def task_prompt(account: Account, task: str, text: str) -> dict[str, Any]:
     return {"task_id": task, "scope_seq": answer.get("scope_seq"), "session_id": answer.get("session_id")}
 
 
-def _events(account: Account, wg: str, query: dict[str, str], after: int = 0) -> list[Any]:
-    found: list[Any] = []
-    while True:
-        target = f"/v1/scopes/{segment(wg)}/events?{urlencode({**query, 'limit': PAGE})}&after={after}"
-        page = account.call("GET", target)
-        items = page.get("events")
-        if not isinstance(items, list):
-            raise PlatformError("hub_refused", reason="response_invalid")
-        found.extend(items)
-        following = page.get("next_after")
-        if not isinstance(following, int) or following <= after:
-            return found
-        after = following
-
-
-def _open(account: Account, org: str, wg: str, item: object) -> dict[str, Any] | None:
-    """The verified event as `{id, seq, kind, author, ts, task, body|locked}`, or None if it does not verify. The key
-    is the requested workgroup's: an event of another scope does not open and is left out."""
-    log = account.org_log(org)
-    try:
-        event = cast(dict[str, Any], item)["event"]
-        header, _rule = check_event(event, log)
-        found: dict[str, Any] = {
-            "id": header["id"],
-            "seq": cast(dict[str, Any], item).get("scope_seq"),
-            "kind": header["kind"],
-            "author": header["author"],
-            "ts": header["ts"],
-            "task": header["task"],
-        }
-        key = account.keys(org).get((WG, wg, cast(int, header["epoch"])))
-        if key is None:
-            return {**found, "locked": True}
-        author = log.state.principals[cast(str, header["author"])]
-        return {**found, "body": parse_json(open_event(key, event, b64u_decode(author.sig)))}
-    except (CryptoError, KeyError, TypeError):
+def _open(account: Account, org: str, wg: str, item: object, ring: KeyRing) -> dict[str, Any] | None:
+    """The verified event as `{id, seq, kind, author, ts, task, body|locked}`, or None if it does not verify or
+    belongs to another scope (`eventio.open_item`)."""
+    opened = open_item(account, org, (WG, wg), item, ring=ring)
+    if opened is None:
         return None
+    found = {key: opened[key] for key in ("id", "seq", "kind", "author", "ts", "task")}
+    return {**found, "locked": True} if opened.get("locked") else {**found, "body": opened["body"]}
 
 
 def task_show(account: Account, task: str) -> dict[str, Any]:
@@ -190,8 +140,9 @@ def task_show(account: Account, task: str) -> dict[str, Any]:
     org = find_org(account, wg)
     events: list[dict[str, Any]] = []
     skipped = 0
-    for item in _events(account, wg, {"kinds": ",".join(("task.meta", *CHAT_KINDS)), "task": task}):
-        opened = _open(account, org, wg, item)
+    ring = account.keys(org)
+    for item in scope_events(account, wg, {"kinds": ",".join(("task.meta", *CHAT_KINDS)), "task": task}):
+        opened = _open(account, org, wg, item, ring)
         if opened is None or opened["task"] != task:
             skipped += 1
             continue
@@ -217,8 +168,9 @@ def task_list(account: Account, wg: str, state: str | None) -> dict[str, Any]:
     if not isinstance(rows, list):
         raise PlatformError("hub_refused", reason="response_invalid")
     titles: dict[str, str] = {}
-    for item in _events(account, wg, {"kinds": "task.meta"}):
-        opened = _open(account, org, wg, item)
+    ring = account.keys(org)
+    for item in scope_events(account, wg, {"kinds": "task.meta"}):
+        opened = _open(account, org, wg, item, ring)
         if opened is not None and isinstance(opened.get("body"), dict):
             titles[str(opened["task"])] = str(opened["body"].get("title", ""))
     tasks = [
@@ -249,17 +201,18 @@ def task_follow(account: Account, task: str, after: int, wait: int) -> dict[str,
     deadline = time.monotonic() + wait
     query = {"kinds": ",".join(CHAT_KINDS), "task": task}
     while True:
-        items = _events(account, wg, query, after)
+        items = scope_events(account, wg, query, after)
         if items or time.monotonic() >= deadline:
             break
         time.sleep(FOLLOW_POLL_S)
     events: list[dict[str, Any]] = []
     skipped = 0
     last = after
+    ring = account.keys(org)
     for item in items:
         seq = item.get("scope_seq") if isinstance(item, dict) else None
         last = max(last, seq) if isinstance(seq, int) else last
-        opened = _open(account, org, wg, item)
+        opened = _open(account, org, wg, item, ring)
         if opened is None or opened["task"] != task:
             skipped += 1
             continue

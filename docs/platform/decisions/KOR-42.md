@@ -43,3 +43,28 @@ The draft of ADR-062 was reviewed by a reviewer without the author's context. Fi
 5. **Low** – two event readers, two copies of the credential body checks, unchecked event ID in the whiteboard send,
    an over-strong docstring claim about the CK epoch start, a lost claim answer reported as timeout, the guide's
    "no command prints a code" sentence, the outdated §8.4 of the spec. Handling: see below.
+
+### Fix of the review findings
+
+1. The browser's jobs run around the commands (`agent_platform/upkeep.py`): before every command that writes into an
+   org or stores a credential, the owed pending rotations of every org of the user that the user may send and the
+   `CK` check; after it, catch-up wrapping of every org; `status` and every round of `claude watch` run both. Sealing
+   refuses an epoch whose rotation is owed (`rotation_pending`, new error code). A loss a `CK` rotation handled is kept
+   in `state.json` (`handled_losses`, like the browser's per-sign-in set), so the checks around every command do not
+   rotate again for the same loss; each way a device lost eligibility (log entry, leaving, holding the key) counts on
+   its own (a holder loss handled earlier no longer hides a later log loss of the same device).
+2. `Account` raises `LogUnverifiable` for a served log that does not verify; only such an org entitles nobody. Any other
+   refusal of an org log makes the `CK` check wait (`not_owed`, `reason: org_log_unavailable`; `--force` fails): no
+   holder loss, no record dropped.
+3. `tests/platform/tool/realhub/`: the tool against `agent_hub` served over HTTP on the test PostgreSQL (pairing on
+   this computer and remote, org create, invite and join, workgroups, grant, ungrant and member remove with their
+   rotations, whiteboards, tasks with a certified device, credentials and their rotation).
+4. `wg ungrant` acts on the explicit access only; `wg grant` follows `grantPlan` (default and archived workgroups
+   refused, nothing to do for the same access); `wg grant`, `wg ungrant` and `wg archive` refuse the default workgroup
+   with the web's code (`invalid_argument`, `reason: forbidden`).
+5. One event reader (`reader.settle`, always with the decertified platform devices excluded; `eventio.open_item` and
+   the task commands use it); one copy of the credential body checks and kinds (`credentials.py`); every event is sent
+   through `eventio.post_event`, which checks the answer names it; the `CK` epoch-start weakness is stated in
+   `credkey.py` and in `spec-deviations.md` (06 §11 job 5, deviation); a lost claim answer is `pairing_failed`,
+   `reason: claim_lost`, with the step to disconnect that agent; the guide lists every command that prints a secret
+   (`secret_fields`) and explains the two codes of the remote pairing.

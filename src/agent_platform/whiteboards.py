@@ -14,9 +14,10 @@ both only for an existing entry that is not deleted. Unverifiable events on the 
 locked events neutral rows without content; an entry whose ID an earlier entry claimed elsewhere, or that the hub does
 not list although it existed when the rows were listed, is a neutral `event_conflict` row; a listed entry without
 events is `missing`. Items are newest first. `whiteboard history` adds `GET /v1/whiteboards/{entry}/history`.
-`add`, `edit` and `delete` seal the body with the scope's current key, sign it (`lh` = the verified head) and send it
-with `POST /v1/events`; an edit or delete names the newest applied event of the entry as `base_event_id`; only a new
-entry may carry `notify`.
+`add`, `edit` and `delete` seal the body with the scope's current key (`eventio.seal`: refused while the scope's
+rotation is owed), sign it (`lh` = the verified head) and send it with `POST /v1/events` (`eventio.post_event`: the
+answer must name the event); an edit or delete names the newest applied event of the entry as `base_event_id`;
+only a new entry may carry `notify`.
 """
 
 from __future__ import annotations
@@ -30,11 +31,9 @@ from urllib.parse import urlencode
 from agent_platform.account import Account, unverified
 from agent_platform.commands import Context, Tree, text_argument
 from agent_platform.errors import PlatformError
+from agent_platform.eventio import post_event, seal
 from agent_platform.hub import segment
-from agent_platform.orgs import now_text
 from agent_platform.reader import VERIFIED, Settled, scope_events, settle
-from agent_runner.crypto.encoding import body_json
-from agent_runner.crypto.event import new_header, seal_event
 from agent_runner.crypto.ids import is_uuid7, uuid7
 from agent_runner.crypto.log.state import ORG, WG
 
@@ -316,39 +315,14 @@ def require_writer(account: Account, location: Location) -> None:
 
 def _seal(account: Account, location: Location, kind: str, ref: str, body: dict[str, object]) -> dict[str, object]:
     require_writer(account, location)
-    log = account.org_log(location.org)
-    state = log.state
-    scope, scope_id = location.scope
-    epoch = state.epoch(scope, scope_id)
-    key = account.keys(location.org).get((scope, scope_id, epoch))
-    if key is None:
-        raise PlatformError("hub_refused", reason="epoch_stale")
-    header = new_header(
-        id=uuid7(),
-        org=location.org,
-        scope=scope,
-        scope_id=scope_id,
-        epoch=epoch,
-        author=account.user_id,
-        kind=kind,
-        ts=now_text(),
-        lh=log.head.seq,
-        wg="" if location.wg is None or location.level == "org" else location.wg,
-        task=location.task or "",
-        ref=ref,
-    )
-    return seal_event(key, header, body_json(body), account.identity.sig)
+    wg = "" if location.wg is None or location.level == "org" else location.wg
+    return seal(account, location.org, location.scope, kind, body, wg=wg, task=location.task or "", ref=ref)
 
 
 def _send(account: Account, location: Location, event: dict[str, object], notify: bool) -> dict[str, Any]:
-    item = {"event": event, "notify": True} if notify else {"event": event}
-    answer = account.call("POST", "/v1/events", {"events": [item]})
-    results = answer.get("results")
-    result = results[0] if isinstance(results, list) and results else None
-    if not isinstance(result, dict) or not isinstance(result.get("scope_seq"), int):
-        raise unverified("response_invalid")
+    seq = post_event(account, event, notify)
     header = cast(dict[str, Any], event["header"])
-    return {**_where(location), "entry_id": header["ref"], "event_id": header["id"], "scope_seq": result["scope_seq"]}
+    return {**_where(location), "entry_id": header["ref"], "event_id": header["id"], "scope_seq": seq}
 
 
 def _text(text: str) -> str:
@@ -419,7 +393,7 @@ def register(tree: Tree) -> None:
         ("edit", _edit, "replace the text of an entry"),
         ("delete", _delete, "delete an entry"),
     ):
-        sub = tree.command(group, name, work, text)
+        sub = tree.command(group, name, work, text, writes=name in ("add", "edit", "delete"))
         sub.add_argument("--org", required=True)
         sub.add_argument("--wg", help="the workgroup board")
         sub.add_argument("--task", help="the task board")

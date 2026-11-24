@@ -282,6 +282,17 @@ commands and options as `agent-platform <group> --help` lists them):
 | `passkey list|remove|add`, `recovery new`, `agents list|revoke`, `platform invite|list|revoke`, `security` | the account's security: passkeys (`add` opens the settings page), a new recovery code, the agents, platform invitations (inviters), the web build check |
 | `guide` | prints the guide for AI agents shipped with the tool |
 
+The browser's background jobs (06-web.md §11 jobs 3-5) run around the commands (`agent_platform/upkeep.py`): before
+every command that writes into an org or stores a credential, the owed pending rotations of every org of the user that
+the user may send and the `CK` check; after it, catch-up wrapping of every org; `status` and every round of
+`claude watch` run both. A scope whose rotation is still owed is never sealed under (`rotation_pending`). The result
+names what was done under `upkeep` (only when something was done or failed). In the `CK` check an org whose log does
+not verify entitles nobody; an org whose log the hub refuses makes the check wait (`reason: org_log_unavailable`); a
+loss a rotation handled is kept in `state.json` (`handled_losses`) and not rotated for again, like the browser's
+per-sign-in set. A
+retry of `pair --wait` that finds the pairing gone after a claim was sent is `pairing_failed` with
+`reason: claim_lost` (the user disconnects that agent in the settings).
+
 Notification (hub, `agents/notify.py`): every account-changing action of an agent – passkey removed, recovery code
 replaced, identity-bundle slot replaced, agent revoked, role or access changed or member removed, credential
 written or deleted, admin or platform invitation created, device request sent – and every finished recovery creates
@@ -294,7 +305,8 @@ recovery) with `agent_id`; the settings show it as "Security activity".
 Codes (closed list in `agent_platform/errors.py`): `not_paired`, `agent_revoked`, `hub_unreachable`, `hub_refused`,
 `pairing_timeout`, `pairing_failed`, `claude_login_missing`, `claude_login_expired`, `claude_cli_missing`,
 `setup_token_failed`, `no_org`, `no_device`, `not_admin`, `invalid_argument`, `state_damaged`, `internal`, `no_write_access`, `not_inviter`,
-`device_request_failed`, `hub_too_old`, `pairing_pending`, `no_pending_pairing`, `pairing_busy`, `last_admin`, `not_found`, `credentials_blocked`.
+`device_request_failed`, `hub_too_old`, `pairing_pending`, `no_pending_pairing`, `pairing_busy`, `last_admin`, `not_found`, `credentials_blocked`,
+`rotation_pending`.
 
 ### 8.5 Reading the local Claude Code login
 Read-only, never a login, logout or refresh, never a write to the profile or the keychain. macOS: the generic password

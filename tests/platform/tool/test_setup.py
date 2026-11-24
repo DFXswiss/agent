@@ -24,6 +24,7 @@ from agent_runner.crypto import invite as invite_format
 from agent_runner.crypto.credential import new_header, open_credential, seal_credential
 from agent_runner.crypto.encoding import b64u_encode, body_json, parse_json
 from agent_runner.crypto.errors import CryptoError
+from agent_runner.crypto.ids import uuid7
 from agent_runner.crypto.keys import Identity
 from agent_runner.crypto.log.batch import check_batch
 from agent_runner.crypto.log.state import ORG, WG
@@ -473,9 +474,47 @@ def test_wg_grant_errors(tool: Tool, hub: HubFake, account: User) -> None:
     assert tool.run("wg", "grant", "--wg", wg, "--user", "nope")[1]["error"] == "invalid_argument"
     unknown = "01a1ee56-5e00-7242-9e24-f87629ad2977"
     assert tool.run("wg", "grant", "--wg", unknown, "--user", unknown)[1]["error"] == "no_org"
-    # a grant to a stranger is refused by the log rules before anything is sent
-    result = tool.run("wg", "grant", "--wg", wg, "--user", unknown)[1]
-    assert result["error"] == "not_admin"
+    # a grant to someone who is no member is refused before anything is sent
+    assert tool.run("wg", "grant", "--wg", wg, "--user", unknown)[1]["error"] == "not_found"
+
+
+def test_append_reports_crypto_refusals(tool: Tool, hub: HubFake, account: User) -> None:
+    """A batch the log rules refuse is never sent (here: a grant to someone who is no member)."""
+    org = team(tool)
+    wg = hub.orgs[org].log.state.default_wg
+    head = hub.orgs[org].log.head
+    opened = Account.open(Home.from_env(tool.env))
+    try:
+        with pytest.raises(PlatformError) as caught:
+            orgs._append(opened, org, [{"type": "grant", "subject": uuid7(), "wg": wg, "access": "read"}])
+    finally:
+        opened.close()
+    assert caught.value.code == "not_admin"
+    assert hub.orgs[org].log.head == head
+
+
+def test_wg_grant_follows_the_web(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> None:
+    """`grantPlan`: neither the default nor an archived workgroup (`forbidden`); nothing to do for the same access."""
+    org = team(tool)
+    default = hub.orgs[org].log.state.default_wg
+    research = tool.run("wg", "create", "--org", org, "--name", "Research")[1]["wg_id"]
+    old = tool.run("wg", "create", "--org", org, "--name", "Old")[1]["wg_id"]
+    invited = tool.run("org", "invite", "--org", org)[1]
+    other_tool = make_tool(tmp_path / "other")
+    bob = hub.add_user(display_name="Bob")
+    pair_user(other_tool, hub, bob)
+    assert other_tool.run("org", "join", stdin=invited["invite_link"])[1]["ok"] is True
+    assert tool.run("wg", "archive", "--wg", old)[1]["changed"] is True
+    for wg in (default, old):
+        refused = tool.run("wg", "grant", "--wg", wg, "--user", bob.id)[1]
+        assert (refused["error"], refused["reason"]) == ("invalid_argument", "forbidden")
+    head = hub.orgs[org].log.head
+    granted = tool.run("wg", "grant", "--wg", research, "--user", bob.id, "--access", "read")[1]
+    assert (granted["changed"], granted["access"], granted["seq"]) == (True, "read", head.seq + 1)
+    again = tool.run("wg", "grant", "--wg", research, "--user", bob.id, "--access", "read")[1]
+    assert (again["changed"], hub.orgs[org].log.head.seq) == (False, head.seq + 1)
+    assert tool.run("wg", "grant", "--wg", research, "--user", bob.id)[1]["changed"] is True
+    assert hub.orgs[org].log.state.explicit_access(bob.id, research) == "write"
 
 
 def test_wg_create_seq_conflict_gives_up(tool: Tool, hub: HubFake, account: User) -> None:

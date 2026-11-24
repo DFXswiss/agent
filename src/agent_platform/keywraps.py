@@ -16,8 +16,9 @@ from agent_platform.account import Account
 from agent_platform.batch import make_wrap
 from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
-from agent_platform.eventio import excluded, rows_of, uuid_argument
+from agent_platform.eventio import rows_of, uuid_argument
 from agent_platform.hub import segment
+from agent_platform.reader import excluded
 from agent_runner.crypto.encoding import b64u_decode
 from agent_runner.crypto.log.state import ORG, WG, OrgState
 from agent_runner.crypto.log.verify import VerifiedLog

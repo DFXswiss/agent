@@ -1,6 +1,10 @@
 """The building blocks of the command line (11-agent-access.md section 8.4): the parser whose errors and help are
 exceptions, the context of a command, the wrapper that opens the paired account, and the tree that adds commands.
 
+A command that writes into an org or stores a credential is registered with `writes=True`: it runs inside
+`upkeep.around` (the owed rotations and the credential-key check before it, catch-up wrapping after it), which
+`cli.build_parser` hands to the tree.
+
 Command modules register themselves through a function `register(tree: Tree) -> None` listed in
 `agent_platform.registry.MODULES`; `Tree.group` returns the same group for the same name, so a module may add commands
 to a group another module created (for example `org leave` next to `org list`).
@@ -39,6 +43,8 @@ class Parser(argparse.ArgumentParser):
 
 Handler = Callable[[argparse.Namespace, "Context"], dict[str, Any]]
 Work = Callable[[Account, argparse.Namespace, "Context"], dict[str, Any]]
+Around = Callable[[Account, Callable[[], dict[str, Any]]], dict[str, Any]]
+"""Runs a command on the opened account with what has to happen before and after it (`upkeep.around`)."""
 
 
 class Context:
@@ -62,11 +68,13 @@ class Context:
         return Account.open(self.home, root)
 
 
-def with_account(work: Work) -> Handler:
+def with_account(work: Work, around: Around | None = None) -> Handler:
     def handler(args: argparse.Namespace, context: Context) -> dict[str, Any]:
         account = context.account(args)
         try:
-            return work(account, args, context)
+            if around is None:
+                return work(account, args, context)
+            return around(account, lambda: work(account, args, context))
         finally:
             account.close()
 
@@ -88,8 +96,9 @@ def _root_option() -> Parser:
 class Tree:
     """Adds commands to the parser tree; every command gets the common options unless told otherwise."""
 
-    def __init__(self, commands: Any) -> None:
+    def __init__(self, commands: Any, around: Around | None = None) -> None:
         self.commands = commands
+        self.around = around
         self.common = _root_option()
         self._groups: dict[tuple[int, str], Any] = {}
 
@@ -98,9 +107,10 @@ class Tree:
         sub.set_defaults(handler=handler)
         return sub
 
-    def command(self, group: Any, name: str, work: Work, help_text: str) -> Parser:
-        """A command that runs on the paired account."""
-        return self.add(group, name, with_account(work), help_text)
+    def command(self, group: Any, name: str, work: Work, help_text: str, *, writes: bool = False) -> Parser:
+        """A command that runs on the paired account; one that `writes` (into an org, or a credential) runs inside
+        the tree's `around` (the browser's jobs before and after it, `upkeep`)."""
+        return self.add(group, name, with_account(work, self.around if writes else None), help_text)
 
     def group(self, name: str, help_text: str, parent: Any = None) -> Any:
         """The group `name` under `parent` (the top level by default), created on first use."""

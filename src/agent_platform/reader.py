@@ -1,8 +1,10 @@
-"""Reading events of a scope like the browser's event reader (04-crypto.md sections 5.12 and 6.4; 06-web.md section
-1.1): every stored event is settled as `verified` (reader checks of `check_event`: author, kind rule, header rules,
-signature, right at `lh`; then opened with the scope key of its epoch), `locked` (it verifies but the user holds no key
-of its epoch) or `unverifiable` with the crypto code. An event that names a log head beyond the verified one makes the
-reader read the log again once (L10). Unverifiable and locked events are never shown with content.
+"""The one event reader of the tool, like the browser's event reader (04-crypto.md sections 5.12 and 6.4; 06-web.md
+section 1.1): every stored event is settled as `verified` (reader checks of `check_event`: author in the verified log
+at `lh`, kind rule, header rules, signature, right at `lh`, with the session's device for session kinds when it is
+known and decertified platform devices excluded; then opened with the scope key of its epoch), `locked` (it verifies
+but the user holds no key of its epoch) or `unverifiable` with the crypto code. An event that names a log head beyond
+the verified one makes the reader read the log again once (L10). Unverifiable and locked events are never shown with
+content. Every command that reads events goes through `settle` (directly, or through `eventio.open_item`).
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from agent_runner.crypto.encoding import b64u_decode, parse_json
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.event import open_event
 from agent_runner.crypto.log.events import check_event
+from agent_runner.crypto.log.verify import VerifiedLog
 
 PAGE = 1000
 VERIFIED, LOCKED, UNVERIFIABLE = "verified", "locked", "unverifiable"
@@ -51,7 +54,14 @@ def scope_events(account: Account, scope_id: str, query: dict[str, str], after: 
         after = following
 
 
-def settle(account: Account, org: str, item: object, ring: KeyRing) -> Settled:
+def excluded(account: Account, log: VerifiedLog) -> frozenset[str]:
+    """Decertified platform devices of the org (the platform log is read only when the org has platform devices)."""
+    if all(p.platform_seq is None for p in log.state.principals.values()):
+        return frozenset()
+    return account.platform().excluded(log.state)
+
+
+def settle(account: Account, org: str, item: object, ring: KeyRing, session_device: str | None = None) -> Settled:
     """The status of one stored item `{scope_seq, event}` (module docstring); `ring` holds the user's keys of the
     org (`Account.keys`, read once for many events)."""
     data = item if isinstance(item, dict) else {}
@@ -67,7 +77,7 @@ def settle(account: Account, org: str, item: object, ring: KeyRing) -> Settled:
         account.forget(org)
         log = account.org_log(org)
     try:
-        header, _rule = check_event(event, log)
+        header, _rule = check_event(event, log, session_device=session_device, excluded=excluded(account, log))
     except CryptoError as error:
         found.status, found.code = UNVERIFIABLE, error.code
         return found

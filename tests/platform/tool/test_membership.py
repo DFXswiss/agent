@@ -172,9 +172,10 @@ def test_leave_makes_the_rotation_pending_and_the_others_rotate(
     rotated = carol_tool.run("org", "rotate", "--org", org)[1]
     assert (rotated["batches"], [item["scope_id"] for item in rotated["rotated"]]) == (1, sorted([default, wg]))
     assert hub.orgs[org].log.state.pending == {(ORG, org)}
-    # the admin's next change runs the owed rotation as a follow-up (like the browser's job)
+    # the admin's next writing command runs the owed rotation first (like the browser's job)
     role = tool.run("member", "role", "--org", org, "--user", carol.id, "--role", "admin")[1]
-    assert role["pending_rotation"]["rotated"] == [{"scope": ORG, "scope_id": org, "epoch": 2}]
+    assert role["upkeep"]["rotated"] == [{"org_id": org, "scope": ORG, "scope_id": org, "epoch": 2}]
+    assert role["pending_rotation"]["rotated"] == []
     assert hub.orgs[org].log.state.pending == frozenset()
     assert tool.run("org", "rotate", "--org", org)[1] == {
         "ok": True,
@@ -216,7 +217,7 @@ def test_ungrant_rotates_the_workgroup(tool: Tool, hub: HubFake, account: User, 
     assert bob_tool.run("whiteboard", "list", "--org", org, "--wg", wg)[1]["hub_error"] == "not_found"
     assert tool.run("wg", "ungrant", "--wg", wg, "--user", bob.id)[1]["changed"] is False
     default = hub.orgs[org].log.state.default_wg
-    assert tool.run("wg", "ungrant", "--wg", default, "--user", bob.id)[1]["reason"] == "default_workgroup"
+    assert tool.run("wg", "ungrant", "--wg", default, "--user", bob.id)[1]["reason"] == "forbidden"
     assert bob_tool.run("wg", "ungrant", "--wg", wg, "--user", account.id)[1]["error"] == "not_admin"
     assert tool.run("wg", "ungrant", "--wg", "x", "--user", bob.id)[1]["error"] == "invalid_argument"
 
@@ -230,7 +231,7 @@ def test_archive(tool: Tool, hub: HubFake, account: User, tmp_path: Path) -> Non
     assert not hub.orgs[org].log.state.writable(wg)
     assert tool.run("wg", "archive", "--wg", wg)[1]["changed"] is False
     default = hub.orgs[org].log.state.default_wg
-    assert tool.run("wg", "archive", "--wg", default)[1]["reason"] == "default_workgroup"
+    assert tool.run("wg", "archive", "--wg", default)[1]["reason"] == "forbidden"
     assert bob_tool.run("wg", "archive", "--wg", default)[1]["error"] == "not_admin"
     assert tool.run("whiteboard", "add", "--org", org, "--wg", wg, "--text", "x")[1]["error"] == "no_write_access"
     assert [row["archived"] for row in tool.run("wg", "list", "--org", org)[1]["workgroups"]] == [False, True]
@@ -335,4 +336,5 @@ def test_leaving_again_finds_nothing_to_do(tool: Tool, hub: HubFake, account: Us
     original = hub.r_log
     # a hub that still serves the log to the former member: the planner finds nothing to do
     hub.override("r_log", lambda request, body, org: original(dataclasses.replace(request, user=account.id), body, org))
-    assert bob_tool.run("org", "leave", "--org", org)[1] == {"ok": True, "org_id": org, "changed": False}
+    again = bob_tool.run("org", "leave", "--org", org)[1]
+    assert (again["ok"], again["org_id"], again["changed"]) == (True, org, False)

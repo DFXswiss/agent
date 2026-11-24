@@ -18,9 +18,9 @@ from collections.abc import Mapping, Sequence
 from importlib import resources
 from typing import Any, TextIO
 
-from agent_platform import __version__, claude, diagnose, orgs, registry, remote, tasks
+from agent_platform import __version__, claude, diagnose, membership, orgs, registry, remote, tasks, upkeep
 from agent_platform.account import Account
-from agent_platform.commands import Context, Help, Parser, Tree, text_argument, with_account
+from agent_platform.commands import Context, Handler, Help, Parser, Tree, Work, text_argument, with_account
 from agent_platform.credentials import put_record, read_record
 from agent_platform.errors import PlatformError
 from agent_platform.pairing import pair, register
@@ -144,7 +144,11 @@ def cmd_claude_watch(args: argparse.Namespace, context: Context) -> dict[str, An
     if args.interval < 1 or (args.iterations is not None and args.iterations < 1):
         raise PlatformError("invalid_argument")
     return claude.watch(
-        lambda: context.account(args), context.environ, interval=args.interval, iterations=args.iterations
+        lambda: context.account(args),
+        context.environ,
+        interval=args.interval,
+        iterations=args.iterations,
+        upkeep=upkeep.sync,
     )
 
 
@@ -219,7 +223,7 @@ def cmd_org_invitees(account: Account, args: argparse.Namespace, context: Contex
 
 
 def cmd_wg_grant(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    return orgs.wg_grant(account, args.wg, args.user, args.access, args.history)
+    return membership.wg_grant(account, args.wg, args.user, args.access, args.history)
 
 
 def cmd_device_assign(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -253,6 +257,11 @@ def cmd_diagnose(account: Account, args: argparse.Namespace, context: Context) -
 # --- parser ---
 
 
+def writing(work: Work) -> Handler:
+    """A command that writes into an org or stores a credential (and `status`): inside `upkeep.around`."""
+    return with_account(work, upkeep.around)
+
+
 def _account_commands(tree: Tree) -> None:
     sub = tree.add(tree.commands, "pair", cmd_pair, "connect this agent to the user's account", common=False)
     sub.add_argument("--hub")
@@ -272,7 +281,7 @@ def _account_commands(tree: Tree) -> None:
     sub.add_argument("--host", default=(socket.gethostname().split(".")[0] or "computer")[:64])
     sub.add_argument("--remote", action="store_true", help="the agent runs on another computer than the browser")
     sub.add_argument("--replace-pending", action="store_true", help="delete a pending remote pairing first")
-    tree.add(tree.commands, "status", with_account(cmd_status), "the account as the agent sees it")
+    tree.add(tree.commands, "status", writing(cmd_status), "the account as the agent sees it")
     sub = tree.add(tree.commands, "api", with_account(cmd_api), "a signed request to any route")
     sub.add_argument("method")
     sub.add_argument("path")
@@ -284,7 +293,7 @@ def _account_commands(tree: Tree) -> None:
     sub.add_argument("--model", help="model ID ('' clears it)")
     sub.add_argument("--locale", choices=["de", "en"])
     credentials = tree.group("credentials", "credential records")
-    tree.add(credentials, "set-api-key", with_account(cmd_set_api_key), "store an Anthropic API key (stdin)")
+    tree.add(credentials, "set-api-key", writing(cmd_set_api_key), "store an Anthropic API key (stdin)")
     sub = tree.add(tree.commands, "diagnose", with_account(cmd_diagnose), "why a task does not start")
     sub.add_argument("--task")
 
@@ -294,10 +303,10 @@ def _task_commands(tree: Tree) -> None:
     sub = tree.add(group, "list", with_account(cmd_task_list), "tasks of a workgroup with their titles")
     sub.add_argument("--wg", required=True)
     sub.add_argument("--state", choices=list(tasks.STATES))
-    sub = tree.add(group, "create", with_account(cmd_task_create), "a new task with its first prompt")
+    sub = tree.add(group, "create", writing(cmd_task_create), "a new task with its first prompt")
     sub.add_argument("--wg", required=True)
     sub.add_argument("--text", required=True, help="the prompt, or - to read it from stdin")
-    sub = tree.add(group, "prompt", with_account(cmd_task_prompt), "a further prompt to a task")
+    sub = tree.add(group, "prompt", writing(cmd_task_prompt), "a further prompt to a task")
     sub.add_argument("--task", required=True)
     sub.add_argument("--text", required=True, help="the prompt, or - to read it from stdin")
     sub = tree.add(group, "show", with_account(cmd_task_show), "a task and its chat, opened and verified")
@@ -311,7 +320,7 @@ def _task_commands(tree: Tree) -> None:
 def _claude_commands(tree: Tree) -> None:
     group = tree.group("claude", "the Claude subscription")
     for name, handler in (("connect", cmd_claude_connect), ("sync", cmd_claude_sync)):
-        sub = tree.add(group, name, with_account(handler), f"claude {name}")
+        sub = tree.add(group, name, writing(handler), f"claude {name}")
         sub.add_argument("--replace", action="store_true", help="also replace a setup-token record")
     sub = tree.add(group, "watch", cmd_claude_watch, "sync in a loop")
     sub.add_argument("--interval", type=int, default=claude.WATCH_INTERVAL_S)
@@ -322,25 +331,23 @@ def _claude_commands(tree: Tree) -> None:
     sub.add_argument("--no-load", action="store_true")
     sub = tree.add(service, "remove", cmd_service_remove, "remove the user-level service", common=False)
     sub.add_argument("--no-load", action="store_true")
-    tree.add(group, "setup-token", with_account(cmd_setup_token), "run `claude setup-token` and store the token")
+    tree.add(group, "setup-token", writing(cmd_setup_token), "run `claude setup-token` and store the token")
 
 
 def _org_commands(tree: Tree) -> None:
     group = tree.group("org", "organizations")
     tree.add(group, "list", with_account(cmd_org_list), "organizations of the user")
-    sub = tree.add(group, "create", with_account(cmd_org_create), "create a team organization")
+    sub = tree.add(group, "create", writing(cmd_org_create), "create a team organization")
     sub.add_argument("--name", required=True)
     sub.add_argument("--display-name")
     sub = tree.add(group, "show", with_account(cmd_org_show), "members, workgroups, invitations and their state")
     sub.add_argument("--org", required=True)
-    sub = tree.add(group, "invite", with_account(cmd_org_invite), "invite a user (prints invite_link once)")
+    sub = tree.add(group, "invite", writing(cmd_org_invite), "invite a user (prints invite_link once)")
     sub.add_argument("--org", required=True)
     sub.add_argument("--role", choices=["admin", "member"], default="member")
     sub.add_argument("--wg", action="append", default=[], help="<wg_id>[:read|write], repeatable")
     sub.add_argument("--expires-hours", type=int, default=72)
-    sub = tree.add(
-        group, "admit", with_account(cmd_org_admit), "admit an existing account directly (no step on its side)"
-    )
+    sub = tree.add(group, "admit", writing(cmd_org_admit), "admit an existing account directly (no step on its side)")
     sub.add_argument("--org", required=True)
     sub.add_argument("--user", required=True, help="user ID or account code (XXXX-XXXX-XXXX)")
     sub.add_argument("--role", choices=["admin", "member"], default="member")
@@ -349,28 +356,28 @@ def _org_commands(tree: Tree) -> None:
         group, "invitees", with_account(cmd_org_invitees), "accounts registered through your platform invitations"
     )
     sub.add_argument("--org", help="only those that can be admitted to this organization")
-    sub = tree.add(group, "join", with_account(cmd_org_join), "accept an org invitation (link on stdin)")
+    sub = tree.add(group, "join", writing(cmd_org_join), "accept an org invitation (link on stdin)")
     sub.add_argument("--display-name")
     group = tree.group("wg", "workgroups")
     sub = tree.add(group, "list", with_account(cmd_wg_list), "workgroups of an organization")
     sub.add_argument("--org", required=True)
-    sub = tree.add(group, "create", with_account(cmd_wg_create), "create a workgroup")
+    sub = tree.add(group, "create", writing(cmd_wg_create), "create a workgroup")
     sub.add_argument("--org", required=True)
     sub.add_argument("--name", required=True)
-    sub = tree.add(group, "grant", with_account(cmd_wg_grant), "give a member access to a workgroup")
+    sub = tree.add(group, "grant", writing(cmd_wg_grant), "give a member access to a workgroup")
     sub.add_argument("--wg", required=True)
     sub.add_argument("--user", required=True)
     sub.add_argument("--access", choices=["read", "write"], default="write")
     sub.add_argument("--history", action="store_true")
     group = tree.group("device", "execution devices")
-    sub = tree.add(group, "assign", with_account(cmd_device_assign), "assign a platform device to a workgroup")
+    sub = tree.add(group, "assign", writing(cmd_device_assign), "assign a platform device to a workgroup")
     sub.add_argument("--wg", required=True)
 
 
 def build_parser() -> Parser:
     parser = Parser(prog="agent-platform", description="The agent tool of agent.dfx.swiss (one JSON object per run).")
     parser.add_argument("--version", action="store_true", help="print the version")
-    tree = Tree(parser.add_subparsers(dest="command", parser_class=Parser))
+    tree = Tree(parser.add_subparsers(dest="command", parser_class=Parser), upkeep.around)
     _account_commands(tree)
     _claude_commands(tree)
     _org_commands(tree)

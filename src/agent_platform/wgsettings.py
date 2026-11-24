@@ -21,7 +21,7 @@ from agent_platform.account import Account
 from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import open_all, post_event, pull, seal, uuid_argument
-from agent_platform.orgs import display_name, find_org, profile_event
+from agent_platform.orgs import display_name, find_org
 from agent_runner.crypto.log.state import ORG, WG
 
 KIND = "settings.workgroup"
@@ -79,7 +79,7 @@ def save(account: Account, wg: str, settings: dict[str, Any]) -> dict[str, Any]:
     org = _place(account, wg)
     if not account.org_log(org).state.can_write_wg(account.user_id, wg):
         raise PlatformError("no_write_access")
-    seq = post_event(account, seal(account, org, wg, KIND, settings))
+    seq = post_event(account, seal(account, org, (WG, wg), KIND, settings, wg=wg))
     return {"org_id": org, "wg_id": wg, "status": "set", "seq": seq, "settings": settings, "author": account.user_id}
 
 
@@ -152,11 +152,7 @@ def wg_rename(account: Account, wg: str, name: str) -> dict[str, Any]:
     log = account.org_log(org)
     if not log.state.is_admin(account.user_id):
         raise PlatformError("not_admin")
-    epoch = log.state.epoch(ORG, org)
-    key = account.keys(org).get((ORG, org, epoch))
-    if key is None:
-        raise PlatformError("hub_refused", reason="epoch_stale")
-    event = profile_event(account, org, key, "wg.profile", {"name": text}, epoch=epoch, lh=log.head.seq, wg=wg)
+    event = seal(account, org, (ORG, org), "wg.profile", {"name": text}, wg=wg)
     return {"org_id": org, "wg_id": wg, "name": text, "seq": post_event(account, event)}
 
 
@@ -187,14 +183,14 @@ def register(tree: Tree) -> None:
     sub = tree.command(group, "list", _list, "the allowed repositories")
     sub.add_argument("--wg", required=True)
     for name, allow, text in (("allow", True, "add repositories"), ("disallow", False, "remove repositories")):
-        sub = tree.command(group, name, _change(allow), text)
+        sub = tree.command(group, name, _change(allow), text, writes=True)
         sub.add_argument("--wg", required=True)
         sub.add_argument("--repo", action="append", default=[], help="owner/name, repeatable")
     group = tree.group("wg", "workgroups")
-    sub = tree.command(group, "settings", _settings, "show or set the workgroup settings")
+    sub = tree.command(group, "settings", _settings, "show or set the workgroup settings", writes=True)
     sub.add_argument("--wg", required=True)
     sub.add_argument("--protected-branch", action="append", help="branch or pattern, repeatable (replaces the list)")
     sub.add_argument("--pr-draft-default", choices=["true", "false"])
-    sub = tree.command(group, "rename", _rename, "rename a workgroup (admins)")
+    sub = tree.command(group, "rename", _rename, "rename a workgroup (admins)", writes=True)
     sub.add_argument("--wg", required=True)
     sub.add_argument("--name", required=True)

@@ -23,11 +23,13 @@ from collections.abc import Callable
 from typing import Any, cast
 
 from agent_platform.account import Account, unverified
+from agent_platform.credentials import EMAIL_RE, LOGIN_RE
 from agent_platform.errors import PlatformError
-from agent_platform.eventio import excluded, rows_of, uuid_argument
+from agent_platform.eventio import rows_of, uuid_argument
 from agent_platform.hub import segment
 from agent_platform.orgs import device_assign, now_text
 from agent_platform.pairing import open_browser
+from agent_platform.reader import excluded
 from agent_runner.crypto.encoding import b64u_decode, body_json, parse_json
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.ids import uuid7
@@ -54,8 +56,6 @@ REQUEST_FAILED = "request_failed"
 PROGRESS_STAGES = frozenset({"browser_started", "email_entered", "magic_link_received", "authorized"})
 URL_RE = re.compile(r"https://[!-~]{1,2040}|http://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?(/[!-~]{0,2000})?")
 USER_CODE_RE = re.compile(r"[A-Z0-9-]{4,16}")
-LOGIN_RE = re.compile(r"[A-Za-z0-9-]{1,39}")
-EMAIL_RE = re.compile(r"[!-?A-~]{1,64}@[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63}){0,8}")
 CODE_RE = re.compile(r"[!-~]{1,512}")
 POLL_S = 2.0
 WAIT_MAX_S = 600

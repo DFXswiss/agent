@@ -25,6 +25,10 @@ while the pairing is still open waits for the confirmation like a plain `--wait`
 the timeout without using the attempt. Terminal cases delete `pending.json` and its key item: success, expiry
 before the confirmation or the claim (`pairing_timeout`: the hub answers `pairing_unknown`) and failure
 (`pairing_failed`). A transient failure (`hub_unreachable`, another refusal) keeps the pending pairing for a retry.
+Before it claims, the tool marks the pending pairing (`claim_sent`): when a retry then finds the pairing gone
+(`pairing_unknown`), the claim may have succeeded at the hub with its answer lost, so the hub may list an active agent
+without local state. That is `pairing_failed` with `reason: claim_lost`, whose next step asks the user to disconnect
+that agent in the settings (`errors.NEXT_FOR_REASON`), not a timeout.
 Outputs never contain the handover, the secret `r`, the claim or a private key; the texts of `next` are fixed here.
 """
 
@@ -199,6 +203,7 @@ def _complete(home: Home, pending: Mapping[str, Any], pairing: Pairing, typed: s
     client = pairing.client()
     try:
         handover = _handover(pairing, client, typed)
+        home.save_pending({**pending, "claim_sent": True})
         try:
             result = pairing.complete(client, handover)
         except PlatformError as error:
@@ -253,4 +258,6 @@ def wait(home: Home, *, return_code: str | None, timeout: int) -> dict[str, Any]
         except PlatformError as error:
             if error.code in ("pairing_timeout", "pairing_failed"):
                 _discard(home, pending)
+            if error.code == "pairing_timeout" and pending.get("claim_sent") is True:
+                raise PlatformError("pairing_failed", reason="claim_lost") from None
             raise

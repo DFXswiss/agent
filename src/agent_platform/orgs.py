@@ -71,6 +71,15 @@ def crypto_refusal(error: CryptoError) -> PlatformError:
     return PlatformError("hub_refused", reason=error.code)
 
 
+def seal_epoch(state: OrgState, scope: str, scope_id: str) -> int:
+    """The epoch a new event of the scope is sealed under: the current one, unless the scope's rotation is owed
+    (`pending`: a member that left by itself could still read it): `rotation_pending` until an admin or writer has
+    rotated (`upkeep.prepare` does it before every writing command when the user may)."""
+    if (scope, scope_id) in state.pending:
+        raise PlatformError("rotation_pending", scope=scope, scope_id=scope_id)
+    return state.epoch(scope, scope_id)
+
+
 def locale(account: Account) -> str:
     settings = account.me().get("settings")
     found = settings.get("locale") if isinstance(settings, dict) else None
@@ -562,7 +571,6 @@ def _append(
     account: Account,
     org: str,
     fields: list[dict[str, object]],
-    history: bool = False,
     events_of: Callable[[Built], list[dict[str, object]]] | None = None,
 ) -> Built:
     def attempt() -> Built:
@@ -580,7 +588,6 @@ def _append(
                 ts=now_text(),
                 held=account.keys(org),
                 platform=platform,
-                history=history,
             )
         except CryptoError as error:
             raise crypto_refusal(error) from None
@@ -599,7 +606,7 @@ def wg_create(account: Account, org: str, name: str) -> dict[str, Any]:
 
     def events(built: Built) -> list[dict[str, object]]:
         state = built.log.state
-        epoch = state.epoch(ORG, org)
+        epoch = seal_epoch(state, ORG, org)
         key = {**account.keys(org), **built.new_keys}.get((ORG, org, epoch))
         if key is None:
             raise PlatformError("hub_refused", reason="epoch_stale")
@@ -617,15 +624,6 @@ def find_org(account: Account, wg: str) -> str:
         if wg in account.org_log(org).state.workgroups:
             return org
     raise PlatformError("no_org")
-
-
-def wg_grant(account: Account, wg: str, user: str, access: str, history: bool) -> dict[str, Any]:
-    if not is_uuid7(user) or access not in (READ, WRITE):
-        raise PlatformError("invalid_argument")
-    org = find_org(account, wg)
-    entry: dict[str, object] = {"type": "grant", "subject": user, "wg": wg, "access": access}
-    built = _append(account, org, [entry], history=history)
-    return {"org_id": org, "wg_id": wg, "user_id": user, "access": access, "seq": built.log.head.seq}
 
 
 # --- platform device ---

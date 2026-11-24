@@ -46,6 +46,11 @@ def unverified(reason: str) -> PlatformError:
     return PlatformError("hub_refused", reason=reason)
 
 
+class LogUnverifiable(PlatformError):
+    """An org log whose entries the hub served but that does not verify (the web's blocked org), as opposed to a
+    refusal or an unreachable hub, which says nothing about the log."""
+
+
 def _entries(page: Mapping[str, Any]) -> list[object]:
     items = page.get("entries")
     if not isinstance(items, list) or not all(isinstance(item, dict) and "entry" in item for item in items):
@@ -181,16 +186,16 @@ class Account:
             genesis = cast(dict[str, Any], entries[0])["body"]
             founder = str(genesis["pub"]["sig"])
         except (IndexError, KeyError, TypeError):
-            raise unverified("log_genesis") from None
+            raise LogUnverifiable("hub_refused", reason="log_genesis") from None
         platform = self.platform() if _needs_platform(entries) else None
         try:
             log = verify_log(entries, founder, platform=platform)
         except CryptoError as error:
-            raise unverified(error.code) from None
+            raise LogUnverifiable("hub_refused", reason=error.code) from None
         if log.state.org != org or head != log.head.to_json():
-            raise unverified("log_chain")
+            raise LogUnverifiable("hub_refused", reason="log_chain")
         if not self._trusts(log):
-            raise unverified("founder_untrusted")
+            raise LogUnverifiable("hub_refused", reason="founder_untrusted")
         return log
 
     def _trusts(self, log: VerifiedLog) -> bool:

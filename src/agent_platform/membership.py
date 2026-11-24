@@ -12,10 +12,12 @@ the head the batch produces; the new keys of scopes the user still reads are kep
 The pending-rotation job of the browser (`rotate_pending`, `org rotate`): an admin unassigns platform devices whose
 certification ended (verified platform log) plus R; then one `rotate` for every scope of the log's `pending` (a member
 left by itself) that the user may rotate (org: admin; workgroup: admin or writer). The browser runs it whenever a log
-changes; the tool runs it after each of its membership changes and on `org rotate`. The credential-key check of the
-browser's re-wrap job (`credkey.rotate_if_owed`) runs after every change that can take a device's eligibility away
-(`member remove`, `wg ungrant`, `device unassign`, `org leave`). A failure of these follow-ups does not undo the change:
-it is reported in the result (`error` and its fields).
+changes; the tool runs it before every writing command (`upkeep.prepare`), after each of its membership changes and
+on `org rotate`. The credential-key check of the browser's re-wrap job (`credkey.rotate_if_owed`) runs before every
+writing command as well and after every change that can take a device's eligibility away (`member remove`,
+`wg ungrant`, `device unassign`, `org leave`). A failure of these follow-ups does not undo the change: it is reported
+in the result (`error` and its fields). `wg grant` follows the web's `grantPlan`: not on the default or an archived
+workgroup (`invalid_argument`, `reason: forbidden`), nothing to do when the member has exactly that access.
 """
 
 from __future__ import annotations
@@ -66,7 +68,9 @@ def platform_for(account: Account, state: OrgState, fields: Sequence[dict[str, o
     return account.platform() if needed else None
 
 
-def submit(account: Account, org: str, planner: Planner, events_of: EventsOf | None = None) -> Built | None:
+def submit(
+    account: Account, org: str, planner: Planner, events_of: EventsOf | None = None, *, history: bool = False
+) -> Built | None:
     """The append flow of the module docstring; None when the planner finds nothing to do."""
 
     def attempt() -> Built | None:
@@ -84,6 +88,7 @@ def submit(account: Account, org: str, planner: Planner, events_of: EventsOf | N
                 ts=now_text(),
                 held=account.keys(org),
                 platform=platform_for(account, log.state, fields),
+                history=history,
             )
         except CryptoError as error:
             raise crypto_refusal(error) from None
@@ -326,12 +331,29 @@ def invite_revoke(account: Account, org: str, invite: str) -> dict[str, Any]:
 # --- workgroups ---
 
 
+def grant_plan(subject: str, wg: str, access: str) -> Planner:
+    """`grant` of `access` (`grantPlan` of the web): not on the default workgroup nor an archived one (`forbidden`);
+    None once the subject has exactly that explicit access."""
+
+    def plan(log: VerifiedLog, me: str) -> Fields | None:
+        state = log.state
+        require_admin(state, me)
+        _require_user(state, subject)
+        if wg == state.default_wg or not state.writable(wg):
+            raise PlatformError("invalid_argument", reason="forbidden")
+        if state.explicit_access(subject, wg) == access:
+            return None
+        return [{"type": "grant", "subject": subject, "wg": wg, "access": access}]
+
+    return plan
+
+
 def ungrant_plan(subject: str, wg: str) -> Planner:
     def plan(log: VerifiedLog, me: str) -> Fields | None:
         state = log.state
         require_admin(state, me)
         if wg == state.default_wg:
-            raise PlatformError("invalid_argument", reason="default_workgroup")
+            raise PlatformError("invalid_argument", reason="forbidden")
         # only the explicit access: an admin's inherited read stays (ADR-058), so there is nothing to ungrant
         if state.member(subject) is None or state.explicit_access(subject, wg) is None:
             return None
@@ -345,12 +367,20 @@ def archive_plan(wg: str) -> Planner:
         state = log.state
         require_admin(state, me)
         if wg == state.default_wg:
-            raise PlatformError("invalid_argument", reason="default_workgroup")
+            raise PlatformError("invalid_argument", reason="forbidden")
         if not state.writable(wg):
             return None
         return [{"type": "wg_archive", "wg": wg}]
 
     return plan
+
+
+def wg_grant(account: Account, wg: str, user: str, access: str, history: bool) -> dict[str, Any]:
+    """Give a member `access` (`read`/`write`, the parser's choices) to a workgroup (with `history` also the older
+    epochs)."""
+    org = find_org(account, require_id(wg))
+    built = submit(account, org, grant_plan(require_id(user), wg, access), history=history)
+    return {**outcome(org, built), "wg_id": wg, "user_id": user, "access": access}
 
 
 def wg_ungrant(account: Account, wg: str, user: str) -> dict[str, Any]:
@@ -404,24 +434,26 @@ def register(tree: Tree) -> None:
     group = tree.group("member", "members of an organization")
     sub = tree.command(group, "list", _member_list, "members with role and workgroup access (verified log)")
     sub.add_argument("--org", required=True)
-    sub = tree.command(group, "role", _member_role, "make a member admin or member")
+    sub = tree.command(group, "role", _member_role, "make a member admin or member", writes=True)
     sub.add_argument("--org", required=True)
     sub.add_argument("--user", required=True)
     sub.add_argument("--role", required=True, choices=[ADMIN, MEMBER])
-    sub = tree.command(group, "remove", _member_remove, "remove a member (rotates the keys it could read)")
+    sub = tree.command(group, "remove", _member_remove, "remove a member (rotates the keys it could read)", writes=True)
     sub.add_argument("--org", required=True)
     sub.add_argument("--user", required=True)
     group = tree.group("org", "organizations")
-    sub = tree.command(group, "leave", _org_leave, "leave an organization")
+    sub = tree.command(group, "leave", _org_leave, "leave an organization", writes=True)
     sub.add_argument("--org", required=True)
-    sub = tree.command(group, "invite-revoke", _invite_revoke, "revoke an open invitation")
+    sub = tree.command(group, "invite-revoke", _invite_revoke, "revoke an open invitation", writes=True)
     sub.add_argument("--org", required=True)
     sub.add_argument("--invite", required=True, help="invite_id (see `org show`)")
     sub = tree.command(group, "rotate", _org_rotate, "the owed key rotations of an organization")
     sub.add_argument("--org", required=True)
     group = tree.group("wg", "workgroups")
-    sub = tree.command(group, "ungrant", _wg_ungrant, "take a member's workgroup access away (rotates the key)")
+    sub = tree.command(
+        group, "ungrant", _wg_ungrant, "take a member's workgroup access away (rotates the key)", writes=True
+    )
     sub.add_argument("--wg", required=True)
     sub.add_argument("--user", required=True)
-    sub = tree.command(group, "archive", _wg_archive, "archive a workgroup (read-only)")
+    sub = tree.command(group, "archive", _wg_archive, "archive a workgroup (read-only)", writes=True)
     sub.add_argument("--wg", required=True)

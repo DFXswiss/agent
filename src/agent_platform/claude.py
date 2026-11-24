@@ -136,9 +136,11 @@ def watch(
     *,
     interval: float,
     iterations: int | None,
+    upkeep: Callable[[Account], object],
     sleep: Callable[[float], None] | None = None,
 ) -> dict[str, Any]:
-    """`sync` every `interval` seconds; failures other than a lost pairing are reported on stderr (codes only)."""
+    """`sync` every `interval` seconds, each round after `upkeep` (the browser's jobs, `upkeep.sync`); failures other
+    than a lost pairing are reported on stderr (codes only)."""
     runs = stored = 0
     while iterations is None or runs < iterations:
         if runs:
@@ -147,6 +149,7 @@ def watch(
         try:
             account = open_account()
             try:
+                upkeep(account)
                 result = connect(account, environ, replace=False, only_changed=True)
             finally:
                 account.close()

@@ -3,12 +3,18 @@
 You are an AI agent (for example Claude Code) on your user's computer. Your user said something like "set up
 agent.dfx.swiss for me". This guide tells you exactly what to do. Your user does **one** thing: confirm with their
 passkey in the browser window you open. You do everything else. Talk to your user in their language and never ask
-them to type commands, copy codes or open settings.
+them to type commands or open settings; the only codes your user ever passes on are the two of the remote pairing
+(section 1), when you run on another computer.
 
 The tool for all of this is `agent-platform` (package of the `DFXswiss/agent` repository). Every command prints one
 JSON object. `"ok": true` means done. `"ok": false` comes with `"error"` (a fixed code) and `"next"` (what to do).
-No command ever prints a token, key or code, except `org invite`, whose `invite_link` (listed in `secret_fields`) is
-meant only for the person being invited.
+No command prints a token or key. A few print a secret code or link, name it in `secret_fields` and mean it for one
+person only: `org invite` and `platform invite` (`invite_link`, for the person invited), `register --remote`
+(`invite_link`, for your user), `device invite` (`code` and `enroll_command`, for the owner of the device) and
+`recovery new` (`recovery_code`, for your user to keep). The remote pairing is the one exception where your user
+handles codes: `pair --remote` prints the agent code (`code`) that you send your user with `connect_link`, and the
+page then shows your user a return code that they send back to you. Neither is in `secret_fields`: the agent code
+only works on the page of this one pairing and the return code only for this agent, within minutes.
 
 ## 0. Install the tool
 
@@ -245,6 +251,22 @@ agent-platform platform list
 agent-platform platform revoke --id <invite_id>
 agent-platform security                                          # checks the web build against its manifest
 ```
+
+**Key changes the tool makes by itself.** A browser keeps the account's keys in order in the background; the tool
+does the same around its commands, so you never need to ask for it:
+
+- before every command that writes (tasks, prompts, whiteboard entries, settings, membership changes, devices,
+  credentials) it makes the key changes your user owes: when a member left an organization by itself, the keys that
+  member could read change (an admin changes the organization's, an admin or writer a workgroup's); a DFX device
+  whose certification ended is taken off its workgroups (admins); when a device lost access to your user's
+  credentials, the credential key changes and the credentials are encrypted again;
+- after such a command it gives members and devices the keys they are still missing (as `org catch-up` does);
+- `status` and `claude watch` (the background service) do both.
+
+A result names what was done under `upkeep`, only when something was done or failed. If a key change is owed that
+your user may not make, the tool does not write there (`rotation_pending`) until an admin (or a writer of the
+workgroup) has made it, in a browser or with an agent: nothing new reaches the member who left. `org rotate`,
+`org catch-up` and `credentials rotate` run one of these steps on demand. The generic `api` command runs none of them.
 
 If a command for something new is missing, the generic signed call reaches every route:
 

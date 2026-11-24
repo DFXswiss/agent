@@ -42,6 +42,11 @@ NEXT: dict[str, str] = {
     "no_write_access": "The user has no write access to this workgroup; ask an admin of the organization for it.",
     "not_inviter": "Only a user with the platform role `inviter` can do this.",
     "device_request_failed": "The device did not finish the request; see `failure`, then start it again.",
+    "rotation_pending": (
+        "A member left and the key of this organization or workgroup must change before anything new is written "
+        "there (see `scope`, `scope_id`); this user may not change it. Ask an admin (or a writer of the workgroup) to "
+        "open the web client or to let their agent run `agent-platform status`; both change it on their own."
+    ),
     "last_admin": "The organization needs another admin first: make a member admin (`agent-platform member role`).",
     "not_found": (
         "The member, workgroup, device, invitation or whiteboard entry is not known; check the ID with `member list`, "
@@ -56,6 +61,14 @@ NEXT: dict[str, str] = {
     "internal": "An unexpected error happened; run the command again.",
 }
 CODES = frozenset(NEXT)
+# A different next step for one reason of a code (the texts are fixed here as well).
+NEXT_FOR_REASON: dict[tuple[str, str], str] = {
+    ("pairing_failed", "claim_lost"): (
+        "The pairing may have completed at the hub while its answer was lost, so the hub may list this agent as "
+        "connected although it kept nothing. Ask your user to disconnect it in the settings (Connected agents), "
+        "then pair again."
+    ),
+}
 
 
 class PlatformError(Exception):
@@ -69,4 +82,5 @@ class PlatformError(Exception):
         super().__init__(code)
 
     def to_json(self) -> dict[str, object]:
-        return {"ok": False, "error": self.code, "next": NEXT[self.code], **self.fields}
+        step = NEXT_FOR_REASON.get((self.code, str(self.fields.get("reason"))), NEXT[self.code])
+        return {"ok": False, "error": self.code, "next": step, **self.fields}
