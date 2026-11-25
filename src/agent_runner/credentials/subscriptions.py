@@ -15,6 +15,8 @@ are created by this device's logins (`store_login`) and by the owner's clients.
   names in a newer version than cached are fetched, cached ones it no longer names are purged. The list is a hint only
   (IDs and versions); an entry of another owner or out of form makes the whole answer unusable. No list (a refusal, a
   transport error, a malformed answer) purges nothing (False).
+- `refresh_cached(context, owner)`: the `credentials` hint reads every cached record of the owner again by its ID (a
+  new login of a shared subscription reaches the pool, `model.operator`).
 - `opened(context, found)`: the decrypted body for one use (verified again); never written or logged.
 - `store_login(context, owner, id, fields, request_id)`: the login of a further subscription (ADR-090 section 2): the
   current record is read (`fetch`; none: version 0), its `name`, `note` and `use` are kept unless `fields` names them,
@@ -208,6 +210,17 @@ async def sync_owner(context: Any, owner: str) -> bool:
             detail = f" code={exc.code}" if isinstance(exc, (HubRefusal, RecordRefused)) else ""
             _line(context, f"fetch_failed id={record_id} error={type(exc).__name__}{detail}")
     return True
+
+
+async def refresh_cached(context: Any, owner: str) -> None:
+    """Read every cached record of the owner again by its ID (the `credentials` hint); a failure is logged."""
+    async with session(context.pool) as conn:
+        ids = [found.id for found in await cached_of(conn, owner)]
+    for record_id in ids:
+        try:
+            await fetch(context, record_id)
+        except Exception as exc:
+            _line(context, f"fetch_failed id={record_id} error={type(exc).__name__}")
 
 
 async def _open(context: Any, found: Subscription) -> dict[str, Any]:

@@ -152,7 +152,7 @@ async def _used_up(env: SessionEnv, session: LocalSession) -> tuple[str, limits.
     if key.startswith(limits.OPERATOR):
         pool = operator.pool_for(env.context)
         assert pool is not None  # the session is bound to one of its files
-        if pool.choose(exclude=(key[len(limits.OPERATOR) :],)) is not None:
+        if pool.choose(exclude=(key[len(limits.OPERATOR) :],), org_id=session.org_id) is not None:
             return None  # step 1: the renewal moves it to another file
     return label, limit
 

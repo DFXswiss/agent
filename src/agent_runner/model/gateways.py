@@ -124,15 +124,14 @@ async def operator_target(
     env: SessionEnv, session: LocalSession, name: str
 ) -> tuple[Stamp, dict[str, Any] | None] | str | None:
     """`target` of a session bound to the operator's token file `name` (module docstring)."""
-    pool = operator.pool_for(env.context)
+    pool = await operator.refreshed(env.context)
     assert pool is not None  # `operator.bound` found a binding
-    if not pool.allows(session.org_id):
+    if not pool.serves(session.org_id):
         _line(env, f"operator_access_revoked session_id={session.id}")
         return None
-    pool.scan()
-    current = pool.current(name)
+    current = pool.current(name) if pool.allowed(name, session.org_id) else None
     if current is None:
-        other = pool.choose(exclude=(name,))
+        other = pool.choose(exclude=(name,), org_id=session.org_id)
         if other is None:
             pool.note(f"exhausted:{session.id}", name, f"operator_pool_exhausted session_id={session.id} file={name}")
             return KEEP

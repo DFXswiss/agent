@@ -173,7 +173,7 @@ class Sampler:
     def operator(self) -> Summary | None:
         """The operator's subscriptions (KOR-23) when they are configured: scanned now."""
         pool = pool_for(self.context)
-        if pool is None:
+        if pool is None or pool.directory is None:  # shared subscriptions only: no token files to show
             return None
         pool.scan()
         return pool.summary()

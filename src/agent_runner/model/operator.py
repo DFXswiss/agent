@@ -43,6 +43,15 @@ runner log and the metrics.
   `exhausted`: no new binding, and a bound session is moved to another usable file by its renewal (in place, the
   model stays); without one the gateway keeps what it holds and the reconcile step `model_fallback` pauses the
   session.
+- **Shared subscriptions** (KOR-69, ADR-090 section 3): further Claude subscriptions of users that the desired state
+  lists (`subscriptions.shared`) join the pool as entries named `sub-<record ID>` (`refresh_shared`): the record is
+  fetched and verified like every record of its owner (`credentials.subscriptions`) and used only for a session of an
+  organization its **sealed** `use` allows - `orgs` names it, or `pool` and the owner holds the platform role
+  `operator` while the verified platform log grants the organization the operator's subscriptions. A record without a
+  token, without a use or that does not open is no entry. The entry's identity is its record version, so a new login
+  ends a block like a renewed file; the choice, binding, blocks, deferrals and exhaustion are those of the files. A
+  pool exists without the directory once the desired state lists a shared subscription (`ensure`); metrics, `doctor`
+  and `operator_quota` show the token files only.
 - Tokens are kept in memory only (the cache of the current content of each file) and handed to the guest in the
   provisioning body; they never appear in a log line, a metric, an error or the store.
 """
@@ -55,11 +64,13 @@ import re
 import stat
 import time
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent_runner.credentials import subscriptions
+from agent_runner.credentials.cache import CredentialUnavailable
 from agent_runner.crypto.log.platform import PlatformState
 from agent_runner.model import limits
 from agent_runner.orgs.book import book_for
@@ -91,7 +102,22 @@ IGNORED = "ignored"
 STATES = (USABLE, BLOCKED, EXHAUSTED, DEFERRED, IGNORED)
 
 Identity = tuple[int, int, int, int]
-"""Device, inode, modification time (ns) and size of a token file."""
+"""Device, inode, modification time (ns) and size of a token file (a shared subscription: `(0, 0, version, 0)`)."""
+SHARED_PREFIX = "sub-"
+OPERATOR_ROLE = "operator"
+FETCH_RETRY_S = 60.0
+"""A shared subscription whose record could not be fetched is not asked for again within this time."""
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+@dataclass(frozen=True)
+class Use:
+    """The sealed use of a shared subscription: its owner, `pool` and the organizations."""
+
+    owner: str
+    pool: bool
+    orgs: frozenset[str]
+    version: int
 
 
 def identity_text(identity: Identity) -> str:
@@ -156,7 +182,7 @@ DIRECTORY_ERRORS = {errno.ENOENT: "missing", errno.ENOTDIR: "not_directory"}
 class Pool:
     """The operator's pool of token files of one daemon (module docstring)."""
 
-    directory: Path
+    directory: Path | None
     orgs: frozenset[str]
     clock: Callable[[], float] = time.monotonic
     wall: Callable[[], float] = time.time
@@ -183,9 +209,41 @@ class Pool:
     reported: dict[str, object] = field(default_factory=dict)
     platform: Callable[[], PlatformState | None] = lambda: None
     """The verified platform state of the daemon (`orgs.book`), None before the first verification."""
+    shared: dict[str, Entry] = field(default_factory=dict)
+    """`sub-<record ID>` -> the entry of a shared subscription (`refresh_shared`)."""
+    uses: dict[str, Use] = field(default_factory=dict)
+    failed: dict[str, float] = field(default_factory=dict)
+    """Record ID -> time its last fetch failed."""
 
     def __repr__(self) -> str:
-        return f"Pool(files={sorted(self.files)!r}, problem={self.problem!r})"
+        return f"Pool(files={sorted(self.files)!r}, shared={sorted(self.shared)!r}, problem={self.problem!r})"
+
+    def entries(self) -> dict[str, Entry]:
+        """The token files and the shared subscriptions."""
+        return {**self.files, **self.shared}
+
+    def allowed(self, name: str, org_id: str | None) -> bool:
+        """`name` may serve a session of `org_id`: a file when the organization may use the pool (`allows`), a shared
+        subscription when its sealed use allows the organization (module docstring)."""
+        use = self.uses.get(name)
+        if use is None:
+            return name in self.files and self.allows(org_id)
+        if org_id is None:
+            return False
+        if org_id in use.orgs:
+            return True
+        state = self.platform()
+        return (
+            use.pool
+            and state is not None
+            and state.has_role(use.owner, OPERATOR_ROLE)
+            and org_id in state.operator_subscriptions
+            and state.operator_subscribed(org_id)
+        )
+
+    def serves(self, org_id: str | None) -> bool:
+        """The organization may use the files or a shared subscription of the pool."""
+        return self.allows(org_id) or any(self.allowed(name, org_id) for name in self.shared)
 
     def allows(self, org_id: str | None) -> bool:
         """The organization may use the pool: by its latest `org_operator_subscriptions` in the verified platform log,
@@ -207,7 +265,13 @@ class Pool:
     # -- files -------------------------------------------------------------------------------------------------------
 
     def scan(self) -> None:
-        """Read the directory again (module docstring)."""
+        """Read the directory again (module docstring); without a directory there are no files."""
+        if self.directory is None:
+            self.files = {}
+            known = self.shared
+            self.blocked = {n: i for n, i in self.blocked.items() if n in known and known[n].identity == i}
+            self.deferred = {n: until for n, until in self.deferred.items() if n in known and until > self.clock()}
+            return
         try:
             descriptor = os.open(self.directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         except OSError as exc:
@@ -235,8 +299,9 @@ class Pool:
         for name, item in found.items():
             self.note(f"file:{name}", item.reason, f"operator_file_ignored file={name} reason={item.reason}")
         now = self.clock()
-        self.blocked = {n: i for n, i in self.blocked.items() if n in found and found[n].identity == i}
-        self.deferred = {n: until for n, until in self.deferred.items() if n in found and until > now}
+        known = {**found, **self.shared}
+        self.blocked = {n: i for n, i in self.blocked.items() if n in known and known[n].identity == i}
+        self.deferred = {n: until for n, until in self.deferred.items() if n in known and until > now}
 
     def _unusable(self, problem: str) -> None:
         self.problem = problem
@@ -263,7 +328,7 @@ class Pool:
         return Entry(identity, token, None if token is not None else "format")
 
     def state(self, name: str) -> str:
-        entry = self.files.get(name)
+        entry = self.entries().get(name)
         if entry is None or entry.token is None:
             return IGNORED
         if self.blocked.get(name) == entry.identity:
@@ -276,7 +341,7 @@ class Pool:
 
     def current(self, name: str) -> tuple[str, Identity] | None:
         """The current token of a file a session may stay on (usable, or deferred by a `429`), else None."""
-        entry = self.files.get(name)
+        entry = self.entries().get(name)
         if self.state(name) not in (USABLE, DEFERRED):
             return None
         assert entry is not None
@@ -284,10 +349,17 @@ class Pool:
         assert entry.identity is not None
         return entry.token, entry.identity
 
-    def choose(self, exclude: Iterable[str] = ()) -> str | None:
-        """The usable file for a new binding (module docstring), or None."""
+    def choose(self, exclude: Iterable[str] = (), org_id: str | None = None) -> str | None:
+        """The usable entry for a new binding of a session of `org_id` (module docstring), or None; without an
+        organization the token files only (their organizations were checked by the caller)."""
         skipped = set(exclude)
-        usable = [name for name in self.files if name not in skipped and self.state(name) == USABLE]
+        usable = [
+            name
+            for name in self.entries()
+            if name not in skipped
+            and self.state(name) == USABLE
+            and (name in self.files if org_id is None else self.allowed(name, org_id))
+        ]
         if not usable:
             return None
         counts = Counter(self.bindings.values())
@@ -318,7 +390,7 @@ class Pool:
             self.note(f"limited:{session_id}", last, f"operator_refusal_ignored session_id={session_id} file={name}")
             return False
         self.scan()
-        entry = self.files.get(name)
+        entry = self.entries().get(name)
         if entry is None or entry.identity is None:
             return False
         if status == LIMITED:
@@ -513,14 +585,12 @@ async def observed(
 
 
 async def pick(context: Any, org_id: str) -> tuple[str, str, Identity] | None:
-    """A usable file for a new session of `org_id`: `(name, token, identity)`; None when the organization is not
-    approved or no file is usable."""
-    pool = pool_for(context)
-    if pool is None or not pool.allows(org_id):
+    """A usable entry for a new session of `org_id`: `(name, token, identity)`; None when the organization may use
+    neither the files nor a shared subscription, or none is usable."""
+    pool = await refreshed(context)
+    if pool is None or not pool.serves(org_id):
         return None
-    await load(context, pool)
-    pool.scan()
-    name = pool.choose()
+    name = pool.choose(org_id=org_id)
     if name is None:
         pool.log(f"runner.model operator_pool_empty problem={pool.problem or 'none'}")
         return None
@@ -530,37 +600,147 @@ async def pick(context: Any, org_id: str) -> tuple[str, str, Identity] | None:
 
 
 async def peek(context: Any, org_id: str) -> str | None:
-    """The file `pick` would take for a session of `org_id` now, without binding or logging (ADR-081: what a resume
+    """The entry `pick` would take for a session of `org_id` now, without binding or logging (ADR-081: what a resume
     would get)."""
-    pool = pool_for(context)
-    if pool is None or not pool.allows(org_id):
+    pool = await refreshed(context)
+    if pool is None or not pool.serves(org_id):
         return None
-    await load(context, pool)
-    pool.scan()
-    return pool.choose()
+    return pool.choose(org_id=org_id)
 
 
 def used_up(context: Any, org_id: str) -> list[tuple[float, str]]:
-    """`(release time, name)` of the used-up files of the pool for a session of `org_id`, earliest first; empty when
-    the organization may not use the pool (ADR-081 section 3: the pool's step waits for the earliest release)."""
+    """`(release time, name)` of the used-up entries of the pool for a session of `org_id`, earliest first; empty when
+    the organization may use none of them (ADR-081 section 3: the pool's step waits for the earliest release)."""
     pool = pool_for(context)
-    if pool is None or not pool.allows(org_id):
+    if pool is None:
         return []
     found = limits.limits_for(context)
     released: list[tuple[float, str]] = []
-    for name in pool.files:
+    for name in pool.entries():
         limit = found.active(limits.operator_key(name))
-        if pool.state(name) == EXHAUSTED and limit is not None and limit.until is not None:
+        allowed = pool.allowed(name, org_id)
+        if allowed and pool.state(name) == EXHAUSTED and limit is not None and limit.until is not None:
             released.append((limit.until, name))
     return sorted(released)
 
 
 def held(context: Any, name: str) -> tuple[str, Identity] | None:
-    """The token and identity of a used-up file a waiting session starts on (ADR-081 section 3), else None."""
+    """The token and identity of a used-up entry a waiting session starts on (ADR-081 section 3), else None."""
     pool = pool_for(context)
-    entry = None if pool is None else pool.files.get(name)
+    entry = None if pool is None else pool.entries().get(name)
     if pool is None or entry is None or pool.state(name) != EXHAUSTED:
         return None
     assert entry.token is not None
     assert entry.identity is not None
     return entry.token, entry.identity
+
+
+# -- shared subscriptions (KOR-69, ADR-090 section 3) ------------------------------------------------------------
+
+
+def listed_shared(desired: Mapping[str, Any] | None) -> list[tuple[str, str]]:
+    """`(record ID, owner)` of `subscriptions.shared` of the desired state (malformed rows are left out)."""
+    section = None if desired is None else desired.get("subscriptions")
+    rows = section.get("shared") if isinstance(section, Mapping) else None
+    found: list[tuple[str, str]] = []
+    for row in rows if isinstance(rows, list) else []:
+        record = row.get("subscription_id") if isinstance(row, Mapping) else None
+        owner = row.get("owner_id") if isinstance(row, Mapping) else None
+        if (
+            isinstance(record, str)
+            and isinstance(owner, str)
+            and _UUID_RE.fullmatch(record)
+            and _UUID_RE.fullmatch(owner)
+        ):
+            found.append((record, owner))
+    return found
+
+
+def _desired(context: Any) -> Mapping[str, Any] | None:
+    from agent_runner.model.gateways import running_service  # noqa: PLC0415 - gateways imports this module
+
+    service = running_service(context)
+    return None if service is None else service.env.desired
+
+
+def ensure(context: Any) -> Pool | None:
+    """The pool of the daemon; one without the directory is made once the desired state lists a shared
+    subscription (module docstring)."""
+    found = pool_for(context)
+    if found is not None or context is None or getattr(context, "identity", None) is None:
+        return found
+    if not listed_shared(_desired(context)):
+        return None
+
+    def log(text: str) -> None:
+        context.log.write(text + "\n")
+        context.log.flush()
+
+    created = Pool(directory=None, orgs=frozenset(), log=log, platform=platform_of(context))
+    attach(context, created)
+    setattr(context, ATTRIBUTE, created)
+    return created
+
+
+def _use(owner: str, version: int, value: object) -> Use | None:
+    if not isinstance(value, Mapping) or not isinstance(value.get("pool"), bool):
+        return None
+    orgs = value.get("orgs")
+    if not isinstance(orgs, list) or not all(isinstance(org, str) and _UUID_RE.fullmatch(org) for org in orgs):
+        return None
+    return Use(owner=owner, pool=value["pool"], orgs=frozenset(orgs), version=version)
+
+
+async def _shared_entry(context: Any, pool: Pool, record_id: str, owner: str) -> bool:
+    """Read one listed shared subscription into the pool; True when it is an entry now."""
+    name = SHARED_PREFIX + record_id
+    async with store_session(context.pool) as conn:
+        found = await subscriptions.cached(conn, record_id)
+    if found is None and pool.clock() - pool.failed.get(record_id, float("-inf")) >= FETCH_RETRY_S:
+        try:
+            found = await subscriptions.fetch(context, record_id)
+        except Exception as exc:
+            pool.failed[record_id] = pool.clock()
+            pool.note(f"shared:{record_id}", type(exc).__name__, f"shared_unusable id={record_id} reason=fetch")
+    if found is None or found.owner != owner or found.primary:
+        return False
+    known = pool.uses.get(name)
+    if known is not None and known.version == found.version and name in pool.shared:
+        return True
+    try:
+        async with subscriptions.opened(context, found) as body:
+            token, use = parse_token(str(body.get("token", "")).encode()), _use(owner, found.version, body.get("use"))
+    except CredentialUnavailable as exc:
+        pool.note(f"shared:{record_id}", exc.reason, f"shared_unusable id={record_id} reason={exc.reason}")
+        return False
+    if token is None or use is None:
+        pool.note(f"shared:{record_id}", "unused", f"shared_unusable id={record_id} reason=unused")
+        return False
+    pool.shared[name] = Entry((0, 0, found.version, 0), token, None)
+    pool.uses[name] = use
+    pool.reported.pop(f"shared:{record_id}", None)
+    return True
+
+
+async def refresh_shared(context: Any, pool: Pool) -> None:
+    """The shared subscriptions of the desired state as entries of the pool (module docstring)."""
+    kept = {
+        SHARED_PREFIX + record_id
+        for record_id, owner in listed_shared(_desired(context))
+        if await _shared_entry(context, pool, record_id, owner)
+    }
+    for name in [name for name in pool.shared if name not in kept]:
+        del pool.shared[name]
+        pool.uses.pop(name, None)
+
+
+async def refreshed(context: Any) -> Pool | None:
+    """The pool (`ensure`) with its bindings and blocks loaded, the directory scanned and the shared subscriptions
+    read again."""
+    pool = ensure(context)
+    if pool is None:
+        return None
+    await load(context, pool)
+    await refresh_shared(context, pool)
+    pool.scan()
+    return pool

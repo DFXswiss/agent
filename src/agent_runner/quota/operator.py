@@ -68,9 +68,9 @@ class Reported:
 
 
 def snapshot(context: Any) -> list[dict[str, Any]] | None:
-    """The subscriptions of the pool as `operator_quota` lists them, None without a pool."""
+    """The subscriptions of the pool as `operator_quota` lists them, None without token files (no directory)."""
     pool = operator.pool_for(context)
-    if pool is None:
+    if pool is None or pool.directory is None:
         return None
     found = limits.limits_for(context)
     listed: list[dict[str, Any]] = []

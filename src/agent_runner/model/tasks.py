@@ -49,7 +49,7 @@ async def tick(context: Any) -> None:
 
 
 async def run(context: Any) -> None:
-    if operator.pool_for(context) is None:
+    if operator.configured(getattr(context, "config", None)) is None and getattr(context, "identity", None) is None:
         return
     while not context.stopping.is_set():
         try:
