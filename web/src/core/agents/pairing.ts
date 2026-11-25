@@ -35,12 +35,9 @@
 // (`r` and the platform root key sealed to the agent's key) instead of a loopback form, and the page shows the return
 // code derived from `r`. `pairingOutcome` reads the result of the claim from the user's agent list.
 import {
-  agentCode,
   claim,
   claimHash,
-  fingerprint,
   MAX_GEN,
-  NONCE_BYTES,
   type PublicKeys,
   returnCode,
   sealHandover,
@@ -52,9 +49,8 @@ import { fail } from '../crypto/errors';
 import { requireInt } from '../crypto/fields';
 import type { Identity } from '../crypto/keys';
 import { Secret } from '../crypto/secret';
-import { b64uDecode, b64uEncode } from '../encoding/b64u';
-import { formatTime, parseTime } from '../encoding/time';
-import type { AnonRequest } from '../account/anon';
+import { b64uEncode } from '../encoding/b64u';
+import { formatTime } from '../encoding/time';
 import type { Prefs } from '../account/prefs';
 import { ownKeys } from '../credentials/records';
 import { handledFor, rememberHandled, rotateCredentialKey } from '../credentials/rotation';
@@ -72,53 +68,9 @@ import { addKeys, orgEntry } from '../store/slices/orgs';
 import type { Store } from '../store/store';
 import type { PairingLink } from './link';
 
-/** How long a pairing stays open (11-agent-access.md section 2: created + 600 s). */
-export const PAIRING_TTL_MS = 600_000;
-/** How long a remote pairing stays open (ADR-067 section 4.3: created + 300 s). */
-export const REMOTE_PAIRING_TTL_MS = 300_000;
+import type { Pairing } from './lookup';
 
-export interface Pairing {
-  readonly pairingId: string;
-  readonly kemPub: Uint8Array;
-  readonly sigPub: Uint8Array;
-  /** Unix ms of the deadline, and of the request (deadline − 10 min, remote: − 5 min). */
-  readonly expiresAt: number;
-  readonly requestedAt: number;
-  /** A pairing from another computer (link and hub agree). */
-  readonly remote: boolean;
-  /** The agent code the user must type (remote only; never shown by the page), else null. */
-  readonly agentCode: string | null;
-}
-
-/**
- * The pairing of `link` at the hub, checked against the link's fingerprint and mode (module comment); `origin` is
- * the page's origin (`scheme://host[:port]`), an input of the agent code.
- */
-export async function lookupPairing(anon: AnonRequest, link: PairingLink, origin: string): Promise<Pairing> {
-  const body = await anon('GET', `/v1/agent-pairings/${encodeURIComponent(link.pairingId)}`);
-  if (!isRecord(body) || !isRecord(body.pub) || body.pairing_id !== link.pairingId) fail('header_invalid');
-  if (body.remote !== undefined && body.remote !== true) fail('header_invalid');
-  const kemPub = b64uDecode(body.pub.kem, 32);
-  const sigPub = b64uDecode(body.pub.sig, 32);
-  const expiresAt = parseTime(body.expires_at);
-  const remote = body.remote === true;
-  if ((await fingerprint(kemPub, sigPub)) !== link.fingerprint) throw new HubError('pairing_mismatch', 0);
-  if (remote !== (link.mode === 'remote')) throw new HubError('pairing_mismatch', 0);
-  if (body.state !== 'open') throw new HubError('pairing_unknown', 404);
-  const code = remote
-    ? await agentCode(link.pairingId, link.fingerprint, b64uDecode(body.nonce, NONCE_BYTES), origin)
-    : null;
-  const ttl = remote ? REMOTE_PAIRING_TTL_MS : PAIRING_TTL_MS;
-  return {
-    pairingId: link.pairingId,
-    kemPub,
-    sigPub,
-    expiresAt,
-    requestedAt: expiresAt - ttl,
-    remote,
-    agentCode: code,
-  };
-}
+export { lookupPairing, PAIRING_TTL_MS, type Pairing, REMOTE_PAIRING_TTL_MS } from './lookup';
 
 /** The generation the user's certificate of the pairing must name (`gen` of the signed lookup). */
 export async function pairingGen(client: Pick<SignedClient, 'request'>, pairingId: string): Promise<number> {

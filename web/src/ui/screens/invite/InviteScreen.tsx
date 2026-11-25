@@ -23,7 +23,7 @@ import { createOrg, displayName, preparePrivateOrg } from '../../../core/account
 import { signIn } from '../../../core/account/login';
 import { codeToInviteId, lookupInvite, register } from '../../../core/account/register';
 import { parseInviteFragment } from '../../../core/agents/link';
-import { lookupPairing } from '../../../core/agents/pairing';
+import { lookupPairing } from '../../../core/agents/lookup';
 import { formatEventTime } from '../../../core/i18n';
 import { HubError } from '../../../core/net/signedFetch';
 import { useStore } from '../../hooks/useStore';
