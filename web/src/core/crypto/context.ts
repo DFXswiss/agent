@@ -10,14 +10,21 @@
 //   SHA-256 over the concatenated SHA-256 of every sealed chunk in index order,
 // - `sig = Ed25519_author(P || "context\0" || canonical(manifest))`,
 // - `tag = b64u(HMAC-SHA256(HKDF(WK_e, info=P || "pr-link"), canonical({"number": n, "repo": "<owner>/<name>"})))`
-//   with the repository in lower case.
+//   with the repository in lower case,
+// - sealed link body (section 4.11a, ADR-084): `k_body = HKDF(WK_e, info=P || "pr-link-body")`, `sealed =
+//   b64u(nonce(12) || AES-256-GCM(k_body, pad(canonical({"number": n, "repo": "<owner>/<name>"})), AAD))` with the
+//   repository as GitHub spells it, zero-padded to `PR_LINK_BODY_BYTES`, `AAD = P || "pr-link-body\0" || wg_id ||
+//   "\0" || epoch || "\0" || tag || "\0" || task_id || "\0" || origin`, `origin` = `device:<session_id>` or
+//   `user:<linked_by>`. `openPrLink` refuses another length (`header_invalid`), a body that does not open
+//   (`decrypt_failed`), a padding or plaintext not exactly in sealed form and a recomputed tag other than the row's
+//   (`header_invalid`).
 //
 // Check order (as in every implementation): manifest keys (`header_invalid`), canonical JSON (`non_ascii`), field
 // formats (`header_invalid`); signature (`signature_invalid`); chunk count, size and digest (`header_invalid`); a chunk
 // above `CHUNK_CT_BYTES` (`size_exceeded`); decryption (`decrypt_failed`).
 import { b64uDecode, b64uEncode } from '../encoding/b64u';
-import { concat, copy, utf8 } from '../encoding/bytes';
-import { canonical } from '../encoding/json';
+import { concat, copy, fromUtf8, utf8 } from '../encoding/bytes';
+import { canonical, parseJson } from '../encoding/json';
 import * as aead from './aead';
 import { fail } from './errors';
 import * as F from './fields';
@@ -32,6 +39,14 @@ export const VERSION = 1;
 export const LABEL_CONTEXT = 'context\0';
 export const LABEL_CONTEXT_CHUNK = 'context-chunk\0';
 export const PR_LINK = 'pr-link';
+/** Info label of `k_body` (without the prefix P). */
+export const PR_LINK_BODY = 'pr-link-body';
+export const LABEL_PR_LINK_BODY = 'pr-link-body\0';
+/** The padded plaintext of a sealed link body. */
+export const PR_LINK_BODY_BYTES = 256;
+/** The decoded length of every `sealed` text. */
+export const PR_LINK_SEALED_BYTES = aead.NONCE_BYTES + PR_LINK_BODY_BYTES + aead.TAG_BYTES;
+const ORIGIN_KINDS = ['device:', 'user:'] as const;
 /** At most this many compressed archive bytes per chunk. */
 export const CHUNK_BYTES = 2 * 1024 * 1024;
 /** The largest sealed chunk. */
@@ -161,4 +176,81 @@ export function prLinkText(repo: unknown, number: unknown): Uint8Array<ArrayBuff
 /** The b64u tag of a pull request (the hub never learns the repository or the number). */
 export async function prLinkTag(linkKey: CryptoKey, repo: unknown, number: unknown): Promise<string> {
   return b64uEncode(new Uint8Array(await subtle.sign('HMAC', linkKey, copy(prLinkText(repo, number)))));
+}
+
+/** `k_body = HKDF(WK_e, info=P || "pr-link-body")` as a non-extractable AES-256-GCM key. */
+export function prLinkBodyKey(workgroupKey: Secret): Promise<CryptoKey> {
+  return hkdfAesKey(workgroupBytes(workgroupKey), label(PR_LINK_BODY));
+}
+
+/** What a sealed link body is bound to (the AAD); `origin` is `device:<session_id>` or `user:<linked_by>`. */
+export interface PrLinkBinding {
+  wgId: string;
+  epoch: number;
+  tag: string;
+  taskId: string;
+  origin: string;
+}
+
+/** `device:<session_id>` or `user:<linked_by>` with a UUIDv7, else `header_invalid`. */
+export function prLinkOrigin(origin: unknown): string {
+  if (typeof origin !== 'string') fail('header_invalid');
+  const kind = ORIGIN_KINDS.find((prefix) => origin.startsWith(prefix));
+  if (kind === undefined) fail('header_invalid');
+  F.uuid(origin.slice(kind.length));
+  return origin;
+}
+
+/** `P || "pr-link-body\0" || wg_id || "\0" || epoch || "\0" || tag || "\0" || task_id || "\0" || origin`. */
+export function prLinkBodyAad(binding: PrLinkBinding): Uint8Array<ArrayBuffer> {
+  const parts = [
+    F.uuid(binding.wgId),
+    String(F.requireInt(binding.epoch, 1, MAX_EPOCH)),
+    F.b64uBytes(binding.tag, 32),
+    F.uuid(binding.taskId),
+    prLinkOrigin(binding.origin),
+  ];
+  return concat(label(LABEL_PR_LINK_BODY), utf8(parts.join('\0')));
+}
+
+/** `canonical({"number": n, "repo": repo})` with the repository as given (checked like `prLinkText`). */
+export function prLinkBodyText(repo: unknown, number: unknown): Uint8Array<ArrayBuffer> {
+  prLinkText(repo, number);
+  return canonical({ number, repo });
+}
+
+/** The b64u `sealed` body of a link; `nonce` is fixed only by the test vectors. */
+export async function sealPrLink(
+  bodyKey: CryptoKey,
+  link: PrLinkBinding & { repo: string; number: number },
+  nonce?: Uint8Array,
+): Promise<string> {
+  const aad = prLinkBodyAad(link);
+  const text = prLinkBodyText(link.repo, link.number);
+  const padded = concat(text, new Uint8Array(PR_LINK_BODY_BYTES - text.length));
+  return b64uEncode(await aead.sealBlob(bodyKey, padded, aad, nonce));
+}
+
+/** `{repo, number}` of a sealed body whose recomputed tag is `binding.tag`; refusals as in the header comment. */
+export async function openPrLink(
+  bodyKey: CryptoKey,
+  linkKey: CryptoKey,
+  binding: PrLinkBinding,
+  sealed: unknown,
+): Promise<{ repo: string; number: number }> {
+  const aad = prLinkBodyAad(binding);
+  const blob = b64uDecode(sealed, PR_LINK_SEALED_BYTES);
+  const padded = await aead.openBlob(bodyKey, blob, aad);
+  let end = padded.length;
+  while (end > 0 && padded[end - 1] === 0) end -= 1;
+  const text = padded.subarray(0, end);
+  const body = F.requireKeys(parseJson(text), ['number', 'repo']);
+  const { repo, number } = body;
+  if (
+    fromUtf8(prLinkBodyText(repo, number)) !== fromUtf8(text) ||
+    (await prLinkTag(linkKey, repo, number)) !== binding.tag
+  ) {
+    fail('header_invalid');
+  }
+  return { repo: repo as string, number: number as number };
 }

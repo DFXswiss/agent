@@ -70,6 +70,17 @@ namespace is not ``git``), ``bad_email`` (the key's account does not own the com
 
 Time is logical: seeded and created objects take timestamps from `World.stamp`, which starts at ``base_time`` and
 advances one second per object, so object ids are deterministic.
+
+Mergeability (KOR-48, ADR-084 section 2) is computed as GitHub computes it, asynchronously: an open pull request whose
+head or base commit changed since the last computation (or that was never read) answers its first read
+(`Repo.read_mergeability`) with ``mergeable: null`` and starts the computation; later reads answer the computed value
+until head or base move again. ``mergeable`` is false when merging the base tip into the head conflicts
+(`Repo.merges_cleanly`): a path changed differently on both sides since their merge base, or a file of one side where
+the other side changed something below the same path as a directory. A pull request is never merged by the double.
+
+`World.add_commit` (``POST /_double/commits``) advances an existing branch by one commit in the seed's commit format
+(``{"repo": "octo-org/hello", "branch": "main", "commit": {"message": "...", "files": {"README.md": "new\\n"}}}``),
+so a test can move a base with a conflicting change; it answers the new commit id.
 """
 
 from __future__ import annotations
@@ -309,6 +320,8 @@ class Pull:
     labels: list[str] = field(default_factory=list)
     assignees: list[str] = field(default_factory=list)
     state_reason: str | None = None
+    mergeable_for: tuple[str, str] | None = None
+    """The head and base commits whose mergeability was computed (started by the first read after they changed)."""
 
 
 @dataclass
@@ -435,6 +448,39 @@ class Repo:
 
     def tree_of(self, commit: str) -> str:
         return self.objects.commit(commit).tree
+
+    def merges_cleanly(self, base: str, head: str) -> bool:
+        """Whether merging commit `base` into commit `head` succeeds without a conflict (module docstring); the merge
+        base of unrelated histories is the empty tree."""
+        objects = self.objects
+        found = self.merge_base(base, head)
+        old = objects.files(self.tree_of(found)) if found is not None else {}
+        ours, theirs = objects.files(self.tree_of(head)), objects.files(self.tree_of(base))
+        changed_ours = {path for path in set(old) | set(ours) if old.get(path) != ours.get(path)}
+        changed_theirs = {path for path in set(old) | set(theirs) if old.get(path) != theirs.get(path)}
+        if any(ours.get(path) != theirs.get(path) for path in changed_ours & changed_theirs):
+            return False
+        return not (
+            _blocked(ours, changed_ours, theirs, changed_theirs) or _blocked(theirs, changed_theirs, ours, changed_ours)
+        )
+
+    def read_mergeability(self, pull: Pull) -> bool:
+        """One read of `pull`'s mergeability: True when it is computed for the current head and base, else False and
+        the computation starts (the next read knows it)."""
+        current = (self.branch(pull.head) or "", self.branch(pull.base) or "")
+        known = pull.mergeable_for == current
+        pull.mergeable_for = current
+        return known
+
+
+def _blocked(files: Mapping[str, Any], changed: set[str], other: Mapping[str, Any], other_changed: set[str]) -> bool:
+    """A file one side changed (`files`, `changed`) is a directory the other side changed something below."""
+    own = changed & set(files)
+    for path in other_changed & set(other):
+        parts = path.split("/")
+        if any("/".join(parts[:n]) in own for n in range(1, len(parts))):
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -983,6 +1029,22 @@ class World:
         else:
             data = _text(spec, "content", path).encode()
         return mode, objects.put_blob(data)
+
+    def add_commit(self, raw: Any) -> str:
+        """Advance an existing branch by one commit (module docstring, ``POST /_double/commits``); the commit id."""
+        data = _object(raw, "commit request")
+        _check_keys(data, {"repo", "branch", "commit"}, "commit request")
+        full_name = _text(data, "repo", "commit request")
+        repo = self.repos.get(full_name.lower())
+        if repo is None:
+            raise SeedError(f"repository {full_name!r} is not seeded")
+        name = _text(data, "branch", "commit request")
+        parent = repo.branch(name)
+        if parent is None:
+            raise SeedError(f"branch {name!r} does not exist")
+        sha = self._seed_commit(repo, parent, _object(data.get("commit", {}), "commit"))
+        repo.refs[f"refs/heads/{name}"] = sha
+        return sha
 
     def _signature(self, raw: Any, when: int) -> Signature:
         if raw is None:

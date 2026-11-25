@@ -177,13 +177,50 @@ def test_pull_requests_are_registered_once_as_opaque_tags(rig: Rig) -> None:
         await succeeded_pull(env, 2, number="seven")  # not a number: never registered
         assert await prlinks.round(ck.contexts) == 1
         [link] = ck.store.links
-        assert link == {
+        wk = scope_key("wg", WG, 1)
+        tag = crypto.pr_link_tag(crypto.pr_link_key(wk), "owner/repo", 7)
+        assert {key: value for key, value in link.items() if key != "sealed"} == {
             "session_id": session_id(1),
             "epoch": 1,
-            "tag": crypto.pr_link_tag(crypto.pr_link_key(scope_key("wg", WG, 1)), "owner/repo", 7),
+            "tag": tag,
         }
+        # the sealed body names the pull request for a reader with WK, bound to the task and this device's session
+        binding: dict[str, Any] = {
+            "wg_id": WG,
+            "epoch": 1,
+            "tag": tag,
+            "task_id": TASK,
+            "origin": f"device:{session_id(1)}",
+        }
+        opened = crypto.open_pr_link(
+            crypto.pr_link_body_key(wk), crypto.pr_link_key(wk), **binding, sealed=link["sealed"]
+        )
+        assert opened == ("Owner/Repo", 7)  # as GitHub spells it; the tag is over the lower-case name
         assert await prlinks.round(ck.contexts) == 0  # done: never again
         assert any(f"pr_link_registered operation_id={op_id}" in line for line in ck.lines)
+
+    run(rig, body)
+
+
+def test_an_older_hub_gets_the_registration_without_the_sealed_body(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        ck = await ckit(env)
+        ck.store.link_pointers = ["/sealed"]
+        await succeeded_pull(env)
+        assert await prlinks.round(ck.contexts) == 1
+        [link] = ck.store.links
+        assert set(link) == {"session_id", "epoch", "tag"}
+        # a refusal at another field is no older hub: refused as before
+        ck.store.link_pointers = ["/tag"]
+        second = await succeeded_pull(env, 2)
+        assert await prlinks.round(ck.contexts) == 1
+        assert any(f"pr_link_refused code=request_invalid operation_id={second}" in line for line in ck.lines)
+        ck.store.link_pointers = None
+        ck.store.refuse["link"] = (400, "request_invalid")  # without pointers
+        third = await succeeded_pull(env, 3)
+        assert await prlinks.round(ck.contexts) == 1
+        assert any(f"pr_link_refused code=request_invalid operation_id={third}" in line for line in ck.lines)
+        assert len(ck.store.links) == 1
 
     run(rig, body)
 

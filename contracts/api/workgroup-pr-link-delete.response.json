@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-pr-link-delete.response.json",
+  "title": "DELETE /v1/workgroups/{wg}/pr-links/{epoch}/{tag} response",
+  "description": "Body of a successful response to DELETE /v1/workgroups/{wg}/pr-links/{epoch}/{tag} (ADR-084 section 1): a link a person made is removed; a link the device registered stays (409 id_conflict).",
+  "type": "object",
+  "properties": {
+    "deleted": {
+      "type": "boolean",
+      "const": true
+    }
+  },
+  "required": [
+    "deleted"
+  ],
+  "additionalProperties": false
+}

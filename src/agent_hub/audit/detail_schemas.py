@@ -301,7 +301,16 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "device_request.answered": {
         "properties": {
             "kind": [
-                {"type": "string", "enum": ["github.connect", "claude.login", "credential.check", "mailbox.check"]}
+                {
+                    "type": "string",
+                    "enum": [
+                        "github.connect",
+                        "claude.login",
+                        "credential.check",
+                        "mailbox.check",
+                        "github.pull_status",
+                    ],
+                }
             ],
             "error_code": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, {"type": "null"}],
         },
@@ -310,7 +319,16 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "device_request.delivered": {
         "properties": {
             "kind": [
-                {"type": "string", "enum": ["github.connect", "claude.login", "credential.check", "mailbox.check"]}
+                {
+                    "type": "string",
+                    "enum": [
+                        "github.connect",
+                        "claude.login",
+                        "credential.check",
+                        "mailbox.check",
+                        "github.pull_status",
+                    ],
+                }
             ],
             "error_code": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, {"type": "null"}],
         },
@@ -319,7 +337,16 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "device_request.expired": {
         "properties": {
             "kind": [
-                {"type": "string", "enum": ["github.connect", "claude.login", "credential.check", "mailbox.check"]}
+                {
+                    "type": "string",
+                    "enum": [
+                        "github.connect",
+                        "claude.login",
+                        "credential.check",
+                        "mailbox.check",
+                        "github.pull_status",
+                    ],
+                }
             ],
             "error_code": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, {"type": "null"}],
         },
@@ -328,7 +355,16 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "device_request.failed": {
         "properties": {
             "kind": [
-                {"type": "string", "enum": ["github.connect", "claude.login", "credential.check", "mailbox.check"]}
+                {
+                    "type": "string",
+                    "enum": [
+                        "github.connect",
+                        "claude.login",
+                        "credential.check",
+                        "mailbox.check",
+                        "github.pull_status",
+                    ],
+                }
             ],
             "error_code": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, {"type": "null"}],
         },
@@ -337,7 +373,16 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "device_request.pending": {
         "properties": {
             "kind": [
-                {"type": "string", "enum": ["github.connect", "claude.login", "credential.check", "mailbox.check"]}
+                {
+                    "type": "string",
+                    "enum": [
+                        "github.connect",
+                        "claude.login",
+                        "credential.check",
+                        "mailbox.check",
+                        "github.pull_status",
+                    ],
+                }
             ],
             "error_code": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, {"type": "null"}],
         },
@@ -580,6 +625,12 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "workvm_unavailable",
                         "identity_forbidden",
                         "identity_unavailable",
+                        "conflict_markers",
+                        "conflicts_unresolved",
+                        "merge_outdated",
+                        "merge_pending",
+                        "merge_unsupported",
+                        "workspace_dirty",
                     ],
                 },
                 {"type": "null"},
@@ -632,6 +683,12 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "workvm_unavailable",
                         "identity_forbidden",
                         "identity_unavailable",
+                        "conflict_markers",
+                        "conflicts_unresolved",
+                        "merge_outdated",
+                        "merge_pending",
+                        "merge_unsupported",
+                        "workspace_dirty",
                     ],
                 },
                 {"type": "null"},
@@ -684,6 +741,12 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "workvm_unavailable",
                         "identity_forbidden",
                         "identity_unavailable",
+                        "conflict_markers",
+                        "conflicts_unresolved",
+                        "merge_outdated",
+                        "merge_pending",
+                        "merge_unsupported",
+                        "workspace_dirty",
                     ],
                 },
                 {"type": "null"},
@@ -736,6 +799,12 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "workvm_unavailable",
                         "identity_forbidden",
                         "identity_unavailable",
+                        "conflict_markers",
+                        "conflicts_unresolved",
+                        "merge_outdated",
+                        "merge_pending",
+                        "merge_unsupported",
+                        "workspace_dirty",
                     ],
                 },
                 {"type": "null"},
@@ -788,6 +857,12 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "workvm_unavailable",
                         "identity_forbidden",
                         "identity_unavailable",
+                        "conflict_markers",
+                        "conflicts_unresolved",
+                        "merge_outdated",
+                        "merge_pending",
+                        "merge_unsupported",
+                        "workspace_dirty",
                     ],
                 },
                 {"type": "null"},
@@ -840,6 +915,12 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "workvm_unavailable",
                         "identity_forbidden",
                         "identity_unavailable",
+                        "conflict_markers",
+                        "conflicts_unresolved",
+                        "merge_outdated",
+                        "merge_pending",
+                        "merge_unsupported",
+                        "workspace_dirty",
                     ],
                 },
                 {"type": "null"},
@@ -892,6 +973,12 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "workvm_unavailable",
                         "identity_forbidden",
                         "identity_unavailable",
+                        "conflict_markers",
+                        "conflicts_unresolved",
+                        "merge_outdated",
+                        "merge_pending",
+                        "merge_unsupported",
+                        "workspace_dirty",
                     ],
                 },
                 {"type": "null"},
@@ -944,6 +1031,12 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "workvm_unavailable",
                         "identity_forbidden",
                         "identity_unavailable",
+                        "conflict_markers",
+                        "conflicts_unresolved",
+                        "merge_outdated",
+                        "merge_pending",
+                        "merge_unsupported",
+                        "workspace_dirty",
                     ],
                 },
                 {"type": "null"},
@@ -996,6 +1089,12 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "workvm_unavailable",
                         "identity_forbidden",
                         "identity_unavailable",
+                        "conflict_markers",
+                        "conflicts_unresolved",
+                        "merge_outdated",
+                        "merge_pending",
+                        "merge_unsupported",
+                        "workspace_dirty",
                     ],
                 },
                 {"type": "null"},
@@ -1199,6 +1298,17 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["seq"],
     },
+    "pr.linked": {
+        "properties": {
+            "epoch": [{"type": "integer", "minimum": 1, "maximum": 2147483647}],
+            "replaced": [{"type": "boolean"}],
+        },
+        "required": ["epoch", "replaced"],
+    },
+    "pr.unlinked": {
+        "properties": {"epoch": [{"type": "integer", "minimum": 1, "maximum": 2147483647}]},
+        "required": ["epoch"],
+    },
     "prompt.withdraw": {
         "properties": {"state": [{"type": "string", "enum": ["withdrawn", "withdrawing"]}]},
         "required": ["state"],
@@ -1319,6 +1429,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.workgroup": {"properties": {}, "required": []},
     "read.workgroup.placement": {"properties": {}, "required": []},
     "read.workgroup.pr_link": {"properties": {}, "required": []},
+    "read.workgroup.pr_links": {"properties": {}, "required": []},
     "read.workgroup.tasks": {"properties": {}, "required": []},
     "read.wraps": {"properties": {}, "required": []},
     "request.refused": {

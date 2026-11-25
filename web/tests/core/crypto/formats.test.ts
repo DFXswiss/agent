@@ -326,4 +326,32 @@ describe('context checkpoints', () => {
     expect(await codeOf(() => context.prLinkTag(linkKey, 7, 1))).toBe('header_invalid');
     expect(await codeOf(() => context.prLinkTag(linkKey, 'a/b', true))).toBe('header_invalid');
   });
+
+  it('seals a link body with a fresh nonce, keeps the spelling and refuses malformed bindings', async () => {
+    const data = VECTOR_FILES.context;
+    const wk = Secret.of(b64uDecode(data.workgroup_key));
+    const [device] = data.pr_link_bodies.bodies;
+    const binding = {
+      wgId: device.wg_id,
+      epoch: device.epoch,
+      tag: device.tag,
+      taskId: device.task_id,
+      origin: device.origin,
+    };
+    const bodyKey = await context.prLinkBodyKey(wk);
+    const linkKey = await context.prLinkKey(wk);
+    const link = { ...binding, repo: device.repo, number: device.number };
+    const first = await context.sealPrLink(bodyKey, link);
+    expect(first).not.toBe(await context.sealPrLink(bodyKey, link));
+    expect(b64uDecode(first).length).toBe(context.PR_LINK_SEALED_BYTES);
+    expect(await context.openPrLink(bodyKey, linkKey, binding, first)).toEqual({ repo: device.repo, number: 17 });
+    expect(await codeOf(() => context.prLinkBodyKey(Secret.of(zero(31))))).toBe('header_invalid');
+    expect(await codeOf(() => context.prLinkOrigin(7))).toBe('header_invalid');
+    expect(await codeOf(() => context.prLinkOrigin('user:x'))).toBe('header_invalid');
+    for (const change of [{ epoch: 0 }, { tag: 'AAAA' }, { wgId: 'x' }, { taskId: 'x' }]) {
+      expect(await codeOf(() => context.prLinkBodyAad({ ...binding, ...change }))).toBe('header_invalid');
+    }
+    expect(await codeOf(() => context.sealPrLink(bodyKey, { ...link, repo: 'a' }))).toBe('header_invalid');
+    expect(await codeOf(() => context.openPrLink(bodyKey, linkKey, binding, null))).toBe('header_invalid');
+  });
 });

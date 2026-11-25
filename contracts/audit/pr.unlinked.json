@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/pr.unlinked.json",
+  "title": "audit detail pr.unlinked",
+  "description": "detail of audit rows with action pr.unlinked (ADR-084 section 1): a person removed a pull-request link a person had made; the workgroup epoch of the tag key; the opaque tag is the row's target. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "epoch": {
+      "$ref": "../common.json#/$defs/epoch"
+    }
+  },
+  "required": [
+    "epoch"
+  ],
+  "additionalProperties": false
+}

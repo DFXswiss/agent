@@ -6,7 +6,7 @@
   "$defs": {
     "failure_code": {
       "type": "string",
-      "description": "closed list of failure codes of device responses: timeout (flow or poll expired), busy (another request of this kind is active), credential_missing (e.g. no mailbox credential), code_invalid (authorization code refused), login_cli_failed, token_invalid (unexpected token format), upstream_error (GitHub/Anthropic/IMAP refused), upstream_unreachable, device_shutdown, token_refused (GitHub refused a stored token: revoked or unknown), scope_missing (a classic token without the repo scope), sso_required (an organisation requires SSO authorisation of the token), flow_unavailable (the asked GitHub device flow is not set up on the device, KOR-65)",
+      "description": "closed list of failure codes of device responses: timeout (flow or poll expired), busy (another request of this kind is active), credential_missing (e.g. no mailbox credential), code_invalid (authorization code refused), login_cli_failed, token_invalid (unexpected token format), upstream_error (GitHub/Anthropic/IMAP refused), upstream_unreachable, device_shutdown, token_refused (GitHub refused a stored token: revoked or unknown), scope_missing (a classic token without the repo scope), sso_required (an organisation requires SSO authorisation of the token), flow_unavailable (the asked GitHub device flow is not set up on the device, KOR-65), github_not_connected (github.pull_status: no GitHub identity the requester may use, ADR-084 section 2), forbidden (github.pull_status: the device does not serve the workgroup or the requester cannot read it)",
       "enum": [
         "timeout",
         "busy",
@@ -20,7 +20,9 @@
         "token_refused",
         "scope_missing",
         "sso_required",
-        "flow_unavailable"
+        "flow_unavailable",
+        "github_not_connected",
+        "forbidden"
       ]
     },
     "github_body": {
@@ -102,6 +104,155 @@
         "created_at"
       ],
       "additionalProperties": false
+    },
+    "pull_address": {
+      "type": "object",
+      "description": "a pull request by repository (owner/name) and number (github.pull_status)",
+      "properties": {
+        "repo": {
+          "$ref": "../ops/objects.json#/$defs/repo"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ],
+      "additionalProperties": false
+    },
+    "pull_state": {
+      "description": "the state of one pull request read by github.pull_status (ADR-084 section 2): found with GitHub's fields (mergeable null while GitHub still computes it; a conflict is mergeable false; mergeable_state is display only; head_repo null when the head repository is gone), or not found with the reason",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "$ref": "../ops/objects.json#/$defs/repo"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "found": {
+              "type": "boolean",
+              "const": true
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed"
+              ]
+            },
+            "draft": {
+              "type": "boolean"
+            },
+            "merged": {
+              "type": "boolean"
+            },
+            "mergeable": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "mergeable_state": {
+              "type": "string",
+              "pattern": "^[a-z_]{1,32}$"
+            },
+            "head_ref": {
+              "$ref": "../ops/objects.json#/$defs/branch"
+            },
+            "head_sha": {
+              "$ref": "../ops/objects.json#/$defs/sha"
+            },
+            "head_repo": {
+              "anyOf": [
+                {
+                  "$ref": "../ops/objects.json#/$defs/repo"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "base_ref": {
+              "$ref": "../ops/objects.json#/$defs/branch"
+            },
+            "url": {
+              "$ref": "../ops/objects.json#/$defs/url"
+            },
+            "updated_at": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+            }
+          },
+          "required": [
+            "repo",
+            "number",
+            "found",
+            "title",
+            "state",
+            "draft",
+            "merged",
+            "mergeable",
+            "mergeable_state",
+            "head_ref",
+            "head_sha",
+            "head_repo",
+            "base_ref",
+            "url",
+            "updated_at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "repo": {
+              "$ref": "../ops/objects.json#/$defs/repo"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "found": {
+              "type": "boolean",
+              "const": false
+            },
+            "code": {
+              "type": "string",
+              "enum": [
+                "not_found",
+                "repo_not_accessible",
+                "repo_not_allowed",
+                "upstream_error"
+              ]
+            }
+          },
+          "required": [
+            "repo",
+            "number",
+            "found",
+            "code"
+          ],
+          "additionalProperties": false
+        }
+      ]
     }
   }
 }

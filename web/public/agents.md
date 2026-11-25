@@ -361,6 +361,31 @@ runs (`run_id` `tr-…`, `state` `running|passed|failed|error|timed_out|cancelle
 a window of `--limit` bytes from `--offset` (`next_offset` goes on; `truncated` means only the last `stored_bytes` of
 `bytes` were kept), or with `--output FILE` the whole kept log. It also reads the full output of a long work VM command
 (its `j-…` job id from `session workvm`). A log that does not match its run is refused (`hub_refused`).
+**Pull requests** (the pull requests your user's tasks created, and those linked to a task by their address):
+
+```sh
+agent-platform pr list --wg <wg_id>                    # or --task <task_id>, --org <org_id>; --no-status: no device read
+agent-platform pr show https://github.com/<owner>/<name>/pull/<n>          # task, session and state; also owner/name#n
+agent-platform pr link https://github.com/<owner>/<name>/pull/<n> --task <task_id>
+agent-platform pr unlink https://github.com/<owner>/<name>/pull/<n>        # only links a person made
+agent-platform pr fix-conflicts https://github.com/<owner>/<name>/pull/<n> # the task's session merges the base in
+```
+
+The platform keeps no readable list of pull requests: each link is encrypted with the workgroup's key, and the tool
+opens it on this computer. `details: unavailable` is a link an older runner registered (its task is known, the pull
+request is not), `locked` one under a key your user does not hold. The state (`pull`) comes fresh from an execution
+device that reads GitHub with your user's connection. `merge_state` is `conflict`, `clean`, `checking` (GitHub is
+still computing it: ask again in a few seconds), `closed` or `merged`; `status_error` names a failed read
+(`github_not_connected`: connect GitHub first, `no_device`, `timeout`). `pr link` never moves a pull request that is
+linked already: it reports the task it belongs to (`created: false`).
+
+`pr fix-conflicts` sends one fixed instruction as an ordinary prompt to the task the pull request belongs to (the
+same text the web client's "Fix conflicts" button sends). The task's own session then merges the base branch into
+the pull request's branch with a merge commit, resolves the conflicts and pushes the branch; it never merges, closes
+or force-pushes the pull request, and asks your user (`human.question`) when a resolution needs their decision. Follow
+it with `task follow`. The command refuses a pull request without a conflict (`pr_no_conflict` with the `reason`:
+`checking`, `clean`, `closed`, `merged`, `fork` for a branch in another repository) unless `--anyway`; a pull request
+linked to no task needs `--task`, one linked to several tasks as well.
 
 Several members may instruct one task. `task queue` lists the prompts that wait for the session in the order they
 will be delivered: `position`, `event_id`, `author_id`, `via_agent` (it came through that person's agent), `state`

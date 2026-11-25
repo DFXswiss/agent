@@ -188,7 +188,7 @@ def task_create(
     }
 
 
-def _task_answer(account: Account, task: str) -> dict[str, Any]:
+def task_answer(account: Account, task: str) -> dict[str, Any]:
     answer = account.call("GET", f"/v1/tasks/{segment(_id(task))}")
     row = answer.get("task")
     if not isinstance(row, dict) or row.get("task_id") != task or not is_uuid7(str(row.get("wg_id"))):
@@ -197,7 +197,7 @@ def _task_answer(account: Account, task: str) -> dict[str, Any]:
 
 
 def _task_row(account: Account, task: str) -> dict[str, Any]:
-    return cast(dict[str, Any], _task_answer(account, task)["task"])
+    return cast(dict[str, Any], task_answer(account, task)["task"])
 
 
 def main_session(answer: dict[str, Any]) -> dict[str, Any] | None:
@@ -276,7 +276,7 @@ def open_verified(account: Account, org: str, wg: str, item: object) -> dict[str
 
 def task_show(account: Account, task: str) -> dict[str, Any]:
     """The task row and its chat: every event of the task, opened and verified; where its main session runs."""
-    answer = _task_answer(account, task)
+    answer = task_answer(account, task)
     row = cast(dict[str, Any], answer["task"])
     wg = str(row["wg_id"])
     org = find_org(account, wg)

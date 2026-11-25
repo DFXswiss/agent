@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/device-pr-links-post.request.json",
   "title": "POST /v1/device/pr-links request",
-  "description": "Body of POST /v1/device/pr-links (03-api.md section 6.1, ADR-072 section 8): the opaque tag of a pull request the session created, under the workgroup epoch.",
+  "description": "Body of POST /v1/device/pr-links (03-api.md section 6.1, ADR-072 section 8, ADR-084 section 1): the opaque tag of a pull request the session created, under the workgroup epoch, and its sealed body (absent or null from an older runner).",
   "type": "object",
   "properties": {
     "session_id": {
@@ -13,6 +13,16 @@
     },
     "tag": {
       "$ref": "../common.json#/$defs/b64u_32"
+    },
+    "sealed": {
+      "anyOf": [
+        {
+          "$ref": "objects.json#/$defs/pr_link_sealed"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [

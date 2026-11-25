@@ -2,7 +2,8 @@
 // title, workgroup, state, the signed owner, last activity) extended by the attention line – the reason in plain words,
 // the main agent's state (a wait for model quota names when it continues, ADR-081 section 5), how long the task is in
 // its group, for "Running" the phase and the active subagents – the
-// next step (`Actions.tsx`, for users who may write in the workgroup), "Open task", and the agent tree on demand.
+// next step (`Actions.tsx`, for users who may write in the workgroup), the task's linked pull requests with "Fix
+// conflicts" (`PullLine.tsx`, KOR-48), "Open task", and the agent tree on demand.
 //
 // A record whose task row is not known yet (a live frame of a new task) loads the row first; a task of a workgroup the
 // verified log does not let the user read is never shown (the hub does not send one; this is the second check).
@@ -21,6 +22,7 @@ import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { durationLabel, TaskItem } from '../tasks/TaskItem';
 import { Actions } from './Actions';
+import { PullLine } from './PullLine';
 import { SessionTree } from './SessionTree';
 
 export interface AttentionItemProps {
@@ -99,6 +101,7 @@ function Item({ org, id, category, state, userId, directory, now }: AttentionIte
           </span>
         )}
       </div>
+      <PullLine org={org} task={task} writer={writer} />
       {writer && action !== null && (
         <Actions
           key={row.seq}

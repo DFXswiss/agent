@@ -1,0 +1,12 @@
+{
+  "repo": "example-org/example-repo",
+  "branch": "fix-typo",
+  "message": "Merge main into fix-typo.",
+  "merge": true,
+  "decisions": [
+    {
+      "path": "logo.png",
+      "choice": "base"
+    }
+  ]
+}

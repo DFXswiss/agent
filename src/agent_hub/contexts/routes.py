@@ -7,11 +7,14 @@
 | `POST /v1/device/pr-links` | `device:session` |
 | `GET /v1/tasks/{task}/contexts` | `task:read` |
 | `GET /v1/tasks/{task}/logs/{object}`, `GET /v1/tasks/{task}/logs/{object}/chunks/{index}` (KOR-43) | `task:read` |
-| `GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag}` | `wg:read` |
+| `GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag}`, `GET /v1/workgroups/{wg}/pr-links` | `wg:read` |
+| `POST /v1/workgroups/{wg}/pr-links`, `DELETE /v1/workgroups/{wg}/pr-links/{epoch}/{tag}` | `wg:write` |
 
 The rules live in `agent_hub.contexts.store`; a chunk refused for a quota is audited (`session.context_refused`) in a
 transaction of its own after the refused one was rolled back. A malformed path ID, index, epoch or tag names nothing
-(`404 not_found`).
+(`404 not_found`); a malformed query parameter of the list is `400 request_invalid` with its pointer. A new link of a
+person answers `201`, one that exists already `200`. Browser routes are open to the user's agent like every browser
+route (ADR-056, `agent_hub.agents.scope`).
 A chunk upload carries up to 2 MiB of ciphertext as b64u, so it may use the batch body limit (4 MiB). Device routes
 read the device's view from the verified logs (`agent_hub.device.access`) in their transaction.
 """
@@ -19,12 +22,14 @@ read the device's view from the verified logs (`agent_hub.device.access`) in the
 from __future__ import annotations
 
 import asyncio
+import functools
 import re
 from collections.abc import Callable
 from datetime import datetime
 from typing import Annotated, Any, Literal, cast
 from uuid import UUID
 
+from fastapi import Response
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from agent_hub.contexts import store
@@ -34,6 +39,7 @@ from agent_hub.db.pool import transaction
 from agent_hub.device.access import DeviceView, device_view
 from agent_hub.device.keys import ActiveDevice, device_id
 from agent_hub.errors import HubError
+from agent_hub.events.routes import parse_count
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import EVENT_BATCH_BYTES, HubRouter
 from agent_hub.orgs import rights
@@ -45,9 +51,12 @@ EPOCH_RE = re.compile(r"[1-9][0-9]{0,9}")
 TAG_RE = re.compile(r"[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]")
 MAX_EPOCH = 2**31 - 1
 LIST_MAX = 1000
-Uuid7 = Annotated[
-    str, StringConstraints(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
-]
+UUID7_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+CURSOR_RE = re.compile(r"[A-Za-z0-9_-]{1,256}")
+Uuid7 = Annotated[str, StringConstraints(pattern=f"^{UUID7_RE.pattern}$")]
+Tag = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")]
+Sealed = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{378}[AEIMQUYcgkosw048]$")]
+"""b64u of the 284 bytes of a sealed link body (04-crypto.md section 4.11a)."""
 
 
 class ChunkRequest(BaseModel):
@@ -73,7 +82,18 @@ class PrLinkRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     session_id: Uuid7
     epoch: int = Field(ge=1, le=MAX_EPOCH)
-    tag: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")]
+    tag: Tag
+    sealed: Sealed | None = None
+
+
+class LinkRequest(BaseModel):
+    """Body of `POST /v1/workgroups/{wg}/pr-links`."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    epoch: int = Field(ge=1, le=MAX_EPOCH)
+    tag: Tag
+    sealed: Sealed
+    task_id: Uuid7
 
 
 def _number(text: str, pattern: re.Pattern[str]) -> int:
@@ -201,7 +221,14 @@ async def post_pr_link(context: Context, principal: ActiveDevice, body: PrLinkRe
         context,
         principal,
         lambda connection, view, device: store.link_pr(
-            connection, view, device, session_id=body.session_id, epoch=body.epoch, tag=body.tag, now=now
+            connection,
+            view,
+            device,
+            session_id=body.session_id,
+            epoch=body.epoch,
+            tag=body.tag,
+            sealed=body.sealed,
+            now=now,
         ),
     )
     return {"replayed": replayed}
@@ -263,12 +290,90 @@ def _pr_link(context: HubContext, user: UUID, wg: UUID, epoch: int, tag: str) ->
         return store.pr_link(connection, wg, epoch, tag)
 
 
+def _link_path(wg: str, epoch: str, tag: str) -> tuple[UUID, int, str]:
+    wg_id, number = path_id(wg), _number(epoch, EPOCH_RE)
+    if number > MAX_EPOCH or TAG_RE.fullmatch(tag) is None:
+        raise HubError("not_found")
+    return wg_id, number, tag
+
+
 @router.get(
     "/v1/workgroups/{wg}/pr-links/{epoch}/{tag}", auth="browser", right="wg:read", read_resource="workgroup.pr_link"
 )
 async def get_pr_link(context: Context, principal: CurrentPrincipal, wg: str, epoch: str, tag: str) -> dict[str, Any]:
     user = cast(UUID, principal.principal_id)
-    wg_id, number = path_id(wg), _number(epoch, EPOCH_RE)
-    if number > MAX_EPOCH or TAG_RE.fullmatch(tag) is None:
-        raise HubError("not_found")
-    return await asyncio.to_thread(_pr_link, context, user, wg_id, number, tag)
+    return await asyncio.to_thread(_pr_link, context, user, *_link_path(wg, epoch, tag))
+
+
+def _query(name: str, value: str | None, pattern: re.Pattern[str]) -> str | None:
+    if value is not None and pattern.fullmatch(value) is None:
+        raise HubError("request_invalid", detail={"pointers": [f"/{name}"]})
+    return value
+
+
+def _pr_links(
+    context: HubContext, user: UUID, wg: UUID, *, task: str | None, cursor: str | None, limit: int
+) -> dict[str, Any]:
+    with context.pool.connection() as connection:
+        rights.require(connection, user, rights.WG_READ, wg_id=wg)
+        task_id = None if task is None else UUID(task)
+        return store.list_links(connection, wg, task_id=task_id, cursor=cursor, limit=limit)
+
+
+@router.get("/v1/workgroups/{wg}/pr-links", auth="browser", right="wg:read", read_resource="workgroup.pr_links")
+async def get_pr_links(
+    context: Context,
+    principal: CurrentPrincipal,
+    wg: str,
+    *,
+    task: str | None = None,
+    cursor: str | None = None,
+    limit: str | None = None,
+) -> dict[str, Any]:
+    user, wg_id = cast(UUID, principal.principal_id), path_id(wg)
+    found_task, found_cursor = _query("task", task, UUID7_RE), _query("cursor", cursor, CURSOR_RE)
+    count = parse_count(limit, store.LIST_DEFAULT, 1, store.LIST_MAX)
+    work = functools.partial(_pr_links, context, user, wg_id, task=found_task, cursor=found_cursor, limit=count)
+    return await asyncio.to_thread(work)
+
+
+def _link(context: HubContext, user: UUID, wg: UUID, body: LinkRequest, now: datetime) -> tuple[bool, dict[str, Any]]:
+    with transaction(context.pool) as connection:
+        rights.require(connection, user, rights.WG_WRITE, wg_id=wg, write=True)
+        return store.link_by_user(
+            connection,
+            user,
+            wg,
+            epoch=body.epoch,
+            tag=body.tag,
+            sealed=body.sealed,
+            task_id=body.task_id,
+            now=now,
+        )
+
+
+@router.post("/v1/workgroups/{wg}/pr-links", auth="browser", right="wg:write")
+async def post_pr_links(
+    context: Context, principal: CurrentPrincipal, response: Response, wg: str, body: LinkRequest
+) -> dict[str, Any]:
+    user, wg_id = cast(UUID, principal.principal_id), path_id(wg)
+    created, link = await asyncio.to_thread(_link, context, user, wg_id, body, context.clock())
+    if created:
+        response.status_code = 201
+    return {"created": created, "link": link}
+
+
+def _unlink(context: HubContext, user: UUID, link: tuple[UUID, int, str], now: datetime) -> None:
+    wg, epoch, tag = link
+    with transaction(context.pool) as connection:
+        rights.require(connection, user, rights.WG_WRITE, wg_id=wg, write=True)
+        store.unlink(connection, user, wg, epoch=epoch, tag=tag, now=now)
+
+
+@router.delete("/v1/workgroups/{wg}/pr-links/{epoch}/{tag}", auth="browser", right="wg:write")
+async def delete_pr_link(
+    context: Context, principal: CurrentPrincipal, wg: str, epoch: str, tag: str
+) -> dict[str, Any]:
+    user = cast(UUID, principal.principal_id)
+    await asyncio.to_thread(_unlink, context, user, _link_path(wg, epoch, tag), context.clock())
+    return {"deleted": True}

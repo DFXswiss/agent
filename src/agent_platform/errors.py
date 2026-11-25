@@ -105,6 +105,16 @@ NEXT: dict[str, str] = {
         "`device remove --this-computer` first."
     ),
     "not_installed": "This Mac is not an execution device; nothing to remove.",
+    "pr_not_linked": (
+        "The pull request is linked to no task you can read: link it with `agent-platform pr link <url> --task "
+        "<task_id>`, or name the task with `--task`."
+    ),
+    "pr_no_conflict": (
+        "The pull request has no merge conflict to fix (see `reason`): `checking` means GitHub is still computing it, "
+        "run the command again in a few seconds; `fork` means its branch lives in another repository, which is not "
+        "supported; `clean`, `closed`, `merged` or a code such as `not_found` need nothing. `--anyway` sends the "
+        "instruction without this check."
+    ),
 }
 CODES = frozenset(NEXT)
 # A different next step for one reason of a code (the texts are fixed here as well).
@@ -125,6 +135,10 @@ NEXT_FOR_REASON: dict[tuple[str, str], str] = {
     ("invalid_argument", "recovery_code_unknown"): (
         "The hub knows no account with this recovery code; check the code and the hub address (a code stops working "
         "once a new one is made)."
+    ),
+    ("device_request_failed", "github_not_connected"): (
+        "No GitHub connection may read this pull request: connect one with `agent-platform github connect --from-gh` "
+        "or `agent-platform github connect --token -`, then run the command again."
     ),
 }
 

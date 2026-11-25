@@ -51,7 +51,8 @@ CATEGORIES: dict[str, str] = {
     "shared": "Shared sessions (ADR-083): which person triggered an operation, a session and a consumption item, the "
     "daily consumption sum per person, which prompt came through the author's agent, withdrawal requests of prompts",
     "contexts": "Context checkpoints (ADR-072): IDs, epoch, chunk counts, sizes, digest and chunk hashes, the signed "
-    "manifest, times; pull-request links: opaque tag, epoch, task and session; restore outcomes",
+    "manifest, times; pull-request links: opaque tag, epoch, task and session or the user who linked it, the sealed "
+    "body of fixed length (ADR-084); restore outcomes",
 }
 
 # Content type → SQL types it may have.
@@ -155,6 +156,7 @@ platform_entry: logs | seq:number entry_text:json entry_hash:code type:code subj
 platform_policy: logs | name:code on:flag seq:number
 platform_role: logs | user_id:uuid role:code granted_seq:number revoked_seq:number
 pr_link: contexts | wg_id:uuid@ids epoch:number tag:code task_id:uuid@ids session_id:uuid@ids created_at:time
+  sealed:code@ciphertext linked_by:uuid@ids
 principal: ids | id:uuid kind:code created_at:time disabled_at:time
 quota_snapshot: metrics | owner_id:uuid window:code used_percent:number resets_at:time severity:code
   fetched_at:time device_id:uuid

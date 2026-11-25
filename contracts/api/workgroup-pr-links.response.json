@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-pr-links.response.json",
+  "title": "GET /v1/workgroups/{wg}/pr-links response",
+  "description": "Body of a successful response to GET /v1/workgroups/{wg}/pr-links (03-api.md section 4.6, ADR-084 section 1): the links of the workgroup, or of one of its tasks, newest first; next_cursor continues the list (null on the last page).",
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "$ref": "objects.json#/$defs/pr_link_row"
+      }
+    },
+    "next_cursor": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/q_before"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "items",
+    "next_cursor"
+  ],
+  "additionalProperties": false
+}

@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { WEB_DIR } from '../helpers';
 
 const CATALOG_DIR = join(WEB_DIR, 'src/core/i18n/catalog');
+const LAZY_DIR = join(WEB_DIR, 'src/core/i18n/lazy');
 const UI_DIR = join(WEB_DIR, 'src/ui');
 
 /** Messages that may carry an ID, with the reason. */
@@ -35,9 +36,14 @@ function files(dir: string): string[] {
 describe('no technical ID instead of a name', () => {
   it('no catalog message shows an ID or an ID fragment', () => {
     const found: string[] = [];
-    for (const name of readdirSync(CATALOG_DIR)) {
+    const files = [CATALOG_DIR, LAZY_DIR].flatMap((dir) =>
+      readdirSync(dir)
+        .filter((name) => name.endsWith('.json'))
+        .map((name) => [dir, name] as const),
+    );
+    for (const [dir, name] of files) {
       const area = name.split('.')[0]!;
-      const catalog = JSON.parse(readFileSync(join(CATALOG_DIR, name), 'utf8')) as Record<string, string>;
+      const catalog = JSON.parse(readFileSync(join(dir, name), 'utf8')) as Record<string, string>;
       for (const [key, text] of Object.entries(catalog)) {
         const id = `${area}.${key}`;
         if ((/\{id\}/.test(text) || /…\{/.test(text)) && !(id in ID_MESSAGES)) found.push(`${name}: ${key}`);

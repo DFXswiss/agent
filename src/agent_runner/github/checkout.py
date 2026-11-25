@@ -27,10 +27,10 @@ import contextlib
 import sys
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, cast
 from urllib.parse import quote
 
-from agent_runner.github import access, ops, snapshot, tarsafe
+from agent_runner.github import access, gitobj, merge_prep, ops, snapshot, tarsafe
 from agent_runner.github.client import GitHubClient, GitHubError
 from agent_runner.guestlink.errors import GuestError
 from agent_runner.operations.extensions import (
@@ -41,6 +41,7 @@ from agent_runner.operations.extensions import (
     PrecheckResult,
 )
 from agent_runner.operations.rules import CHECKOUT_LIMITS, branch_valid
+from agent_runner.orgs.db import session as store_session
 
 ARCHIVE_LIMIT = CHECKOUT_LIMITS["archive_bytes"]
 CONTENT_LIMITS = tarsafe.Limits(max_bytes=ARCHIVE_LIMIT, max_entries=100_000)
@@ -85,6 +86,16 @@ async def base_sha(conn: Any, session_id: str, repo: str) -> str | None:
     return None if row is None else str(row[0])
 
 
+def listed(plain: Path) -> dict[str, str]:
+    """`path -> blob` of the files of a plain tar (the workspace digest, `merge_prep`)."""
+    with plain.open("rb") as source:
+        return {
+            entry.path: gitobj.blob_sha_stream(cast(BinaryIO, entry.reader), entry.size)
+            for entry in tarsafe.entries(source, limits=CONTENT_LIMITS, links="refuse", compressed=False)
+            if entry.reader is not None
+        }
+
+
 def _repack(scratch: Any) -> tarsafe.Stats:
     with (scratch / "archive.tar.gz").open("rb") as source, (scratch / "import.tar").open("wb") as target:
         return tarsafe.repack(source, target, limits=CONTENT_LIMITS)
@@ -97,7 +108,8 @@ async def chunks(path: Path) -> AsyncGenerator[bytes]:
             yield chunk
 
 
-async def _import(ctx: OperationContext, target: str, packed: Path) -> dict[str, Any]:
+async def import_tar(ctx: OperationContext, target: str, packed: Path) -> dict[str, Any]:
+    """Import a plain tar into the workspace directory `target` with `replace=true`; the guest's counts."""
     try:
         guest = await snapshot.guest_for(ctx.env, ctx.session)
     except snapshot.NoGuest:
@@ -129,7 +141,8 @@ async def checkout(ctx: OperationContext, github: GitHubClient) -> dict[str, Any
         if packed.stat().st_size > ARCHIVE_LIMIT:
             raise snapshot.TooLarge
         target = directory(repo)
-        imported = await _import(ctx, target, packed)
+        imported = await import_tar(ctx, target, packed)
+        files = await asyncio.to_thread(listed, packed)
     except snapshot.TooLarge:
         raise OperationFailed("size_exceeded", message=TOO_LARGE) from None
     except tarsafe.UnsafeArchive as error:
@@ -137,6 +150,9 @@ async def checkout(ctx: OperationContext, github: GitHubClient) -> dict[str, Any
         raise OperationFailed(code, message="The repository archive was refused.") from None
     finally:
         snapshot.remove(ctx.context, ctx.operation.id)
+    async with store_session(ctx.context.pool) as conn:
+        await merge_prep.end(conn, ctx.session.id, repo)
+        await merge_prep.remember(conn, ctx.session.id, target, merge_prep.Known(merge_prep.digest(files.items())))
     ctx.env.log(f"runner.github checkout operation_id={ctx.operation.id} files={stats.files} skipped={stats.skipped}")
     return {"repo": repo, "commit_sha": sha, "dir": target, **imported}
 

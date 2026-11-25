@@ -1,0 +1,22 @@
+{
+  "step": "done",
+  "pulls": [
+    {
+      "repo": "Example-Org/example-repo",
+      "number": 17,
+      "found": true,
+      "title": "Fix the parser",
+      "state": "open",
+      "draft": false,
+      "merged": false,
+      "mergeable": false,
+      "mergeable_state": "dirty",
+      "head_ref": "feature/parser",
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "head_repo": "Example-Org/example-repo",
+      "base_ref": "main",
+      "url": "https://github.com/Example-Org/example-repo/pull/17",
+      "updated_at": "2026-11-24T12:00:00Z"
+    }
+  ]
+}

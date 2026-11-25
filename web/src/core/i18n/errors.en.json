@@ -114,6 +114,16 @@
     "body": "This browser has not joined the community yet.",
     "action": "Reload the page and try again."
   },
+  "conflict_markers": {
+    "title": "Markers left",
+    "body": "A merged file has conflict markers.",
+    "action": "The AI removes them."
+  },
+  "conflicts_unresolved": {
+    "title": "Merge not resolved",
+    "body": "The merge does not match its preparation.",
+    "action": "The AI resolves it."
+  },
   "counter_regressed": {
     "title": "Passkey possibly cloned",
     "body": "The passkey's signature counter went backwards, which can indicate a cloned authenticator.",
@@ -368,6 +378,21 @@
     "title": "Automatic login failed",
     "body": "The automatic Claude login via your mailbox did not succeed.",
     "action": "Use the manual login instead."
+  },
+  "merge_outdated": {
+    "title": "Merge outdated",
+    "body": "The branch moved.",
+    "action": "Fix conflicts again."
+  },
+  "merge_pending": {
+    "title": "Merge not pushed",
+    "body": "A prepared merge is not pushed.",
+    "action": "The AI pushes it."
+  },
+  "merge_unsupported": {
+    "title": "Not possible",
+    "body": "Closed, merged or a fork.",
+    "action": "Open it at GitHub."
   },
   "model_access_unavailable": {
     "title": "No model access",
@@ -678,6 +703,11 @@
     "title": "Workgroup VM limit reached",
     "body": "The workgroup uses as many VMs as allowed – the task starts when one of them has room.",
     "action": "No action needed."
+  },
+  "workspace_dirty": {
+    "title": "Uncommitted work",
+    "body": "The merge would replace it.",
+    "action": "The AI commits it first."
   },
   "workvm_unavailable": {
     "title": "Work VM unavailable",

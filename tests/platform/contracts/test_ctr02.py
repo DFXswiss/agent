@@ -572,14 +572,14 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
     "github.checkout": ("repo ref github_identity", "repo commit_sha dir files bytes", "repo ref session", 600),
     "github.get_pull_request": (
         "repo number github_identity",
-        "number title body state draft head base url files comments truncated",
+        "number title body state draft mergeable mergeable_state head base url files comments truncated",
         "",
         None,
     ),
     "github.create_branch": ("repo branch from github_identity", "branch sha", "repo branch", 86400),
     "github.commit": (
-        "repo branch message paths github_identity author committer co_authors signing",
-        "commit_sha parent_sha tree_sha files_changed",
+        "repo branch message paths github_identity author committer co_authors signing merge decisions",
+        "commit_sha parent_sha tree_sha files_changed merge_parent",
         "repo branch parent_sha tree_sha",
         86400,
     ),
@@ -640,6 +640,12 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
     "human.approval": ("question", "", "", None),
     # ADR-078 (contracts/changes/KOR-47.md)
     "github.list_identities": ("", "acting_user current identities co_authors", "", None),
+    "github.merge_base": (
+        "repo number discard github_identity",
+        "repo number branch base head_sha base_sha merge_base_sha up_to_date conflicts conflicts_total dir files bytes",
+        "",
+        None,
+    ),
 }
 SPEC_REPO = "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"
 # 03-api.md section 9: (type, field, longest valid value length).

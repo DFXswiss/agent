@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/requests/github.pull_status.response.json",
+  "title": "device response body github.pull_status",
+  "description": "Plaintext body of the one, final device response to github.pull_status (05-runner.md section 11): the state of every requested pull request in request order, or the failure of the whole request. Never contains a secret.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "done"
+        },
+        "pulls": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": {
+            "$ref": "objects.json#/$defs/pull_state"
+          }
+        }
+      },
+      "required": [
+        "step",
+        "pulls"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "failed"
+        },
+        "code": {
+          "$ref": "objects.json#/$defs/failure_code"
+        }
+      },
+      "required": [
+        "step",
+        "code"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

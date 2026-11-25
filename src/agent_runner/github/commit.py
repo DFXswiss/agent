@@ -67,7 +67,21 @@ from agent_runner.credentials import acting, identities
 from agent_runner.credentials.cache import RecordRefused
 from agent_runner.crypto.encoding import b64u_decode
 from agent_runner.crypto.errors import CryptoError
-from agent_runner.github import access, checkout, gitobj, identity, ops, people, signing, snapshot, tarsafe
+from agent_runner.github import (
+    access,
+    checkout,
+    gitobj,
+    identity,
+    merge3,
+    merge_base,
+    merge_commit,
+    merge_prep,
+    ops,
+    people,
+    signing,
+    snapshot,
+    tarsafe,
+)
 from agent_runner.github.client import GitHubClient, GitHubError
 from agent_runner.guestlink.errors import GuestError
 from agent_runner.operations.extensions import (
@@ -90,6 +104,14 @@ UNAVAILABLE = "A GitHub identity of the commit is not connected on this device."
 NOT_INSTRUCTING = "A co-author must be a human who instructed this task."
 NO_COAUTHOR = "A co-author has no own GitHub identity that can be named."
 NO_KEY = "The committer identity holds no signing key."
+MERGE_PENDING = (
+    "A merge of this repository was prepared in this session and is not pushed yet: commit it with merge: true and push"
+    " it, or check the repository out again to drop it."
+)
+MERGE_OUTDATED = (
+    "No prepared merge of this pull request's branch is current in this session (the branch moved or nothing was"
+    " prepared): call github.merge_base again."
+)
 
 
 @dataclass(frozen=True)
@@ -113,9 +135,11 @@ def _ancestors(path: str) -> list[str]:
     return ["/".join(parts[:depth]) for depth in range(1, len(parts))]
 
 
-def plan(base: Mapping[str, tuple[str, str]], snap: snapshot.Snapshot, scope: Sequence[str] | None) -> Plan:
-    """The new tree and its entries relative to `base` (see the module docstring); `CheckFailed` on a refusal.
-    Linear in the number of files (each path is compared with its ancestors only)."""
+def new_tree(
+    base: Mapping[str, tuple[str, str]], snap: snapshot.Snapshot, scope: Sequence[str] | None
+) -> dict[str, tuple[str, str]]:
+    """The leaf entries of the new tree: `base` changed by the snapshot (module docstring, step 3). Linear in the
+    number of files (each path is compared with its ancestors only)."""
     files = {path: found for path, found in snap.files.items() if not tarsafe.protected(path)}
     present = set(files)
     skipped = {item["path"] for item in snap.skipped}
@@ -135,22 +159,41 @@ def plan(base: Mapping[str, tuple[str, str]], snap: snapshot.Snapshot, scope: Se
         old = base.get(path)
         mode = old[0] if old is not None and old[0] in gitobj.REGULAR_MODES else gitobj.FILE_MODE
         new[path] = (mode, found.blob)
+    return new
+
+
+def finish(
+    base: Mapping[str, tuple[str, str]],
+    new: Mapping[str, tuple[str, str]],
+    sizes: Mapping[str, int],
+    counted: frozenset[str] | None = None,
+) -> Plan:
+    """The entries of `new` against `base` and the checks of step 4 (paths, limits). `counted` (a merge commit) names
+    the changed paths with new content, the only ones the limits count; `sizes` holds their sizes."""
     deleted = sorted(path for path in base if path not in new)
     changed = sorted(path for path, entry in new.items() if base.get(path) != entry)
     if any(not path_valid(path) for path in changed):
         raise CheckFailed("path_invalid", message="A changed file has a path that cannot be committed.")
-    if len(deleted) + len(changed) > MAX_CHANGES:
+    limited = changed if counted is None else [path for path in changed if path in counted]
+    if (len(deleted) + len(changed) if counted is None else len(limited)) > MAX_CHANGES:
         raise CheckFailed("size_exceeded", message="The commit changes more than 500 files.")
-    sizes = [snap.files[path].size for path in changed]
-    if any(size > MAX_FILE for size in sizes):
+    measured = [sizes[path] for path in limited]
+    if any(size > MAX_FILE for size in measured):
         raise CheckFailed("size_exceeded", message="A changed file is larger than 10 MiB.")
-    if sum(sizes) > MAX_TOTAL:
+    if sum(measured) > MAX_TOTAL:
         raise CheckFailed("size_exceeded", message="The changed files are larger than 50 MiB together.")
     entries: list[dict[str, Any]] = [
         {"path": path, "mode": base[path][0], "type": _kind(base[path][0]), "sha": None} for path in deleted
     ]
-    entries += [{"path": path, "mode": new[path][0], "type": "blob", "sha": new[path][1]} for path in changed]
+    entries += [
+        {"path": path, "mode": new[path][0], "type": _kind(new[path][0]), "sha": new[path][1]} for path in changed
+    ]
     return Plan(gitobj.build_tree(new), entries, len(deleted) + len(changed))
+
+
+def plan(base: Mapping[str, tuple[str, str]], snap: snapshot.Snapshot, scope: Sequence[str] | None) -> Plan:
+    """The new tree and its entries relative to `base` (see the module docstring); `CheckFailed` on a refusal."""
+    return finish(base, new_tree(base, snap, scope), {path: found.size for path, found in snap.files.items()})
 
 
 def scan(scratch: Any, entries: Sequence[Mapping[str, Any]]) -> None:
@@ -280,45 +323,99 @@ async def commit_identity(request: PrecheckRequest) -> dict[str, Any]:
     }
 
 
+async def _prepared(request: PrecheckRequest, repo: str, branch: str) -> merge_prep.Prep | None:
+    """The preparation a merge commit uses (`merge_outdated` without one); a normal commit while a merge of the
+    repository is pending or committed but not pushed is `merge_pending` (ADR-084 section 4)."""
+    async with store_session(request.context.pool) as conn:
+        found = await merge_prep.latest(conn, request.session.id, repo)
+    pending = found is not None and found.state in (merge_prep.PENDING, merge_prep.COMMITTED)
+    if request.params.get("merge") is not True:
+        if pending:
+            raise CheckFailed("merge_pending", message=MERGE_PENDING)
+        return None
+    if found is None or found.state != merge_prep.PENDING or found.branch != branch:
+        raise CheckFailed("merge_outdated", message=MERGE_OUTDATED)
+    return found
+
+
+async def _marked(
+    github: GitHubClient, repo: str, scratch: Any, merged: merge_commit.MergePlan, *, prep: merge_prep.Prep, sides: Any
+) -> None:
+    bad, suspects = await asyncio.to_thread(merge_commit.marked, scratch, merged, prep)
+    merge_commit.refuse_marked(bad)
+    if not suspects:
+        return
+    known: dict[str, frozenset[bytes]] = {}
+    for path in suspects:
+        lines: set[bytes] = set()
+        for files in sides:
+            if path in files:
+                lines |= merge3.marker_lines(await merge_base.blob(github, repo, files[path][1]))
+        known[path] = frozenset(lines)
+    bad, _ = await asyncio.to_thread(merge_commit.marked, scratch, merged, prep, known)
+    merge_commit.refuse_marked(bad)
+
+
 async def check(request: PrecheckRequest) -> PrecheckResult:
     repo, branch = str(request.params["repo"]), str(request.params["branch"])
     context, op_id = request.context, request.operation.id
     attribution = await commit_identity(request)
+    prep = await _prepared(request, repo, branch)
     async with access.client(request) as github:
         await access.repository(github, repo, write=True)
         parent = await _parent(github, request, repo, branch)
+        if prep is not None and parent != prep.head_sha:
+            raise CheckFailed("merge_outdated", message=MERGE_OUTDATED)
         parent_tree, base = await _parent_files(github, repo, parent)
-    snapshot.sweep(context)
-    scratch = snapshot.fresh(context, op_id)
-    try:
-        snap = await _snapshot(request, repo, scratch)
-        found = await asyncio.to_thread(plan, base, snap, request.params.get("paths"))
-        if found.files_changed == 0:
-            below = " below the listed paths" if request.params.get("paths") else ""
-            message = f"The workspace directory {checkout.directory(repo)} has no changes{below} against the branch."
-            raise CheckFailed("no_changes", message=message)
-        await asyncio.to_thread(scan, scratch, found.entries)
-        snapshot.trim(scratch, {entry["sha"] for entry in found.entries})
-    except BaseException:
-        snapshot.remove(context, op_id)
-        raise
-    data = {
+        theirs = {} if prep is None else (await _parent_files(github, repo, prep.base_sha))[1]
+        snapshot.sweep(context)
+        scratch = snapshot.fresh(context, op_id)
+        try:
+            snap = await _snapshot(request, repo, scratch)
+            if prep is None:
+                found = await asyncio.to_thread(plan, base, snap, request.params.get("paths"))
+                upload = [entry["sha"] for entry in found.entries if entry["sha"] is not None]
+            else:
+                decisions = {item["path"]: item["choice"] for item in request.params.get("decisions", [])}
+                merged = await asyncio.to_thread(merge_commit.plan, base, theirs, snap, prep, decisions)
+                await _marked(github, repo, scratch, merged, prep=prep, sides=(base, theirs))
+                found = merged.plan
+                upload = sorted({merged.new[path][1] for path in merged.counted})
+            if found.files_changed == 0 and prep is None:
+                below = " below the listed paths" if request.params.get("paths") else ""
+                message = (
+                    f"The workspace directory {checkout.directory(repo)} has no changes{below} against the branch."
+                )
+                raise CheckFailed("no_changes", message=message)
+            uploaded = [entry for entry in found.entries if entry["sha"] in upload]
+            await asyncio.to_thread(scan, scratch, uploaded)
+            snapshot.trim(scratch, set(upload))
+        except BaseException:
+            snapshot.remove(context, op_id)
+            raise
+    data: dict[str, Any] = {
         "parent_sha": parent,
         "parent_tree": parent_tree,
         "tree_sha": found.tree_sha,
         "entries": found.entries,
         "files_changed": found.files_changed,
         "commit": attribution,
+        "workspace_digest": merge_prep.digest((path, found.blob) for path, found in snap.files.items()),
     }
-    return PrecheckResult(dedupe={"parent_sha": parent, "tree_sha": found.tree_sha}, data=data)
+    if prep is not None:
+        data |= {"merge_parent": prep.base_sha, "prep_id": prep.id, "upload": upload}
+    # a merge commit never shares the slot of a single-parent commit with the same parent and tree (ADR-084 §4)
+    tree_field = found.tree_sha if prep is None else f"{found.tree_sha}+{prep.base_sha}"
+    return PrecheckResult(dedupe={"parent_sha": parent, "tree_sha": tree_field}, data=data)
 
 
 async def _create(ctx: OperationContext, github: GitHubClient, scratch: Any) -> dict[str, Any]:
     repo, data = str(ctx.params["repo"]), ctx.data
     parent, tree_sha = ops.text(data.get("parent_sha"), ops.SHA_RE), ops.text(data.get("tree_sha"), ops.SHA_RE)
     entries: list[dict[str, Any]] = list(data.get("entries", []))
+    upload = data.get("upload")
     for entry in entries:
-        if entry["sha"] is None:
+        if entry["sha"] is None or (upload is not None and entry["sha"] not in upload):
             continue
         try:
             content = snapshot.read_blob(scratch, entry["sha"])
@@ -328,15 +425,30 @@ async def _create(ctx: OperationContext, github: GitHubClient, scratch: Any) -> 
         answer = await github.request("POST", f"/repos/{repo}/git/blobs", body=blob)
         if ops.obj(answer.data).get("sha") != entry["sha"]:
             raise OperationFailed("tree_mismatch", message="GitHub stored a blob with another SHA.")
-    body: dict[str, Any] = {"base_tree": data["parent_tree"], "tree": entries}
-    answer = await github.request("POST", f"/repos/{repo}/git/trees", body=body)
-    if ops.obj(answer.data).get("sha") != tree_sha:
+    if entries:
+        body: dict[str, Any] = {"base_tree": data["parent_tree"], "tree": entries}
+        answer = await github.request("POST", f"/repos/{repo}/git/trees", body=body)
+        if ops.obj(answer.data).get("sha") != tree_sha:
+            raise OperationFailed("tree_mismatch", message="GitHub built another tree than the snapshot.")
+    elif tree_sha != data["parent_tree"]:  # a merge commit without change keeps the head's tree
         raise OperationFailed("tree_mismatch", message="GitHub built another tree than the snapshot.")
-    body = {"message": str(ctx.params["message"]), "tree": tree_sha, "parents": [parent]}
+    merge = data.get("merge_parent")
+    parents = [parent] if merge is None else [parent, ops.text(merge, ops.SHA_RE)]
+    body = {"message": str(ctx.params["message"]), "tree": tree_sha, "parents": parents}
     body = await _attributed(ctx, github, body, data["commit"])
     answer = await github.request("POST", f"/repos/{repo}/git/commits", body=body)
     commit = ops.text(ops.obj(answer.data).get("sha"), ops.SHA_RE)
-    return {"commit_sha": commit, "parent_sha": parent, "tree_sha": tree_sha, "files_changed": data["files_changed"]}
+    result = {"commit_sha": commit, "parent_sha": parent, "tree_sha": tree_sha, "files_changed": data["files_changed"]}
+    async with store_session(ctx.context.pool) as conn:
+        if merge is not None:
+            await merge_prep.committed(conn, str(data["prep_id"]), commit)
+        digest = data.get("workspace_digest")
+        if isinstance(digest, str):  # the committed snapshot is a known state of the workspace (`merge_base`)
+            known = merge_prep.Known(digest, commit, str(ctx.params["branch"]))
+            await merge_prep.remember(conn, ctx.session.id, checkout.directory(repo), known)
+    if merge is not None:
+        result["merge_parent"] = merge
+    return result
 
 
 def full_message(message: str, co_authors: Sequence[Mapping[str, str]]) -> str:

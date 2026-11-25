@@ -76,6 +76,8 @@ SPEC_OPERATION_ERRORS = (
     " rights_denied hub_unreachable upstream_error timeout model_not_allowed tree_mismatch no_changes"
     " workvm_unavailable"  # 13-work-vm.md section 2 (contracts/changes/KOR-29.md)
     " identity_forbidden identity_unavailable"  # ADR-078 (contracts/changes/KOR-47.md)
+    " conflict_markers conflicts_unresolved merge_outdated merge_pending merge_unsupported"
+    " workspace_dirty"  # ADR-084 (contracts/changes/KOR-48.md)
 )
 SPEC_SESSION_FAILURES = (
     "model_access_unavailable vm_start_failed guest_unreachable sandbox_failed agent_start_failed agent_exited"
@@ -156,6 +158,8 @@ KOR31_AUDIT = "credit.changed billing.fx_set billing.export"
 KOR47_AUDIT = "github.default github.primary task.github_identity runner.operator_github_users"
 # ADR-081 section 5 (contracts/changes/KOR-50.md): a session moved to another model access, a task's consent.
 KOR50_AUDIT = "session.model_switched task.model_consent"
+# ADR-084 section 1 (contracts/changes/KOR-48.md): a person's pull-request link and its removal.
+KOR48_AUDIT = "pr.linked pr.unlinked"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 03-api.md section 4.6.2, ADR-075 section 7: reasons of a waiting task beyond the session failure reasons
 SPEC_WAITING_REASONS = "no_device platform_access_required wg_vm_limit placement_full placement_offline keys_pending"
@@ -279,7 +283,7 @@ def test_audit_actions(index: dict[str, Any]) -> None:
         assert set(row) == {"action", "group"}
         assert re.fullmatch(r"[a-z_]+(\.[a-z_]+)+", row["action"]), row
     expected = set(SPEC_AUDIT_FIXED.split()) | set(DECIDED_AUDIT.split()) | set(KOR31_AUDIT.split())
-    expected |= set(KOR47_AUDIT.split()) | set(KOR50_AUDIT.split())
+    expected |= set(KOR47_AUDIT.split()) | set(KOR50_AUDIT.split()) | set(KOR48_AUDIT.split())
     for prefix, values in SPEC_AUDIT_PATTERNS.items():
         expected |= {f"{prefix}.{value}" for value in values.split()}
     expected |= {f"read.{e['read_resource']}" for e in index["endpoints"] if e["read_resource"]}

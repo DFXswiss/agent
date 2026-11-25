@@ -114,6 +114,16 @@
     "body": "Dieser Browser ist der Community noch nicht beigetreten.",
     "action": "Lade die Seite neu und versuche es noch einmal."
   },
+  "conflict_markers": {
+    "title": "Marker übrig",
+    "body": "Eine Datei hat Konfliktmarker.",
+    "action": "Die KI entfernt sie."
+  },
+  "conflicts_unresolved": {
+    "title": "Merge offen",
+    "body": "Der Merge passt nicht zur Vorbereitung.",
+    "action": "Die KI löst ihn auf."
+  },
   "counter_regressed": {
     "title": "Passkey möglicherweise kopiert",
     "body": "Der Signaturzähler des Passkeys ist zurückgegangen; das kann auf einen kopierten Authenticator hinweisen.",
@@ -368,6 +378,21 @@
     "title": "Automatische Anmeldung fehlgeschlagen",
     "body": "Die automatische Claude-Anmeldung über dein Postfach hat nicht funktioniert.",
     "action": "Verwende stattdessen die manuelle Anmeldung."
+  },
+  "merge_outdated": {
+    "title": "Merge veraltet",
+    "body": "Der Branch hat sich bewegt.",
+    "action": "Konflikte erneut beheben."
+  },
+  "merge_pending": {
+    "title": "Merge nicht gepusht",
+    "body": "Ein Merge ist nicht gepusht.",
+    "action": "Die KI pusht ihn."
+  },
+  "merge_unsupported": {
+    "title": "Nicht möglich",
+    "body": "Geschlossen, gemergt oder Fork.",
+    "action": "Bei GitHub öffnen."
   },
   "model_access_unavailable": {
     "title": "Kein Modellzugang",
@@ -678,6 +703,11 @@
     "title": "VM-Grenze der Workgroup erreicht",
     "body": "Die Workgroup nutzt so viele VMs wie erlaubt – die Aufgabe startet, sobald eine davon Platz hat.",
     "action": "Keine Aktion nötig."
+  },
+  "workspace_dirty": {
+    "title": "Offene Änderungen",
+    "body": "Der Merge würde sie ersetzen.",
+    "action": "Die KI committet sie."
   },
   "workvm_unavailable": {
     "title": "Arbeits-VM nicht verfügbar",

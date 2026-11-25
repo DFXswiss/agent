@@ -12,5 +12,7 @@
   "failure.token_refused": "GitHub hat das Token abgelehnt: Es wurde widerrufen oder existiert nicht.",
   "failure.scope_missing": "Dem Token fehlt der für Repositories nötige Scope.",
   "failure.sso_required": "Eine Organisation verlangt die SSO-Freigabe des Tokens.",
-  "failure.flow_unavailable": "Die Anmeldung über GitHub ist auf diesem Ausführungsgerät nicht eingerichtet."
+  "failure.flow_unavailable": "Die Anmeldung über GitHub ist auf diesem Ausführungsgerät nicht eingerichtet.",
+  "failure.github_not_connected": "Es ist kein GitHub-Konto verbunden, das du verwenden darfst.",
+  "failure.forbidden": "Das Gerät bedient diese Arbeitsgruppe nicht, oder du kannst sie nicht lesen."
 }

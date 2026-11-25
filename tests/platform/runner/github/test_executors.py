@@ -153,7 +153,9 @@ def test_get_pull_request_returns_the_pull_request_files_and_comments(store_dsn:
         assert "patch" in result["files"][0]
         assert [(c["author"], c["body"]) for c in result["comments"]] == [("other-user", "Looks good.")]
         assert result["truncated"] is False
+        assert (result["mergeable"], result["mergeable_state"]) == (True, "clean")
         assert github.journal() == [
+            f"GET /repos/{REPO}/pulls/1",  # mergeable null: GitHub starts computing it
             f"GET /repos/{REPO}/pulls/1",
             f"GET /repos/{REPO}/pulls/1/files?per_page=100",
             f"GET /repos/{REPO}/issues/1/comments?per_page=100",

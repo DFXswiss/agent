@@ -11,8 +11,8 @@ from typing import Any
 import pytest
 
 from agent_hub.contexts import vectors as context_vectors
-from agent_hub.crypto import context
-from agent_hub.crypto.encoding import b64u_decode
+from agent_hub.crypto import aead, context
+from agent_hub.crypto.encoding import b64u_decode, b64u_encode
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.crypto.keys import Identity
 from agent_hub.crypto.vectors import render
@@ -142,3 +142,90 @@ def test_pull_request_tags() -> None:
     assert code(lambda: context.pr_link_text("a/b", True)) == "header_invalid"
     assert code(lambda: context.pr_link_text("a/b/c", 1)) == "header_invalid"
     assert code(lambda: context.pr_link_key(WK[:16])) == "header_invalid"
+
+
+def _binding(**changes: object) -> dict[str, Any]:
+    tag = context.pr_link_tag(context.pr_link_key(WK), "Org/Repo", 3)
+    binding: dict[str, Any] = {
+        "wg_id": ids()["wg"],
+        "epoch": 4,
+        "tag": tag,
+        "task_id": ids()["task"],
+        "origin": f"user:{ids()['author']}",
+    }
+    return {**binding, **changes}
+
+
+def test_the_sealed_link_body_vectors_open_and_are_reproduced() -> None:
+    wk = b64u_decode(VECTORS["workgroup_key"])
+    body_key, link_key = context.pr_link_body_key(wk), context.pr_link_key(wk)
+    data = VECTORS["pr_link_bodies"]
+    assert b64u_encode(body_key) == data["body_key"]
+    assert data["body_bytes"] == context.PR_LINK_BODY_BYTES
+    for body in data["bodies"]:
+        binding = {key: body[key] for key in ("wg_id", "epoch", "tag", "task_id", "origin")}
+        assert context.pr_link_body_aad(**binding).decode("ascii") == body["aad"]
+        assert context.pr_link_body_text(body["repo"], body["number"]).decode("ascii") == body["plaintext"]
+        nonce = b64u_decode(body["nonce"])
+        sealed = context.seal_pr_link(body_key, **binding, repo=body["repo"], number=body["number"], nonce=nonce)
+        assert sealed == body["sealed"]
+        assert len(b64u_decode(sealed)) == context.PR_LINK_SEALED_BYTES
+        opened = context.open_pr_link(body_key, link_key, **binding, sealed=sealed)
+        assert opened == (body["repo"], body["number"])
+
+
+def test_a_sealed_link_body_round_trips_with_a_random_nonce_and_keeps_the_spelling() -> None:
+    body_key, link_key = context.pr_link_body_key(WK), context.pr_link_key(WK)
+    sealed = context.seal_pr_link(body_key, **_binding(), repo="Org/Repo", number=3)
+    assert sealed != context.seal_pr_link(body_key, **_binding(), repo="Org/Repo", number=3)
+    assert context.open_pr_link(body_key, link_key, **_binding(), sealed=sealed) == ("Org/Repo", 3)
+    device = _binding(origin=f"device:{ids()['session']}")
+    assert context.open_pr_link(
+        body_key, link_key, **device, sealed=context.seal_pr_link(body_key, **device, repo="Org/Repo", number=3)
+    ) == ("Org/Repo", 3)
+    assert body_key != context.pr_link_key(WK)
+
+
+def test_sealed_link_body_refusals() -> None:
+    body_key, link_key = context.pr_link_body_key(WK), context.pr_link_key(WK)
+    sealed = context.seal_pr_link(body_key, **_binding(), repo="Org/Repo", number=3)
+    # the binding of the AAD
+    for change in (
+        {"task_id": ids()["object"]},
+        {"wg_id": ids()["org"]},
+        {"epoch": 5},
+        {"origin": f"device:{ids()['author']}"},
+        {"origin": f"user:{ids()['session']}"},
+    ):
+        assert code(lambda c=change: context.open_pr_link(body_key, link_key, **_binding(**c), sealed=sealed)) == (
+            "decrypt_failed"
+        ), change
+    # the formats of the AAD parts
+    for change in (
+        {"origin": 7},
+        {"origin": "robot:" + ids()["author"]},
+        {"origin": "user:not-an-id"},
+        {"epoch": 0},
+        {"tag": "AAAA"},
+        {"wg_id": "x"},
+    ):
+        assert code(lambda c=change: context.pr_link_body_aad(**_binding(**c))) == "header_invalid", change
+    # the sealed text, the keys and the plaintext
+    assert code(lambda: context.open_pr_link(body_key, link_key, **_binding(), sealed=sealed[:-2])) == "header_invalid"
+    assert code(lambda: context.open_pr_link(body_key, link_key, **_binding(), sealed=None)) == "header_invalid"
+    assert code(lambda: context.open_pr_link(WK[:5], link_key, **_binding(), sealed=sealed)) == "header_invalid"
+    assert code(lambda: context.seal_pr_link(WK[:5], **_binding(), repo="a/b", number=1)) == "header_invalid"
+    assert code(lambda: context.seal_pr_link(body_key, **_binding(), repo="a", number=1)) == "header_invalid"
+    assert code(lambda: context.seal_pr_link(body_key, **_binding(), repo="a/b", number=0)) == "header_invalid"
+    assert code(lambda: context.pr_link_body_key(WK[:31])) == "header_invalid"
+    # a body that names another pull request than the tag, under the right binding
+    other = context.seal_pr_link(body_key, **_binding(), repo="org/repo", number=4)
+    assert code(lambda: context.open_pr_link(body_key, link_key, **_binding(), sealed=other)) == "header_invalid"
+    # a link key of another workgroup recomputes another tag
+    foreign = context.pr_link_key(WK[::-1])
+    assert code(lambda: context.open_pr_link(body_key, foreign, **_binding(), sealed=sealed)) == "header_invalid"
+    # a body with another key set does not open as a link
+    aad = context.pr_link_body_aad(**_binding())
+    text = b'{"number":3,"repo":"Org/Repo","x":1}'
+    blob = b64u_encode(aead.seal_blob(body_key, text + bytes(context.PR_LINK_BODY_BYTES - len(text)), aad))
+    assert code(lambda: context.open_pr_link(body_key, link_key, **_binding(), sealed=blob)) == "header_invalid"

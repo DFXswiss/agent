@@ -74,6 +74,7 @@ their vectors: [key model](../key-model.md)** (§11).
 | `k_ctx` **(new, KOR-33)** | `HKDF(ikm=WK_e, salt=manifest.salt (32 B random per object), info=P‖"context\0"‖object_id)`: the key of one context checkpoint (§4.11) |
 | `pk_e` **(new, KOR-33)** | `HKDF(ikm=WK_e, info=P‖"pr-link")`: the HMAC key of pull-request tags (§4.11) |
 | `k_log` **(new, KOR-43)** | `HKDF(ikm=WK_e, salt=manifest.salt (32 B random per object), info=P‖"run-log\0"‖object_id)`: the key of one log of a test run or work VM job (§4.12) |
+| `k_body` **(new, KOR-48)** | `HKDF(ikm=WK_e, info=P‖"pr-link-body")`: the AES-256-GCM key of sealed pull-request link bodies (§4.11a) |
 | storage key **(new)** | `HKDF(ikm=device_sig_seed, info=P‖"runner-storage")` |
 | Code text | 16 B → base32 (RFC 4648, no padding, uppercase) 26 chars, shown as `XXXXX-XXXXX-XXXXX-XXXXX-XXXXXX`; parser strips `-` and spaces, uppercases; wrong length → `invite_code_length`, bad alphabet → `invite_code_invalid`. Same text form for recovery codes. |
 
@@ -179,7 +180,7 @@ the identity's own SSH signing key (`signing_key`), readable by everyone who can
 
 ### 4.5 Device request and response **(new)**
 
-Requests from a user to one device (GitHub connect, Claude login, credential check):
+Requests from a user to one device (GitHub connect, Claude login, credential and mailbox check, the fresh read of pull-request states `github.pull_status` of ADR-084 §2):
 `{"header":{"v":1,"id","user","device","kind","follows","ts","enc_alg":"HPKE-X25519-A256GCM"},"ct":b64u(enc‖ct),"sig"}`
 with HPKE to the device X25519 key, `info = P‖"request-wrap\0"‖canonical(header)`, signature by the user
 identity over `P‖"request-sig\0"‖canonical(header)‖ct_raw`. Responses use the same format, encrypted to the user
@@ -338,6 +339,25 @@ runner's `agent_runner.crypto.context`; vectors `contracts/vectors/context.json`
 Pull-request tag (ADR-072 §8): `tag = b64u(HMAC-SHA256(pk_e, canonical({"number":n,"repo":"<owner>/<name>"})))`
 with the repository name in lower case. The hub stores `(wg, epoch, tag)`; only a holder of `WK_e` who knows
 repository and number can compute it.
+
+### 4.11a Sealed pull-request link body **(new, KOR-48)**
+
+A link carries a body that names the pull request for a reader with `WK_e` (ADR-084 §1):
+
+- plaintext = `canonical({"number":n,"repo":"<owner>/<name>"})` with the repository as GitHub spells it (the tag stays
+  over the lower-case name), padded with zero bytes to 256 bytes, so the ciphertext does not show the name's length;
+- `sealed = b64u(nonce12‖AES-256-GCM(k_body, padded, AAD))` (284 bytes, 379 characters), with
+  `AAD = P‖"pr-link-body\0"‖wg_id‖"\0"‖epoch‖"\0"‖tag‖"\0"‖task_id‖"\0"‖origin` (epoch in decimal) and
+  `origin` = `device:<session_id>` for a link the device registered, `user:<linked_by>` for one a person linked.
+
+A reader opens it with the row's own workgroup, epoch, tag, task and `session_id`/`linked_by`, and **recomputes the
+tag** from the opened repository and number. Refused (the link shows as unreadable): another length or malformed
+b64u (`header_invalid`), a body that does not open (`decrypt_failed`), padding that is not zero bytes, a plaintext
+that is not exactly the canonical form with these two keys, or a recomputed tag other than the row's
+(`header_invalid`). A hub can therefore neither move a link to another task, workgroup, epoch or pull request nor turn
+a device link into a person's link. Implementations: `seal_pr_link`/`open_pr_link` of `agent_hub.crypto.context` (and
+its runner copy), `sealPrLink`/`openPrLink` of `web/src/core/crypto/context.ts`; vectors `pr_link_bodies` and the
+`pr_body_*` negatives of `contracts/vectors/context.json`.
 
 ### 4.12 Log of a test run or work VM job **(new, KOR-43)**
 
@@ -608,9 +628,10 @@ E9 `id` unique (same `id` + identical bytes → idempotent success; different by
 | Credential metadata (owner, owner kind user/organization, kind, version, epoch, times, the primary mark of a user's GitHub record, so the number of GitHub records per owner); the default GitHub identity (record ID) of an organization or workgroup (ADR-078) | lifecycle, identity choice |
 | User settings (model access preference, model choice, locale) | session start |
 | Admission (ADR-060): `user_certify` entries, the identity proof of a platform registration, the capabilities a device announced (`device.features`), which account looked up which identity or account code (read log) | direct admission without consent steps |
-| Context checkpoints (ADR-072): object, task, session, author device and workgroup IDs, epoch, chunk count, sizes, digest and chunk hashes, the manifest (salt, times), upload and commit times; pull-request links: opaque tag, epoch, task and session; restore outcomes (`context_restore`, `context_reason`: restored, workspace partial/omitted, fallback reason) | storage, quotas, pruning, the newest checkpoint for a restore, PR → task lookup, the notice on the task |
+| Context checkpoints (ADR-072): object, task, session, author device and workgroup IDs, epoch, chunk count, sizes, digest and chunk hashes, the manifest (salt, times), upload and commit times; pull-request links: opaque tag, epoch, task and session or the user who linked it (KOR-48), when, and the sealed body of fixed length (§4.11a); restore outcomes (`context_restore`, `context_reason`: restored, workspace partial/omitted, fallback reason) | storage, quotas, pruning, the newest checkpoint for a restore, PR → task lookup, the notice on the task |
 | Agents of a user (`11-agent-access.md` §2): agent ID, public keys, state, times, claim hash, the source address of an open pairing (≤ 70 min), which login confirmed which pairing, which actions were taken by an agent (`agent_id` of audit rows), whether a pairing is a remote one and its nonce; the sealed identity, the sealed label and the sealed handover of a remote pairing are ciphertexts the hub cannot open | delegated agent access (ADR-056, ADR-067) |
 | Shared sessions (ADR-083): which person triggered an operation, a session and a consumption item (`triggered_by`, IDs only), the daily consumption sum per person, which prompt came through the author's agent, withdrawal requests of prompts (event ID, author, times, outcome) | audit ("triggered by"), consumption per person, the visible queue |
+| Device request kind `github.pull_status` (KOR-48, ADR-084 §2): which user asked which device for a fresh read of pull-request states, when; the body (organization, workgroup, task, repositories, numbers) and the answer are HPKE end to end | routing of device requests |
 | Community metadata of `14-community.md` §2.3 (message IDs, authors, times, sizes, tombstones, key epochs and checks, key requests, members, read positions, mutes, moderators) | community (ADR-069); names and texts are ciphertext under the community key |
 
 Not visible: everything listed as confidential in `00-overview.md` §3, invitation and recovery codes, PRF

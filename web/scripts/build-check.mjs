@@ -2,7 +2,7 @@
 // unless both outputs are byte-identical, index.html satisfies the CSP/SRI rules (lazily loaded chunks included: the
 // asset table and the integrity-checking preload helper, KOR-04), the bundle contains no `__TEST__`
 // and assigns no globals, build-manifest.json describes exactly the files written and the initial JavaScript fits the
-// budget (`INITIAL_JS_BUDGET`, 220 KiB gzip). Prints the build hash and the initial JS size.
+// budget (`INITIAL_JS_BUDGET`, 221 KiB gzip). Prints the build hash and the initial JS size.
 import { mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';

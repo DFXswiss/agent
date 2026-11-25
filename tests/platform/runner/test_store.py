@@ -295,6 +295,25 @@ TABLES = {
     "context_pr_link": ["operation_id", "state", "attempts", "next_at", "updated_at"],
     # the last audited list of OPERATOR_GITHUB_USERS, keyed hashes only (KOR-47, migration 0022)
     "operator_github_user": ["user_hmac"],
+    # the preparation of a merge commit and the workspace digests (KOR-48, migration 0027_merge_prep)
+    "merge_prep": [
+        "id",
+        "session_id",
+        "repo",
+        "number",
+        "branch",
+        "head_sha",
+        "base_sha",
+        "merge_base_sha",
+        "changed",
+        "conflicts",
+        "sides",
+        "markers",
+        "state",
+        "commit_sha",
+        "created_at",
+    ],
+    "workspace_state": ["session_id", "dir", "digest", "commit_sha", "branch", "updated_at"],
     # GitHub identities (KOR-47, migration 0017)
     "github_identity_cache": ["id", "owner_id", "owner_kind", "is_primary", "version", "record"],
     "github_selection": ["session_id", "task_id", "github_identity", "task_github_identity"],

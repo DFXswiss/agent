@@ -539,7 +539,13 @@ def test_the_daemon_task_and_the_service_of_a_device_that_is_not_enrolled(store_
         built = service_for(env.context)
         assert built is not None
         assert service_for(env.context) is built
-        assert set(built.handlers) == {"github.connect", "claude.login", "credential.check", "mailbox.check"}
+        assert set(built.handlers) == {
+            "github.connect",
+            "github.pull_status",
+            "claude.login",
+            "credential.check",
+            "mailbox.check",
+        }
         env.context.stopping.set()
         await task.run(env.context)
         env.context.identity = None

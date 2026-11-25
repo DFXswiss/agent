@@ -15,6 +15,8 @@ and `credentials/login.ts`). The hub relays opaque envelopes only; everything is
   anything else is `unverifiable` and never shown as content.
 - The tool waits (polling) up to `--wait` seconds for the next step a person would act on, then returns; a later call
   with `--request` continues. A device code or authorization link is opened in the user's browser.
+- `github.pull_status` (KOR-48, ADR-084 section 2) reads the fresh state of pull requests; its answer is checked by
+  `pullstate.valid_response`, its failures add `github_not_connected` and `forbidden` (`pulls` sends it).
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from agent_platform.eventio import rows_of, uuid_argument
 from agent_platform.hub import segment
 from agent_platform.orgs import device_assign, now_text
 from agent_platform.pairing import open_browser
+from agent_platform.pullstate import valid_response
 from agent_platform.reader import excluded
 from agent_runner.crypto.encoding import b64u_decode, body_json, parse_json
 from agent_runner.crypto.errors import CryptoError
@@ -56,6 +59,8 @@ FAILURE_CODES = frozenset(
         "token_refused",
         "scope_missing",
         "sso_required",
+        "github_not_connected",
+        "forbidden",
     }
 )
 REQUEST_FAILED = "request_failed"
@@ -126,6 +131,7 @@ CHECKS: dict[str, Callable[[dict[str, Any]], bool]] = {
     "claude.login": _login,
     "credential.check": _check,
     "mailbox.check": _check,
+    "github.pull_status": valid_response,
 }
 
 

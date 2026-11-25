@@ -475,9 +475,22 @@ def pull_changes(repo: Repo, pull: Pull) -> tuple[str, str, list[FileChange], in
     return head, base, changes, commits
 
 
-def pull(urls: Urls, world: World, repo: Repo, item: Pull, *, listed: bool = False) -> dict[str, Any]:
-    """A pull request (`listed`: the shorter form of ``GET …/pulls``)."""
+def mergeability(repo: Repo, item: Pull, known: bool) -> tuple[bool | None, str]:
+    """``mergeable`` and ``mergeable_state`` of a pull request: unknown (``null``, ``"unknown"``) while not computed
+    and for a closed one; else whether the base merges into the head cleanly, with the state ``draft`` for a draft
+    (whatever ``mergeable`` is), ``dirty`` for a conflict and ``clean`` otherwise (`agent_doubles.github.repos`)."""
+    if item.state == "closed" or not known:
+        return None, "unknown"
+    clean = repo.merges_cleanly(repo.branch(item.base) or "", repo.branch(item.head) or "")
+    return clean, "draft" if item.draft else "clean" if clean else "dirty"
+
+
+def pull(
+    urls: Urls, world: World, repo: Repo, item: Pull, *, listed: bool = False, known: bool = False
+) -> dict[str, Any]:
+    """A pull request (`listed`: the shorter form of ``GET …/pulls``; `known`: its mergeability is computed)."""
     api = f"{urls.api}/repos/{repo.full_name}"
+    mergeable, mergeable_state = mergeability(repo, item, known)
     web = f"{urls.web}/{repo.full_name}"
     number = item.number
     head, base, changes, commits = pull_changes(repo, item)
@@ -542,9 +555,9 @@ def pull(urls: Urls, world: World, repo: Repo, item: Pull, *, listed: bool = Fal
         "auto_merge": None,
         "draft": item.draft,
         "merged": False,
-        "mergeable": None if item.state == "closed" else True,
-        "rebaseable": None if item.state == "closed" else True,
-        "mergeable_state": "draft" if item.draft else "clean",
+        "mergeable": mergeable,
+        "rebaseable": mergeable,
+        "mergeable_state": mergeable_state,
         "merged_by": None,
         "comments": repo.comment_count(number),
         "review_comments": 0,

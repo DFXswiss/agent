@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-pr-links-post.request.json",
+  "title": "POST /v1/workgroups/{wg}/pr-links request",
+  "description": "Body of POST /v1/workgroups/{wg}/pr-links (03-api.md section 4.6, ADR-084 section 1): a person links a pull request to a task of the workgroup by its address; the tag and the sealed body under the workgroup's current epoch.",
+  "type": "object",
+  "properties": {
+    "epoch": {
+      "$ref": "../common.json#/$defs/epoch"
+    },
+    "tag": {
+      "$ref": "../common.json#/$defs/b64u_32"
+    },
+    "sealed": {
+      "$ref": "objects.json#/$defs/pr_link_sealed"
+    },
+    "task_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "epoch",
+    "tag",
+    "sealed",
+    "task_id"
+  ],
+  "additionalProperties": false
+}

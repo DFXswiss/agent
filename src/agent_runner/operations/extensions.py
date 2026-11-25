@@ -68,6 +68,12 @@ OPERATION_ERROR_CODES = frozenset(
         "workvm_unavailable",
         "identity_forbidden",
         "identity_unavailable",
+        "conflict_markers",
+        "conflicts_unresolved",
+        "merge_outdated",
+        "merge_pending",
+        "merge_unsupported",
+        "workspace_dirty",
     }
 )
 """`contracts/enums/operation-error-codes.json` (a test compares them)."""

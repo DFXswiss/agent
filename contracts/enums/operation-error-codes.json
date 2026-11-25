@@ -25,6 +25,12 @@
     "no_changes",
     "workvm_unavailable",
     "identity_forbidden",
-    "identity_unavailable"
+    "identity_unavailable",
+    "conflict_markers",
+    "conflicts_unresolved",
+    "merge_outdated",
+    "merge_pending",
+    "merge_unsupported",
+    "workspace_dirty"
   ]
 }

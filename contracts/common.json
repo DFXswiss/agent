@@ -270,7 +270,13 @@
         "no_changes",
         "workvm_unavailable",
         "identity_forbidden",
-        "identity_unavailable"
+        "identity_unavailable",
+        "conflict_markers",
+        "conflicts_unresolved",
+        "merge_outdated",
+        "merge_pending",
+        "merge_unsupported",
+        "workspace_dirty"
       ],
       "description": "enums/operation-error-codes.json"
     },
@@ -532,7 +538,8 @@
         "github.connect",
         "claude.login",
         "credential.check",
-        "mailbox.check"
+        "mailbox.check",
+        "github.pull_status"
       ]
     },
     "request_state": {

@@ -968,6 +968,65 @@
     },
     {
       "method": "GET",
+      "path": "/v1/workgroups/{wg}/pr-links",
+      "name": "workgroup-pr-links",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "wg:read"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/workgroup-pr-links.request.json",
+      "response": "api/workgroup-pr-links.response.json",
+      "read_resource": "workgroup.pr_links",
+      "streaming": false,
+      "owner": "KOR-48"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/workgroups/{wg}/pr-links",
+      "name": "workgroup-pr-links-post",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "wg:write"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/workgroup-pr-links-post.request.json",
+      "response": "api/workgroup-pr-links-post.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-48"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/workgroups/{wg}/pr-links/{epoch}/{tag}",
+      "name": "workgroup-pr-link-delete",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "wg:write"
+      ],
+      "path_params": {
+        "wg": "uuid",
+        "epoch": "q_epoch",
+        "tag": "b64u_32"
+      },
+      "request_kind": "query",
+      "request": "api/workgroup-pr-link-delete.request.json",
+      "response": "api/workgroup-pr-link-delete.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-48"
+    },
+    {
+      "method": "GET",
       "path": "/v1/tasks/{task}/operations",
       "name": "task-operations",
       "section": "4.7",

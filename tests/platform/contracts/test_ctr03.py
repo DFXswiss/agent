@@ -40,7 +40,7 @@ SPEC_PLATFORM_TYPES = (
 )
 # 04-crypto.md section 4.4 and 02-data-model.md section 2.7 (device_request.kind).
 SPEC_CREDENTIAL_KINDS = "github anthropic_api_key claude_subscription mailbox"
-SPEC_REQUEST_KINDS = "github.connect claude.login credential.check mailbox.check"
+SPEC_REQUEST_KINDS = "github.connect claude.login credential.check mailbox.check github.pull_status"
 # 03-api.md section 6.1: the device endpoints (CTR-03 rows of INDEX.json) and the two live channels.
 SPEC_CHANNELS = {
     "/v1/stream": ("ws/sse/query.json", "ws/sse/frame.json"),

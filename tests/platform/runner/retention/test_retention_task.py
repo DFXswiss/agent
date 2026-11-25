@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from agent_runner import registry
+from agent_runner.github import merge_prep
 from agent_runner.prompts import retention as prompt_retention
 from agent_runner.retention import tasks
 from agent_runner.store.pool import open_pool
@@ -22,6 +23,7 @@ def test_the_task_and_its_pruners_are_registered() -> None:
     assert (
         ("outbox", outbox.prune, outbox.PRUNE_BATCH),
         ("prompt_event", prompt_retention.prune, prompt_retention.PRUNE_BATCH),
+        ("merge_prep", merge_prep.prune, merge_prep.PRUNE_BATCH),
     ) == tasks.PRUNERS
 
 
@@ -84,4 +86,4 @@ def test_a_real_round_on_an_empty_store(store_dsn: str) -> None:
         finally:
             await pool.close()
 
-    assert asyncio.run(main()) == {"outbox": 0, "prompt_event": 0}
+    assert asyncio.run(main()) == {"outbox": 0, "prompt_event": 0, "merge_prep": 0}

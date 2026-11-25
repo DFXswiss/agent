@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/requests/github.pull_status.request.json",
+  "title": "device request body github.pull_status",
+  "description": "A fresh read of pull-request states by a device assigned to the workgroup (ADR-084 section 2, 05-runner.md section 11): the organization and workgroup the requester reads them for, the task when known (the device then resolves the identity of that task), and 1-50 distinct pull requests.",
+  "type": "object",
+  "properties": {
+    "org_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "wg_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "task_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "pulls": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "$ref": "objects.json#/$defs/pull_address"
+      },
+      "description": "distinct pull requests; the device answers a request that repeats one with step failed with code upstream_error (05-runner.md section 11)"
+    }
+  },
+  "required": [
+    "org_id",
+    "wg_id",
+    "pulls"
+  ],
+  "additionalProperties": false
+}

@@ -382,6 +382,17 @@ def test_kinds_outside_the_closed_list_are_refused(desk: Desk) -> None:
     assert (response.status_code, response.json()) == (400, {"error": "header_invalid"})
 
 
+def test_a_pull_status_request_is_routed_like_every_kind(desk: Desk) -> None:
+    """KOR-48, ADR-084 section 2: `github.pull_status` is a kind of the closed list (hub and table)."""
+    writer, device = desk.scene.writer, desk.scene.device
+    request_id = _send(desk, writer, device, "github.pull_status")
+    assert desk.world.rows("SELECT kind FROM hub.device_request WHERE id = %s", request_id) == [("github.pull_status",)]
+    body = {"step": "failed", "code": "forbidden"}
+    final = desk.response(device, writer, request_id, "github.pull_status", final=True, body=body)
+    assert _respond(desk.client(device), request_id, final).status_code == 200
+    assert desk.state(request_id) == "answered"
+
+
 def test_envelopes_and_responses_within_the_contract_limits(desk: Desk) -> None:
     """Review M3: `ct` at most 349526 characters, at most 100 responses per request."""
     writer, device = desk.scene.writer, desk.scene.device

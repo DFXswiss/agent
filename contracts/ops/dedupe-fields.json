@@ -61,7 +61,7 @@
         },
         {
           "name": "tree_sha",
-          "source": "tree SHA computed locally from the snapshot"
+          "source": "tree SHA computed locally from the snapshot; for a merge commit (merge: true) \"<tree sha>+<merge parent sha>\""
         }
       ],
       "window_seconds": 86400

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/pr.linked.json",
+  "title": "audit detail pr.linked",
+  "description": "detail of audit rows with action pr.linked (ADR-084 section 1): a person linked a pull request to a task by its address (actor the user, replaced false), or a device's registration replaced a person's link of the same tag (actor the device, replaced true); the workgroup epoch of the tag key; the opaque tag is the row's target. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "epoch": {
+      "$ref": "../common.json#/$defs/epoch"
+    },
+    "replaced": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "epoch",
+    "replaced"
+  ],
+  "additionalProperties": false
+}

@@ -1,26 +1,14 @@
 {
-  "agent_exited": {
+  "account_code_invalid": {
     "en": {
-      "title": "Agent stopped",
-      "body": "Claude Code ended unexpectedly.",
-      "action": "Retry the task."
+      "title": "Code not valid",
+      "body": "An account code has 12 characters (letters and the digits 2–7).",
+      "action": "Check the code and enter it again."
     },
     "de": {
-      "title": "Agent beendet",
-      "body": "Claude Code wurde unerwartet beendet.",
-      "action": "Starte den Task noch einmal."
-    }
-  },
-  "agent_start_failed": {
-    "en": {
-      "title": "Agent did not start",
-      "body": "Claude Code could not be started.",
-      "action": "Retry the task."
-    },
-    "de": {
-      "title": "Agent nicht gestartet",
-      "body": "Claude Code konnte nicht gestartet werden.",
-      "action": "Starte den Task noch einmal."
+      "title": "Kennung ungültig",
+      "body": "Eine Kontokennung hat 12 Zeichen (Buchstaben und die Ziffern 2–7).",
+      "action": "Prüfe die Kennung und gib sie erneut ein."
     }
   },
   "agent_batches_incomplete": {
@@ -35,6 +23,18 @@
       "action": "Lade die Seite neu und bestätige noch einmal."
     }
   },
+  "agent_exited": {
+    "en": {
+      "title": "Agent stopped",
+      "body": "Claude Code ended unexpectedly.",
+      "action": "Retry the task."
+    },
+    "de": {
+      "title": "Agent beendet",
+      "body": "Claude Code wurde unerwartet beendet.",
+      "action": "Starte den Task noch einmal."
+    }
+  },
   "agent_gen_mismatch": {
     "en": {
       "title": "Agent connection changed",
@@ -45,6 +45,18 @@
       "title": "Agentenverbindung geändert",
       "body": "Inzwischen wurde ein anderer KI-Agent verbunden oder getrennt.",
       "action": "Lade die Seite neu und bestätige noch einmal."
+    }
+  },
+  "agent_start_failed": {
+    "en": {
+      "title": "Agent did not start",
+      "body": "Claude Code could not be started.",
+      "action": "Retry the task."
+    },
+    "de": {
+      "title": "Agent nicht gestartet",
+      "body": "Claude Code konnte nicht gestartet werden.",
+      "action": "Starte den Task noch einmal."
     }
   },
   "already_assigned": {
@@ -179,6 +191,18 @@
       "action": "Starte den Passkey-Schritt noch einmal."
     }
   },
+  "claim_invalid": {
+    "en": {
+      "title": "Agent connection refused",
+      "body": "The agent could not prove that it received the connection.",
+      "action": "Ask your AI agent to connect again."
+    },
+    "de": {
+      "title": "Agentenverbindung abgelehnt",
+      "body": "Der Agent konnte nicht nachweisen, dass er die Verbindung erhalten hat.",
+      "action": "Bitte deinen KI-Agenten, sich neu zu verbinden."
+    }
+  },
   "client_data_invalid": {
     "en": {
       "title": "Passkey response invalid",
@@ -189,6 +213,90 @@
       "title": "Passkey-Antwort ungültig",
       "body": "Der Browser hat eine ungültige Passkey-Antwort geliefert.",
       "action": "Versuche es noch einmal oder verwende einen anderen Browser."
+    }
+  },
+  "client_outdated": {
+    "en": {
+      "title": "Page out of date",
+      "body": "This page uses a form the platform no longer accepts.",
+      "action": "Reload the page and try again."
+    },
+    "de": {
+      "title": "Seite veraltet",
+      "body": "Diese Seite verwendet ein Format, das die Plattform nicht mehr annimmt.",
+      "action": "Lade die Seite neu und versuche es noch einmal."
+    }
+  },
+  "community_epoch_exists": {
+    "en": {
+      "title": "Community key already exists",
+      "body": "Another browser created the community key at the same moment.",
+      "action": "Reload the page; the key is fetched automatically."
+    },
+    "de": {
+      "title": "Community-Schlüssel existiert bereits",
+      "body": "Ein anderer Browser hat den Community-Schlüssel im selben Moment angelegt.",
+      "action": "Lade die Seite neu; der Schlüssel wird automatisch geholt."
+    }
+  },
+  "community_muted": {
+    "en": {
+      "title": "Muted in the community",
+      "body": "A moderator has muted you in the community. You can still read messages.",
+      "action": "Contact support if you think this is a mistake."
+    },
+    "de": {
+      "title": "In der Community stummgeschaltet",
+      "body": "Eine Moderatorin oder ein Moderator hat dich in der Community stummgeschaltet. Lesen kannst du weiterhin.",
+      "action": "Wende dich an den Support, wenn du das für einen Fehler hältst."
+    }
+  },
+  "community_no_key": {
+    "en": {
+      "title": "Community not unlocked yet",
+      "body": "This browser does not have the community key yet.",
+      "action": "Wait a moment; the key arrives as soon as another user is online."
+    },
+    "de": {
+      "title": "Community noch nicht entsperrt",
+      "body": "Dieser Browser hat den Community-Schlüssel noch nicht.",
+      "action": "Warte einen Moment; der Schlüssel kommt, sobald ein anderer Nutzer online ist."
+    }
+  },
+  "community_not_member": {
+    "en": {
+      "title": "Community not joined yet",
+      "body": "This browser has not joined the community yet.",
+      "action": "Reload the page and try again."
+    },
+    "de": {
+      "title": "Community noch nicht beigetreten",
+      "body": "Dieser Browser ist der Community noch nicht beigetreten.",
+      "action": "Lade die Seite neu und versuche es noch einmal."
+    }
+  },
+  "conflict_markers": {
+    "en": {
+      "title": "Markers left",
+      "body": "A merged file has conflict markers.",
+      "action": "The AI removes them."
+    },
+    "de": {
+      "title": "Marker übrig",
+      "body": "Eine Datei hat Konfliktmarker.",
+      "action": "Die KI entfernt sie."
+    }
+  },
+  "conflicts_unresolved": {
+    "en": {
+      "title": "Merge not resolved",
+      "body": "The merge does not match its preparation.",
+      "action": "The AI resolves it."
+    },
+    "de": {
+      "title": "Merge offen",
+      "body": "Der Merge passt nicht zur Vorbereitung.",
+      "action": "Die KI löst ihn auf."
     }
   },
   "counter_regressed": {
@@ -347,6 +455,30 @@
       "action": "Starte den Task noch einmal."
     }
   },
+  "handover_required": {
+    "en": {
+      "title": "Agent connection refused",
+      "body": "This page did not send what your agent on the other computer needs.",
+      "action": "Reload the page and confirm again."
+    },
+    "de": {
+      "title": "Agentenverbindung abgelehnt",
+      "body": "Diese Seite hat nicht gesendet, was dein Agent auf dem anderen Computer braucht.",
+      "action": "Lade die Seite neu und bestätige noch einmal."
+    }
+  },
+  "handover_unexpected": {
+    "en": {
+      "title": "Agent connection refused",
+      "body": "This page treated the request as one from another computer, but it is not.",
+      "action": "Do not confirm. Ask your AI agent to connect again."
+    },
+    "de": {
+      "title": "Agentenverbindung abgelehnt",
+      "body": "Diese Seite hat die Anfrage wie eine von einem anderen Computer behandelt, sie ist es aber nicht.",
+      "action": "Nicht bestätigen. Bitte deinen KI-Agenten, sich neu zu verbinden."
+    }
+  },
   "header_invalid": {
     "en": {
       "title": "Invalid header",
@@ -357,6 +489,18 @@
       "title": "Ungültiger Header",
       "body": "Ein Anfrage- oder Datensatz-Header ist fehlerhaft.",
       "action": "Lade die Seite neu und versuche es noch einmal."
+    }
+  },
+  "hook_unavailable": {
+    "en": {
+      "title": "Safety check unavailable",
+      "body": "The check that clears every step of the session before it runs could not be reached. The session was ended so that nothing runs unchecked.",
+      "action": "Start the task again."
+    },
+    "de": {
+      "title": "Sicherheitsprüfung ausgefallen",
+      "body": "Die Prüfung, die jeden Schritt der Session vor der Ausführung freigibt, war nicht erreichbar. Die Session wurde deshalb beendet, damit nichts ungeprüft läuft.",
+      "action": "Starte den Task noch einmal."
     }
   },
   "hpke_short": {
@@ -393,6 +537,42 @@
       "title": "Existiert bereits",
       "body": "Ein Eintrag mit dieser ID existiert bereits mit anderem Inhalt.",
       "action": "Lade die Seite neu und versuche es noch einmal."
+    }
+  },
+  "identity_forbidden": {
+    "en": {
+      "title": "This GitHub account cannot be used here",
+      "body": "Only your own accounts and the company accounts of this organization can be chosen for its tasks.",
+      "action": "Choose another account or Automatic."
+    },
+    "de": {
+      "title": "Dieses GitHub-Konto kann hier nicht genutzt werden",
+      "body": "Für Aufgaben dieser Organisation können nur deine eigenen Konten und die Firmenkonten der Organisation gewählt werden.",
+      "action": "Wähle ein anderes Konto oder Automatisch."
+    }
+  },
+  "identity_unavailable": {
+    "en": {
+      "title": "GitHub account unavailable",
+      "body": "The GitHub account needed for this step is not connected or cannot be used for it.",
+      "action": "Connect your own GitHub account in the settings, then try again."
+    },
+    "de": {
+      "title": "GitHub-Konto nicht verfügbar",
+      "body": "Das GitHub-Konto für diesen Schritt ist nicht verbunden oder kann dafür nicht genutzt werden.",
+      "action": "Verbinde dein eigenes GitHub-Konto in den Einstellungen und versuche es dann erneut."
+    }
+  },
+  "identity_unproven": {
+    "en": {
+      "title": "Account not found",
+      "body": "There is no account with this code or ID that can be admitted directly.",
+      "action": "Check the code, or send an invitation link instead."
+    },
+    "de": {
+      "title": "Konto nicht gefunden",
+      "body": "Es gibt kein Konto mit dieser Kennung oder ID, das direkt aufgenommen werden kann.",
+      "action": "Prüfe die Kennung oder sende stattdessen einen Einladungslink."
     }
   },
   "invite_code_invalid": {
@@ -515,6 +695,18 @@
       "action": "Melde dich erneut an."
     }
   },
+  "keys_pending": {
+    "en": {
+      "title": "Device is receiving keys",
+      "body": "The device with room is still receiving the keys of this workgroup – the task starts as soon as they are there.",
+      "action": "No action needed."
+    },
+    "de": {
+      "title": "Gerät erhält Schlüssel",
+      "body": "Das Gerät mit freiem Platz erhält noch die Schlüssel dieser Workgroup – die Aufgabe startet, sobald sie da sind.",
+      "action": "Keine Aktion nötig."
+    }
+  },
   "kind_not_allowed": {
     "en": {
       "title": "Action not allowed here",
@@ -573,6 +765,30 @@
       "title": "Ungültige Annahme",
       "body": "Eine Einladungsannahme in der Mitgliederhistorie ist ungültig.",
       "action": "Wenn es wieder passiert, melde dich mit dem Fehlercode beim Support."
+    }
+  },
+  "log_admit": {
+    "en": {
+      "title": "Admission refused",
+      "body": "The account could not be admitted: its identity could not be confirmed.",
+      "action": "Check the account and try again, or send an invitation link."
+    },
+    "de": {
+      "title": "Aufnahme abgelehnt",
+      "body": "Das Konto konnte nicht aufgenommen werden: Seine Identität ließ sich nicht bestätigen.",
+      "action": "Prüfe das Konto und versuche es erneut, oder sende einen Einladungslink."
+    }
+  },
+  "log_agent": {
+    "en": {
+      "title": "Agent not accepted",
+      "body": "The organization's membership log contains an agent its user did not confirm, or an agent that was replaced or removed.",
+      "action": "Reload. If this stays, connect the agent again from your settings."
+    },
+    "de": {
+      "title": "Agent nicht anerkannt",
+      "body": "Das Mitgliederprotokoll der Organisation enthält einen Agenten, den sein Benutzer nicht bestätigt hat, oder einen ersetzten oder entfernten Agenten.",
+      "action": "Lade neu. Bleibt der Fehler, verbinde den Agenten in deinen Einstellungen erneut."
     }
   },
   "log_chain": {
@@ -695,6 +911,42 @@
       "action": "Verwende stattdessen die manuelle Anmeldung."
     }
   },
+  "merge_outdated": {
+    "en": {
+      "title": "Merge outdated",
+      "body": "The branch moved.",
+      "action": "Fix conflicts again."
+    },
+    "de": {
+      "title": "Merge veraltet",
+      "body": "Der Branch hat sich bewegt.",
+      "action": "Konflikte erneut beheben."
+    }
+  },
+  "merge_pending": {
+    "en": {
+      "title": "Merge not pushed",
+      "body": "A prepared merge is not pushed.",
+      "action": "The AI pushes it."
+    },
+    "de": {
+      "title": "Merge nicht gepusht",
+      "body": "Ein Merge ist nicht gepusht.",
+      "action": "Die KI pusht ihn."
+    }
+  },
+  "merge_unsupported": {
+    "en": {
+      "title": "Not possible",
+      "body": "Closed, merged or a fork.",
+      "action": "Open it at GitHub."
+    },
+    "de": {
+      "title": "Nicht möglich",
+      "body": "Geschlossen, gemergt oder Fork.",
+      "action": "Bei GitHub öffnen."
+    }
+  },
   "model_access_unavailable": {
     "en": {
       "title": "No model access",
@@ -705,6 +957,18 @@
       "title": "Kein Modellzugang",
       "body": "Für diesen Task ist kein nutzbarer Modellzugang eingerichtet.",
       "action": "Richte in den Einstellungen einen Modellzugang ein."
+    }
+  },
+  "model_not_allowed": {
+    "en": {
+      "title": "Model not allowed",
+      "body": "The chosen model is not allowed for this access kind.",
+      "action": "Choose another model in the settings."
+    },
+    "de": {
+      "title": "Modell nicht erlaubt",
+      "body": "Das gewählte Modell ist für diese Zugangsart nicht erlaubt.",
+      "action": "Wähle in den Einstellungen ein anderes Modell."
     }
   },
   "model_quota_exhausted": {
@@ -719,16 +983,16 @@
       "action": "Die Aufgabe geht bei der nächsten Freigabe von selbst weiter; die Lageansicht zeigt die Zeit."
     }
   },
-  "model_not_allowed": {
+  "no_changes": {
     "en": {
-      "title": "Model not allowed",
-      "body": "The chosen model is not allowed for this access kind.",
-      "action": "Choose another model in the settings."
+      "title": "Nothing to commit",
+      "body": "The workspace has no changes against the branch.",
+      "action": "Change files first, then commit."
     },
     "de": {
-      "title": "Modell nicht erlaubt",
-      "body": "Das gewählte Modell ist für diese Zugangsart nicht erlaubt.",
-      "action": "Wähle in den Einstellungen ein anderes Modell."
+      "title": "Nichts zu committen",
+      "body": "Der Arbeitsbereich hat keine Änderungen gegenüber dem Branch.",
+      "action": "Ändere zuerst Dateien und committe dann."
     }
   },
   "no_device": {
@@ -851,6 +1115,42 @@
       "action": "Das Gerät sendet sie automatisch erneut."
     }
   },
+  "pairing_gesture_required": {
+    "en": {
+      "title": "Confirm again",
+      "body": "The confirmation took too long.",
+      "action": "Confirm once more with your passkey."
+    },
+    "de": {
+      "title": "Erneut bestätigen",
+      "body": "Die Bestätigung hat zu lange gedauert.",
+      "action": "Bestätige noch einmal mit deinem Passkey."
+    }
+  },
+  "pairing_mismatch": {
+    "en": {
+      "title": "This link is not valid",
+      "body": "The agent connection link does not match the request at the server.",
+      "action": "Do not confirm. Ask your AI agent to connect again."
+    },
+    "de": {
+      "title": "Dieser Link ist nicht gültig",
+      "body": "Der Verbindungslink des Agenten passt nicht zur Anfrage beim Server.",
+      "action": "Nicht bestätigen. Bitte deinen KI-Agenten, sich neu zu verbinden."
+    }
+  },
+  "pairing_unknown": {
+    "en": {
+      "title": "Connection request expired",
+      "body": "This agent connection request does not exist any more: it expired, was already used or was cancelled.",
+      "action": "Ask your AI agent to connect again."
+    },
+    "de": {
+      "title": "Verbindungsanfrage abgelaufen",
+      "body": "Diese Verbindungsanfrage des Agenten gibt es nicht mehr: Sie ist abgelaufen, wurde schon verwendet oder abgebrochen.",
+      "action": "Bitte deinen KI-Agenten, sich neu zu verbinden."
+    }
+  },
   "params_invalid": {
     "en": {
       "title": "Invalid parameters",
@@ -875,6 +1175,66 @@
       "action": "Verwende einen Pfad innerhalb des Repositorys."
     }
   },
+  "peer_outdated": {
+    "en": {
+      "title": "A device needs an update",
+      "body": "A device of this organization runs an older version and would not understand the change.",
+      "action": "Update the device, then try again."
+    },
+    "de": {
+      "title": "Ein Gerät braucht ein Update",
+      "body": "Ein Gerät dieser Organisation läuft mit einer älteren Version und würde die Änderung nicht verstehen.",
+      "action": "Aktualisiere das Gerät und versuche es dann erneut."
+    }
+  },
+  "placement_forbidden": {
+    "en": {
+      "title": "Device not available",
+      "body": "This device is not assigned to the workgroup, so tasks of the workgroup cannot run on it.",
+      "action": "Choose another device or “Automatic”."
+    },
+    "de": {
+      "title": "Gerät nicht verfügbar",
+      "body": "Dieses Gerät ist der Workgroup nicht zugewiesen, deshalb können Aufgaben der Workgroup nicht darauf laufen.",
+      "action": "Wähle ein anderes Gerät oder „Automatisch“."
+    }
+  },
+  "placement_full": {
+    "en": {
+      "title": "Chosen device is full",
+      "body": "The chosen device is full – the task starts as soon as it has room.",
+      "action": "Wait, or let the platform choose a device automatically."
+    },
+    "de": {
+      "title": "Gewähltes Gerät ist voll",
+      "body": "Das gewählte Gerät ist voll – die Aufgabe startet, sobald dort Platz ist.",
+      "action": "Warte oder lass die Plattform automatisch ein Gerät wählen."
+    }
+  },
+  "placement_invalid": {
+    "en": {
+      "title": "VM not available",
+      "body": "This VM no longer runs for the workgroup on the chosen device.",
+      "action": "Choose another VM or “Any VM”."
+    },
+    "de": {
+      "title": "VM nicht verfügbar",
+      "body": "Diese VM läuft auf dem gewählten Gerät nicht mehr für die Workgroup.",
+      "action": "Wähle eine andere VM oder „Beliebige VM“."
+    }
+  },
+  "placement_offline": {
+    "en": {
+      "title": "Chosen device is offline",
+      "body": "The chosen device is offline – the task starts as soon as it is back.",
+      "action": "Wait, or let the platform choose a device automatically."
+    },
+    "de": {
+      "title": "Gewähltes Gerät ist offline",
+      "body": "Das gewählte Gerät ist offline – die Aufgabe startet, sobald es wieder da ist.",
+      "action": "Warte oder lass die Plattform automatisch ein Gerät wählen."
+    }
+  },
   "platform_access_denied": {
     "en": {
       "title": "No platform devices",
@@ -885,6 +1245,18 @@
       "title": "Keine Plattform-Geräte",
       "body": "Diese Organisation darf keine Ausführungsgeräte der Plattform verwenden.",
       "action": "Füge ein eigenes Gerät hinzu oder bitte den Betreiber um Plattformzugang."
+    }
+  },
+  "platform_access_required": {
+    "en": {
+      "title": "No execution device yet",
+      "body": "This organization has no execution device yet – the operator has been notified.",
+      "action": "No action needed; you can also add your own device."
+    },
+    "de": {
+      "title": "Noch kein Ausführungsgerät",
+      "body": "Diese Organisation hat noch kein Ausführungsgerät – der Betreiber wurde benachrichtigt.",
+      "action": "Keine Aktion nötig; du kannst auch ein eigenes Gerät hinzufügen."
     }
   },
   "platform_invite_required": {
@@ -1307,6 +1679,30 @@
       "action": "Starte den Task noch einmal."
     }
   },
+  "wg_vm_limit": {
+    "en": {
+      "title": "Workgroup VM limit reached",
+      "body": "The workgroup uses as many VMs as allowed – the task starts when one of them has room.",
+      "action": "No action needed."
+    },
+    "de": {
+      "title": "VM-Grenze der Workgroup erreicht",
+      "body": "Die Workgroup nutzt so viele VMs wie erlaubt – die Aufgabe startet, sobald eine davon Platz hat.",
+      "action": "Keine Aktion nötig."
+    }
+  },
+  "workspace_dirty": {
+    "en": {
+      "title": "Uncommitted work",
+      "body": "The merge would replace it.",
+      "action": "The AI commits it first."
+    },
+    "de": {
+      "title": "Offene Änderungen",
+      "body": "Der Merge würde sie ersetzen.",
+      "action": "Die KI committet sie."
+    }
+  },
   "workvm_unavailable": {
     "en": {
       "title": "Work VM unavailable",
@@ -1329,330 +1725,6 @@
       "title": "Unberechtigte Freigabe",
       "body": "Etwas wurde von einer Person ohne Berechtigung freigegeben und ignoriert.",
       "action": "Keine Aktion nötig."
-    }
-  },
-  "no_changes": {
-    "en": {
-      "title": "Nothing to commit",
-      "body": "The workspace has no changes against the branch.",
-      "action": "Change files first, then commit."
-    },
-    "de": {
-      "title": "Nichts zu committen",
-      "body": "Der Arbeitsbereich hat keine Änderungen gegenüber dem Branch.",
-      "action": "Ändere zuerst Dateien und committe dann."
-    }
-  },
-  "pairing_unknown": {
-    "en": {
-      "title": "Connection request expired",
-      "body": "This agent connection request does not exist any more: it expired, was already used or was cancelled.",
-      "action": "Ask your AI agent to connect again."
-    },
-    "de": {
-      "title": "Verbindungsanfrage abgelaufen",
-      "body": "Diese Verbindungsanfrage des Agenten gibt es nicht mehr: Sie ist abgelaufen, wurde schon verwendet oder abgebrochen.",
-      "action": "Bitte deinen KI-Agenten, sich neu zu verbinden."
-    }
-  },
-  "pairing_gesture_required": {
-    "en": {
-      "title": "Confirm again",
-      "body": "The confirmation took too long.",
-      "action": "Confirm once more with your passkey."
-    },
-    "de": {
-      "title": "Erneut bestätigen",
-      "body": "Die Bestätigung hat zu lange gedauert.",
-      "action": "Bestätige noch einmal mit deinem Passkey."
-    }
-  },
-  "claim_invalid": {
-    "en": {
-      "title": "Agent connection refused",
-      "body": "The agent could not prove that it received the connection.",
-      "action": "Ask your AI agent to connect again."
-    },
-    "de": {
-      "title": "Agentenverbindung abgelehnt",
-      "body": "Der Agent konnte nicht nachweisen, dass er die Verbindung erhalten hat.",
-      "action": "Bitte deinen KI-Agenten, sich neu zu verbinden."
-    }
-  },
-  "pairing_mismatch": {
-    "en": {
-      "title": "This link is not valid",
-      "body": "The agent connection link does not match the request at the server.",
-      "action": "Do not confirm. Ask your AI agent to connect again."
-    },
-    "de": {
-      "title": "Dieser Link ist nicht gültig",
-      "body": "Der Verbindungslink des Agenten passt nicht zur Anfrage beim Server.",
-      "action": "Nicht bestätigen. Bitte deinen KI-Agenten, sich neu zu verbinden."
-    }
-  },
-  "log_admit": {
-    "en": {
-      "title": "Admission refused",
-      "body": "The account could not be admitted: its identity could not be confirmed.",
-      "action": "Check the account and try again, or send an invitation link."
-    },
-    "de": {
-      "title": "Aufnahme abgelehnt",
-      "body": "Das Konto konnte nicht aufgenommen werden: Seine Identität ließ sich nicht bestätigen.",
-      "action": "Prüfe das Konto und versuche es erneut, oder sende einen Einladungslink."
-    }
-  },
-  "log_agent": {
-    "en": {
-      "title": "Agent not accepted",
-      "body": "The organization's membership log contains an agent its user did not confirm, or an agent that was replaced or removed.",
-      "action": "Reload. If this stays, connect the agent again from your settings."
-    },
-    "de": {
-      "title": "Agent nicht anerkannt",
-      "body": "Das Mitgliederprotokoll der Organisation enthält einen Agenten, den sein Benutzer nicht bestätigt hat, oder einen ersetzten oder entfernten Agenten.",
-      "action": "Lade neu. Bleibt der Fehler, verbinde den Agenten in deinen Einstellungen erneut."
-    }
-  },
-  "identity_unproven": {
-    "en": {
-      "title": "Account not found",
-      "body": "There is no account with this code or ID that can be admitted directly.",
-      "action": "Check the code, or send an invitation link instead."
-    },
-    "de": {
-      "title": "Konto nicht gefunden",
-      "body": "Es gibt kein Konto mit dieser Kennung oder ID, das direkt aufgenommen werden kann.",
-      "action": "Prüfe die Kennung oder sende stattdessen einen Einladungslink."
-    }
-  },
-  "peer_outdated": {
-    "en": {
-      "title": "A device needs an update",
-      "body": "A device of this organization runs an older version and would not understand the change.",
-      "action": "Update the device, then try again."
-    },
-    "de": {
-      "title": "Ein Gerät braucht ein Update",
-      "body": "Ein Gerät dieser Organisation läuft mit einer älteren Version und würde die Änderung nicht verstehen.",
-      "action": "Aktualisiere das Gerät und versuche es dann erneut."
-    }
-  },
-  "account_code_invalid": {
-    "en": {
-      "title": "Code not valid",
-      "body": "An account code has 12 characters (letters and the digits 2–7).",
-      "action": "Check the code and enter it again."
-    },
-    "de": {
-      "title": "Kennung ungültig",
-      "body": "Eine Kontokennung hat 12 Zeichen (Buchstaben und die Ziffern 2–7).",
-      "action": "Prüfe die Kennung und gib sie erneut ein."
-    }
-  },
-  "hook_unavailable": {
-    "en": {
-      "title": "Safety check unavailable",
-      "body": "The check that clears every step of the session before it runs could not be reached. The session was ended so that nothing runs unchecked.",
-      "action": "Start the task again."
-    },
-    "de": {
-      "title": "Sicherheitsprüfung ausgefallen",
-      "body": "Die Prüfung, die jeden Schritt der Session vor der Ausführung freigibt, war nicht erreichbar. Die Session wurde deshalb beendet, damit nichts ungeprüft läuft.",
-      "action": "Starte den Task noch einmal."
-    }
-  },
-  "handover_required": {
-    "en": {
-      "title": "Agent connection refused",
-      "body": "This page did not send what your agent on the other computer needs.",
-      "action": "Reload the page and confirm again."
-    },
-    "de": {
-      "title": "Agentenverbindung abgelehnt",
-      "body": "Diese Seite hat nicht gesendet, was dein Agent auf dem anderen Computer braucht.",
-      "action": "Lade die Seite neu und bestätige noch einmal."
-    }
-  },
-  "handover_unexpected": {
-    "en": {
-      "title": "Agent connection refused",
-      "body": "This page treated the request as one from another computer, but it is not.",
-      "action": "Do not confirm. Ask your AI agent to connect again."
-    },
-    "de": {
-      "title": "Agentenverbindung abgelehnt",
-      "body": "Diese Seite hat die Anfrage wie eine von einem anderen Computer behandelt, sie ist es aber nicht.",
-      "action": "Nicht bestätigen. Bitte deinen KI-Agenten, sich neu zu verbinden."
-    }
-  },
-  "community_epoch_exists": {
-    "en": {
-      "title": "Community key already exists",
-      "body": "Another browser created the community key at the same moment.",
-      "action": "Reload the page; the key is fetched automatically."
-    },
-    "de": {
-      "title": "Community-Schlüssel existiert bereits",
-      "body": "Ein anderer Browser hat den Community-Schlüssel im selben Moment angelegt.",
-      "action": "Lade die Seite neu; der Schlüssel wird automatisch geholt."
-    }
-  },
-  "community_muted": {
-    "en": {
-      "title": "Muted in the community",
-      "body": "A moderator has muted you in the community. You can still read messages.",
-      "action": "Contact support if you think this is a mistake."
-    },
-    "de": {
-      "title": "In der Community stummgeschaltet",
-      "body": "Eine Moderatorin oder ein Moderator hat dich in der Community stummgeschaltet. Lesen kannst du weiterhin.",
-      "action": "Wende dich an den Support, wenn du das für einen Fehler hältst."
-    }
-  },
-  "community_no_key": {
-    "en": {
-      "title": "Community not unlocked yet",
-      "body": "This browser does not have the community key yet.",
-      "action": "Wait a moment; the key arrives as soon as another user is online."
-    },
-    "de": {
-      "title": "Community noch nicht entsperrt",
-      "body": "Dieser Browser hat den Community-Schlüssel noch nicht.",
-      "action": "Warte einen Moment; der Schlüssel kommt, sobald ein anderer Nutzer online ist."
-    }
-  },
-  "community_not_member": {
-    "en": {
-      "title": "Community not joined yet",
-      "body": "This browser has not joined the community yet.",
-      "action": "Reload the page and try again."
-    },
-    "de": {
-      "title": "Community noch nicht beigetreten",
-      "body": "Dieser Browser ist der Community noch nicht beigetreten.",
-      "action": "Lade die Seite neu und versuche es noch einmal."
-    }
-  },
-  "placement_forbidden": {
-    "en": {
-      "title": "Device not available",
-      "body": "This device is not assigned to the workgroup, so tasks of the workgroup cannot run on it.",
-      "action": "Choose another device or “Automatic”."
-    },
-    "de": {
-      "title": "Gerät nicht verfügbar",
-      "body": "Dieses Gerät ist der Workgroup nicht zugewiesen, deshalb können Aufgaben der Workgroup nicht darauf laufen.",
-      "action": "Wähle ein anderes Gerät oder „Automatisch“."
-    }
-  },
-  "placement_invalid": {
-    "en": {
-      "title": "VM not available",
-      "body": "This VM no longer runs for the workgroup on the chosen device.",
-      "action": "Choose another VM or “Any VM”."
-    },
-    "de": {
-      "title": "VM nicht verfügbar",
-      "body": "Diese VM läuft auf dem gewählten Gerät nicht mehr für die Workgroup.",
-      "action": "Wähle eine andere VM oder „Beliebige VM“."
-    }
-  },
-  "keys_pending": {
-    "en": {
-      "title": "Device is receiving keys",
-      "body": "The device with room is still receiving the keys of this workgroup – the task starts as soon as they are there.",
-      "action": "No action needed."
-    },
-    "de": {
-      "title": "Gerät erhält Schlüssel",
-      "body": "Das Gerät mit freiem Platz erhält noch die Schlüssel dieser Workgroup – die Aufgabe startet, sobald sie da sind.",
-      "action": "Keine Aktion nötig."
-    }
-  },
-  "placement_full": {
-    "en": {
-      "title": "Chosen device is full",
-      "body": "The chosen device is full – the task starts as soon as it has room.",
-      "action": "Wait, or let the platform choose a device automatically."
-    },
-    "de": {
-      "title": "Gewähltes Gerät ist voll",
-      "body": "Das gewählte Gerät ist voll – die Aufgabe startet, sobald dort Platz ist.",
-      "action": "Warte oder lass die Plattform automatisch ein Gerät wählen."
-    }
-  },
-  "placement_offline": {
-    "en": {
-      "title": "Chosen device is offline",
-      "body": "The chosen device is offline – the task starts as soon as it is back.",
-      "action": "Wait, or let the platform choose a device automatically."
-    },
-    "de": {
-      "title": "Gewähltes Gerät ist offline",
-      "body": "Das gewählte Gerät ist offline – die Aufgabe startet, sobald es wieder da ist.",
-      "action": "Warte oder lass die Plattform automatisch ein Gerät wählen."
-    }
-  },
-  "platform_access_required": {
-    "en": {
-      "title": "No execution device yet",
-      "body": "This organization has no execution device yet – the operator has been notified.",
-      "action": "No action needed; you can also add your own device."
-    },
-    "de": {
-      "title": "Noch kein Ausführungsgerät",
-      "body": "Diese Organisation hat noch kein Ausführungsgerät – der Betreiber wurde benachrichtigt.",
-      "action": "Keine Aktion nötig; du kannst auch ein eigenes Gerät hinzufügen."
-    }
-  },
-  "wg_vm_limit": {
-    "en": {
-      "title": "Workgroup VM limit reached",
-      "body": "The workgroup uses as many VMs as allowed – the task starts when one of them has room.",
-      "action": "No action needed."
-    },
-    "de": {
-      "title": "VM-Grenze der Workgroup erreicht",
-      "body": "Die Workgroup nutzt so viele VMs wie erlaubt – die Aufgabe startet, sobald eine davon Platz hat.",
-      "action": "Keine Aktion nötig."
-    }
-  },
-  "identity_forbidden": {
-    "en": {
-      "title": "This GitHub account cannot be used here",
-      "body": "Only your own accounts and the company accounts of this organization can be chosen for its tasks.",
-      "action": "Choose another account or Automatic."
-    },
-    "de": {
-      "title": "Dieses GitHub-Konto kann hier nicht genutzt werden",
-      "body": "Für Aufgaben dieser Organisation können nur deine eigenen Konten und die Firmenkonten der Organisation gewählt werden.",
-      "action": "Wähle ein anderes Konto oder Automatisch."
-    }
-  },
-  "identity_unavailable": {
-    "en": {
-      "title": "GitHub account unavailable",
-      "body": "The GitHub account needed for this step is not connected or cannot be used for it.",
-      "action": "Connect your own GitHub account in the settings, then try again."
-    },
-    "de": {
-      "title": "GitHub-Konto nicht verfügbar",
-      "body": "Das GitHub-Konto für diesen Schritt ist nicht verbunden oder kann dafür nicht genutzt werden.",
-      "action": "Verbinde dein eigenes GitHub-Konto in den Einstellungen und versuche es dann erneut."
-    }
-  },
-  "client_outdated": {
-    "en": {
-      "title": "Page out of date",
-      "body": "This page uses a form the platform no longer accepts.",
-      "action": "Reload the page and try again."
-    },
-    "de": {
-      "title": "Seite veraltet",
-      "body": "Diese Seite verwendet ein Format, das die Plattform nicht mehr annimmt.",
-      "action": "Lade die Seite neu und versuche es noch einmal."
     }
   }
 }

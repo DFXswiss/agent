@@ -147,6 +147,18 @@ Operation types and parameter examples:
   `github.commit` also `author`, `committer` (account `id`s), `co_authors` (user IDs of this list) and `signing`
   (`none` or `key`). Never write co-author, sign-off or committer lines into a commit message yourself:
   `{"type": "github.list_identities", "params": {}}`
+- `github.merge_base` – bring a pull request up to date with its base: merges the base into the pull request's branch
+  in `repos/<owner>/<name>` of your workspace with conflict markers (`<<<<<<< pull request (…)`, `||||||| common
+  ancestor`, `=======`, `>>>>>>> base (…)`) and lists every conflict with its kind; `up_to_date` means nothing to do.
+  It refuses uncommitted changes in that directory (`workspace_dirty`; `discard: true` replaces them on purpose).
+  Resolve every conflict, then request `github.commit` with `"merge": true` (never with `paths`) and push that commit
+  to the same branch. A conflict without markers (`binary`, `modify_delete`, `type`, `mode`, `protected`) and every
+  merged file you changed on purpose need a decision in that commit, for example `"decisions": [{"path": "logo.png",
+  "choice": "base"}]` with `head`, `base`, `deleted` or `edited` (for `protected` only `head` or `base`). A commit that
+  still holds markers (`conflict_markers`) or does not match the prepared merge (`conflicts_unresolved`) is refused; a
+  normal commit while a prepared merge is not pushed is `merge_pending`. Never merge or close the pull request; ask
+  with `human.question` when a resolution needs a decision of a person:
+  `{"type": "github.merge_base", "params": {"repo": "example-org/example-repo", "number": 42}}`
 
 If the task needs GitHub, request the operation – even when GitHub is not connected; the platform asks the user to
 connect and continues your operation afterwards. Do not explain what is missing and do not offer workarounds. If no

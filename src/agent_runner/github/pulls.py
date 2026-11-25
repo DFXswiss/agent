@@ -9,6 +9,13 @@ the contract's lengths (also `truncated`); file and comment entries that do not 
 (`truncated`). Before patches are added the rest is fitted into the budget as well (`fit`: newest comments, then the
 body, then the last files, then the title).
 
+`mergeable` and `mergeable_state` (KOR-48, ADR-084 section 2) are passed on as GitHub answers them (`mergeability`;
+`mergeable` true, false or null, `mergeable_state` GitHub's word, e.g. `clean`, `dirty`, `draft`, `unknown`). GitHub
+computes `mergeable` asynchronously and starts on the first read, so `read_pull` reads an open pull request whose
+`mergeable` is still null again after 1 s and, if still null, after another 2 s (`REREAD_DELAYS`, the client's sleep);
+then null is passed on (a client shows it as "being checked", never as "no conflict"). The device request
+`github.pull_status` reads pull requests the same way (`github.pull_status`).
+
 `create_pull_request`: `GET /repos/{r}/pulls?head=<owner>:<head>&base=<base>&state=open` first: an open pull request for
 the same head and base ends the operation with it and `existing:true` (the pipeline answers MCP `duplicate`); otherwise
 `POST /repos/{r}/pulls {title, head, base, body?, draft}` (`draft` defaulted from the workgroup settings by the formal
@@ -36,9 +43,12 @@ MAX_COMMENTS = 10000
 FILE_STATUSES = frozenset({"added", "removed", "modified", "renamed", "copied", "changed", "unchanged"})
 PATH_RE = re.compile(r"^[^/\x00-\x1f\x7f][^\x00-\x1f\x7f]{0,4095}$")
 EXISTS_TEXT = "a pull request already exists"
+REREAD_DELAYS = (1.0, 2.0)
+"""Seconds before the second and the third read of an open pull request whose `mergeable` is still null."""
+MERGEABLE_STATE_RE = re.compile(r"^[a-z_]{1,32}$")
 
 
-def _ref(value: object) -> dict[str, str]:
+def ref_of(value: object) -> dict[str, str]:
     data = ops.obj(value)
     ref = data.get("ref")
     if not branch_valid(ref):
@@ -97,17 +107,39 @@ def _header(pull: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         "body": body,
         "state": state,
         "draft": ops.flag(pull.get("draft")),
-        "head": _ref(pull.get("head")),
-        "base": _ref(pull.get("base")),
+        "head": ref_of(pull.get("head")),
+        "base": ref_of(pull.get("base")),
         "url": ops.text(pull.get("html_url"), ops.URL_RE),
     }
     return found, cut_title or cut_body
 
 
+async def read_pull(client: GitHubClient, repo: str, number: int) -> dict[str, Any]:
+    """`GET /repos/{repo}/pulls/{number}`, read again while the pull request is open and `mergeable` is null (module
+    docstring); the last answer."""
+    path = f"/repos/{repo}/pulls/{number}"
+    pull = ops.obj((await client.request("GET", path)).data)
+    for delay in REREAD_DELAYS:
+        if pull.get("state") != "open" or pull.get("mergeable") is not None:
+            break
+        await client.sleep(delay)
+        pull = ops.obj((await client.request("GET", path)).data)
+    return pull
+
+
+def mergeability(pull: dict[str, Any]) -> dict[str, Any]:
+    """`{mergeable, mergeable_state}` of GitHub's answer (a missing state is `unknown`); another form is invalid."""
+    value = pull.get("mergeable")
+    if value is not None and not isinstance(value, bool):
+        raise ops.invalid()
+    return {"mergeable": value, "mergeable_state": ops.text(pull.get("mergeable_state", "unknown"), MERGEABLE_STATE_RE)}
+
+
 async def get_pull_request(ctx: OperationContext, client: GitHubClient) -> dict[str, Any]:
     repo, number = str(ctx.params["repo"]), int(ctx.params["number"])
-    pull = ops.obj((await client.request("GET", f"/repos/{repo}/pulls/{number}")).data)
+    pull = await read_pull(client, repo, number)
     result, truncated = _header(pull)
+    result.update(mergeability(pull))
     files: list[tuple[dict[str, Any], str | None]] = []
     for item in await client.items(f"/repos/{repo}/pulls/{number}/files"):
         found = _file(item)

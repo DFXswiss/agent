@@ -129,6 +129,9 @@ class HubContexts:
     links: list[dict[str, Any]] = field(default_factory=list)
     refuse: dict[str, tuple[int, str]] = field(default_factory=dict)
     """Operation name (`put`, `commit`, `get`, `chunk`, `link`) -> refusal `(status, code)`."""
+    link_pointers: list[str] | None = None
+    """A hub that refuses a registration with `request_invalid` at these pointers when it carries `sealed` (an older
+    hub names `/sealed`, ADR-084 section 1)."""
 
     def install(self) -> HubContexts:
         original = self.hub.route
@@ -144,15 +147,20 @@ class HubContexts:
         found = self.refuse.get(name)
         return None if found is None else (found[0], {"error": found[1]})
 
+    def _link(self, body: Any) -> tuple[int, dict[str, Any]]:
+        self.hub.check("api/device-pr-links-post.request.json", body)
+        refused = self._refused("link")
+        if refused is not None:
+            return refused
+        if self.link_pointers is not None and "sealed" in body:
+            return 400, {"error": "request_invalid", "detail": {"pointers": self.link_pointers}}
+        self.links.append(body)
+        return 200, {"replayed": False}
+
     def route(self, method: str, path: str, body: Any) -> tuple[int, dict[str, Any]] | None:  # noqa: PLR0911
         parts = path.split("/")
         if path == "/v1/device/pr-links" and method == "POST":
-            self.hub.check("api/device-pr-links-post.request.json", body)
-            refused = self._refused("link")
-            if refused is not None:
-                return refused
-            self.links.append(body)
-            return 200, {"replayed": False}
+            return self._link(body)
         if parts[:4] != ["", "v1", "device", "contexts"] or len(parts) < 5:
             return None
         object_id = parts[4]

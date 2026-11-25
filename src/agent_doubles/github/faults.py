@@ -22,6 +22,9 @@ A fault rule (``POST /_double/faults`` with ``{"faults": [...]}`` or ``"faults"`
     ``.double-tree-mismatch``, so its id differs from the one the client computed (03 §9 ``tree_mismatch``);
   - ``truncated`` (only ``GET /repos/{owner}/{repo}/git/trees/{tree}``): ``truncated: true`` with only the first
     ``limit`` entries (default 1).
+  - ``mergeable_unknown`` (only ``GET /repos/{owner}/{repo}/pulls/{number}``, KOR-48): the pull request answers
+    ``mergeable: null`` and ``mergeable_state: "unknown"`` although its mergeability is computed (GitHub still
+    computing); ``times`` reads stay unknown, so a client's re-reads can be tested up to "being checked".
 
 Faults on API routes are applied after the header checks, so a retried request is still checked; their answers carry
 the rate-limit headers like every API answer.
@@ -52,15 +55,17 @@ KINDS = frozenset(
         "disconnect",
         "tree_mismatch",
         "truncated",
+        "mergeable_unknown",
     }
 )
 # Kinds that change the normal answer of one route instead of replacing it.
 ROUTE_BOUND = {
     "tree_mismatch": "POST /repos/{owner}/{repo}/git/trees",
     "truncated": "GET /repos/{owner}/{repo}/git/trees/{tree}",
+    "mergeable_unknown": "GET /repos/{owner}/{repo}/pulls/{number}",
 }
 # Kinds after which the request is answered normally (possibly altered).
-CONTINUING = frozenset({"slow", "exhaust", "tree_mismatch", "truncated"})
+CONTINUING = frozenset({"slow", "exhaust", "tree_mismatch", "truncated", "mergeable_unknown"})
 ERROR_STATUSES = frozenset({500, 502, 503, 504})
 ANY_ROUTE = "*"
 

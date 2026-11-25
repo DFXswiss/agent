@@ -13,7 +13,8 @@ Executor: `GET /repos/{r}/git/ref/heads/{branch}`:
 
 When GitHub refuses the creation or the update (`422`: the branch appeared or moved in between) the ref is read again:
 at the commit means an earlier attempt of this operation won (succeeded), anything else is `non_fast_forward`.
-Result `{branch, sha, url}` with `url` = `<html_url>/tree/<branch>`.
+Result `{branch, sha, url}` with `url` = `<html_url>/tree/<branch>`. The push of a merge commit marks its preparation
+`pushed` (`merge_prep`, ADR-084 section 4).
 """
 
 from __future__ import annotations
@@ -21,9 +22,10 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
-from agent_runner.github import access, ops
+from agent_runner.github import access, merge_prep, ops
 from agent_runner.github.client import GitHubClient, GitHubError
 from agent_runner.operations.extensions import OperationContext, OperationFailed, PrecheckRequest, PrecheckResult
+from agent_runner.orgs.db import session as store_session
 
 NOT_FAST_FORWARD = "The branch is not an ancestor of the commit."
 
@@ -89,6 +91,8 @@ async def push(ctx: OperationContext, github: GitHubClient) -> dict[str, Any]:
         if error.kind not in ("unprocessable", "conflict"):
             raise
         await _settled(github, repo, branch, sha)
+    async with store_session(ctx.context.pool) as conn:
+        await merge_prep.pushed(conn, ctx.session.id, branch, sha)
     return {"branch": branch, "sha": sha, "url": f"{url}/tree/{_ref(branch)}"}
 
 

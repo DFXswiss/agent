@@ -343,7 +343,16 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("kind", T),  # KOR-43, migration 0024
     ],
     "context_chunk": [("object_id", U), ("chunk_index", INT), ("ct", B), ("sha256", B)],
-    "pr_link": [("wg_id", U), ("epoch", INT), ("tag", T), ("task_id", U), ("session_id", U), ("created_at", TS)],
+    "pr_link": [
+        ("wg_id", U),
+        ("epoch", INT),
+        ("tag", T),
+        ("task_id", U),
+        ("session_id", U),
+        ("created_at", TS),
+        ("sealed", T),  # KOR-48, migration 0028: the AEAD body naming the pull request (04-crypto.md section 4.11a)
+        ("linked_by", U),  # KOR-48, migration 0028: the user who linked it by its address
+    ],
     "session_transition": [
         ("session_id", U),
         ("seq", INT),
@@ -890,6 +899,7 @@ def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns:
         ("event", "(task_id, received_at DESC) WHERE (kind = 'prompt'::text)"),
         ("credential", "(owner_id, kind) WHERE (kind <> 'github'::text)"),
         ("credential", "(owner_id) WHERE ((kind = 'github'::text) AND is_primary)"),
+        ("pr_link", '(wg_id, created_at DESC, epoch DESC, tag COLLATE "C" DESC)'),
     ],
 )
 def test_named_indexes(owner: psycopg.Connection[Any], table: str, definition: str) -> None:
@@ -971,7 +981,11 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
                 "prompt.waiting_for_device",
             ],
         ),
-        ("device_request", "kind", ["github.connect", "claude.login", "credential.check", "mailbox.check"]),
+        (
+            "device_request",
+            "kind",
+            ["github.connect", "claude.login", "credential.check", "mailbox.check", "github.pull_status"],
+        ),
         ("device_request", "state", ["pending", "delivered", "answered", "failed", "expired"]),
         ("github_default", "scope", ["org", "wg"]),
         ("metric_sample", "entity_kind", ["device", "vm", "session", "workvm"]),

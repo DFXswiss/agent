@@ -213,6 +213,39 @@
             "key"
           ],
           "description": "none, or the committer identity's own SSH signing key (default: key when it has one)"
+        },
+        "merge": {
+          "type": "boolean",
+          "const": true,
+          "description": "create the merge commit of the session's prepared merge (github.merge_base) with two parents; not with paths (ADR-084 section 4)"
+        },
+        "decisions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1000,
+          "description": "only with merge: the choice for every conflict without markers and for every merged path that was changed on purpose",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/rel_path"
+              },
+              "choice": {
+                "type": "string",
+                "enum": [
+                  "head",
+                  "base",
+                  "deleted",
+                  "edited"
+                ]
+              }
+            },
+            "required": [
+              "path",
+              "choice"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [
@@ -419,10 +452,25 @@
     },
     "result_github_get_pull_request": {
       "type": "object",
-      "description": "patches at most 1 MiB in total; truncated when patches were left out",
+      "description": "patches at most 1 MiB in total; truncated when patches were left out; mergeable and mergeable_state as GitHub computes them (KOR-48, ADR-084 section 2): null while GitHub still computes it after the device read again after 1 s and 2 s, false = conflict with the base; absent in results of older runners",
       "properties": {
         "number": {
           "$ref": "#/$defs/number"
+        },
+        "mergeable": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mergeable_state": {
+          "type": "string",
+          "description": "GitHub's word (clean, dirty, draft, unknown, blocked, behind, unstable, has_hooks, ...); display only",
+          "pattern": "^[a-z_]{1,32}$"
         },
         "title": {
           "type": "string",
@@ -605,6 +653,10 @@
         },
         "files_changed": {
           "$ref": "../common.json#/$defs/count"
+        },
+        "merge_parent": {
+          "$ref": "#/$defs/sha",
+          "description": "the second parent of a merge commit (the merged base tip)"
         }
       },
       "required": [
@@ -1099,6 +1151,9 @@
         },
         {
           "$ref": "#/$defs/result_github_list_identities"
+        },
+        {
+          "$ref": "#/$defs/result_github_merge_base"
         }
       ],
       "description": "result of any operation type"
@@ -1964,6 +2019,122 @@
         "current",
         "identities",
         "co_authors"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_merge_base": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "number": {
+          "$ref": "#/$defs/number"
+        },
+        "discard": {
+          "type": "boolean",
+          "description": "replace uncommitted changes in the workspace directory on purpose (default false: workspace_dirty)"
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-078 section 3); must be usable by the human the session works for"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ],
+      "additionalProperties": false
+    },
+    "merge_conflict_kind": {
+      "type": "string",
+      "enum": [
+        "content",
+        "binary",
+        "modify_delete",
+        "type",
+        "mode",
+        "protected"
+      ],
+      "description": "content: conflict markers in the file; without markers (a decision of the merge commit is needed): binary (head's version kept), modify_delete (modified version kept), type (file against directory: head's entries kept), mode (added on both sides with different modes: head's mode), protected (a protected name, link or submodule: head's entry kept) (ADR-084 section 4)"
+    },
+    "result_github_merge_base": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "number": {
+          "$ref": "#/$defs/number"
+        },
+        "branch": {
+          "$ref": "#/$defs/branch"
+        },
+        "base": {
+          "$ref": "#/$defs/branch"
+        },
+        "head_sha": {
+          "$ref": "#/$defs/sha"
+        },
+        "base_sha": {
+          "$ref": "#/$defs/sha",
+          "description": "the tip of the base branch that was merged"
+        },
+        "merge_base_sha": {
+          "$ref": "#/$defs/sha"
+        },
+        "up_to_date": {
+          "type": "boolean",
+          "description": "the head already contains the base tip; the workspace was not touched"
+        },
+        "conflicts": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/rel_path"
+              },
+              "kind": {
+                "$ref": "#/$defs/merge_conflict_kind"
+              }
+            },
+            "required": [
+              "path",
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "conflicts_total": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "dir": {
+          "type": "string",
+          "pattern": "^repos/[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"
+        },
+        "files": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "bytes": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "repo",
+        "number",
+        "branch",
+        "base",
+        "head_sha",
+        "base_sha",
+        "merge_base_sha",
+        "up_to_date",
+        "conflicts",
+        "conflicts_total",
+        "dir",
+        "files",
+        "bytes"
       ],
       "additionalProperties": false
     }

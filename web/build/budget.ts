@@ -9,10 +9,11 @@ import { parseAttributes } from './sri.ts';
 
 /**
  * The guard of the build: the measured first load (199.3 KiB gzip, HOT-16) plus 10 %, raised to 220 KiB by KOR-57 (the
- * agent rules every client verifies at sign-in), well below the 300 KiB ceiling of
+ * agent rules every client verifies at sign-in) and to 221 KiB by KOR-48 (the error texts and the navigation entry of the
+ * pull-request view), well below the 300 KiB ceiling of
  * section 12.2, so every package sees growth of the first load in its own gates. Raise it only with a reason there.
  */
-export const INITIAL_JS_BUDGET = 220 * 1024;
+export const INITIAL_JS_BUDGET = 221 * 1024;
 
 const TAG_RE = /<(script|link)\b([^>]*)>/gi;
 // `import … from "x"`, `import "x"` and `export … from "x"` (also right after a comment) – never `import("x")`

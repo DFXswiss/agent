@@ -42,17 +42,34 @@ never chosen as the `context` of the device state, and pruned on its own: comple
 `409 id_conflict`. Members with `task:read` read a complete log of the task (`task_log`, `task_log_chunk`); the hub
 holds no key.
 
-**Pull-request links** (`POST /v1/device/pr-links` `{session_id, epoch, tag}`, `device:session` as above): the tag is
-stored for the session's workgroup and an epoch of it (`400 request_invalid` at `/epoch`); the same tag for the same
-task again is `replayed`, for another task `409 id_conflict` (the first task keeps the link). Members look a tag up
-with `pr_link` (`wg:read`, checked by the route).
+**Pull-request links** (`POST /v1/device/pr-links` `{session_id, epoch, tag, sealed?}`, `device:session` as above):
+the tag is stored for the session's workgroup and an epoch of it (`400 request_invalid` at `/epoch`) with the sealed
+body when the runner sends one (04-crypto.md section 4.11a; NULL from an older runner); the same tag for the same task
+again is `replayed`, for another task `409 id_conflict` (the first task keeps the link). A tag a person linked before
+is **replaced** by the device's link (the creating task is the true origin, ADR-084 section 1): the row takes the
+device's task, session and body, loses `linked_by` and gets the new time, audited `pr.linked {epoch, replaced: true}`;
+a new device link is audited `session.pr_linked {epoch}` as before.
+
+A person links a pull request by its address (`link_by_user`, `wg:write` checked by the route) with
+`{epoch, tag, sealed, task_id}`: the task must lie in the workgroup (`400 request_invalid` at `/task_id`) and the
+epoch must be the workgroup's current one (`400 epoch_stale`), so a client never adds a link under a key the
+workgroup has rotated away from. A new row answers `created: true` (audit `pr.linked {epoch, replaced: false}`, actor
+the user); a tag linked already under that epoch answers `created: false` with the existing row, whoever made it -
+an existing link is never moved silently. `unlink` removes a person's link (`pr.unlinked {epoch}`); a link the device
+registered is a fact of the task and stays (`409 id_conflict`); an unknown one is `404 not_found`.
+
+Members read (`wg:read`, checked by the route) one tag with `pr_link` and the links of a workgroup or of one of its
+tasks with `list_links`: newest first by `created_at`, then epoch and tag descending, pages of at most `LIST_MAX`
+rows with an opaque cursor (the position of the last row; a malformed cursor is `400 request_invalid` at `/cursor`).
+A row is `pr_link_row`: `{epoch, tag, sealed, task_id, session_id, linked_by, created_at}`, exactly one of
+`session_id` and `linked_by` set; nothing about the pull request is in clear.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID
 
@@ -80,6 +97,13 @@ _NEWEST_FIRST = (
 """The complete checkpoints of a task, newest first (module docstring)."""
 SAVED = "session.context_saved"
 PR_LINKED = "session.pr_linked"
+LINKED = "pr.linked"
+UNLINKED = "pr.unlinked"
+LIST_DEFAULT = 100
+LIST_MAX = 200
+_LINK_COLUMNS = "epoch, tag, sealed, task_id, session_id, linked_by, created_at"
+_LINK_ORDER = ' ORDER BY created_at DESC, epoch DESC, tag COLLATE "C" DESC'
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 REFUSED = "session.context_refused"
 _OBJECT = (
     "SELECT org_id, wg_id, task_id, session_id, author_id, state, chunks, size, manifest_text, sig, created_at,"
@@ -445,8 +469,71 @@ def newest(connection: Connection, task_id: str) -> dict[str, Any] | None:
     return {"object_id": str(row[0]), "session_id": str(row[1]), "created_at": format_time(row[2]), "size": row[3]}
 
 
+def _link_row(row: tuple[Any, ...]) -> dict[str, Any]:
+    """`pr_link_row` of `_LINK_COLUMNS`."""
+    return {
+        "epoch": row[0],
+        "tag": row[1],
+        "sealed": row[2],
+        "task_id": str(row[3]),
+        "session_id": None if row[4] is None else str(row[4]),
+        "linked_by": None if row[5] is None else str(row[5]),
+        "created_at": format_time(row[6]),
+    }
+
+
+def _find(connection: Connection, wg_id: UUID, epoch: int, tag: str, *, lock: bool = False) -> tuple[Any, ...] | None:
+    return cast(
+        tuple[Any, ...] | None,
+        connection.execute(
+            f"SELECT {_LINK_COLUMNS} FROM hub.pr_link WHERE wg_id = %s AND epoch = %s AND tag = %s"
+            + (" FOR UPDATE" if lock else ""),
+            (wg_id, epoch, tag),
+        ).fetchone(),
+    )
+
+
+def _device_audit(
+    connection: Connection,
+    session: SessionRow,
+    device: UUID,
+    *,
+    now: datetime,
+    action: str,
+    tag: str,
+    epoch: int,
+    **extra: DetailValue,
+) -> None:
+    append_audit(
+        connection,
+        AuditRow(
+            at=now,
+            actor_kind="device",
+            actor_id=device,
+            action=action,
+            result="ok",
+            org_id=session.org_id,
+            wg_id=session.wg_id,
+            task_id=session.task_id,
+            session_id=session.session_id,
+            device_id=device,
+            target_kind="pr_link",
+            target_id=tag,
+            detail={"epoch": epoch, **extra},
+        ),
+    )
+
+
 def link_pr(
-    connection: Connection, view: DeviceView, device: UUID, *, session_id: str, epoch: int, tag: str, now: datetime
+    connection: Connection,
+    view: DeviceView,
+    device: UUID,
+    *,
+    session_id: str,
+    epoch: int,
+    tag: str,
+    sealed: str | None,
+    now: datetime,
 ) -> bool:
     """Store the tag of a pull request the session created (module docstring); True for a replay."""
     session = own_session(connection, view, device, session_id)
@@ -456,51 +543,157 @@ def link_pr(
     if known is None:
         raise _invalid("/epoch")
     stored = connection.execute(
-        "INSERT INTO hub.pr_link (wg_id, epoch, tag, task_id, session_id, created_at) VALUES (%s, %s, %s, %s, %s, %s)"
-        " ON CONFLICT (wg_id, epoch, tag) DO NOTHING RETURNING task_id",
-        (session.wg_id, epoch, tag, session.task_id, session.session_id, now),
+        "INSERT INTO hub.pr_link (wg_id, epoch, tag, task_id, session_id, sealed, created_at)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (wg_id, epoch, tag) DO NOTHING RETURNING task_id",
+        (session.wg_id, epoch, tag, session.task_id, session.session_id, sealed, now),
     ).fetchone()
     if stored is not None:
-        append_audit(
-            connection,
-            AuditRow(
-                at=now,
-                actor_kind="device",
-                actor_id=device,
-                action=PR_LINKED,
-                result="ok",
-                org_id=session.org_id,
-                wg_id=session.wg_id,
-                task_id=session.task_id,
-                session_id=session.session_id,
-                device_id=device,
-                target_kind="pr_link",
-                target_id=tag,
-                detail={"epoch": epoch},
-            ),
-        )
+        _device_audit(connection, session, device, now=now, action=PR_LINKED, tag=tag, epoch=epoch)
         return False
-    found = cast(
-        tuple[UUID],
+    found = cast(tuple[Any, ...], _find(connection, session.wg_id, epoch, tag, lock=True))
+    if found[5] is not None:
         connection.execute(
-            "SELECT task_id FROM hub.pr_link WHERE wg_id = %s AND epoch = %s AND tag = %s", (session.wg_id, epoch, tag)
-        ).fetchone(),
-    )
-    if found[0] != session.task_id:
+            "UPDATE hub.pr_link SET task_id = %s, session_id = %s, linked_by = NULL, sealed = %s, created_at = %s"
+            " WHERE wg_id = %s AND epoch = %s AND tag = %s",
+            (session.task_id, session.session_id, sealed, now, session.wg_id, epoch, tag),
+        )
+        _device_audit(connection, session, device, now=now, action=LINKED, tag=tag, epoch=epoch, replaced=True)
+        return False
+    if found[3] != session.task_id:
         raise HubError("id_conflict")
     recorder.unchanged()
     return True
 
 
 def pr_link(connection: Connection, wg_id: UUID, epoch: int, tag: str) -> dict[str, Any]:
-    """`{task_id, session_id, created_at}` of a tag, `404 not_found` for an unknown one."""
-    row = connection.execute(
-        "SELECT task_id, session_id, created_at FROM hub.pr_link WHERE wg_id = %s AND epoch = %s AND tag = %s",
-        (wg_id, epoch, tag),
-    ).fetchone()
+    """`{task_id, session_id, linked_by, sealed, created_at}` of a tag, `404 not_found` for an unknown one."""
+    row = _find(connection, wg_id, epoch, tag)
     if row is None:
         raise HubError("not_found")
-    return {"task_id": str(row[0]), "session_id": str(row[1]), "created_at": format_time(row[2])}
+    found = _link_row(row)
+    del found["epoch"], found["tag"]
+    return found
+
+
+def _cursor(at: datetime, epoch: int, tag: str) -> str:
+    """The opaque position of a row: its time in microseconds since the Unix epoch, its epoch and its tag."""
+    return b64u_encode(canonical({"at": (at - _EPOCH) // timedelta(microseconds=1), "epoch": epoch, "tag": tag}))
+
+
+def decode_cursor(text: str) -> tuple[datetime, int, str]:
+    """`(created_at, epoch, tag)` of a cursor `_cursor` made; anything else is `400 request_invalid` at `/cursor`."""
+    found: tuple[datetime, int, str] | None = None
+    try:
+        data = json.loads(b64u_decode(text))
+        at, epoch, tag = _EPOCH + timedelta(microseconds=data["at"]), data["epoch"], data["tag"]
+        if type(epoch) is int and type(tag) is str and _cursor(at, epoch, tag) == text:
+            found = (at, epoch, tag)
+    except (CryptoError, ValueError, TypeError, KeyError, OverflowError):
+        found = None
+    if found is None:
+        raise _invalid("/cursor")
+    return found
+
+
+def list_links(
+    connection: Connection, wg_id: UUID, *, task_id: UUID | None, cursor: str | None, limit: int
+) -> dict[str, Any]:
+    """`{items: [pr_link_row], next_cursor}` of a workgroup or of one of its tasks, newest first (module docstring)."""
+    where = "wg_id = %s"
+    params: list[object] = [wg_id]
+    if task_id is not None:
+        where, params = where + " AND task_id = %s", [*params, task_id]
+    if cursor is not None:
+        at, epoch, tag = decode_cursor(cursor)
+        where, params = where + ' AND (created_at, epoch, tag COLLATE "C") < (%s, %s, %s)', [*params, at, epoch, tag]
+    rows = connection.execute(
+        f"SELECT {_LINK_COLUMNS} FROM hub.pr_link WHERE {where}{_LINK_ORDER} LIMIT %s", (*params, limit + 1)
+    ).fetchall()
+    last = rows[limit - 1] if len(rows) > limit else None
+    return {
+        "items": [_link_row(row) for row in rows[:limit]],
+        "next_cursor": None if last is None else _cursor(last[6], last[0], last[1]),
+    }
+
+
+def _user_audit(
+    connection: Connection,
+    user: UUID,
+    wg: tuple[UUID, UUID],
+    *,
+    now: datetime,
+    action: str,
+    row: tuple[Any, ...],
+    **extra: DetailValue,
+) -> None:
+    append_audit(
+        connection,
+        AuditRow(
+            at=now,
+            actor_kind="user",
+            actor_id=user,
+            action=action,
+            result="ok",
+            org_id=wg[0],
+            wg_id=wg[1],
+            task_id=row[3],
+            target_kind="pr_link",
+            target_id=row[1],
+            detail={"epoch": row[0], **extra},
+        ),
+    )
+
+
+def _org_of(connection: Connection, wg_id: UUID) -> UUID:
+    return cast(tuple[UUID], connection.execute("SELECT org_id FROM hub.wg WHERE id = %s", (wg_id,)).fetchone())[0]
+
+
+def link_by_user(
+    connection: Connection,
+    user: UUID,
+    wg_id: UUID,
+    *,
+    epoch: int,
+    tag: str,
+    sealed: str,
+    task_id: str,
+    now: datetime,
+) -> tuple[bool, dict[str, Any]]:
+    """A person links a pull request to a task (module docstring): `(created, pr_link_row)`."""
+    task = connection.execute("SELECT wg_id FROM hub.task WHERE id = %s", (task_id,)).fetchone()
+    if task is None or task[0] != wg_id:
+        raise _invalid("/task_id")
+    current = cast(
+        tuple[int | None],
+        connection.execute(
+            "SELECT max(epoch) FROM hub.scope_epoch WHERE scope = 'wg' AND scope_id = %s", (wg_id,)
+        ).fetchone(),
+    )
+    if current[0] != epoch:
+        raise HubError("epoch_stale")
+    stored = connection.execute(
+        f"INSERT INTO hub.pr_link (wg_id, epoch, tag, task_id, linked_by, sealed, created_at)"
+        f" VALUES (%s, %s, %s, %s, %s, %s, %s) ON CONFLICT (wg_id, epoch, tag) DO NOTHING RETURNING {_LINK_COLUMNS}",
+        (wg_id, epoch, tag, task_id, user, sealed, now),
+    ).fetchone()
+    if stored is None:
+        recorder.unchanged()
+        return False, _link_row(cast(tuple[Any, ...], _find(connection, wg_id, epoch, tag)))
+    _user_audit(
+        connection, user, (_org_of(connection, wg_id), wg_id), now=now, action=LINKED, row=stored, replaced=False
+    )
+    return True, _link_row(stored)
+
+
+def unlink(connection: Connection, user: UUID, wg_id: UUID, *, epoch: int, tag: str, now: datetime) -> None:
+    """Remove a person's link (module docstring)."""
+    row = _find(connection, wg_id, epoch, tag, lock=True)
+    if row is None:
+        raise HubError("not_found")
+    if row[5] is None:
+        raise HubError("id_conflict")
+    connection.execute("DELETE FROM hub.pr_link WHERE wg_id = %s AND epoch = %s AND tag = %s", (wg_id, epoch, tag))
+    _user_audit(connection, user, (_org_of(connection, wg_id), wg_id), now=now, action=UNLINKED, row=row)
 
 
 def expire(connection: Connection, now: datetime) -> int:

@@ -202,3 +202,14 @@ describe('GitHub identities (KOR-47)', () => {
     }
   });
 });
+
+describe('github.pull_status without its checks (KOR-48)', () => {
+  it('refuses every body until core/pulls/checks.ts registered the kind, except a failure', () => {
+    const request = { org_id: '0190f000-0000-7000-8000-0000000000e1', wg_id: '0190f000-0000-7000-8000-0000000000e2' };
+    expect(validRequestBody('github.pull_status', { ...request, pulls: [{ repo: 'a/b', number: 1 }] }, false)).toBe(
+      false,
+    );
+    expect(checkResponseBody('github.pull_status', { step: 'done', pulls: [] })).toBeNull();
+    expect(checkResponseBody('github.pull_status', { step: 'failed', code: 'github_not_connected' })).not.toBeNull();
+  });
+});

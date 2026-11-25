@@ -172,6 +172,12 @@ const recoverFields = (a: Any): agent.RecoverFields => ({
 });
 
 /** The TypeScript twin of `agent_hub.crypto.vectors.OPS` (the operations negative vectors name). */
+
+/** The binding of a sealed pull-request link body from its snake_case vector fields. */
+function prLinkBinding(a: Any): context.PrLinkBinding {
+  return { wgId: a.wg_id, epoch: a.epoch, tag: a.tag, taskId: a.task_id, origin: a.origin };
+}
+
 export const OPS: Record<string, (a: Any) => Promise<unknown>> = {
   b64u_decode: async (a) => b64uDecode(a.text, a.length ?? undefined),
   canonical: async (a) => canonical(a.value),
@@ -223,6 +229,13 @@ export const OPS: Record<string, (a: Any) => Promise<unknown>> = {
   open_log: async (a) =>
     runlog.openLog(Secret.of(b(a.workgroup_key)), a.manifest, a.sig, b(a.author_sig_pk), a.chunks.map(b)),
   open_log_chunk: async (a) => runlog.openChunk(await aesKey(b(a.key)), a.object, a.index, b(a.sealed)),
+  open_pr_link: async (a) =>
+    context.openPrLink(
+      await context.prLinkBodyKey(Secret.of(b(a.workgroup_key))),
+      await context.prLinkKey(Secret.of(b(a.workgroup_key))),
+      prLinkBinding(a),
+      a.sealed,
+    ),
 };
 
 /** Operations whose name one vector file uses for its own function (`agent.json` `parse_code`: the agent and return
@@ -645,6 +658,22 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
     for (const link of links.links) {
       same(fromUtf8(context.prLinkText(link.repo, link.number)), link.text, `pr-link text ${link.repo}`);
       same(await context.prLinkTag(linkKey, link.repo, link.number), link.tag, `pr-link tag ${link.repo}`);
+    }
+    const bodies = data.pr_link_bodies;
+    const bodyKey = await context.prLinkBodyKey(wk);
+    await sameAesKey(bodyKey, bodies.body_key, 'pr-link body key');
+    same(bodies.body_bytes, context.PR_LINK_BODY_BYTES, 'pr-link body bytes');
+    for (const body of bodies.bodies) {
+      const binding = prLinkBinding(body);
+      same(fromUtf8(context.prLinkBodyAad(binding)), body.aad, `pr-link body AAD ${body.repo}`);
+      same(fromUtf8(context.prLinkBodyText(body.repo, body.number)), body.plaintext, `pr-link body ${body.repo}`);
+      const link = { ...binding, repo: body.repo, number: body.number };
+      same(await context.sealPrLink(bodyKey, link, b(body.nonce)), body.sealed, `sealed pr-link ${body.repo}`);
+      same(
+        await context.openPrLink(bodyKey, linkKey, binding, body.sealed),
+        { repo: body.repo, number: body.number },
+        `opened pr-link ${body.repo}`,
+      );
     }
   },
   runlog: async (data) => {

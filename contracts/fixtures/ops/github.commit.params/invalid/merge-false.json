@@ -1,0 +1,6 @@
+{
+  "repo": "example-org/example-repo",
+  "branch": "fix-typo",
+  "message": "M.",
+  "merge": false
+}

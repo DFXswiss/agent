@@ -1,0 +1,12 @@
+{
+  "repo": "example-org/example-repo",
+  "branch": "fix-typo",
+  "message": "M.",
+  "merge": true,
+  "decisions": [
+    {
+      "path": "a",
+      "choice": "theirs"
+    }
+  ]
+}

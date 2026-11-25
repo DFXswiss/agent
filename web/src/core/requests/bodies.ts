@@ -7,11 +7,24 @@
 // of an organization (`org_id`, its `done` then carries the credential `body` for the admin's client to seal) and ask
 // for an own signing key (`signing_key`, outcome `signing`); `source` adds `operator`.
 //
-// Used by WEB-09 (`github.connect`) and WEB-10 (`claude.login`, `credential.check`, `mailbox.check`).
+// `github.pull_status` (KOR-48, ADR-084 section 2): its bodies are checked by `core/pulls/checks.ts`, which registers
+// itself here (`registerKind`) when the pull-request code loads – that code is not part of the first load (06-web.md
+// section 12.2), and no such request is sent before it registered. Without a registration every body of the kind is
+// refused.
+//
+// Used by WEB-09 (`github.connect`), WEB-10 (`claude.login`, `credential.check`, `mailbox.check`) and KOR-48
+// (`github.pull_status`, `core/pulls/status.ts`).
 import { isUuid7 } from '../encoding/ids';
+import type { PullState } from '../pulls/checks';
 import { isRecord } from '../registry';
 
-export const REQUEST_KINDS = ['github.connect', 'claude.login', 'credential.check', 'mailbox.check'] as const;
+export const REQUEST_KINDS = [
+  'github.connect',
+  'claude.login',
+  'credential.check',
+  'mailbox.check',
+  'github.pull_status',
+] as const;
 export type RequestKind = (typeof REQUEST_KINDS)[number];
 
 /** Failure codes of device responses (`contracts/requests/objects.json` `failure_code`). */
@@ -29,6 +42,8 @@ export const FAILURE_CODES = [
   'scope_missing',
   'sso_required',
   'flow_unavailable',
+  'github_not_connected',
+  'forbidden',
 ] as const;
 export type FailureCode = (typeof FAILURE_CODES)[number];
 /** Client code of a request the hub failed (device no longer eligible, or replaced by a newer one of its kind). */
@@ -100,6 +115,8 @@ export type ResponseBody =
       readonly identity_id?: string;
       readonly signing?: SigningOutcome;
       readonly body?: GithubBody;
+      /** `github.pull_status` (`core/pulls/checks.ts`). */
+      readonly pulls?: readonly PullState[];
     }
   | { readonly step: 'failed'; readonly code: FailureCode };
 
@@ -107,17 +124,17 @@ export const isRequestKind = (value: unknown): value is RequestKind =>
   (REQUEST_KINDS as readonly unknown[]).includes(value);
 
 /** Exactly the keys `required` plus any of `optional`. */
-function keysAre(value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []) {
+export function keysAre(value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []) {
   const keys = Object.keys(value);
   return (
     required.every((key) => keys.includes(key)) && keys.every((key) => required.includes(key) || optional.includes(key))
   );
 }
 
-const matches = (value: unknown, re: RegExp, max = Infinity): value is string =>
+export const matches = (value: unknown, re: RegExp, max = Infinity): value is string =>
   typeof value === 'string' && value.length <= max && re.test(value);
 
-const isInt = (value: unknown, min: number, max: number): value is number =>
+export const isInt = (value: unknown, min: number, max: number): value is number =>
   Number.isSafeInteger(value) && (value as number) >= min && (value as number) <= max;
 
 /** At most 64 scopes of the contract's form. */
@@ -147,7 +164,20 @@ export const isGithubBody = (value: unknown): value is GithubBody =>
   (value.name === undefined || matches(value.name, NAME_RE)) &&
   (value.signing_key === undefined || isSigningKey(value.signing_key));
 
-const optionalUuid = (value: unknown): boolean => value === undefined || isUuid7(value);
+export const optionalUuid = (value: unknown): boolean => value === undefined || isUuid7(value);
+
+/** The checks of a kind whose code registers itself (module comment). */
+export interface KindChecks {
+  readonly request: (body: Record<string, unknown>, followUp: boolean) => boolean;
+  readonly response: (body: Record<string, unknown>) => boolean;
+}
+
+const registered = new Map<RequestKind, KindChecks>();
+
+/** Registers the checks of `kind` (module comment). */
+export function registerKind(kind: RequestKind, checks: KindChecks): void {
+  registered.set(kind, checks);
+}
 
 /** A request body a user may send for `kind` (first request or, with `follows`, a follow-up). */
 export function validRequestBody(kind: RequestKind, body: unknown, followUp: boolean): boolean {
@@ -167,6 +197,8 @@ export function validRequestBody(kind: RequestKind, body: unknown, followUp: boo
       );
     case 'mailbox.check':
       return !followUp && keysAre(body, []);
+    case 'github.pull_status':
+      return registered.get(kind)?.request(body, followUp) ?? false;
     case 'credential.check':
       return (
         !followUp &&
@@ -224,6 +256,8 @@ export function checkResponseBody(kind: RequestKind, body: unknown): ResponseBod
       case 'credential.check':
       case 'mailbox.check':
         return body.step === 'done' && keysAre(body, ['step', 'valid']) && typeof body.valid === 'boolean';
+      case 'github.pull_status':
+        return registered.get(kind)?.response(body) ?? false;
     }
   })();
   return ok ? (body as ResponseBody) : null;

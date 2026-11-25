@@ -1,0 +1,14 @@
+{
+  "repo": "example-org/example-repo",
+  "number": 42,
+  "branch": "fix-typo",
+  "base": "main",
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "base_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "merge_base_sha": "cccccccccccccccccccccccccccccccccccccccc",
+  "up_to_date": false,
+  "conflicts_total": 2,
+  "dir": "repos/example-org/example-repo",
+  "files": 31,
+  "bytes": 81920
+}

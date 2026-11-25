@@ -10,9 +10,11 @@ booleans; the guest's `local_check:"passed"` is only a hint) and adds the rules 
    question of `human.question` / `human.approval` (1-4000 characters); `github_identity`, `author`, `committer` and
    `co_authors` are identity and user IDs (canonical UUIDs, never free text); `github.commit`: a message without a
    trailer-like line `co-authored-by:`, `signed-off-by:` or `committed-by:` (any case, leading spaces allowed) and
-   every co-author once (`params_invalid`, KOR-47); `github.update_issue` names at least one of `state`, `title`,
-   `body`, `labels`, and `state_reason` only together with a fitting `state` (`reopened` with `open`,
-   `completed`/`not_planned` with `closed`; `params_invalid`; the contract leaves this to the runner, KOR-25);
+   every co-author once (`params_invalid`, KOR-47); `merge` (only `true`) without `paths`, `decisions` only with
+   `merge`, each decided path once (`params_invalid`) and valid (`path_invalid`, KOR-48); `github.update_issue`
+   names at least one of `state`, `title`, `body`, `labels`, and `state_reason` only together with a fitting
+   `state` (`reopened` with `open`, `completed`/`not_planned` with `closed`; `params_invalid`; the contract leaves
+   this to the runner, KOR-25);
 2. commit paths (`path_invalid`, with pointers): relative, no empty, `.`, `..` or `.git` segment;
 3. repository allow-list of the workgroup settings when it is set (`repo_not_allowed`; every type with `repo`, so
    not `github.list_repositories` and `github.request_connection`; without a list every repository passes, KOR-30);
@@ -58,6 +60,8 @@ LABEL_RE = re.compile(r"^[^,\x00-\x1f\x7f]{1,100}$")
 MAX_LABELS = 20
 MAX_PER_PAGE = 100
 MAX_PAGE = 1000
+MAX_DECISIONS = 1000
+CHOICES = ("head", "base", "deleted", "edited")
 ISSUE_TITLE_MAX = 256
 UPDATE_FIELDS = ("state", "title", "body", "labels")
 
@@ -95,6 +99,21 @@ def _co_authors(value: object) -> bool:
         isinstance(value, list)
         and 1 <= len(value) <= MAX_CO_AUTHORS
         and all(isinstance(item, str) and _UUID_RE.fullmatch(item) is not None for item in value)
+    )
+
+
+def _decisions(value: object) -> bool:
+    # paths beyond "a string" and duplicates are rules of their own (`_merge_check`)
+    return (
+        isinstance(value, list)
+        and 1 <= len(value) <= MAX_DECISIONS
+        and all(
+            isinstance(item, dict)
+            and set(item) == {"path", "choice"}
+            and isinstance(item["path"], str)
+            and item["choice"] in CHOICES
+            for item in value
+        )
     )
 
 
@@ -144,8 +163,13 @@ TYPES: Mapping[str, TypeRules] = {
             "committer": UUID,
             "co_authors": _co_authors,
             "signing": _one_of("none", "key"),
+            "merge": lambda value: value is True,
+            "decisions": _decisions,
         },
         ("repo", "branch", "message"),
+    ),
+    "github.merge_base": TypeRules(
+        {"repo": REPO, "number": _number, "discard": BOOL, "github_identity": UUID}, ("repo", "number")
     ),
     "github.push": TypeRules(
         {"repo": REPO, "branch": BRANCH, "commit_sha": SHA, "github_identity": UUID}, ("repo", "branch", "commit_sha")
@@ -333,6 +357,22 @@ def _commit_check(params: Mapping[str, Any]) -> None:
         raise CheckFailed("params_invalid", pointers=[_pointer("co_authors")], message="A co-author is named twice.")
 
 
+def _merge_check(params: Mapping[str, Any]) -> None:
+    """`github.commit` with `merge`: no `paths` (a partial snapshot would revert the base outside them), `decisions`
+    only with `merge`, every decision path valid and once (ADR-084 section 4)."""
+    decisions = params.get("decisions", [])
+    if "merge" in params and "paths" in params:
+        raise CheckFailed("params_invalid", pointers=[_pointer("paths")], message="paths cannot be used with merge.")
+    if decisions and "merge" not in params:
+        raise CheckFailed("params_invalid", pointers=[_pointer("decisions")], message="decisions need merge: true.")
+    paths = [item["path"] for item in decisions]
+    bad = [f"/params/decisions/{index}/path" for index, path in enumerate(paths) if not rules.path_valid(path)]
+    if bad:
+        raise CheckFailed("path_invalid", pointers=bad[:MAX_POINTERS], message="A path is not a valid relative path.")
+    if len(set(paths)) != len(paths):
+        raise CheckFailed("params_invalid", pointers=[_pointer("decisions")], message="A path is decided twice.")
+
+
 def _update_check(params: Mapping[str, Any]) -> None:
     """`github.update_issue` changes something (one of `UPDATE_FIELDS`), and `state_reason` comes with `state`."""
     if not any(name in params for name in UPDATE_FIELDS):
@@ -369,6 +409,7 @@ def check(request: CheckRequest) -> dict[str, Any]:
     if op_type == "github.commit":
         _commit_check(params)
         _paths_check(params)
+        _merge_check(params)
     if op_type == "github.update_issue":
         _update_check(params)
     out = effective(op_type, params, settings)

@@ -23,6 +23,7 @@ from agent_platform import (
     membership,
     modelaccess,
     ownmac,
+    pulls,
     security,
     sessions,
     testruns,
@@ -51,4 +52,5 @@ MODULES: tuple[Callable[[Any], None], ...] = (
     ownmac.register,
     connector.register,
     modelaccess.register,
+    pulls.register,
 )

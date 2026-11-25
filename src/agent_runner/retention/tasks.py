@@ -4,7 +4,8 @@ Every `INTERVAL_S` (and once after the start) it deletes, in batches of its own 
 
 - acknowledged outbox items older than an hour (`sync.outbox.prune`; ADR-038: the event items of the last hour stay
   for the subagent results; the newest item always stays for the numbering);
-- prompt events whose delivery is final for a day (`prompts.retention.prune`; delivery rows stay).
+- prompt events whose delivery is final for a day (`prompts.retention.prune`; delivery rows stay);
+- merge preparations and workspace digests older than seven days (`github.merge_prep.prune`, KOR-48).
 
 Other tables bound themselves (`runner.ping`: rows of sessions ended an hour ago, RUN-14) or are small per object
 (profiles, settings, sessions). A failing round is logged (`runner.retention failed error=<type>`) and tried again at
@@ -16,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from agent_runner.github import merge_prep
 from agent_runner.prompts import retention as prompt_retention
 from agent_runner.registry import TaskSpec
 from agent_runner.sync import outbox
@@ -25,6 +27,7 @@ Prune = Callable[[Any], Awaitable[int]]
 PRUNERS: tuple[tuple[str, Prune, int], ...] = (
     ("outbox", outbox.prune, outbox.PRUNE_BATCH),
     ("prompt_event", prompt_retention.prune, prompt_retention.PRUNE_BATCH),
+    ("merge_prep", merge_prep.prune, merge_prep.PRUNE_BATCH),
 )
 
 

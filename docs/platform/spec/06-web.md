@@ -87,11 +87,12 @@ via selectors.
 | `/o/:org` | home: first-task composer (§4) and recent tasks of the default workgroup | org:member |
 | `/o/:org/tasks` | task overview: all tasks of the readable workgroups (§5.1a, KOR-32) | org:member |
 | `/o/:org/w/:wg` | task list + composer of a workgroup (§5.1) | wg:read |
-| `/o/:org/t/:task` | chat (§5.2), tabs: Chat, Sessions, Operations, Whiteboard, Audit | task:read |
+| `/o/:org/t/:task` | chat (§5.2), tabs: Chat, Sessions, Pull requests (§5.6), Operations, Whiteboard, Audit | task:read |
 | `/o/:org/s/:session` | session detail: terminal (§5.5), chat of that session, children | task:read |
 | `/o/:org/whiteboard` and `/o/:org/w/:wg/whiteboard` | whiteboards (§6.1) | org:member / wg:read |
 | `/o/:org/members` | members and rights (§7.1) | org:member (edit: admin) |
 | `/o/:org/workgroups` | workgroups (§7.2) | org:member (edit: admin) |
+| `/o/:org/pulls` and `/o/:org/w/:wg/pulls` | pull requests of the default / a workgroup, "Fix conflicts" (§5.6, KOR-48) | wg:read (link, fix: wg:write) |
 | `/o/:org/w/:wg/settings` | workgroup settings: repositories, protected branches, PR draft default (§8.1) | wg:read (edit: wg:write) |
 | `/o/:org/devices` | devices (§7.3) | org:member (edit: admin / private-org writer) |
 | `/o/:org/monitoring` | monitoring (§9.1) | org:member |
@@ -472,6 +473,42 @@ open `workvm.request`; a stopped one (paused session) reads "stopped – starts 
   replays from the start into an off-screen terminal up to the chosen offset, then shows it; playback speed 1×/4×/16×).
 - An explicit label "Read-only view – prompts are entered in the chat" is always visible.
 
+### 5.6 Pull requests and "Fix conflicts" (KOR-48, ADR-084)
+
+- **Links.** A pull request belongs to a task through a link: the device registers one after
+  `github.create_pull_request`, a person links one by its address. `GET /v1/workgroups/{wg}/pr-links` (`?task=` for
+  one task; newest first, 100 per page, "Load more") lists `{epoch, tag, sealed, task_id, session_id, linked_by}`;
+  the browser opens `sealed` with the workgroup key of the row's epoch, bound to the row's workgroup, epoch, tag,
+  task and origin (`device:<session_id>` / `user:<linked_by>`), and recomputes the tag (04-crypto.md §4.11a). A
+  row without a body (older runner), without the epoch's key or whose body does not open is shown as "Pull request
+  (details unavailable)" with its task (`core/pulls/links.ts`).
+- **State.** Repository, number and state are read by a device: device request `github.pull_status` to the task's
+  device, else an (online) device of the workgroup, with every pull request of the view batched into one request
+  (≤ 50, one request at a time; the task is named when the batch has one, `core/pulls/status.ts`). Rows show open /
+  draft / merged / closed and, for an open one, "Conflict" (`mergeable: false` alone), "Being checked"
+  (`mergeable: null` – never "No conflict"; read once more after 10 s by itself, then "Check again") or "No
+  conflict"; the link to GitHub (https only) and the task. `github_not_connected` offers "Connect GitHub" in the row
+  (§8.1, E-05); other failures show their reason and "Check again". A pull request whose head is in another
+  repository (a fork) says that "Fix conflicts" is not available.
+- **Fix conflicts** (users with `task:write`, only for a conflict in the same repository) posts the fixed platform
+  instruction v1 (`core/pulls/instruction.ts`, equal to `agent_platform/pulls.py`) as an ordinary prompt to the
+  linked task (`POST /v1/tasks/{task}/prompts`), so the task's own conversation resumes (ADR-072).
+- **Feedback.** "Conflicts fixed, branch updated (merge commit …)" once the task's verified operation events hold a
+  succeeded `github.push` to the pull request's head branch of a commit made by `github.commit` with `merge: true`
+  (`core/pulls/fixed.ts`); the state is then read again until it shows the merge commit as head.
+- **Where.** The workgroup view `/o/:org/pulls` (default workgroup) and `/o/:org/w/:wg/pulls` with a workgroup bar,
+  navigation entry "Pull requests" (phones: under "More"); the task tab "Pull requests"; in the situation view
+  (§4.0) an entry whose task has links shows a compact line per pull request with "Fix conflicts" (states read only
+  for the entries on screen). "Paste a pull-request address" (`https://github.com/<owner>/<repo>/pull/<n>` or
+  `<owner>/<repo>#<n>`, writers) looks the pull request up under every epoch the browser holds first: a linked one
+  is shown with its task and nothing changes; else `POST /v1/workgroups/{wg}/pr-links` under the current epoch. A
+  person's link can be removed ("Unlink"); a device's link stays.
+- Test IDs: `pulls.screen`, `pulls.level`, `pulls.item` (`data-pull`, `data-state`, `data-conflict`), `pulls.state`,
+  `pulls.conflict`, `pulls.github`, `pulls.task`, `pulls.fix`, `pulls.fix.sent`, `pulls.recheck`, `pulls.fixed`,
+  `pulls.fork`, `pulls.connect`, `pulls.unlink`, `pulls.unavailable`, `pulls.more`, `pulls.link.input`,
+  `pulls.link.task`, `pulls.link.submit`, `pulls.link.created`, `pulls.link.exists`, `pulls.link.invalid`,
+  `task.pulls`, `attention.pull`, `attention.fix-conflicts`.
+
 ## 6. Whiteboards and notifications
 
 ### 6.1 Whiteboards
@@ -793,7 +830,9 @@ The build enforces a tighter guard than the ceiling: `INITIAL_JS_BUDGET` in `web
 load plus 10 % (HOT-16: 199.3 KiB measured, guard 219 KiB), raised to 220 KiB by KOR-57: every client verifies the
 agent of a user as a sub-principal in the membership logs at sign-in (ADR-082), which needs about 1 KiB gzip in the first
 load; the confirmation of a pairing, the revocation, the job `agents` and the community check of agent authors load
-lazily. The guard runs in every package's gates (`npm run
+lazily; raised to 221 KiB by KOR-48: the error texts of six new operation codes, the navigation entry and the request
+kind of the pull-request view (its other texts load with its code, area `pulls`; decisions/KOR-48.md). The guard runs
+in every package's gates (`npm run
 build:check`, the build tests and the E2E budget test), so growth of the first load is seen deterministically where it
 is caused, not later as a narrow timing failure. It is raised only together with a reason in this section. The first
 load is three scripts: the framework, the app modules imported statically from the entry (chunk group `$initial`) and
@@ -805,6 +844,9 @@ once (`screen.loading`), also on the first switch to it. A chunk that cannot be 
 connection banner stays; other errors reach the route's error page. A direct link into a lazy screen waits for one more
 chunk after the first load.
 
+
+The pull-request view (KOR-48) keeps its texts in the lazily added area `pulls` (`core/i18n/lazy/pulls.ts`); only its
+navigation label and tab title are in the first load, as the area `pullnav`.
 ### 12.3 Accessibility
 
 Semantic HTML, labels for all inputs, focus visible, keyboard operable dialogs with focus trap, `aria-live` for

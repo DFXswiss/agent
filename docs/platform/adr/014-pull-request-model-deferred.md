@@ -14,6 +14,13 @@ KONZEPT §11 states that a detailed relational model for pull requests and their
 ## Consequences
 - No cross-task PR overview in v1; a later ADR can add an encrypted PR index (scope `wg`) without schema changes at the hub.
 
+## Addendum (KOR-48, 2026-11-24)
+[ADR-084](084-fix-conflicts-by-merge-commit.md) adds only what the "Fix conflicts" button needs: the opaque
+`hub.pr_link` of ADR-072 gains a sealed body (repository and number, AEAD under the workgroup key, bound to task and
+origin), a list per workgroup and task, and links a person makes by address. The hub still holds no plaintext pull
+request data and no PR table with states; states are read fresh from GitHub through a device. The detailed model of
+§11 Punkt 7 stays deferred.
+
 ## Alternatives considered
 Plaintext PR table at the hub (violates §5); encrypted PR index events now (scope creep against the explicit deferral).
 

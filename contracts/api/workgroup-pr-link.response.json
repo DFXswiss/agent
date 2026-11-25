@@ -2,23 +2,70 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/workgroup-pr-link.response.json",
   "title": "GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag} response",
-  "description": "Body of a successful response to GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag} (03-api.md section 4.6, ADR-072 section 8): the task and session that created the pull request.",
-  "type": "object",
-  "properties": {
-    "task_id": {
-      "$ref": "../common.json#/$defs/uuid"
+  "description": "Body of a successful response to GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag} (03-api.md section 4.6, ADR-072 section 8, ADR-084 section 1): the task, exactly one of the session that created the pull request and the user who linked it by its address, the sealed body (null for a link an older runner registered) and the time.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "linked_by": {
+          "type": "null"
+        },
+        "sealed": {
+          "anyOf": [
+            {
+              "$ref": "objects.json#/$defs/pr_link_sealed"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "task_id",
+        "session_id",
+        "linked_by",
+        "sealed",
+        "created_at"
+      ],
+      "additionalProperties": false
     },
-    "session_id": {
-      "$ref": "../common.json#/$defs/uuid"
-    },
-    "created_at": {
-      "$ref": "../common.json#/$defs/time"
+    {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "session_id": {
+          "type": "null"
+        },
+        "linked_by": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "sealed": {
+          "$ref": "objects.json#/$defs/pr_link_sealed"
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "task_id",
+        "session_id",
+        "linked_by",
+        "sealed",
+        "created_at"
+      ],
+      "additionalProperties": false
     }
-  },
-  "required": [
-    "task_id",
-    "session_id",
-    "created_at"
-  ],
-  "additionalProperties": false
+  ]
 }

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-pr-links-post.response.json",
+  "title": "POST /v1/workgroups/{wg}/pr-links response",
+  "description": "Body of a successful response to POST /v1/workgroups/{wg}/pr-links: 201 with created true and the new link, or 200 with created false and the link the tag already has under that epoch (whoever made it; an existing link is never moved).",
+  "type": "object",
+  "properties": {
+    "created": {
+      "type": "boolean"
+    },
+    "link": {
+      "$ref": "objects.json#/$defs/pr_link_row"
+    }
+  },
+  "required": [
+    "created",
+    "link"
+  ],
+  "additionalProperties": false
+}

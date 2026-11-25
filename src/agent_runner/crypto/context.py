@@ -15,7 +15,19 @@ compressed bytes and sealed under the object key of the task's workgroup:
 The hub stores and checks the manifest, the signature, the chunk count, the size and the digest without any key; a
 reader with `WK_e` opens the chunks (`open_context`). Pull-request links are opaque:
 `tag = b64u(HMAC-SHA256(HKDF(ikm=WK_e, info=P || "pr-link"), canonical({"number": n, "repo": "<owner>/<name>"})))`
-with the repository name in lower case.
+with the repository name in lower case. The sealed body of a link (section 4.11a, ADR-084 section 1) names the pull
+request for a reader with `WK_e`:
+
+- `k_body = HKDF(ikm=WK_e, info=P || "pr-link-body")`,
+- `sealed = b64u(nonce(12) || AES-256-GCM(k_body, pad(canonical({"number": n, "repo": "<owner>/<name>"})), AAD))`
+  with the repository as GitHub spells it, padded with zero bytes to `PR_LINK_BODY_BYTES`,
+- `AAD = P || "pr-link-body\0" || wg_id || "\0" || epoch || "\0" || tag || "\0" || task_id || "\0" || origin` with
+  `origin` = `device:<session_id>` or `user:<linked_by>`.
+
+`open_pr_link` refuses a sealed text of another length (`header_invalid`), a body that does not open
+(`decrypt_failed`), a padding or plaintext that is not exactly the sealed form (`header_invalid`) and a body whose
+recomputed tag is not the row's tag (`header_invalid`): a hub can move a link to no other task, workgroup, origin or
+pull request.
 
 Check order (the same in every implementation): manifest key set (`header_invalid`), canonical JSON (`non_ascii`),
 field formats (`header_invalid`); signature (`signature_invalid`); chunk count, size and digest against the chunks
@@ -32,7 +44,16 @@ from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from agent_runner.crypto import aead, fields
-from agent_runner.crypto.encoding import P, b64u_decode, b64u_encode, canonical, require_bytes, require_int
+from agent_runner.crypto.encoding import (
+    P,
+    b64u_decode,
+    b64u_encode,
+    canonical,
+    parse_json,
+    require_bytes,
+    require_int,
+    require_keys,
+)
 from agent_runner.crypto.errors import fail
 from agent_runner.crypto.kdf import KEY_BYTES, SALT_BYTES, hkdf
 from agent_runner.crypto.keys import ed25519_sign, ed25519_verify_b64u
@@ -42,6 +63,13 @@ CONTEXT = b"context\x00"
 """Info label of `k_ctx` and signature label of the manifest (without the prefix P)."""
 LABEL_CONTEXT_CHUNK = b"context-chunk\x00"
 PR_LINK = b"pr-link"
+PR_LINK_BODY = b"pr-link-body"
+"""Info label of `k_body` (without the prefix P)."""
+LABEL_PR_LINK_BODY = b"pr-link-body\x00"
+PR_LINK_BODY_BYTES = 256
+"""The padded plaintext of a sealed link body."""
+PR_LINK_SEALED_BYTES = aead.NONCE_BYTES + PR_LINK_BODY_BYTES + aead.TAG_BYTES
+"""The decoded length of every `sealed` text."""
 CHUNK_BYTES = 2 * 1024 * 1024
 """At most this many compressed archive bytes per chunk."""
 CHUNK_CT_BYTES = CHUNK_BYTES + aead.NONCE_BYTES + aead.TAG_BYTES
@@ -55,6 +83,7 @@ MANIFEST_KEYS = frozenset(
 )
 ID_KEYS = ("object", "org", "wg", "task", "session", "author")
 _REPO_RE = re.compile(r"[a-z0-9_.-]{1,100}/[a-z0-9_.-]{1,100}")
+_ORIGIN_KINDS = ("device:", "user:")
 
 
 def context_key(workgroup_key: bytes, salt: bytes, object_id: str) -> bytes:
@@ -220,3 +249,79 @@ def pr_link_tag(link_key: bytes, repo: object, number: object) -> str:
     mac = hmac.HMAC(require_bytes(link_key, KEY_BYTES), hashes.SHA256())
     mac.update(pr_link_text(repo, number))
     return b64u_encode(mac.finalize())
+
+
+def pr_link_body_key(workgroup_key: bytes) -> bytes:
+    """`k_body = HKDF(WK_e, info=P || "pr-link-body")`."""
+    return hkdf(require_bytes(workgroup_key, KEY_BYTES), P + PR_LINK_BODY)
+
+
+def pr_link_origin(origin: object) -> str:
+    """`device:<session_id>` or `user:<linked_by>` with a UUIDv7, else `header_invalid`."""
+    if not isinstance(origin, str):
+        fail("header_invalid")
+    kind = next((prefix for prefix in _ORIGIN_KINDS if origin.startswith(prefix)), None)
+    if kind is None:
+        fail("header_invalid")
+    fields.uuid(origin[len(kind) :])
+    return origin
+
+
+def pr_link_body_aad(wg_id: object, epoch: object, tag: object, task_id: object, origin: object) -> bytes:
+    """`P || "pr-link-body\0" || wg_id || "\0" || epoch || "\0" || tag || "\0" || task_id || "\0" || origin`."""
+    parts = (
+        fields.uuid(wg_id),
+        str(require_int(epoch, 1, MAX_EPOCH)),
+        fields.b64u_bytes(tag, 32),
+        fields.uuid(task_id),
+        pr_link_origin(origin),
+    )
+    return P + LABEL_PR_LINK_BODY + b"\x00".join(part.encode("ascii") for part in parts)
+
+
+def pr_link_body_text(repo: object, number: object) -> bytes:
+    """`canonical({"number": n, "repo": repo})` with the repository as given (checked like `pr_link_text`)."""
+    pr_link_text(repo, number)
+    return canonical({"number": number, "repo": repo})
+
+
+def seal_pr_link(
+    body_key: bytes,
+    *,
+    wg_id: str,
+    epoch: int,
+    tag: str,
+    task_id: str,
+    origin: str,
+    repo: str,
+    number: int,
+    nonce: bytes | None = None,
+) -> str:
+    """The b64u `sealed` body of a link (module docstring); `nonce` is fixed only by the test vectors."""
+    aad = pr_link_body_aad(wg_id, epoch, tag, task_id, origin)
+    text = pr_link_body_text(repo, number)
+    padded = text + bytes(PR_LINK_BODY_BYTES - len(text))
+    return b64u_encode(aead.seal_blob(require_bytes(body_key, KEY_BYTES), padded, aad, nonce))
+
+
+def open_pr_link(
+    body_key: bytes,
+    link_key: bytes,
+    *,
+    wg_id: str,
+    epoch: int,
+    tag: str,
+    task_id: str,
+    origin: str,
+    sealed: object,
+) -> tuple[str, int]:
+    """`(repo, number)` of a sealed body whose recomputed tag is `tag`; every refusal as in the module docstring."""
+    aad = pr_link_body_aad(wg_id, epoch, tag, task_id, origin)
+    blob = b64u_decode(sealed, PR_LINK_SEALED_BYTES)
+    padded = aead.open_blob(require_bytes(body_key, KEY_BYTES), blob, aad)
+    text = padded.rstrip(b"\x00")
+    body = require_keys(parse_json(text), frozenset({"number", "repo"}))
+    repo, number = body["repo"], body["number"]
+    if pr_link_body_text(repo, number) != text or pr_link_tag(link_key, repo, number) != tag:
+        fail("header_invalid")
+    return str(repo), require_int(number, 1)

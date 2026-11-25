@@ -42,11 +42,25 @@ def test_the_positive_vector_is_reproduced() -> None:
     for link in v["pr_links"]["links"]:
         assert c.pr_link_text(link["repo"], link["number"]).decode() == link["text"]
         assert c.pr_link_tag(link_key, link["repo"], link["number"]) == link["tag"]
+    body_key = c.pr_link_body_key(wk)
+    assert b64u_encode(body_key) == v["pr_link_bodies"]["body_key"]
+    for body in v["pr_link_bodies"]["bodies"]:
+        binding = {key: body[key] for key in ("wg_id", "epoch", "tag", "task_id", "origin")}
+        assert c.pr_link_body_aad(**binding).decode() == body["aad"]
+        body_sealed = c.seal_pr_link(
+            body_key, **binding, repo=body["repo"], number=body["number"], nonce=b64u_decode(body["nonce"])
+        )
+        assert body_sealed == body["sealed"]
+        assert c.open_pr_link(body_key, link_key, **binding, sealed=body_sealed) == (body["repo"], body["number"])
 
 
 def _run(case: dict[str, Any]) -> None:
     args = case["args"]
-    if "sealed" in args:
+    if case["op"] == "open_pr_link":
+        wk = b64u_decode(args["workgroup_key"])
+        binding = {key: args[key] for key in ("wg_id", "epoch", "tag", "task_id", "origin")}
+        c.open_pr_link(c.pr_link_body_key(wk), c.pr_link_key(wk), **binding, sealed=args["sealed"])
+    elif "sealed" in args:
         c.open_chunk(b64u_decode(args["key"]), args["object"], args["index"], b64u_decode(args["sealed"]))
     elif "repo" in args:
         c.pr_link_tag(c.pr_link_key(b64u_decode(args["workgroup_key"])), args["repo"], args["number"])
@@ -96,12 +110,14 @@ def test_size_and_shape_refusals_of_the_copy() -> None:
         )
     with pytest.raises(CryptoError, match="header_invalid"):
         c.pr_link_text(5, 1)
+    with pytest.raises(CryptoError, match="header_invalid"):
+        c.pr_link_origin(7)
 
 
 def test_the_vector_generator_refuses_a_wrong_or_missing_error() -> None:
     from agent_runner.crypto.contexts import vectors  # noqa: PLC0415
 
-    args = VECTORS["invalid"][-1]["args"]
+    args = next(case["args"] for case in VECTORS["invalid"] if case["name"] == "pr_repo_non_ascii")
     with pytest.raises(RuntimeError, match="instead of"):
         vectors.negative("x", "pr_link_tag", args, "signature_invalid")
     good = {**args, "repo": "owner/repo", "number": 1}

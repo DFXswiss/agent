@@ -1,0 +1,36 @@
+{
+  "description": "Endpoints added by KOR-48 (ADR-084 section 1): the pull-request index of a workgroup the hub cannot read - the list, a person's link by address and its removal; 03-api.md section 4.6.",
+  "rights": [
+    "wg:read",
+    "wg:write"
+  ],
+  "auth": [
+    "browser"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/pr-links",
+      "rights": [
+        "wg:read"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/workgroups/{wg}/pr-links",
+      "rights": [
+        "wg:write"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/workgroups/{wg}/pr-links/{epoch}/{tag}",
+      "rights": [
+        "wg:write"
+      ],
+      "section": "4.6"
+    }
+  ]
+}

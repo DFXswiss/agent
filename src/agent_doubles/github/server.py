@@ -58,8 +58,14 @@ Control routes (not journaled, not counted): ``GET /_double/state``, ``GET /_dou
 ``POST /_double/seed`` (`agent_doubles.github.repos`), ``GET|POST /_double/faults`` (``{"faults": [...]}``),
 ``POST /_double/expect`` (``{"expectations": [...]}``), ``GET|POST /_double/device`` (grants; user decision),
 ``POST /_double/clock`` (``{"advance": seconds}``), ``POST /_double/tokens`` (``{"revoke": "<token>"}``),
-``POST /_double/organizations`` (an organisation's OAuth App and classic-token policies, KOR-65) and
+``POST /_double/organizations`` (an organisation's OAuth App and classic-token policies, KOR-65),
+``POST /_double/commits`` (advance a branch by one commit, ``{"sha"}``; `agent_doubles.github.repos`, KOR-48) and
 ``GET /_double/repos/{owner}/{repo}`` (refs, issues, pull requests and comments for assertions).
+
+``GET …/pulls/{number}`` answers ``mergeable`` and ``mergeable_state`` as GitHub computes them, asynchronously: the
+first read after the head or the base moved is ``null``/``"unknown"`` and starts the computation (KOR-48,
+`agent_doubles.github.repos`); the fault ``mergeable_unknown`` keeps reads unknown. The list and the create answer
+carry no computed value (the list omits the fields).
 """
 
 from __future__ import annotations
@@ -1294,7 +1300,9 @@ class _Handler(DoubleHandler):
 
     def _r_get_pull(self, call: Call) -> Result:
         pull = self._pull(call)
-        return 200, render.pull(self.double.urls, self.double.world, call.the_repo, pull), []
+        repo = call.the_repo
+        known = repo.read_mergeability(pull) and not (call.fault is not None and call.fault.kind == "mergeable_unknown")
+        return 200, render.pull(self.double.urls, self.double.world, repo, pull, known=known), []
 
     def _r_pull_files(self, call: Call) -> Result:
         repo = call.the_repo
@@ -1431,6 +1439,7 @@ class _Handler(DoubleHandler):
             "/_double/clock": ("POST",),
             "/_double/tokens": ("POST",),
             "/_double/organizations": ("POST",),
+            "/_double/commits": ("POST",),
         }
         inspect = re.match(r"^/_double/repos/([^/]+)/([^/]+)$", path)
         allowed = ("GET",) if inspect else routes.get(path)
@@ -1473,6 +1482,7 @@ class _Handler(DoubleHandler):
             ("POST", "/_double/clock"): lambda: self._advance(body),
             ("POST", "/_double/tokens"): lambda: self._tokens(body),
             ("POST", "/_double/organizations"): lambda: self._organizations(body),
+            ("POST", "/_double/commits"): lambda: self._commits(body),
         }
         return 200, actions[(self.command, path)]()
 
@@ -1522,6 +1532,11 @@ class _Handler(DoubleHandler):
             "oauth_approved": list(found.oauth_approved),
             "classic_forbidden": found.classic_forbidden,
         }
+
+    def _commits(self, body: Any) -> dict[str, Any]:
+        """``POST /_double/commits``: advance a branch by one commit (`World.add_commit`, KOR-48)."""
+        with self.double.world.lock:
+            return {"sha": self.double.world.add_commit(body)}
 
     def _known_login(self, login: str) -> str | None:
         world = self.double.world

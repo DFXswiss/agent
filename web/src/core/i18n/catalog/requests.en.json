@@ -12,5 +12,7 @@
   "failure.token_refused": "GitHub refused the token: it was revoked or does not exist.",
   "failure.scope_missing": "The token lacks the scope needed for repositories.",
   "failure.sso_required": "An organisation requires SSO authorisation of the token.",
-  "failure.flow_unavailable": "The sign-in through GitHub is not set up on this execution device."
+  "failure.flow_unavailable": "The sign-in through GitHub is not set up on this execution device.",
+  "failure.github_not_connected": "No GitHub account you may use is connected.",
+  "failure.forbidden": "The device does not serve this workgroup, or you cannot read it."
 }

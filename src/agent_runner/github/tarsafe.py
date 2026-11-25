@@ -207,6 +207,11 @@ def _info(path: str, kind: Literal["file", "dir", "symlink"], size: int) -> tarf
     return info
 
 
+def member_info(path: str, kind: Literal["file", "dir"], size: int) -> tarfile.TarInfo:
+    """A plain-tar member header as `repack` writes it (files `0600`, directories `0700`, owner and time `0`)."""
+    return _info(path, kind, size)
+
+
 def repack(
     source: BinaryIO, target: BinaryIO, *, limits: Limits, compressed: bool = True, strip_top: bool = True
 ) -> Stats:

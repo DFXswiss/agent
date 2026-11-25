@@ -1,0 +1,12 @@
+{
+  "step": "done",
+  "pulls": [
+    {
+      "repo": "a/b",
+      "number": 2,
+      "found": false,
+      "code": "not_found",
+      "title": "x"
+    }
+  ]
+}

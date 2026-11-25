@@ -64,6 +64,7 @@ VALID: dict[str, dict[str, Any]] = {
     "task.set_title": {"title": "Fix the login"},
     "human.question": {"question": "Which database should the service use?\n- PostgreSQL\n- SQLite"},
     "human.approval": {"question": "May I delete the old branch?"},
+    "github.merge_base": {"repo": REPO, "number": 7, "discard": True},
 }
 
 
@@ -220,6 +221,43 @@ def test_lengths_are_counted_in_code_points() -> None:
 def test_commit_paths_are_path_invalid(path: str) -> None:
     failed = refused("github.commit", with_("github.commit", paths=["ok.txt", path]))
     assert (failed.code, failed.pointers) == ("path_invalid", ["/params/paths/1"])
+
+
+def test_merge_commit_rules() -> None:
+    """KOR-48 (ADR-084 section 4): `merge` only `true` and never with `paths`, `decisions` only with `merge`, each
+    path valid and decided once."""
+    plain = {key: value for key, value in VALID["github.commit"].items() if key != "paths"}
+    decided = [{"path": "a.txt", "choice": "head"}, {"path": "b.bin", "choice": "base"}]
+    assert checks.check(request("github.commit", {**plain, "merge": True, "decisions": decided}))["merge"] is True
+    for params, code, pointers in [
+        ({**plain, "merge": False}, "params_invalid", ["/params/merge"]),
+        ({**VALID["github.commit"], "merge": True}, "params_invalid", ["/params/paths"]),
+        ({**plain, "decisions": decided}, "params_invalid", ["/params/decisions"]),
+        (
+            {**plain, "merge": True, "decisions": [*decided, {"path": "a.txt", "choice": "edited"}]},
+            "params_invalid",
+            ["/params/decisions"],
+        ),
+        (
+            {**plain, "merge": True, "decisions": [{"path": "../x", "choice": "head"}]},
+            "path_invalid",
+            ["/params/decisions/0/path"],
+        ),
+        (
+            {**plain, "merge": True, "decisions": [{"path": "a", "choice": "theirs"}]},
+            "params_invalid",
+            ["/params/decisions"],
+        ),
+        (
+            {**plain, "merge": True, "decisions": [{"path": "a", "choice": "head", "x": 1}]},
+            "params_invalid",
+            ["/params/decisions"],
+        ),
+        ({**plain, "merge": True, "decisions": []}, "params_invalid", ["/params/decisions"]),
+        ({**plain, "merge": True, "decisions": ["a"]}, "params_invalid", ["/params/decisions"]),
+    ]:
+        failed = refused("github.commit", params)
+        assert (failed.code, failed.pointers) == (code, pointers), params
 
 
 WITH_REPO = [t for t in VALID if "repo" in VALID[t]]

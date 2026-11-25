@@ -378,6 +378,14 @@
       "group": "session"
     },
     {
+      "action": "pr.linked",
+      "group": "pr"
+    },
+    {
+      "action": "pr.unlinked",
+      "group": "pr"
+    },
+    {
       "action": "model.provider_outside_allowlist",
       "group": "runner"
     },
@@ -719,6 +727,10 @@
     },
     {
       "action": "read.workgroup.pr_link",
+      "group": "read"
+    },
+    {
+      "action": "read.workgroup.pr_links",
       "group": "read"
     },
     {

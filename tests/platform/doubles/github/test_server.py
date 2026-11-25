@@ -655,9 +655,13 @@ def test_pull_request_lifecycle(github: Any) -> None:
     assert pull["base"]["sha"] == head(github)
     assert (pull["commits"], pull["additions"], pull["deletions"], pull["changed_files"]) == (1, 1, 1, 1)
     assert pull["user"]["login"] == "octo-user"
-    assert pull["mergeable_state"] == "draft"
+    assert (pull["mergeable"], pull["mergeable_state"]) == (None, "unknown")  # computed after the first read
     assert created.headers["location"] == pull["url"]
     assert github.get(f"{REPO}/pulls/1") == pull
+    assert (github.get(f"{REPO}/pulls/1")["mergeable"], github.get(f"{REPO}/pulls/1")["mergeable_state"]) == (
+        True,
+        "draft",
+    )
     files = github.get(f"{REPO}/pulls/1/files")
     assert [(f["filename"], f["status"], f["additions"], f["deletions"]) for f in files] == [
         ("src/app.py", "modified", 1, 1)

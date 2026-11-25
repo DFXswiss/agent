@@ -2,7 +2,7 @@
 4.10) and the device side for the tests:
 
 - `POST /v1/device-requests {envelope}`: the envelope verifies with the caller's identity (crypto codes as the hub
-  answers them), `header.user` is the caller (`403 forbidden`), the kind is one of the four (`400 header_invalid`), a
+  answers them), `header.user` is the caller (`403 forbidden`), the kind is a known one (`400 header_invalid`), a
   follow-up names an earlier request of the same user, device and kind (`400 params_invalid`), the device may read the
   user's `CK` by the logs (`403 device_not_assigned`); a plaintext `org_id` (a company account, KOR-47) is accepted
   for a `github.connect` of an admin of that org only (`403 forbidden`) and kept with the request; the same ID again
@@ -29,7 +29,7 @@ from agent_runner.crypto.request import ENC_ALG, open_request, seal_response, ve
 
 from ..hubfake import HubFake, Json, Request, now_ms_text
 
-KINDS = ("github.connect", "claude.login", "credential.check", "mailbox.check")
+KINDS = ("github.connect", "claude.login", "credential.check", "mailbox.check", "github.pull_status")
 ACTIVE = ("pending", "delivered")
 
 
@@ -38,7 +38,8 @@ class Relay:
     requests: dict[str, Json] = field(default_factory=dict)
     offline: set[str] = field(default_factory=set)
     script: dict[str, list[list[tuple[object, bool]]]] = field(default_factory=dict)
-    """Per kind, the answers the device gives at once to the next requests of that kind (one list per request)."""
+    """Per kind, the answers the device gives at once to the next requests of that kind (one list per request); a
+    callable answer is called with the opened request body."""
 
 
 def relay(hub: HubFake) -> Relay:
@@ -160,7 +161,8 @@ def install(hub: HubFake) -> None:
         }
         answers = found.script.get(header["kind"])
         for answer, final in answers.pop(0) if answers else []:
-            respond(hub, cast(str, header["id"]), answer, final=final)
+            given = answer(opened(hub, cast(str, header["id"]))) if callable(answer) else answer
+            respond(hub, cast(str, header["id"]), given, final=final)
         return 200, {"request_id": header["id"], "state": found.requests[cast(str, header["id"])]["state"]}
 
     def view(request: Request, body: Any, request_id: str) -> tuple[int, Any]:

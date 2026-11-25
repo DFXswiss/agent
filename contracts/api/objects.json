@@ -1935,6 +1935,95 @@
         "state"
       ],
       "additionalProperties": false
+    },
+    "pr_link_sealed": {
+      "type": "string",
+      "description": "the sealed body of a pull-request link: b64u without padding of nonce(12) || ciphertext(256) || tag(16) (04-crypto.md section 4.11a, ADR-084 section 1); the hub cannot open it",
+      "pattern": "^[A-Za-z0-9_-]{378}[AEIMQUYcgkosw048]$"
+    },
+    "pr_link_row": {
+      "description": "one pull-request link of a workgroup (ADR-084 section 1): the opaque tag under a workgroup epoch, the sealed body (null for a link an older runner registered), the task, and exactly one of the session whose device registered it after github.create_pull_request and the user who linked it by its address; nothing about the pull request is in clear",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "epoch": {
+              "$ref": "../common.json#/$defs/epoch"
+            },
+            "tag": {
+              "$ref": "../common.json#/$defs/b64u_32"
+            },
+            "sealed": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/pr_link_sealed"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "task_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "session_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "linked_by": {
+              "type": "null"
+            },
+            "created_at": {
+              "$ref": "../common.json#/$defs/time"
+            }
+          },
+          "required": [
+            "epoch",
+            "tag",
+            "sealed",
+            "task_id",
+            "session_id",
+            "linked_by",
+            "created_at"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "epoch": {
+              "$ref": "../common.json#/$defs/epoch"
+            },
+            "tag": {
+              "$ref": "../common.json#/$defs/b64u_32"
+            },
+            "sealed": {
+              "$ref": "#/$defs/pr_link_sealed"
+            },
+            "task_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "session_id": {
+              "type": "null"
+            },
+            "linked_by": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "created_at": {
+              "$ref": "../common.json#/$defs/time"
+            }
+          },
+          "required": [
+            "epoch",
+            "tag",
+            "sealed",
+            "task_id",
+            "session_id",
+            "linked_by",
+            "created_at"
+          ],
+          "additionalProperties": false
+        }
+      ]
     }
   }
 }

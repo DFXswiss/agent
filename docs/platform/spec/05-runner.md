@@ -1034,6 +1034,26 @@ key after the account is checked, registers it with `POST /user/ssh_signing_keys
 (`signing:"registered"`); GitHub's `403`/`404` (scope `write:ssh_signing_key` missing) is `signing:"scope_missing"`,
 another refusal `signing:"refused"`; the connection is stored either way.
 
+### 11.5 Pull-request state (`github.pull_status`, ADR-084 §2, KOR-48)
+
+A fresh read of pull requests for the pull-request view; repositories, numbers and states stay end-to-end encrypted
+between the device and the requester. Body `{org_id, wg_id, task_id?, pulls:[{repo, number}]}` (1–50, no pull request
+twice; any other form → `failed upstream_error`). The device answers only for a workgroup it is assigned to and a
+requester who can read that workgroup in the verified organization log, and a task it knows must belong to that
+workgroup and organization – otherwise `failed forbidden`. A requester who can write the workgroup reads with the
+identity the ADR-078 resolution picks for an operation of that task (the task's choice when the device knows the task,
+the workgroup's default, the organization's default, the requester's own primary record, the operator's account; each
+usable by the requester, §12 step 3); a reader only with the own primary record. Records open only through
+`credentials.acting`. Nothing usable (or GitHub's `401`) → `failed github_not_connected`; the hub unreachable while a
+record is needed → `failed upstream_unreachable`. Per pull request, in the order asked: outside the workgroup's
+repository list (when set) → `{repo, number, found:false, code:"repo_not_allowed"}` without a request; else
+`GET /repos/{r}/pulls/{n}` (read again after 1 s and 2 s while an open pull request's `mergeable` is `null`, then
+`null` is passed on) → `{repo, number, found:true, title, state, draft, merged, mergeable, mergeable_state, head_ref,
+head_sha, head_repo, base_ref, url, updated_at}`; `404` → `not_found`, another `403` → `repo_not_accessible`, anything
+else → `upstream_error` for that pull request. One final response `{step:"done", pulls}`. Log lines never name a
+repository or a number. The GitHub double computes `mergeable` asynchronously like GitHub (first read after head or
+base moved `null`) and offers `POST /_double/commits` to move a base in tests.
+
 ## 12. Operations (ADR-012)
 
 Pipeline for every `request_operation`:
@@ -1120,10 +1140,11 @@ Pipeline for every `request_operation`:
 |---|---|
 | `github.list_repositories` | `GET /user/installations` → `GET /user/installations/{id}/repositories` (paginated); a token without the GitHub App (`403` on `/user/installations`, ADR-053) lists `GET /user/repos` (paginated, same limits) instead - the same for a connection with an existing token (§11.4); mark `allowed` from settings (every entry when the workgroup sets no list, ADR-054) |
 | `github.checkout` | resolve ref (`GET /repos/{r}/commits/{ref}`) → `GET /repos/{r}/tarball/{sha}` streamed to scratch → safe extraction (regular files/dirs only; reject absolute, `..`, links, devices; strip the top directory; size limits) → re-tar → `files/import?dir=repos/<owner>/<name>&replace=true` (`<owner>/<name>` in lower case: GitHub names, the allow-list and the dedupe are case-insensitive; the result's `dir` names the path, KOR-10); remember base sha per (session, repo) |
-| `github.get_pull_request` | `GET /repos/{r}/pulls/{n}`, `/files` (paginated), `/issues/{n}/comments` |
+| `github.get_pull_request` | `GET /repos/{r}/pulls/{n}` (an open pull request whose `mergeable` is `null` – GitHub computes it asynchronously – is read again after 1 s and 2 s, then `null` is passed on with `mergeable_state`; KOR-48), `/files` (paginated), `/issues/{n}/comments` |
 | `github.create_branch` | `GET /repos/{r}/git/ref/heads/{from}` (or commit sha) → `POST /repos/{r}/git/refs` |
 | `github.commit` | uses the snapshot taken in step 3 (no second export) → parent = head of `branch` at GitHub at check time, or the checkout commit if the branch does not exist → compare with the parent tree (`GET /repos/{r}/git/trees/{parent_tree}?recursive=1`; blob and tree SHA-1 computed locally in git object format) → dedupe fields include the local tree SHA → after acceptance `POST /git/blobs` for changed files → `POST /git/trees` with `base_tree` (+ deletions) → verify returned tree SHA = local (`tree_mismatch`) → `POST /git/commits` (parent as determined) |
-| `github.push` | check fast-forward (`GET /repos/{r}/compare/{head}...{sha}` status `ahead`/`identical`) → `PATCH /repos/{r}/git/refs/heads/{branch}` `force:false` or `POST /git/refs` if missing |
+| `github.push` | check fast-forward (`GET /repos/{r}/compare/{head}...{sha}` status `ahead`/`identical`) → `PATCH /repos/{r}/git/refs/heads/{branch}` `force:false` or `POST /git/refs` if missing; the push of a merge commit marks its preparation `pushed` (KOR-48) |
+| `github.merge_base` (KOR-48, ADR-084 §4) | pre-check: `GET /repos/{r}/pulls/{n}` (open, head in the same repository) → base tip `GET /git/ref/heads/{base}` → merge base `GET /compare/{tip}...{head}` (`up_to_date` when equal) → workspace protection (one export, compared with the head's tree and the stored digest; `workspace_dirty`) · executor: the trees of merge base, head and tip (`GET /git/commits`, `GET /git/trees?recursive=1`) → `merge3.merge_entries` → contents from the head's, then the base's tarball, each member checked against its blob SHA (`GET /git/blobs/{sha}` for the rest, ≤ 1000) → line merges (diff3 style) → one plain tar → `files/import?…&replace=true` → merged blobs of protected names `POST /git/blobs` → `runner.merge_prep` (migration `0027_merge_prep`) and `runner.workspace_state`; both pruned after 7 days by `retention` |
 | `github.create_pull_request` | `GET /repos/{r}/pulls?head=<owner>:<head>&base=<base>&state=open` (existing ⇒ operation `succeeded` with that PR and `result.existing:true`; MCP status `duplicate`) → else `POST /repos/{r}/pulls` |
 | `github.comment` | `POST /repos/{r}/issues/{n}/comments` (issues and pull requests alike) |
 | `github.list_issues` | `GET /repos/{r}/issues?state&labels&sort&direction&per_page&page` (one page; entries with `pull_request` are left out; `next_page` from the `Link` header) |

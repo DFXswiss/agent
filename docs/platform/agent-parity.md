@@ -140,6 +140,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | session-follow | screens/task, screens/session (live stream) | `task follow` | done |
 | operations | screens/task (tabs) | `task operations --task --operation --before` | done |
 | operations-identity | screens/task (Operations tab: the GitHub identity an operation acted with and the human who triggered it, ADR-078 section 6) | `task operations --task --operation` | done |
+| pr-view | screens/pulls, screens/task (tab "Pull requests"), screens/home (the pull-request line of a situation-view entry; KOR-48, ADR-084: the sealed index opened on the client, the state read fresh by a device) | `pr list --wg\|--task\|--org --no-status --wait`, `pr show --wg --no-status --wait` | done |
+| pr-link-address | screens/pulls, screens/task (paste a pull-request address: link it to a task; an existing link is shown with its task, never moved) | `pr link --task` | done |
+| pr-unlink | screens/pulls, screens/task (remove a link a person made; a device's link stays) | `pr unlink --wg` | done |
+| pr-fix-conflicts | screens/pulls, screens/task, screens/home ("Fix conflicts": the fixed platform instruction as a prompt to the linked task, ADR-084 section 3) | `pr fix-conflicts --task --wg --anyway --wait` | done |
 | whiteboard-list | screens/whiteboard | `whiteboard list`, `whiteboard history` | done |
 | whiteboard-write | screens/whiteboard | `whiteboard add\|edit\|delete --notify` | done |
 | notifications-list | screens/notifications | `notifications list --unread --before` | done |
@@ -168,8 +172,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 |---|---|
 | `GET /v1/agent-pairings/{pairing}` | agents-pair |
 | `GET /v1/config` | connect-agent, settings-model |
-| `POST /v1/device-requests` | github-connect, github-token, github-accounts, github-company-accounts, credential-claude-relay, credential-check |
-| `GET /v1/device-requests/{request}` | github-connect, github-token, github-accounts, github-company-accounts, credential-claude-relay, credential-check |
+| `POST /v1/device-requests` | github-connect, github-token, github-accounts, github-company-accounts, credential-claude-relay, credential-check, pr-view, pr-fix-conflicts |
+| `GET /v1/device-requests/{request}` | github-connect, github-token, github-accounts, github-company-accounts, credential-claude-relay, credential-check, pr-view, pr-fix-conflicts |
 | `PUT /v1/github-defaults/{scope}/{scope_id}` | github-company-accounts, github-wg-default |
 | `GET /v1/github-identities/{identity}` | github-accounts, github-rewrap, operations-identity |
 | `PUT /v1/github-identities/{identity}` | github-company-accounts, github-rewrap |
@@ -193,7 +197,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `DELETE /v1/me/credentials/{kind}` | credential-delete, github-disconnect |
 | `GET /v1/me/github-identities` | github-accounts, github-company-accounts, github-wg-default, task-github-identity, operations-identity, github-rewrap |
 | `GET /v1/me/invitees` | members-invitees |
-| `GET /v1/me/devices` | github-connect, github-token, github-company-accounts, credential-claude-relay, credential-check |
+| `GET /v1/me/devices` | github-connect, github-token, github-company-accounts, credential-claude-relay, credential-check, pr-view, pr-fix-conflicts |
 | `GET /v1/me/quotas` | quotas |
 | `POST /v1/me/recovery/begin` | recovery-new |
 | `DELETE /v1/me/registration` | register |
@@ -257,7 +261,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/tasks/{task}/model-consent` | attention-model-consent |
 | `GET /v1/tasks/{task}/operations` | operations, session-workvm, task-waiting, triggered-by |
 | `PUT /v1/tasks/{task}/placement` | task-create, task-view |
-| `POST /v1/tasks/{task}/prompts` | task-prompt |
+| `POST /v1/tasks/{task}/prompts` | task-prompt, pr-fix-conflicts |
 | `PUT /v1/tasks/{task}/github-identity` | task-github-identity |
 | `POST /v1/tasks/{task}/prompts/{event}/withdraw` | task-prompt-withdraw |
 | `GET /v1/tasks/{task}/queue` | task-queue, task-prompt-withdraw |
@@ -269,6 +273,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/workgroups/{wg}/device-candidates` | devices-assign, task-create |
 | `PUT /v1/workgroups/{wg}/placement` | wg-placement |
 | `GET /v1/workgroups/{wg}/tasks` | tasks-list, tasks-overview |
+| `GET /v1/workgroups/{wg}/pr-links` | pr-view |
+| `POST /v1/workgroups/{wg}/pr-links` | pr-link-address |
+| `GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag}` | pr-view, pr-link-address, pr-unlink, pr-fix-conflicts |
+| `DELETE /v1/workgroups/{wg}/pr-links/{epoch}/{tag}` | pr-unlink |
 | `GET /v1/wraps` | task-view, credential-list, key-catch-up |
 | `POST /v1/wraps` | devices-assign, key-catch-up, org-join |
 
@@ -314,6 +322,7 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | next:claude_login_missing | `claude connect` on a computer where Claude Code is logged in, `credentials set-api-key` | outside |
 | next:claude_login_expired | `claude sync`, `credentials set-api-key` | outside |
 | next:waiting.CONNECT | `github connect --from-gh`, `github connect --token` (an existing token; the device page needs a person at GitHub) | outside |
+| next:github_not_connected | `github connect --from-gh` (the GitHub CLI login of this computer), `github connect --token` (any existing token) | built |
 | next:github_login_missing | `github connect --token` (any existing token; the GitHub CLI's own login at GitHub happens on this computer) | outside |
 | next:claude_missing | `claude connect`, `credentials set-api-key` | outside |
 | next:claude_expired | `claude sync`, `credentials set-api-key` | outside |

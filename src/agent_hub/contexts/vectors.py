@@ -2,10 +2,11 @@
 sections 3 and 4.11, ADR-072) and of the logs (`contracts/vectors/runlog.json`, section 4.12, ADR-080, below),
 discovered by the generator of `agent_hub.crypto.vectors` through `SECTIONS`.
 
-Positive part of `context`: one checkpoint of one chunk (workgroup key, salt, `k_ctx`, the compressed archive, the
-sealed chunk, manifest and signature), three standalone chunks of one object at the indexes 0-2 with their AAD and the
-digest over them, and pull-request tags. Negative vectors name the operations of `OPS`; they are executed while
-generating and must fail with exactly the stated code, as in `agent_hub.crypto.vectors.negative`.
+Positive part: one checkpoint of one chunk (workgroup key, salt, `k_ctx`, the compressed archive, the sealed chunk,
+manifest and signature), three standalone chunks of one object at the indexes 0-2 with their AAD and the digest over
+them, pull-request tags and sealed link bodies (04-crypto.md section 4.11a, ADR-084 section 1) of a device link and
+of a person's link. Negative vectors name the operations of `OPS`; they are executed while generating and
+must fail with exactly the stated code, as in `agent_hub.crypto.vectors.negative`.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import gzip
 from collections.abc import Callable
 from typing import Any
 
-from agent_hub.crypto import context, runlog
+from agent_hub.crypto import aead, context, runlog
 from agent_hub.crypto.encoding import b64u_decode, b64u_encode
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.crypto.keys import Identity
@@ -44,6 +45,16 @@ OPS: dict[str, Callable[[Json], object]] = {
     ),
     "open_context_chunk": lambda a: context.open_chunk(_b(a["key"]), a["object"], a["index"], _b(a["sealed"])),
     "pr_link_tag": lambda a: context.pr_link_tag(context.pr_link_key(_b(a["workgroup_key"])), a["repo"], a["number"]),
+    "open_pr_link": lambda a: context.open_pr_link(
+        context.pr_link_body_key(_b(a["workgroup_key"])),
+        context.pr_link_key(_b(a["workgroup_key"])),
+        wg_id=a["wg_id"],
+        epoch=a["epoch"],
+        tag=a["tag"],
+        task_id=a["task_id"],
+        origin=a["origin"],
+        sealed=a["sealed"],
+    ),
 }
 
 
@@ -64,6 +75,78 @@ def _device() -> Identity:
 
 def _changed(manifest: Json, **changes: object) -> Json:
     return {**manifest, **changes}
+
+
+def _bodies(wk: bytes) -> tuple[Json, list[Json]]:
+    """The sealed link bodies (positive) and their negative vectors."""
+    body_key, link_key = context.pr_link_body_key(wk), context.pr_link_key(wk)
+    cases = (
+        ("Example-Org/Example-Repo", 17, f"device:{IDS['session']}", "context/nonce/pr-body/0"),
+        ("a/b.c", 1, f"user:{fixed_id('context/user')}", "context/nonce/pr-body/1"),
+    )
+    bodies: list[Json] = []
+    for repo, number, origin, label in cases:
+        tag = context.pr_link_tag(link_key, repo, number)
+        binding: Json = {"wg_id": IDS["wg"], "epoch": 2, "tag": tag, "task_id": IDS["task"], "origin": origin}
+        nonce = fixed(label, 12)
+        bodies.append(
+            {
+                **binding,
+                "repo": repo,
+                "number": number,
+                "nonce": b64u_encode(nonce),
+                "aad": context.pr_link_body_aad(**binding).decode("ascii"),
+                "plaintext": context.pr_link_body_text(repo, number).decode("ascii"),
+                "sealed": context.seal_pr_link(body_key, **binding, repo=repo, number=number, nonce=nonce),
+            }
+        )
+    device, person = bodies
+    binding = {key: device[key] for key in ("wg_id", "epoch", "tag", "task_id", "origin")}
+    base = {"workgroup_key": b64u_encode(wk), **binding, "sealed": device["sealed"]}
+    aad = context.pr_link_body_aad(**binding)
+    text = context.pr_link_body_text(device["repo"], device["number"])
+
+    def raw(plaintext: bytes) -> str:
+        return b64u_encode(aead.seal_blob(body_key, plaintext, aad, fixed("context/nonce/pr-body/raw", 12)))
+
+    unsorted = b'{"repo":"' + device["repo"].encode("ascii") + b'","number":17}'
+    other = context.seal_pr_link(
+        body_key, **binding, repo="a/b.c", number=1, nonce=fixed("context/nonce/pr-body/other", 12)
+    )
+    invalid = [
+        negative("pr_body_other_task", "open_pr_link", {**base, "task_id": IDS["object"]}, "decrypt_failed"),
+        negative("pr_body_other_workgroup", "open_pr_link", {**base, "wg_id": IDS["org"]}, "decrypt_failed"),
+        negative("pr_body_other_epoch", "open_pr_link", {**base, "epoch": 3}, "decrypt_failed"),
+        negative("pr_body_device_as_person", "open_pr_link", {**base, "origin": person["origin"]}, "decrypt_failed"),
+        negative(
+            "pr_body_other_workgroup_key",
+            "open_pr_link",
+            {**base, "workgroup_key": b64u_encode(fixed("context/wg-key-2"))},
+            "decrypt_failed",
+        ),
+        negative("pr_body_short", "open_pr_link", {**base, "sealed": device["sealed"][:-4]}, "header_invalid"),
+        negative("pr_body_origin_kind", "open_pr_link", {**base, "origin": f"bot:{IDS['session']}"}, "header_invalid"),
+        negative("pr_body_other_pull_request", "open_pr_link", {**base, "sealed": other}, "header_invalid"),
+        negative(
+            "pr_body_padding_not_zero",
+            "open_pr_link",
+            {**base, "sealed": raw(text + bytes(context.PR_LINK_BODY_BYTES - len(text) - 1) + b"\x01")},
+            "header_invalid",
+        ),
+        negative(
+            "pr_body_all_zero",
+            "open_pr_link",
+            {**base, "sealed": raw(bytes(context.PR_LINK_BODY_BYTES))},
+            "header_invalid",
+        ),
+        negative(
+            "pr_body_not_canonical",
+            "open_pr_link",
+            {**base, "sealed": raw(unsorted + bytes(context.PR_LINK_BODY_BYTES - len(unsorted)))},
+            "header_invalid",
+        ),
+    ]
+    return {"body_key": b64u_encode(body_key), "bodies": bodies}, invalid
 
 
 def build() -> Json:
@@ -97,11 +180,13 @@ def build() -> Json:
     ]
     for link in links:
         link["tag"] = context.pr_link_tag(link_key, link["repo"], link["number"])
+    link_bodies, body_invalid = _bodies(wk)
     one = b64u_encode(sealed[0])
     base = {"manifest": manifest, "sig": sig, "author_sig_pk": pk}
     return {
         "about": "Context checkpoints and pull-request links of 04-crypto.md section 4.11 (ADR-072): k_ctx from WK "
-        "and the manifest salt, sealed chunks, the signed manifest, the digest and pull-request tags.",
+        "and the manifest salt, sealed chunks, the signed manifest, the digest and pull-request tags; sealed "
+        "pull-request link bodies of section 4.11a (ADR-084).",
         "workgroup_key": b64u_encode(wk),
         "author_sig_pk": pk,
         "salt": b64u_encode(salt),
@@ -114,6 +199,7 @@ def build() -> Json:
         "chunks": [one],
         "parts": {"chunks": chunks, "digest": context.digest(chunk_bytes)},
         "pr_links": {"link_key": b64u_encode(link_key), "links": links},
+        "pr_link_bodies": {**link_bodies, "body_bytes": context.PR_LINK_BODY_BYTES},
         "limits": {"chunk_bytes": context.CHUNK_BYTES, "chunk_ct_bytes": context.CHUNK_CT_BYTES},
         "invalid": [
             negative(
@@ -212,6 +298,7 @@ def build() -> Json:
                 {"workgroup_key": b64u_encode(wk), "repo": "örg/repo", "number": 1},
                 "non_ascii",
             ),
+            *body_invalid,
         ],
     }
 

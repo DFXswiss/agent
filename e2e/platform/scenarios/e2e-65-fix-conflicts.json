@@ -1,0 +1,377 @@
+{
+  "name": "e2e-65-fix-conflicts",
+  "description": "E2E-65 (KOR-48, ADR-084): one task, one conversation, three turns. Turn 1 checks the repository out, branches, writes NOTES.md, commits, pushes and opens pull request #2 (the seeded foreign pull request is #1). Turn 2 is the fixed platform instruction v1 for #2 sent by 'Fix conflicts' in the web: the earlier turn is in the request (min_messages; the spec reads the request from the journal), github.merge_base lists the content conflict of NOTES.md, a merge commit with the markers still in the file is refused (conflict_markers), the file is read (markers) and written resolved, the merge commit is made and pushed. Turn 3 is the same instruction for the foreign pull request #1 sent by 'agent-platform pr fix-conflicts': the session checks the foreign branch out first (the runner counts a workspace committed for another pull request as dirty for this one), then the same steps for CHANGELOG.md on that branch. Each step waits for the previous tool result; the pushes take the commit SHA from the newest commit result. Canary texts for the plaintext scan.",
+  "steps": [
+    {
+      "id": "checkout",
+      "expect": { "user_text_contains": "E2E61-PR", "has_tools": true, "has_tool_result": false },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Checking the repository out first." },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": { "type": "github.checkout", "params": { "repo": "kz61-org/kz61-app-w5q8" } }
+          }
+        ]
+      }
+    },
+    {
+      "id": "branch",
+      "expect": { "tool_result_contains": "\"dir\":\"repos/kz61-org/kz61-app-w5q8\"" },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_branch",
+              "params": { "repo": "kz61-org/kz61-app-w5q8", "branch": "kz61-notes-b7t2", "from": "main" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "write",
+      "expect": { "tool_result_contains": "\"branch\":\"kz61-notes-b7t2\"" },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/kz61-org/kz61-app-w5q8/NOTES.md",
+              "content": "# Notes\nkz61-head-notes-p4w9 from the pull request\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "commit",
+      "expect": { "tool_result_is_error": false },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": { "repo": "kz61-org/kz61-app-w5q8", "branch": "kz61-notes-b7t2", "message": "Add the notes." }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "push",
+      "expect": { "tool_result_contains": "\"files_changed\":1" },
+      "capture": { "commit": { "regex": "\"commit_sha\":\"([0-9a-f]{40})\",\"files_changed\"", "source": "messages" } },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.push",
+              "params": { "repo": "kz61-org/kz61-app-w5q8", "branch": "kz61-notes-b7t2", "commit_sha": "${commit}" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "pull-request",
+      "expect": {
+        "tool_result_contains": "\"url\":\"https://github.example/kz61-org/kz61-app-w5q8/tree/kz61-notes-b7t2\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.create_pull_request",
+              "params": {
+                "repo": "kz61-org/kz61-app-w5q8",
+                "head": "kz61-notes-b7t2",
+                "base": "main",
+                "title": "Add the notes kz61-title-s8k3",
+                "body": "Written by the session.",
+                "draft": false
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "opened",
+      "expect": { "tool_result_contains": "\"url\":\"https://github.example/kz61-org/kz61-app-w5q8/pull/2\"" },
+      "reply": { "content": [{ "type": "text", "text": "Pull request #2 is open kz61-answer-m2q6." }] }
+    },
+    {
+      "id": "fix-merge",
+      "expect": {
+        "user_text_contains": "Platform instruction \"fix merge conflicts\" (v1) for pull request kz61-org/kz61-app-w5q8#2:",
+        "has_tool_result": false,
+        "min_messages": 15
+      },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Bringing the pull request up to date with its base." },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": { "type": "github.merge_base", "params": { "repo": "kz61-org/kz61-app-w5q8", "number": 2 } }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fix-marked",
+      "expect": { "tool_result_contains": "\"kind\":\"content\"" },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "kz61-org/kz61-app-w5q8",
+                "branch": "kz61-notes-b7t2",
+                "message": "Merge main into kz61-notes-b7t2.",
+                "merge": true
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fix-read",
+      "expect": { "tool_result_contains": "\"conflict_markers\"" },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "The markers are still there; reading the file." },
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": { "file_path": "${cwd}/repos/kz61-org/kz61-app-w5q8/NOTES.md" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fix-write",
+      "expect": { "tool_result_contains": "<<<<<<< pull request (kz61-notes-b7t2)" },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/kz61-org/kz61-app-w5q8/NOTES.md",
+              "content": "# Notes\nkz61-head-notes-p4w9 from the pull request\nkz61-base-notes-k8m3 from the base\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fix-commit",
+      "expect": { "tool_result_is_error": false },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "kz61-org/kz61-app-w5q8",
+                "branch": "kz61-notes-b7t2",
+                "message": "Merge main into kz61-notes-b7t2.",
+                "merge": true
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fix-push",
+      "expect": { "tool_result_contains": "\"merge_parent\":\"" },
+      "capture": {
+        "merge": { "regex": "[\\s\\S]*\"commit_sha\":\"([0-9a-f]{40})\",\"files_changed\"", "source": "messages" }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.push",
+              "params": { "repo": "kz61-org/kz61-app-w5q8", "branch": "kz61-notes-b7t2", "commit_sha": "${merge}" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "fix-answer",
+      "expect": { "tool_result_contains": "\"status\":\"succeeded\"" },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Conflicts fixed, the branch kz61-notes-b7t2 is updated kz61-fixed-n6c2." }
+        ]
+      }
+    },
+    {
+      "id": "foreign-checkout",
+      "expect": {
+        "user_text_contains": "Platform instruction \"fix merge conflicts\" (v1) for pull request kz61-org/kz61-app-w5q8#1:",
+        "has_tool_result": false,
+        "min_messages": 27
+      },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Checking the branch of the linked pull request out first." },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.checkout",
+              "params": { "repo": "kz61-org/kz61-app-w5q8", "ref": "kz61-foreign-c3n9" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "foreign-merge",
+      "expect": { "tool_result_contains": "\"dir\":\"repos/kz61-org/kz61-app-w5q8\"" },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Bringing the linked pull request up to date with its base." },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": { "type": "github.merge_base", "params": { "repo": "kz61-org/kz61-app-w5q8", "number": 1 } }
+          }
+        ]
+      }
+    },
+    {
+      "id": "foreign-marked",
+      "expect": { "tool_result_contains": "\"kind\":\"content\"" },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "kz61-org/kz61-app-w5q8",
+                "branch": "kz61-foreign-c3n9",
+                "message": "Merge main into kz61-foreign-c3n9.",
+                "merge": true
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "foreign-read",
+      "expect": { "tool_result_contains": "\"conflict_markers\"" },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Read",
+            "input": { "file_path": "${cwd}/repos/kz61-org/kz61-app-w5q8/CHANGELOG.md" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "foreign-write",
+      "expect": { "tool_result_contains": "<<<<<<< pull request (kz61-foreign-c3n9)" },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/repos/kz61-org/kz61-app-w5q8/CHANGELOG.md",
+              "content": "# Changelog\n- 0.3 kz61-foreign-line-v5d1\n- 0.2 kz61-base-line-r2x6\n- 0.1 first release\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "foreign-commit",
+      "expect": { "tool_result_is_error": false },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.commit",
+              "params": {
+                "repo": "kz61-org/kz61-app-w5q8",
+                "branch": "kz61-foreign-c3n9",
+                "message": "Merge main into kz61-foreign-c3n9.",
+                "merge": true
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "foreign-push",
+      "expect": { "tool_result_contains": "\"merge_parent\":\"" },
+      "capture": {
+        "merge": { "regex": "[\\s\\S]*\"commit_sha\":\"([0-9a-f]{40})\",\"files_changed\"", "source": "messages" }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "github.push",
+              "params": { "repo": "kz61-org/kz61-app-w5q8", "branch": "kz61-foreign-c3n9", "commit_sha": "${merge}" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "foreign-answer",
+      "expect": { "tool_result_contains": "\"status\":\"succeeded\"" },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Conflicts fixed, the branch kz61-foreign-c3n9 is updated kz61-foreign-fixed-t4h9."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Notes" }] }
+    }
+  ]
+}

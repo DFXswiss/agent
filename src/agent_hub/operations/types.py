@@ -37,6 +37,7 @@ OPERATION_TYPES = frozenset(
         "human.question",
         "human.approval",
         "github.list_identities",
+        "github.merge_base",
     }
 )
 SUBAGENT_REQUEST = "subagent.request"

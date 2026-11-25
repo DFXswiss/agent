@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-pr-links.request.json",
+  "title": "GET /v1/workgroups/{wg}/pr-links request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "task": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "cursor": {
+      "$ref": "../common.json#/$defs/q_before"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_list"
+    }
+  },
+  "required": [],
+  "additionalProperties": false
+}
