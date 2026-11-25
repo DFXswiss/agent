@@ -79,3 +79,17 @@ and [ADR-088](../adr/088-full-subagents-and-limits-as-settings.md), reviewed wit
 19. **Rollout order:** hub, runner, golden (ADR-088 §5).
 20. **No new parity rows.** The web client gains no action (the limits are operator settings; follow-ups are a
     session's operations, visible in the operation lists that already have their commands).
+21. **Independent review of the diff** (fresh context). Fixed: an instruction is marked handed over before the guest
+    registers it (the child may accept it before the runner sees the guest's answer; it was left "working" for good)
+    and is pending again when the guest refuses it; resuming a suspended child checks the running limit and the VM's
+    room again right before the resume, serialised per task; a replayed acceptance of an older instruction never
+    brings back that person's rights; the completeness check also sees tuple assignments and `maxProperties`. The
+    scenario found that a turn followed at once by the next instruction got no ping; every ended turn is pinged now.
+    Recorded, not changed: an instruction handed over to a child whose guest loses it before accepting it blocks that
+    child's later instructions until the child ends (the parent can stop it and start another); a task view still
+    shows its first 100 sessions and a session its first 1000 children (`open`/`page` in the inventory, next step of
+    A14); a task of a readable workgroup that the device does not serve answers `not_found` (the hub already refuses
+    it), only the workgroup reads name the remedy; the runtime setting counts from a child's creation (default 0: no
+    limit).
+22. **Numbers.** ADR-087 and E2E-67 were taken on `develop` meanwhile (device failure); this package uses ADR-089 and
+    E2E-68 (ADR-088 was free).
