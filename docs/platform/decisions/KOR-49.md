@@ -44,14 +44,14 @@ rules [E-05](../KONZEPT.md#e-05), [E-11](../KONZEPT.md#e-11), [E-19](../KONZEPT.
     nothing with the default start credit of 0 and that F1 must bound a start credit above 0 (per founder or per
     invitation chain) before it is combined with the switches.
 13. **Findings of the independent review, kept as they are** (low): the operator pool falls back to
-    `OPERATOR_SUBSCRIPTION_ORGS` while the runner has no verified platform log (the behaviour before ADR-079 during the
-    move; once the variable is removed it denies); open invitations have no per-user quota (part of the owner's
-    decision F1, with the start credit); an attempt after a model credential of the other kind than an explicit
-    preference fails again and waits (the card stays); the `log.policy` gate also holds back a revocation of the role
-    `operator` until every device runs this release; an automatic device assignment stays when the task creation
-    after it fails (the device is useful for the next task). The texts "credit has been requested" and "the
-    administrators have been asked" hold once the operator has the role `operator` (rollout step); an unread request
-    of the same reason stands for further organizations (aggregation).
+    `OPERATOR_SUBSCRIPTION_ORGS` while the runner has no verified platform log (the behaviour before ADR-079 during
+    the move; once the variable is removed it denies); open invitations have no per-user quota (was part of the
+    owner's decision F1; F1 is answered without a start credit, [E-14](../KONZEPT.md#e-14)); an attempt after a model
+    credential of the other kind than an explicit preference fails again and waits (the card stays); the `log.policy`
+    gate also holds back a revocation of the role `operator` until every device runs this release; an automatic device
+    assignment stays when the task creation after it fails (the device is useful for the next task). The texts "credit
+    has been requested" and "the administrators have been asked" hold once the operator has the role `operator`
+    (rollout step); an unread request of the same reason stands for further organizations (aggregation).
 14. **A credential and a failure in the same moment.** Both transactions take an advisory lock of the owner
     (`model_retry.lock_owner`, before any task lock), so one of them always sees the other committed and the
     continuation is never lost.

@@ -36,12 +36,12 @@ justification or a handling.
 ## 4. The former approvals (inventory of KOR-49)
 | # | Former approval | Now |
 |---|---|---|
-| a | a team organization needed the operator's `org_platform_access` before it could use a platform device | root-signed switch `open_platform_access` (ADR-079 §3); off until the owner decides F1; with it off the operators are asked (`operator.request`) |
+| a | a team organization needed the operator's `org_platform_access` before it could use a platform device | root-signed switch `open_platform_access` (ADR-079 §3); off until the owner names it (F1 is answered: no start credit, [E-14](../KONZEPT.md#e-14)); with it off the operators are asked (`operator.request`) |
 | b | a private organization only with a platform invitation | stays: the invitation is the only way onto the platform (§1 Punkt 1, E-18), class `third_party` |
 | c | the operator's subscriptions only for organizations in a fixed list of the runner's environment, changed with a restart | root-signed `org_operator_subscriptions` in the platform log, read by the runner at its next refresh, no restart; all members of a granted organization use them; who outside the operator's organization is granted is the owner's question F2 |
 | d | the operator's GitHub account only for users of a fixed list | not here: KOR-47 makes it the organization's account |
 | e | protected branches `main`, `master`, `develop`, `release/*` even without settings | no default (A17); GitHub's own branch protection applies; the workgroup may set a list |
-| f | platform invitations only with the role `inviter` | root-signed switch `open_platform_invites`; off until F1; without the role a user lists and revokes only its own invitations |
+| f | platform invitations only with the role `inviter` | root-signed switch `open_platform_invites`; off until the owner names it; without the role a user lists and revokes only its own invitations |
 | g | a session without model access ended `model_access_unavailable` | the chat offers its owner the connection; the hub continues the task by itself once a model credential is stored (ADR-079 §4) |
 | h | an empty balance made the task wait without anybody being told | the operators are asked once per occasion; the person sees that credit has been requested |
 | i | workgroup rights and roles | stay: the rights model of the concept, not an approval; roles come only as a voluntary restriction (KOR-51) |

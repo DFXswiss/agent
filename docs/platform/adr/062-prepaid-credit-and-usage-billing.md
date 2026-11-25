@@ -112,7 +112,8 @@ device can therefore neither cause nor avoid a charge.
   (history `start`); until then an organization counts with the configured start credit. `price-list add` names the
   organizations that would be exhausted when the list comes into force and refuses without `--confirm`, so a release
   with start credit 0 cannot stop everyone by accident. *Since 2026-11-25 the setting stays 0:* there is no
-  automatic start credit ([E-14](../KONZEPT.md#e-14)); the operator distributes credit by hand.
+  automatic start credit ([E-14](../KONZEPT.md#e-14)); the operator distributes credit by hand, also before the first
+  price list (a credit creates the account at once).
 - **Exhausted** means a price list is in force and the balance is ≤ 0. A booking may take the balance below 0 (a
   request in flight is booked in full); the overdraft is bounded by the stop rules below.
 
@@ -183,11 +184,11 @@ charges are `hub.charge`.
 
 ## Consequences
 - Billing is metadata at the hub (amounts, token counts, seconds); no content, so zero knowledge is unchanged.
-- Release order: hub first (accepts the old items, publishes `billing`), then runners, then the start credit and the
-  first price list. The migration only adds tables; an older runner keeps working (tokens billed by the fallback,
-  runtime not measured, sessions not stopped). Rolling the hub back below this release is not supported once runners
-  of this release pushed `runtime` items (an older hub refuses the kind); `agent-hub migrate` already refuses to run an
-  older hub on a newer schema.
+- Release order: hub first (accepts the old items, publishes `billing`), then runners, then the credit the operator
+  distributes and the first price list. The migration only adds tables; an older runner keeps working (tokens billed
+  by the fallback, runtime not measured, sessions not stopped). Rolling the hub back below this release is not
+  supported once runners of this release pushed `runtime` items (an older hub refuses the kind); `agent-hub migrate`
+  already refuses to run an older hub on a newer schema.
 - `hub.charge` keeps one row per model request and per runtime interval for the books; it has no retention (sums for
   the dashboard come from `charge_daily`).
 - Token counts are measured by the guest gateway inside the VM; their trust rests on the guest isolation (ADR-008).

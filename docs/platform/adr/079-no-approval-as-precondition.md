@@ -27,7 +27,8 @@ ADR-076 §5 and §8 (notifications, actions).
   (the operator's subscriptions for organizations outside the operator's own – contract). Until they are answered the
   approvals stay in force; this ADR builds the switches and the ways, and the operator flips them.
   *F1 answered on 2026-11-25 ([E-14](../KONZEPT.md#e-14)): there is no automatic start credit; credit is only bought
-  or distributed by the operator by hand. The setting stays 0; a start credit is not pursued.*
+  or distributed by the operator by hand. The setting stays 0; a start credit is not pursued. The switches stay off
+  until the owner names which to flip.*
 
 ## Decision
 

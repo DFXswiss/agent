@@ -19,10 +19,10 @@ and their consequences marked in the platform documents.
 4. **Dates:** each rule keeps a single date line (checked by `test_konzept.py`); the supplement is written as
    "ergänzt 2026-11-25 11:12" on the same line.
 5. **Credit is distributed directly on the hub device ([E-14](../KONZEPT.md#e-14)).** No public endpoint and no view
-   for distributing credit is built. The runbook now names the direct database statement as the operator's way and
-   the `agent-hub billing credit` command (also on the hub device, with a reason in the history) as the equivalent;
-   "preferred" is dropped because it contradicted the decision. Check of the built state (no code change): the hub
-   has no HTTP endpoint that changes credit. The billing routes are read-only (`GET /v1/orgs/{org}/billing`,
-   `GET /v1/workgroups/{wg}/charges`, `GET /v1/tasks/{task}/charges`); `credit.grant` and `credit.set_balance` are
-   called only by the CLI `agent-hub billing credit`; accounts are otherwise created only by the settle job with the
-   start credit of the setting (0).
+   for distributing credit is built. The runbook now names the direct database statement as the operator's way and the
+   `agent-hub billing credit` command (also on the hub device, with a reason in the history) as the equivalent;
+   "preferred" is dropped because it contradicted the decision. Check of the built state (no code change): the hub has
+   no HTTP endpoint that grants or sets credit (runner bookings only reduce it). The billing routes are read-only
+   (`GET /v1/orgs/{org}/billing`, `GET /v1/workgroups/{wg}/charges`, `GET /v1/tasks/{task}/charges`); `credit.grant`
+   and `credit.set_balance` are called only by the CLI `agent-hub billing credit`; accounts are otherwise created only
+   by the settle job with the start credit of the setting (0).

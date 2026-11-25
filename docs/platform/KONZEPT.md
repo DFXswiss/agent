@@ -529,18 +529,17 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 ### E-14 – Abrechnung nur über Guthaben, das der Betreiber setzt
 
 - **Datum:** 2026-11-23 20:00, ergänzt 2026-11-25 11:12
-- **Regel:** Kostenpflichtige Ressourcen verbrauchen nur Guthaben; es gibt keinen Zahlungsweg und kein Aufladen in
-  der Oberfläche, das Guthaben setzt der Betreiber (Befehl mit Audit, zusätzlich dokumentierter direkter Weg in der
-  Datenbank). Guthaben entsteht nur auf zwei Wegen: gekauft oder vom Betreiber manuell verteilt; ein automatisches
-  Startguthaben gibt es nicht, auch nicht für neue Organisationen (Ergänzung vom 2026-11-25). Der Kauf ist heute
-  nicht gebaut (kein Zahlungsweg, siehe oben). Verteilt wird Guthaben durch einen direkten Eingriff des Betreibers
-  auf dem Hub-Gerät; ein öffentlicher Endpunkt oder eine Ansicht zum Verteilen wird nicht gebaut (Ergänzung vom
-  2026-11-25).
+- **Regel:** Kostenpflichtige Ressourcen verbrauchen nur Guthaben; es gibt keinen Zahlungsweg und kein Aufladen in der
+  Oberfläche, das Guthaben setzt der Betreiber (direkt in der Datenbank, gleichwertig ein Befehl mit Audit). Guthaben
+  entsteht nur auf zwei Wegen: gekauft oder vom Betreiber manuell verteilt; ein automatisches Startguthaben gibt es
+  nicht, auch nicht für neue Organisationen (Ergänzung vom 2026-11-25). Der Kauf ist heute nicht gebaut (kein
+  Zahlungsweg, siehe oben). Verteilt wird Guthaben durch einen direkten Eingriff des Betreibers auf dem Hub-Gerät; ein
+  öffentlicher Endpunkt oder eine Ansicht zum Verteilen wird nicht gebaut (Ergänzung vom 2026-11-25).
 - **Wortlaut:** „zahlungswege gibt es keinen, man kann nur guthaben verbrauchen, guthaben aufladen aktuell nicht
   möglich. guthaben setze ich nach eigenem gutdünken manuell in der db über […]. wir starten einfach mal so.“
   (interner Zugangsweg gekürzt). Am 2026-11-25 11:12 auf die Frage nach 20 USD Startguthaben je neuer
   Organisation: „es gibt kein automatisches startguthaben, guthaben wird nur entweder gekauft oder manuell von mir
-  verteilt. das ist alles“; am selben Vormittag: „das verteilen mache ich mit direktem remote ssh eingriff auf
+  verteilt. das ist alles“; am 2026-11-25 vormittags: „das verteilen mache ich mit direktem remote ssh eingriff auf
   […], kein öffentlicher api endpoint notwneid.g“ (Gerätename gekürzt; gemeint ist das Hub-Gerät, „notwneid.g“ =
   notwendig)
 - **Bezug:** präzisiert [Idee 47](#k-idee-47) („nach Aufladung“ = nach einer Gutschrift des Betreibers) und
@@ -867,11 +866,11 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
 
 ### Offene Abweichungen
 
-Stand 2026-11-24. Was hier steht, widerspricht dem gebauten Stand noch und wird vom genannten Paket geschlossen.
+Stand 2026-11-25. Was hier steht, widerspricht dem gebauten Stand noch und wird vom genannten Paket geschlossen.
 
 | Regel / Stelle | Gebauter Stand heute | Schließt |
 |---|---|---|
-| [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber die Schalter umzulegen nennt (gebaut, [ADR-079](adr/079-no-approval-as-precondition.md); ein Startguthaben gibt es nicht, [E-14](#e-14), entschieden 2026-11-25); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
+| [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber nennt, welche Schalter umgelegt werden (gebaut, [ADR-079](adr/079-no-approval-as-precondition.md); ein Startguthaben gibt es nicht, [E-14](#e-14), entschieden 2026-11-25); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
 | [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |

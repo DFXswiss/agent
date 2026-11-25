@@ -45,8 +45,12 @@ INSERT INTO hub.credit_account (org_id, balance_micro_usd) VALUES ('<org-id>', 5
 To add instead of set: `UPDATE hub.credit_account SET balance_micro_usd = balance_micro_usd + 50 * 1000000 WHERE
 org_id = '<org-id>';` (reading a value and writing it back would lose the charges booked in between).
 
-The same works with the operator command on the hub device, which also stores the reason in the history (audit row
-`credit.changed`):
+What happens: only `balance_micro_usd` changes. Within 5 s the hub's settle job sees that it differs from
+`booked_micro_usd`, records the difference in the history (`manual`, actor `database`), writes the audit row and aligns
+the columns. Charges arriving at the same time are taken from the new value; nothing is lost or counted twice.
+
+The same works with the operator command on the hub device, which books at once and also stores the reason in the
+history (`grant` or `set`, actor `operator`, audit row `credit.changed`):
 
 ```sh
 agent-hub billing credit --org <org-id> --add 50 --reason "credit for November"
@@ -54,10 +58,6 @@ agent-hub billing credit --org <org-id> --set 10 --reason "correction"
 agent-hub billing credit --all-orgs --add 5 --reason "goodwill"
 agent-hub billing show [--org <org-id>]          # balance, exhausted, account columns (JSON lines)
 ```
-
-What happens: only `balance_micro_usd` changes. Within 5 s the hub's settle job sees that it differs from
-`booked_micro_usd`, records the difference in the history (`manual`, actor `database`), writes the audit row and aligns
-the columns. Charges arriving at the same time are taken from the new value; nothing is lost or counted twice.
 
 ## 3. What users see when the credit is used up
 
