@@ -37,7 +37,7 @@
       },
       "capture": {
         "dev": {
-          "regex": "\"result\":\\{[^{}]*\"session_id\":\"([0-9a-f-]{36})\"",
+          "regex": "(?s).*\"result\":\\{[^{}]*\"session_id\":\"([0-9a-f-]{36})\"",
           "source": "messages"
         }
       },
@@ -308,7 +308,7 @@
       },
       "capture": {
         "review": {
-          "regex": "\"result\":\\{[^{}]*\"session_id\":\"([0-9a-f-]{36})\"",
+          "regex": "(?s).*\"result\":\\{[^{}]*\"session_id\":\"([0-9a-f-]{36})\"",
           "source": "messages"
         }
       },
@@ -468,7 +468,7 @@
       },
       "capture": {
         "merger": {
-          "regex": "\"result\":\\{[^{}]*\"session_id\":\"([0-9a-f-]{36})\"",
+          "regex": "(?s).*\"result\":\\{[^{}]*\"session_id\":\"([0-9a-f-]{36})\"",
           "source": "messages"
         }
       },
@@ -598,7 +598,7 @@
       },
       "capture": {
         "free": {
-          "regex": "\"result\":\\{[^{}]*\"session_id\":\"([0-9a-f-]{36})\"",
+          "regex": "(?s).*\"result\":\\{[^{}]*\"session_id\":\"([0-9a-f-]{36})\"",
           "source": "messages"
         }
       },
@@ -723,7 +723,7 @@
       },
       "capture": {
         "reader": {
-          "regex": "\"result\":\\{[^{}]*\"session_id\":\"([0-9a-f-]{36})\"",
+          "regex": "(?s).*\"result\":\\{[^{}]*\"session_id\":\"([0-9a-f-]{36})\"",
           "source": "messages"
         }
       },
