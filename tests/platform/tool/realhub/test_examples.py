@@ -184,6 +184,7 @@ def account(real: RealHub) -> tuple[dict[str, str], Tool]:
         "<account_code>": str(run_ok(bob, "status")["account_code"]),
         "<agent_id>": str(uuid7()),
         "<run_id>": "tr-" + "0" * 12,
+        "<browser_id>": "br-" + "0" * 12,
         "https://agent.dfx.swiss": real.origin,
     }, ada
 
