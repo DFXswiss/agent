@@ -179,7 +179,7 @@ def test_over_ssh_the_keys_go_to_the_file_and_the_output_says_where(
     def hangs(*args: object, **kwargs: object) -> object:
         raise subprocess.TimeoutExpired("security", state.SECURITY_TIMEOUT_S)
 
-    monkeypatch.setattr(state.subprocess, "run", hangs)
+    monkeypatch.setattr(subprocess, "run", hangs)
     assert state.run_security("/usr/bin/security", ["-i"], "x").returncode == 124
 
 
