@@ -7,7 +7,8 @@
 // - the **bandwidth choice** (Economical, Standard, Sharp), kept in this browser and sent as `browser_kbps`;
 // - the **action record**, newest first, in a window of `RECORD_ROWS` rows (never the whole record in the page):
 //   time, tool and action, target, typed text (as stored: passwords are masked by the runner), page, title, result or
-//   error, notice and the picture after the action – read and decoded only for the rows in the window;
+//   error, notice and the picture after the action – read and decoded only for the rows in the window; opening reads
+//   the newest page only, an older page is read when the window reaches beyond the held entries;
 // - the note that the work VM's own browser is neither recorded nor live (E-09).
 //
 // Pictures are shown from object URLs of the decrypted JPEG bytes, revoked as soon as a row leaves the window or the
@@ -260,13 +261,19 @@ function Record({ watch }: { readonly watch: BrowserWatch }) {
   const view = useSyncExternalStore(watch.subscribe, () => watch.view);
   const [offset, setOffset] = useState(0);
   const [moved, setMoved] = useState(false);
-  const { entries, loading, error: failed } = view.record;
+  const { entries, loading, more, error: failed } = view.record;
   const total = entries.length;
-  const start = Math.min(offset, Math.max(0, total - 1));
+  // while older pages exist the window may wait for them; else it stays within the held entries
+  const start = more ? offset : Math.min(offset, Math.max(0, total - 1));
   const rows: RecordEntry[] = [];
   for (let index = start; index < Math.min(total, start + RECORD_ROWS); index += 1) {
     rows.push(entries[total - 1 - index]!);
   }
+  // the window reaches beyond the held entries: the next older page is read (on demand, one page at a time)
+  const short = more && !loading && failed === null && start + RECORD_ROWS > total;
+  useEffect(() => {
+    if (short) void watch.record.older();
+  }, [watch, short, total]);
   const move = (to: number) => {
     setOffset(Math.max(0, to));
     setMoved(true);
@@ -295,13 +302,17 @@ function Record({ watch }: { readonly watch: BrowserWatch }) {
           {t('browser.record.empty')}
         </p>
       )}
-      {total > 0 && (
+      {rows.length > 0 && (
         <p
           className="text-sm text-gray-700"
           data-testid="browser.record.range"
           aria-live={moved ? 'polite' : undefined}
         >
-          {t('browser.record.range', { from: start + 1, to: start + rows.length, total })}
+          {t(more ? 'browser.record.range.more' : 'browser.record.range', {
+            from: start + 1,
+            to: start + rows.length,
+            total,
+          })}
         </p>
       )}
       <ol className="flex flex-col" data-testid="browser.record">
@@ -309,7 +320,7 @@ function Record({ watch }: { readonly watch: BrowserWatch }) {
           <Row key={entry.scopeSeq} record={watch.record} entry={entry} />
         ))}
       </ol>
-      {total > RECORD_ROWS && (
+      {(total > RECORD_ROWS || more) && (
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -332,7 +343,7 @@ function Record({ watch }: { readonly watch: BrowserWatch }) {
           <button
             type="button"
             className="min-h-11 rounded border border-gray-300 px-3 disabled:opacity-50"
-            disabled={start + RECORD_ROWS >= total}
+            disabled={start + RECORD_ROWS >= total && !more}
             onClick={() => move(start + RECORD_ROWS)}
             data-testid="browser.record.older"
           >

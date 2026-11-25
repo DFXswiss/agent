@@ -1,21 +1,22 @@
 // The action record of one session's platform browser (06-web.md section 5.4b, ADR-085 section 4): the session's
-// `browser.action` events, read with `GET /v1/scopes/{wg}/events?session=…&kinds=browser.action`.
+// `browser.action` events, read newest first with `GET /v1/scopes/{wg}/events?before=…&kinds=browser.action&session=…`
+// (03-api.md section 4: descending `scope_seq` below `before`, `next_before` while older ones exist).
 //
-// The events route pages only forward (`after`, ascending `scope_seq`; there is no `before`), so the record is read
-// in pages of `RECORD_PAGE` events from the start up to the hub's head, and the view shows it newest first. What is
-// kept is bounded by the pictures, not by the entries:
+// Opening reads only the newest page of `RECORD_PAGE` events (`pull`); older pages are read on demand when the view
+// reaches the end of what it holds (`older`), so opening costs the same for any length of record. What is kept:
 //
-// - every entry is kept **without** its picture (`RecordEntry`: the body with `image` reduced to type and size);
-// - the picture data (b64u) of at most `PICTURES` entries is kept, the most recently read or used ones (after the
-//   first pass the newest ones, which the view shows first); the picture of any other entry is read again on demand
-//   with `after=<scope_seq − 1>&limit=1` (`picture`), only for rows in view;
-// - entries arrive live as `browser_action` frames (`receive`; the stream does not replay them on a reconnect, so
-//   `pull` continues from the last read position after every (re)connect and fetches what was missed);
+// - every read entry **without** its picture (`RecordEntry`: the body with `image` reduced to type and size);
+// - the picture data (b64u) of at most `PICTURES` entries, the most recently read or used ones; the picture of any
+//   other entry is read again on demand with `before=<scope_seq + 1>&limit=1` (`picture`), only for rows in view;
+// - entries arrive live as `browser_action` frames (`receive`); the stream does not replay them, so after every
+//   (re)connect `pull` reads the newest page again, and further pages back only until it meets what it already holds
+//   (the actions missed while disconnected);
 // - entries are de-duplicated by `scope_seq`; an entry that cannot be verified, or whose body does not follow the
 //   contract, stays as a neutral row with its code (never dropped, never shown as content); a verified event of
 //   another session or kind is not part of the record.
 //
-// A failed page is read again after `RETRY_MS`; `stop()` ends every timer and ignores answers still under way.
+// One read at a time; a failed one is tried again after `RETRY_MS`; `stop()` ends every timer and ignores answers still
+// under way.
 import { b64uDecode } from '../encoding/b64u';
 import { parseTime } from '../encoding/time';
 import { HubError } from '../net/signedFetch';
@@ -63,17 +64,19 @@ export interface RecordState {
   readonly entries: readonly RecordEntry[];
   /** A page is being read. */
   readonly loading: boolean;
-  /** Everything up to the hub's head at the last page was read. */
-  readonly complete: boolean;
+  /** Older entries than the held ones exist (`older` reads the next page). */
+  readonly more: boolean;
   /** Code of the last failed page, null after a successful one. */
   readonly error: string | null;
 }
 
 interface Page {
   readonly events: StoredEvent[];
-  readonly next_after: number | null;
-  readonly head: number;
+  readonly next_before: number | null;
 }
+
+/** `before` of the newest page: above every `scope_seq`. */
+export const NEWEST = Number.MAX_SAFE_INTEGER;
 
 const isSeq = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 
@@ -82,15 +85,14 @@ function isPage(value: unknown): value is Page {
     isRecord(value) &&
     Array.isArray(value.events) &&
     value.events.every((item) => isRecord(item) && isSeq(item.scope_seq) && isRecord(item.event)) &&
-    (value.next_after === null || isSeq(value.next_after)) &&
-    isSeq(value.head)
+    (value.next_before === null || isSeq(value.next_before))
   );
 }
 
-/** The request target of the page after `after` (`limit` events). */
-export function recordTarget(target: RecordTarget, after: number, limit: number = RECORD_PAGE): string {
+/** The request target of the newest `limit` events below `before`. */
+export function recordTarget(target: RecordTarget, before: number, limit: number = RECORD_PAGE): string {
   const params = new URLSearchParams({
-    after: String(after),
+    before: String(before),
     limit: String(limit),
     kinds: ACTION_KIND,
     session: target.session,
@@ -136,10 +138,10 @@ export class ActionRecord {
   readonly #target: RecordTarget;
   readonly #timers: Timers;
   readonly #listeners = new Set<() => void>();
-  #state: RecordState = { entries: [], loading: false, complete: false, error: null };
-  /** Every matching event up to here was read. */
-  #through = 0;
-  #pulling = false;
+  #state: RecordState = { entries: [], loading: false, more: false, error: null };
+  /** `before` of the next older page: undefined before the first page, null when nothing older exists. */
+  #oldest: number | null | undefined = undefined;
+  #busy = false;
   #again = false;
   #timer: unknown = null;
   #stopped = false;
@@ -202,45 +204,82 @@ export class ActionRecord {
     if (changed) this.#set({ entries });
   }
 
-  /** Reads the record from the last read position up to the hub's head (one pull at a time). */
-  async pull(): Promise<void> {
-    if (this.#stopped) return;
-    if (this.#pulling) {
-      this.#again = true;
-      return;
-    }
+  /** One page below `before`: its read entries and `next_before`. */
+  async #page(before: number): Promise<{ readonly read: EventEntry[]; readonly next: number | null }> {
+    const page = await this.#context.client.request('GET', recordTarget(this.#target, before));
+    if (!isPage(page)) throw new HubError('unavailable', 200);
+    const items = page.events.filter((item) => item.scope_seq < before);
+    return { read: await this.#context.read(this.#target.org, this.#target.wg, items), next: page.next_before };
+  }
+
+  /** Runs `work` as the one read under way; a failure is reported and `retry` runs after `RETRY_MS`. */
+  async #run(work: () => Promise<boolean>, retry: () => void): Promise<void> {
     if (this.#timer !== null) {
       this.#timers.clearTimeout(this.#timer);
       this.#timer = null;
     }
-    this.#pulling = true;
-    this.#again = false;
+    this.#busy = true;
     this.#set({ loading: true });
     try {
-      for (;;) {
-        const after = this.#through;
-        const page = await this.#context.client.request('GET', recordTarget(this.#target, after));
-        if (!isPage(page)) throw new HubError('unavailable', 200);
-        const items = page.events.filter((item) => item.scope_seq > after && item.scope_seq <= page.head);
-        const read = await this.#context.read(this.#target.org, this.#target.wg, items);
-        if (this.#stopped) return;
-        this.#add(read);
-        this.#through = Math.max(after, page.next_after ?? page.head);
-        if (page.next_after === null) break;
-      }
+      if (!(await work())) return;
     } catch (error) {
-      this.#pulling = false;
+      this.#busy = false;
       if (this.#stopped) return;
       this.#set({ loading: false, error: error instanceof HubError ? error.code : 'unavailable' });
       this.#timer = this.#timers.setTimeout(() => {
         this.#timer = null;
-        void this.pull();
+        retry();
       }, RETRY_MS);
       return;
     }
-    this.#pulling = false;
-    this.#set({ loading: false, complete: true, error: null });
+    this.#busy = false;
+    this.#set({ loading: false, more: this.#oldest != null, error: null });
     if (this.#again) void this.pull();
+  }
+
+  /**
+   * Reads the newest page (opening, every (re)connect); after the first page, further pages back until they meet the
+   * held entries. Asked again while a read is under way, it runs once more afterwards.
+   */
+  async pull(): Promise<void> {
+    if (this.#stopped) return;
+    if (this.#busy) {
+      this.#again = true;
+      return;
+    }
+    this.#again = false;
+    await this.#run(
+      async () => {
+        const first = this.#oldest === undefined;
+        const held = this.#state.entries.at(-1)?.scopeSeq ?? 0;
+        let before = NEWEST;
+        for (;;) {
+          const { read, next } = await this.#page(before);
+          if (this.#stopped) return false;
+          this.#add(read);
+          if (first) this.#oldest = next;
+          if (first || next === null || next <= held) return true;
+          before = next;
+        }
+      },
+      () => void this.pull(),
+    );
+  }
+
+  /** Reads the next older page, if there is one and no read is under way. */
+  async older(): Promise<void> {
+    const before = this.#oldest;
+    if (this.#stopped || this.#busy || before == null) return;
+    await this.#run(
+      async () => {
+        const { read, next } = await this.#page(before);
+        if (this.#stopped) return false;
+        this.#add(read);
+        this.#oldest = next;
+        return true;
+      },
+      () => void this.older(),
+    );
   }
 
   /** A `browser_action` frame (`{scope_id, scope_seq, event}`) of the watched session. */
@@ -270,7 +309,7 @@ export class ActionRecord {
 
   async #fetchPicture(scopeSeq: number): Promise<Uint8Array | null> {
     try {
-      const page = await this.#context.client.request('GET', recordTarget(this.#target, scopeSeq - 1, 1));
+      const page = await this.#context.client.request('GET', recordTarget(this.#target, scopeSeq + 1, 1));
       if (!isPage(page)) return null;
       const items = page.events.filter((item) => item.scope_seq === scopeSeq);
       const read = await this.#context.read(this.#target.org, this.#target.wg, items);

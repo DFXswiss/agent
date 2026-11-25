@@ -356,14 +356,22 @@ describe('browser tab', () => {
     const t = await tab(Array.from({ length: 45 }, (_, index) => read(index + 1)));
     expect(rows()).toHaveLength(RECORD_ROWS);
     expect(rows()[0]).toHaveAttribute('data-seq', '45');
+    // only the newest page was read: older ones are loaded as the window reaches them
+    expect(t.hub.requests).toHaveLength(1);
+    expect(screen.getByTestId('browser.record.range')).toHaveTextContent(
+      'Entries 1–20, newest first; older ones are loaded as you page on',
+    );
     expect(screen.getByTestId('browser.record.newest')).toBeDisabled();
     expect(screen.getByTestId('browser.record.newer')).toBeDisabled();
     fireEvent.click(screen.getByTestId('browser.record.older'));
-    expect(screen.getByTestId('browser.record.range')).toHaveTextContent('Entries 21–40 of 45, newest first');
+    await waitFor(() => expect(rows()[0]).toHaveAttribute('data-seq', '25'));
+    expect(screen.getByTestId('browser.record.range')).toHaveTextContent('Entries 21–40, newest first;');
     expect(screen.getByTestId('browser.record.range')).toHaveAttribute('aria-live', 'polite');
     fireEvent.click(screen.getByTestId('browser.record.older'));
-    expect(rows()).toHaveLength(5);
+    await waitFor(() => expect(rows()).toHaveLength(5));
+    expect(screen.getByTestId('browser.record.range')).toHaveTextContent('Entries 41–45 of 45, newest first');
     expect(screen.getByTestId('browser.record.older')).toBeDisabled();
+    expect(t.hub.requests).toHaveLength(3);
     fireEvent.click(screen.getByTestId('browser.record.newer'));
     expect(rows()[0]).toHaveAttribute('data-seq', '25');
     fireEvent.click(screen.getByTestId('browser.record.newest'));
@@ -376,11 +384,13 @@ describe('browser tab', () => {
 });
 
 describe('record volume', () => {
-  it('keeps 5 000 actions to a window of rows and a bounded set of pictures', async () => {
+  it('opens a record of 5 000 actions with one request and keeps a window of rows and pictures', async () => {
     const t = await tab(Array.from({ length: 5000 }, (_, index) => read(index + 1)));
     expect(rows()).toHaveLength(RECORD_ROWS);
     expect(rows()[0]).toHaveAttribute('data-seq', '5000');
-    expect(screen.getByTestId('browser.record.range')).toHaveTextContent('Entries 1–20 of 5000, newest first');
+    // opening costs one page, as for a record of 20 actions
+    expect(t.hub.requests).toHaveLength(1);
+    expect(t.hub.read.mock.calls.flatMap(([, , items]) => items)).toHaveLength(RECORD_ROWS);
     await waitFor(() => expect(screen.getAllByTestId('browser.record.picture')).toHaveLength(RECORD_ROWS));
     // the window's pictures and the main picture are decoded, nothing else
     expect(urls.alive.size).toBeLessThanOrEqual(RECORD_ROWS + 1);
@@ -388,8 +398,9 @@ describe('record volume', () => {
     await waitFor(() => expect(rows()[0]).toHaveAttribute('data-seq', '4900'));
     await waitFor(() => expect(screen.getAllByTestId('browser.record.picture')).toHaveLength(RECORD_ROWS));
     expect(urls.alive.size).toBeLessThanOrEqual(RECORD_ROWS + 1);
-    // pictures out of the kept set were read one by one
-    expect(t.hub.requests.filter((target) => target.includes('limit=1&')).length).toBeGreaterThanOrEqual(RECORD_ROWS);
+    // paging back 100 entries read only the pages up to the window, not the record
+    const pages = t.hub.requests.filter((target) => target.includes(`limit=${RECORD_ROWS}&`));
+    expect(pages.length).toBe(6);
     expect(document.querySelectorAll('li').length).toBeLessThanOrEqual(RECORD_ROWS);
   }, 60_000);
 });

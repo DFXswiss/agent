@@ -43,6 +43,7 @@
   "record.loading": "Das Protokoll wird geladen… (bisher {count} Einträge)",
   "record.failed": "Das Protokoll konnte nicht geladen werden: {reason}. Es wird erneut versucht.",
   "record.range": "Einträge {from}–{to} von {total}, neueste zuerst",
+  "record.range.more": "Einträge {from}–{to}, neueste zuerst; ältere werden beim Weiterblättern geladen",
   "record.newest": "Neueste Einträge",
   "record.newer": "Neuere Einträge",
   "record.older": "Ältere Einträge",

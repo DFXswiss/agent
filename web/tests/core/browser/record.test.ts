@@ -1,48 +1,69 @@
-// The action record of a session's platform browser: forward pages up to the head, entries without picture data,
-// a bounded set of kept pictures (the newest after a pass), pictures read again on demand, live entries, neutral rows
-// for unreadable entries, de-duplication, retry after a failed page and stop.
+// The action record of a session's platform browser: the newest page on opening (one request for any length of
+// record), older pages on demand, the newest page again after a reconnect (and further back only over what was
+// missed), entries without picture data, a bounded set of kept pictures, pictures read again on demand, live entries,
+// neutral rows for unreadable entries, de-duplication, retry after a failed read and stop.
 import { describe, expect, it } from 'vitest';
-import { ActionRecord, PICTURES, RECORD_PAGE, recordTarget, RETRY_MS } from '../../../src/core/browser/record';
+import { ActionRecord, NEWEST, PICTURES, RECORD_PAGE, recordTarget, RETRY_MS } from '../../../src/core/browser/record';
 import { HubError } from '../../../src/core/net/signedFetch';
 import { ManualTimers } from '../net/stream';
 import { action, jpegOf, OTHER, read, RecordHub, SESSION, settle, stored, TARGET, WG } from './world';
 
 const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, index) => from + index);
+const seqs = (record: ActionRecord) => record.state.entries.map((entry) => entry.scopeSeq);
 
-function setup(seqs: number[] = []) {
-  const hub = new RecordHub(seqs.map((seq) => read(seq)));
+function setup(numbers: number[] = []) {
+  const hub = new RecordHub(numbers.map((seq) => read(seq)));
   const timers = new ManualTimers();
   const record = new ActionRecord(hub.context(timers), TARGET);
   return { hub, timers, record };
 }
 
 describe('reading the record', () => {
-  it('builds the page target of the events route', () => {
-    expect(recordTarget(TARGET, 7)).toBe(
-      `/v1/scopes/${WG}/events?after=7&limit=${RECORD_PAGE}&kinds=browser.action&session=${SESSION}`,
+  it('builds the page target of the events route, newest first', () => {
+    expect(recordTarget(TARGET, NEWEST)).toBe(
+      `/v1/scopes/${WG}/events?before=${NEWEST}&limit=${RECORD_PAGE}&kinds=browser.action&session=${SESSION}`,
     );
-    expect(recordTarget(TARGET, 0, 1)).toContain('limit=1');
+    expect(recordTarget(TARGET, 7, 1)).toContain('before=7&limit=1');
   });
 
-  it('reads every page up to the head, keeps no picture data in the entries and only the newest pictures', async () => {
-    const { hub, record } = setup(range(1, 75));
+  it('opens with the newest page only, whatever the length of the record, and reads older pages on demand', async () => {
+    const { hub, record } = setup(range(1, 5000));
     const changes: number[] = [];
     const unsubscribe = record.subscribe(() => changes.push(record.state.entries.length));
     await record.pull();
     unsubscribe();
-    expect(hub.requests).toHaveLength(4);
-    expect(record.state).toMatchObject({ loading: false, complete: true, error: null });
-    expect(record.state.entries.map((entry) => entry.scopeSeq)).toEqual(range(1, 75));
+    expect(hub.requests).toEqual([recordTarget(TARGET, NEWEST)]);
+    expect(seqs(record)).toEqual(range(5000 - RECORD_PAGE + 1, 5000));
+    expect(record.state).toMatchObject({ loading: false, more: true, error: null });
     expect(record.state.entries[0]!.action!.image).toEqual({ type: 'image/jpeg', width: 960, height: 600 });
     expect(record.state.entries[0]!.at).toBe(Date.parse('2026-11-25T12:00:00.000Z'));
-    expect(changes.at(-1)).toBe(75);
+    expect(changes.at(-1)).toBe(RECORD_PAGE);
+    await record.older();
+    expect(hub.requests.at(-1)).toBe(recordTarget(TARGET, 5000 - RECORD_PAGE + 1));
+    expect(seqs(record)).toEqual(range(5000 - 2 * RECORD_PAGE + 1, 5000));
     expect(record.pictures).toBe(PICTURES);
-    // a kept picture comes from memory, an older one is read again
-    expect(await record.picture(75)).toEqual(jpegOf(75));
-    expect(hub.requests).toHaveLength(4);
-    expect(await record.picture(1)).toEqual(jpegOf(1));
-    expect(hub.requests.at(-1)).toBe(recordTarget(TARGET, 0, 1));
+    // the most recently read pictures come from memory, an evicted one is read again
+    const oldest = 5000 - 2 * RECORD_PAGE + 1;
+    expect(await record.picture(oldest)).toEqual(jpegOf(oldest));
+    expect(hub.requests).toHaveLength(2);
+    expect(await record.picture(5000)).toEqual(jpegOf(5000));
+    expect(hub.requests.at(-1)).toBe(recordTarget(TARGET, 5001, 1));
     expect(record.pictures).toBe(PICTURES);
+  });
+
+  it('knows when nothing older exists and then reads no further page', async () => {
+    const { hub, record } = setup(range(1, RECORD_PAGE + 3));
+    await record.pull();
+    await record.older();
+    expect(seqs(record)).toEqual(range(1, RECORD_PAGE + 3));
+    expect(record.state.more).toBe(false);
+    await record.older();
+    expect(hub.requests).toHaveLength(2);
+    const empty = setup();
+    await empty.record.older();
+    expect(empty.hub.requests).toHaveLength(0);
+    await empty.record.pull();
+    expect(empty.record.state).toMatchObject({ entries: [], more: false });
   });
 
   it('keeps unreadable entries as neutral rows and leaves out other sessions and kinds', async () => {
@@ -70,38 +91,62 @@ describe('reading the record', () => {
     expect(hub.requests).toHaveLength(1);
   });
 
-  it('continues from the last position, drops events outside the page and de-duplicates', async () => {
-    const { hub, record } = setup([1, 2]);
+  it('reads the newest page again after a reconnect and further back only over what was missed', async () => {
+    const { hub, record } = setup(range(1, 30));
     await record.pull();
-    hub.put([read(3)]);
-    // an answer with an event at or below the position and one beyond the head is filtered
-    hub.request.mockImplementationOnce(async () => ({
-      events: [stored(read(2)), stored(read(3)), stored(read(9))],
-      next_after: null,
-      head: 3,
-    }));
+    expect(seqs(record)).toEqual(range(11, 30));
+    // nothing new: one request
     await record.pull();
-    expect(hub.requests).toHaveLength(1);
-    expect(record.state.entries.map((entry) => entry.scopeSeq)).toEqual([1, 2, 3]);
+    expect(hub.requests).toHaveLength(2);
+    // 45 actions missed: the newest page and back until the held ones are met; the older pages stay on demand
+    hub.put(range(31, 75).map((seq) => read(seq)));
     await record.pull();
-    expect(hub.requests.at(-1)).toContain('after=3');
-    expect(record.state.entries).toHaveLength(3);
+    expect(hub.requests.slice(2)).toEqual([
+      recordTarget(TARGET, NEWEST),
+      recordTarget(TARGET, 56),
+      recordTarget(TARGET, 36),
+    ]);
+    expect(seqs(record)).toEqual(range(11, 75));
+    expect(record.state.more).toBe(true);
+    await record.older();
+    expect(hub.requests.at(-1)).toBe(recordTarget(TARGET, 11));
+    expect(seqs(record)).toEqual(range(1, 75));
   });
 
-  it('reads once more when asked while reading', async () => {
-    const { hub, record } = setup([1]);
+  it('drops events at or above `before` and de-duplicates', async () => {
+    const { hub, record } = setup([1, 2]);
+    hub.request.mockImplementationOnce(async () => ({
+      events: [stored(read(2)), stored(read(2)), stored(read(1))],
+      next_before: 5,
+    }));
+    await record.pull();
+    expect(seqs(record)).toEqual([1, 2]);
+    hub.request.mockImplementationOnce(async () => ({ events: [stored(read(9))], next_before: 5 }));
+    await record.older();
+    expect(seqs(record)).toEqual([1, 2]);
+  });
+
+  it('reads once more when asked while reading, and not older while reading', async () => {
+    const { hub, record } = setup(range(1, 50));
     const first = record.pull();
     void record.pull();
+    void record.older();
     await first;
     await settle();
-    expect(hub.requests).toHaveLength(2);
+    expect(hub.requests).toEqual([recordTarget(TARGET, NEWEST), recordTarget(TARGET, NEWEST)]);
+    // a pull asked during an older read follows it
+    const older = record.older();
+    void record.pull();
+    await older;
+    await settle();
+    expect(hub.requests.slice(2)).toEqual([recordTarget(TARGET, 31), recordTarget(TARGET, NEWEST)]);
   });
 
   it('reads a failed page again after RETRY_MS and reports the code', async () => {
     const { hub, timers, record } = setup([1]);
     hub.fail = new HubError('rate_limited', 429);
     await record.pull();
-    expect(record.state).toMatchObject({ loading: false, complete: false, error: 'rate_limited' });
+    expect(record.state).toMatchObject({ loading: false, error: 'rate_limited' });
     expect(timers.pending).toEqual([RETRY_MS]);
     hub.fail = null;
     hub.malformed = true;
@@ -113,11 +158,24 @@ describe('reading the record', () => {
     timers.advance(RETRY_MS);
     await settle();
     expect(record.state.error).toBe('unavailable');
-    // a pull before the retry cancels it
+    // a read before the retry cancels it
     await record.pull();
     expect(timers.pending).toEqual([]);
-    expect(record.state).toMatchObject({ error: null, complete: true });
-    expect(record.state.entries).toHaveLength(1);
+    expect(record.state).toMatchObject({ error: null, more: false });
+    expect(seqs(record)).toEqual([1]);
+  });
+
+  it('reads a failed older page again after RETRY_MS', async () => {
+    const { hub, timers, record } = setup(range(1, 25));
+    await record.pull();
+    hub.fail = new HubError('unavailable', 503);
+    await record.older();
+    expect(record.state.error).toBe('unavailable');
+    hub.fail = null;
+    timers.advance(RETRY_MS);
+    await settle();
+    expect(seqs(record)).toEqual(range(1, 25));
+    expect(record.state.error).toBeNull();
   });
 
   it('ignores answers and failures after stop', async () => {
@@ -127,7 +185,14 @@ describe('reading the record', () => {
     await pending;
     expect(record.state.entries).toEqual([]);
     await record.pull();
+    await record.older();
     expect(hub.requests).toHaveLength(1);
+    const paging = setup(range(1, 25));
+    await paging.record.pull();
+    const older = paging.record.older();
+    paging.record.stop();
+    await older;
+    expect(paging.record.state.entries).toHaveLength(RECORD_PAGE);
     const failing = setup([1]);
     failing.hub.fail = new HubError('unavailable', 503);
     const failed = failing.record.pull();
@@ -161,7 +226,7 @@ describe('live entries', () => {
     await record.receive({ scope_id: WG, ...stored(read(5)) });
     await record.receive({ scope_id: WG, ...stored(read(3)) });
     await record.receive({ scope_id: WG, ...stored(read(5)) });
-    expect(record.state.entries.map((entry) => entry.scopeSeq)).toEqual([1, 3, 5]);
+    expect(seqs(record)).toEqual([1, 3, 5]);
     expect(await record.picture(5)).toEqual(jpegOf(5));
     record.stop();
     await record.receive({ scope_id: WG, ...stored(read(6)) });
@@ -171,43 +236,42 @@ describe('live entries', () => {
 
 describe('pictures read again', () => {
   async function older() {
-    const t = setup(range(1, PICTURES + 1));
+    const t = setup(range(1, 40));
     await t.record.pull();
+    await t.record.older();
     t.hub.requests.length = 0;
     return t;
   }
 
   it('reads a picture once for concurrent requests', async () => {
     const { hub, record } = await older();
-    const [a, b] = await Promise.all([record.picture(1), record.picture(1)]);
-    expect(a).toEqual(jpegOf(1));
-    expect(b).toEqual(jpegOf(1));
+    const [a, b] = await Promise.all([record.picture(40), record.picture(40)]);
+    expect(a).toEqual(jpegOf(40));
+    expect(b).toEqual(jpegOf(40));
     expect(hub.requests).toHaveLength(1);
   });
 
   it('answers null when the picture cannot be read again', async () => {
     const { hub, record } = await older();
     hub.fail = new HubError('unavailable', 503);
-    expect(await record.picture(1)).toBeNull();
+    expect(await record.picture(40)).toBeNull();
     hub.fail = null;
     hub.malformed = true;
-    expect(await record.picture(1)).toBeNull();
+    expect(await record.picture(40)).toBeNull();
     hub.malformed = false;
-    hub.request.mockImplementationOnce(async () => ({ events: [], next_after: null, head: 40 }));
-    expect(await record.picture(1)).toBeNull();
+    hub.request.mockImplementationOnce(async () => ({ events: [], next_before: null }));
+    expect(await record.picture(40)).toBeNull();
     hub.request.mockImplementationOnce(async () => ({
-      events: [stored(read(1, { session: OTHER }))],
-      next_after: null,
-      head: 40,
+      events: [stored(read(40, { session: OTHER }))],
+      next_before: null,
     }));
-    expect(await record.picture(1)).toBeNull();
+    expect(await record.picture(40)).toBeNull();
     hub.request.mockImplementationOnce(async () => ({
-      events: [stored(read(1, { body: action(1, { image: null }) }))],
-      next_after: null,
-      head: 40,
+      events: [stored(read(40, { body: action(40, { image: null }) }))],
+      next_before: null,
     }));
-    expect(await record.picture(1)).toBeNull();
-    const late = record.picture(1);
+    expect(await record.picture(40)).toBeNull();
+    const late = record.picture(40);
     record.stop();
     expect(await late).toBeNull();
   });

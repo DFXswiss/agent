@@ -93,12 +93,12 @@ export const stored = (entry: EventEntry): StoredEvent => ({
 });
 
 /**
- * A hub with the scope's matching events (ascending): it answers `GET …/events?after&limit` like the events route,
- * counts the requests and can be made to fail; `read` returns the entry each stored event carries.
+ * A hub with the scope's matching events: it answers `GET …/events?before&limit` newest first like the events route
+ * (descending, `next_before` while older ones exist), counts the requests and can be made to fail; `read` returns the
+ * entry each stored event carries.
  */
 export class RecordHub {
   events: EventEntry[] = [];
-  head = 0;
   requests: string[] = [];
   fail: HubError | null = null;
   malformed = false;
@@ -109,23 +109,23 @@ export class RecordHub {
 
   put(events: EventEntry[]): void {
     this.events.push(...events);
-    this.events.sort((a, b) => a.scopeSeq - b.scopeSeq);
-    this.head = Math.max(this.head, ...this.events.map((item) => item.scopeSeq));
+    this.events.sort((a, b) => b.scopeSeq - a.scopeSeq);
   }
 
-  readonly request = vi.fn(async (_method: string, target: string) => {
+  readonly request = vi.fn(async (_method: string, target: string): Promise<unknown> => {
     this.requests.push(target);
     if (this.fail !== null) throw this.fail;
     if (this.malformed) return { events: 'nope' };
     const params = new URL(target, 'https://hub.example').searchParams;
-    const after = Number(params.get('after'));
+    const before = Number(params.get('before'));
     const limit = Number(params.get('limit'));
-    const matching = this.events.filter((item) => item.scopeSeq > after);
+    const matching = this.events.filter((item) => item.scopeSeq < before);
     const page = matching.slice(0, limit);
     return {
       events: page.map(stored),
-      next_after: matching.length > limit ? page.at(-1)!.scopeSeq : null,
-      head: this.head,
+      next_after: null,
+      head: this.events[0]?.scopeSeq ?? 0,
+      next_before: matching.length > limit ? page.at(-1)!.scopeSeq : null,
     };
   });
 

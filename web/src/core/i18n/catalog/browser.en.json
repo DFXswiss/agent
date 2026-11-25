@@ -43,6 +43,7 @@
   "record.loading": "Loading the record… ({count} entries so far)",
   "record.failed": "The record could not be loaded: {reason}. It is tried again.",
   "record.range": "Entries {from}–{to} of {total}, newest first",
+  "record.range.more": "Entries {from}–{to}, newest first; older ones are loaded as you page on",
   "record.newest": "Newest entries",
   "record.newer": "Newer entries",
   "record.older": "Older entries",
