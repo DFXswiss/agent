@@ -125,6 +125,20 @@
     },
     {
       "fields": {
+        "head_sha": "dddddddddddddddddddddddddddddddddddddddd",
+        "number": 12,
+        "repo": "example-org/example-repo"
+      },
+      "params": {
+        "head_sha": "dddddddddddddddddddddddddddddddddddddddd",
+        "number": 12,
+        "repo": "example-org/example-repo"
+      },
+      "tag": "kRoHxzaseD6sLeAdmbc7Y_p7pwSIP6mTD4HTEx9SmzE",
+      "type": "github.merge"
+    },
+    {
+      "fields": {
         "branch": "feature/x",
         "commit_sha": "cccccccccccccccccccccccccccccccccccccccc",
         "repo": "example-org/example-repo"
@@ -136,6 +150,22 @@
       },
       "tag": "FAZaypsFwXuDAotpU1LkdavbkUCaqLCK2lnbVmUX4f8",
       "type": "github.push"
+    },
+    {
+      "fields": {
+        "head_sha": "dddddddddddddddddddddddddddddddddddddddd",
+        "number": 12,
+        "repo": "example-org/example-repo",
+        "session": "01a1ee56-5e00-7d1f-8f1b-340691d99f09"
+      },
+      "params": {
+        "head_sha": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+        "number": 12,
+        "repo": "Example-Org/Example-Repo",
+        "session": "01a1ee56-5e00-7d1f-8f1b-340691d99f09"
+      },
+      "tag": "RyipPiu0_LTH6aQ-GqLYod-HMvM9y-FhKtz74s5afrE",
+      "type": "review.verdict"
     },
     {
       "fields": {

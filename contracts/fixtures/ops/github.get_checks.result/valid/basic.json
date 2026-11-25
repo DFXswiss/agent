@@ -1,0 +1,18 @@
+{
+  "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "state": "success",
+  "check_runs": [
+    {
+      "name": "ci",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "statuses": [
+    {
+      "context": "lint",
+      "state": "success"
+    }
+  ],
+  "truncated": false
+}

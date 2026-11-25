@@ -1,0 +1,8 @@
+{
+  "repositories": [],
+  "protected_branches": [],
+  "pr_draft_default": true,
+  "merge_criteria": {
+    "reviewers": 2
+  }
+}

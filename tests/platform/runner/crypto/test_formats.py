@@ -719,6 +719,16 @@ def test_dedupe_fields_normalisation() -> None:
     assert dedupe.dedupe_fields("github.create_issue", {"repo": "a/b", "title": "t", "body": "x"})["body"] == (
         dedupe.sha256_hex("x")
     )
+    assert dedupe.dedupe_fields(
+        "review.verdict", {"repo": "A/B", "number": 4, "head_sha": "ABC", "session": SESSION, "outcome": "passed"}
+    ) == {"repo": "a/b", "number": 4, "head_sha": "abc", "session": SESSION}
+    assert dedupe.dedupe_fields(
+        "github.merge", {"repo": "A/B", "number": 4, "head_sha": "ABC", "method": "squash"}
+    ) == {
+        "repo": "a/b",
+        "number": 4,
+        "head_sha": "abc",
+    }
     assert {
         "github.checkout",
         "github.create_branch",
@@ -728,6 +738,8 @@ def test_dedupe_fields_normalisation() -> None:
         "github.comment",
         "github.create_issue",
         "subagent.request",
+        "review.verdict",
+        "github.merge",
     } == dedupe.DEDUPE_TYPES
 
 

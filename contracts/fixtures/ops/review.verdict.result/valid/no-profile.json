@@ -1,0 +1,8 @@
+{
+  "verdict_id": "01930051-0000-7000-8000-000000000001",
+  "repo": "example-org/example-repo",
+  "number": 7,
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "outcome": "rejected",
+  "profile": null
+}

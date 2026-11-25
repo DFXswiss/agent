@@ -58,7 +58,7 @@
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/dedupe.py",
-      "sha256": "6342ff0c863aadb97bdfd844eb69a98c393ed309dfe3f33bdba93e6047729268",
+      "sha256": "1d8347b7caff1b89f7840904d3c273d036513e56331b3215757e6e07dbf703e4",
       "source": "src/agent_hub/crypto/dedupe.py"
     },
     {
@@ -246,7 +246,7 @@
         }
       ],
       "copy": "src/agent_runner/crypto/vectors.py",
-      "sha256": "221600bd5ea717934a39f23ab00a366be1588871930b169c8b311907d98151f4",
+      "sha256": "c62b0fdf3fb6dfaf425bfe40a0671dc6e09b59b8fea012125da5ff9d7d219cde",
       "source": "src/agent_hub/crypto/vectors.py"
     },
     {
@@ -337,8 +337,8 @@
     },
     {
       "copy": "tests/platform/runner/crypto/test_formats.py",
-      "copy_sha256": "7104e044c9e90bede422143a64ea5d6feef5c24492fba0ef0215d0cb0811d2e6",
-      "sha256": "80599d0158367e7f4de8312cff64d4c1868da9b8577d6f296e1568a4c6ebd9f1",
+      "copy_sha256": "226ca12aa45df9c7802217495a5295b0a79841f63dea2544f918a7412be45bde",
+      "sha256": "24d98d769678cd56bdcbc0f1465ba0674106f35857efb0fdfdc728a2e4dd089a",
       "source": "tests/platform/hub/crypto/test_formats.py"
     },
     {

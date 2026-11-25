@@ -1,0 +1,15 @@
+{
+  "repo": "example-org/example-repo",
+  "ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "tool": "semgrep",
+  "passed": false,
+  "findings": {
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "low": 0,
+    "info": 3
+  },
+  "run_id": "tr-0123456789ab",
+  "summary": "One high finding."
+}

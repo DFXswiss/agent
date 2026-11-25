@@ -1,0 +1,17 @@
+{
+  "repo": "example-org/example-repo",
+  "number": 7,
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "outcome": "passed",
+  "summary": "Tests and review are fine.",
+  "evidence": [
+    {
+      "kind": "test_run",
+      "ref": "tr-0123456789ab"
+    },
+    {
+      "kind": "url",
+      "ref": "https://example.com/log"
+    }
+  ]
+}

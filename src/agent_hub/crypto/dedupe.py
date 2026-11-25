@@ -14,6 +14,8 @@ the runner (Python) and the web client (TypeScript) produce the same tag for the
 | `github.comment` | `repo`, `number`, `body` = sha256_hex(UTF-8 body) |
 | `github.create_issue` | `repo`, `title`, `body` = sha256_hex of the UTF-8 text (body empty when left out) |
 | `subagent.request` | `session` (parent), `prompt` = sha256_hex(UTF-8 purpose || 0x00 || UTF-8 prompt) |
+| `review.verdict` | `repo`, `number`, `head_sha`, `session` (KOR-51: one verdict per session and head) |
+| `github.merge` | `repo`, `number`, `head_sha` (KOR-51) |
 
 Repository names are lowercased, branch names lose a leading `refs/heads/`, SHAs are lowercased. A branch or ref
 name that is not printable ASCII is replaced by `sha256:<hex>` of its UTF-8 bytes (canonical JSON is ASCII-only).
@@ -107,13 +109,24 @@ _BUILDERS: dict[str, Callable[[Mapping[str, object]], dict[str, object]]] = {
         "session": _session(p),
         "prompt": sha256_hex(_text(p, "purpose") + "\x00" + _text(p, "prompt")),
     },
+    "review.verdict": lambda p: {
+        "repo": _repo(p),
+        "number": require_int(p.get("number"), 1),
+        "head_sha": _sha(p, "head_sha"),
+        "session": _session(p),
+    },
+    "github.merge": lambda p: {
+        "repo": _repo(p),
+        "number": require_int(p.get("number"), 1),
+        "head_sha": _sha(p, "head_sha"),
+    },
 }
 DEDUPE_TYPES = frozenset(_BUILDERS)
 """Operation types with duplicate protection (03-api.md section 9); the others have no dedupe fields."""
 
 
 def dedupe_fields(op_type: str, params: object) -> dict[str, object]:
-    """The normalised field set of `op_type` from its parameters plus `session` (checkout, subagent parent)."""
+    """The normalised field set of `op_type` from its parameters plus `session` (checkout, subagent parent, verdict)."""
     builder = _BUILDERS.get(op_type)
     if builder is None or not isinstance(params, Mapping):
         fail("header_invalid")

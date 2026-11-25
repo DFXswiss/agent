@@ -12,6 +12,8 @@
 // | `github.comment` | `repo`, `number`, `body` = sha256_hex(UTF-8 body) |
 // | `github.create_issue` | `repo`, `title` = sha256_hex(UTF-8 title), `body` = sha256_hex(UTF-8 body, empty when left out) |
 // | `subagent.request` | `session` (parent), `prompt` = sha256_hex(UTF-8 purpose || 0x00 || UTF-8 prompt) |
+// | `review.verdict` | `repo`, `number`, `head_sha`, `session` (KOR-51: one verdict per session and head) |
+// | `github.merge` | `repo`, `number`, `head_sha` (KOR-51) |
 //
 // Repository names and SHAs are lowercased, branch names lose a leading `refs/heads/`; a value that is not printable
 // ASCII is replaced by `sha256:<hex>` of its UTF-8 bytes. With an idempotency key the field set is
@@ -78,6 +80,17 @@ const BUILDERS: Record<string, (p: Params) => Promise<Fields>> = {
   'subagent.request': async (p) => ({
     session: session(p),
     prompt: await sha256Hex(`${F.text(p.purpose)}\0${F.text(p.prompt)}`),
+  }),
+  'review.verdict': async (p) => ({
+    repo: await repo(p),
+    number: F.requireInt(p.number, 1),
+    head_sha: await sha(p, 'head_sha'),
+    session: session(p),
+  }),
+  'github.merge': async (p) => ({
+    repo: await repo(p),
+    number: F.requireInt(p.number, 1),
+    head_sha: await sha(p, 'head_sha'),
   }),
 };
 

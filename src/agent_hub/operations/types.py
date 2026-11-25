@@ -42,6 +42,11 @@ OPERATION_TYPES = frozenset(
         "human.approval",
         "github.list_identities",
         "github.merge_base",
+        "github.list_reviews",
+        "github.get_checks",
+        "review.verdict",
+        "security.report",
+        "github.merge",
     }
 )
 SUBAGENT_REQUEST = "subagent.request"
@@ -57,6 +62,8 @@ WINDOWS: Mapping[str, int] = MappingProxyType(
         "github.comment": 86400,
         "github.create_issue": 86400,
         "subagent.request": 600,
+        "review.verdict": 2592000,
+        "github.merge": 86400,
     }
 )
 IDEMPOTENCY_WINDOW = 86400

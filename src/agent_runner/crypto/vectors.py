@@ -1180,6 +1180,8 @@ def build_dedupe() -> Json:
         "github.comment": {"repo": "example-org/example-repo", "number": 12, "body": "Looks good \u2013 danke!"},
         "github.create_issue": {"repo": "Example-Org/Example-Repo", "title": "Anmeldung schlägt fehl"},
         "subagent.request": {"session": SESSION, "purpose": "review", "prompt": "Prüfe den Diff."},
+        "review.verdict": {"repo": "Example-Org/Example-Repo", "number": 12, "head_sha": "D" * 40, "session": SESSION},
+        "github.merge": {"repo": "example-org/example-repo", "number": 12, "head_sha": "d" * 40},
     }
     tags = []
     for op_type in sorted(dedupe.DEDUPE_TYPES):

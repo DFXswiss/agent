@@ -599,6 +599,34 @@
         },
         "pr_draft_default": {
           "type": "boolean"
+        },
+        "merge_criteria": {
+          "type": "object",
+          "description": "formal criteria of github.merge (KOR-51, ADR-090 section 5); absent or all zero/false: only GitHub's own rules apply",
+          "properties": {
+            "passed_verdicts": {
+              "$ref": "../common.json#/$defs/count",
+              "description": "passed review.verdict operations on exactly the head needed, from distinct sessions other than the merging one with profile verdict_profile (0: none)"
+            },
+            "verdict_profile": {
+              "$ref": "../common.json#/$defs/agent_profile_name",
+              "description": "the profile the verdict sessions must have had (default review)"
+            },
+            "checks_green": {
+              "type": "boolean",
+              "description": "the check runs and statuses of the head must all have succeeded"
+            },
+            "github_approvals": {
+              "$ref": "../common.json#/$defs/count",
+              "description": "approving GitHub reviews on exactly the head by distinct accounts needed (0: none)"
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        },
+        "separate_duties": {
+          "type": "boolean",
+          "description": "a session that made or pushed a commit of the pull request may neither give a verdict on its head nor merge it, and its verdicts never count (KOR-51, ADR-090 section 6); default false"
         }
       },
       "required": [
@@ -1403,6 +1431,126 @@
             },
             "params": {
               "$ref": "../ops/objects.json#/$defs/params_github_merge_base"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.list_reviews"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_list_reviews"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.get_checks"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_get_checks"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "review.verdict"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_review_verdict"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "security.report"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_security_report"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "github.merge"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_github_merge"
             },
             "idempotency_key": {
               "$ref": "#/$defs/idempotency_key"

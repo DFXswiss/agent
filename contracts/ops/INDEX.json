@@ -163,6 +163,36 @@
       "params": "ops/github.merge_base.params.json",
       "result": "ops/github.merge_base.result.json",
       "dedupe": false
+    },
+    {
+      "type": "github.list_reviews",
+      "params": "ops/github.list_reviews.params.json",
+      "result": "ops/github.list_reviews.result.json",
+      "dedupe": false
+    },
+    {
+      "type": "github.get_checks",
+      "params": "ops/github.get_checks.params.json",
+      "result": "ops/github.get_checks.result.json",
+      "dedupe": false
+    },
+    {
+      "type": "review.verdict",
+      "params": "ops/review.verdict.params.json",
+      "result": "ops/review.verdict.result.json",
+      "dedupe": true
+    },
+    {
+      "type": "security.report",
+      "params": "ops/security.report.params.json",
+      "result": "ops/security.report.result.json",
+      "dedupe": false
+    },
+    {
+      "type": "github.merge",
+      "params": "ops/github.merge.params.json",
+      "result": "ops/github.merge.result.json",
+      "dedupe": true
     }
   ]
 }

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ops/security.report.params.json",
+  "title": "operation security.report params",
+  "description": "Parameters of the operation type security.report (03-api.md section 9); additionalProperties false, integers without booleans.",
+  "$ref": "objects.json#/$defs/params_security_report"
+}

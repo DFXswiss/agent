@@ -1559,7 +1559,8 @@
    "/$defs/positive/maximum": "integer",
    "/$defs/seq/maximum": "integer",
    "/$defs/vm_upgrade/properties/holds/maxItems": "answer",
-   "/$defs/vm_upgrade/properties/sessions/maxItems": "answer"
+   "/$defs/vm_upgrade/properties/sessions/maxItems": "answer",
+   "/$defs/agent_profile/properties/operations/maxItems": "answer"
   },
   "contracts/credentials/claude_subscription.json": {
    "/properties/scopes/maxItems": "answer",
@@ -1734,7 +1735,12 @@
    "/$defs/result_test_run/properties/exit_code/anyOf/0/maximum": "integer",
    "/$defs/result_workvm_request/properties/cpus/maximum": "integer",
    "/$defs/result_workvm_request/properties/disk_gib/maximum": "integer",
-   "/$defs/result_workvm_request/properties/memory_mib/maximum": "size"
+   "/$defs/result_workvm_request/properties/memory_mib/maximum": "size",
+   "/$defs/params_review_verdict/properties/evidence/maxItems": "size",
+   "/$defs/result_github_get_checks/properties/check_runs/maxItems": "page",
+   "/$defs/result_github_get_checks/properties/statuses/maxItems": "page",
+   "/$defs/result_github_list_reviews/properties/reviews/maxItems": "page",
+   "/$defs/result_github_list_reviews/properties/verdicts/maxItems": "page"
   },
   "contracts/outbox/objects.json": {
    "/$defs/body_audit/oneOf/0/properties/detail/properties/rule/maximum": "integer",
@@ -1773,6 +1779,15 @@
   "contracts/ws/sse/query.json": {
    "/properties/browser/maxItems": "open",
    "/properties/terminal/maxItems": "open"
+  },
+  "contracts/api/org-agent-profile-put.request.json": {
+   "/properties/operations/maxItems": "answer"
+  },
+  "contracts/api/workgroup-agent-profile-put.request.json": {
+   "/properties/operations/maxItems": "answer"
+  },
+  "contracts/api/workgroup-agent-profiles.response.json": {
+   "/properties/profiles/items/properties/operations/maxItems": "answer"
   }
  }
 }

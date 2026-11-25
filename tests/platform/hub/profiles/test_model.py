@@ -30,6 +30,11 @@ def test_roles_are_derived_from_the_classes() -> None:
     assert all(CLASSES[name] != model.MERGE for name in development)
     assert "test.run" in BUILTIN["security"].operations
     assert "github.commit" not in BUILTIN["security"].operations
+    assert "security.report" in BUILTIN["security"].operations
+    assert "review.verdict" in BUILTIN["review"].operations
+    assert "review.verdict" not in development
+    assert "github.merge" in BUILTIN["merge"].operations
+    assert not {"github.merge", "github.commit"} & BUILTIN["review"].operations
     assert all(item.reads == model.REACH_ALL for item in BUILTIN.values())
 
 

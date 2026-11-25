@@ -1,0 +1,9 @@
+{
+  "repo": "example-org/example-repo",
+  "ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "tool": "semgrep",
+  "passed": true,
+  "findings": {
+    "critical": 0
+  }
+}

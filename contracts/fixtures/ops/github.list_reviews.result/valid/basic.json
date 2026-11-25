@@ -1,0 +1,25 @@
+{
+  "number": 7,
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "reviews": [
+    {
+      "id": 11,
+      "author": "octo",
+      "state": "APPROVED",
+      "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "submitted_at": "2026-11-25T10:00:00Z",
+      "body": "Looks good."
+    }
+  ],
+  "verdicts": [
+    {
+      "verdict_id": "01930051-0000-7000-8000-000000000001",
+      "session_id": "01930051-0000-7000-8000-000000000002",
+      "profile": "review",
+      "outcome": "passed",
+      "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "created_at": "2026-11-25T10:00:01.000Z"
+    }
+  ],
+  "truncated": false
+}

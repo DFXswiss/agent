@@ -721,6 +721,22 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
         "",
         None,
     ),
+    # ADR-090 section 4 (contracts/changes/KOR-51.md)
+    "github.list_reviews": ("repo number github_identity", "number head_sha reviews verdicts truncated", "", None),
+    "github.get_checks": ("repo ref github_identity", "sha state check_runs statuses truncated", "", None),
+    "review.verdict": (
+        "repo number head_sha outcome summary evidence",
+        "verdict_id repo number head_sha outcome profile",
+        "repo number head_sha session",
+        2592000,
+    ),
+    "security.report": (
+        "repo ref tool passed findings run_id summary",
+        "report_id repo ref tool passed findings",
+        "",
+        None,
+    ),
+    "github.merge": ("repo number head_sha method github_identity", "merged sha number", "repo number head_sha", 86400),
 }
 SPEC_REPO = "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"
 # 03-api.md section 9: (type, field, longest valid value length).

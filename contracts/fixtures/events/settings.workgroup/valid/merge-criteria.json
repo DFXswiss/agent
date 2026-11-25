@@ -1,0 +1,12 @@
+{
+  "repositories": [],
+  "protected_branches": [],
+  "pr_draft_default": true,
+  "merge_criteria": {
+    "passed_verdicts": 1,
+    "verdict_profile": "review",
+    "checks_green": true,
+    "github_approvals": 0
+  },
+  "separate_duties": true
+}

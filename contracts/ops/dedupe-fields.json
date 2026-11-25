@@ -147,6 +147,44 @@
         }
       ],
       "window_seconds": 86400
+    },
+    "review.verdict": {
+      "fields": [
+        {
+          "name": "repo",
+          "source": "params.repo, lowercased"
+        },
+        {
+          "name": "number",
+          "source": "params.number"
+        },
+        {
+          "name": "head_sha",
+          "source": "params.head_sha, lowercased"
+        },
+        {
+          "name": "session",
+          "source": "ID of the requesting session"
+        }
+      ],
+      "window_seconds": 2592000
+    },
+    "github.merge": {
+      "fields": [
+        {
+          "name": "repo",
+          "source": "params.repo, lowercased"
+        },
+        {
+          "name": "number",
+          "source": "params.number"
+        },
+        {
+          "name": "head_sha",
+          "source": "params.head_sha, lowercased"
+        }
+      ],
+      "window_seconds": 86400
     }
   }
 }
