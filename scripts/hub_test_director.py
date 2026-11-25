@@ -28,7 +28,8 @@ test hub (`scripts/hub_test_server.py` starts it on `--port` with the hub's writ
 - `POST /devices/<id>/{vms,metrics,usage,rollups}`: VMs, metric samples, usage and rollups of the monitoring screen
   (`scripts/hub_test_metrics.py`, WEB-12).
 - `POST|GET /volume/seed`, `POST /volume/{invite,joined,live}`: the data set of the volume gate
-  (`scripts/hub_test_volume.py`, KOR-35).
+  (`scripts/hub_test_volume.py`, KOR-35), cached in a lane of the volume gate (`scripts/hub_test_volume_cache.py`,
+  HOT-21).
 - `POST /sessions/<id>/orchestrator {"pairing_id", "pub", "pop", "fp", "forged"?}`: the keys of a main orchestrator
   session registered by the session's device (`scripts/hub_test_orchestrator.py`, ADR-082 section 6); `GET` of the
   same path: the device's view with the stored handover. Both answer `{status, body}` of the hub.
@@ -51,7 +52,7 @@ import secrets
 import sys
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -477,6 +478,22 @@ def handler(director: Director) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
+def volume_lane(director: Director, environ: Mapping[str, str]) -> None:
+    """A lane of the volume gate (`scripts/hub_test_server.py --volume-cache`): take over the cached data set's
+    state, or store the data set in the cache once it is seeded (`scripts/hub_test_volume_cache.py`)."""
+    if "WEB_E2E_VOLUME_STATE" in environ:
+        director.volume.restore(json.loads(environ["WEB_E2E_VOLUME_STATE"]))
+    elif "WEB_E2E_VOLUME_SNAPSHOT" in environ:
+        target = Path(environ["WEB_E2E_VOLUME_SNAPSHOT"])
+        admin_url, signing_key = environ["WEB_E2E_VOLUME_ADMIN_URL"], environ["WEB_E2E_HUB_SIGNING_KEY"]
+        cache = _sibling("hub_test_volume_cache")
+
+        def snapshot(state: Json) -> None:
+            cache.store(target.parent, target.name, admin_url, state, signing_key)
+
+        director.volume.snapshot = snapshot
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     parser.add_argument("--port", type=int, required=True)
@@ -493,6 +510,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     pool: ConnectionPool[psycopg.Connection[Any]] = ConnectionPool(database, min_size=1, max_size=4, open=True)
     set_publisher(BusPublisher(pool))
     director = Director(args.hub, pool)
+    volume_lane(director, os.environ)
     threading.Thread(target=director.beat_forever, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), handler(director))
     try:

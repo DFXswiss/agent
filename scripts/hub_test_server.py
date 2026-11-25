@@ -17,12 +17,18 @@ browser session (600 per minute) is raised to `SESSION_PER_MINUTE` as well: the 
 for many views in a row, and the views it measures read every page of large lists (the limit is tested by the hub's
 own suite).
 
-    python scripts/hub_test_server.py --port 20262 --root-key <b64u> [--director-port 20264]
+With `--volume-cache DIR` (a lane of the volume gate, decisions/HOT-21.md) the volume data set comes from the cache
+of `scripts/hub_test_volume_cache.py`: a usable entry is restored into the migrated database before the hub starts
+(with the entry's hub signing key, its state handed to the device double); without one, the device double seeds on
+request and stores a new entry.
+
+    python scripts/hub_test_server.py --port 20262 --root-key <b64u> [--director-port 20264] [--volume-cache DIR]
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import secrets
 import signal
@@ -35,7 +41,7 @@ from typing import Any
 
 import psycopg
 from psycopg import sql
-from psycopg.conninfo import conninfo_to_dict
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from agent_hub.db.migrate import OWNER_VARIABLE, WRITER_VARIABLE
 
@@ -43,6 +49,7 @@ TEST_POSTGRES = "AGENT_HUB_TEST_POSTGRES"
 ROLE_ATTRIBUTES = sql.SQL("LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS")
 MODEL_CATALOG = Path(__file__).resolve().parents[1] / "contracts" / "model-catalog.example.json"
 DIRECTOR = Path(__file__).resolve().parent / "hub_test_director.py"
+VOLUME_CACHE = Path(__file__).resolve().parent / "hub_test_volume_cache.py"
 ANONYMOUS_PER_MINUTE = 100_000
 RECOVERY_PER_SOURCE = 100_000
 SESSION_PER_MINUTE = 100_000
@@ -76,11 +83,38 @@ def url(params: dict[str, Any], role: str, password: str, database: str) -> str:
     return f"postgresql://{role}:{password}@{host}:{params.get('port') or 5432}/{database}?sslmode={sslmode}"
 
 
+def volume_cache() -> Any:
+    """`scripts/hub_test_volume_cache.py` (scripts/ is no package)."""
+    spec = importlib.util.spec_from_file_location("hub_test_volume_cache", VOLUME_CACHE)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def volume_data(cache: Path, admin_url: str, signing_key: str) -> tuple[str, dict[str, str]]:
+    """The cached volume data set restored into the database at `admin_url`, or how the device double stores a new
+    one: the hub's signing key and the device double's environment."""
+    module = volume_cache()
+    name = module.key()
+    entry = module.usable(cache, name)
+    if entry is None:
+        print(f"volume data set {name}: not cached, seeded on request", flush=True)
+        snapshot = {"WEB_E2E_VOLUME_SNAPSHOT": str(cache / name), "WEB_E2E_VOLUME_ADMIN_URL": admin_url}
+        return signing_key, {**snapshot, "WEB_E2E_HUB_SIGNING_KEY": signing_key}
+    module.restore(admin_url, entry)
+    print(f"volume data set {name}: restored from the cache", flush=True)
+    state = (entry / "state.json").read_text()
+    return (entry / "signing.key").read_text().strip(), {"WEB_E2E_VOLUME_STATE": state}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--root-key", required=True)
     parser.add_argument("--director-port", type=int, default=None)
+    parser.add_argument("--volume-cache", type=Path, default=None)
     args = parser.parse_args(argv)
     environ = dict(os.environ)
     params = admin_params(environ)
@@ -109,11 +143,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         writer_url = url(params, writer, writer_password, name)
         migrate_env = {**base, OWNER_VARIABLE: url(params, owner, owner_password, name), WRITER_VARIABLE: writer_url}
         subprocess.run([sys.executable, "-m", "agent_hub.db", "migrate"], env=migrate_env, check=True)
+        signing_key, volume_env = secrets.token_hex(32), dict[str, str]()
+        if args.volume_cache is not None:
+            admin_url = make_conninfo(**{**params, "dbname": name})
+            signing_key, volume_env = volume_data(args.volume_cache, admin_url, signing_key)
         hub_env = {
             **base,
             "AGENT_HUB_PUBLIC_URL": f"http://localhost:{args.port}",
             "AGENT_HUB_DATABASE": writer_url,
-            "AGENT_HUB_SIGNING_KEY": secrets.token_hex(32),
+            "AGENT_HUB_SIGNING_KEY": signing_key,
             "AGENT_HUB_HUB_KEY_ID": "hub-web-test",
             "AGENT_HUB_PLATFORM_ROOT_KEY": args.root_key,
             "AGENT_HUB_HOST": "127.0.0.1",
@@ -140,7 +178,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "--hub",
                 hub_env["AGENT_HUB_PUBLIC_URL"],
             ]
-            director = subprocess.Popen(command, env={**base, "AGENT_HUB_DATABASE": writer_url})
+            director = subprocess.Popen(command, env={**base, **volume_env, "AGENT_HUB_DATABASE": writer_url})
         return hub.wait()
     finally:
         if director is not None:

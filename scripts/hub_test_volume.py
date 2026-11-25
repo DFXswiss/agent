@@ -43,10 +43,10 @@ from typing import Any, Protocol
 from uuid import UUID
 
 import psycopg
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from agent_hub.agents.store import acting_user
 from agent_hub.community import crypto as community_format
 from agent_hub.community import distribution as community_keys
 from agent_hub.community import store as community_store
@@ -64,6 +64,7 @@ from agent_hub.events.store import StoredEvent, append_events
 from agent_hub.log.entries import entry_hash, sign_log_entry
 from agent_hub.orgs.append import Appender, AppendResult, append_batch
 from agent_hub.orgs.genesis import create_org
+from agent_hub.stream.publish import Audience, publish
 
 Json = dict[str, Any]
 Pool = ConnectionPool[psycopg.Connection[Any]]
@@ -219,8 +220,10 @@ def chunks[T](items: Sequence[T], size: int = BATCH) -> Iterator[Sequence[T]]:
 class Seeder:
     """Builds the volume data set once per hub and serves the follow-up routes (module docstring)."""
 
-    def __init__(self, director: DirectorLike) -> None:
+    def __init__(self, director: DirectorLike, snapshot: Callable[[Json], None] | None = None) -> None:
         self.director = director
+        self.snapshot = snapshot
+        """Called with the exported state once the data set is complete, before any follow-up route changes it."""
         self.pool = director.pool
         self.lock = threading.Lock()
         self.state: Json = {"state": "idle"}
@@ -232,6 +235,8 @@ class Seeder:
         self.live_written = 0
         """Live events stored and announced so far (the spec relates what the page received to it)."""
         self.root_key = b""
+        self.community_key: tuple[int, bytes] | None = None
+        """The community epoch and key the founder holds (it serves the key requests of the lane)."""
 
     # --- routes ---
 
@@ -253,8 +258,11 @@ class Seeder:
         try:
             data = self.seed(counts)
             data["seconds"] = round(time.monotonic() - started, 1)
+            if self.snapshot is not None:
+                self.snapshot(self.export({"state": "done", "data": data}))
             with self.lock:
                 self.state = {"state": "done", "data": data}
+            self.serve_forever()
         except Exception as error:  # the spec reads the message
             with self.lock:
                 self.state = {
@@ -923,48 +931,26 @@ class Seeder:
     def community(self, founder: Actor, count: int) -> None:
         """`count` community messages of the founder over the last 20 days, sealed under the community key.
 
-        The key comes the way a newcomer gets it (14-community.md section 4.2): the founder joins and opens a key
-        request, a holder wraps the key for it - the suite's community keeper (`web/e2e/helpers/community.ts`, global
-        setup), which created epoch 1 - and the founder stores its self-wrap. The browser users of the volume projects
-        get the key from the keeper in the same way when they first open the community.
+        The lane of a volume project has no other community member (decisions/HOT-21.md): the founder creates epoch 1
+        with its self-wrap (14-community.md section 4.2, the first member) and holds the key, so it hands the key to
+        the browser users of the volume project when they first open the community (`serve_community`).
         """
         user = UUID(founder.id)
-        request_id = str(uuid7())
-        ephemeral = X25519PrivateKey.generate()
-        kem_text = b64u_encode(ephemeral.public_key().public_bytes_raw())
-        signature = community_format.sign_request(
-            founder.identity.sig, id=request_id, kem_pub=kem_text, user=founder.id
-        )
-        with self.pool.connection() as connection, connection.transaction():
-            community_store.join(connection, user, now())
-            if community_store.current_epoch(connection) is None:
-                raise RuntimeError("no community key: the suite's community keeper did not create epoch 1")
-            community_keys.put_request(
-                connection, user, request_id=UUID(request_id), kem_text=kem_text, signature=signature, now=now()
-            )
-        deadline = time.monotonic() + 120
-        while True:
-            with self.pool.connection() as connection:
-                row = connection.execute(
-                    "SELECT epoch, wrap FROM hub.community_request WHERE user_id = %s AND wrap IS NOT NULL", (user,)
-                ).fetchone()
-            if row is not None:
-                break
-            if time.monotonic() > deadline:
-                raise RuntimeError("the community keeper did not wrap the key for the volume founder within 120 s")
-            time.sleep(0.5)
-        epoch = int(row[0])
-        key = community_format.unwrap_community_key(
-            ephemeral, epoch=epoch, recipient=request_id, wrap_text=b64u_encode(bytes(row[1]))
-        )
+        epoch = 1
+        key = secrets.token_bytes(32)
         own = community_format.wrap_community_key(
             founder.identity.kem_public(), epoch=epoch, recipient=founder.id, key=key
         )
         own_sig = community_format.sign_community_wrap(
             founder.identity.sig, epoch=epoch, recipient=founder.id, wrap_text=own
         )
+        check = b64u_encode(community_format.key_check(key, epoch))
         with self.pool.connection() as connection, connection.transaction():
-            community_keys.store_self_wrap(connection, user, epoch=epoch, wrap_text=own, signature=own_sig, now=now())
+            community_store.join(connection, user, now())
+            community_keys.create_epoch(
+                connection, user, epoch=epoch, check_text=check, wrap_text=own, signature=own_sig, now=now()
+            )
+        self.community_key = (epoch, key)
         start = now() - timedelta(days=20)
         step = timedelta(days=20) / max(count, 1)
         messages = []
@@ -980,6 +966,97 @@ class Seeder:
             with self.pool.connection() as connection, connection.transaction():
                 for at, message in part:
                     community_store.post(connection, user, message, at)
+
+    # --- the founder as community key holder ---
+
+    def serve_community(self) -> int:
+        """Seals the community key to every open key request (as a holder's browser does on the `request` frame) and
+        announces it to the requester; the number of requests served."""
+        assert self.org is not None
+        if self.community_key is None:
+            return 0
+        epoch, key = self.community_key
+        founder = self.org.founder
+        holder = UUID(founder.id)
+        with self.pool.connection() as connection, connection.transaction():
+            requests = community_keys.open_requests(connection, holder, 100, now())
+            wraps = []
+            for request in requests:
+                wrap = community_format.wrap_community_key(
+                    b64u_decode(request["kem_pub"], 32), epoch=epoch, recipient=request["id"], key=key
+                )
+                sig = community_format.sign_community_wrap(
+                    founder.identity.sig, epoch=epoch, recipient=request["id"], wrap_text=wrap
+                )
+                wraps.append({"request": request["id"], "epoch": epoch, "wrap": wrap, "sig": sig})
+            served = community_keys.wrap_requests(connection, holder, wraps, now()) if wraps else []
+            requesters = [acting_user(connection, user) for user in served]
+            seq = community_store.head_seq(connection)
+        for requester in requesters:
+            publish(Audience(kind="user", id=requester), "community", {"change": "key", "seq": seq})
+        return len(served)
+
+    def serve_forever(self) -> None:
+        """`serve_community` once a second for the rest of the process (a failed round is printed and tried again)."""
+        while True:
+            try:
+                self.serve_community()
+            except Exception as error:  # printed; the next round tries again
+                print(f"volume: community key service failed: {error}", flush=True)
+            time.sleep(1.0)
+
+    # --- the cached data set (decisions/HOT-21.md) ---
+
+    def export(self, state: Json) -> Json:
+        """What this process knows beyond the database: the seed's answer, keys and ids of the follow-up routes."""
+        assert self.org is not None
+        assert self.device is not None
+        assert self.community_key is not None
+
+        def actor(item: Actor) -> Json:
+            raw = item.identity.kem.private_bytes_raw(), item.identity.sig.private_bytes_raw()
+            return {"id": item.id, "kind": item.kind, "kem": b64u_encode(raw[0]), "sig": b64u_encode(raw[1])}
+
+        return {
+            "state": state,
+            "org": {
+                "id": self.org.id,
+                "wg": self.org.wg,
+                "founder": actor(self.org.founder),
+                "keys": [
+                    [scope, scope_id, epoch, b64u_encode(key)]
+                    for (scope, scope_id, epoch), key in self.org.keys.items()
+                ],
+            },
+            "device": actor(self.device),
+            "live": [list(item) for item in self.live],
+            "workvm": self.workvm,
+            "unseedable": self.unseedable,
+            "root_key": b64u_encode(self.root_key),
+            "community": [self.community_key[0], b64u_encode(self.community_key[1])],
+        }
+
+    def restore(self, saved: Json) -> None:
+        """Takes over an exported state (its database restored next to it) and serves the community key."""
+
+        def actor(item: Json) -> Actor:
+            identity = Identity.from_raw(b64u_decode(str(item["kem"])), b64u_decode(str(item["sig"])))
+            return Actor(str(item["id"]), str(item["kind"]), identity)
+
+        org = saved["org"]
+        self.org = Org(str(org["id"]), str(org["wg"]), actor(org["founder"]))
+        self.org.keys = {(str(a), str(b), int(c)): b64u_decode(str(d)) for a, b, c, d in org["keys"]}
+        self.device = actor(saved["device"])
+        self.director.identities[self.device.id] = self.device.identity
+        self.live = [(str(task), str(session)) for task, session in saved["live"]]
+        self.workvm = saved["workvm"]
+        self.unseedable = dict(saved["unseedable"])
+        self.root_key = b64u_decode(str(saved["root_key"]))
+        self.community_key = (int(saved["community"][0]), b64u_decode(str(saved["community"][1])))
+        state = dict(saved["state"])
+        with self.lock:
+            self.state = {**state, "data": {**state["data"], "cached": True}}
+        threading.Thread(target=self.serve_forever, daemon=True).start()
 
     # --- follow-up routes ---
 
