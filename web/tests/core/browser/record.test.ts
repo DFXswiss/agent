@@ -3,7 +3,15 @@
 // missed), entries without picture data, a bounded set of kept pictures, pictures read again on demand, live entries,
 // neutral rows for unreadable entries, de-duplication, retry after a failed read and stop.
 import { describe, expect, it } from 'vitest';
-import { ActionRecord, NEWEST, PICTURES, RECORD_PAGE, recordTarget, RETRY_MS } from '../../../src/core/browser/record';
+import {
+  ActionRecord,
+  NEWEST,
+  PICTURES,
+  RECORD_PAGE,
+  rangeKey,
+  recordTarget,
+  RETRY_MS,
+} from '../../../src/core/browser/record';
 import { HubError } from '../../../src/core/net/signedFetch';
 import { ManualTimers } from '../net/stream';
 import { action, jpegOf, OTHER, read, RecordHub, SESSION, settle, stored, TARGET, WG } from './world';
@@ -19,6 +27,11 @@ function setup(numbers: number[] = []) {
 }
 
 describe('reading the record', () => {
+  it('names the position without a total while older entries are still to be read', () => {
+    expect(rangeKey(true)).toBe('browser.record.range.more');
+    expect(rangeKey(false)).toBe('browser.record.range');
+  });
+
   it('builds the page target of the events route, newest first', () => {
     expect(recordTarget(TARGET, NEWEST)).toBe(
       `/v1/scopes/${WG}/events?before=${NEWEST}&limit=${RECORD_PAGE}&kinds=browser.action&session=${SESSION}`,

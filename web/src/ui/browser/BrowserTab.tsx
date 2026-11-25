@@ -17,7 +17,7 @@ import './texts';
 import { type ChangeEvent, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { type Bandwidth, BANDWIDTH_IDS, bandwidthOf, kbpsOf } from '../../core/browser/bandwidth';
 import { frameAge, showsAge } from '../../core/browser/live';
-import type { ActionRecord, RecordEntry } from '../../core/browser/record';
+import { type ActionRecord, rangeKey, type RecordEntry } from '../../core/browser/record';
 import { newestOpen, selectBrowserStates } from '../../core/browser/sessions';
 import { BrowserWatch } from '../../core/browser/watch';
 import { formatRuntime } from '../../core/chat/workvm';
@@ -111,11 +111,10 @@ function Picture({ watch, current }: { readonly watch: BrowserWatch; readonly cu
             <span className="rounded bg-red-700 px-2 py-0.5 font-semibold text-white" data-testid="browser.live.badge">
               {t('browser.live.badge')}
             </span>
-            {showsAge(age) && (
-              <span className="text-amber-800" data-testid="browser.live.age">
-                {t('browser.live.age', { age: formatRuntime(age) })}
-              </span>
-            )}
+            {/* always rendered, hidden while the frame is fresh (no branch the built chunk could reprint) */}
+            <span className="text-amber-800" data-testid="browser.live.age" hidden={!showsAge(age)}>
+              {t('browser.live.age', { age: formatRuntime(age) })}
+            </span>
           </>
         ) : (
           recorded !== null && (
@@ -310,7 +309,7 @@ function Record({ watch }: { readonly watch: BrowserWatch }) {
           data-testid="browser.record.range"
           aria-live={moved ? 'polite' : undefined}
         >
-          {t(more ? 'browser.record.range.more' : 'browser.record.range', {
+          {t(rangeKey(more), {
             from: start + 1,
             to: start + rows.length,
             total,

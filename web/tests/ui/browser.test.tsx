@@ -241,12 +241,13 @@ describe('browser tab', () => {
     expect(picture).toHaveAttribute('data-seq', '4');
     expect(picture).toHaveAttribute('alt', "Live picture of the session's browser");
     expect(screen.getByTestId('browser.live.badge')).toHaveTextContent('Live');
-    expect(screen.queryByTestId('browser.live.age')).toBeNull();
+    expect(screen.getByTestId('browser.live.age')).not.toBeVisible();
     // an older frame and a frame of another browser session are not shown
     await act(async () => listener!.live(live(3)));
     await act(async () => listener!.live(live(9, undefined, BROWSER2)));
     expect(screen.getByTestId('browser.live')).toHaveAttribute('data-seq', '4');
     await act(async () => listener!.live(live(5, new Date(Date.now() - 45_000).toISOString())));
+    await waitFor(() => expect(screen.getByTestId('browser.live.age')).toBeVisible());
     await waitFor(() => expect(screen.getByTestId('browser.live.age')).toHaveTextContent(/4[45] s old/), {
       timeout: 3000,
     });

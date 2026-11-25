@@ -75,6 +75,9 @@ interface Page {
   readonly next_before: number | null;
 }
 
+/** The message key of the window's position: without the total while older entries are still to be read. */
+export const rangeKey = (more: boolean): string => (more ? 'browser.record.range.more' : 'browser.record.range');
+
 /** `before` of the newest page: above every `scope_seq`. */
 export const NEWEST = Number.MAX_SAFE_INTEGER;
 
