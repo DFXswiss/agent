@@ -219,7 +219,8 @@ user_identity: auth | user_id:uuid@ids kem_pub:bytes@logs sig_pub:bytes@logs rec
 user_settings: settings | user_id:uuid model_access:code model_id:code locale:code updated_at:time
   fallback_own_to_dfx:flag fallback_operator_to_platform:flag
 vm: tasks | id:code device_id:uuid wg_id:uuid state:code golden_version:code cpus:number@metrics
-  memory_mib:number@metrics disk_gib:number@metrics created_at:time state_at:time
+  memory_mib:number@metrics disk_gib:number@metrics created_at:time state_at:time upgrade:json replaced_by:code
+  switch_requested_at:time switch_requested_by:uuid
 wg: logs | id:uuid@ids org_id:uuid is_default:flag created_seq:number archived_seq:number
 wg_access: logs | wg_id:uuid user_id:uuid access:code granted_seq:number revoked_seq:number inherited:flag
 wg_device: logs | wg_id:uuid device_id:uuid assigned_seq:number unassigned_seq:number
