@@ -12,7 +12,7 @@
 // its computer (stage b adds the orchestrator session).
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { loadAgents, revokeAgent, revokeAllAgents } from '../../../../core/agents/list';
+import { loadAgents } from '../../../../core/agents/list';
 import { formatEventTime } from '../../../../core/i18n';
 import { requestErrorCode } from '../../../../core/requests/client';
 import { type AgentEntry, agentName, LIVE_STATES, mainOrchestrator } from '../../../../core/store/slices/agents';
@@ -118,8 +118,11 @@ export function AgentsSection() {
     setBusy(true);
     setFailure(null);
     try {
-      if (target === 'all') await revokeAllAgents(app.tasks);
-      else await revokeAgent(app.tasks, target!.agentId);
+      await import('../../../../core/agents/revoke').then((revoke) =>
+        target === 'all'
+          ? revoke.revokeAllAgents(app.tasks).then(() => undefined)
+          : revoke.revokeAgent(app.tasks, target!.agentId),
+      );
       setTarget(null);
     } catch (error) {
       setFailure(requestErrorCode(error));

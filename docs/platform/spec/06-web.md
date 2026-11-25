@@ -779,7 +779,10 @@ the terminal, charts and Markdown load lazily); time to interactive ≤ 3 s on a
 "Fast 3G"); measured in the E2E suite (median of three loads, no tolerance).
 
 The build enforces a tighter guard than the ceiling: `INITIAL_JS_BUDGET` in `web/build/budget.ts` is the measured first
-load plus 10 % (HOT-16: 199.3 KiB measured, guard 219 KiB). The guard runs in every package's gates (`npm run
+load plus 10 % (HOT-16: 199.3 KiB measured, guard 219 KiB), raised to 220 KiB by KOR-57: every client verifies the
+agent of a user as a sub-principal in the membership logs at sign-in (ADR-080), which needs about 1 KiB gzip in the first
+load; the confirmation of a pairing, the revocation, the job `agents` and the community check of agent authors load
+lazily. The guard runs in every package's gates (`npm run
 build:check`, the build tests and the E2E budget test), so growth of the first load is seen deterministically where it
 is caused, not later as a narrow timing failure. It is raised only together with a reason in this section. The first
 load is three scripts: the framework, the app modules imported statically from the entry (chunk group `$initial`) and

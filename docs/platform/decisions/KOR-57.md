@@ -32,3 +32,7 @@ Architecture in ADR-082; small decisions here.
    runs there); a person who wants them gone disconnects them, which deletes it at once. No deadline job (E-25).
 9. **Agent labels** are sealed to the user's identity as before, so an agent with its own key shows `label: null` in
    its own `agents list`; the user's clients show the names.
+10. **First-load guard raised to 220 KiB.** With the agent rules every client runs at sign-in (log verification,
+    catch-up) the first load grew by about 1 KiB gzip; the confirmation, the revocation, the job `agents` and the
+    community check of agent authors were moved to lazily loaded chunks first. 06-web.md §12.2 allows raising the
+    guard with a reason; the ceiling of 300 KiB stays.

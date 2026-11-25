@@ -21,7 +21,6 @@ import type { Prefs } from '../account/prefs';
 import { b64uDecode, b64uEncode } from '../encoding/b64u';
 import { uuid7 } from '../encoding/ids';
 import { formatTime, parseTime } from '../encoding/time';
-import { verifyCert } from '../crypto/agent';
 import * as C from '../crypto/community';
 import { CryptoError } from '../crypto/errors';
 import { type Identity, type KeyPair, x25519KeyPair } from '../crypto/keys';
@@ -485,23 +484,12 @@ export class Community {
 
   /**
    * An agent author (ADR-082): its certificate must verify under its user's signing key, which is pinned like the key
-   * of a user author (first sight, then it must not change); true when it does, null otherwise.
+   * of a user author (first sight, then it must not change); true when it does, null otherwise. The check is loaded
+   * only when an agent author appears (`agent-author.ts`, initial JavaScript guard).
    */
   async #agentOk(agentId: string, author: Author): Promise<true | null> {
-    const agent = author.agent;
-    if (!isRecord(agent) || !isText(agent.user) || !isText(agent.user_sig_pub) || !isText(agent.kem_pub)) return null;
-    try {
-      const pub = { kem: agent.kem_pub, sig: author.sig_pub };
-      await verifyCert(b64uDecode(agent.user_sig_pub, 32), agent.cert, {
-        agent: agentId,
-        pub,
-        user: agent.user,
-        gen: agent.gen,
-      });
-    } catch {
-      return null;
-    }
-    return this.#pinned(agent.user, agent.user_sig_pub) ? true : null;
+    const user = await import('./agent-author').then((check) => check.agentUser(agentId, author.sig_pub, author.agent));
+    return user !== null && this.#pinned(user.id, user.sigPub) ? true : null;
   }
 
   async #read(row: Row, author: Author | undefined): Promise<CommunityMessage> {

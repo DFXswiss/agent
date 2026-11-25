@@ -6,7 +6,7 @@
 //   `remote` marks an agent paired from another computer (ADR-067; a row without it, from a hub of before KOR-42, is
 //   not remote). `own_identity`, `held_identity`, `gen` and `revoked_reason` (ADR-082) are false/null in a row of a
 //   hub that does not send them; `pub` and `cert` (when the hub sends them) only for the job. `fetchAgentRows` is the checked list without labels (the background job `agents`).
-// - `revokeAgent`: `DELETE /v1/me/agents/{id}`; `revokeAllAgents`: `DELETE /v1/me/agents` (→ the number revoked).
+// - `revokeAgent` (`revoke.ts`, loaded when somebody disconnects): `DELETE /v1/me/agents/{id}`; `revokeAllAgents`: `DELETE /v1/me/agents` (→ the number revoked).
 //   Both take effect at once at the hub; the list is loaded again afterwards, then the log clean-up runs at once
 //   (`cleanUp`: the log job of every org of the user, which runs the job `agents` – the revoked agent is removed from
 //   every log with its rotations – and the credential-key rotation after it, ADR-082 section 4).
@@ -31,7 +31,6 @@ import {
 import type { TasksContext } from '../tasks/pull';
 
 type Context = Pick<TasksContext, 'store' | 'client'>;
-type RevokeContext = Pick<TasksContext, 'store' | 'client' | 'refreshLog'>;
 
 /** The `agent.account_change` actions after which the agent list is loaded again. */
 export const LIST_CHANGES: readonly string[] = ['agent_paired_remote', 'agent_revoked'];
@@ -134,24 +133,4 @@ export async function loadAgents(context: Context): Promise<void> {
   } catch (error) {
     if (store.generation === generation) setAgentsError(store, requestErrorCode(error));
   }
-}
-
-/** The log clean-up after a revocation (module comment): the log job of every org the store holds, one at a time. */
-export async function cleanUp(context: RevokeContext): Promise<void> {
-  for (const org of Object.keys(context.store.getState().orgs.byId).sort()) await context.refreshLog(org);
-}
-
-/** Disconnects one agent at once, reloads the list, then removes it from the logs. */
-export async function revokeAgent(context: RevokeContext, agentId: string): Promise<void> {
-  await context.client.request('DELETE', `/v1/me/agents/${encodeURIComponent(agentId)}`);
-  await loadAgents(context);
-  await cleanUp(context);
-}
-
-/** Disconnects every agent of the user at once, reloads the list, cleans up the logs; returns how many were revoked. */
-export async function revokeAllAgents(context: RevokeContext): Promise<number> {
-  const body = await context.client.request('DELETE', '/v1/me/agents');
-  await loadAgents(context);
-  await cleanUp(context);
-  return isRecord(body) && Number.isSafeInteger(body.revoked) ? (body.revoked as number) : 0;
 }

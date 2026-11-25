@@ -3,7 +3,8 @@
 // their code, revoking one and all with the log clean-up right after it; the fields of an agent with its own identity
 // (ADR-082).
 import { describe, expect, it } from 'vitest';
-import { agentChanges, fetchAgentRows, loadAgents, revokeAgent, revokeAllAgents } from '../../../src/core/agents/list';
+import { agentChanges, fetchAgentRows, loadAgents } from '../../../src/core/agents/list';
+import { revokeAgent, revokeAllAgents } from '../../../src/core/agents/revoke';
 import { sealLabel } from '../../../src/core/crypto/agent';
 import { Identity } from '../../../src/core/crypto/keys';
 import { HubError } from '../../../src/core/net/signedFetch';

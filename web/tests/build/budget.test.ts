@@ -1,5 +1,5 @@
 // The performance budget of 06-web.md section 12.2 in the build check: entry scripts and module preloads of
-// index.html, static imports followed transitively, dynamic imports left out, gzip sizes against the guard of 219 KiB.
+// index.html, static imports followed transitively, dynamic imports left out, gzip sizes against the guard of 220 KiB.
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -56,7 +56,7 @@ describe('initial JS budget', () => {
     expect(budgetProblems(dir)).toEqual([]);
     const total = scripts.reduce((sum, script) => sum + script.gzip, 0);
     expect(budgetProblems(dir, total - 1)[0]).toMatch(/^initial JS .* KiB gzip exceeds .* KiB \(assets\/entry\.js/);
-    expect(INITIAL_JS_BUDGET).toBe(219 * 1024);
+    expect(INITIAL_JS_BUDGET).toBe(220 * 1024);
   });
 
   it('is part of the build check', () => {
@@ -69,6 +69,6 @@ describe('initial JS budget', () => {
       commit: 'a'.repeat(40),
       rootKey: '4es19ejjw83HvBQaTcmCqzLKLe7OQffXqDUsvsMeYkE',
     });
-    expect(check(dir, '4es19ejjw83HvBQaTcmCqzLKLe7OQffXqDUsvsMeYkE').join('\n')).toMatch(/exceeds 219 KiB/);
+    expect(check(dir, '4es19ejjw83HvBQaTcmCqzLKLe7OQffXqDUsvsMeYkE').join('\n')).toMatch(/exceeds 220 KiB/);
   });
 });

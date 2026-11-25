@@ -6,7 +6,7 @@
 // loads the list again, so the banner also appears in a client that was open while the pairing was confirmed
 // elsewhere. "Disconnect" revokes the agent at once and reloads the list.
 import { useEffect, useState } from 'react';
-import { agentChanges, loadAgents, revokeAgent } from '../../core/agents/list';
+import { agentChanges, loadAgents } from '../../core/agents/list';
 import { formatEventTime } from '../../core/i18n';
 import { requestErrorCode } from '../../core/requests/client';
 import { remoteOrchestrator } from '../../core/store/slices/agents';
@@ -29,7 +29,7 @@ export function RemoteAgentBanner() {
     setBusy(true);
     setFailure(null);
     try {
-      await revokeAgent(app.tasks, remote.agentId);
+      await import('../../core/agents/revoke').then((revoke) => revoke.revokeAgent(app.tasks, remote.agentId));
     } catch (caught) {
       setFailure(requestErrorCode(caught));
     } finally {
