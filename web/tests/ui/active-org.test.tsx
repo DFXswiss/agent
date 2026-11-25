@@ -3,6 +3,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
+import { putEvents } from '../../src/core/store/slices/events';
 import { setProfile } from '../../src/core/store/slices/me';
 import { setActiveOrg } from '../../src/core/store/slices/session';
 import { createI18n } from '../../src/core/i18n';
@@ -44,11 +45,26 @@ describe('active org of the settings', () => {
         { org_id: other, role: 'member', private: true, default_wg: t.wg },
       ],
     });
+    // the org's verified profile names it
+    putEvents(t.store, t.org, [
+      {
+        org: t.org,
+        scopeId: t.org,
+        scopeSeq: 1,
+        receivedAt: null,
+        event: {},
+        status: 'verified',
+        code: null,
+        header: { id: 'p1', kind: 'org.profile', author: t.me.id },
+        body: { name: 'Acme' },
+      },
+    ] as never);
     const { activate, rememberOrg } = mountPicker(t, 'de');
     const select = screen.getByTestId('x.org.select');
     expect(select).toHaveValue('');
     expect(select).toHaveTextContent('Organisation wählen');
     expect(select).toHaveTextContent('(privat)');
+    expect(select).toHaveTextContent('Acme');
     // the org without a verified log is read so its name can show
     expect(t.context.refreshLog).toHaveBeenCalledWith(other);
     act(() => {
