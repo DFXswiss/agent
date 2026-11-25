@@ -290,14 +290,14 @@ describe('the page My subscriptions', () => {
     setPhase(t.store, 'unlocked');
     mount(t, [{ path: '/subscriptions', element: <SubscriptionsScreen /> }], '/subscriptions');
     fireEvent.click(await screen.findByTestId('subscriptions.row.login'));
-    await screen.findByTestId('claude.waiting');
+    await waitFor(() => expect(d.sent).toHaveLength(1));
     await hub.add(A, body({ name: 'Out' }));
     await d.respond(0, { step: 'done' }, true);
     await waitFor(() => expect(screen.queryByTestId('subscriptions.row.login')).toBeNull());
     fireEvent.click(screen.getByTestId('subscriptions.add'));
     fireEvent.change(screen.getByTestId('subadd.name'), { target: { value: 'New' } });
     fireEvent.click(screen.getByTestId('subadd.start'));
-    await screen.findByTestId('claude.waiting');
+    await waitFor(() => expect(d.sent).toHaveLength(2));
     await d.respond(1, { step: 'done' }, true);
     expect(await screen.findByTestId('subscriptions.add')).toBeVisible();
   });

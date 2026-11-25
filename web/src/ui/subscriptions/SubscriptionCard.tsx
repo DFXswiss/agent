@@ -26,9 +26,9 @@ export function SubscriptionCard({ item, onChanged }: { readonly item: Subscript
   const { t } = useI18n();
   const reason = useReason();
   const [open, setOpen] = useState<Open>('none');
-  const [initial] = useState(() => ({ name: item.name ?? '', note: item.note ?? '' }));
-  const [name, setName] = useState(initial.name);
-  const [note, setNote] = useState(initial.note);
+  const current = { name: item.name ?? '', note: item.note ?? '' };
+  const [name, setName] = useState(current.name);
+  const [note, setNote] = useState(current.note);
   const [failure, setFailure] = useState<string | null>(null);
   const [revoke, setRevoke] = useState(false);
   const run = async (work: () => Promise<void>, after: () => void = () => setOpen('none')) => {
@@ -44,8 +44,8 @@ export function SubscriptionCard({ item, onChanged }: { readonly item: Subscript
   const saveLabels = (event: FormEvent) => {
     event.preventDefault();
     void run(async () => {
-      if (name.trim() !== initial.name) await renameSubscription(app.tasks, item.id, name);
-      if (note.trim() !== initial.note) await noteSubscription(app.tasks, item.id, note);
+      if (name.trim() !== current.name) await renameSubscription(app.tasks, item.id, name);
+      if (note.trim() !== current.note) await noteSubscription(app.tasks, item.id, note);
     });
   };
   const title = item.primary ? t('subscription-login.primary') : (item.name ?? t('subscription-login.unnamed'));
