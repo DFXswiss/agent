@@ -244,6 +244,7 @@
    "MAX_CATALOG_BYTES": "size",
    "MAX_CONTEXT_BYTES": "size",
    "MAX_CONTEXT_KEEP": "size",
+   "MAX_DEVICE_FAILOVER_SECONDS": "time",
    "MAX_DEVICE_ONLINE_SECONDS": "size",
    "MAX_HOST_NAME": "size",
    "MAX_LIST": "page",
@@ -817,16 +818,30 @@
   "src/agent_runner/queries/common.py": {
    "NAME_MAX": "size"
   },
+  "src/agent_runner/queries/device_api.py": {
+   "MAX_OPERATIONS": "page",
+   "MAX_SESSIONS": "open"
+  },
   "src/agent_runner/queries/projection.py": {
-   "MAX_ENTRIES": "page"
+   "MAX_ENTRIES": "page",
+   "MAX_ENTRY_TEXT": "size",
+   "MAX_MESSAGE_TEXT": "size"
   },
   "src/agent_runner/queries/tools/get_operation.py": {
    "MAX_WAIT_S": "time"
   },
   "src/agent_runner/queries/tools/get_task_messages.py": {
+   "DEFAULT_LIMIT": "page",
+   "MAX_LIMIT": "page",
    "MAX_SEQ": "integer"
   },
+  "src/agent_runner/queries/tools/list_operations.py": {
+   "DEFAULT_LIMIT": "page",
+   "MAX_LIMIT": "page"
+  },
   "src/agent_runner/queries/tools/list_tasks.py": {
+   "DEFAULT_LIMIT": "page",
+   "MAX_LIMIT": "page",
    "TITLE_MAX": "size"
   },
   "src/agent_runner/quota/operator.py": {
@@ -908,6 +923,9 @@
    "MAX_IDLE_CONNECTIONS": "rate",
    "MAX_RESPONSE_BYTES": "size",
    "RETRY_AFTER_MAX_S": "time"
+  },
+  "src/agent_runner/sync/lease.py": {
+   "MAX_FAILOVER_SECONDS": "time"
   },
   "src/agent_runner/sync/push.py": {
    "HEDGE_MAX_BYTES": "size",
@@ -1158,6 +1176,8 @@
    "/oneOf/1/properties/dfx_key_held/maxItems": "answer",
    "/oneOf/1/properties/dfx_keys/properties/keys/maxItems": "answer",
    "/oneOf/1/properties/dfx_keys/properties/requests/maxItems": "answer",
+   "/oneOf/1/properties/failover_seconds/maximum": "time",
+   "/oneOf/1/properties/failovers/maxItems": "answer",
    "/oneOf/1/properties/github_defaults/maxItems": "answer",
    "/oneOf/1/properties/orgs/maxItems": "answer",
    "/oneOf/1/properties/pending_prompts/maxItems": "answer",
@@ -1516,6 +1536,7 @@
   "contracts/guest/journal/record.json": {
    "/$defs/body_session_file/oneOf/2/properties/paths/maxItems": "answer",
    "/$defs/body_session_hook/properties/rule/maximum": "integer",
+   "/$defs/body_session_hook_summary/properties/tools/maxProperties": "answer",
    "/$defs/body_session_terminal/properties/cols/maximum": "integer",
    "/$defs/body_session_terminal/properties/frames/items/items/anyOf/0/maximum": "integer",
    "/$defs/body_session_terminal/properties/frames/items/maxItems": "answer",
