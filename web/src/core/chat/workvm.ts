@@ -16,6 +16,7 @@
 //   session runs (with the countdown to the 10 s target of KONZEPT §3), `running`, `stopped` (paused session),
 //   `deleted` (the last VM, with its reason) or `none`.
 import { parseTime } from '../encoding/time';
+import { isRecord } from '../registry';
 import {
   type Check,
   count,
@@ -33,7 +34,6 @@ import {
   time,
 } from './shape';
 import { parseTestRun, TEST_RUN_KIND } from './testrun';
-import { parseBrowserState, STATE_KIND as BROWSER_STATE_KIND } from '../browser/shape';
 import { FINAL_STATES, type OperationRow } from '../store/slices/operations';
 import type { ScopeEvents } from '../store/slices/events';
 import type { StoreState } from '../store/store';
@@ -140,7 +140,8 @@ export const outputTruncated = (run: WorkvmRun): boolean =>
 function runKey(kind: string, body: unknown): string | undefined {
   if (kind === RUN_KIND) return parseWorkvmRun(body)?.job_id;
   if (kind === TEST_RUN_KIND) return parseTestRun(body)?.run_id;
-  if (kind === BROWSER_STATE_KIND) return parseBrowserState(body)?.browser_id;
+  // the browser ID alone (the body check of `core/browser/shape.ts` stays out of the start of the app)
+  if (kind === 'browser.state' && isRecord(body) && typeof body.browser_id === 'string') return body.browser_id;
   return undefined;
 }
 

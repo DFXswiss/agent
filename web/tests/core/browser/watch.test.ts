@@ -21,7 +21,15 @@ function setup() {
     listeners.push(listener);
     return handle;
   });
-  const context: BrowserContext = { ...hub.context(), store, watch: watchFn, opener };
+  const context: BrowserContext = {
+    ...hub.context(),
+    store,
+    watches: (create) => {
+      create(() => undefined);
+      return { watch: watchFn };
+    },
+    opener,
+  };
   const watch = new BrowserWatch(context, { org: ORG, wg: WG, task: TASK, session: SESSION }, 250);
   return { store, hub, listeners, handle, opener, watchFn, watch };
 }
@@ -67,5 +75,14 @@ describe('BrowserWatch', () => {
     expect(t.handle.release).toHaveBeenCalledTimes(1);
     t.watch.setKbps(250);
     expect(t.handle.setKbps).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens live frames with the keys of the store without an opener of its own', async () => {
+    const t = setup();
+    const context: BrowserContext = { ...t.hub.context(), store: t.store, watches: () => ({ watch: t.watchFn }) };
+    const watch = new BrowserWatch(context, { org: ORG, wg: WG, task: TASK, session: SESSION }, 1000);
+    putEvents(t.store, WG, [read(10, { kind: 'browser.state', body: state() })]);
+    await watch.live.receive({ session_id: SESSION, frame: { browser: BROWSER, seq: 1 } });
+    expect(watch.live.state.error).toBe('header_invalid');
   });
 });

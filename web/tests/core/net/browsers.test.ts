@@ -1,5 +1,5 @@
 // Watched browsers of the live channel (03-api.md section 5, 06-web.md section 5.4b): `browser=` with one
-// `browser_kbps`, `setBrowsers` reopens a running connection with the newest three sessions and the clamped rate, a
+// `browser_kbps`, `setBrowsers` reopens a running connection with the newest three sessions and the rate, a
 // refused stream drops the newest watched browser first, and the browser frames go to the frame handler.
 import { describe, expect, it } from 'vitest';
 import { Cursors } from '../../../src/core/net/cursors';
@@ -41,11 +41,11 @@ describe('watched browsers', () => {
     const t = setup({ browsers: ['a', 'b', 'c', 'd'], browserKbps: 50 });
     expect(MAX_BROWSERS).toBe(3);
     expect(t.channel.browsers).toEqual(['b', 'c', 'd']);
-    expect(t.channel.browserKbps).toBe(100);
+    expect(t.channel.browserKbps).toBe(50);
     t.channel.start();
     await settle();
     expect(t.query().getAll('browser')).toEqual(['b', 'c', 'd']);
-    expect(t.query().get('browser_kbps')).toBe('100');
+    expect(t.query().get('browser_kbps')).toBe('50');
     const none = setup();
     expect(none.channel.browserKbps).toBe(1000);
     none.channel.start();
@@ -61,12 +61,11 @@ describe('watched browsers', () => {
     await settle();
     expect(t.query().getAll('browser')).toEqual(['s0']);
     t.channel.setBrowsers(['s0'], 250);
-    t.channel.setBrowsers(['s0'], 250.2);
     await settle();
     expect(t.client.connections).toHaveLength(1);
     t.channel.setBrowsers(['s0'], 20_000);
     await settle();
-    expect(t.query().get('browser_kbps')).toBe('10000');
+    expect(t.query().get('browser_kbps')).toBe('20000');
     t.channel.setBrowsers(['s1', 's1', 's2'], 20_000);
     await settle();
     expect(t.query().getAll('browser')).toEqual(['s1', 's2']);

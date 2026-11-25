@@ -1,10 +1,13 @@
 // i18n of the web client (06-web.md section 2.5): area catalogs discovered from `catalog/<area>.<locale>.json`
-// (ADR-027 section 4) and the generated error catalog.
+// (ADR-027 section 4) and the generated error catalog. Texts that only a lazily loaded view shows live in
+// `lazy/<area>.<locale>.json` and are added by that view's chunk (`addCatalogs`), so they do not weigh on the start
+// of the app (section 12.2).
 import { buildCatalogs, translate, type Catalog, type Params } from './catalog';
 import errorsDe from './errors.de.json';
 import errorsEn from './errors.en.json';
 import { errorMessage, type ErrorCatalog, type ErrorMessage } from './errors';
-import type { Locale } from './locale';
+import { LOCALES, type Locale } from './locale';
+import type { ModuleMap } from '../registry';
 
 export { DEFAULT_LOCALE, LOCALES, isLocale, pickLocale, type Locale } from './locale';
 export { buildCatalogs, interpolate, translate, type Catalog, type Params } from './catalog';
@@ -14,6 +17,12 @@ export { formatClock, formatEventTime, formatMoney, formatNumber, localTimeZone,
 export const catalogs: Record<Locale, Catalog> = buildCatalogs(
   import.meta.glob('./catalog/*.json', { eager: true, import: 'default' }),
 );
+/** Adds the texts of a lazily loaded chunk (files `<area>.<locale>.json`, as in `catalog/`) to the catalogs. */
+export function addCatalogs(modules: ModuleMap): void {
+  const added = buildCatalogs(modules);
+  for (const locale of LOCALES) Object.assign(catalogs[locale], added[locale]);
+}
+
 export const errorCatalogs: Record<Locale, ErrorCatalog> = { de: errorsDe, en: errorsEn };
 
 export interface I18n {

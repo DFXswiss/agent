@@ -15,7 +15,6 @@ import { pullOnce } from '../../../core/tasks/pull';
 import { useLiveReload } from '../../hooks/useLiveReload';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
-import { BrowserTab } from '../../browser/BrowserTab';
 import { ChunkBoundary } from '../../lazy/ChunkBoundary';
 import { useAppEnv } from '../../shell/context';
 import { LoadError } from '../errors/pages';
@@ -27,6 +26,7 @@ import { Timeline } from '../../task-tabs/chat/Timeline';
 import { activeTab, Tabs } from '../task/Tabs';
 
 const TerminalView = lazy(() => import('../../terminal/TerminalView'));
+const BrowserTab = lazy(() => import('../../browser/BrowserTab'));
 
 const TAB_IDS = ['terminal', 'chat', 'children', 'browser'] as const;
 
@@ -88,7 +88,19 @@ function SessionView({ entry }: { readonly entry: SessionEntry }) {
       )}
       {active === 'chat' && <SessionChat entry={entry} />}
       {active === 'children' && <ChildrenTab entry={entry} />}
-      {active === 'browser' && <BrowserTab org={org} wg={wg} task={task} session={session} />}
+      {active === 'browser' && (
+        <ChunkBoundary
+          fallback={
+            <p className="text-sm text-red-800" role="alert" data-testid="browser.chunk-unavailable">
+              {t('app.screen-unavailable.title')}
+            </p>
+          }
+        >
+          <Suspense fallback={<p data-testid="browser.loading">{t('app.loading')}</p>}>
+            <BrowserTab org={org} wg={wg} task={task} session={session} />
+          </Suspense>
+        </ChunkBoundary>
+      )}
     </main>
   );
 }

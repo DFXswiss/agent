@@ -56,7 +56,8 @@ describe('live wiring', () => {
       monitoring: true,
     });
     await settle();
-    expect(t.client.last.target).toContain('browser=b&browser_kbps=3000');
+    expect(t.client.last.target).toContain('browser=b');
+    expect(t.client.last.target).toContain('browser_kbps=3000');
     expect(t.client.last.target).toContain(`cursors=${SCOPE}%3A1`);
     expect(t.client.last.target).toContain('terminal=s');
     expect(t.client.last.target).toContain('monitoring=1');

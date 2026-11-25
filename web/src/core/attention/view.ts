@@ -13,7 +13,7 @@
 // - the agent's question of a `question` / `approval` record: the `params.question` of the verified
 //   `operation.params` event of the record's operation, and only for the two asking operation types;
 // - the window of a group (`groupWindow`): at most `WINDOW` entries in the DOM, moved by `STEP` (HOT-05).
-import { selectOperation } from '../operations/view';
+import { selectOperationParts } from '../operations/parts';
 import { type AttentionRow, attentionGroup, CATEGORIES, type Category } from '../store/slices/attention';
 import type { TaskRow } from '../store/slices/tasks';
 import type { StoreState } from '../store/store';
@@ -105,7 +105,7 @@ const MISSING: Question = { status: 'missing' };
 export function selectQuestion(wg: string, row: Pick<AttentionRow, 'task_id' | 'reason' | 'ref_kind' | 'ref_id'>) {
   const type = ASKING_TYPES[row.reason];
   if (type === undefined || row.ref_kind !== 'operation' || row.ref_id === null) return (): Question => MISSING;
-  const operation = selectOperation(wg, row.ref_id);
+  const operation = selectOperationParts(wg, row.ref_id);
   let last: { view: unknown; question: Question } | null = null;
   return (state: StoreState): Question => {
     const view = operation(state);

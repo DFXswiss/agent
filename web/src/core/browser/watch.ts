@@ -11,18 +11,19 @@
 //
 // `stop()` leaves the list, ends the record's timers and forgets the pictures.
 import type { Store } from '../store/store';
+import { frameOpener } from './frame';
 import { type FrameOpener, LivePicture, type LiveState } from './live';
 import { ActionRecord, type RecordContext, type RecordState } from './record';
 import { newestOpen, selectBrowserStates } from './sessions';
-import type { BrowserListener, BrowserWatchHandle } from './watchlist';
+import { type BrowserWatchHandle, BrowserWatchList } from './watchlist';
 
 /** What the Browser tab needs of the signed-in browser (`AppSession.browser`; tests pass doubles). */
 export interface BrowserContext extends RecordContext {
   readonly store: Store;
-  /** Adds the session to the live channel's watched browsers (`BrowserWatchList.watch`). */
-  readonly watch: (org: string, session: string, listener: BrowserListener, kbps: number) => BrowserWatchHandle;
-  /** Opens the live frames of `session` in workgroup `wg` of `org` (`frame.ts`). */
-  readonly opener: (org: string, wg: string, session: string) => FrameOpener;
+  /** The watched browsers of the live channel, made by `create` on first use (`AppSession.browserWatches`). */
+  readonly watches: (create: (changed: () => void) => BrowserWatchList) => Pick<BrowserWatchList, 'watch'>;
+  /** Opens the live frames of `session` in workgroup `wg` of `org` (default `frame.ts` with the store's keys). */
+  readonly opener?: (org: string, wg: string, session: string) => FrameOpener;
 }
 
 export interface BrowserTarget {
@@ -59,7 +60,11 @@ export class BrowserWatch {
     this.record = new ActionRecord(context, target);
     this.live = new LivePicture({
       session: target.session,
-      open: context.opener(target.org, target.wg, target.session),
+      open: (context.opener ?? ((org, wg, session) => frameOpener(context.store, org, wg, session)))(
+        target.org,
+        target.wg,
+        target.session,
+      ),
       current: () => newestOpen(select(context.store.getState())),
     });
     this.#view = this.#snapshot();
@@ -86,7 +91,8 @@ export class BrowserWatch {
 
   start(): void {
     this.#unsubscribe = [this.record.subscribe(this.#changed), this.live.subscribe(this.#changed)];
-    this.#handle = this.#context.watch(
+    const list = this.#context.watches((changed) => new BrowserWatchList(changed));
+    this.#handle = list.watch(
       this.#target.org,
       this.#target.session,
       {

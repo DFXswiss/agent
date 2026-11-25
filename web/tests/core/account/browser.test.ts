@@ -1,9 +1,9 @@
 // The platform browser side of the signed-in browser (06-web.md section 5.4b): the watched browsers the live channel
 // of the active org follows (`browser=`, `browser_kbps`), the hand-over of browser frames to the views, and the
-// context of the Browser tab (reader without storage, watch, frame opener).
+// context of the Browser tab (reader without storage and the watch).
 import { IDBFactory } from 'fake-indexeddb';
 import { describe, expect, it, vi } from 'vitest';
-import type { BrowserListener } from '../../../src/core/browser/watchlist';
+import { type BrowserListener, BrowserWatchList } from '../../../src/core/browser/watchlist';
 import { preparePrivateOrg } from '../../../src/core/account/genesis';
 import { signIn } from '../../../src/core/account/login';
 import { Prefs, type PrefStorage } from '../../../src/core/account/prefs';
@@ -74,16 +74,18 @@ const listener = (): BrowserListener & Record<string, ReturnType<typeof vi.fn>> 
   refused: vi.fn(),
 });
 
+const watches = (app: AppSession) => app.browserWatches((changed) => new BrowserWatchList(changed));
+
 describe('watched browsers of the app session', () => {
   it('passes the watched browsers and the largest wish of the active org to its channel until released', async () => {
     const { app, lists, wirings, org } = await setup();
-    const a = app.watchBrowser(org, 'a', listener(), 250);
-    app.watchBrowser('other-org', 'x', listener(), 3000);
+    const a = watches(app).watch(org, 'a', listener(), 250);
+    watches(app).watch('other-org', 'x', listener(), 3000);
     expect(lists).toEqual([]);
     app.activate(org);
     expect(wirings[0]!.browsers).toEqual(['a']);
     expect(wirings[0]!.browserKbps).toBe(250);
-    const b = app.browser.watch(org, 'b', listener(), 1000);
+    const b = app.browser.watches((changed) => new BrowserWatchList(changed)).watch(org, 'b', listener(), 1000);
     await vi.waitFor(() => expect(lists.at(-1)).toEqual([['a', 'b'], 1000]));
     b.setKbps(3000);
     await vi.waitFor(() => expect(lists.at(-1)).toEqual([['a', 'b'], 3000]));
@@ -95,7 +97,7 @@ describe('watched browsers of the app session', () => {
   it('hands browser frames to the views and the rest to the store', async () => {
     const { app, wirings, org } = await setup();
     const view = listener();
-    app.watchBrowser(org, 's', view, 1000);
+    watches(app).watch(org, 's', view, 1000);
     app.activate(org);
     wirings[0]!.onFrame!('browser_live', { session_id: 's', frame: {} });
     wirings[0]!.onFrame!('hello', { stream_id: 'x', heads: {}, hub_time: '' });
@@ -105,15 +107,15 @@ describe('watched browsers of the app session', () => {
     expect(view.refused).toHaveBeenCalledTimes(1);
   });
 
-  it('gives the Browser tab a reader without storage and a frame opener', async () => {
+  it('gives the Browser tab a reader without storage', async () => {
     const { app, hub, store, org } = await setup();
     const event = hub.orgs.get(org)!.events[0];
     const before = store.getState().events;
+    expect(app.browser.client).toBe(app.client);
     const entries = await app.browser.read(org, org, [{ scope_seq: 1, received_at: null, event }]);
     expect(entries[0]).toMatchObject({ org, scopeId: org, scopeSeq: 1, status: 'verified' });
     expect(store.getState().events).toBe(before);
     expect(app.browser.store).toBe(store);
-    expect(typeof app.browser.opener(org, 'wg', 's')).toBe('function');
     await app.signOut();
   });
 });

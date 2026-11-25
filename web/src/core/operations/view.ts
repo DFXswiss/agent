@@ -23,23 +23,9 @@ import { isRecord } from '../registry';
 import type { EventEntry } from '../store/slices/events';
 import type { OperationRow } from '../store/slices/operations';
 import type { StoreState } from '../store/store';
-import { OPERATION_KINDS } from './load';
+import { operationParts, type ParamsBody, type Part, type ResultBody } from './parts';
 
-export type Part<T> =
-  | { readonly status: 'verified'; readonly value: T; readonly at: string }
-  | { readonly status: 'unverifiable'; readonly code: string }
-  | { readonly status: 'missing' };
-
-export interface ParamsBody {
-  readonly type: string;
-  readonly params: Readonly<Record<string, unknown>>;
-}
-
-export interface ResultBody {
-  readonly status: string;
-  readonly result: Readonly<Record<string, unknown>> | null;
-  readonly error: { readonly code: string; readonly message: string | null; readonly retryable: boolean | null } | null;
-}
+export type { ParamsBody, Part, ResultBody } from './parts';
 
 export interface Fact {
   /** Message key suffix (`operations.fact.<label>`). */
@@ -111,9 +97,6 @@ export interface OperationView {
   readonly testRun: TestRunResult | null;
 }
 
-const raw = (entry: EventEntry): Readonly<Record<string, unknown>> =>
-  isRecord(entry.event) && isRecord(entry.event.header) ? entry.event.header : {};
-
 const text = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 const count = (value: unknown): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
@@ -135,61 +118,6 @@ const known = (value: unknown): string | null => (typeof value === 'string' && I
 export function httpsUrl(value: unknown): string | null {
   const url = typeof value === 'string' ? safeUrl(value) : null;
   return url !== null && new URL(url).protocol === 'https:' ? url : null;
-}
-
-/**
- * The newest verified event of `kind` that refers to `operation`, else the newest unverifiable one (by its unchecked
- * header): an injected unverifiable event never hides a verified one.
- */
-function find(entries: Iterable<EventEntry>, operation: string, kind: string): EventEntry | null {
-  let verified: EventEntry | null = null;
-  let other: EventEntry | null = null;
-  for (const entry of entries) {
-    if (entry.status === 'pending' || entry.status === 'locked') continue;
-    const header = entry.status === 'verified' ? entry.header! : raw(entry);
-    if (header.ref !== operation || header.kind !== kind) continue;
-    if (entry.status === 'verified')
-      verified = verified === null || entry.scopeSeq > verified.scopeSeq ? entry : verified;
-    else other = other === null || entry.scopeSeq > other.scopeSeq ? entry : other;
-  }
-  return verified ?? other;
-}
-
-function part<T>(
-  entry: EventEntry | null,
-  operation: string,
-  device: string | null,
-  read: (body: Record<string, unknown>) => T | null,
-): Part<T> {
-  if (entry === null) return { status: 'missing' };
-  if (entry.status !== 'verified') return { status: 'unverifiable', code: entry.code ?? 'header_invalid' };
-  const header = entry.header!;
-  const body = entry.body;
-  // the body must name the operation of its header, and the device of the row must be its author
-  if (!isRecord(body) || body.operation_id !== operation || (device !== null && header.author !== device))
-    return { status: 'unverifiable', code: 'header_invalid' };
-  const value = read(body);
-  return value === null
-    ? { status: 'unverifiable', code: 'params_invalid' }
-    : { status: 'verified', value, at: header.ts as string };
-}
-
-const readParams = (body: Record<string, unknown>): ParamsBody | null =>
-  typeof body.type === 'string' && isRecord(body.params) ? { type: body.type, params: body.params } : null;
-
-function readResult(body: Record<string, unknown>): ResultBody | null {
-  if (body.status === 'succeeded')
-    return isRecord(body.result) ? { status: 'succeeded', result: body.result, error: null } : null;
-  if (typeof body.status !== 'string' || !isRecord(body.error) || typeof body.error.code !== 'string') return null;
-  return {
-    status: body.status,
-    result: null,
-    error: {
-      code: body.error.code,
-      message: text(body.error.message),
-      retryable: typeof body.error.retryable === 'boolean' ? body.error.retryable : null,
-    },
-  };
 }
 
 /** At most this many characters of a test command are the subject. */
@@ -357,10 +285,7 @@ export function operationView(
   operation: string,
   row: OperationRow | null,
 ): OperationView {
-  const list = [...entries];
-  const device = row?.device_id ?? null;
-  const params = part(find(list, operation, OPERATION_KINDS[0]), operation, device, readParams);
-  const result = part(find(list, operation, OPERATION_KINDS[1]), operation, device, readResult);
+  const { params, result } = operationParts(entries, operation, row);
   const type = row?.type ?? (params.status === 'verified' ? params.value.type : 'unknown');
   const state = row?.state ?? (result.status === 'verified' ? result.value.status : 'received');
   const succeeded = result.status === 'verified' && result.value.result !== null ? result.value.result : null;

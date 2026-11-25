@@ -32,7 +32,7 @@ export function emptyBrowser(t: TaskWorld): BrowserContext {
     store: t.store,
     client: { request: async () => ({ events: [], next_after: null, head: 0 }) },
     read: async () => [],
-    watch: () => ({ setKbps: () => undefined, release: () => undefined }),
+    watches: () => ({ watch: () => ({ setKbps: () => undefined, release: () => undefined }) }),
     opener: () => () => Promise.reject(new Error('no frames here')),
   };
 }
