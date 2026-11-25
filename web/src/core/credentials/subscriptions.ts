@@ -34,8 +34,8 @@ import {
   RequestError,
   type RequestsContext,
   submitRequest,
-  type TasksContext,
 } from '../requests/client';
+import type { TasksContext } from '../tasks/pull';
 import type { LoginMode } from './login';
 
 export const KIND = 'claude_subscription';
@@ -293,8 +293,8 @@ async function changeOnce(
   if (opened.primary) refuse('invalid_argument');
   const body = { ...opened.body };
   edit(body);
-  if (!isSubscriptionRecord(body)) refuse('params_invalid');
-  const latest = keys[0] ?? refuse('epoch_stale');
+  const latest = keys[0]!; // the key that opened the record is one of them
+
   const version = opened.header.version as number;
   const header = newHeader({
     id,
@@ -309,9 +309,7 @@ async function changeOnce(
   const use = isUse(body.use) ? body.use : { pool: false, orgs: [] };
   try {
     await context.client.request('PUT', `/v1/subscriptions/${encodeURIComponent(id)}`, {
-      record,
-      expected_version: version,
-      use,
+      body: { record, expected_version: version, use },
     });
     return true;
   } catch (error) {
