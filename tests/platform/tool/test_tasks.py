@@ -190,3 +190,27 @@ def test_open_tasks_are_every_state_but_closed_across_pages(
     assert tool.run("task", "list", "--wg", wg, "--state", "open")[1]["tasks"] == []
     monkeypatch.setattr(tasks, "OPEN_PAGES", 10)
     assert [row["task_id"] for row in tool.run("task", "list", "--wg", wg, "--state", "open")[1]["tasks"]] == [made[2]]
+
+
+def test_open_task_list_says_when_it_is_truncated(
+    tool: Tool, hub: HubFake, account: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`truncated` is true as soon as open tasks or pages were cut off, and false when every page was read."""
+    wg = default_wg(hub, account)
+    made = [str(tool.run("task", "create", "--wg", wg, "--text", f"Task {n}")[1]["task_id"]) for n in range(3)]
+
+    def listed() -> dict[str, Any]:
+        return tool.run("task", "list", "--wg", wg, "--state", "open")[1]
+
+    assert listed()["truncated"] is False
+    monkeypatch.setattr(tasks, "LIST_LIMIT", 2)
+    cut = listed()
+    assert ([row["task_id"] for row in cut["tasks"]], cut["truncated"]) == ([made[2], made[1]], True)
+    monkeypatch.setattr(tasks, "LIST_LIMIT", 1)
+    hub.tasks[made[2]]["task"]["state"] = "closed"
+    hub.tasks[made[1]]["task"]["state"] = "closed"
+    monkeypatch.setattr(tasks, "OPEN_PAGES", 2)
+    assert (listed()["tasks"], listed()["truncated"]) == ([], True)
+    monkeypatch.setattr(tasks, "OPEN_PAGES", 3)
+    whole = listed()
+    assert ([row["task_id"] for row in whole["tasks"]], whole["truncated"]) == ([made[0]], False)
