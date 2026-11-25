@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import threading
 import time
 import uuid
@@ -69,6 +70,8 @@ from .lane import (
     LaneResult,
     LaneUsage,
     bounded_lane_metadata,
+    delegated_account_read,
+    delegated_lane_argv,
     finalize_lane_output,
     redact_lane_text,
     record_lane_run,
@@ -2106,6 +2109,7 @@ def launch_lane(
 
     aid = str(uuid.uuid4())
     lane_output: str | None = None
+    profile_context: tempfile.TemporaryDirectory[str] | None = None
 
     def _release_lane() -> None:
         forget_lane_process(worker, str(task["id"]), aid)
@@ -2114,13 +2118,16 @@ def launch_lane(
                 os.unlink(lane_output)
             except OSError:
                 pass
+        if profile_context is not None:
+            profile_context.cleanup()
 
     try:
         replay_source: str | None = None
         try:
-            ai.require_lane_execution()
+            execution = ai.require_lane_execution()
         except AIAccountError as exc:
             raise CoordinatorError(str(exc)) from exc
+        delegated = execution.delegated
         if io.output_file:
             if role == "reviewer":
                 lane_output = str(
@@ -2206,14 +2213,40 @@ def launch_lane(
         save_task(store, task)
 
         capture = _lane_capture_paths(worker, str(task["id"]), aid)
+        if lane_runner is not None:
+            if delegated:
+                # The empty GitHub profile's path is a delegated read.
+                profile_context = tempfile.TemporaryDirectory(
+                    prefix="agent-lane-empty-gh-"
+                )
+                profile_dir: str | None = profile_context.name
+            else:
+                profile_dir = None
+        else:
+            profile_dir = str(capture["profile"])
         try:
-            with sanitized_lane_argv(
-                argv,
-                profile_dir=(
-                    None if lane_runner is not None else str(capture["profile"])
-                ),
-            ) as run_argv:
+            with sanitized_lane_argv(argv, profile_dir=profile_dir) as run_argv:
                 argv = run_argv
+                if delegated:
+                    write_backs: list[str] = []
+                    if lane_output is not None:
+                        write_backs.append(lane_output)
+                    if write:
+                        write_backs.append(worktree)
+                    argv = delegated_lane_argv(
+                        execution,
+                        argv,
+                        workdir=worktree,
+                        reads=(
+                            str(spec_path),
+                            *read_dirs,
+                            delegated_account_read(
+                                driver, selected.account.config_dir
+                            ),
+                            profile_dir,
+                        ),
+                        write_backs=write_backs,
+                    )
                 if lane_runner is not None:
                     completed = lane_runner(argv, stdin_text)
                 else:
@@ -3291,7 +3324,7 @@ def _prepare_pr_review_agent(
     aid = str(uuid.uuid4())
     lane_output: str | None = None
     try:
-        ai.require_lane_execution()
+        execution = ai.require_lane_execution()
     except AIAccountError as exc:
         raise CoordinatorError(str(exc)) from exc
     try:
@@ -3382,7 +3415,13 @@ def _prepare_pr_review_agent(
         "worktree": worktree,
         "model": selected.model,
         "config_dir": selected.account.config_dir,
+        "delegated_account_read": delegated_account_read(
+            driver, selected.account.config_dir
+        ),
         "path_replacements": _coordinator_path_replacements(store, worker, task),
+        "lane_execution": execution,
+        "spec_file": str(spec_path),
+        "read_dirs": read_dirs,
         "dimension": "quality" if role.endswith("quality") else "logic",
     }
 
@@ -3415,12 +3454,37 @@ def _run_prepared(
                 "lane capture paths are required"
             )
         survive = lane_runner is None and all(present)
+        execution = prepared.get("lane_execution")
+        delegated = execution is not None and execution.delegated
+        profile_context: tempfile.TemporaryDirectory[str] | None = None
+        delegate_profile_dir = profile_dir if survive else None
+        if not survive and delegated:
+            # The empty GitHub profile's path is a delegated read.
+            profile_context = tempfile.TemporaryDirectory(
+                prefix="agent-lane-empty-gh-"
+            )
+            delegate_profile_dir = profile_context.name
         try:
             with sanitized_lane_argv(
                 argv,
-                profile_dir=profile_dir if survive else None,
+                profile_dir=delegate_profile_dir,
             ) as run_argv:
                 argv = run_argv
+                if delegated:
+                    write_backs = [str(output_file)] if output_file else []
+                    argv = delegated_lane_argv(
+                        execution,
+                        argv,
+                        workdir=worktree,
+                        reads=(
+                            worktree,
+                            *(prepared.get("read_dirs") or ()),
+                            str(prepared.get("spec_file") or ""),
+                            str(prepared.get("delegated_account_read") or ""),
+                            delegate_profile_dir or "",
+                        ),
+                        write_backs=write_backs,
+                    )
                 if lane_runner is not None:
                     completed = lane_runner(argv, stdin_text)
                 elif survive:
@@ -3451,6 +3515,9 @@ def _run_prepared(
                 except OSError:
                     pass
             return prepared["agent_id"], exc
+        finally:
+            if profile_context is not None:
+                profile_context.cleanup()
         stdout = str(getattr(completed, "stdout") or "")
         path_replacements = tuple(prepared.get("path_replacements") or ())
         stderr = _redact_coordinator_lane_text(

@@ -1839,6 +1839,32 @@ def test_interactive_start_builds_the_pane_from_driver_templates(
     assert _session_runtime(tmp_path)["interactive_session_id"] == session
 
 
+def test_interactive_start_accepts_delegate_without_prefixing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_placeholder_interactive(tmp_path)
+    path = tmp_path / "ai-accounts.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["lane_execution"] = {
+        "mode": "delegate",
+        "argv": ["/opt/operator/run"],
+    }
+    path.write_text(json.dumps(data), encoding="utf-8")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        main_mod, "Runtime", lambda *a, **k: Runtime(runner=_tmux_runner(calls))
+    )
+    run(tmp_path, ["init"])
+    run(tmp_path, ["session", "register", "--id", SESSION_A, "--kind", "human"])
+    run(tmp_path, ["session", "start", "--id", SESSION_A, "--provider", "driver-a"])
+
+    command = _pane_command(calls)
+    assert "/opt/operator/run" not in command
+    assert "--workdir" not in command
+    assert command[command.index("tool-a") :][:2] == ["tool-a", "--session-id"]
+    assert "interactive_start_pending" not in _session_runtime(tmp_path)
+
+
 def test_control_start_interactive_starts_the_driver_of_the_role(tmp_path: Path) -> None:
     write_placeholder_interactive(tmp_path)
     run(tmp_path, ["init"])

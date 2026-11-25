@@ -9,9 +9,11 @@ description: >-
 
 Requires **spine**. Roles: `pr-reviewer-quality`, `pr-reviewer-logic`.
 Order: model slot `first`, then model slot `second` (a coordinator A38 task with the external second review has no second slot; see Gates). The provider of each configured slot (a driver that the device's `drivers.json` configures with a `lane` section) is the `models` value pinned on the task; the device's `ai-accounts.json` supplies the default at task creation (read it with `agent models first|second --task <uuid>`). To run a slot with another provider, change the pin explicitly first with `agent task models --id <uuid> --slot first|second|implementer --vendor <provider> --reason "<why>"`; the change is recorded on the task and never applies silently. Non-A38 tasks require both slots. A coordinator A38 task requires `models.second: null` for the external second review, and a provider there when its worker sets `a38_second_review: "model"`; there is no built-in assignment. The examples below name the provider pinned to each task slot; they do not assume a fixed vendor.
-The same manifest must declare the current device as a lane host. The local
-harness's lane starter starts review lanes on that external host; Agent has no
-remote SSH execution mode.
+The same manifest must declare `lane_execution`. The local harness's lane
+starter starts review lanes on that external host; or a `delegate` declaration
+names one local foreground operator command that runs each headless review lane
+elsewhere. Agent has no remote SSH execution mode of its own; the operator
+command does the copy and transport.
 `lane_execution` gates provider execution on this device; recording an Agent
 for a lane started elsewhere does not need it.
 

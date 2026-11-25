@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -18,8 +18,11 @@ from typing import TYPE_CHECKING
 
 from .drivers import (
     WRITE_READ_DIRS_REFUSED,
+    DriverSpec,
     LaneIO,
     credential_dir_overlap_error,
+    harden_write_argv,
+    is_home_default_dir,
     lane_argv,
     lane_io,
     lane_scrub_env,
@@ -32,7 +35,7 @@ from .text_sanitize import (
 )
 
 if TYPE_CHECKING:
-    from .ai_accounts import AIRole
+    from .ai_accounts import AIRole, LaneExecution
 
 LANE_ROLES = ("implementer", "reviewer", "pr-reviewer-quality", "pr-reviewer-logic")
 NPROC_CAP = 800
@@ -125,6 +128,57 @@ def sanitized_lane_argv(argv: list[str], profile_dir: str | None = None):
         return
     with tempfile.TemporaryDirectory(prefix="agent-lane-empty-gh-") as profile:
         yield _github_cleared_argv(argv, profile)
+
+
+def _unique_abspaths(paths: Sequence[str | None]) -> list[str]:
+    """Absolute, de-duplicated, non-empty paths in their original order."""
+    seen: set[str] = set()
+    selected: list[str] = []
+    for path in paths:
+        if not path:
+            continue
+        absolute = os.path.abspath(path)
+        if absolute in seen:
+            continue
+        seen.add(absolute)
+        selected.append(absolute)
+    return selected
+
+
+def delegated_account_read(driver: DriverSpec, config_dir: str) -> str:
+    """The account directory a delegated lane reads, or ``""`` for none.
+
+    An account in the driver's default directory runs with the target's own
+    default profile (operator contract item 8). Mirroring the local directory
+    onto that path would replace the target's logged-in profile, so it is not
+    listed.
+    """
+    return "" if is_home_default_dir(driver, config_dir) else config_dir
+
+
+def delegated_lane_argv(
+    execution: LaneExecution,
+    argv: Sequence[str],
+    *,
+    workdir: str,
+    reads: Sequence[str] = (),
+    write_backs: Sequence[str] = (),
+) -> list[str]:
+    """Prefix a lane argv with the operator command, or leave it unchanged.
+
+    The operator process runs the lane elsewhere. The model argv after ``--``
+    is never interpreted here, and every path stays a local absolute path.
+    """
+    if not execution.delegated:
+        return list(argv)
+    prefixed = [*execution.argv, "--workdir", os.path.abspath(workdir)]
+    for path in _unique_abspaths(reads):
+        prefixed.extend(["--read", path])
+    for path in _unique_abspaths(write_backs):
+        prefixed.extend(["--write-back", path])
+    prefixed.append("--")
+    prefixed.extend(argv)
+    return prefixed
 
 
 def replace_path_roots(
@@ -700,6 +754,11 @@ def launch(
     # an unknown --vendor.
     driver = ai.driver(vendor, lane=True)
     lane = require_lane(driver)
+    execution = ai.lane_execution
+    delegated = execution is not None and execution.delegated
+    if delegated:
+        # The operator command is the process holder; local tmux holds local lanes.
+        tmux = False
     io = lane_io(driver, tmux=tmux)
     if binding is None:
         selected = ai.for_lane(session_id, role, vendor, require_execution=False)
@@ -758,11 +817,43 @@ def launch(
     # Apply the selected driver home inside the tmux child too. The lane's
     # credential-clearing prefix is nested, never a process-global mutation.
     argv = [*selected.env_prefix(ai.drivers), *argv]
-    github_environment = sanitized_lane_argv(argv)
+    profile_context: tempfile.TemporaryDirectory[str] | None = None
+    profile_dir: str | None = None
+    if delegated:
+        # The empty GitHub profile's path is a delegated read, so keep it here.
+        profile_context = tempfile.TemporaryDirectory(prefix="agent-lane-empty-gh-")
+        profile_dir = profile_context.name
+    github_environment = sanitized_lane_argv(argv, profile_dir=profile_dir)
     argv = github_environment.__enter__()
 
     tmux_session: str | None = None
     try:
+        if delegated:
+            if write:
+                # Harden the provider argv before the operator prefix, so a
+                # matching operator flag can never suppress a hardening group.
+                argv = harden_write_argv(argv, driver)
+            write_backs: list[str] = []
+            if lane_output_file is not None:
+                write_backs.append(lane_output_file)
+            if write:
+                write_backs.append(cwd)
+            argv = delegated_lane_argv(
+                execution,
+                argv,
+                workdir=cwd,
+                reads=(
+                    spec_file,
+                    *read_dirs,
+                    delegated_account_read(driver, selected.account.config_dir),
+                    profile_dir,
+                ),
+                write_backs=write_backs,
+            )
+            # The operator process must not inherit the ambient GitHub
+            # variables either. The provider part after "--" keeps the
+            # clearing it already has.
+            argv = _github_cleared_argv(argv, profile_dir)
         if tmux:
             unique = "" if dry_run else uuid.uuid4().hex[:8]
             tmux_session = lane_tmux_name(vendor=vendor, role=role, unique=unique)
@@ -775,6 +866,8 @@ def launch(
             argv = tmux_wrap_argv(argv, name=tmux_session, cwd=cwd)
     except BaseException:
         github_environment.__exit__(None, None, None)
+        if profile_context is not None:
+            profile_context.cleanup()
         raise
 
     if dry_run:
@@ -794,6 +887,8 @@ def launch(
             )
         finally:
             github_environment.__exit__(None, None, None)
+            if profile_context is not None:
+                profile_context.cleanup()
 
     stdin_text: str | None = spec_text if io.stdin else None
     try:
@@ -880,3 +975,5 @@ def launch(
             except OSError:
                 pass
         github_environment.__exit__(None, None, None)
+        if profile_context is not None:
+            profile_context.cleanup()
