@@ -321,13 +321,12 @@ describe('the page', () => {
     expect(await screen.findByTestId('subscriptions.empty')).toBeVisible();
     expect(screen.queryByTestId('subscriptions.loading')).toBeNull();
     expect(screen.queryByTestId('subscriptions.table')).toBeNull();
-    expect(screen.queryByTestId('subscriptions.add-hint')).toBeNull();
+    // "Add subscription" opens the login dialog of KOR-69 and closes again
     fireEvent.click(screen.getByTestId('subscriptions.add'));
-    expect(screen.getByTestId('subscriptions.add-hint')).toHaveTextContent(
-      'Your agent adds one with: agent-platform subscriptions add --name <name>',
-    );
-    fireEvent.click(screen.getByTestId('subscriptions.add'));
-    expect(screen.queryByTestId('subscriptions.add-hint')).toBeNull();
+    expect(screen.getByTestId('subadd')).toBeVisible();
+    expect(screen.queryByTestId('subscriptions.add')).toBeNull();
+    fireEvent.click(screen.getByTestId('subadd.close'));
+    expect(screen.getByTestId('subscriptions.add')).toBeVisible();
   });
 
   it('reports a failed load and loads again on "Reload"', async () => {
@@ -514,12 +513,12 @@ describe('the page', () => {
     expect(spare[5]).toHaveTextContent('measure only');
     const login = within(spare[3]!).getByTestId('subscriptions.row.login');
     expect(spare[3]).toHaveTextContent('not logged inLog in now');
+    // "Log in now" opens the login of KOR-69 for this record; without a capable device it ends with a message
     fireEvent.click(login);
-    expect(within(spare[3]!).getByTestId('subscriptions.row.login-hint')).toHaveTextContent(
-      'Your agent logs it in again: agent-platform subscriptions list names the command.',
-    );
-    fireEvent.click(login);
-    expect(within(spare[3]!).queryByTestId('subscriptions.row.login-hint')).toBeNull();
+    expect(await within(spare[3]!).findByTestId('sublogin.flow')).toBeVisible();
+    expect(within(spare[3]!).queryByTestId('subscriptions.row.login')).toBeNull();
+    fireEvent.click(within(spare[3]!).getByTestId('sublogin.close'));
+    expect(within(spare[3]!).getByTestId('subscriptions.row.login')).toBeVisible();
   });
 
   it('shows the page in German', async () => {
