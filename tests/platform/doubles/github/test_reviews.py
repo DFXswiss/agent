@@ -1,4 +1,4 @@
-"""U-DBL-github (KOR-51, ADR-090 section 4): the GitHub double serves the commits and reviews of a pull request, check
+"""U-DBL-github (KOR-51, ADR-091 section 4): the GitHub double serves the commits and reviews of a pull request, check
 runs and commit statuses of a commit, and merges a pull request like GitHub: only an open, non-draft one without a
 conflict (`405` otherwise), only at the head the caller names (`409` otherwise), with a merge commit of two parents on
 the base branch; the pull request is closed and merged afterwards."""

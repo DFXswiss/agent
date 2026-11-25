@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/org-agent-profile-put.request.json",
   "title": "PUT /v1/orgs/{org}/agent-profiles/{name} request",
-  "description": "Create or change an own profile (admins of the organization; a built-in name is 400 request_invalid, ADR-090 section 2).",
+  "description": "Create or change an own profile (admins of the organization; a built-in name is 400 request_invalid, ADR-091 section 2).",
   "type": "object",
   "properties": {
     "operations": {

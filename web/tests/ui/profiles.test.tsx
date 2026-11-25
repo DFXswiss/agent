@@ -1,4 +1,4 @@
-// Rights profiles in the web client (ADR-090 sections 2, 5-7): the profiles section and the merge rules of the
+// Rights profiles in the web client (ADR-091 sections 2, 5-7): the profiles section and the merge rules of the
 // workgroup settings, the profile of a task and the role of every session; nothing is restricted by default.
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';

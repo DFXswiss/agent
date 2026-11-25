@@ -1,4 +1,4 @@
-"""U-RUN-profiles (KOR-51, ADR-090 section 3): work VM and browser tools need the type they stand for, reads stay
+"""U-RUN-profiles (KOR-51, ADR-091 section 3): work VM and browser tools need the type they stand for, reads stay
 within the profile's reach, and every session start carries the profile (guest 0.4.0 and later) and a harness line."""
 
 from __future__ import annotations

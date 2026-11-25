@@ -137,7 +137,7 @@
               "type": "null"
             }
           ],
-          "description": "the rights profile of the task's main sessions (ADR-090 section 1), null without"
+          "description": "the rights profile of the task's main sessions (ADR-091 section 1), null without"
         }
       },
       "required": [
@@ -513,7 +513,7 @@
               "type": "null"
             }
           ],
-          "description": "the rights profile a child was started with (ADR-090 section 1), null without (a child without one works with its parent's rights; a main session with its task's)"
+          "description": "the rights profile a child was started with (ADR-091 section 1), null without (a child without one works with its parent's rights; a main session with its task's)"
         }
       },
       "required": [

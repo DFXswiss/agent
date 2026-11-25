@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/workgroup-agent-profiles.response.json",
   "title": "GET /v1/workgroups/{wg}/agent-profiles response",
-  "description": "Every profile usable in the workgroup, by name: the built-in roles, the organization's and the workgroup's own (a workgroup's own profile wins over the organization's of the same name), and the class of every operation type (ADR-090 section 2).",
+  "description": "Every profile usable in the workgroup, by name: the built-in roles, the organization's and the workgroup's own (a workgroup's own profile wins over the organization's of the same name), and the class of every operation type (ADR-091 section 2).",
   "type": "object",
   "properties": {
     "profiles": {

@@ -1,6 +1,6 @@
 {
   "name": "e2e-69-agent-roles",
-  "description": "E2E-69 (KOR-51, ADR-090): a main agent without a profile starts a development child that opens pull request 1 and is refused its own verdict, a review child that gives a passed verdict, a merge child that merges under the workgroup's criteria, a child without a profile that may do what its parent may, and a read-only child whose comment and escalation are refused.",
+  "description": "E2E-69 (KOR-51, ADR-091): a main agent without a profile starts a development child that opens pull request 1 and is refused its own verdict, a review child that gives a passed verdict, a merge child that merges under the workgroup's criteria, a child without a profile that may do what its parent may, and a read-only child whose comment and escalation are refused.",
   "steps": [
     {
       "id": "parent-dev",

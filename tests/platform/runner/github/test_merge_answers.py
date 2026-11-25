@@ -1,4 +1,4 @@
-"""U-RUN-github (KOR-51, ADR-090 sections 4-6): how `github.merge`, `github.list_reviews` and `github.get_checks` treat
+"""U-RUN-github (KOR-51, ADR-091 sections 4-6): how `github.merge`, `github.list_reviews` and `github.get_checks` treat
 GitHub's answers (a mock transport), and the push guard of the merge rules."""
 
 from __future__ import annotations

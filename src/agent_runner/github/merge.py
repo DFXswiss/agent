@@ -1,4 +1,4 @@
-"""Reviews, checks and the merge of a pull request (KOR-51, ADR-090 sections 4-6; 03-api.md section 9).
+"""Reviews, checks and the merge of a pull request (KOR-51, ADR-091 sections 4-6; 03-api.md section 9).
 
 - `github.list_reviews`: `GET /repos/{r}/pulls/{n}` (the head) and `GET …/pulls/{n}/reviews` (GitHub's reviews, the
   newest `REVIEWS_SHOWN`; bodies cut to the contract's length), and the platform verdicts this device knows for the
@@ -231,7 +231,7 @@ DIRECT_PUSH = (
 
 async def guarded_push(request: PrecheckRequest) -> PrecheckResult:
     """`github.push`: the push pre-check, and with merge rules of the workgroup no push onto the repository's default
-    branch (it would bypass the rules, ADR-090 section 6)."""
+    branch (it would bypass the rules, ADR-091 section 6)."""
     found = await push.check(request)
     settings = request.settings
     if criteria.active(settings.merge_criteria, settings.separate_duties):

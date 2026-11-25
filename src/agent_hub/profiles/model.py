@@ -1,4 +1,4 @@
-"""Rights profiles of sessions and the built-in agent roles (ADR-090 sections 1 and 2; `contracts/ops/classes.json`).
+"""Rights profiles of sessions and the built-in agent roles (ADR-091 sections 1 and 2; `contracts/ops/classes.json`).
 
 A **profile** is an optional restriction of one session: the operation types it may request and the reach of its read
 tools (`all` as its human, ADR-089; `workgroup` only its own workgroup; `task` only its own task). No profile means
@@ -76,7 +76,7 @@ ROLE_CLASSES: Mapping[str, frozenset[str]] = MappingProxyType(
         "merge": frozenset({READ, MERGE, DELEGATE, ASK}),
     }
 )
-"""The built-in roles by the classes they allow (ADR-090 section 2)."""
+"""The built-in roles by the classes they allow (ADR-091 section 2)."""
 
 NAME_RE = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 SCOPE_BUILTIN, SCOPE_ORG, SCOPE_WG = "builtin", "org", "wg"
@@ -122,7 +122,7 @@ def allows(profile: Profile | None, op_type: str) -> bool:
 
 
 def within(child: Profile, parent: Profile | None) -> bool:
-    """True when `child` allows nothing its parent does not (ADR-090 section 1)."""
+    """True when `child` allows nothing its parent does not (ADR-091 section 1)."""
     if parent is None:
         return True
     return child.operations <= parent.operations and REACHES.index(child.reads) <= REACHES.index(parent.reads)

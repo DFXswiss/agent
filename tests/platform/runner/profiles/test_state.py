@@ -1,4 +1,4 @@
-"""U-RUN-profiles (KOR-51, ADR-090 section 3): the section `agent_profiles` kept in the store, the effective profile of
+"""U-RUN-profiles (KOR-51, ADR-091 section 3): the section `agent_profiles` kept in the store, the effective profile of
 a local session (the section's entry, a child's remembered answer, else its parent's), the names of a workgroup, the
 reconcile step and the model."""
 

@@ -1,4 +1,4 @@
-// Rights profiles in the web core (ADR-090): snapshots, the role of a session along its parents and its task, the
+// Rights profiles in the web core (ADR-091): snapshots, the role of a session along its parents and its task, the
 // profile list, own profiles of a workgroup or an organization and the profile of a task.
 import { describe, expect, it } from 'vitest';
 import {

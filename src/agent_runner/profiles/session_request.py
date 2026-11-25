@@ -1,4 +1,4 @@
-"""Request amender of the profiles area (`sessions.extensions`, `<area>/session_request.py:AMENDERS`; ADR-090
+"""Request amender of the profiles area (`sessions.extensions`, `<area>/session_request.py:AMENDERS`; ADR-091
 section 3): every session start carries the session's effective rights profile.
 
 - `profile` of `POST /v1/sessions` (guest 0.4.0 and later, `PROFILE_GUEST`): the guest does not offer the tools the

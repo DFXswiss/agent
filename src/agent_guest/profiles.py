@@ -1,4 +1,4 @@
-"""The rights profile of a session in the guest (ADR-090 section 3; ``sessions-create`` ``profile``).
+"""The rights profile of a session in the guest (ADR-091 section 3; ``sessions-create`` ``profile``).
 
 The runner sends the session's effective profile ``{name, operations, reads}`` with ``POST /v1/sessions`` (null or
 absent: no profile, every right). The guest is the third of three checks (hub, runner, guest) and never the only one:

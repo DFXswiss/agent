@@ -177,9 +177,9 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | session-orchestrator | screens/session (the task owner makes a running main session on DFX hardware the main orchestrator: request, check of the device signature, passkey confirmation, signed handover; ADR-082 §6) | (none: only the person makes a session the main orchestrator, the hub refuses an agent, ADR-082 §6.4) | n/a |
 | error-pages | screens/errors, screens/notfound | (no action: every failure of the tool is one JSON object with error and next) | n/a |
 | ui-health-report | shell (the browser's automatic, anonymous UI health report, ADR-086 section 5) | (no action: a browser measures its own main-thread blocks; nothing a person does or reads) | n/a |
-| agent-profiles | screens/wg-settings (rights profiles of the workgroup and the organization, ADR-090) | `profile list --wg`, `profile set --wg\|--org --name --operation --reads`, `profile delete --wg\|--org --name` | done |
-| task-agent-profile | screens/task (the rights profile of the task's main sessions, ADR-090) | `task profile --task --profile\|--clear` | done |
-| wg-merge-criteria | screens/wg-settings (merge criteria and separate duties, ADR-090 sections 5 and 6) | `wg settings --wg --merge-verdicts --merge-verdict-profile --merge-checks-green --merge-approvals --separate-duties` | done |
+| agent-profiles | screens/wg-settings (rights profiles of the workgroup and the organization, ADR-091) | `profile list --wg`, `profile set --wg\|--org --name --operation --reads`, `profile delete --wg\|--org --name` | done |
+| task-agent-profile | screens/task (the rights profile of the task's main sessions, ADR-091) | `task profile --task --profile\|--clear` | done |
+| wg-merge-criteria | screens/wg-settings (merge criteria and separate duties, ADR-091 sections 5 and 6) | `wg settings --wg --merge-verdicts --merge-verdict-profile --merge-checks-green --merge-approvals --separate-duties` | done |
 | review-verdicts | task-tabs/operations (review verdicts and security reports of a task) | `review verdicts --task` | done |
 | session-role | screens/home, task-tabs/sessions (the role of every session in the session tree) | `task show --task` (the session rows carry their rights profile) | done |
 

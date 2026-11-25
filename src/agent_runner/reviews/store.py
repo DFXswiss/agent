@@ -1,4 +1,4 @@
-"""What the runner knows about verdicts and commits from its own operation records (ADR-090 sections 5 and 6).
+"""What the runner knows about verdicts and commits from its own operation records (ADR-091 sections 5 and 6).
 
 The records are the runner's `runner.operation` rows - the same operations the hub has as rows, with the parameters
 and results the hub cannot read:

@@ -808,7 +808,7 @@
         },
         "agent_profiles": {
           "type": "object",
-          "description": "rights profiles (ADR-090 section 3; KOR-51): the effective profile of every session of the device (null = every right) and what every profile name resolves to in each assigned workgroup; always sent by a hub of this release, optional in the schema for older hubs",
+          "description": "rights profiles (ADR-091 section 3; KOR-51): the effective profile of every session of the device (null = every right) and what every profile name resolves to in each assigned workgroup; always sent by a hub of this release, optional in the schema for older hubs",
           "properties": {
             "api": {
               "type": "integer",

@@ -1,4 +1,4 @@
-"""Rights profiles, the profile of a task and the review verdicts (ADR-090; 03-api.md section 4.13; twin of
+"""Rights profiles, the profile of a task and the review verdicts (ADR-091; 03-api.md section 4.13; twin of
 `web/src/core/profiles/profiles.ts`).
 
 - `profile list --wg`: every profile usable in the workgroup (built-in roles, the organization's and the workgroup's
@@ -118,7 +118,7 @@ def _verdicts(account: Account, args: Any, context: Context) -> dict[str, Any]:
 
 
 def register(tree: Tree) -> None:
-    group = tree.group("profile", "rights profiles of sessions (voluntary restrictions, ADR-090)")
+    group = tree.group("profile", "rights profiles of sessions (voluntary restrictions, ADR-091)")
     sub = tree.command(
         group,
         "list",
@@ -168,7 +168,7 @@ def register(tree: Tree) -> None:
     sub.add_argument("--task", required=True)
     sub.add_argument("--profile")
     sub.add_argument("--clear", action="store_true")
-    review_group = tree.group("review", "review verdicts and security reports (ADR-090)")
+    review_group = tree.group("review", "review verdicts and security reports (ADR-091)")
     sub = tree.command(
         review_group,
         "verdicts",

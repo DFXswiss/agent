@@ -8,7 +8,7 @@ for the org's browsers, the hint `session.start {session_id}` for the device (wh
 child in `sessions`) and the task derivation (`refresh_task`: the task's activity time and `task` frame). The child's
 `github_identity` is the one the registration names, else the parent session's (ADR-078 section 3); its `triggered_by`
 is the operation's (ADR-083 section 2); its `agent_profile` the resolved snapshot of the profile the request named
-(ADR-090 section 1; NULL: the child works with its parent's rights). The model of the child is chosen by the runner
+(ADR-091 section 1; NULL: the child works with its parent's rights). The model of the child is chosen by the runner
 (the parent's access kind, or the `model_id` the runner allowed). The caller holds the task row (lock order of
 `agent_hub.sessions.taskstate`).
 """

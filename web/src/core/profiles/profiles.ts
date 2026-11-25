@@ -1,4 +1,4 @@
-// Rights profiles of sessions (ADR-090; 03-api.md section 4.13): a voluntary restriction - without one a session may
+// Rights profiles of sessions (ADR-091; 03-api.md section 4.13): a voluntary restriction - without one a session may
 // do what its human may (A1, E-11).
 //
 // - `profileOf(value)`: a well-formed `agent_profile` snapshot of a task or session row (kept as received), else null.

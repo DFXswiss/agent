@@ -364,7 +364,7 @@
         },
         "profile": {
           "$ref": "../common.json#/$defs/agent_profile_name",
-          "description": "the rights profile the child is started with (ADR-090 section 1): within the requesting session's rights, else rights_denied; default: the child has the requesting session's rights"
+          "description": "the rights profile the child is started with (ADR-091 section 1): within the requesting session's rights, else rights_denied; default: the child has the requesting session's rights"
         }
       },
       "required": [
@@ -2394,7 +2394,7 @@
     },
     "params_github_list_reviews": {
       "type": "object",
-      "description": "github.list_reviews (KOR-51, ADR-090 section 4)",
+      "description": "github.list_reviews (KOR-51, ADR-091 section 4)",
       "properties": {
         "repo": {
           "$ref": "#/$defs/repo"
@@ -2502,7 +2502,7 @@
                     "type": "null"
                   }
                 ],
-                "description": "the name of the session's effective rights profile when it gave the verdict, null without (ADR-090 section 5)"
+                "description": "the name of the session's effective rights profile when it gave the verdict, null without (ADR-091 section 5)"
               },
               "outcome": {
                 "$ref": "#/$defs/verdict_outcome"
@@ -2540,7 +2540,7 @@
     },
     "params_github_get_checks": {
       "type": "object",
-      "description": "github.get_checks (KOR-51, ADR-090 section 4)",
+      "description": "github.get_checks (KOR-51, ADR-091 section 4)",
       "properties": {
         "repo": {
           "$ref": "#/$defs/repo"
@@ -2642,7 +2642,7 @@
     },
     "params_review_verdict": {
       "type": "object",
-      "description": "review.verdict (KOR-51, ADR-090 section 4): a review session's verdict on one head of a pull request; sealed in operation.params",
+      "description": "review.verdict (KOR-51, ADR-091 section 4): a review session's verdict on one head of a pull request; sealed in operation.params",
       "properties": {
         "repo": {
           "$ref": "#/$defs/repo"
@@ -2727,7 +2727,7 @@
               "type": "null"
             }
           ],
-          "description": "the name of the session's effective rights profile when it gave the verdict, null without (ADR-090 section 5)"
+          "description": "the name of the session's effective rights profile when it gave the verdict, null without (ADR-091 section 5)"
         }
       },
       "required": [
@@ -2742,7 +2742,7 @@
     },
     "params_security_report": {
       "type": "object",
-      "description": "security.report (KOR-51, ADR-090 section 4): the structured result of a security scan",
+      "description": "security.report (KOR-51, ADR-091 section 4): the structured result of a security scan",
       "properties": {
         "repo": {
           "$ref": "#/$defs/repo"
@@ -2863,7 +2863,7 @@
     },
     "params_github_merge": {
       "type": "object",
-      "description": "github.merge (KOR-51, ADR-090 section 4): merge a pull request at exactly head_sha after the workgroup's formal criteria",
+      "description": "github.merge (KOR-51, ADR-091 section 4): merge a pull request at exactly head_sha after the workgroup's formal criteria",
       "properties": {
         "repo": {
           "$ref": "#/$defs/repo"

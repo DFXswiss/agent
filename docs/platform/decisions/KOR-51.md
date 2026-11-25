@@ -3,7 +3,7 @@
 Package: agent roles and rights profiles – work, review and release kept apart, voluntary and never a precondition.
 Concept references: [Idee 42](../KONZEPT.md#k-idee-42), [§10 Punkt 7](../KONZEPT.md#k-10-b7); rules
 [E-04](../KONZEPT.md#e-04), [E-05](../KONZEPT.md#e-05), [E-11](../KONZEPT.md#e-11), [E-19](../KONZEPT.md#e-19);
-interpretation [A1](../KONZEPT.md#a-1). Design: [ADR-090](../adr/090-rights-profiles-and-agent-roles.md), reviewed
+interpretation [A1](../KONZEPT.md#a-1). Design: [ADR-091](../adr/091-rights-profiles-and-agent-roles.md), reviewed
 with fresh context before the build (four high and five medium findings, all worked into the ADR).
 
 1. **Profiles on the task, not on one main session.** A task gets a new main session after every end (03-api.md
@@ -29,7 +29,7 @@ with fresh context before the build (four high and five medium findings, all wor
 9. **Review findings of the code (fresh context).** Pushes onto the default branch are refused while the workgroup has
    merge rules (else a Development session could push around `github.merge`); the platform tools carry their class in
    `contracts/ops/classes.json` (`tools`) with a test that refuses a tool without one; reach `workgroup`/`task` also
-   refuses the organization's member list. Not built, stated in ADR-090 §§3, 6: a feature gate when an older runner
+   refuses the organization's member list. Not built, stated in ADR-091 §§3, 6: a feature gate when an older runner
    joins after the assignment, and a gate for writing the extended settings (older runners keep their former settings,
    never wider). `review.verdict` reads no GitHub (a verdict counts only on the head a merge finds); the ADR says so.
 8. **Audit details use `profile`, not `name`.** The contract tests forbid `name` in audit details (it could carry

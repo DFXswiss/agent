@@ -26,7 +26,7 @@
               "type": "null"
             }
           ],
-          "description": "the child's effective profile (ADR-090 section 3), only when the registration named child_profile"
+          "description": "the child's effective profile (ADR-091 section 3), only when the registration named child_profile"
         }
       },
       "required": [

@@ -1,4 +1,4 @@
-"""Rights profiles as the runner reads them (ADR-090 sections 1-3; `contracts/common.json#/$defs/agent_profile`).
+"""Rights profiles as the runner reads them (ADR-091 sections 1-3; `contracts/common.json#/$defs/agent_profile`).
 
 A profile is `{name, operations, reads}`: the operation types a session may request and the reach of its read tools
 (`task` ⊂ `workgroup` ⊂ `all`). None means no profile: every right (A1, E-11). The hub resolves names and computes

@@ -13,7 +13,7 @@ ADR-083 section 2). `interrupted_at` is set while the session's device has faile
 an ended session keeps it), `failover_of` names, for a session the hub started on another device after a device
 failure, the lost session it continues (ADR-087 section 3). `agent_profile` is the rights profile snapshot of a task
 (for its main sessions) or of a child started with a profile of its own (`{name, operations, reads}`, null without;
-ADR-090 section 1): a child without one works with what its parent has.
+ADR-091 section 1): a child without one works with what its parent has.
 """
 
 from __future__ import annotations

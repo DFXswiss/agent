@@ -1,4 +1,4 @@
-"""The section `agent_profiles` of `GET /v1/device/state` (ADR-090 section 3; extension point
+"""The section `agent_profiles` of `GET /v1/device/state` (ADR-091 section 3; extension point
 `<area>/device_state.py:SECTION`).
 
 `{"api": 1, "sessions": {session_id: profile|null}, "workgroups": {wg_id: {name: profile}}}` with `profile` =

@@ -1,4 +1,4 @@
-// Rights profiles of a workgroup (ADR-090 section 2): the built-in roles and the own profiles of the organization and
+// Rights profiles of a workgroup (ADR-091 section 2): the built-in roles and the own profiles of the organization and
 // the workgroup with their operation types and read reach; writers of the workgroup add or remove a workgroup
 // profile, admins an organization profile. A profile is a voluntary restriction a person assigns to a task; nothing
 // here restricts anybody by itself (E-11).

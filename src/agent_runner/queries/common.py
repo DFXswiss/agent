@@ -12,7 +12,7 @@
   the session's workgroup) after `ReadScope.readable`; a workgroup this device does not serve is refused with its
   name (`NotServed`).
 - `known_task(context, scope, task_id)`: the task with its readable workgroup, as the hub says (`device_api.task`;
-  `not_found` otherwise), within the reach of the session's rights profile (`ReadScope.outside_reach`, ADR-090); a
+  `not_found` otherwise), within the reach of the session's rights profile (`ReadScope.outside_reach`, ADR-091); a
   task ID named only by events is not enough (the hub projects task whiteboards of existing tasks only).
 - `answered` audits the workgroup of a refusal (`ReadRefused.wg_id`) and `ok(..., read_wg_id=)` the workgroup read.
 """

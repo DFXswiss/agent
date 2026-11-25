@@ -222,7 +222,7 @@ describe('saveSettings', () => {
   });
 });
 
-describe('merge criteria and separate duties (ADR-090)', () => {
+describe('merge criteria and separate duties (ADR-091)', () => {
   const BASE = { repositories: '', protectedBranches: '', prDraftDefault: true };
 
   it('writes nothing new while every field is off', () => {

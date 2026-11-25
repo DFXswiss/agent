@@ -1344,7 +1344,7 @@ Every GitHub request carries `Accept: application/vnd.github+json`, `X-GitHub-Ap
 - Full session in every respect: own events, terminal, hooks, audit, metrics; visible in the web as a child (at any
   depth).
 
-### 13.1 Rights profiles (KOR-51, ADR-090 §3)
+### 13.1 Rights profiles (KOR-51, ADR-091 §3)
 
 A session may carry a rights profile `{name, operations, reads}`; without one it may do what its human may (A1,
 E-11). The runner keeps the section `agent_profiles` of the desired state (`profile_state`, reconcile step 46

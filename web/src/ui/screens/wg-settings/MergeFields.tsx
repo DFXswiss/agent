@@ -1,4 +1,4 @@
-// The merge criteria and the separation of duties of a workgroup (ADR-090 sections 5 and 6; part of the settings
+// The merge criteria and the separation of duties of a workgroup (ADR-091 sections 5 and 6; part of the settings
 // form): passed verdicts of review sessions on the head, their profile, green checks, approving GitHub reviews and
 // separate duties. Every field is optional and off by default: without them only GitHub's own rules decide (E-11).
 import { useId } from 'react';
