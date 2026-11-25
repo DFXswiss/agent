@@ -2,14 +2,18 @@
 exported with `git archive`, the lock checked and its inputs downloaded by digest into a cache, the staged payload
 (interpreter, dependencies, packages, Lima, PostgreSQL, golden sources, launchers), normalised modes and times, code
 signing before the manifest, the signed `release.json`, `pkgbuild` and the signed, expiring `latest.json`; two builds
-of one commit produce the same `release.json`."""
+of one commit produce the same `release.json`. A signed package holds no unsigned Mach-O file, not even inside an
+archive (HOT-20): Lima's agents for macOS guests are left out, any other archived Mach-O refuses the build."""
 
 from __future__ import annotations
 
+import bz2
+import gzip
 import hashlib
 import importlib.util
 import io
 import json
+import lzma
 import marshal
 import os
 import stat
@@ -90,7 +94,16 @@ PYTHON = tar_gz(
     [("python/bin/python3", MACHO, 0o755), (SITE, None, 0o755), (LIBRARY + "/os.py", b"# os\n", 0o644)],
     {"python/bin/python3.12": "python3"},
 )
-LIMA = tar_gz([("bin/limactl", MACHO + b"lima", 0o755), ("share/lima/README", b"lima\n", 0o644)])
+ELF = b"\x7fELF" + b"\0" * 12
+# As Lima ships it: the agent for Linux guests and the one for macOS guests, each a Mach-O or ELF file in gzip.
+LIMA = tar_gz(
+    [
+        ("bin/limactl", MACHO + b"lima", 0o755),
+        ("share/lima/README", b"lima\n", 0o644),
+        ("share/lima/lima-guestagent.Linux-aarch64.gz", gzip.compress(ELF, mtime=0), 0o644),
+        ("share/lima/lima-guestagent.Darwin-aarch64.gz", gzip.compress(MACHO, mtime=0), 0o644),
+    ]
+)
 POSTGRES_TXZ = tar_gz([("bin/pg_ctl", FAT, 0o755), ("share/postgresql.conf", b"conf\n", 0o644)], mode="w:xz")
 POSTGRES = jar({"META-INF/MANIFEST.MF": b"Manifest-Version: 1.0\n", "postgres-darwin-arm_64.txz": POSTGRES_TXZ})
 INPUTS = {"python": PYTHON, "lima": LIMA, "postgresql": POSTGRES}
@@ -313,6 +326,7 @@ def test_a_build_from_a_checkout(tmp_path: Path, keys: Keys) -> None:
     for path in (
         "lima/bin/limactl",
         "lima/share/lima/README",
+        "lima/share/lima/lima-guestagent.Linux-aarch64.gz",
         "postgresql/bin/pg_ctl",
         "postgresql/share/postgresql.conf",
         "golden-src/images/golden.yaml",
@@ -335,6 +349,7 @@ def test_a_build_from_a_checkout(tmp_path: Path, keys: Keys) -> None:
         f"{SITE}/agent_runner/__pycache__/x.cpython-312.pyc",
         "golden-src/images/.DS_Store",
         "golden-src/packaging",
+        "lima/share/lima/lima-guestagent.Darwin-aarch64.gz",
     ):
         assert path not in files, path
     assert not any(path.startswith(("packaging/", "src/")) for path in files)
@@ -431,6 +446,78 @@ def test_code_signing_happens_before_the_manifest(tmp_path: Path, keys: Keys) ->
     steps = [call[0] for call in bench.run.calls]
     assert steps.index("pkgbuild") > max(index for index, step in enumerate(steps) if step == "codesign")
     assert bench.tools.log[-1].endswith("signed_files=3 package=" + f"DFX-Agent-Runner-{VERSION}.pkg")
+    # the package list holds no unsigned Mach-O file, neither loose nor inside an archive
+    for name in files:
+        if not files[name].startswith("link:"):
+            data = (stage / name).read_bytes()
+            assert data[:4] not in build.MACHO or data.endswith(b"+signature"), name
+    assert build.archived_macho(stage) == []
+
+
+def test_a_mach_o_file_inside_an_archive_refuses_a_signed_build_and_is_named(
+    tmp_path: Path, keys: Keys, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bench = make_bench(tmp_path, keys)
+
+    def bundled(argv: list[str]) -> None:
+        folder = bench.options.work / "stage" / SITE / "bundled"
+        folder.mkdir(parents=True)
+        (folder / "native-1.0-py3-none-any.whl").write_bytes(jar({"native/_speed.so": MACHO, "native/a.py": b""}))
+
+    bench.run.on([bench.python, "-I", "-B", "-m", "pip"], bundled)
+    argv = [*required(tmp_path, keys), "--checkout", str(bench.checkout), "--trust-build-key"]
+    argv[argv.index("--work") + 1] = str(bench.options.work)
+    signed = [*argv, "--sign-identity", IDENTITY]
+    assert build.main(signed, bench.tools) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == {"ok": False, "error": {"code": "build_failed", "name": "sign_missing"}}
+    where = f"{SITE}/bundled/native-1.0-py3-none-any.whl/native/_speed.so"
+    assert captured.err == f"sign_missing path={where}\n"
+    assert bench.run.called("codesign") == []
+    assert bench.run.called("pkgbuild") == []
+    # without an identity the build stays as it was: nothing is signed or checked
+    assert build.main(argv, bench.tools) == 0
+    assert bench.run.called("codesign") == []
+    assert f"{SITE}/bundled/native-1.0-py3-none-any.whl" in release.read_manifest(bench.stage, [keys.public]).files
+
+
+def test_mach_o_files_inside_archives_are_found_by_content(tmp_path: Path) -> None:
+    def tar(entries: list[Entry], mode: str = "w") -> bytes:
+        return tar_gz(entries, {"link": "x"}, mode=mode)
+
+    inner_zip = jar({"deep/tool": MACHO, "deep/text": b"text"})
+    files = {
+        "a.whl": jar({"pkg/": b"", "pkg/fast.so": FAT, "pkg/x.py": b"x = 1\n"}),
+        "b.tar": tar([("d", None, 0o755), ("d/bin", MACHO, 0o755), ("d/elf", ELF, 0o755)]),
+        "c.tgz": tar([("tool", MACHO, 0o755)], mode="w:gz"),
+        "d.tar.xz": tar([("tool", MACHO, 0o755)], mode="w:xz"),
+        "e.tar.bz2": tar([("tool", MACHO, 0o755)], mode="w:bz2"),
+        "f.gz": gzip.compress(MACHO, mtime=0),
+        "g.xz": lzma.compress(MACHO),
+        "h.bz2": bz2.compress(MACHO),
+        "linux.gz": gzip.compress(ELF, mtime=0),
+        "nested.tar.gz": tar([("inner.zip", inner_zip, 0o644), ("plain", b"plain", 0o644)], mode="w:gz"),
+        "broken.gz": b"\x1f\x8b" + b"\0" * 20,
+        "broken.zip": b"PK\x03\x04" + b"\0" * 20,
+        "broken.tar": b"x" * 257 + b"ustar" + b"\0" * 300,
+        "plain": MACHO,
+        "short": b"\x1f",
+    }
+    (tmp_path / "sub").mkdir()
+    for name, data in files.items():
+        (tmp_path / "sub" / name).write_bytes(data)
+    (tmp_path / "link.gz").symlink_to("sub/f.gz")
+    assert build.archived_macho(tmp_path) == [
+        "sub/a.whl/pkg/fast.so",
+        "sub/b.tar/d/bin",
+        "sub/c.tgz/tool",
+        "sub/d.tar.xz/tool",
+        "sub/e.tar.bz2/tool",
+        "sub/f.gz/f",
+        "sub/g.xz/g",
+        "sub/h.bz2/h",
+        "sub/nested.tar.gz/inner.zip/deep/tool",
+    ]
 
 
 def test_a_notarised_release_with_the_longest_expiry(tmp_path: Path, keys: Keys) -> None:

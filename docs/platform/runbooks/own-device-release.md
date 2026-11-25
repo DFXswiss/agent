@@ -51,6 +51,16 @@ depended on what the compiling process had compiled before). Publish only once t
 `--notarized` (or re-run the build with `--notarized` and staple again) so `package_sha256` matches the stapled file.
 The device screen offers the download only for a feed with `notarized: true` that has not expired.
 
+Apple also checks Mach-O files **inside** archives (`.gz`, `.zip`, `.whl`, `.tar*`): a submission that ends `Invalid`
+with "Archive contains critical validation errors" and names a file such as `….gz/<file>` ("not signed with a valid
+Developer ID certificate", "no secure timestamp", "hardened runtime not enabled") holds such a file, which `codesign`
+cannot sign in place. The build therefore leaves Lima's agents for macOS guests (`lima-guestagent.Darwin-*`) out of
+the payload (own devices run Linux guests only), and a build with `--sign-identity` refuses any other archived Mach-O
+file before signing: `build_failed` `sign_missing`, with one `sign_missing path=<archive>/<member>` line per file on
+standard error. Do not submit such a build; report the paths as a build defect (the test
+`test_a_mach_o_file_inside_an_archive_refuses_a_signed_build_and_is_named` covers the class). A build without
+identities is not checked.
+
 Without a Developer ID (sections 2 and 4 only, `notarized: false`) the agent way installs and updates: `device add`
 checks the feed's signature, expiry, minimum macOS and the package digest, never `notarized`; it writes the package
 itself (no quarantine attribute) and the administrator step installs it with `installer -pkg`, which accepts an

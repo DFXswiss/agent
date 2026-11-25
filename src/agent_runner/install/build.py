@@ -11,14 +11,16 @@ Everything comes from one commit (`git archive`) and its lock (`scripts/macos-pa
 2. the pinned inputs are downloaded into `<work>/cache` and checked by SHA-256 (a cached file that matches is reused);
 3. the payload is staged: the relocatable CPython (`python/`), the runner's dependencies installed into it with
    `pip --require-hashes` and the packages `agent_runner` and `agent_cli` copied into its `site-packages`, Lima
-   (`lima/`), PostgreSQL (`postgresql/`), the golden's sources (`golden-src/`: `images/`, `src/agent_guest/`,
-   `contracts/`) and the launchers in `libexec/`;
+   (`lima/`, without its agents for macOS guests: own devices run Linux guests only), PostgreSQL (`postgresql/`),
+   the golden's sources (`golden-src/`: `images/`, `src/agent_guest/`, `contracts/`) and the launchers in `libexec/`;
 4. modes and times are normalised (0755 for executables and directories, 0644 for the rest, the commit time
    everywhere) and the interpreter's whole library is compiled with unchecked hashes (no time stamps; the launcher
    runs `python -I -B`, so nothing is ever written into the payload), each file in a fresh interpreter that reads no
    byte code (`compile_python`), so two builds of one commit stage the same tree;
 5. with `--sign-identity` every Mach-O file is signed with the hardened runtime and a time stamp (entitlements from
-   `scripts/macos-package/entitlements/`), **before** the manifest is written;
+   `scripts/macos-package/entitlements/`), **before** the manifest is written; a Mach-O file inside an archive
+   (`.gz`, `.zip`, `.whl`, `.tar*`, found by content) cannot be signed there and refuses the build
+   (`build_failed` `sign_missing`, the log names each `sign_missing path=…`), since notarisation rejects it;
 6. `release.json` (every file's SHA-256 and the pinned Claude Code download) is written and signed with the release
    key; `pkgbuild` makes the package (signed with `--installer-identity` when given), whose `postinstall` runs the
    root helper;
@@ -34,15 +36,19 @@ from __future__ import annotations
 
 import argparse
 import ast
+import bz2
+import gzip
 import hashlib
 import io
 import json
+import lzma
 import os
 import re
 import shutil
 import sys
 import tarfile
 import zipfile
+import zlib
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -87,6 +93,17 @@ os.makedirs(os.path.dirname(target), exist_ok=True)
 pyc = bootstrap._code_to_hash_pyc(code, _imp.source_hash(bootstrap._RAW_MAGIC_NUMBER, data), False)
 bootstrap._write_atomic(target, pyc, 0o644)
 """
+# The agents Lima runs inside macOS guests (Mach-O in gzip); own devices run Linux guests only (HOT-20).
+MACOS_GUEST_AGENTS = "share/lima/lima-guestagent.Darwin-*"
+# Archives looked into for Mach-O files: zip (also wheels and jars), gzip, xz, bzip2 and tar (`ustar` at 257).
+ZIP = b"PK\x03\x04"
+STREAMS: tuple[tuple[bytes, Callable[[bytes], bytes]], ...] = (
+    (b"\x1f\x8b", gzip.decompress),
+    (b"\xfd7zXZ\x00", lzma.decompress),
+    (b"BZh", bz2.decompress),
+)
+TAR_MAGIC = (257, b"ustar")
+HEAD = 262
 MACHO = (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xfe\xed\xfa\xcf", b"\xbe\xba\xfe\xca")
 LAUNCHER = """#!/bin/sh
 # Runs a module of the payload's interpreter, isolated from the caller's Python settings (ADR-074 section 3).
@@ -261,6 +278,8 @@ def stage(tools: Tools, options: Options, source: Path, lock: dict[str, Any], ta
         shutil.copytree(source / "src" / package, site / package, ignore=SKIP)
     drop_scripts(target / "python/bin", target, site)
     _extract_tar(fetch_input(tools, cache, "lima", lock["lima"]), target / "lima")
+    for agent in sorted((target / "lima").glob(MACOS_GUEST_AGENTS)):
+        agent.unlink()
     stage_postgresql(fetch_input(tools, cache, "postgresql", lock["postgresql"]), target / "postgresql")
     for part in GOLDEN_PARTS:
         shutil.copytree(source / part, target / "golden-src" / part, ignore=SKIP)
@@ -343,6 +362,64 @@ def macho_files(tree: Path) -> list[Path]:
     return sorted(found)
 
 
+def _is_archive(head: bytes) -> bool:
+    start, magic = TAR_MAGIC
+    return head.startswith(ZIP) or any(head.startswith(m) for m, _ in STREAMS) or head[start : start + 5] == magic
+
+
+def _members(name: str, data: bytes) -> list[tuple[str, bytes]]:
+    """The regular files of the archive `data` (`name/member`); a compressed stream that is no tar is one member
+    named like the archive without its suffix. Data that does not read as its archive holds no member."""
+    try:
+        return _read_members(name, data)
+    except (OSError, EOFError, zlib.error, lzma.LZMAError, zipfile.BadZipFile, tarfile.TarError):
+        return []
+
+
+def _read_members(name: str, data: bytes) -> list[tuple[str, bytes]]:
+    if data.startswith(ZIP):
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            return [(f"{name}/{i.filename}", archive.read(i)) for i in archive.infolist() if not i.is_dir()]
+    try:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
+            found: list[tuple[str, bytes]] = []
+            for info in archive.getmembers():
+                handle = archive.extractfile(info) if info.isfile() else None
+                if handle is not None:
+                    found.append((f"{name}/{info.name}", handle.read()))
+            return found
+    except tarfile.ReadError:
+        pass  # no tar: a compressed stream of one file, or no archive after all
+    for magic, decompress in STREAMS:
+        if data.startswith(magic):
+            return [(f"{name}/{Path(name).stem}", decompress(data))]
+    return []
+
+
+def archived_macho(tree: Path) -> list[str]:
+    """Mach-O files inside archives below `tree` (nested archives included), as `archive/member` paths relative to
+    `tree`; `codesign` cannot sign them in place."""
+    found: list[str] = []
+    pending: list[tuple[str, bytes]] = []
+    for directory, _dirnames, filenames in os.walk(tree):
+        for name in sorted(filenames):
+            path = Path(directory) / name
+            if path.is_symlink() or not path.is_file():
+                continue
+            with path.open("rb") as handle:
+                head = handle.read(HEAD)
+            if _is_archive(head):
+                pending.append((path.relative_to(tree).as_posix(), path.read_bytes()))
+    while pending:
+        name, data = pending.pop()
+        for member, content in _members(name, data):
+            if content[:4] in MACHO:
+                found.append(member)
+            elif _is_archive(content[:HEAD]):
+                pending.append((member, content))
+    return sorted(found)
+
+
 def entitlements_for(source: Path, path: Path) -> Path | None:
     folder = source / ENTITLEMENTS
     if path.name == "limactl":
@@ -353,9 +430,15 @@ def entitlements_for(source: Path, path: Path) -> Path | None:
 
 
 def codesign(tools: Tools, options: Options, source: Path, tree: Path) -> int:
-    """Sign every Mach-O file (hardened runtime, time stamp); returns their number. No identity: nothing."""
+    """Sign every Mach-O file (hardened runtime, time stamp); returns their number. No identity: nothing. A Mach-O
+    file inside an archive cannot be signed in place and would fail notarisation: `build_failed` `sign_missing`, each
+    one logged as `sign_missing path=<archive>/<member>`."""
     if options.sign_identity is None:
         return 0
+    archived = archived_macho(tree)
+    if archived:
+        tools.log += [f"sign_missing path={name}" for name in archived]
+        raise RunnerError("build_failed", "sign_missing")
     files = macho_files(tree)
     for path in files:
         argv = ["codesign", "--force", "--options", "runtime", "--timestamp", "--sign", options.sign_identity]
@@ -538,6 +621,7 @@ def main(argv: Sequence[str] | None = None, tools: Tools | None = None) -> int:
     try:
         result = build(parse(sys.argv[1:] if argv is None else argv), used)
     except RunnerError as error:
+        sys.stderr.writelines(line + "\n" for line in used.log)
         sys.stdout.write(json.dumps({"ok": False, "error": {"code": error.code, "name": error.name}}) + "\n")
         return 1
     sys.stdout.write(
