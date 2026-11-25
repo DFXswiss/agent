@@ -139,7 +139,7 @@
     },
     "body_vm_state": {
       "type": "object",
-      "description": "VM row as reported by the runner (02-data-model.md section 2.4)",
+      "description": "VM row as reported by the runner (02-data-model.md section 2.4); optional upgrade (the switch status of an outdated workgroup VM, null once current; absent: unchanged) and replaced_by (on the deleted report of a VM switched to a newer golden), ADR-093 section 3",
       "properties": {
         "vm_id": {
           "$ref": "../common.json#/$defs/vm_id"
@@ -181,6 +181,19 @@
         },
         "at": {
           "$ref": "../common.json#/$defs/time"
+        },
+        "upgrade": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/vm_upgrade"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "replaced_by": {
+          "$ref": "../common.json#/$defs/vm_id"
         }
       },
       "required": [
@@ -2171,7 +2184,7 @@
               "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
             },
             "detail": {
-              "description": "detail of audit rows with action session.context_restored: the runner restored the task's context checkpoint into this session (ADR-072 section 7): the checkpoint, what came back of the workspace (partial and omitted are stored on the session as context_reason workspace_partial/workspace_omitted) and whether the checkpoint was stale (the final checkpoint of the previous session did not arrive in time, the newest one available was used). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+              "description": "detail of audit rows with action session.context_restored: the runner restored the task's context checkpoint into this session (ADR-072 section 7): the checkpoint, what came back of the workspace (partial and omitted are stored on the session as context_reason workspace_partial/workspace_omitted) and whether the checkpoint was stale (the final checkpoint of the previous session did not arrive in time, the newest one available was used). moved golden: the session's VM had been switched to a newer golden while it was paused (ADR-093 section 4), stored on the session as context_reason golden_switch. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
               "type": "object",
               "properties": {
                 "object_id": {
@@ -2182,6 +2195,12 @@
                 },
                 "stale": {
                   "type": "boolean"
+                },
+                "moved": {
+                  "type": "string",
+                  "enum": [
+                    "golden"
+                  ]
                 }
               },
               "required": [

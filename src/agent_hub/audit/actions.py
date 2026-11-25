@@ -238,6 +238,7 @@ AUDIT_ACTIONS = frozenset(
         "task.close",
         "task.create",
         "task.placement",
+        "vm.switch_requested",
         "wg.placement",
         "whiteboard.notify",
         "wrap.put",

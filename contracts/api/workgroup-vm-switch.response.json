@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-vm-switch.response.json",
+  "title": "POST /v1/workgroups/{wg}/vms/{vm}/switch response",
+  "description": "Body of a successful response to POST /v1/workgroups/{wg}/vms/{vm}/switch (03-api.md section 4.5, ADR-093 section 5): the preview - the VM's switch status as the device last reported it (null: the VM is current, nothing was requested) - and whether the switch is requested (requested_at: since when).",
+  "type": "object",
+  "properties": {
+    "vm_id": {
+      "$ref": "../common.json#/$defs/vm_id"
+    },
+    "device_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "golden_version": {
+      "$ref": "../common.json#/$defs/version_text"
+    },
+    "requested": {
+      "type": "boolean"
+    },
+    "requested_at": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "upgrade": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/vm_upgrade"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "vm_id",
+    "device_id",
+    "golden_version",
+    "requested",
+    "requested_at",
+    "upgrade"
+  ],
+  "additionalProperties": false
+}

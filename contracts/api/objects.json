@@ -1745,7 +1745,7 @@
     },
     "vm_load": {
       "type": "object",
-      "description": "a live VM of a workgroup on a device with its occupying sessions (ADR-075 section 3)",
+      "description": "a live VM of a workgroup on a device with its occupying sessions (ADR-075 section 3); golden_version and upgrade (the switch status of an outdated VM, null when current) as the device reported them (ADR-093 section 3)",
       "properties": {
         "vm_id": {
           "$ref": "../common.json#/$defs/vm_id"
@@ -1762,6 +1762,19 @@
         },
         "sessions": {
           "$ref": "../common.json#/$defs/count"
+        },
+        "golden_version": {
+          "$ref": "../common.json#/$defs/version_text"
+        },
+        "upgrade": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/vm_upgrade"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [

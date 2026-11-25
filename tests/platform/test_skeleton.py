@@ -63,6 +63,7 @@ AREAS: dict[ModuleType, list[str]] = {
         "telemetry",
         "usage",
         "users",
+        "vmswitch",
         "whiteboards",
         "workgroups",
         "wraps",

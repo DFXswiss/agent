@@ -2519,6 +2519,26 @@
       "owner": "KOR-41"
     },
     {
+      "method": "POST",
+      "path": "/v1/workgroups/{wg}/vms/{vm}/switch",
+      "name": "workgroup-vm-switch",
+      "section": "4.5",
+      "auth": "browser",
+      "rights": [
+        "wg:read"
+      ],
+      "path_params": {
+        "wg": "uuid",
+        "vm": "vm_id"
+      },
+      "request_kind": "body",
+      "request": "api/workgroup-vm-switch.request.json",
+      "response": "api/workgroup-vm-switch.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-70"
+    },
+    {
       "method": "PUT",
       "path": "/v1/tasks/{task}/placement",
       "name": "task-placement-put",

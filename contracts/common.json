@@ -3379,7 +3379,7 @@
     },
     "context_reason": {
       "type": "string",
-      "description": "why a main session's continuation is noteworthy (session row context_reason, ADR-072 section 7): with context_restore fallback one of the fallback reasons; with context_restore restored workspace_partial (the conversation is complete, parts of the workspace were left out) or workspace_omitted (the workspace was too large and was not restored)",
+      "description": "why a main session's continuation is noteworthy (session row context_reason, ADR-072 section 7): with context_restore fallback one of the fallback reasons; with context_restore restored workspace_partial (the conversation is complete, parts of the workspace were left out) or workspace_omitted (the workspace was too large and was not restored); with context_restore restored also golden_switch (the session's VM was switched to a newer golden while it was paused and the whole workspace came along, ADR-093 section 4)",
       "enum": [
         "context_missing",
         "context_invalid",
@@ -3387,7 +3387,8 @@
         "version_incompatible",
         "restore_failed",
         "workspace_partial",
-        "workspace_omitted"
+        "workspace_omitted",
+        "golden_switch"
       ]
     },
     "context_workspace": {
@@ -3824,6 +3825,85 @@
         "ts",
         "salt",
         "ct"
+      ],
+      "additionalProperties": false
+    },
+    "vm_upgrade": {
+      "type": "object",
+      "description": "the switch of an outdated workgroup VM to the newest golden of its device (ADR-093 section 3): the golden it moves to, state waiting (holds name who or what keeps it, since when) or switching, and the paused main sessions that move with it; IDs, reasons and times only",
+      "properties": {
+        "golden_version": {
+          "$ref": "#/$defs/version_text"
+        },
+        "golden_built_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "waiting",
+            "switching"
+          ]
+        },
+        "holds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/vm_upgrade_hold"
+          },
+          "minItems": 0,
+          "maxItems": 16
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/uuid"
+          },
+          "minItems": 0,
+          "maxItems": 64
+        }
+      },
+      "required": [
+        "golden_version",
+        "golden_built_at",
+        "state",
+        "holds",
+        "sessions"
+      ],
+      "additionalProperties": false
+    },
+    "vm_upgrade_hold": {
+      "type": "object",
+      "description": "one cause that keeps an outdated workgroup VM on its golden (ADR-093 section 1): session_active (a session that is not paused), subagent (a child session that has not ended), checkpoint_due, checkpoint_missing, workspace_incomplete (a paused session's newest checkpoint is due, missing or left part of the workspace out), capacity (no free slot for the new VM), switch_failed (the last attempt failed); session_id names the session; since is when the device first saw the cause",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "enum": [
+            "session_active",
+            "subagent",
+            "checkpoint_due",
+            "checkpoint_missing",
+            "workspace_incomplete",
+            "capacity",
+            "switch_failed"
+          ]
+        },
+        "session_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "since": {
+          "$ref": "#/$defs/time"
+        }
+      },
+      "required": [
+        "reason",
+        "since"
       ],
       "additionalProperties": false
     }

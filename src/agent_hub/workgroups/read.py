@@ -5,7 +5,8 @@
   them: active org members with `device.state = active`), newest enrolment first, with presence, capacity,
   `capacity_low`, `assigned_via` (`org` for a device assigned to the whole organization, else `workgroup`; display
   data, clients decide key recipients from the verified log, ADR-075 section 5) and `vms` (the workgroup's live VMs
-  on the device with their occupying sessions); `members` the users with access (active members, not revoked),
+  on the device with their occupying sessions, their golden and the switch status `upgrade` the device reported,
+  ADR-093 section 3); `members` the users with access (active members, not revoked),
   newest grant first; `placement` the workgroup's default device and VM (as stored).
 - `candidates(wg)`: the platform devices the browser may assign to the workgroup (03-api.md section 4.6.1 step 1):
   certified (`certified_seq` = `platform_seq` of the `device_certify` entry the browser verifies), `active`, not yet
@@ -59,10 +60,12 @@ def _capacity(stored: Any) -> tuple[dict[str, Any], bool]:
 
 
 def _vm_rows(connection: Connection, where: str, params: tuple[Any, ...]) -> list[tuple[Any, ...]]:
-    """`(device_id, vm_id, wg_id, state, occupying sessions)` of the live VMs matching `where`, ordered by VM ID."""
+    """`(device_id, vm_id, wg_id, state, occupying sessions, golden_version, upgrade)` of the live VMs matching
+    `where`, ordered by VM ID."""
     return connection.execute(
         "SELECT v.device_id, v.id, v.wg_id, v.state, (SELECT count(*) FROM hub.session s WHERE s.vm_id = v.id"
-        f" AND s.state = ANY(%s)) FROM hub.vm v WHERE v.state <> 'deleted' AND v.wg_id IS NOT NULL AND {where}"
+        f" AND s.state = ANY(%s)), v.golden_version, v.upgrade FROM hub.vm v WHERE v.state <> 'deleted'"
+        f" AND v.wg_id IS NOT NULL AND {where}"
         " ORDER BY v.id",
         (list(OCCUPYING), *params),
     ).fetchall()
@@ -77,8 +80,10 @@ def workgroup(connection: Connection, wg_id: UUID, now: datetime, online_seconds
     ).fetchone()
     assert row is not None
     vms: dict[str, list[dict[str, Any]]] = {}
-    for device, vm_id, _wg, state, sessions in _vm_rows(connection, "v.wg_id = %s", (wg_id,)):
-        vms.setdefault(str(device), []).append({"vm_id": vm_id, "state": state, "sessions": int(sessions)})
+    for device, vm_id, _wg, state, sessions, golden, upgrade in _vm_rows(connection, "v.wg_id = %s", (wg_id,)):
+        vms.setdefault(str(device), []).append(
+            {"vm_id": vm_id, "state": state, "sessions": int(sessions), "golden_version": golden, "upgrade": upgrade}
+        )
     devices = []
     for found in connection.execute(
         "SELECT d.id, d.kind, p.last_heartbeat_at > %s, d.capacity, EXISTS (SELECT 1 FROM hub.org_device o"
@@ -176,7 +181,7 @@ def org_devices(
         "v.wg_id IN (SELECT a.wg_id FROM hub.wg_access a JOIN hub.wg w ON w.id = a.wg_id WHERE w.org_id = %s"
         " AND a.user_id = %s AND a.revoked_seq IS NULL)"
     )
-    for device, vm_id, wg, state, sessions in _vm_rows(connection, readable, (org_id, user)):
+    for device, vm_id, wg, state, sessions, _golden, _upgrade in _vm_rows(connection, readable, (org_id, user)):
         vms.setdefault(str(device), []).append(
             {"vm_id": vm_id, "wg_id": str(wg), "state": state, "sessions": int(sessions)}
         )

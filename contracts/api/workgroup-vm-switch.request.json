@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-vm-switch.request.json",
+  "title": "POST /v1/workgroups/{wg}/vms/{vm}/switch request",
+  "description": "Body of POST /v1/workgroups/{wg}/vms/{vm}/switch: empty; asks the device to switch the workgroup VM to the newest golden now (03-api.md section 4.5, ADR-093 section 5).",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

@@ -858,6 +858,10 @@
       "group": "task"
     },
     {
+      "action": "vm.switch_requested",
+      "group": "task"
+    },
+    {
       "action": "read.workgroup.placement",
       "group": "read"
     },

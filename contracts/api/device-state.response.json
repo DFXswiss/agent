@@ -796,6 +796,15 @@
           },
           "minItems": 0,
           "maxItems": 1000
+        },
+        "vm_switch": {
+          "type": "array",
+          "description": "live workgroup VMs of this device a member with administration rights asked to switch to the newest golden now (POST /v1/workgroups/{wg}/vms/{vm}/switch, ADR-093 section 5); a hub that sends the field also reads upgrade and replaced_by of vm_state",
+          "items": {
+            "$ref": "../common.json#/$defs/vm_id"
+          },
+          "minItems": 0,
+          "maxItems": 1000
         }
       },
       "required": [

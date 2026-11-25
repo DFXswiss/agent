@@ -249,8 +249,40 @@ class SessionTransitionBody(Strict):
         return self
 
 
+class VmUpgradeHold(Strict):
+    """`vm_upgrade_hold` (ADR-093 section 1)."""
+
+    reason: Literal[
+        "session_active",
+        "subagent",
+        "checkpoint_due",
+        "checkpoint_missing",
+        "workspace_incomplete",
+        "capacity",
+        "switch_failed",
+    ]
+    session_id: Uuid7 | None = None
+    since: Time
+
+    @model_validator(mode="after")
+    def _optional(self) -> VmUpgradeHold:
+        _absent_not_null(self, ("session_id",))
+        return self
+
+
+class VmUpgrade(Strict):
+    """`vm_upgrade`: the switch status of an outdated workgroup VM (ADR-093 section 3)."""
+
+    golden_version: VersionText
+    golden_built_at: Time | None
+    state: Literal["waiting", "switching"]
+    holds: Annotated[list[VmUpgradeHold], Field(max_length=16)]
+    sessions: Annotated[list[Uuid7], Field(max_length=64)]
+
+
 class VmStateBody(Strict):
-    """`vm_state`: the VM row as the runner reports it."""
+    """`vm_state`: the VM row as the runner reports it; `upgrade` (absent: unchanged, null: current) and
+    `replaced_by` (ADR-093 section 3) are optional."""
 
     vm_id: VmId
     wg_id: Uuid7 | None
@@ -260,6 +292,13 @@ class VmStateBody(Strict):
     memory_mib: Int4Positive
     disk_gib: Int4Positive
     at: Time
+    upgrade: VmUpgrade | None = None
+    replaced_by: VmId | None = None
+
+    @model_validator(mode="after")
+    def _optional(self) -> VmStateBody:
+        _absent_not_null(self, ("replaced_by",))
+        return self
 
 
 class OperationTransitionBody(Strict):
@@ -552,6 +591,12 @@ class ContextRestored(Strict):
     object_id: Uuid7
     workspace: Literal["full", "partial", "omitted", "empty"]
     stale: bool
+    moved: Literal["golden"] | None = None
+
+    @model_validator(mode="after")
+    def _optional(self) -> ContextRestored:
+        _absent_not_null(self, ("moved",))
+        return self
 
 
 class NoDetail(Strict):

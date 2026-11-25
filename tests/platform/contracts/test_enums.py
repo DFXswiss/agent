@@ -158,6 +158,8 @@ DECIDED_AUDIT = (
     " agent.register"
     # ADR-075 section 6
     " task.placement wg.placement"
+    # ADR-093 section 5 (KOR-70): the switch of a workgroup VM to the newest golden asked for by hand
+    " vm.switch_requested"
     # 13-work-vm.md section 13.6 (contracts/changes/KOR-44.md): watching a platform browser
     " read.stream.browser"
 )

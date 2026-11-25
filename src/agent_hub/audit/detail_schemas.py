@@ -1674,6 +1674,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             ],
             "workspace": [{"type": "string", "enum": ["full", "partial", "omitted", "empty"]}],
             "stale": [{"type": "boolean"}],
+            "moved": [{"type": "string", "enum": ["golden"]}],
         },
         "required": ["object_id", "workspace", "stale"],
     },
@@ -1898,6 +1899,15 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "vm_id": [{"type": "string", "pattern": "^vm-[0-9a-f]{8}$"}, {"type": "null"}],
         },
         "required": ["device_id", "vm_id"],
+    },
+    "vm.switch_requested": {
+        "properties": {
+            "vm_id": [{"type": "string", "pattern": "^vm-[0-9a-f]{8}$"}],
+            "device_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ],
+        },
+        "required": ["vm_id", "device_id"],
     },
     "whiteboard.notify": {
         "properties": {

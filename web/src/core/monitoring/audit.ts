@@ -242,6 +242,7 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'task.github_identity',
   'task.model_consent',
   'task.placement',
+  'vm.switch_requested',
   'wg.placement',
   'whiteboard.notify',
   'wrap.put',

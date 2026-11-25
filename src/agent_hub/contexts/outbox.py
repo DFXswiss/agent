@@ -6,7 +6,8 @@ and wrote the audit row) in the same savepoint. For the two restore outcomes a r
 
 - `session.context_restored {object_id, workspace, stale}`: `context_restore = restored`; the reason is
   `workspace_partial` or `workspace_omitted` when the workspace came back `partial` or not at all (`omitted`: too
-  large), none for `full` and `empty` (`stale` stays in the audit row),
+  large), else `golden_switch` when the detail says `moved: golden` (ADR-093 section 4), none otherwise (`stale` stays
+  in the audit row),
 - `session.context_fallback {reason}`: `context_restore = fallback`, `context_reason = reason` (the reported emergency
   path: the session continued with a new conversation),
 
@@ -37,6 +38,8 @@ METRIC = "agent_hub_session_context_total"
 OUTCOMES = {"session.context_restored": "restored", "session.context_fallback": "fallback"}
 WORKSPACE_REASONS = {"partial": "workspace_partial", "omitted": "workspace_omitted"}
 """The `workspace` of a restore that the session row names as its `context_reason`."""
+MOVED_REASON = "golden_switch"
+"""`context_reason` of a complete restore after the session's VM was switched to a newer golden (ADR-093 section 4)."""
 COUNTS: Counter[tuple[str, str]] = Counter()
 _lock = threading.Lock()
 
@@ -56,6 +59,8 @@ def restore_outcome(item: ItemContext, body: AuditBody) -> None:
     if body.session_id is None:
         raise HubError("request_invalid")
     reason = body.detail.get("reason") if result == "fallback" else WORKSPACE_REASONS.get(body.detail["workspace"])
+    if result == "restored" and reason is None and body.detail.get("moved") == "golden":
+        reason = MOVED_REASON
     row = cast(
         tuple[UUID],
         item.connection.execute(
