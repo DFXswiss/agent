@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest';
 import { b64uDecode } from '../../../src/core/encoding/b64u';
 import { fromUtf8 } from '../../../src/core/encoding/bytes';
 import { openRequest } from '../../../src/core/crypto/request';
-import { Secret } from '../../../src/core/crypto/secret';
 import {
   fetchSubscription,
   isSubscriptionRecord,
@@ -118,12 +117,14 @@ describe('loadSubscriptions', () => {
     await hub.add(stale, body());
     hub.rows.get(stale)!.record = await sealed(t, { id: stale, kind: 'claude_subscription', body: body(), epoch: 9 });
     const wrongKey = '0190f000-0000-7000-8000-0000000000c4';
-    await hub.add(wrongKey, body(), { key: Secret.of(new Uint8Array(32).fill(7)) });
+    await hub.add(wrongKey, body());
+    const tampered = hub.rows.get(wrongKey)!.record as { ct: string };
+    tampered.ct = (tampered.ct.startsWith('A') ? 'B' : 'A') + tampered.ct.slice(1);
     const codes = Object.fromEntries((await loadSubscriptions(t.context)).map((item) => [item.id, item.code]));
     expect(codes[A]).toBe('header_invalid');
     expect(codes[B]).toBe('params_invalid');
     expect(codes[C]).toBe('author_not_writer');
-    expect(codes[wrongKey]).not.toBeNull();
+    expect(codes[wrongKey]).toBe('unverifiable');
     expect(codes[stale]).toBe('epoch_stale');
   });
 

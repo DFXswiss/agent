@@ -10,7 +10,7 @@ import { HubError } from '../../src/core/net/signedFetch';
 import { noteResponse } from '../../src/core/store/slices/requests';
 import { SubscriptionManager } from '../../src/ui/subscriptions/SubscriptionManager';
 import type { CredWorld } from '../core/credentials/world';
-import { A, body, ORG, reading, type SubHub, TOKEN, world } from '../core/credentials/sub-hub';
+import { A, body, ORG, reading, SubHub, TOKEN, world } from '../core/credentials/sub-hub';
 import { mount } from './chat-world';
 
 interface Sent {
@@ -72,8 +72,9 @@ function device(t: CredWorld) {
   return { sent, respond, refuse: (error: HubError | null) => (refuse = error) };
 }
 
-async function page(options: { features?: string[] } = {}) {
+async function page(options: { features?: string[]; seed?: (hub: SubHub) => Promise<void> } = {}) {
   const { t, hub } = await world();
+  await options.seed?.(hub);
   t.client.on('GET /v1/me/devices', () => ({
     devices: [
       {
@@ -158,19 +159,14 @@ describe('SubscriptionManager', () => {
 });
 
 async function withCard(extra: Parameters<SubHub['add']>[2] = {}, content: unknown = body({ name: 'Team' })) {
-  const found = await page();
-  await found.hub.add(A, content, { reading: reading(10), ...extra });
-  fireEvent.click(await screen.findByTestId('submanage.add'));
-  fireEvent.click(screen.getByTestId('subadd.close'));
-  return found;
+  return page({ seed: (hub) => hub.add(A, content, { reading: reading(10), ...extra }) });
 }
 
 describe('SubscriptionCard', () => {
   it('logs a subscription in that is not logged in, and in again', async () => {
-    const { hub, d } = await page();
-    await hub.add(A, { email: null, kind: 'setup_token', name: 'Out' });
-    fireEvent.click(await screen.findByTestId('submanage.add'));
-    fireEvent.click(screen.getByTestId('subadd.close'));
+    const { hub, d } = await page({
+      seed: (seeded) => seeded.add(A, { email: null, kind: 'setup_token', name: 'Out' }),
+    });
     const card = await screen.findByTestId(`subcard.${A}`);
     expect(within(card).getByTestId('subcard.status')).toHaveAttribute('data-status', 'not_logged_in');
     expect(within(card).queryByTestId('subcard.logout')).toBeNull();
@@ -241,12 +237,13 @@ describe('SubscriptionCard', () => {
   });
 
   it('shows the primary and an unverifiable subscription without actions', async () => {
-    const { hub } = await page();
-    await hub.add(A, body(), { primary: true });
     const other = '0190f000-0000-7000-8000-0000000000c7';
-    await hub.add(other, body(), { owner: ORG });
-    fireEvent.click(await screen.findByTestId('submanage.add'));
-    fireEvent.click(screen.getByTestId('subadd.close'));
+    await page({
+      seed: async (hub) => {
+        await hub.add(A, body(), { primary: true });
+        await hub.add(other, body(), { owner: ORG });
+      },
+    });
     const primary = await screen.findByTestId(`subcard.${A}`);
     expect(primary).toHaveTextContent('Own sessions');
     expect(within(primary).queryByTestId('subcard.login')).toBeNull();
