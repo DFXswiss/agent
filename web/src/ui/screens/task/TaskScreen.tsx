@@ -159,8 +159,10 @@ function TaskView({ row }: { readonly row: TaskRow }) {
           </span>
           <TaskRuntime start={row.created_at} end={row.closed_at} />
           <TaskPlacement row={row} />
-          <TaskIdentity row={row} writer={writer && row.state !== 'closed'} orgName={directory.orgName} />
-          <TaskProfile row={row} writer={writer && row.state !== 'closed'} />
+          <div className="flex flex-wrap items-start gap-x-4">
+            <TaskIdentity row={row} writer={writer && row.state !== 'closed'} orgName={directory.orgName} />
+            <TaskProfile row={row} writer={writer && row.state !== 'closed'} />
+          </div>
         </div>
         {writer && <TaskMenu task={row} />}
       </header>
