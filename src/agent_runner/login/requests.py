@@ -189,12 +189,10 @@ async def _known_email(flow: Flow, record_id: str) -> str | None:
 
 
 async def _store(flow: Flow, login: str | FullLogin, email: str | None, target: Mapping[str, object]) -> None:
-    if isinstance(login, FullLogin):
-        body = login.body()  # the address the program reports, unless the automation signed in with its own
-        if email is not None:
-            body["email"] = email
-    else:
-        body = {"token": login, "email": email, "kind": "setup_token"}
+    # a full login knows the address the program reports, unless the automation signed in with its own
+    body = login.body() if isinstance(login, FullLogin) else {"token": login, "email": None, "kind": "setup_token"}
+    if email is not None:
+        body["email"] = email
     record_id = target.get("subscription_id")
     try:
         if isinstance(record_id, str):

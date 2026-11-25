@@ -144,13 +144,9 @@ def _merge(current: Mapping[str, Any], new: Mapping[str, Any]) -> dict[str, Any]
     return merged
 
 
-async def flush(context: Any, record_id: str) -> bool:
-    """Write the pending renewal of the record (module docstring, step 4); True when no row remains."""
+async def flush(context: Any, item: Pending) -> bool:
+    """Write the pending renewal (module docstring, step 4); True when no row remains."""
     for _attempt in range(PUT_ATTEMPTS):
-        found = await pending(context, record_id)
-        if not found:
-            return True
-        item = found[0]
         body: dict[str, Any] = {}
         try:
             body = await _body(context, _record(item, base=False))
@@ -159,12 +155,15 @@ async def flush(context: Any, record_id: str) -> bool:
                 await _drop(context, item.id, "written")
                 _line(context, f"renewed id={item.id} version={stored}")
                 return True
-            if not await _rebase(context, item, body):
-                return True
+            rebased = await _rebase(context, item, body)
         except (CredentialUnavailable, HubTransportError, HubRefusal, RecordRefused) as exc:
             return await _failed(context, item.id, exc)
         finally:
             body.clear()
+        if rebased is None:
+            return True
+        item = rebased
+    _line(context, f"pending_kept id={item.id} error=version_conflict")
     return False
 
 
@@ -178,23 +177,24 @@ async def _failed(context: Any, record_id: str, exc: Exception) -> bool:
     return False
 
 
-async def _rebase(context: Any, item: Pending, body: Mapping[str, Any]) -> bool:
-    """After a `version_conflict`: merge into the current record (True, the row is kept) or drop the row (False)."""
+async def _rebase(context: Any, item: Pending, body: Mapping[str, Any]) -> Pending | None:
+    """After a `version_conflict`: the row merged into the current record (kept), or None (dropped)."""
     current = await subscriptions.fetch(context, item.id)
     if current is None or current.primary or current.owner != item.owner:
         await _drop(context, item.id, "gone")
-        return False
+        return None
     base, now = await _body(context, _record(item, base=True)), await _body(context, current)
     try:
         replaced = base.get("refresh_token")
         if now.get("refresh_token") != replaced and not (now.get("relogin") == RELOGIN and "refresh_token" not in now):
             await _drop(context, item.id, "newer_login")
-            return False
+            return None
         merged = _merge(now, body)
         sealed = await subscriptions.seal(context, item.owner, item.id, current.version, merged)
         merged.clear()
-        await _keep(context, Pending(item.id, item.owner, current.version, current.record, sealed))
-        return True
+        rebased = Pending(item.id, item.owner, current.version, current.record, sealed)
+        await _keep(context, rebased)
+        return rebased
     finally:
         base.clear()
         now.clear()
@@ -214,8 +214,9 @@ class Renewer:
         a new version was written or the record was marked."""
         if now < self.retry_at.get(item.id, float("-inf")):
             return False
-        if await pending(self.context, item.id):
-            return await self._flush(item.id, now)
+        waiting = await pending(self.context, item.id)
+        if waiting:
+            return await self._flush(waiting[0], now)
         try:
             current = await subscriptions.fetch(self.context, item.id)
             if current is None or current.primary:
@@ -233,11 +234,17 @@ class Renewer:
         finally:
             body.clear()
 
-    async def _flush(self, record_id: str, now: float) -> bool:
-        if await flush(self.context, record_id):
-            self.retry_at.pop(record_id, None)
+    async def write(self, item: Pending, now: float) -> bool:
+        """Write a pending renewal unless a failed try is too recent; True when no row remains."""
+        if now < self.retry_at.get(item.id, float("-inf")):
+            return False
+        return await self._flush(item, now)
+
+    async def _flush(self, item: Pending, now: float) -> bool:
+        if await flush(self.context, item):
+            self.retry_at.pop(item.id, None)
             return True
-        self.retry_at[record_id] = now + RETRY_S
+        self.retry_at[item.id] = now + RETRY_S
         return False
 
     async def _exchange(self, current: Subscription, body: dict[str, Any], now: float) -> bool:
@@ -269,17 +276,14 @@ class Renewer:
             fields.setdefault("refresh_token", body["refresh_token"])
             new_body = _merge(body, fields)
             fields.clear()
-            try:
+            try:  # the epoch the body was just opened with exists: sealing cannot miss a key
                 sealed = await subscriptions.seal(self.context, current.owner, current.id, current.version, new_body)
-            except CredentialUnavailable as exc:
-                _line(self.context, f"renew_failed id={current.id} stage=seal reason={exc.reason}")
-                self.retry_at[current.id] = now + RETRY_S
-                return False
             finally:
                 new_body.clear()
-            await _keep(self.context, Pending(current.id, current.owner, current.version, current.record, sealed))
+            item = Pending(current.id, current.owner, current.version, current.record, sealed)
+            await _keep(self.context, item)
             _line(self.context, f"renewal_stored id={current.id} base={current.version}")
-            return await self._flush(current.id, now)
+            return await self._flush(item, now)
         finally:
             answer.clear()
 

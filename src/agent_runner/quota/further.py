@@ -112,9 +112,7 @@ class FurtherPoller:
         named = owners(desired) if api(desired) else []
         if api(desired):
             for waiting in await renewal.pending(self.context):
-                await self.renewals().renew(
-                    subscriptions.Subscription(waiting.id, waiting.owner, False, waiting.base_version, {}), now
-                )
+                await self.renewals().write(waiting, now)
         for owner in [name for name in self.listed if name not in named]:
             del self.listed[owner]
         seen: set[str] = set()

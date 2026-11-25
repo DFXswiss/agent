@@ -156,3 +156,27 @@ def test_an_automatic_login_signs_in_with_the_given_address(
         records={"mailbox": mailbox_body(login)},
         opts=opts,
     )
+
+
+@pytest.mark.parametrize("unreadable", [True, False])
+def test_no_address_is_handed_on_when_the_record_cannot_be_read_or_holds_none(
+    store_dsn: str, tmp_path: Path, doubles: Callable[..., Login], unreadable: bool
+) -> None:
+    login = doubles()
+
+    async def check(run: Run) -> None:
+        hub = SubscriptionHub(run.env.hub).install()
+        if unreadable:
+            hub.refusals[RECORD] = (503, {"error": "unavailable"})
+        else:
+            hub.add(subscription_body(email=None), owner=ALICE, record_id=RECORD)
+        first = await run.wait_bodies(1)
+        assert "login_hint" not in first[0]["url"]
+        hub.refusals.clear()
+        follow = await run.follow({"code": await asyncio.to_thread(code_for, login, first[0]["url"])})
+        await run.settle()
+        assert run.bodies(follow) == [{"step": "done"}]
+        assert hub.opened(RECORD)["email"] == USER
+
+    body = {"mode": "manual", "subscription_id": RECORD}
+    run_request(store_dsn, tmp_path, "claude.login", body, check, config={"subscription_login_argv": full_argv(login)})
