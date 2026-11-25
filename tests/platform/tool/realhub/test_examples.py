@@ -4,7 +4,7 @@
 Each command's `example` (`commands.Doc`, the text `search` shows) is run as written, with the identifiers of a
 prepared account put in for its placeholders (`<org_id>`, `<wg_id>` …; an identifier this account has none of becomes
 a well-formed unknown one), the optional parts `[…]` included, each alternative `a|b` run once and a `--wait` cut
-to one second. Allowed are
+to one second (as the `--timeout` of `task wait`). Allowed are
 success or a refusal on the merits with a `next` step; never `invalid_argument` (the tool refuses its own example),
 `request_invalid` (the hub refuses what the tool sent) or `internal` (a crash). `recover` gets the recovery code of
 an agent alone registered for it. The examples that cannot run here
@@ -86,7 +86,8 @@ def split(example: str, values: dict[str, str]) -> tuple[list[str], str]:
     def put(match: re.Match[str]) -> str:
         return values.get(match.group(0), str(uuid7()))
 
-    text = re.sub(r"--wait \d+", "--wait 1", PLACEHOLDER.sub(put, example))  # the wait itself is not under test
+    # the wait itself is not under test (`--wait`, and `--timeout` of `task wait`)
+    text = re.sub(r"--(wait|timeout) \d+", r"--\1 1", PLACEHOLDER.sub(put, example))
     stdin = ""
     piped = re.match(r"printf '%s' (\"[^\"]*\"|\S+) \| (.*)", text)
     if piped:

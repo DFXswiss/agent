@@ -1,7 +1,11 @@
 """Tasks of the agent tool (stage c, 11-agent-access.md section 8.4; twin of `web/src/core/tasks/`): `task list`,
-`task create`, `task prompt`, `task show`, `task follow` and `task queue`. An answer to an approval (KOR-39, ADR-076
-section 8) is a prompt whose first line is exactly `Approved.` or `Declined.`, followed by a blank line and the
-comment when one is given (`answer_text`, the same text the web client sends).
+`task create`, `task prompt`, `task show`, `task follow`, `task wait` and `task queue`. An answer to an approval
+(KOR-39, ADR-076 section 8) is a prompt whose first line is exactly `Approved.` or `Declined.`, followed by a blank
+line and the comment when one is given (`answer_text`, the same text the web client sends).
+
+`task wait` blocks on a loop of `task follow` steps until the task no longer works (`idle`, `closed`, `failed`,
+`waiting`) or its time is up, and answers once: state, reason, the last answer, the pull request addresses the task's
+sessions and operations named, `timed_out` and `next_after`.
 
 The tool seals what the web client seals: a new task is `POST /v1/tasks` with the events `task.meta` (`{"title"}`,
 derived from the prompt as `web/src/core/tasks/title.ts`, vectors `contracts/tasks/title.json`) and `prompt`
@@ -66,6 +70,12 @@ PROMPT_MAX = 65536
 TITLE_MAX = 80
 FOLLOW_POLL_S = 2.0
 FOLLOW_WAIT_MAX_S = 600
+# `task wait`: seconds (default and limit), the states in which a task no longer works, the length of the answer
+WAIT_DEFAULT_S = 600
+WAIT_MAX_S = 3600
+SETTLED = ("idle", "closed", "failed", "waiting")
+ANSWER_MAX = 4000
+PULL_URL = re.compile(r"https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/[0-9]+")
 STATES = ("open", "closed")
 # `task list`: at most this many tasks; `open` pages through at most OPEN_PAGES pages of the hub.
 LIST_LIMIT = 50
@@ -421,6 +431,11 @@ def task_follow(account: Account, task: str, after: int, wait: int) -> dict[str,
     The tool prints one JSON object per command, so following is a loop of calls: each returns the new events (opened
     and verified like `task show`) and `next_after`, the position to pass to the next call, and the task's state.
     """
+    return _follow(account, task, after, wait)[0]
+
+
+def _follow(account: Account, task: str, after: int, wait: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    """`task_follow`'s answer and the task row it read last."""
     if after < 0 or not 0 <= wait <= FOLLOW_WAIT_MAX_S:
         raise PlatformError("invalid_argument")
     row = _task_row(account, task)
@@ -447,11 +462,67 @@ def task_follow(account: Account, task: str, after: int, wait: int) -> dict[str,
         events.append(opened)
     now = _task_row(account, task)
     chat = annotate(account, (org, wg, task), events, None)
-    return {
+    answer = {
         "task_id": task,
         "state": now.get("state"),
         "next": task_next(now),
         "events": chat,
         "next_after": last,
         "unverified": skipped,
+    }
+    return answer, now
+
+
+def _strings(value: object) -> list[str]:
+    """Every text inside an event body (nested objects and lists included)."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for item in value.values() for text in _strings(item)]
+    if isinstance(value, list):
+        return [text for item in value for text in _strings(item)]
+    return []
+
+
+def task_wait(account: Account, task: str, timeout: int) -> dict[str, Any]:
+    """Waits up to `timeout` seconds until the task no longer works (`SETTLED`) and answers once.
+
+    A loop of `task_follow` calls from the start of the chat: the answer is the text of the newest `session.output`
+    (at most `ANSWER_MAX` characters), `pull_requests` the GitHub pull request addresses the task's sessions and
+    operations created or mentioned (in order, each once; the prompts do not count), `next_after` the position for a
+    later `task follow`. `timed_out` is true when the time ran out while the task still worked.
+    """
+    if not 0 <= timeout <= WAIT_MAX_S:
+        raise PlatformError("invalid_argument")
+    deadline = time.monotonic() + timeout
+    after = 0
+    answer: str | None = None
+    pulls: list[str] = []
+    while True:
+        page, row = _follow(account, task, after, 0)
+        after = page["next_after"]
+        for event in page["events"]:
+            body = event.get("body")
+            if event.get("kind") == "prompt" or not isinstance(body, dict):
+                continue
+            if event.get("kind") == "session.output" and isinstance(body.get("text"), str):
+                answer = body["text"]
+            for text in _strings(body):
+                pulls += [url for url in PULL_URL.findall(text) if url not in pulls]
+        state = page["state"]
+        settled = state in SETTLED
+        remaining = deadline - time.monotonic()
+        if settled or remaining <= 0:
+            break
+        time.sleep(min(FOLLOW_POLL_S, remaining))
+    result: dict[str, Any] = {"task_id": task, "state": state}
+    reason = row.get("state_reason")
+    if isinstance(reason, str) and reason:
+        result["reason"] = reason
+    return {
+        **result,
+        "answer": None if answer is None else answer[:ANSWER_MAX],
+        "pull_requests": pulls,
+        "timed_out": not settled,
+        "next_after": after,
     }
