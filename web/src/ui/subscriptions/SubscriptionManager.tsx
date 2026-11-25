@@ -12,7 +12,7 @@ import { AddSubscription } from './AddSubscription';
 import { SubscriptionCard } from './SubscriptionCard';
 
 type State =
-  | { readonly kind: 'loading' }
+  | { readonly kind: 'loading'; readonly items: readonly Subscription[] | null }
   | { readonly kind: 'ready'; readonly items: readonly Subscription[] }
   | { readonly kind: 'error'; readonly code: string };
 
@@ -20,9 +20,13 @@ export function SubscriptionManager() {
   const { app } = useAppEnv();
   const { t } = useI18n();
   const reason = useReason();
-  const [state, setState] = useState<State>({ kind: 'loading' });
+  const [state, setState] = useState<State>({ kind: 'loading', items: null });
   const [adding, setAdding] = useState(false);
-  const reload = useCallback(() => setState({ kind: 'loading' }), []);
+  // the cards stay while the list is read again, so an open dialog and its outcome stay visible
+  const reload = useCallback(
+    () => setState((current) => ({ kind: 'loading', items: current.kind === 'ready' ? current.items : null })),
+    [],
+  );
   useEffect(() => {
     if (state.kind !== 'loading') return;
     loadSubscriptions(app.tasks).then(
@@ -43,7 +47,7 @@ export function SubscriptionManager() {
           {t('subscription-login.add')}
         </button>
       )}
-      {state.kind === 'loading' && (
+      {state.kind === 'loading' && state.items === null && (
         <p aria-live="polite" data-testid="submanage.loading">
           {t('subscription-login.loading')}
         </p>
@@ -61,8 +65,8 @@ export function SubscriptionManager() {
       {state.kind === 'ready' && state.items.length === 0 && (
         <p data-testid="submanage.empty">{t('subscription-login.empty')}</p>
       )}
-      {state.kind === 'ready' &&
-        state.items.map((item) => <SubscriptionCard key={item.id} item={item} onChanged={reload} />)}
+      {(state.kind === 'ready' || state.kind === 'loading') &&
+        state.items?.map((item) => <SubscriptionCard key={item.id} item={item} onChanged={reload} />)}
     </section>
   );
 }
