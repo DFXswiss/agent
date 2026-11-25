@@ -1,6 +1,6 @@
 {
   "name": "e2e-66-browser",
-  "description": "E2E-66 (KOR-44, ADR-085): the session opens the platform browser on a local sign-in site, signs in through the form, waits while the user watches live, downloads the report and closes the browser; a second task opens the browser implicitly, its VM is killed, the next action gets a fresh VM with a notice, and the browser is left to the idle teardown.",
+  "description": "E2E-66 (KOR-44, ADR-085): the session opens the platform browser on a local sign-in site, signs in through the form, waits while the user watches live, downloads the report and closes the browser; a second task opens the browser implicitly, its VM is killed, the action that finds it lost says so, the next action gets a fresh VM with a notice, and the browser is left to the idle teardown.",
   "variables": {
     "site": "http://host.lima.internal:0",
     "password": "unset"
@@ -171,7 +171,7 @@
     {
       "id": "failover-again",
       "expect": {
-        "tool_result_contains": "started again"
+        "tool_result_contains": "stopped answering"
       },
       "reply": {
         "content": [
@@ -188,7 +188,7 @@
     {
       "id": "failover-done",
       "expect": {
-        "tool_result_contains": "\"ok\":true"
+        "tool_result_contains": "started again"
       },
       "reply": {
         "content": [
