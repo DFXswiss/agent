@@ -18,7 +18,7 @@ no session start chooses the VM meanwhile:
 2. a stopped VM held only by a due or missing checkpoint (e.g. a checkpoint of before migration `0034_golden_switch`,
    whose completeness is unknown, or a final checkpoint the stop did not finish in time) is started to take fresh
    checkpoints, when a slot is free without stopping another workgroup's VM (`capacity` otherwise); attempts follow
-   `retry_delay`;
+   `retry_delay`, at most `MAX_REFRESHES` until a request by hand;
 3. a running VM is stopped first (`VmManager._stop`: the retire hooks take the final checkpoints of its sessions) and
    judged again; a hold now leaves it stopped and as it is;
 4. the new VM - a pool VM of the newest golden, else a clone (no other workgroup's VM is stopped for it) - is
@@ -62,6 +62,9 @@ REFRESHABLE = frozenset({"checkpoint_due", "checkpoint_missing"})
 SWITCH_STATES = ("running", "stopped")
 MAX_HOLDS = 16
 MAX_SESSIONS = 64
+MAX_REFRESHES = 3
+"""Starts of a stopped VM for fresh checkpoints before the switch gives up until a request by hand (a checkpoint that
+keeps being dropped never becomes complete; the VM is not started and stopped forever)."""
 RETRY_BASE_S = 300.0
 RETRY_CAP_S = 3600.0
 _VM_ID_RE = re.compile(r"^vm-[0-9a-f]{8}$")
@@ -136,12 +139,12 @@ class GoldenSwitch:
         """VMs a member asked to switch now (desired state `vm_switch`): first in the next pass, without waiting for a
         retry; a VM no longer listed is no longer requested."""
         wanted = list(dict.fromkeys(ids))
-        for vm_id in wanted:
-            if vm_id not in self.requested:
-                self._refreshes.pop(vm_id, None)
-                self._failures.pop(vm_id, None)
+        new = [vm_id for vm_id in wanted if vm_id not in self.requested]
+        for vm_id in new:
+            self._refreshes.pop(vm_id, None)
+            self._failures.pop(vm_id, None)
         self.requested = wanted
-        if wanted:
+        if new:
             self.manager.wake_refill()
 
     async def run_pass(self) -> list[str]:
@@ -208,7 +211,12 @@ class GoldenSwitch:
         if failure is not None and self.env.now() < failure.next_at:
             return (Hold(failure.reason),)
         refresh = self._refreshes.get(row.id)
-        if row.state == "stopped" and verdict.holds and refresh is not None and self.env.now() < refresh.next_at:
+        if (
+            row.state == "stopped"
+            and verdict.holds
+            and refresh is not None
+            and (self.env.now() < refresh.next_at or refresh.count >= MAX_REFRESHES)
+        ):
             return ()
         return None
 

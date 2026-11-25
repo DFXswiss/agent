@@ -29,7 +29,7 @@ const SCENARIO: unknown = JSON.parse(
 const NAME = 'Ada kz69-name-v7q2';
 // Long enough that the runner's first switch pass (every 60 s) still sees the idle sessions (the hold), short enough
 // that the run does not wait long for the pause.
-const IDLE_SECONDS = 150;
+const IDLE_SECONDS = 240;
 const SWITCH_TIMEOUT = 360_000;
 const OUTDATED = 'e2e-outdated';
 const GOLDEN_LINE = 'Continued on the new version of the workgroup VM – files carried over.';
@@ -150,11 +150,15 @@ test('@E2E-69 @R-6.3 @needs-vm a workgroup VM on an older golden moves to the cu
     // The VM is on an older golden while its sessions are still idle: it waits and says who holds it, since when.
     await orchestrator.call('POST', '/runners/runner-1/vm-outdated', { vm_id: vm });
     await expect
-      .poll(async () => (await hubVm(orchestrator, vm))?.upgrade?.holds.map((hold) => hold.reason) ?? [], {
-        timeout: 150_000,
-        intervals: [2000],
-      })
-      .toContain('session_active');
+      .poll(
+        async () =>
+          ((await hubVm(orchestrator, vm))?.upgrade?.holds ?? [])
+            .filter((hold) => hold.reason === 'session_active')
+            .map((hold) => hold.session_id)
+            .sort(),
+        { timeout: 180_000, intervals: [2000] },
+      )
+      .toEqual([alpha.session, beta.session].sort());
     const waiting = (await hubVm(orchestrator, vm))!.upgrade!;
     expect(waiting.state).toBe('waiting');
     expect(waiting.holds.map((hold) => hold.session_id).sort()).toEqual([alpha.session, beta.session].sort());

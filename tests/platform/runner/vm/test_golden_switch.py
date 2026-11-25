@@ -458,8 +458,50 @@ def test_a_failed_clone_at_a_start_keeps_the_old_vm(harness: Harness) -> None:
         await manager.ensure_vm(ORG, WG_A)
 
     with pytest.raises(RunnerError):
-        harness.run(body)
+        harness.run(body)  # the new VM does not start, then the old one (restarted instead) does not either
     assert [item["id"] for item in harness.live()] == [old.id]
+    assert ("vm.golden_replace_failed", {"vm_id": old.id, "code": "vm_start_failed"}) in harness.logs
+
+
+def test_a_failed_delete_reuses_the_recorded_successor(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    harness.session(old.id, WG_A, "suspended")
+    hook = Checkpoints(harness)
+    harness.fake.fail["delete"] = (1, "", "delete failed\n")
+
+    async def body(manager: VmManager) -> tuple[list[str], list[str]]:
+        manager.retire = hook.retire()
+        switch = manager.golden_switch
+        first = await switch.run_pass()
+        [successor] = harness.sql("SELECT new_vm_id FROM runner.golden_switch")
+        await manager.stop_vm(successor["new_vm_id"])  # it went idle meanwhile: it is started again, not cloned
+        switch.request([old.id])
+        return first, await switch.run_pass()
+
+    first, second = harness.run(body)
+    assert (first, second) == ([], [old.id])
+    assert harness.fake.ops().count("clone") == 2  # the first VM of the workgroup and one successor, not two
+    [switch_row] = harness.sql("SELECT new_vm_id FROM runner.golden_switch")
+    assert [item["id"] for item in harness.live()] == [switch_row["new_vm_id"]]
+
+
+def test_refreshes_end_after_a_few_attempts_until_a_request(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    paused = harness.session(old.id, WG_A, "suspended")
+    hook = Checkpoints(harness)
+    hook.reasons[paused] = "checkpoint_missing"  # e.g. dropped again and again
+
+    async def body(manager: VmManager) -> None:
+        manager.retire = hook.retire()
+        for _ in range(6):
+            await manager.golden_switch.run_pass()
+            harness.now += timedelta(hours=2)
+        manager.golden_switch.request([old.id])
+        await manager.golden_switch.run_pass()
+
+    harness.run(body)
+    attempts = [line[1]["attempt"] for line in harness.logs if line[0] == "vm.golden_refresh"]
+    assert attempts == [1, 2, 3, 1]
 
 
 # -- judge, the retire extension and helpers ----------------------------------------------------------------------

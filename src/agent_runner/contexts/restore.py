@@ -324,8 +324,10 @@ class Restorer:
             origin = await records.get(conn, str(restored.manifest["session"]))
         if origin is not None and origin.vm_id == session.vm_id:
             return "same_vm"
-        if origin is not None and origin.vm_id is not None and await vm_records.switched_to(self.env.db, origin.vm_id):
-            return "golden"
+        if origin is not None and origin.vm_id is not None:
+            successor = await vm_records.switched_to(self.env.db, origin.vm_id)
+            if successor is not None and successor == session.vm_id:
+                return "golden"
         return "other_vm"
 
     @staticmethod

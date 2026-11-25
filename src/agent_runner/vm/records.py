@@ -282,7 +282,8 @@ async def record_switch(db: Any, old_vm_id: str, new_vm_id: str, golden_version:
     await _execute(
         db,
         "INSERT INTO runner.golden_switch (old_vm_id, new_vm_id, golden_version, switched_at) VALUES (%s, %s, %s, %s)"
-        " ON CONFLICT (old_vm_id) DO NOTHING",
+        " ON CONFLICT (old_vm_id) DO UPDATE SET new_vm_id = EXCLUDED.new_vm_id, golden_version ="
+        " EXCLUDED.golden_version, switched_at = EXCLUDED.switched_at",
         (old_vm_id, new_vm_id, golden_version, at),
     )
 

@@ -108,7 +108,7 @@ the new VM before it deletes the old one.
 `vm_state` (outbox) gains the optional object `upgrade` and the optional `replaced_by` (contracts, additive):
 
 ```
-upgrade: {golden_version, outdated_since, state: "waiting" | "switching", holds: [{reason, session_id?, since}],
+upgrade: {golden_version, golden_built_at, state: "waiting" | "switching", holds: [{reason, session_id?, since}],
           sessions: [session_id]}   // sessions: the paused main sessions that move with the VM
 replaced_by: vm_id                  // on the `deleted` report of a switched VM
 ```

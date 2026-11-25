@@ -137,11 +137,13 @@ def test_an_older_hub_gets_no_moved_field(rig: Rig) -> None:
         ck, _object_id = await checkpointed(env)
         sid = session_id(1)
         await ck.pk.set_state(sid, "suspended")
+        new_vm = (await ck.pk.vm()).id
         async with env.pool.connection() as conn:
             await conn.execute("UPDATE runner.session SET vm_id = 'vm-0000ffff' WHERE id = %s", (sid,))
             await conn.execute(
                 "INSERT INTO runner.golden_switch (old_vm_id, new_vm_id, golden_version, switched_at)"
-                " VALUES ('vm-0000ffff', 'vm-0000eeee', 'g2', now())"
+                " VALUES ('vm-0000ffff', %s, 'g2', now())",
+                (new_vm,),
             )
         ck.pk.kit.session_env.desired = None
         assert await Resumer(ck.pk.kit.session_env).resume(await ck.pk.session(sid)) == "resumed"
@@ -158,3 +160,21 @@ def test_the_golden_sentence_names_a_stale_checkpoint() -> None:
     context = archive_format.parse_context(json.dumps(context_json()).encode())
     line = restored_line(Restored("o", context, {"ts": TS}), where="golden", stale=True)
     assert line.endswith(STALE_TEXT)
+
+
+def test_a_resume_on_another_vm_than_the_successor_is_no_golden_move(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        ck, _object_id = await checkpointed(env)
+        sid = session_id(1)
+        await ck.pk.set_state(sid, "suspended")
+        async with env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.session SET vm_id = 'vm-0000ffff' WHERE id = %s", (sid,))
+            await conn.execute(
+                "INSERT INTO runner.golden_switch (old_vm_id, new_vm_id, golden_version, switched_at)"
+                " VALUES ('vm-0000ffff', 'vm-0000eeee', 'g2', now())"
+            )
+        assert await Resumer(ck.pk.kit.session_env).resume(await ck.pk.session(sid)) == "resumed"
+        [create] = [value for name, value in ck.guest.calls if name == "create_session"]
+        assert "on another VM of this device" in create["restore"]["note"]
+
+    run(rig, body)

@@ -217,22 +217,31 @@ class VmManager:
         golden = await records.ready_golden(env.db)
         stopped = [row for row in live if row.state in STOPPED_STATES and room(row) > 0]
         if stopped:
-            row = stopped[0]
-            if (
-                golden is None
-                or row.golden_version == golden.version
-                or await self.retire.pending(row)
-                or (await judge(env, self.retire, row)).holds
-            ):
-                return await self._restart(row)
-            env.log("vm.golden_replaced", {"vm_id": row.id, "golden_version": golden.version})
-            return await self.replacement(golden, row, replaced_by=self.golden_switch.hub_reads_status)
+            return await self._from_stopped(stopped[0], golden)
         if not new_allowed:
             # the hub's workgroup limit (`AGENT_HUB_VMS_PER_WG`): no further VM for this session
             raise RunnerError("capacity_exhausted", "vm_new_allowed")
         if golden is None:
             raise RunnerError("capacity_exhausted", "golden")
         return await self._new_vm(golden, org_id, wg_id)
+
+    async def _from_stopped(self, row: VmRow, golden: GoldenRef | None) -> VmRow:
+        """Step 4: restart the stopped VM, or replace it by a VM of the newest golden when it may move."""
+        env = self.env
+        if (
+            golden is None
+            or row.golden_version == golden.version
+            or await self.retire.pending(row)
+            or (await judge(env, self.retire, row)).holds
+        ):
+            return await self._restart(row)
+        env.log("vm.golden_replaced", {"vm_id": row.id, "golden_version": golden.version})
+        try:
+            return await self.replacement(golden, row, replaced_by=self.golden_switch.hub_reads_status, evict=True)
+        except RunnerError as exc:
+            # the session goes on on the old golden; the switch tries again later
+            env.log("vm.golden_replace_failed", {"vm_id": row.id, "code": exc.code})
+            return await self._restart(row)
 
     async def _new_vm(self, golden: GoldenRef, org_id: str, wg_id: str, *, evict: bool = True) -> VmRow:
         taken = await self.pool.take(golden, org_id, wg_id)
@@ -243,14 +252,23 @@ class VmManager:
 
     # -- the switch to a newer golden (`vm.golden_switch`, ADR-093; callers hold the workgroup lock) -------------
 
-    async def replacement(self, golden: GoldenRef, old: VmRow, *, replaced_by: bool) -> VmRow:
+    async def replacement(self, golden: GoldenRef, old: VmRow, *, replaced_by: bool, evict: bool = False) -> VmRow:
         """A running VM of `golden` for the workgroup of the stopped VM `old` (pool or clone; another workgroup's VM
-        is never stopped for it), then `old` is deleted and the switch recorded. A failure leaves `old` as it is."""
+        is stopped for it only with `evict`, a session start), the switch recorded, then `old` is deleted. A failure
+        before the record leaves `old` as it is; after it (the delete failed, or the daemon stopped) the next attempt
+        reuses the recorded successor while it is live instead of making another VM."""
         env = self.env
         assert old.org_id is not None
         assert old.wg_id is not None
-        new = await self._new_vm(golden, old.org_id, old.wg_id, evict=False)
-        await records.record_switch(env.db, old.id, new.id, golden.version, env.now())
+        recorded = await records.switched_to(env.db, old.id)
+        found = None if recorded is None else await records.get(env.db, recorded)
+        if found is not None and found.state == "running":
+            new = found
+        elif found is not None and found.state in STOPPED_STATES:
+            new = await self._restart(found, evict=evict)
+        else:
+            new = await self._new_vm(golden, old.org_id, old.wg_id, evict=evict)
+            await records.record_switch(env.db, old.id, new.id, golden.version, env.now())
         self._forget(old.id)
         await env.delete(old, replaced_by=new.id if replaced_by else None)
         return new
