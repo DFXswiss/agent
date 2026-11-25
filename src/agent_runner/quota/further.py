@@ -102,7 +102,7 @@ class FurtherPoller:
                 async with subscriptions.opened(self.context, item) as body:
                     known = (item.version, renewal.expires(body))
             except CredentialUnavailable:
-                known = (item.version, None)
+                return False  # perhaps a key not synced yet: read again at the next tick
             self.expiry[item.id] = known
         if known[1] is None or not (force or now >= known[1] - renewal.RENEW_BEFORE_S):
             return False

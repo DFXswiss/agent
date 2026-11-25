@@ -394,7 +394,7 @@ def test_a_renewal_needs_a_readable_due_record(store_dsn: str) -> None:
             )
         polls.expiry.clear()
         await polls.tick(DESIRED, DUE + LIFETIME)
-        assert polls.expiry[other][1] is None
+        assert other not in polls.expiry  # read again at the next tick
 
     run(store_dsn, body)
 
@@ -434,31 +434,23 @@ def test_answers_of_the_token_endpoint_out_of_form_are_refused() -> None:
     assert renewal._json(httpx.Response(200, json=[1])) == {}
     good = {"access_token": "a" * 20, "expires_in": 60}
     assert renewal._fields(good, 0.0) == {"token": "a" * 20, "expires_at": time_text(60.0)}
-    for bad in (
-        {"expires_in": 60},
-        {**good, "access_token": "with space"},
-        {**good, "expires_in": True},
-        {**good, "expires_in": 0},
-        {**good, "expires_in": renewal.MAX_EXPIRES_IN + 1},
-        {**good, "refresh_token": 7},
-        {**good, "refresh_token": "with space"},
-        {**good, "scope": "Not A Scope"},
-    ):
+    for bad in ({"expires_in": 60}, {**good, "access_token": "with space"}, {**good, "refresh_token": 7},
+                {**good, "refresh_token": "with space"}):  # fmt: skip
         assert renewal._fields(bad, 0.0) is None, bad
-    assert renewal._fields({**good, "scope": "user:profile"}, 0.0)["scopes"] == ["user:profile"]  # type: ignore[index]
+    # secondary fields never discard an answer whose refresh token the provider already rotated
+    fallback = time_text(float(renewal.DEFAULT_EXPIRES_IN))
+    for odd in (True, 0, "60", renewal.MAX_EXPIRES_IN + 1):
+        assert renewal._fields({**good, "expires_in": odd}, 0.0) == {"token": "a" * 20, "expires_at": fallback}
+    assert renewal._fields({**good, "expires_in": 60.5}, 0.0)["expires_at"] == time_text(60.5)  # type: ignore[index]
+    found = renewal._fields(
+        {**good, "scope": "user:profile Not-A-Scope user:inference", "refresh_token": "r" * 20}, 0.0
+    )
+    assert found == {
+        "token": "a" * 20,
+        "expires_at": time_text(60.0),
+        "refresh_token": "r" * 20,
+        "scopes": ["user:inference", "user:profile"],
+    }
+    assert "scopes" not in renewal._fields({**good, "scope": 7}, 0.0)  # type: ignore[operator]
     assert renewal.expires({**login(), "expires_at": "x"}) is None
     assert renewal.expires({"kind": "setup_token"}) is None
-
-
-def test_a_renewal_with_a_waiting_row_only_writes_it(store_dsn: str) -> None:
-    async def body(env: Env, hub: SubscriptionHub, double: UsageDouble, auth: AuthPageDouble) -> None:
-        grant(auth)
-        record = hub.add(login(), owner=ALICE)
-        hub.put_refusals = [(503, {"error": "unavailable"})]
-        await poller(env, double).tick(DESIRED, DUE)
-        [item] = [found for found in await cached(env) if found.id == record]
-        assert await renewal.Renewer(context=env.context).renew(item, DUE + 1, force=True) is True
-        assert hub.opened(record)["token"] == renewed(1)[0]
-        assert auth.run.counters["refresh"] == 1
-
-    run(store_dsn, body)

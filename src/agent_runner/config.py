@@ -266,12 +266,13 @@ class Config:
     browser_live_max_kbps: int = 3000
     """Cap of the live picture's bandwidth in kbit/s (ADR-085 section 6)."""
     browser_search_url: str = ""
+    """URL template with `{q}` that `browser_navigate {query}` opens; empty = automated search is off (F9)."""
     subscription_login_argv: tuple[str, ...] = DEFAULT_SUBSCRIPTION_LOGIN_ARGV
     """The full login of a further subscription (ADR-092 section 1)."""
     claude_token_url: str = DEFAULT_CLAUDE_TOKEN_URL
     """The token endpoint the measuring device renews further subscriptions at (ADR-092 section 2)."""
     claude_oauth_client_id: str = DEFAULT_CLAUDE_OAUTH_CLIENT_ID
-    """URL template with `{q}` that `browser_navigate {query}` opens; empty = automated search is off (F9)."""
+    """The client ID of that renewal (the pinned Claude Code's)."""
 
     @property
     def contexts_dir(self) -> Path:

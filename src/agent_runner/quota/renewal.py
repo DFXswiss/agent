@@ -47,7 +47,6 @@ from psycopg.types.json import Jsonb
 from agent_runner.credentials import subscriptions
 from agent_runner.credentials.cache import PUT_ATTEMPTS, CredentialUnavailable, RecordRefused
 from agent_runner.credentials.subscriptions import Subscription
-from agent_runner.login.full_login import LoginUnusable, scopes_of
 from agent_runner.orgs.db import session as store_session
 from agent_runner.quota.reader import ClientFactory, default_client
 from agent_runner.sessions.records import time_text
@@ -59,6 +58,9 @@ RENEW_BEFORE_S = 1800.0
 RETRY_S = 60.0
 TIMEOUT_S = 30.0
 MAX_EXPIRES_IN = 366 * 86400
+DEFAULT_EXPIRES_IN = 3600
+"""The lifetime assumed for an answer whose `expires_in` is out of form (renewed again after half of it)."""
+SCOPE_RE = re.compile(r"^[a-z_:]{1,64}$")
 TOKEN_RE = re.compile(r"^[!-~]{1,4096}$")
 TOKEN_FIELDS = ("token", "refresh_token", "expires_at", "scopes")
 RELOGIN = "renewal_refused"
@@ -326,20 +328,23 @@ def _json(response: httpx.Response) -> dict[str, Any]:
 
 
 def _fields(answer: Mapping[str, Any], now: float) -> dict[str, Any] | None:
-    """The token fields of a `200` answer, None when it is out of form."""
+    """The token fields of a `200` answer, None without a usable access or refresh token. The provider has rotated the
+    refresh token by then, so secondary fields never discard the answer: an `expires_in` out of form counts as
+    `DEFAULT_EXPIRES_IN`, scopes out of form are left out (the record keeps its own)."""
     token, refresh, expires_in = answer.get("access_token"), answer.get("refresh_token"), answer.get("expires_in")
     if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
         return None
-    if not isinstance(expires_in, int) or isinstance(expires_in, bool) or not 0 < expires_in <= MAX_EXPIRES_IN:
+    if refresh is not None and not (isinstance(refresh, str) and TOKEN_RE.fullmatch(refresh)):
         return None
-    found: dict[str, Any] = {"token": token, "expires_at": time_text(now + expires_in)}
+    lifetime = expires_in if isinstance(expires_in, (int, float)) and not isinstance(expires_in, bool) else 0
+    if not 0 < lifetime <= MAX_EXPIRES_IN:
+        lifetime = DEFAULT_EXPIRES_IN
+    found: dict[str, Any] = {"token": token, "expires_at": time_text(now + lifetime)}
     if refresh is not None:
-        if not isinstance(refresh, str) or not TOKEN_RE.fullmatch(refresh):
-            return None
         found["refresh_token"] = refresh
-    if "scope" in answer:
-        try:
-            found["scopes"] = list(scopes_of(answer["scope"]))
-        except LoginUnusable:
-            return None
+    scope = answer.get("scope")
+    items = scope.split() if isinstance(scope, str) else []
+    scopes = sorted({item for item in items if SCOPE_RE.fullmatch(item)})
+    if scopes:
+        found["scopes"] = scopes
     return found
