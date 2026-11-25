@@ -51,7 +51,8 @@ runner log and the metrics.
   token, without a use or that does not open is no entry. The entry's identity is its record version, so a new login
   ends a block like a renewed file; the choice, binding, blocks, deferrals and exhaustion are those of the files. A
   pool exists without the directory once the desired state lists a shared subscription (`ensure`); metrics, `doctor`
-  and `operator_quota` show the token files only.
+  and `operator_quota` show the token files only; the quota of a shared entry is read like a file's (`quota.operator`)
+  for the choice and the exhaustion. A token file named `sub-...` is no part of the pool (the prefix is reserved).
 - Tokens are kept in memory only (the cache of the current content of each file) and handed to the guest in the
   provisioning body; they never appear in a log line, a metric, an error or the store.
 """
@@ -286,7 +287,7 @@ class Pool:
             found: dict[str, Entry] = {}
             for entry in sorted(os.listdir(descriptor)):
                 match = NAME_RE.fullmatch(entry)
-                if match is not None:
+                if match is not None and not match.group(1).startswith(SHARED_PREFIX):
                     found[match.group(1)] = self._entry(descriptor, entry, self.files.get(match.group(1)))
         finally:
             os.close(descriptor)

@@ -14,6 +14,8 @@ import pytest
 
 from agent_runner.credentials import subscriptions
 from agent_runner.credentials.cache import CredentialUnavailable, RecordRefused
+from agent_runner.credentials.hints import HANDLERS as HINTS
+from agent_runner.credentials.reconcile import STEPS
 from agent_runner.sync.http import HubRefusal
 
 from .kit import ALICE, BOB, Env, ck, kit_env, make_record, seal_request
@@ -253,19 +255,21 @@ def test_a_lost_answer_is_a_transport_error(store_dsn: str) -> None:
     run(store_dsn, body)
 
 
-def test_the_credentials_hint_reads_the_cached_records_of_the_owner_again(store_dsn: str) -> None:
+def test_the_reconcile_step_and_the_hint_list_the_changed_owners_subscriptions(store_dsn: str) -> None:
     async def body(env: Env, hub: SubscriptionHub) -> None:
         await env.add_ck()
-        first = hub.add(subscription_body(name="One"), owner=ALICE)
-        second = hub.add(subscription_body(), owner=ALICE)
-        assert await subscriptions.sync_owner(env.context, ALICE) is True
-        hub.add(subscription_body(name="Two"), owner=ALICE, version=2, record_id=first)
-        hub.refusals[second] = (403, {"error": "forbidden"})
-        await subscriptions.refresh_cached(env.context, ALICE)
+        record_id = hub.add(subscription_body(name="One"), owner=ALICE)
+        env.hub.changed = [ALICE]
+        (step,) = STEPS
+        await step.run(await env.desired())
         async with env.pool.connection() as conn:
-            found = await subscriptions.cached(conn, first)
+            found = await subscriptions.cached(conn, record_id)
+        assert found is not None
+        hub.add(subscription_body(name="Two"), owner=ALICE, version=2, record_id=record_id)
+        await HINTS["credentials"](env.context, {"owner_id": ALICE})
+        async with env.pool.connection() as conn:
+            found = await subscriptions.cached(conn, record_id)
         assert found is not None
         assert found.version == 2
-        assert f"fetch_failed id={second} error=HubRefusal" in env.log()
 
     run(store_dsn, body)

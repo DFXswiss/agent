@@ -119,8 +119,16 @@ def _models(catalog: Catalog, kind: str) -> list[dict[str, Any]]:
     return [{"model_id": model, "context_window": window} for model, window in catalog.allowed_models(kind)]
 
 
+FURTHER_FIELDS = frozenset({"name", "note", "use"})
+"""Fields only a further subscription carries (ADR-090 section 1): such a body served as the owner's primary record is
+not used for the owner's own sessions (a hub cannot make a measure-only subscription serve them)."""
+
+
 def owner_secret(credential_kind: str, body: Mapping[str, Any]) -> str | None:
-    """The secret of a decrypted owner credential, or None when the body does not carry a usable one."""
+    """The secret of a decrypted owner credential, or None when the body does not carry a usable one (or is the body
+    of a further subscription)."""
+    if credential_kind == "claude_subscription" and FURTHER_FIELDS & set(body):
+        return None
     value = body.get(SECRET_FIELDS[credential_kind])
     return value if isinstance(value, str) and _TOKEN_RE.fullmatch(value) else None
 

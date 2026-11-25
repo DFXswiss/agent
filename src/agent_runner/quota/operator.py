@@ -44,9 +44,10 @@ class OperatorPoller:
             return
         await operator.load(self.context, pool)
         pool.scan()
-        for name in [name for name in self.next_at if name not in pool.files]:
+        entries = pool.entries()  # the token files and the shared subscriptions (KOR-69)
+        for name in [name for name in self.next_at if name not in entries]:
             del self.next_at[name]
-        for name, entry in pool.files.items():
+        for name, entry in entries.items():
             if entry.token is None or entry.identity is None:
                 continue
             due = self.next_at.get(name)

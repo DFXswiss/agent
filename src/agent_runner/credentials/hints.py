@@ -1,6 +1,6 @@
 """WebSocket hint `credentials {owner_id}` (03-api.md section 6.2, 05-runner.md section 2.6): re-read the owner's
 records (the legacy kinds of a user and every cached GitHub identity record of the owner, `identities.refresh`; KOR-47;
-every cached subscription record of the owner, `subscriptions.refresh_cached`, KOR-69). The hint carries no content and
+every cached subscription record of the owner, `subscriptions.sync_owner`, KOR-69). The hint carries no content and
 is never trusted: an owner ID that is not a canonical UUID is logged and
 dropped, and every record read is verified (`cache.fetch`)."""
 
@@ -22,7 +22,7 @@ async def on_credentials(context: Any, hint: Mapping[str, object]) -> None:
         context.log.flush()
         return
     await refresh(context, owner)
-    await subscriptions.refresh_cached(context, owner)
+    await subscriptions.sync_owner(context, owner)
 
 
 HANDLERS: dict[str, Callable[..., Any]] = {"credentials": on_credentials}

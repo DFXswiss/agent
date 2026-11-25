@@ -141,6 +141,9 @@ def test_withdrawn_credentials_carry_no_secret_and_allow_no_model(kind: str) -> 
 def test_owner_secrets_are_taken_from_the_credential_bodies() -> None:
     assert owner_secret("anthropic_api_key", {"key": KEY}) == KEY
     assert owner_secret("claude_subscription", {"token": KEY, "email": None, "kind": "setup_token"}) == KEY
+    # a further subscription's body served as the primary record is not used for the owner's sessions (KOR-69)
+    further = {"token": KEY, "email": None, "kind": "setup_token", "name": "Spare"}
+    assert owner_secret("claude_subscription", further) is None
     assert owner_secret("anthropic_api_key", {"key": "two words"}) is None
     assert owner_secret("anthropic_api_key", {"key": 5}) is None
     assert owner_secret("claude_subscription", {}) is None

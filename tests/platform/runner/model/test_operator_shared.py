@@ -15,7 +15,7 @@ from typing import Any, cast
 import pytest
 
 from agent_runner.metrics.sampler import Sampler
-from agent_runner.model import access, gateways, operator, provision
+from agent_runner.model import access, exhaustion, gateways, limits, operator, provision
 from agent_runner.model.operator import BLOCKED, USABLE, Entry, Pool, Use
 from agent_runner.quota import operator as quota_operator
 
@@ -234,3 +234,16 @@ def test_a_bound_session_moves_when_its_use_no_longer_allows_its_organization(
     assert bound == [("s1", "sub-b")]
     assert target is not None
     assert "operator_file_switched session_id=s1 from=sub-a to=sub-b" in context.log.getvalue()
+
+
+def test_a_token_file_may_not_use_the_shared_prefix_and_shared_tokens_are_read_for_their_quota(tmp_path: Path) -> None:
+    directory = pool_dir(tmp_path)
+    put(directory, "sub-x", token(2))
+    put(directory, "f", token(3))
+    pool = shared_pool(directory=directory)
+    add_shared(pool, "sub-a", orgs=(ORG,))
+    pool.scan()
+    assert sorted(pool.entries()) == ["f", "sub-a"]
+    context = SimpleNamespace(**{operator.ATTRIBUTE: pool})
+    token_of = asyncio.run(exhaustion.token_of(context, limits.operator_key("sub-a")))
+    assert token_of == VALID

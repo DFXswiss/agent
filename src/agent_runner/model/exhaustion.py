@@ -124,7 +124,7 @@ async def token_of(context: Any, key: str) -> str | None:
     """The token of a subscription access for one read of its quota, None when it cannot be had now."""
     if key.startswith(limits.OPERATOR):
         pool = operator.pool_for(context)
-        entry = None if pool is None else pool.files.get(key[len(limits.OPERATOR) :])
+        entry = None if pool is None else pool.entries().get(key[len(limits.OPERATOR) :])
         return None if entry is None else entry.token
     try:
         async with cache.opened(context, key[len(limits.OWN) :], KIND) as body:

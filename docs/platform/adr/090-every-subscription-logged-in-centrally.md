@@ -101,7 +101,7 @@ Status: Accepted (2026-11-25)
   subscription_id, …}` (additive; only to a hub whose device state carries `subscriptions.api >= 1`). The hub keeps
   the newest reading per record (`hub.subscription_quota`, dropped with the record) and serves
   `GET /v1/me/subscriptions`: per record the metadata, the primary mark, the measuring device, the last reading
-  (windows and `fetched_at`) or `unreadable` with its time, and whether the record has a hub-visible use (stage b).
+  (windows and `fetched_at`) or `unreadable` with its time; the use is read from the sealed record by the client.
   "Not logged in" is known to the owner's client only (the token is sealed); the client shows it with "log in now".
   The usage endpoint may refuse setup tokens (05-runner §10.6); such a subscription shows "not readable" with the
   time of the refusal instead of windows – the readings are as good as the provider allows.

@@ -7,7 +7,8 @@ device state carries `subscriptions.api >= 1` (an older hub would refuse the ite
 - **which**: the owner's records are listed at the hub (`credentials.subscriptions.sync_owner`) when the owner is new
   here and then every `POLL_S`; every cached non-primary record of the owner is measured. Before it is measured, a
   record under an older `CK` epoch than the newest one this device holds is re-sealed (`subscriptions.reseal`), so a
-  rotation of the owner's key by a client that does not know further subscriptions leaves none behind;
+  rotation of the owner's key by a client that does not know further subscriptions leaves none behind (a try that
+  wrote nothing is not repeated within `POLL_S`);
 - **when**: every `POLL_S` per record; after `429` not before `max(Retry-After, 300 s)`; a record whose token the usage
   endpoint refused is not polled again for `UNAVAILABLE_S` unless its version changed (a new login);
 - **how**: as for the primary record (`Authorization: Bearer`, `anthropic-beta: oauth-2025-04-20`, 8 s, no redirects),
@@ -70,6 +71,8 @@ class FurtherPoller:
     """Owner -> time of its last list."""
     records: dict[str, OwnerState] = field(default_factory=dict)
     """Record ID -> its schedule."""
+    reseal_after: dict[str, float] = field(default_factory=dict)
+    """Record ID -> when a re-seal may be tried again (one try per `POLL_S` that wrote nothing)."""
 
     def line(self, text: str) -> None:
         self.context.log.write(f"runner.quota {text}\n")
@@ -88,11 +91,15 @@ class FurtherPoller:
                 found = [item for item in await subscriptions.cached_of(conn, owner) if not item.primary]
             for item in found:
                 seen.add(item.id)
-                if await subscriptions.reseal(self.context, item):
-                    continue  # measured at the next tick, with the re-sealed version
+                if now >= self.reseal_after.get(item.id, float("-inf")):
+                    if await subscriptions.reseal(self.context, item):
+                        continue  # measured at the next tick, with the re-sealed version
+                    self.reseal_after[item.id] = now + POLL_S
                 await self.due(item, now)
         for record_id in [name for name in self.records if name not in seen]:
             del self.records[record_id]
+        for record_id in [name for name in self.reseal_after if name not in seen]:
+            del self.reseal_after[record_id]
 
     async def due(self, item: subscriptions.Subscription, now: float) -> None:
         state = self.records.setdefault(item.id, OwnerState())
