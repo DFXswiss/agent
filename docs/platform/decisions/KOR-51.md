@@ -26,5 +26,11 @@ with fresh context before the build (four high and five medium findings, all wor
 7. **Feature gate for assignments only.** Reads, work VM and browser tools are checked by the runner alone, so a
    profile cannot be assigned while an older runner serves the organization (`409 peer_outdated`). Clearing a profile
    is always possible.
+9. **Review findings of the code (fresh context).** Pushes onto the default branch are refused while the workgroup has
+   merge rules (else a Development session could push around `github.merge`); the platform tools carry their class in
+   `contracts/ops/classes.json` (`tools`) with a test that refuses a tool without one; reach `workgroup`/`task` also
+   refuses the organization's member list. Not built, stated in ADR-090 §§3, 6: a feature gate when an older runner
+   joins after the assignment, and a gate for writing the extended settings (older runners keep their former settings,
+   never wider). `review.verdict` reads no GitHub (a verdict counts only on the head a merge finds); the ADR says so.
 8. **Audit details use `profile`, not `name`.** The contract tests forbid `name` in audit details (it could carry
    free text); the profile name is a closed pattern.

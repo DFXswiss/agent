@@ -44,6 +44,7 @@ def test_check_runs_and_statuses(start_github: Callable[..., Any]) -> None:
     assert gh.api("POST", f"{REPO}/check-runs", {"name": "x", "head_sha": feature, "status": "odd"}).status == 422
     assert gh.api("POST", f"{REPO}/statuses/{feature}", {"state": "success", "context": "build"}).status == 201
     assert gh.get(f"{REPO}/commits/feature/status")["state"] == "success"
+    gh.api("POST", f"{REPO}/statuses/{head(gh, 'main')}", {"state": "failure", "context": "deploy"})
     gh.api("POST", f"{REPO}/statuses/{feature}", {"state": "pending", "context": "deploy"})
     assert gh.get(f"{REPO}/commits/feature/status")["state"] == "pending"
     gh.api("POST", f"{REPO}/statuses/{feature}", {"state": "error", "context": "deploy"})

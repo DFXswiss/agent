@@ -79,7 +79,8 @@ def test_verdicts_reviews_and_checks(store_dsn: str, start_github: Any, tmp_path
     async def body(r: R10) -> None:
         reviewer, reader = await r.session(1), await r.session(2)
         await profiles(r, {reviewer: REVIEW})
-        op = await r.run(reviewer, "review.verdict", verdict(head))
+        evidence = [{"kind": "note", "ref": "read the diff"}, {"kind": "test_run", "ref": "tr-0123456789ab"}]
+        op = await r.run(reviewer, "review.verdict", {**verdict(head), "evidence": evidence})
         assert op.state == "succeeded", op.answer
         assert op.result == {
             "verdict_id": op.id,

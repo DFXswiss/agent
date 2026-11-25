@@ -1,5 +1,5 @@
 {
-  "description": "The class of every operation type (ADR-090 section 2). Built-in profiles (roles) are derived from the classes: read_only = read, delegate, ask; development = read, write, run, delegate, ask; security = read, run, scan, delegate, ask; review = read, review, run, delegate, ask; merge = read, merge, delegate, ask. Every type of ops/INDEX.json has exactly one class.",
+  "description": "The class of every operation type (ADR-090 section 2). Built-in profiles (roles) are derived from the classes: read_only = read, delegate, ask; development = read, write, run, delegate, ask; security = read, run, scan, delegate, ask; review = read, review, run, delegate, ask; merge = read, merge, delegate, ask. Every type of ops/INDEX.json has exactly one class. `tools`: every platform MCP tool with what a profile must allow for it - `read` (a read tool, bounded by the profile's read reach), `operation` (each requested type is checked) or the operation type it stands for (work VM and browser tools). `head_changing`: the types that make or move a commit (separation of duties).",
   "classes": [
     "read",
     "write",
@@ -43,5 +43,44 @@
     "test.run": "run",
     "workvm.release": "run",
     "workvm.request": "run"
-  }
+  },
+  "tools": {
+    "browser_click": "browser.open",
+    "browser_dialog": "browser.open",
+    "browser_download": "browser.open",
+    "browser_evaluate": "browser.open",
+    "browser_hover": "browser.open",
+    "browser_navigate": "browser.open",
+    "browser_press": "browser.open",
+    "browser_screenshot": "browser.open",
+    "browser_scroll": "browser.open",
+    "browser_select": "browser.open",
+    "browser_snapshot": "browser.open",
+    "browser_tabs": "browser.open",
+    "browser_type": "browser.open",
+    "browser_upload": "browser.open",
+    "browser_wait": "browser.open",
+    "get_context": "read",
+    "get_notifications": "read",
+    "get_operation": "read",
+    "get_subagent_result": "read",
+    "get_task": "read",
+    "get_task_messages": "read",
+    "get_whiteboard": "read",
+    "list_members": "read",
+    "list_operations": "read",
+    "list_tasks": "read",
+    "list_workgroups": "read",
+    "request_operation": "operation",
+    "workvm_browse": "workvm.request",
+    "workvm_exec": "workvm.request",
+    "workvm_kill": "workvm.request",
+    "workvm_output": "workvm.request",
+    "workvm_status": "workvm.request",
+    "workvm_sync": "workvm.request"
+  },
+  "head_changing": [
+    "github.commit",
+    "github.push"
+  ]
 }

@@ -12,6 +12,15 @@ ADR-027 section 3 (additive). Decision: ADR-090 (rights profiles and agent roles
   `scan`, `review`, `merge`); the built-in roles are derived from it.
 - `subagent.request` takes `profile` (an `agent_profile_name`): the child's rights profile.
 
+- New types (with `INDEX.json`, params/result schemas, `operation.params` variants and fixtures): `github.list_reviews`,
+  `github.get_checks`, `github.merge` (dedupe repo, number, head_sha; 24 h), `review.verdict` (dedupe repo, number,
+  head_sha, session; 30 days), `security.report`; dedupe vectors in `vectors/dedupe.json`.
+- `classes.json` also lists every platform MCP tool (`tools`) and the head-changing types (`head_changing`).
+
+## Events (`events/objects.json`)
+- `settings.workgroup` adds the optional `merge_criteria {passed_verdicts, verdict_profile, checks_green,
+  github_approvals}` and `separate_duties` (older runners refuse such a body and keep their former settings).
+
 ## API (`api/INDEX.json`, section 4.13 of 03-api.md)
 | Endpoint | Right | Purpose |
 |---|---|---|

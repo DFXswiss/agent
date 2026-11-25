@@ -9,8 +9,9 @@
   the sentence of a refusal, None when allowed.
 - `reach(db, session_id, parent_id)`: the reach of the session's reads (`all` without a profile); the read tools apply
   it to every workgroup and task they read (`queries.rights.ReadScope.outside_reach`). `read_refusal(reach, tool,
-  arguments)` refuses at once what reads beyond the own task as a whole: `list_tasks` and the organization and
-  workgroup whiteboards for reach `task`.
+  arguments)` refuses at once what reads beyond the reach as a whole: the members of the whole organization for reach
+  `workgroup` and `task`, `list_tasks` and the organization and workgroup whiteboards for reach `task`. The names of
+  the organization's workgroups (`list_workgroups`) stay readable: they are organization metadata every member sees.
 """
 
 from __future__ import annotations
@@ -71,6 +72,10 @@ async def reach(db: Any, session_id: str, parent_id: str | None) -> str:
 
 def read_refusal(reach: str, tool: str, arguments: Mapping[str, Any]) -> QueryOutcome | None:
     """The refusal of a read beyond the own task as a whole (module docstring), None otherwise."""
+    if reach == "all":
+        return None
+    if tool == "list_members" and arguments.get("scope") == "org":
+        return failure("forbidden", REACH_SENTENCE.format(reach=reach))
     if reach != "task":
         return None
     if tool == "list_tasks" or (tool == "get_whiteboard" and arguments.get("level") != "task"):

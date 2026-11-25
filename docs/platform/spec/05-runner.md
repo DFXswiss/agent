@@ -1358,8 +1358,8 @@ list yet has its parent's profile. It enforces the effective profile three times
   workgroup that allows nothing beyond the session's own profile; the name is registered as `child_profile`.
 - **Work VM and browser tools** (`workvm.call`): a tool whose type (`workvm.request`, `browser.open`) the profile does
   not allow is answered with the tool error `forbidden` before anything starts.
-- **Reads** (`platform.query`): reach `workgroup` reads no other workgroup, reach `task` no other task, no task list
-  and no workgroup or organization whiteboard (`forbidden`).
+- **Reads** (`platform.query`): reach `workgroup` reads no other workgroup and not the organization's member list,
+  reach `task` in addition no other task, no task list and no workgroup or organization whiteboard (`forbidden`).
 
 Every session start carries the profile in `POST /v1/sessions` (`profile`, guests 0.4.0 and later: the guest does
 not offer the excluded tools and records an excluded operation as locally rejected) and one harness line naming the

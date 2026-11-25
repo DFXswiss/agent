@@ -6,13 +6,17 @@ executes it. Without a profile nothing changes."""
 from __future__ import annotations
 
 import dataclasses
+import json
 from pathlib import Path
 
 import pytest
 
 from agent_guest import profiles, sessions
 from agent_guest.control import ControlContext
+from agent_guest.policy import PLATFORM_TOOLS
 from agent_guest.state import Session
+from agent_runner.profiles.model import tool_type
+from tests.platform.contracts.harness import CONTRACTS
 from tests.platform.guest.conftest import SESSION_ID
 from tests.platform.guest.test_control import OPERATION
 
@@ -73,3 +77,15 @@ def test_the_stored_profile(tmp_path: Path, context: ControlContext, monkeypatch
     assert manager.profile(SESSION_ID) == READ_ONLY
     manager._write_meta(SESSION_ID, {"profile": "broken"})
     assert manager.profile(SESSION_ID) is None
+
+
+def test_every_platform_tool_has_a_class_in_the_contract() -> None:
+    """E-19: a new platform tool without a class fails here (ADR-090 section 2); the guest and the runner map the work
+    VM and browser tools to the type the contract names, every other tool needs no type of its own."""
+    tools = json.loads((CONTRACTS / "ops" / "classes.json").read_text(encoding="utf-8"))["tools"]
+    assert set(tools) == set(PLATFORM_TOOLS)
+    for tool, needs in tools.items():
+        expected = needs if needs not in ("read", "operation") else None
+        assert tool_type(tool) == expected, tool
+        hidden = profiles.disallowed_tools({"name": "x", "operations": [], "reads": "all"})
+        assert (f"mcp__platform__{tool}" in hidden) == (expected is not None), tool

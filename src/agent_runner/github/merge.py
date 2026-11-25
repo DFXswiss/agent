@@ -17,6 +17,8 @@
   with `sha` = `head_sha` and the method (default `merge`): GitHub merges only exactly that head. GitHub's refusals
   are passed on: `405` (not mergeable by GitHub's own rules - protection, required reviews or checks, conflicts) is
   `rights_denied` with GitHub's message, `409` (the head moved) `merge_outdated`.
+- `github.push` (`guarded_push`): with any merge rule of the workgroup a push onto the repository's default branch is
+  refused (`branch_protected`): the default branch changes only through `github.merge`, so the rules cannot be bypassed.
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
-from agent_runner.github import access, ops
+from agent_runner.github import access, ops, push
 from agent_runner.github.client import GitHubClient, GitHubError
 from agent_runner.operations import settings as workgroup_settings
 from agent_runner.operations.extensions import (
@@ -219,6 +221,26 @@ async def _decide(
     if refused is not None:
         raise failure("rights_denied", message=refused)
     return str(pull["base_ref"])
+
+
+DIRECT_PUSH = (
+    "This workgroup has merge rules: its default branch changes only through github.merge of a pull request. Push to"
+    " another branch and open a pull request."
+)
+
+
+async def guarded_push(request: PrecheckRequest) -> PrecheckResult:
+    """`github.push`: the push pre-check, and with merge rules of the workgroup no push onto the repository's default
+    branch (it would bypass the rules, ADR-090 section 6)."""
+    found = await push.check(request)
+    settings = request.settings
+    if criteria.active(settings.merge_criteria, settings.separate_duties):
+        repo = str(request.params["repo"])
+        async with access.client(request) as github:
+            data = await access.repository(github, repo)
+        if request.params["branch"] == data.get("default_branch"):
+            raise CheckFailed("branch_protected", message=DIRECT_PUSH)
+    return found
 
 
 async def merge_check(request: PrecheckRequest) -> PrecheckResult:

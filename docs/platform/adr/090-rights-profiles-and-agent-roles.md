@@ -106,19 +106,25 @@ type falls into the roles by its class without a list being edited:
 - **Guest**: the session gets its profile at creation (`sessions-create` `profile`, only sent to a guest that
   announces it, `guest_features`). `request_operation` rejects a type outside the list locally (`rights_denied`,
   forwarded with `local_check:"rejected"` like every local refusal), `get_context` and the harness name the profile,
-  its types and reach, and the model is told to ask its parent or a person instead of trying a way around.
+  its types and reach (the harness line of every session start), and the model is told to ask its parent or a person
+  instead of trying a way around.
 - Without a profile none of the three changes anything; the runner and the guest skip the check.
 - **Older runners.** A runner announces the feature `agent.profiles` (ADR-060 decision 6). Assigning a profile to a
   task (`409 peer_outdated`, "A device of this organization runs an older runner that cannot enforce profiles;
   update it first.") is refused while an active device assigned to the organization has not announced it, because
   only the runner can check reads, work VM and browser tools. This concerns only people who choose profiles (E-11).
+  A device that joins later with an older runner can still run such a task: the hub keeps checking the operation types
+  (H2b); reads, work VM and browser tools are then unchecked until the runner is updated (stated, not gated).
+- **Older runners and the extended settings.** An older runner refuses a `settings.workgroup` body with
+  `merge_criteria`/`separate_duties` as invalid and keeps the settings it had before (never wider than those); an older
+  web tab shows such settings as invalid until it is reloaded. Runners are updated right after the hub (§8).
 
 ### 4. New operation types
 | Type | Class | Params | Runner checks | Dedupe | Result |
 |---|---|---|---|---|---|
 | `github.list_reviews` | read | `{repo, number, github_identity?}` | allow-list, number ≥ 1 | – | `{number, head_sha, reviews:[{id, author, state, commit_id, submitted_at, body}], verdicts:[{verdict_id, session_id, profile, outcome, head_sha, created_at}]}` – GitHub's reviews (newest 100) and the platform verdicts of §5 the device knows for the pull request |
 | `github.get_checks` | read | `{repo, ref, github_identity?}` (`ref` a sha or branch) | allow-list, ref syntax | – | `{sha, state: success|failure|pending|none, check_runs:[{name, status, conclusion}], statuses:[{context, state}]}` – check runs and commit statuses of the commit; `state` `failure` when any finished one failed, `pending` when any is not finished, `success` when all succeeded, `none` without any |
-| `review.verdict` | review | `{repo, number, head_sha, outcome: passed|rejected, summary, evidence?, github_identity?}` | allow-list; the pull request is open and its head is `head_sha` (`merge_outdated` otherwise); separation (§6) | repo, number, head_sha, session (the requesting session's ID, as `github.checkout`) | 30 days | `{verdict_id, repo, number, head_sha, outcome, profile}` |
+| `review.verdict` | review | `{repo, number, head_sha, outcome: passed|rejected, summary, evidence?}` | no GitHub request: a verdict names its head and counts only on the head a merge finds; with separation a session that made or pushed `head_sha` is refused (§6) | repo, number, head_sha, session (the requesting session's ID, as `github.checkout`) | 30 days | `{verdict_id, repo, number, head_sha, outcome, profile}` |
 | `security.report` | scan | `{repo, ref, tool, passed, findings:{critical, high, medium, low, info}, run_id?, summary?}` | allow-list; `run_id` a `test.run` of this task | – (idempotency key) | – | `{report_id, repo, ref, tool, passed, findings}` – the structured scan result of a Security session |
 | `github.merge` | merge | `{repo, number, head_sha, method?: merge|squash|rebase, github_identity?}` | allow-list; open, head = `head_sha` (`merge_outdated`); the base branch not protected by the workgroup; the workgroup's merge criteria (§5) and separation (§6) | repo, number, head_sha | 24 h | `{merged, sha, number}` – GitHub's merge with `sha` as precondition, so a head that moved is never merged |
 
@@ -154,7 +160,8 @@ of `github.merge`, deterministically and formally (§10 point 7), never on conte
   the merge call.
 
 ### 6. Separation of work, review and release
-With `separate_duties: true` a session that made or pushed **any commit of the pull request** (the commits GitHub lists
+With `separate_duties: true` a session that made or pushed `head_sha` may not give a verdict on it (checked without
+GitHub), and at the merge a session that made or pushed **any commit of the pull request** (the commits GitHub lists
 for it, compared with the session's own `github.commit` results and `github.push` shas – the head-changing types of
 `classes.json`, merge commits of ADR-084 included) may neither give a verdict on its head nor merge it, and its
 verdicts never count for it (`rights_denied`, "This session made the head <sha>; with separate duties another session reviews
@@ -162,9 +169,14 @@ and merges it."). The runner decides from its own operation records (session ID 
 the hub has as rows; a refusal is registered `rejected` and audited like every refusal. The merging session's own
 verdict never counts (§5), with or without separation.
 
+**No bypass through the default branch.** With any merge rule set, a `github.push` onto the repository's default
+branch is refused (`branch_protected`): the default branch then changes only through `github.merge`. (A workgroup that
+uses `github.merge` on `main` cannot list `main` as protected, because the merge itself writes it.)
+
 **Limits, stated honestly.** The separation binds the sessions that wrote, as the package asks. One main agent without
 a profile can still start a Development child, several Review children and a Merge child; the sessions are separate,
-their instructions come from one parent. A workgroup that wants independent approval sets `github_approvals` (a
+their instructions come from one parent, and a Review child may start review grandchildren of the same name. A
+workgroup that wants independent approval sets `github_approvals` (a
 person's review at GitHub) or uses `human.approval`.
 
 ### 7. Workflows and visibility

@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from agent_runner.github import checkout, commit, identity, listing, merge, merge_base, precheck, push
+from agent_runner.github import checkout, commit, identity, listing, merge, merge_base, precheck
 
 PRECHECKS: dict[str, Callable[..., Any]] = {
     "github.list_repositories": identity.resolved(precheck.list_repositories),
@@ -19,7 +19,7 @@ PRECHECKS: dict[str, Callable[..., Any]] = {
     "github.comment": identity.resolved(precheck.repo_access),
     "github.checkout": identity.resolved(checkout.check),
     "github.commit": identity.resolved(commit.check),
-    "github.push": identity.resolved(push.check),
+    "github.push": identity.resolved(merge.guarded_push),
     "github.list_issues": identity.resolved(precheck.repo_access),
     "github.get_issue": identity.resolved(precheck.repo_access),
     "github.create_issue": identity.resolved(precheck.repo_access),

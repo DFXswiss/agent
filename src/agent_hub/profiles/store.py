@@ -78,11 +78,6 @@ def resolve(connection: Connection, org_id: UUID | str, wg_id: UUID | str, name:
     return None if found is None else found.profile
 
 
-def task_profile(connection: Connection, task_id: UUID | str) -> Profile | None:
-    row = connection.execute("SELECT agent_profile FROM hub.task WHERE id = %s", (task_id,)).fetchone()
-    return None if row is None else from_json(row[0])
-
-
 def effective(connection: Connection, session_id: UUID | str) -> Profile | None:
     """The effective profile of a session (module docstring)."""
     rows = connection.execute(
@@ -174,5 +169,4 @@ __all__ = [
     "put_definition",
     "resolve",
     "snapshot",
-    "task_profile",
 ]

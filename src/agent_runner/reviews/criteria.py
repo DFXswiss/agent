@@ -35,6 +35,11 @@ class Facts:
     """GitHub accounts that approved exactly the head."""
 
 
+def active(criteria: MergeCriteria, separate: bool) -> bool:
+    """True when the workgroup set any merge rule (then the default branch changes only through `github.merge`)."""
+    return separate or criteria.passed_verdicts > 0 or criteria.checks_green or criteria.github_approvals > 0
+
+
 def counted(criteria: MergeCriteria, separate: bool, facts: Facts) -> tuple[list[Verdict], list[Verdict]]:
     """The passed and rejected verdicts that count: on exactly the head, from sessions with the criteria's profile,
     never the merging session's, and with separate duties never one of a session that wrote the pull request."""

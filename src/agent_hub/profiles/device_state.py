@@ -26,16 +26,16 @@ API = 1
 
 def provide(request: StateRequest) -> Mapping[str, Any]:
     """The field `agent_profiles` for the device of `request` (module docstring)."""
+    wgs = [wg for _org, wg in request.view.assigned()]
     rows = request.connection.execute(
-        "SELECT id, wg_id FROM hub.session WHERE device_id = %s AND state NOT IN ('stopped', 'failed')"
-        " ORDER BY created_at, id",
-        (request.device_id,),
+        "SELECT id FROM hub.session WHERE device_id = %s AND state NOT IN ('stopped', 'failed')"
+        " AND wg_id = ANY(%s::uuid[]) ORDER BY created_at, id",
+        (request.device_id, wgs),
     ).fetchall()
     sessions: dict[str, Any] = {}
-    for session_id, wg_id in rows:
-        if request.view.reads_wg(wg_id):
-            found = store.effective(request.connection, session_id)
-            sessions[str(session_id)] = None if found is None else found.as_json()
+    for (session_id,) in rows:
+        found = store.effective(request.connection, session_id)
+        sessions[str(session_id)] = None if found is None else found.as_json()
     workgroups = {
         wg: {
             name: item.profile.as_json()

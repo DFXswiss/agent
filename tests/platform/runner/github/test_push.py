@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from agent_guest.schema import SchemaSet
-from agent_runner.github import checkout, commit, push
+from agent_runner.github import checkout, commit, merge, push
 from agent_runner.github.client import GitHubOptions
 from agent_runner.github.executors import EXECUTORS
 from agent_runner.github.op_prechecks import PRECHECKS
@@ -213,4 +213,9 @@ def test_a_repository_answer_without_an_https_url_refuses_the_push(store_dsn: st
 def test_the_area_registers_executors_and_prechecks_of_part_two() -> None:
     for op_type, module in (("github.checkout", checkout), ("github.commit", commit), ("github.push", push)):
         assert EXECUTORS[op_type] is module.execute
-        assert PRECHECKS[op_type].__wrapped__ is module.check  # type: ignore[attr-defined]
+    for op_type, check in (
+        ("github.checkout", checkout.check),
+        ("github.commit", commit.check),
+        ("github.push", merge.guarded_push),  # the push pre-check behind the guard of the merge rules (KOR-51)
+    ):
+        assert PRECHECKS[op_type].__wrapped__ is check  # type: ignore[attr-defined]

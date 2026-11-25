@@ -107,6 +107,9 @@ def test_a_refused_tool_is_answered_forbidden() -> None:
 
 def test_reads_beyond_the_reach() -> None:
     assert check.read_refusal("all", "list_tasks", {}) is None
+    assert check.read_refusal("all", "list_members", {"scope": "org"}) is None
+    assert check.read_refusal("workgroup", "list_members", {"scope": "org"}) is not None
+    assert check.read_refusal("workgroup", "list_members", {"scope": "workgroup"}) is None
     assert check.read_refusal("workgroup", "list_tasks", {}) is None
     refused = check.read_refusal("task", "list_tasks", {})
     assert refused is not None
