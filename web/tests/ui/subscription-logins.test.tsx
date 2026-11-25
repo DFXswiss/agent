@@ -2,7 +2,7 @@
 // device that announced `subscriptions`, no device, a refused start, "log in now" for a subscription that is not
 // logged in, name and note, the use (only measure, organizations, the operator pool), log out with the place to revoke,
 // remove with a confirmation, failures – and that no token reaches the DOM.
-import { act, fireEvent, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { bodyJson } from '../../src/core/encoding/json';
 import { sealResponse } from '../../src/core/crypto/request';
@@ -194,14 +194,19 @@ describe('SubscriptionCard', () => {
     expect(await hub.opened(A)).toMatchObject({ name: 'New', note: 'for reviews' });
     const again = await screen.findByTestId(`subcard.${A}`);
     fireEvent.click(within(again).getByTestId('subcard.edit'));
+    const writes = hub.puts.length;
     fireEvent.click(within(again).getByTestId('subcard.save')); // nothing changed: nothing written
-    fireEvent.click(await within(again).findByTestId('subcard.use'));
-    fireEvent.click(within(again).getByTestId('subuse.shared'));
-    fireEvent.click(within(again).getByTestId(`subuse.org.${t.org}`));
-    fireEvent.click(within(again).getByTestId(`subuse.org.${t.org}`));
-    fireEvent.click(within(again).getByTestId(`subuse.org.${t.org}`));
-    fireEvent.click(within(again).getByTestId('subuse.pool'));
-    fireEvent.click(within(again).getByTestId('subuse.save'));
+    await waitFor(() => expect(screen.queryByTestId('subcard.labels')).toBeNull());
+    expect(hub.puts).toHaveLength(writes);
+    const fresh = await screen.findByTestId(`subcard.${A}`);
+    fireEvent.click(await within(fresh).findByTestId('subcard.use'));
+    const again2 = fresh;
+    fireEvent.click(within(again2).getByTestId('subuse.shared'));
+    fireEvent.click(within(again2).getByTestId(`subuse.org.${t.org}`));
+    fireEvent.click(within(again2).getByTestId(`subuse.org.${t.org}`));
+    fireEvent.click(within(again2).getByTestId(`subuse.org.${t.org}`));
+    fireEvent.click(within(again2).getByTestId('subuse.pool'));
+    fireEvent.click(within(again2).getByTestId('subuse.save'));
     expect(await screen.findByTestId('subuse.saved')).toBeVisible();
     expect((await hub.opened(A)).use).toEqual({ pool: true, orgs: [t.org] });
     const used = await screen.findByTestId(`subcard.${A}`);
