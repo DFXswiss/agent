@@ -39,6 +39,9 @@ SPEC_OPERATIONS: dict[str, tuple[set[str], set[str]]] = {
     "workvm.request": (set(), {"size", "scope"}),
     "workvm.release": (set(), {"scope"}),
     "test.run": ({"kind", "command"}, {"cwd", "timeout_seconds", "size"}),
+    # ADR-085 (KOR-44)
+    "browser.open": (set(), {"url", "idle_seconds"}),
+    "browser.close": (set(), set()),
     "human.question": ({"question"}, set()),
     "human.approval": ({"question"}, set()),
     # ADR-078 (KOR-47)
@@ -89,7 +92,20 @@ MANDATORY = [
     "its result, complete log and exit code are kept and visible to the user.",
     "bring them into your workspace with `workvm_sync` direction `from_vm` first.",
     "you run in the work VM without asking.",
-    "Use the browser with `mcp__platform__workvm_browse`",
+    "Use the browser of the work VM with `mcp__platform__workvm_browse` for automation, tests and apps running in"
+    " the work VM",
+    "Neither is recorded nor watched by the user",
+    # ADR-085 (KOR-44): the platform browser for what a person does in a browser, recorded and watched live
+    "For anything a person would do in a browser - signing in, filling forms, downloading files, checking a page",
+    "use the platform browser with the `mcp__platform__browser_*` tools",
+    "every action is recorded with a picture of the page and the user can watch it live",
+    "The first `browser_*` call opens it.",
+    "Close it with type `browser.close` when you are done",
+    "The platform browser reaches the internet, not your work VM.",
+    "ask with type `human.question` (main session)",
+    # 13-work-vm.md section 13.7
+    "use your own `WebSearch` tool when this session has it; otherwise open a search engine's page in the platform"
+    " browser",
     "Root, internet access, installing packages and starting services and containers are allowed there",
     "allowed there without asking.",
     "`mcp__platform__workvm_sync` direction `from_vm`",
@@ -117,7 +133,13 @@ MANDATORY = [
     "need a decision in that commit",
     "Never merge or close the pull request",
 ]
-FORBIDDEN = ["say so in your answer", "Request it once", "deleted with the task anyway"]
+FORBIDDEN = [
+    "say so in your answer",
+    "Request it once",
+    "deleted with the task anyway",
+    # 13-work-vm.md section 13.7: sessions with Anthropic access have a web search tool
+    "the session has no web search tool of its own",
+]
 
 
 @pytest.fixture(scope="module")
@@ -194,6 +216,21 @@ def test_names_every_tool_of_the_platform_api(text: str) -> None:
         "workvm_status",
         "workvm_sync",
         "workvm_browse",
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_click",
+        "browser_hover",
+        "browser_type",
+        "browser_select",
+        "browser_press",
+        "browser_scroll",
+        "browser_wait",
+        "browser_evaluate",
+        "browser_upload",
+        "browser_dialog",
+        "browser_tabs",
+        "browser_download",
+        "browser_screenshot",
     ):
         assert f"`{tool}`" in text or f"`mcp__platform__{tool}`" in text, tool
 
