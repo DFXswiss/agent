@@ -332,7 +332,7 @@ describe('the login dialog', () => {
     let mode: 'hold' | 'fail' | 'post' | 'pass' = 'hold';
     t.client.request = async (method: string, target: string, options?: { body?: unknown }) => {
       const held = mode === 'post' ? target === '/v1/device-requests' : target === '/v1/me/devices';
-      if (held && mode !== 'pass') {
+      if (held && mode !== 'pass' && gate.open === undefined) {
         await new Promise<void>((resolve, reject) => {
           gate.open = resolve;
           gate.fail = () => reject(new Error('gone'));
@@ -347,6 +347,7 @@ describe('the login dialog', () => {
     fireEvent.click(screen.getByTestId('sublogin.close'));
     await act(async () => gate.open!());
     gate.open = undefined;
+    gate.fail = undefined;
     fireEvent.click(screen.getByTestId('submanage.add'));
     fireEvent.change(screen.getByTestId('subadd.name'), { target: { value: 'Y' } });
     fireEvent.click(screen.getByTestId('subadd.start'));
