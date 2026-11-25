@@ -31,3 +31,11 @@ Design: [ADR-092](../adr/092-full-subscription-login-and-renewal-on-the-device.m
    The KOR-69 test that expected an unknown field to be refused now expects it to be listed.
 9. **`expires_at` with milliseconds** (the contract time); the program's `expiresAt` (ms) is converted.
 10. **Measuring after a `401` renewal** is due at the next tick (30 s), not after 900 s.
+11. **The web client's dialogs (KOR-69, not yet merged) must accept the full login.** On the branch of KOR-69 the
+    web core checks a closed list of body fields with the kinds `setup_token`/`login_token` only and "Log out" drops
+    only the token: a full login would show as "cannot be opened" there and a logged-out one would keep its refresh
+    token. The change (kind `oauth_login`, the fields `refresh_token`, `scopes`, `subscription_type`,
+    `rate_limit_tier`, `relogin`; "Log out" drops `token`, `refresh_token`, `relogin`) was built and tested on that
+    branch (`web/src/core/credentials/subscriptions.ts`, commit "Let the web dialogs open full logins and drop both
+    tokens on log out." of branch `ad5f2026-kor-71` before its rebase onto `develop`); it goes in with KOR-69's web
+    part, which is merged after this package. A record marked `relogin` has no token and shows "Log in now".
