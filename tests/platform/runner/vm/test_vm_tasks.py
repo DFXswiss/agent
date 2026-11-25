@@ -44,6 +44,11 @@ class Stopper:
         self.rounds = rounds
         self.calls: list[str] = []
         self.reconciled = False
+        self.golden_switch = self
+
+    async def run_pass(self) -> list[str]:
+        self.calls.append("switch")
+        return []
 
     def turn(self, name: str) -> None:
         self.calls.append(name)
@@ -90,7 +95,8 @@ def test_pool_task_reconciles_then_refills(fake_clock: Any) -> None:
         await tasks.run_pool(ctx)
         return fake.calls
 
-    assert asyncio.run(body()) == ["reconcile", "refill", "wait:60", "refill", "wait:60"]
+    # the golden switch (ADR-093) follows every refill
+    assert asyncio.run(body()) == ["reconcile", "refill", "switch", "wait:60", "refill", "switch", "wait:60"]
 
 
 def test_idle_task_probes_every_5_s_and_stops_idle_vms_every_60_s(fake_clock: Any) -> None:
@@ -332,4 +338,4 @@ def test_pool_task_reconciles_only_once(fake_clock: Any) -> None:
         await tasks.run_pool(ctx)
         return fake.calls
 
-    assert asyncio.run(body()) == ["refill", "wait:60"]
+    assert asyncio.run(body()) == ["refill", "switch", "wait:60"]
