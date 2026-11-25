@@ -60,7 +60,9 @@ test('a model switch shows in the task and in the notifications', async ({ page,
   await expect(line).toHaveText('Model switched: operator subscription → DFX access over OpenRouter · used up');
   // the owner was told each time
   await page.getByTestId('bell.link').click();
-  const texts = page.locator('[data-testid="notifications.item"][data-kind="model.switched"]').getByTestId('notifications.text');
+  const texts = page
+    .locator('[data-testid="notifications.item"][data-kind="model.switched"]')
+    .getByTestId('notifications.text');
   await expect(texts).toHaveCount(3);
   await expect(texts.filter({ hasText: 'because' })).toContainText(
     'model switched: Claude subscription → DFX access over OpenRouter because Claude subscription is used up until',
