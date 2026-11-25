@@ -474,7 +474,7 @@ with `hub_error: peer_outdated` names the execution `devices` that need a newer 
 agent-platform notifications list [--unread]
 agent-platform notifications read --all                          # or --id <id> (repeatable)
 agent-platform quotas                                            # unreadable_since: the login may not read them
-agent-platform quotas --org <org_id>                             # own and operator subscriptions, DFX access, release
+agent-platform quotas [--org <org_id>]                           # with --org: own and operator subscriptions, DFX access, release
 agent-platform settings set --fallback on                        # own subscription used up: continue on DFX access
 agent-platform settings set --fallback-platform off              # operator subscriptions used up: wait instead
 agent-platform billing --org <org_id>                            # credit balance, prices, credit history, usage
