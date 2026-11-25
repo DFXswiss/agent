@@ -1,4 +1,4 @@
-// Disconnecting agents from the settings or the banner (11-agent-access.md section 5.3, ADR-080 section 4): the hub
+// Disconnecting agents from the settings or the banner (11-agent-access.md section 5.3, ADR-082 section 4): the hub
 // refuses the key at once, the list is loaded again, then the log clean-up runs (the log job of every org, which runs
 // the job `agents` – the revoked agent leaves every log with its rotations – and the credential-key rotation after
 // it). Loaded only when somebody disconnects (initial JavaScript guard, 06-web.md section 10).

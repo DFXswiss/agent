@@ -780,7 +780,7 @@ the terminal, charts and Markdown load lazily); time to interactive ≤ 3 s on a
 
 The build enforces a tighter guard than the ceiling: `INITIAL_JS_BUDGET` in `web/build/budget.ts` is the measured first
 load plus 10 % (HOT-16: 199.3 KiB measured, guard 219 KiB), raised to 220 KiB by KOR-57: every client verifies the
-agent of a user as a sub-principal in the membership logs at sign-in (ADR-080), which needs about 1 KiB gzip in the first
+agent of a user as a sub-principal in the membership logs at sign-in (ADR-082), which needs about 1 KiB gzip in the first
 load; the confirmation of a pairing, the revocation, the job `agents` and the community check of agent authors load
 lazily. The guard runs in every package's gates (`npm run
 build:check`, the build tests and the E2E budget test), so growth of the first load is seen deterministically where it

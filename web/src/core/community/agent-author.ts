@@ -1,4 +1,4 @@
-// The author of a community message that is an own-identity agent (ADR-080): the hub's `agent` entry names its user,
+// The author of a community message that is an own-identity agent (ADR-082): the hub's `agent` entry names its user,
 // the user's signing key, the agent's KEM key, generation and certificate; the certificate must verify under that key.
 // Loaded by the community engine only when such an author appears (initial JavaScript guard, 06-web.md section 10).
 import { verifyCert } from '../crypto/agent';
