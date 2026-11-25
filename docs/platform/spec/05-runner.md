@@ -899,7 +899,9 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   records are never renewed. Neither request nor answer is logged.
 - Platform key: `GET <openrouter>/api/v1/key` every 900 s → `spend_snapshot` → device metrics
   (`agent_runner_device_model_spend_*`), operators only.
-- Tokens are never logged, never written to disk outside the encrypted credential record.
+- Tokens are never logged, never written to disk outside the encrypted credential record (and its sealed pending
+  renewal); the only exception is the login's own plaintext store in `tmp/login-<id>` while a full login runs (§11.6),
+  removed on every path and, after a crash, at the next start of the daemon.
 
 ### 10.7 Fallback, exhaustion and waits (ADR-081 sections 1–5)
 

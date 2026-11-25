@@ -39,3 +39,12 @@ Design: [ADR-092](../adr/092-full-subscription-login-and-renewal-on-the-device.m
     branch (`web/src/core/credentials/subscriptions.ts`, commit "Let the web dialogs open full logins and drop both
     tokens on log out." of branch `ad5f2026-kor-71` before its rebase onto `develop`); it goes in with KOR-69's web
     part, which is merged after this package. A record marked `relogin` has no token and shows "Log in now".
+12. **Findings of the independent code review** (no high ones). Fixed: an answer whose `expires_in` or scopes are out
+    of form is kept (the provider has rotated the refresh token by then; 3600 s assumed, scopes left out); a record
+    that does not open for a moment (key not synced) is read again at the next tick instead of being remembered as
+    "not renewable"; config docstrings; ADR and spec texts (retry constant, `scope_missing` reused, the plaintext
+    store of a running login, the web's closed field list). Documented, not changed: a measuring duty that moves to
+    a device that is refused and never comes back strands the first device's renewal (a hub rule for it would need
+    the hub to know who renewed what – E-25); the "wrote the stored version" exception has no time limit (such a
+    device can open the record anyway); pending rows are kept until written (they are ciphertext and retried every
+    60 s); a `401` whose forced renewal fails for a moment still reports "not readable" until the next renewal.

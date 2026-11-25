@@ -42,15 +42,15 @@ Status: Accepted (2026-11-25)
 - After the code the program must **end** with status 0 within `token_wait`; the runner then reads
   `$CLAUDE_CONFIG_DIR/.credentials.json` (`O_NOFOLLOW`, regular file, at most 64 KiB) and, when present, the
   address of `$CLAUDE_CONFIG_DIR/.claude.json` (`oauthAccount.emailAddress`). A login is taken only when `scopes`
-  contains `user:profile` **and** `user:inference`; otherwise `scope_missing` (new failure code; next step: log in
+  contains `user:profile` **and** `user:inference`; otherwise `scope_missing` (the existing failure code; next step: log in
   again with the Claude subscription, not with a Console account).
 - The record body (`contracts/credentials/claude_subscription.json`, additive) gets the kind `oauth_login` and
   `token` (access token), `refresh_token`, `expires_at`, `scopes`, `subscription_type`, `rate_limit_tier`, besides
   `email` and the kept `name`, `note`, `use`. All of it is sealed under the owner's `CK` like every record (the owner's
   clients may open it, as for every credential; they keep fields they do not know when they write).
   Records with a setup token stay valid ("not readable", with "log in again"). The agent tool keeps every body field
-  it does not know when it writes a record (a later version may add fields); the web client must do the same before it
-  writes records (KOR-69 dialogs).
+  it does not know when it writes a record (a later version may add fields); the web client checks a closed list of
+  fields (its design) that now includes those of the full login, and keeps them when it writes.
 
 ### 2. Renewal by the measuring device
 - Only the device that measures the owner (`quota_poll_owners`, the elected device of 05-runner §10.6) renews, in
@@ -75,8 +75,10 @@ Status: Accepted (2026-11-25)
 - **Answers:** `invalid_grant` (400) → the device writes the next version without `token` and `refresh_token`,
   with `relogin: "renewal_refused"` – only while the current record still holds the refused refresh token (after a
   `version_conflict` it reads the record again; a newer login or renewal is never marked); the record is then "not
-  logged in" and the overview and `subscriptions list` show "log in again". Other 4xx/5xx, a malformed answer or a network error → retry after `RENEW_RETRY_S` (60 s),
-  until a valid answer or `invalid_grant`.
+  logged in" and the overview and `subscriptions list` show "log in again". Other 4xx/5xx, a malformed answer or a
+  network error → retry after 60 s (`RETRY_S`), until a valid answer or `invalid_grant`. An answer with a usable
+  access token (and a usable or no refresh token) is never discarded for a secondary field: an `expires_in` out of
+  form counts as 3600 s, scopes out of form are left out.
 - **Hub:** `PUT /v1/device/subscriptions/{id}` without `request_id` is also allowed when the record is a non-primary
   subscription of the owner and the device is the one that polls the owner now (`polls_for`, the rule of the
   `quota` items) **or wrote the stored version itself** (it finishes a renewal it began before the measuring duty
@@ -108,8 +110,13 @@ also names `next`. The web overview (KOR-68) shows a record without token as "no
 - Two devices could renew the same record only when the measuring duty moved between a renewal and its write; the
   device that renewed may still write it (it wrote the stored version), the conflict rule keeps the newest refresh
   token, and only a token the provider no longer accepts leads to "log in again". A duty that moved twice before the
-  write (A renews, B measures and is refused, the duty moves to C) can still cost a new login; on the platform there
-  is one measuring device in practice.
+  write can still cost a new login: A renews and cannot write, B measures and is refused (`invalid_grant`, B is now
+  the author), and the duty does not come back to A – A's row stays and is refused. On the platform there is one
+  measuring device in practice; a hub rule that let A write over B's mark would need the hub to know which device
+  renewed which version (not done, E-25).
+- The exception "the device that wrote the stored version" has no time limit and also covers a device that answered
+  a login: such a device can already open the record (it is eligible for the owner's `CK`), so trusting its write adds
+  nothing (the reasoning of ADR-090 §3); the hub cannot tell kinds apart (the body is sealed).
 - Sessions on other devices get the renewed token through the `credentials` hint of the new version; the 1800 s
   margin covers a lost hint (the reconcile step re-reads every owner's records) and the provisioning. A measuring
   device that is an older runner does not renew: roll the runners out before the first full login.
