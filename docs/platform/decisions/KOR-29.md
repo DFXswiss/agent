@@ -21,6 +21,8 @@ Work VM on request (ADR-059, spec `13-work-vm.md`).
 7. **Addendum 1 of the client** (credentials are the session's business; internet only through Cloudflare,
    fail-closed): no destination log (the former `runner.workvm_netlog` is dropped), no scanning in the VM; the
    Cloudflare requirements went to the operator as one issue text (work-package report `KOR-29-cloudflare-bedarf`).
+   *Not pursued (2026-11-25):* its dedicated static address is replaced by addendum 3 (item 9); Cloudflare is used
+   only on its free plans ([E-10](../KONZEPT.md#e-10)).
 8. **Security review of the design (fresh-context subagent, before building) – dispositions:**
    - H1 (Lima's SSH over vsock still uses a host-loopback proxy; confirmed on a real VM: "Started vsock forwarder:
      127.0.0.1:<port> -> vsock:22"): one macOS account per slot with a pinned SSH port; pf allows each slot only its

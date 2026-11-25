@@ -17,9 +17,11 @@ The release changes nothing until a price list is in force. Order:
 3. **USD/CHF rate first** (every booking keeps its CHF equivalent for the books; without a rate the price list and
    credits are refused): `agent-hub billing fx set --day <today> --rate <CHF per USD> --source BAZG`, and from then
    on the daily job of section 5.
-4. **Start credit**: set `AGENT_HUB_BILLING_START_CREDIT_USD` in the hub's environment (decimal USD, e.g. `20`) and
-   restart the hub. Every organization – existing and new – gets an account with this balance when billing becomes
-   active (history entry `start`). With 0 every organization would be exhausted at once.
+4. **Credit for the existing organizations**: there is no automatic start credit
+   ([E-14](../KONZEPT.md#e-14)); `AGENT_HUB_BILLING_START_CREDIT_USD` stays unset or `0`. Before the price list of
+   step 5 comes into force, the operator distributes credit by hand to every existing organization that should keep
+   working on DFX resources (section 2, e.g. `agent-hub billing credit --org <org-id> --add <usd> --reason "..."`);
+   otherwise every organization is exhausted at once. New organizations start with 0 until the operator credits them.
 5. **Price list**: `agent-hub billing price-list add --file docs/platform/billing/price-list-2026-11-24.json`. The
    command refuses a list that misses a model of the hub's model catalog and names every organization that would have
    no credit; it refuses then unless `--confirm` is given. `--valid-from 2026-11-24T00:00:00Z` (never in the past)
@@ -69,7 +71,8 @@ the columns. Charges arriving at the same time are taken from the new value; not
 ## 4. Operations check (after the rollout)
 
 1. `agent-hub billing price-list show` → `in_force` is the expected version.
-2. `agent-hub billing show --org <test-org>` → account exists, balance = start credit, `exhausted: false`.
+2. `agent-hub billing show --org <test-org>` → account exists, balance = the credit distributed in
+   step 4 of section 1, `exhausted: false`.
 3. Run one short task in the test organization on a DFX device. Within a minute:
    `psql … -c "SELECT kind, amount_micro_usd, price_version, quantity FROM hub.charge ORDER BY at DESC LIMIT 5"`
    shows `runtime` rows (and `tokens` rows with `"access": "platform"` or `"operator"` when DFX model access was used);

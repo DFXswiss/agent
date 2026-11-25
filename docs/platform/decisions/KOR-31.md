@@ -18,7 +18,8 @@ operations: [runbooks/credit.md](../runbooks/credit.md).
 6. **Hand-set balance** (owner's wish): `balance` vs. `booked` columns; the settle job records a difference as a
    `manual` entry with an audit row. Concurrent bookings are not lost (see the runbook).
 7. **Start credit only while billing is active**, with the value configured at that moment; `price-list add` names
-   organizations that would be exhausted and needs `--confirm` (design review H3). Proposed start credit: 20 USD.
+   organizations that would be exhausted and needs `--confirm` (design review H3). Proposed start credit: 20 USD
+   (*not pursued*: no automatic start credit, [E-14](../KONZEPT.md#e-14), 2026-11-25).
 8. **Shared workgroup VM**: runtime split evenly (largest remainder) between the sessions holding it; a VM nobody holds
    is not charged; a work VM's runtime goes to the requesting session (extension point `<area>/billing_vms.py:VMS`
    for KOR-29). Measuring starts when the runner first sees billing active; a gap of a stopped VM is free.

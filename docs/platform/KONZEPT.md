@@ -465,15 +465,22 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 
 ### E-10 – Der Ausgang der Arbeits-VMs läuft nie über die Standortadresse
 
-- **Datum:** 2026-11-23 18:52
+- **Datum:** 2026-11-23 18:52, ergänzt 2026-11-25 11:12
 - **Regel:** Arbeits-VMs erreichen das Internet nur über geteilte Ausgangsadressen eines Dienstleisters, nie über die
   Adresse des Standorts, an dem das Gerät steht; fällt dieser Weg aus, hat die VM kein Internet (fail-closed). Eine
-  feste Ausgangsadresse ist nicht verlangt.
+  feste Ausgangsadresse ist nicht verlangt. Bei Cloudflare werden nur die kostenlosen Tarife benutzt; eine eigene
+  feste Ausgangsadresse (kostenpflichtiger Zusatz) wird nicht beschafft, auch kein Angebot dafür eingeholt
+  (Ergänzung vom 2026-11-25).
 - **Wortlaut:** „[…] allerdings sollten wir schauen dass er nicht mit meiner ip ins internet geht […]“ (18:52; die
   dort verlangte eigene statische Adresse hat er um 20:40 zurückgenommen:) „wir brauchen keine fixe ip für ubuntu vm,
-  es geht nur darum dass sie nicht die normale ip von […] standort nimmt“ (Standortname gekürzt)
-- **Bezug:** ergänzt E-08 und [§3](#k-3).
-- **Umsetzung:** gebaut – [ADR-059](adr/059-work-vm-on-request.md) (KOR-29).
+  es geht nur darum dass sie nicht die normale ip von […] standort nimmt“ (Standortname gekürzt). Am 2026-11-25
+  11:12 auf die Frage, ob ein Angebot für eine eigene feste Ausgangsadresse eingeholt werden soll: „nein, wir bleiben
+  bei den kostenlosen modellen“ („Modelle“ als Tarife ausgelegt).
+- **Bezug:** ergänzt E-08 und [§3](#k-3); die Ergänzung bestätigt die Rücknahme vom 2026-11-23 20:40 und schließt
+  kostenpflichtige Cloudflare-Tarife auch für andere Zwecke aus.
+- **Umsetzung:** gebaut – [ADR-059](adr/059-work-vm-on-request.md) (KOR-29; geteilte Adressen des Cloudflare-Clients
+  ohne kostenpflichtigen Tarif); die frühere Folgerung „eigene statische Adresse“ ist dort als nicht verfolgt
+  gekennzeichnet (DOC-05).
 
 <a id="e-11"></a>
 
@@ -521,16 +528,23 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 
 ### E-14 – Abrechnung nur über Guthaben, das der Betreiber setzt
 
-- **Datum:** 2026-11-23 20:00
+- **Datum:** 2026-11-23 20:00, ergänzt 2026-11-25 11:12
 - **Regel:** Kostenpflichtige Ressourcen verbrauchen nur Guthaben; es gibt keinen Zahlungsweg und kein Aufladen in
   der Oberfläche, das Guthaben setzt der Betreiber (Befehl mit Audit, zusätzlich dokumentierter direkter Weg in der
-  Datenbank).
+  Datenbank). Guthaben entsteht nur auf zwei Wegen: gekauft oder vom Betreiber manuell verteilt; ein automatisches
+  Startguthaben gibt es nicht, auch nicht für neue Organisationen (Ergänzung vom 2026-11-25). Der Kauf ist heute
+  nicht gebaut (kein Zahlungsweg, siehe oben).
 - **Wortlaut:** „zahlungswege gibt es keinen, man kann nur guthaben verbrauchen, guthaben aufladen aktuell nicht
   möglich. guthaben setze ich nach eigenem gutdünken manuell in der db über […]. wir starten einfach mal so.“
-  (interner Zugangsweg gekürzt)
+  (interner Zugangsweg gekürzt). Am 2026-11-25 11:12 auf die Frage nach 20 USD Startguthaben je neuer
+  Organisation: „es gibt kein automatisches startguthaben, guthaben wird nur entweder gekauft oder manuell von mir
+  verteilt. das ist alles“
 - **Bezug:** präzisiert [Idee 47](#k-idee-47) („nach Aufladung“ = nach einer Gutschrift des Betreibers) und
-  [Idee 46](#k-idee-46).
-- **Umsetzung:** gebaut – [ADR-062](adr/062-prepaid-credit-and-usage-billing.md) (KOR-31).
+  [Idee 46](#k-idee-46); die Ergänzung beantwortet die offene Frage F1 aus
+  [ADR-079](adr/079-no-approval-as-precondition.md) (Startguthaben statt Freigabe): kein Startguthaben.
+- **Umsetzung:** gebaut – [ADR-062](adr/062-prepaid-credit-and-usage-billing.md) (KOR-31); die Einstellung
+  Startguthaben bleibt 0 (Voreinstellung), vor dem Einschalten der Abrechnung verteilt der Betreiber Guthaben an die
+  bestehenden Organisationen ([Runbook](runbooks/credit.md), DOC-05).
 
 <a id="e-15"></a>
 
@@ -853,7 +867,7 @@ Stand 2026-11-24. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 
 | Regel / Stelle | Gebauter Stand heute | Schließt |
 |---|---|---|
-| [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber über ein Startguthaben entscheidet (die Schalter sind gebaut, [ADR-079](adr/079-no-approval-as-precondition.md)); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
+| [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber die Schalter umzulegen nennt (gebaut, [ADR-079](adr/079-no-approval-as-precondition.md); ein Startguthaben gibt es nicht, [E-14](#e-14), entschieden 2026-11-25); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
 | [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |

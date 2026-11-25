@@ -156,7 +156,8 @@ sessions on own access there are never touched.
   `operator` gets one `operator.request` (`ref` = `credit_exhausted:<org>`) per organization and occasion (not again
   before a later `credit.changed` of the organization; not while an earlier one of the same reason is unread);
   `agent-hub platform waiting` lists the organizations waiting for credit. A start credit above 0 together with the
-  switches of ADR-079 multiplies per new organization: the owner's decision F1 bounds it first.
+  switches of ADR-079 multiplies per new organization; the owner decided on 2026-11-25 that there is none
+  ([E-14](../KONZEPT.md#e-14)): the setting stays 0.
 
 ## 9. Web
 - Header item: balance (`$12.34`), red with "Credit used up" when exhausted; hidden when billing is inactive.

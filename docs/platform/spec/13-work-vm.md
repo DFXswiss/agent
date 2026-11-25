@@ -184,7 +184,8 @@ refused address-independently; private ranges are in the table.
 - The operator installs and enrolls the Cloudflare One client on the device (managed preferences, service token,
   `service_mode warp`, `auto_connect`); the platform never handles its credential. Device traffic and everything the
   slot accounts send leaves with Cloudflare's shared egress addresses, never the site's address. No dedicated
-  address, no Mesh node, no gateway VM.
+  address, no Mesh node, no gateway VM; Cloudflare is used only on its free plans
+  ([E-10](../KONZEPT.md#e-10)), a paid plan or add-on is not pursued.
 - The watcher runs every 2 s and checks that the boundary is **effective**: pf enabled (`pfctl -E` when it is not -
   never `-d`), the hook `anchor "com.apple/*"` as the first `anchor` line of the running main ruleset with no
   `pass quick` before it, the anchor's rules loaded, and our anchor the first child of `com.apple` (`unordered`

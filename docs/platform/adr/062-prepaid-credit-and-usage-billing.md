@@ -111,7 +111,8 @@ device can therefore neither cause nor avoid a charge.
   force, new ones at their first booking or settle – gets an account with the start credit **as set at that moment**
   (history `start`); until then an organization counts with the configured start credit. `price-list add` names the
   organizations that would be exhausted when the list comes into force and refuses without `--confirm`, so a release
-  with start credit 0 cannot stop everyone by accident.
+  with start credit 0 cannot stop everyone by accident. *Since 2026-11-25 the setting stays 0:* there is no
+  automatic start credit ([E-14](../KONZEPT.md#e-14)); the operator distributes credit by hand.
 - **Exhausted** means a price list is in force and the balance is ≤ 0. A booking may take the balance below 0 (a
   request in flight is booked in full); the overdraft is bounded by the stop rules below.
 

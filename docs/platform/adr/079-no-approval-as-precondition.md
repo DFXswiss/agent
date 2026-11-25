@@ -26,6 +26,8 @@ ADR-076 §5 and §8 (notifications, actions).
 - Open questions of the owner: F1 (a start credit for every new organization instead of the approval – money) and F2
   (the operator's subscriptions for organizations outside the operator's own – contract). Until they are answered the
   approvals stay in force; this ADR builds the switches and the ways, and the operator flips them.
+  *F1 answered on 2026-11-25 ([E-14](../KONZEPT.md#e-14)): there is no automatic start credit; credit is only bought
+  or distributed by the operator by hand. The setting stays 0; a start credit is not pursued.*
 
 ## Decision
 
@@ -162,6 +164,7 @@ assignment through `agent-platform task create`. Operator commands are in the op
   private ones one invitation each, and with `open_platform_invites` everybody can invite) and so multiply the start
   credit. Before a start credit above 0 is combined with the switches, the owner's answer to F1 must fix a bound
   (a start credit per founder or per invitation chain is the recommendation; billing logic is KOR-31's).
+  *Not pursued:* F1 is answered with no start credit ([E-14](../KONZEPT.md#e-14)), so the bound is not needed.
 - The protected-branch default is gone at once: a workgroup that relied on it without saving settings has no
   platform-side protection; GitHub's protection remains.
 - An old runner, organization device or agent tool stops at the new entry types; the `log.policy` gate keeps them out

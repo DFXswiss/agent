@@ -99,6 +99,11 @@ Consequences: no destination logging, no in-VM agents or scans; what the session
 execution path stays visible in its chat and terminal (product transparency, [KONZEPT §6](../KONZEPT.md#k-6)). Requirements for the
 Cloudflare side: one issue written for the operator (work-package report `KOR-29-cloudflare-bedarf`).
 
+> **Not pursued (2026-11-25, [E-10](../KONZEPT.md#e-10)):** the dedicated static egress address asked for in
+> addendum 1 is not procured, and no offer is requested for it. The client withdrew it on 2026-11-23 (addendum 3) and
+> confirmed on 2026-11-25 that Cloudflare is used only on its free plans ("nein, wir bleiben bei den kostenlosen
+> modellen"). The wording above stays as history.
+
 ### Addendum 3 of the client (2026-11-23): the Cloudflare client on the device, shared egress addresses
 The operator answered the Cloudflare issue with a different design than the one first asked for: no dedicated
 egress address, no Enterprise plan, no Mesh node and no gateway VM. The **Cloudflare One client runs on each
@@ -182,7 +187,8 @@ so the filter can never lock the production device out. Cloudflare keeps logging
   that would then also open other VMs' SSH proxies to every VM. Rejected for per-slot accounts.
 - **Gateway VM with a Cloudflare Mesh node** (the first design): Cloudflare does not document shared egress for a
   subnet forwarded by a Mesh node and the dedicated address needs an Enterprise plan; replaced by the client on the
-  device (addendum 3). **A connector in every work VM**: the session could switch it off and read its key.
+  device (addendum 3). A paid plan or add-on is not pursued at all ([E-10](../KONZEPT.md#e-10), free plans
+  only). **A connector in every work VM**: the session could switch it off and read its key.
   **Egress through Cloudflare Tunnel (cloudflared)**: exits with the site's address. Rejected.
 - **Direct internet with the site address** (also as a fallback): refused by the client.
 - **Subagents sharing the task VM**: the shared `/workspace` would mix the workspaces of parent and subagent.
