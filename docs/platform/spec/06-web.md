@@ -110,6 +110,9 @@ history; it is never sent to the hub, logged or stored.
 - Locales `de` and `en`. Initial locale = `user_settings.locale` if signed in, else the first supported
   `navigator.languages` entry, else `en`. Switch in `/settings` (`PUT /v1/me/settings`).
 - All UI strings come from `core/i18n/<locale>.json`; a unit test asserts both catalogs have the same keys.
+  An area whose texts only lazily loaded screens use may live in `core/i18n/lazy/<area>.<locale>.json` and is added
+  to the catalogs by `core/i18n/lazy/<area>.ts` when the first of those screens loads (the area `model`, KOR-50), so
+  it stays out of the first load (§12.2); the same parity test covers it.
 - **Error catalog:** every error code of `03-api.md` §11 and `04-crypto.md` §8 has an entry
   `{title, body, action}` in both languages; unknown codes render a generic message showing the code. A unit
   test enumerates the codes from `contracts/` and fails on a missing entry.

@@ -8,7 +8,6 @@ import {
   FALLBACK_DEFAULTS,
   fallbackOf,
   isAccess,
-  keptFallback,
   modelChoices,
   modelSettings,
   platformDefault,
@@ -126,8 +125,6 @@ describe('fallback settings (ADR-081 section 1)', () => {
     expect(fallbackOf({ fallback: 'x' })).toBeNull();
     expect(fallbackOf({ fallback: FALLBACK })).toEqual({ ownToDfx: true, operatorToPlatform: false });
     expect(fallbackOf({ fallback: { own_to_dfx: 1 } })).toEqual(FALLBACK_DEFAULTS);
-    expect(keptFallback({})).toEqual({});
-    expect(keptFallback({ fallback: FALLBACK })).toEqual({ fallback: FALLBACK });
     const t = await credWorld();
     setProfile(t.store, { settings: { model_access: 'auto', model_id: null, locale: 'de', fallback: FALLBACK } });
     expect(modelSettings(t.store)).toEqual({

@@ -20,6 +20,7 @@ import { useI18n } from '../../../i18n';
 import { useAppEnv } from '../../../shell/context';
 import { useReason } from '../github/reason';
 import { SummaryText, useClock } from './summary';
+import '../../../../core/i18n/lazy/model';
 
 function LimitLine({ limited, testId }: { readonly limited: Limited; readonly testId: string }) {
   const { t } = useI18n();

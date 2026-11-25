@@ -12,6 +12,7 @@ import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { useClock } from '../../settings/sections/model-quotas/summary';
+import '../../../core/i18n/lazy/model';
 
 const ACCESSES: ReadonlySet<string> = new Set(['subscription', 'operator', 'api_key', 'platform']);
 const CAUSES: ReadonlySet<string> = new Set(['exhausted', 'unusable', 'released']);

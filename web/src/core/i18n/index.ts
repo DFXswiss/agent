@@ -29,3 +29,15 @@ export function createI18n(locale: Locale): I18n {
     error: (code) => errorMessage(errorCatalogs, catalogs[locale], locale, code),
   };
 }
+
+/**
+ * Adds the texts of an area that only lazily loaded parts use (`lazy/<area>.<locale>.json`, imported by that part's
+ * `lazy/<area>.ts`) to the catalogs, so they stay out of the first load (06-web.md section 12.2); adding them again
+ * changes nothing.
+ */
+export function extendCatalogs(area: string, texts: Readonly<Record<Locale, Readonly<Record<string, string>>>>): void {
+  for (const locale of Object.keys(texts) as Locale[]) {
+    const catalog = catalogs[locale] as Record<string, string>;
+    for (const [key, text] of Object.entries(texts[locale])) catalog[`${area}.${key}`] = text;
+  }
+}

@@ -15,6 +15,7 @@ import { useI18n } from '../../../i18n';
 import { useNow } from '../../../countdown/useNow';
 import { useAppEnv } from '../../../shell/context';
 import { useReason } from '../github/reason';
+import '../../../../core/i18n/lazy/model';
 
 function Bar({ bar }: { readonly bar: QuotaBar }) {
   const { t, locale } = useI18n();

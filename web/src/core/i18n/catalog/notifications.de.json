@@ -42,5 +42,9 @@
   "text.device.needed": "Workgroup „{wg}“ in „{org}“ braucht einen Rechner – weise einen zu",
   "text.model.switched": "Task „{task}“: Modell gewechselt",
   "text.model.switched.to": "Task „{task}“: Modell gewechselt: {from} → {to}",
-  "text.model.switched.until": "Task „{task}“: Modell gewechselt: {from} → {to}, weil {from} bis {time} erschöpft ist"
+  "text.model.switched.until": "Task „{task}“: Modell gewechselt: {from} → {to}, weil {from} bis {time} erschöpft ist",
+  "access.subscription": "Claude-Abo",
+  "access.operator": "Betreiber-Abo",
+  "access.api_key": "API-Key",
+  "access.platform": "DFX-Zugang über OpenRouter"
 }

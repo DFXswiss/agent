@@ -26,6 +26,7 @@ import { retryPrompt, sendable, sendErrorCode } from '../../../core/tasks/send';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
+import '../../../core/i18n/lazy/model';
 
 const BUTTON = 'min-h-11 rounded px-4 disabled:opacity-50';
 const PRIMARY = `${BUTTON} bg-blue-700 text-white`;
@@ -200,7 +201,7 @@ export function Actions({
         {action === 'consent' && (
           <>
             <p className="w-full text-sm text-gray-700" data-testid="attention.consent.hint">
-              {t('attention.consent.hint')}
+              {t('model.consent.hint')}
             </p>
             <button
               type="button"
@@ -209,7 +210,7 @@ export function Actions({
               onClick={() => void run(() => allowDfxForTask(app.tasks, task.task_id))}
               data-testid="attention.consent"
             >
-              {t('attention.consent')}
+              {t('model.consent')}
             </button>
             {owner && (
               <button
@@ -224,12 +225,12 @@ export function Actions({
                 }
                 data-testid="attention.consent.always"
               >
-                {t('attention.consent.always')}
+                {t('model.consent.always')}
               </button>
             )}
             {owner && (
               <p className="w-full text-xs text-gray-600" data-testid="attention.consent.always.hint">
-                {t(always ? 'attention.consent.always.saved' : 'attention.consent.always.hint')}
+                {t(always ? 'model.consent.always.saved' : 'model.consent.always.hint')}
               </p>
             )}
           </>

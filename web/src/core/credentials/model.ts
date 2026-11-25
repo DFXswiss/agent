@@ -74,12 +74,6 @@ export const fallbackBody = (fallback: FallbackSettings): FallbackBody => ({
   operator_to_platform: fallback.operatorToPlatform,
 });
 
-/** The stored `fallback` of `settings` for a body that changes something else (nothing for an older hub). */
-export function keptFallback(settings: Readonly<Record<string, unknown>>): { fallback?: FallbackBody } {
-  const found = fallbackOf(settings);
-  return found === null ? {} : { fallback: fallbackBody(found) };
-}
-
 /**
  * The stored settings of `GET /v1/me` (`auto` and the default model when absent or malformed; a stored model the
  * configuration no longer allows for the preference reads as the default).

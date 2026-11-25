@@ -81,5 +81,10 @@
   "switch.cause.exhausted": "erschöpft",
   "switch.cause.exhausted.until": "erschöpft bis {time}",
   "switch.cause.unusable": "bisheriger Zugang nicht nutzbar",
-  "switch.cause.released": "Abo wieder frei"
+  "switch.cause.released": "Abo wieder frei",
+  "consent": "Mit DFX-Zugang weiterarbeiten",
+  "consent.always": "Immer so",
+  "consent.hint": "Der DFX-Zugang wird nach Verbrauch vom Guthaben der Organization abgerechnet. Ohne Antwort geht die Aufgabe von selbst mit deinem Abo weiter, sobald es wieder frei ist.",
+  "consent.always.hint": "„Immer so“ gilt für alle deine Aufgaben; du kannst es in den Einstellungen unter „Modellzugang“ wieder ausschalten.",
+  "consent.always.saved": "Gespeichert: Ist dein eigenes Abo erschöpft, arbeiten deine Aufgaben mit dem DFX-Zugang weiter."
 }

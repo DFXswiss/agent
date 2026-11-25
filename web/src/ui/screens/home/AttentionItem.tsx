@@ -9,7 +9,8 @@
 import { memo, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ensureTask } from '../../../core/attention/load';
-import { actionOf, reasonText } from '../../../core/attention/view';
+import { reasonText } from '../../../core/attention/reason-text';
+import { actionOf } from '../../../core/attention/view';
 import { parseTime } from '../../../core/encoding/time';
 import { formatEventTime, localTimeZone } from '../../../core/i18n';
 import { type OrgState, WG } from '../../../core/log/state';

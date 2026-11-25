@@ -16,6 +16,7 @@ import { useDeviceNames } from '../../screens/devices/labels';
 import { useDevicePresence } from '../../screens/devices/presence';
 import { useAppEnv } from '../../shell/context';
 import type { TaskTabProps } from '../../registries/task-tabs';
+import '../../../core/i18n/lazy/model';
 
 /** The runtime of a running session is redrawn once a second. */
 export const RUNTIME_TICK_MS = 1000;

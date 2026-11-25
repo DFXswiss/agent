@@ -12,7 +12,6 @@ import {
   groupWindow,
   laterFrom,
   reasonKey,
-  reasonText,
   REASONS,
   selectTaskRows,
   selectNoTask,
@@ -21,6 +20,7 @@ import {
   WINDOW,
   windowAt,
 } from '../../../src/core/attention/view';
+import { reasonText } from '../../../src/core/attention/reason-text';
 import { createStore } from '../../../src/core/store';
 import { CATEGORIES, groupPage } from '../../../src/core/store/slices/attention';
 import { type EventEntry, putEvents } from '../../../src/core/store/slices/events';

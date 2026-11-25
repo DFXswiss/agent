@@ -30,6 +30,35 @@ describe('area catalogs', () => {
   });
 });
 
+describe('lazily added area catalogs', () => {
+  const LAZY_DIR = join(I18N_DIR, 'lazy');
+  const lazy = [
+    ...new Set(
+      readdirSync(LAZY_DIR)
+        .filter((name) => name.endsWith('.json'))
+        .map((name) => name.split('.')[0]!),
+    ),
+  ];
+
+  it.each(lazy)(
+    '%s has one file per locale with the same keys, a module that adds it, and no eager twin',
+    async (area) => {
+      const [first, ...rest] = LOCALES.map((locale) => readJson(join(LAZY_DIR, `${area}.${locale}.json`)));
+      for (const other of rest) expect(Object.keys(other).sort()).toEqual(Object.keys(first!).sort());
+      for (const catalog of [first!, ...rest]) {
+        for (const text of Object.values(catalog)) expect(typeof text === 'string' && text.trim() !== '').toBe(true);
+      }
+      expect(areas).not.toContain(area);
+      await import(`../../src/core/i18n/lazy/${area}.ts`);
+      const { catalogs } = await import('../../src/core/i18n');
+      for (const [index, locale] of LOCALES.entries()) {
+        const texts = [first!, ...rest][index]!;
+        for (const [key, text] of Object.entries(texts)) expect(catalogs[locale][`${area}.${key}`]).toBe(text);
+      }
+    },
+  );
+});
+
 describe('error catalog', () => {
   const catalogs = LOCALES.map((locale) => readJson(join(I18N_DIR, `errors.${locale}.json`)));
 

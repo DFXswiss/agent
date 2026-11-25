@@ -10,6 +10,7 @@ import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import type { UsageStripProps } from './UsageSlot';
+import '../../../core/i18n/lazy/model';
 
 export function UsageStrip({ taskId }: UsageStripProps) {
   const { app } = useAppEnv();

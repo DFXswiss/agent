@@ -38,8 +38,8 @@ export function NotificationText({ row }: { readonly row: NotificationRow }) {
   if (switched !== undefined) {
     params = {
       ...params,
-      from: t(`model.switch.access.${switched.from}`),
-      to: t(`model.switch.access.${switched.to}`),
+      from: t(`notifications.access.${switched.from}`),
+      to: t(`notifications.access.${switched.to}`),
       ...(switched.until !== null && {
         time: formatClock(switched.until, { locale, timeZone: localTimeZone(), now }),
       }),

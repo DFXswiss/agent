@@ -4,6 +4,7 @@ import type { OrgQuotas } from '../../../../core/credentials/orgQuotas';
 import { formatClock, localTimeZone } from '../../../../core/i18n';
 import { useNow } from '../../../countdown/useNow';
 import { useI18n } from '../../../i18n';
+import '../../../../core/i18n/lazy/model';
 
 /** A release time as `HH:MM` (with the date when it is not today) in the user's zone. */
 export function useClock(): (at: number) => string {

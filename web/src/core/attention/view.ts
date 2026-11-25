@@ -6,15 +6,13 @@
 //   the model settings, "Continue" after an empty balance, "Continue with DFX access" while the own subscription is
 //   used up (ADR-081 section 5), "Try again" only where a new attempt can help, nothing else for a refused action
 //   ("Open task" is always offered);
-// - the text of a reason that continues by itself at a time (`quota_wait`, `quota_choice`) names that time;
+// - the text of a reason that continues by itself at a time (`quota_wait`, `quota_choice`) names that time
+//   (`reason-text.ts`, only for the lazily loaded view);
 // - the prompt of an approval: exactly `Approved.` or `Declined.` (English in every locale, so the agent reads the
 //   same), then a blank line and the comment when one was given;
 // - the agent's question of a `question` / `approval` record: the `params.question` of the verified
 //   `operation.params` event of the record's operation, and only for the two asking operation types;
 // - the window of a group (`groupWindow`): at most `WINDOW` entries in the DOM, moved by `STEP` (HOT-05).
-import { parseTime } from '../encoding/time';
-import type { Params } from '../i18n/catalog';
-import { formatClock, type TimeOptions } from '../i18n/format';
 import { selectOperation } from '../operations/view';
 import { type AttentionRow, attentionGroup, CATEGORIES, type Category } from '../store/slices/attention';
 import type { TaskRow } from '../store/slices/tasks';
@@ -38,26 +36,6 @@ export const REASONS: Readonly<Record<Category, readonly string[]>> = {
 /** The message key of a reason's plain words (`attention` catalog). */
 export function reasonKey(category: Category, reason: string): string {
   return REASONS[category].includes(reason) ? `attention.reason.${reason}` : `attention.generic.${category}`;
-}
-
-/** The reasons whose text names the time the task continues by itself (ADR-081 section 5). */
-export const TIMED_REASONS: ReadonlySet<string> = new Set(['quota_wait', 'quota_choice']);
-
-/**
- * The message key and parameters of a reason's plain words: a timed reason of its own category with a known
- * `wait_until` names that time (`attention.reason.<reason>.at`), otherwise the words of `reasonKey`.
- */
-export function reasonText(
-  category: Category,
-  row: Pick<AttentionRow, 'reason' | 'wait_until'>,
-  options: TimeOptions,
-): { readonly key: string; readonly params: Params } {
-  const key = reasonKey(category, row.reason);
-  const until = row.wait_until ?? null;
-  if (until === null || !TIMED_REASONS.has(row.reason) || !REASONS[category].includes(row.reason)) {
-    return { key, params: {} };
-  }
-  return { key: `${key}.at`, params: { time: formatClock(parseTime(until), options) } };
 }
 
 /** The operation types with which an agent asks a person (03-api.md section 9). */

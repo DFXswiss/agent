@@ -21,6 +21,7 @@ import { useStore } from '../../../hooks/useStore';
 import { useI18n } from '../../../i18n';
 import { useAppEnv } from '../../../shell/context';
 import { useReason } from '../github/reason';
+import '../../../../core/i18n/lazy/model';
 
 const DEFAULT = '';
 
