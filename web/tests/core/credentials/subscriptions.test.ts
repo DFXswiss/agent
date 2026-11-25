@@ -143,6 +143,8 @@ describe('loadSubscriptions', () => {
     await expect(openSubscription(t.context, A, null, [])).rejects.toMatchObject({ code: 'header_invalid' });
     const answer = { owner_id: t.me.id, record: 'x' };
     await expect(openSubscription(t.context, A, answer, [])).rejects.toMatchObject({ code: 'header_invalid' });
+    t.store.update('me', (me) => ({ ...me, identity: null }));
+    await expect(openSubscription(t.context, A, answer, [])).rejects.toMatchObject({ code: 'unauthorized' });
   });
 
   it('passes other errors of a read on', async () => {

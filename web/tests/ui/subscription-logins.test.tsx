@@ -228,8 +228,12 @@ describe('SubscriptionCard', () => {
   });
 
   it('removes after a confirmation and reports a failure', async () => {
-    const { hub } = await withCard({}, body({ name: 'Team', use: { pool: false, orgs: [ORG] } }));
+    const { t, hub } = await withCard({}, body({ name: 'Team', use: { pool: false, orgs: [ORG] } }));
+    t.store.update('orgs', (orgs) => ({ ...orgs, platform: null }));
     const card = await screen.findByTestId(`subcard.${A}`);
+    fireEvent.click(within(card).getByTestId('subcard.use'));
+    expect(within(card).queryByTestId('subuse.pool')).toBeNull(); // no verified platform log: no operator pool
+    fireEvent.click(within(card).getByTestId('subcard.use.close'));
     fireEvent.click(within(card).getByTestId('subcard.remove'));
     fireEvent.click(within(card).getByTestId('subcard.remove.no'));
     fireEvent.click(within(card).getByTestId('subcard.remove'));
