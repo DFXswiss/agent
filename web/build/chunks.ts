@@ -17,8 +17,12 @@ export interface ChunkGroup {
 
 const FRAMEWORK = /(?:^|\/)node_modules\/(?:react|react-dom|react-router|react-router-dom|@remix-run|scheduler)\//;
 const APP = /^src\//;
-/** The lazily loaded parts that keep chunks of their own with their libraries (Markdown, chart, terminal). */
-const LAZY_PARTS = /^src\/ui\/(?:task-tabs\/chat\/Markdown\.tsx$|charts\/UPlotChart\.tsx$|terminal\/)/;
+/**
+ * The lazily loaded parts that keep chunks of their own with their libraries (Markdown, chart, terminal) and the
+ * platform browser's views (KOR-44), which the screens load lazily: in the screens chunk the bundler would turn their
+ * lazy import into one of the chunk itself, which the integrity loader cannot place and refuses.
+ */
+const LAZY_PARTS = /^src\/ui\/(?:task-tabs\/chat\/Markdown\.tsx$|charts\/UPlotChart\.tsx$|terminal\/|browser\/)/;
 
 /** Path of a module relative to `web` with `/` separators; '' for a virtual module or one outside `web`. */
 export function fromWebDir(web: string, id: string): string {

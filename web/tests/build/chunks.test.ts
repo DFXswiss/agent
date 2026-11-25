@@ -30,6 +30,8 @@ describe('chunk groups', () => {
     expect(screens.test(`${web}/src/ui/task-tabs/chat/Markdown.tsx`)).toBe(false);
     expect(screens.test(`${web}/src/ui/charts/UPlotChart.tsx`)).toBe(false);
     expect(screens.test(`${web}/src/ui/terminal/TerminalView.tsx`)).toBe(false);
+    expect(screens.test(`${web}/src/ui/browser/StateCard.tsx`)).toBe(false);
+    expect(screens.test(`${web}/src/ui/browser/BrowserTab.tsx`)).toBe(false);
     expect(screens.test(`${web}/node_modules/uplot/dist/uPlot.esm.js`)).toBe(false);
   });
 
