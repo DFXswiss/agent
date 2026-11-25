@@ -69,15 +69,21 @@ export function directorOrigin(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /** The lanes a run needs: those of the projects named with `--project` (all without one or with a pattern); `main`
- *  always. */
+ *  always. Like Playwright, `--project` takes every following value up to the next option and names are matched
+ *  without regard to case. */
 export function lanesOf(argv: readonly string[]): string[] {
   const named: string[] = [];
-  argv.forEach((arg, index) => {
-    if (arg === '--project' && argv[index + 1]) named.push(argv[index + 1]!);
-    else if (arg.startsWith('--project=')) named.push(arg.slice('--project='.length));
-  });
+  let taking = false;
+  for (const arg of argv) {
+    if (arg.startsWith('--project=')) named.push(arg.slice('--project='.length));
+    if (arg.startsWith('-')) taking = arg === '--project';
+    else if (taking) named.push(arg);
+  }
   if (!named.length || named.some((project) => project.includes('*'))) return [...LANES];
-  return LANES.filter((lane) => lane === 'main' || named.some((project) => laneOf(project) === lane));
+  const lower = named.map((project) => project.toLowerCase());
+  return LANES.filter(
+    (lane) => lane === 'main' || Object.keys(PROJECT_LANES).some((p) => PROJECT_LANES[p] === lane && lower.includes(p)),
+  );
 }
 export const REPO_DIR = fileURLToPath(new URL('../../../', import.meta.url));
 

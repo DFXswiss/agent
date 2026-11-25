@@ -18,6 +18,7 @@ import {
   LANES,
   lanesOf,
   PORT,
+  PROJECT_LANES,
   VOLUME_LANES,
   volumeCache,
 } from '../../e2e/fixtures/env.ts';
@@ -90,6 +91,15 @@ describe('e2e environment', () => {
     expect(VOLUME_LANES.every((lane) => LANES.includes(lane))).toBe(true);
   });
 
+  it('names only projects of the Playwright configuration as lanes', async () => {
+    const { default: config } = await import('../../playwright.config.ts');
+    const names = (config.projects ?? []).map((project) => project.name);
+    for (const project of Object.keys(PROJECT_LANES)) expect(names).toContain(project);
+    // every project with the device double that is not in the main lane runs one test at a time
+    for (const project of config.projects ?? [])
+      if (laneOf(project.name!) !== 'main') expect(project.workers, project.name).toBe(1);
+  });
+
   it('starts the lanes of the selected projects only', () => {
     expect(lanesOf([])).toEqual(LANES);
     expect(lanesOf(['test', '--project', 'desktop'])).toEqual(['main']);
@@ -98,6 +108,11 @@ describe('e2e environment', () => {
       'main',
       'volume',
       'volume-mobile',
+    ]);
+    expect(lanesOf(['--project', 'Volume', 'devices', '--workers', '2', 'e2e/x.spec.ts'])).toEqual([
+      'main',
+      'volume',
+      'devices',
     ]);
   });
 

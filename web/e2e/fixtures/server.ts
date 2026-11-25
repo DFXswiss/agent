@@ -118,6 +118,10 @@ export async function startHub(options: {
   readonly directorPort?: number;
   /** A lane of the volume gate: the data set from this cache directory (`scripts/hub_test_volume_cache.py`). */
   readonly volumeCache?: string;
+  /** How long the server may take until it answers (migration, and restoring a cached data set). */
+  readonly readyTimeoutMs?: number;
+  /** Receives `stop` as soon as the process runs (a caller can end a server that is still starting). */
+  readonly onSpawn?: (stop: () => Promise<void>) => void;
 }): Promise<HubProcess> {
   const args = [options.script, '--port', String(options.port), '--root-key', options.rootKey];
   if (options.directorPort !== undefined) args.push('--director-port', String(options.directorPort));
@@ -128,8 +132,9 @@ export async function startHub(options: {
     if (child.exitCode === null) child.kill('SIGTERM');
     await exited;
   };
+  options.onSpawn?.(stop);
   try {
-    await waitForHealth(`http://localhost:${options.port}/v1/health`, child);
+    await waitForHealth(`http://localhost:${options.port}/v1/health`, child, options.readyTimeoutMs);
     if (options.directorPort !== undefined)
       await waitForHealth(`http://127.0.0.1:${options.directorPort}/health`, child);
   } catch (error) {

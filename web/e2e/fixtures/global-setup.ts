@@ -3,12 +3,15 @@
 // (`helpers/community.ts`: the first community member, which hands the key to every new user of the suite). Every
 // further lane of the run (`env.ts`, decisions/HOT-21.md) gets a hub and a keeper of its own, started side by side;
 // the lanes of the volume gate get their data set from the cache instead of a keeper.
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { CoverageReport } from 'monocart-coverage-reports';
 import { build } from 'vite';
 import { buildWeb } from '../../scripts/build.mjs';
 import { e2eCoverage } from './coverage-options.ts';
 import { compiledRootKey } from '../../build/manifest.ts';
 import { startKeeper } from '../helpers/community.ts';
+import { laneError } from '../volume/completeness.ts';
 import {
   hubPython,
   laneDirectorPort,
@@ -35,22 +38,38 @@ async function stopAll(stops: Stop[]): Promise<void> {
 
 /**
  * The hub (with device double) and the community keeper of one lane; `stops` collects how to end them. A lane of the
- * volume gate has no keeper (the volume org's founder holds the community key) and takes its data set from the cache.
+ * volume gate has no keeper (the volume org's founder holds the community key) and takes its data set from the cache;
+ * it may wait there for the other volume lane's seed, so the run does not wait for it (`startVolumeLane`).
  */
 async function startLane(lane: string, rootKey: string, stops: Stop[]): Promise<void> {
   const volume = VOLUME_LANES.includes(lane);
-  const hub = await startHub({
+  // a data set shrunk by VOLUME_COUNTS is seeded on request and never cached (such a run always ends red)
+  const shrunk = Object.keys(JSON.parse(process.env.VOLUME_COUNTS ?? '{}') as object).length > 0;
+  await startHub({
     python: hubPython(),
     script: `${REPO_DIR}scripts/hub_test_server.py`,
     port: lanePort(lane),
     rootKey,
     directorPort: laneDirectorPort(lane),
-    ...(volume && { volumeCache: volumeCache() }),
+    ...(volume && !shrunk && { volumeCache: volumeCache(), readyTimeoutMs: VOLUME_READY_MS }),
+    onSpawn: (stop) => stops.push(stop),
   });
-  stops.push(() => hub.stop());
   if (volume) return;
   const keeper = await startKeeper(laneOrigin(lane));
   stops.push(() => keeper.stop());
+}
+
+/** How long a volume lane may take to answer: waiting for the other lane's seed and restoring its entry. */
+const VOLUME_READY_MS = 25 * 60_000;
+
+/** Starts a volume lane in the background: its worker waits for it (`volume/data.ts`), a failure is written to
+ *  `laneError` for that worker to report. */
+function startVolumeLane(lane: string, rootKey: string, stops: Stop[]): Promise<void> {
+  return startLane(lane, rootKey, stops).catch((error: unknown) => {
+    const file = laneError(WEB_DIR, lane);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, error instanceof Error ? error.message : String(error));
+  });
 }
 
 export default async function globalSetup() {
@@ -69,12 +88,20 @@ export default async function globalSetup() {
   }).then((server) => {
     stops.push(() => server.close());
   });
-  const lanes = lanesOf(process.argv).map((lane) => startLane(lane, rootKey, stops));
-  // every start has ended before anything is stopped (a lane still starting would outlive the stop)
+  const selected = lanesOf(process.argv);
+  const background = selected
+    .filter((lane) => VOLUME_LANES.includes(lane))
+    .map((lane) => startVolumeLane(lane, rootKey, stops));
+  const lanes = selected.filter((lane) => !VOLUME_LANES.includes(lane)).map((lane) => startLane(lane, rootKey, stops));
+  const finish = async () => {
+    // a lane still starting is ended through the stop it registered when it was spawned
+    await stopAll(stops);
+    await Promise.all(background);
+  };
   const failed = (await Promise.allSettled([probe, ...lanes])).find((result) => result.status === 'rejected');
   if (failed) {
-    await stopAll(stops);
+    await finish();
     throw failed.reason;
   }
-  return () => stopAll(stops);
+  return finish;
 }

@@ -121,6 +121,8 @@ export const runDir = (webDir: string): string => join(webDir, 'test-results', '
 /** The data set of one volume project (each seeds its own lane, decisions/HOT-21.md). */
 export const seedFile = (webDir: string, project: string): string => join(runDir(webDir), `seed-${project}.json`);
 export const measuredFile = (webDir: string): string => join(runDir(webDir), 'measured.jsonl');
+/** Why a volume lane did not start (written by the global setup, read by the lane's worker). */
+export const laneError = (webDir: string, lane: string): string => join(runDir(webDir), `lane-${lane}.error`);
 
 interface Seed {
   readonly override?: Record<string, number>;
