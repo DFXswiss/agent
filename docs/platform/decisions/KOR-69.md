@@ -45,4 +45,11 @@ Design: [ADR-090](../adr/090-every-subscription-logged-in-centrally.md); rules [
     and exhaustion like the files (`exhaustion.token_of`, `quota.operator`); a failed re-seal waits `POLL_S`; a token
     file named `sub-...` is no part of the pool; 04-crypto section 7 names the use mirror; ADR-090 section 4 no longer
     promises the mirror in the list.
+13. **The web dialogs** (second merge): a settings section of their own ("Claude subscriptions") and the two entry
+    points of KOR-68's page; no device choice (the first online device that announced `subscriptions`), the relay of
+    the credentials section reused. Findings of the review of the dialogs, fixed: one login per attempt (a re-render
+    started a second one), the mailbox option, removing a record that does not open, left organizations and the pool
+    stay switchable, a hub answer without the primary mark is refused like the primary record. Kept: the dialog inside
+    the table cell of the page (KOR-68's layout), no busy state on log out and remove (the hub answers an idempotent
+    repeat), the primary record is logged in through the credentials section as before.
 
