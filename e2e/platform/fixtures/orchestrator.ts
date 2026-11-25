@@ -73,6 +73,14 @@ export class Orchestrator {
   restore = (link: string) => this.call<{ cut: boolean }>('POST', `/links/${link}/restore`);
   runners = () => this.call<Record<string, string>>('GET', '/runners');
   stopRunner = (name: string) => this.call<{ state: string }>('POST', `/runners/${name}/stop`);
+  /** SIGKILL to the runner's process group, no SIGTERM first (a hard device failure, KOR-58); its VMs stay. */
+  killRunner = (name: string) => this.call<{ exit: number; state: string }>('POST', `/runners/${name}/hard-kill`);
+  /** Restarts the hub with the device online window and failure deadline (null: the hub's default, 30 and 300 s). */
+  setFailover = (online: number | null, failover: number | null) =>
+    this.call<{ online_seconds: number | null; failover_seconds: number | null }>('POST', '/hub/failover', {
+      online_seconds: online,
+      failover_seconds: failover,
+    });
   /** Starts a stopped runner; `github` sets its GitHub ways (KOR-65: OAuth App client ID, GitHub App URL name; a
    *  missing member removes the setting). */
   startRunner = (name: string, github?: { oauth_client_id?: string; app_slug?: string }) =>

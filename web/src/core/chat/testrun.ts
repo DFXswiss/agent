@@ -7,7 +7,10 @@
 // - `selectTestRuns`: the latest valid body per `run_id` of one session, newest start first (the session panel; the
 //   timeline keeps the latest item per run through `latestRuns` of `workvm.ts`);
 // - `summaryCounts` / `runFailed`: the parts of the summary text ("Tests: 3 failed, 12 passed") and whether the run
-//   is red.
+//   is red;
+// - `shownRun`: state and reason as shown – a run whose own last event still says `running` while the hub ended its
+//   operation `failed` with `device_failed` is cancelled by the device failure (the hub cannot write the encrypted run
+//   event, so the operation state wins; ADR-086 section 5).
 import {
   type Check,
   count,
@@ -25,6 +28,7 @@ import {
   integer,
 } from './shape';
 import type { ScopeEvents } from '../store/slices/events';
+import type { OperationRow } from '../store/slices/operations';
 import type { StoreState } from '../store/store';
 
 export const TEST_RUN_KIND = 'test.run';
@@ -117,6 +121,28 @@ export const parseTestRunResult = (result: unknown): TestRunResult | null =>
 /** Whether the run ended red: anything but `running` and `passed`. */
 export const runFailed = (run: Pick<TestRunResult, 'state'>): boolean =>
   run.state !== 'running' && run.state !== 'passed';
+
+/** The operation error code of a test run cancelled by a device failure (`contracts/enums/operation-error-codes.json`). */
+export const DEVICE_FAILED = 'device_failed';
+
+export interface ShownRun {
+  readonly state: TestState;
+  readonly reason: TestReason | typeof DEVICE_FAILED | null;
+  /** The run's own event still says `running`, but the device that ran it failed. */
+  readonly deviceFailed: boolean;
+}
+
+/** State and reason of a run as shown, with its operation row when known (module comment). */
+export function shownRun(
+  run: Pick<TestRunResult, 'state' | 'reason'>,
+  operation: Pick<OperationRow, 'state' | 'error_code'> | null | undefined,
+): ShownRun {
+  const deviceFailed =
+    run.state === 'running' && operation?.state === 'failed' && operation.error_code === DEVICE_FAILED;
+  return deviceFailed
+    ? { state: 'cancelled', reason: DEVICE_FAILED, deviceFailed }
+    : { state: run.state, reason: run.reason, deviceFailed };
+}
 
 const SUMMARY_ORDER = ['failed', 'errors', 'passed', 'skipped'] as const;
 export type SummaryPart = (typeof SUMMARY_ORDER)[number];

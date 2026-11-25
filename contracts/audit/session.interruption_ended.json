@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/session.interruption_ended.json",
+  "title": "audit detail session.interruption_ended",
+  "description": "detail of audit rows with action session.interruption_ended: the device of an interrupted session is online again before the task moved, the session goes on there (ADR-086 section 2). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

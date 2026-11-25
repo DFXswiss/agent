@@ -4,8 +4,9 @@
 //   its category's generic text (a newer hub may add reasons);
 // - the next step of an entry (`actionOf`): an answer field, approve / decline, connect GitHub, assign a computer,
 //   the model settings, "Continue" after an empty balance, "Continue with DFX access" while the own subscription is
-//   used up (ADR-081 section 5), "Try again" only where a new attempt can help, nothing else for a refused action
-//   ("Open task" is always offered);
+//   used up (ADR-081 section 5), "Choose automatically" while a task pinned to a failed device waits for it (ADR-086
+//   section 3; an unpinned task continues on another device or there by itself), "Try again" only where a new attempt
+//   can help, nothing else for a refused action ("Open task" is always offered);
 // - the text of a reason that continues by itself at a time (`quota_wait`, `quota_choice`) names that time
 //   (`reason-text.ts`, only for the lazily loaded view);
 // - the prompt of an approval: exactly `Approved.` or `Declined.` (English in every locale, so the agent reads the
@@ -28,6 +29,7 @@ export const REASONS: Readonly<Record<Category, readonly string[]>> = {
     'model_access_missing',
     'no_capacity',
     'operation_refused',
+    'device_failed',
   ],
   working: ['queued', 'starting', 'working', 'operation', 'subagents', 'quota_wait'],
   done: ['idle', 'closed'],
@@ -52,10 +54,11 @@ export const RETRY_REASONS: ReadonlySet<string> = new Set([
   'no_capacity',
 ]);
 
-export type Action = 'answer' | 'approve' | 'connect' | 'assign' | 'model' | 'continue' | 'consent' | 'retry' | null;
+export type Action =
+  'answer' | 'approve' | 'connect' | 'assign' | 'model' | 'continue' | 'consent' | 'automatic' | 'retry' | null;
 
-/** The next step of a record (module comment). */
-export function actionOf(row: Pick<AttentionRow, 'category' | 'reason'>): Action {
+/** The next step of a record (module comment); `pinned`: the record's task has a chosen device. */
+export function actionOf(row: Pick<AttentionRow, 'category' | 'reason'>, pinned = false): Action {
   if (row.category === 'needs_decision') {
     switch (row.reason) {
       case 'question':
@@ -76,6 +79,7 @@ export function actionOf(row: Pick<AttentionRow, 'category' | 'reason'>): Action
   }
   if (row.category === 'blocked') {
     if (row.reason === 'model_access_missing') return 'model';
+    if (row.reason === 'device_failed') return pinned ? 'automatic' : null;
     return RETRY_REASONS.has(row.reason) ? 'retry' : null;
   }
   return null;

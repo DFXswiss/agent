@@ -17,6 +17,7 @@
   "reason.transfer_failed": "the workspace could not be copied",
   "reason.vm_lost": "the VM was lost",
   "reason.cancelled": "cancelled",
+  "reason.device_failed": "the device failed",
   "reason": "Reason: {reason}",
   "exit": "Exit code {code}",
   "duration": "{seconds} s",

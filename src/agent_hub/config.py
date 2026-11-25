@@ -53,6 +53,7 @@ LOG_ORG_BYTES = "AGENT_HUB_LOG_ORG_BYTES"
 VMS_PER_WG = "AGENT_HUB_VMS_PER_WG"
 CAPACITY_REFUSALS = "AGENT_HUB_CAPACITY_REFUSALS"
 REFUSAL_HOLD_SECONDS = "AGENT_HUB_REFUSAL_HOLD_SECONDS"
+DEVICE_FAILOVER_SECONDS = "AGENT_HUB_DEVICE_FAILOVER_SECONDS"
 
 TEST_PREFIX = "AGENT_HUB_TEST_"
 KNOWN_VARIABLES = frozenset(
@@ -81,6 +82,7 @@ KNOWN_VARIABLES = frozenset(
         VMS_PER_WG,
         CAPACITY_REFUSALS,
         REFUSAL_HOLD_SECONDS,
+        DEVICE_FAILOVER_SECONDS,
     }
 )
 
@@ -96,6 +98,9 @@ MAX_CAPACITY_REFUSALS = 1000
 DEFAULT_REFUSAL_HOLD_SECONDS = 60
 DEFAULT_DFX_KEY_HEADROOM = Decimal(5)
 MAX_REFUSAL_HOLD_SECONDS = 86400
+DEFAULT_DEVICE_FAILOVER_SECONDS = 300
+"""How long a device stays away before its sessions count as interrupted and may move (ADR-086 section 1)."""
+MAX_DEVICE_FAILOVER_SECONDS = 86400
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_CATALOG_BYTES = 1024 * 1024
 GIB = 1024**3
@@ -214,6 +219,9 @@ class HubConfig:
     vms_per_wg: int = DEFAULT_VMS_PER_WG
     capacity_refusals: int = DEFAULT_CAPACITY_REFUSALS
     refusal_hold_seconds: int = DEFAULT_REFUSAL_HOLD_SECONDS
+    device_failover_seconds: int = DEFAULT_DEVICE_FAILOVER_SECONDS
+    """`AGENT_HUB_DEVICE_FAILOVER_SECONDS`: a device offline this long has failed (ADR-086 section 1; default 300, at
+    least twice `device_online_seconds`)."""
 
     def signer(self) -> HubSigner:
         """The hub's response and checkpoint signer (reused `agent_core.signing.HubSigner`)."""
@@ -281,6 +289,20 @@ def _bounded_int(environ: Mapping[str, str], name: str, default: int, pattern: r
     if pattern.fullmatch(value) is None or not 1 <= int(value) <= maximum:
         raise ConfigError(f"{name} must be an integer from 1 to {maximum}")
     return int(value)
+
+
+def _failover_seconds(environ: Mapping[str, str]) -> int:
+    """`AGENT_HUB_DEVICE_FAILOVER_SECONDS`, at least twice the online window (ADR-086 section 1: a short outage or a
+    runner restart never moves a session)."""
+    online = _bounded_int(
+        environ, DEVICE_ONLINE_SECONDS, DEFAULT_DEVICE_ONLINE_SECONDS, _SECONDS_RE, MAX_DEVICE_ONLINE_SECONDS
+    )
+    value = _bounded_int(
+        environ, DEVICE_FAILOVER_SECONDS, DEFAULT_DEVICE_FAILOVER_SECONDS, _SECONDS_RE, MAX_DEVICE_FAILOVER_SECONDS
+    )
+    if value < 2 * online:
+        raise ConfigError(f"{DEVICE_FAILOVER_SECONDS} must be at least twice {DEVICE_ONLINE_SECONDS} ({2 * online})")
+    return value
 
 
 def _setting(environ: Mapping[str, str], name: str, default: int, maximum: int) -> int:
@@ -541,4 +563,5 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
         refusal_hold_seconds=_setting(
             environ, REFUSAL_HOLD_SECONDS, DEFAULT_REFUSAL_HOLD_SECONDS, MAX_REFUSAL_HOLD_SECONDS
         ),
+        device_failover_seconds=_failover_seconds(environ),
     )

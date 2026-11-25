@@ -1,0 +1,123 @@
+{
+  "name": "e2e-67-single-device",
+  "description": "E2E-67 (KOR-58, ADR-086) with the organization's only own device: a first turn writes solo.md and ends idle (checkpoint). The second instruction's answer is held 240 s while the runner is killed: the task waits interrupted (device_failed); the runner comes back with its VMs, so the same session goes on and the held answer arrives. The third instruction's request is held 420 s while the runner is killed again; its VMs are deleted before it starts (a reboot): it reports the session failed and the hub starts the successor on the same device, which resumes the conversation and receives the interrupted third instruction again.",
+  "steps": [
+    {
+      "id": "solo-work",
+      "expect": {
+        "user_text_contains": "E2E65-SOLO-WORK",
+        "has_tools": true,
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "I will keep the solo notes first."
+          },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/solo.md",
+              "content": "# Solo\nkz65-solo-file-h8v2\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "solo-worked",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "solo.md"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The solo notes are written kz65-solo-answer-t6y1."
+          }
+        ]
+      }
+    },
+    {
+      "id": "solo-long",
+      "expect": {
+        "user_text_contains": "E2E65-SOLO-LONG",
+        "has_tool_result": false
+      },
+      "delay_ms": 240000,
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The long solo thought is done kz65-solo-answer-l2d6."
+          }
+        ]
+      }
+    },
+    {
+      "id": "solo-third",
+      "expect": {
+        "user_text_contains": "E2E65-SOLO-THIRD",
+        "has_tool_result": false
+      },
+      "delay_ms": 420000,
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "This answer never arrives: the device was rebooted."
+          }
+        ]
+      }
+    },
+    {
+      "id": "solo-again",
+      "expect": {
+        "user_text_contains": "E2E65-SOLO-THIRD",
+        "has_tool_result": false,
+        "min_messages": 7
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Continued on the same device kz65-solo-answer-c3n7."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Solo notes"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lost",
+      "expect": {
+        "tool_result_is_error": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Stopping here."
+          }
+        ]
+      }
+    }
+  ]
+}

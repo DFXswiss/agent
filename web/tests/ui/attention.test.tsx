@@ -350,6 +350,27 @@ describe('situation view', () => {
     expect(await sent(t, F)).toEqual(['Build it']);
   });
 
+  it('names a failed computer and offers the automatic choice only for a task pinned to it (KOR-58)', async () => {
+    const placement = { device_id: DEVICE, vm_id: null };
+    const failed = { category: 'blocked', reason: 'device_failed', ref_id: null, ref_kind: null };
+    const t = await world((w) => ({
+      blocked: [item(w, E, failed, { placement }), item(w, F, failed)],
+    }));
+    t.client.on(`PUT /v1/tasks/${E}/placement`, () => ({ task: taskRow(t, { task_id: E, main_session_id: null }) }));
+    mount(t);
+    await waitFor(() => expect(screen.getAllByTestId('attention.item')).toHaveLength(2));
+    for (const task of [E, F])
+      expect(within(entry(task)).getByTestId('attention.item.reason')).toHaveTextContent(
+        'Interrupted – the computer failed',
+      );
+    // an unpinned task continues on another computer or there by itself: nothing to do
+    expect(within(entry(F)).queryByTestId('attention.actions')).toBeNull();
+    expect(within(entry(E)).getByTestId('attention.automatic.hint')).toHaveTextContent('tied to the failed computer');
+    fireEvent.click(within(entry(E)).getByTestId('attention.automatic'));
+    await waitFor(() => expect(t.client.of(`PUT /v1/tasks/${E}/placement`)).toHaveLength(1));
+    expect(t.client.of(`PUT /v1/tasks/${E}/placement`)[0]!.body).toEqual({ device_id: null, vm_id: null });
+  });
+
   it('tells a member who cannot assign a computer who can, and shows read-only users no controls', async () => {
     const t = await world(undefined, { member: true, private: false });
     const research = await idOf('research');

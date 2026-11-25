@@ -50,6 +50,9 @@ class Node:
     def stop(self, name: str, timeout: float = 10.0) -> int:
         return int(self.call("stop", name=name, timeout=timeout))
 
+    def kill(self, name: str) -> int:
+        return int(self.call("kill", name=name))
+
     def log_tail(self, name: str, lines: int = 20) -> str:
         return str(self.call("log_tail", name=name, lines=lines))
 

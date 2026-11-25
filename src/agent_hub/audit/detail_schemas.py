@@ -634,6 +634,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "merge_pending",
                         "merge_unsupported",
                         "workspace_dirty",
+                        "device_failed",
                     ],
                 },
                 {"type": "null"},
@@ -692,6 +693,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "merge_pending",
                         "merge_unsupported",
                         "workspace_dirty",
+                        "device_failed",
                     ],
                 },
                 {"type": "null"},
@@ -750,6 +752,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "merge_pending",
                         "merge_unsupported",
                         "workspace_dirty",
+                        "device_failed",
                     ],
                 },
                 {"type": "null"},
@@ -808,6 +811,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "merge_pending",
                         "merge_unsupported",
                         "workspace_dirty",
+                        "device_failed",
                     ],
                 },
                 {"type": "null"},
@@ -866,6 +870,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "merge_pending",
                         "merge_unsupported",
                         "workspace_dirty",
+                        "device_failed",
                     ],
                 },
                 {"type": "null"},
@@ -924,6 +929,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "merge_pending",
                         "merge_unsupported",
                         "workspace_dirty",
+                        "device_failed",
                     ],
                 },
                 {"type": "null"},
@@ -982,6 +988,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "merge_pending",
                         "merge_unsupported",
                         "workspace_dirty",
+                        "device_failed",
                     ],
                 },
                 {"type": "null"},
@@ -1040,6 +1047,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "merge_pending",
                         "merge_unsupported",
                         "workspace_dirty",
+                        "device_failed",
                     ],
                 },
                 {"type": "null"},
@@ -1098,6 +1106,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "merge_pending",
                         "merge_unsupported",
                         "workspace_dirty",
+                        "device_failed",
                     ],
                 },
                 {"type": "null"},
@@ -1578,6 +1587,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "unassigned",
                         "hook_unavailable",
                         "model_quota_exhausted",
+                        "device_failed",
                     ],
                 }
             ],
@@ -1593,6 +1603,21 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["reason", "model_access", "model_id"],
     },
+    "session.interrupted": {
+        "properties": {
+            "offline_since": [
+                {
+                    "type": "string",
+                    "pattern": (
+                        "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])"
+                        "T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\\.[0-9]{3}Z$"
+                    ),
+                }
+            ]
+        },
+        "required": ["offline_since"],
+    },
+    "session.interruption_ended": {"properties": {}, "required": []},
     "session.model_switched": {
         "properties": {
             "from_access": [{"type": "string", "enum": ["subscription", "api_key", "platform", "operator"]}],

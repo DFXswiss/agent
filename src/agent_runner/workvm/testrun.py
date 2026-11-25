@@ -21,8 +21,13 @@
    cancellation. Then the row and the final `test.run` event get the result, and the operation succeeds with it (also
    when the tests failed).
 
-After a restart (`reconcile`) every row still `running` ends `error` (`restart`) with its final event; its VM went with
-the work VM reconciliation and the pipeline fails the operation found `executing` (`timeout`): a run never runs twice.
+After a restart (`reconcile`, before the work VM reconciliation deletes the VMs left over, `tasks.py`) every row
+still `running` ends `error` (`restart`) with its final event, and the pipeline fails the operation found `executing`
+(`timeout`): a run never runs twice. **The log stays** (ADR-086 section 5): when the run's VM is still `running`, its
+job (the newest of the VM's jobs with the run's command) is killed and its output kept like in step 5 (`_keep`: tail,
+counts and the log of kind `log` with the run ID as `ref`, within `CAPTURE_TIMEOUT`), and the result and the final
+event carry `log`, `tail` and `summary`; only then is the VM deleted (`restart`). When the VM is gone, does not answer
+or the capture fails, the run ends as before without log.
 
 `summary` counts tests from the last summary line of the output tail the runner recognises (`summarize`: pytest,
 vitest/jest, go test, cargo test, mocha, ESLint/ruff problems); the tail is at most `TAIL_CHARS` characters and every
@@ -47,7 +52,7 @@ from typing import Any
 
 from agent_runner.operations.extensions import OperationContext, OperationFailed
 from agent_runner.sessions.records import LocalSession
-from agent_runner.workvm import jobs, sync
+from agent_runner.workvm import jobs, records, sync
 from agent_runner.workvm.jobs import WorkVmError
 from agent_runner.workvm.manager import (
     RUN_COMMAND_LIMIT,
@@ -386,15 +391,16 @@ class TestRuns:
         return found
 
     async def reconcile(self) -> int:
-        """After a restart: every run still `running` ends `error` (`restart`); returns their number."""
+        """After a restart: every run still `running` ends `error` (`restart`), with the log of its VM when that still
+        runs (module docstring); returns their number."""
         async with self.store.db.connection() as conn:
             cursor = await conn.execute(
                 "SELECT run_id, operation_id::text, session_id::text, task_id::text, org_id::text, wg_id::text, kind,"
-                " command, cwd, size, timeout_seconds, started_at FROM runner.test_run WHERE state = 'running'"
-                " ORDER BY started_at, run_id"
+                " command, cwd, size, timeout_seconds, started_at, workvm_id FROM runner.test_run"
+                " WHERE state = 'running' ORDER BY started_at, run_id"
             )
             rows = await cursor.fetchall()
-        for run_id, operation_id, session_id, task_id, org_id, wg_id, kind, command, cwd, size, timeout, at in rows:
+        for run_id, operation_id, session_id, task_id, org_id, wg_id, kind, command, cwd, size, timeout, at, vm in rows:
             run = Run(
                 run_id=run_id,
                 operation_id=operation_id,
@@ -407,20 +413,53 @@ class TestRuns:
                 started_at=at,
                 ready_ms=0,
             )
+            outcome = Outcome()
+            tail, log = await self._salvage(vm, run, outcome)
             run.result = {
                 "run_id": run_id,
                 "state": "error",
                 "exit_code": None,
-                "duration_ms": max(0, int((self.store.now() - at).total_seconds() * 1000)),
+                "duration_ms": max(outcome.duration_ms, int((self.store.now() - at).total_seconds() * 1000)),
                 "ready_ms": 0,
-                "summary": None,
-                "log": None,
-                "tail": "",
+                "summary": summarize(tail),
+                "log": log,
+                "tail": tail,
                 "reason": "restart",
             }
             await self._end(run, "error")
-            self.store.log(f"runner.testrun ended run_id={run_id} state=error reason=restart")
+            self.store.log(
+                f"runner.testrun ended run_id={run_id} state=error reason=restart logged={int(log is not None)}"
+            )
         return len(rows)
+
+    async def _salvage(self, workvm_id: str | None, run: Run, outcome: Outcome) -> tuple[str, dict[str, Any] | None]:
+        """The output of a run whose VM outlived the restart, then that VM goes (module docstring)."""
+        vm = None if workvm_id is None else await records.get(self.store.db, workvm_id)
+        if vm is None or vm.state != "running":
+            return "", None
+        try:
+            job_id = await self._job_of(vm, run)
+            if job_id is None:
+                return "", None
+            with contextlib.suppress(WorkVmError):
+                await self.workvms.deps.shell_for(vm)(
+                    jobs.kill_argv(job_id, "KILL"), stdin=None, timeout=10.0, limit=4096
+                )
+            return await self._keep(vm, run, outcome, job_id)
+        finally:
+            await self.workvms.delete(vm, reason="restart")
+
+    async def _job_of(self, vm: WorkVm, run: Run) -> str | None:
+        """The run's job in its VM: the newest job with the run's command; None when there is none or the VM does not
+        answer."""
+        shell = self.workvms.deps.shell_for(vm)
+        try:
+            listed = jobs.parse_list(await shell(jobs.list_argv(), stdin=None, timeout=10.0, limit=jobs.LIST_LIMIT))
+        except WorkVmError:
+            return None
+        label = jobs.command_label(run.command)
+        found = [job for job in listed if job["command"] == label]
+        return str(max(found, key=lambda job: job["started_at"])["job_id"]) if found else None
 
     # -- rows and events -------------------------------------------------------------------------------------------
 

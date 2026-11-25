@@ -24,6 +24,9 @@
   object in the background (`capture`, injected); its final `workvm.run` event names the log, and the teardown of its
   VM waits for the capture (at most `CAPTURE_TIMEOUT`).
 - **credit**: on a platform device an exhausted organization gets no new VM (`credit_exhausted`).
+- **lease** (ADR-086 section 4): `workvm_exec` and `workvm_browse` (and the implicit VM they start) reach the internet
+  without a hub registration; they are refused `unavailable` (`NO_LEASE`) while the runner has not reached the hub for
+  longer than the failover time (`Deps.hub_lease`, `sync.lease`). The other tools and running jobs go on.
 
 Availability (`available`): slots configured, a ready work image, and the boundary check (`boundary_ok`, the host
 filter; always true in `TEST_MODE` self mode). Lima calls are synchronous and run in threads; one lock per VM
@@ -97,6 +100,11 @@ RUN_OUTPUT_LIMIT = 65536
 BROWSE_COMMAND = "/usr/local/bin/workvm-browse"
 BROWSE_TIMEOUT = 120
 CAPTURE_TIMEOUT = 300.0
+NO_LEASE = (
+    "This execution device has not reached the platform hub for longer than the failover time, so the platform may"
+    " have moved this session to another device: commands and browsing in the work VM are refused until the hub is"
+    " reachable again. Tell the user; try again in a few minutes."
+)
 NO_CREDIT = (
     "The organization's credit is used up: the platform starts no new work VM or test run until credit is added."
     " Tell the user; the work continues once credit is available."
@@ -165,6 +173,8 @@ class Deps:
     """The organization's credit is used up on this (platform) device (`billing.state.exhausted`)."""
     capture: Callable[[WorkVm, Identity, str, int], Awaitable[dict[str, Any] | None]] | None = None
     """Stores the output of a final job (`vm, identity, job_id, output_bytes`) as a log; returns its `log_ref`."""
+    hub_lease: Callable[[], bool] = field(default_factory=lambda: _always)
+    """The runner's lease of the tools with internet egress (`sync.lease.held`, ADR-086 section 4)."""
 
 
 def _tail(text: str, limit: int) -> str:
@@ -219,6 +229,10 @@ async def _no_emit(_identity: Identity, _kind: str, _body: Mapping[str, Any]) ->
 
 def _never(_org_id: str) -> bool:
     return False
+
+
+def _always() -> bool:
+    return True
 
 
 class WorkVms:
@@ -992,15 +1006,21 @@ class WorkVms:
         ):
             await self.delete(task_vm, reason=reason)
 
-    async def reconcile(self) -> None:
-        """After a restart nothing is resumed (KONZEPT idea 44): every live VM and every own `wvm-` instance without
-        a row is deleted."""
-        known: dict[int, set[str]] = {}
+    async def left_over(self) -> list[WorkVm]:
+        """The live VMs at the start of the daemon (taken before the test-run reconciliation, `tasks.py`)."""
+        return await records.live(self.deps.db)
+
+    async def reconcile(self, left: Sequence[WorkVm] | None = None) -> None:
+        """After a restart nothing is resumed (KONZEPT idea 44): every VM `left` over from before the restart (default:
+        every live VM) and every own `wvm-` instance without a live row is deleted. A VM a session obtained while the
+        test-run reconciliation kept the logs of the runs is not in `left` and stays."""
         for entry in await records.pool(self.deps.db):
             await self._drop(entry)
+        for vm in await records.live(self.deps.db) if left is None else left:
+            await self.delete(vm, reason="restart")
+        known: dict[int, set[str]] = {}
         for vm in await records.live(self.deps.db):
             known.setdefault(vm.slot, set()).add(vm.lima_name)
-            await self.delete(vm, reason="restart")
         for slot in range(self.deps.settings.slots):
             lima = self.deps.lima_for(slot)
             marker = lima.prefix + "wvm-"
@@ -1015,6 +1035,7 @@ class WorkVms:
         """The result of one tool call (raises `CallFailed` for a tool error)."""
         if tool == "workvm_status":
             return await self._status(session)
+        self._check_lease(session, tool)
         begun = time.monotonic()
         vm = await self._vm_of(session)
         if vm is not None and vm.state == "stopped":
@@ -1047,6 +1068,12 @@ class WorkVms:
             if error.code == "workvm_job_unknown":
                 raise CallFailed("not_found", "There is no job with this job_id in the work VM.") from None
             raise CallFailed("unavailable", "The work VM did not answer as expected. Try again.") from None
+
+    def _check_lease(self, session: LocalSession, tool: str) -> None:
+        """The tools with internet egress need the runner's lease (module docstring)."""
+        if tool in IMPLICIT_TOOLS and not self.deps.hub_lease():
+            self.deps.log(f"runner.workvm lease_lost tool={tool} session_id={session.id}")
+            raise CallFailed("unavailable", NO_LEASE)
 
     async def _vm_of(self, session: LocalSession) -> WorkVm | None:
         """The VM a session works in: a subagent only in its own session VM (its workspace differs from the task's,

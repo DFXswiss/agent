@@ -25,7 +25,7 @@ import psycopg
 from agent_hub.attention import store as attention
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.sessions import rows
-from agent_hub.sessions.derive import CLOSED, SCHEDULING, WORKING, MainSession, task_state
+from agent_hub.sessions.derive import CLOSED, INTERRUPTED_SQL, SCHEDULING, WORKING, MainSession, task_state
 from agent_hub.sessions.effects import Effects
 
 Connection = psycopg.Connection[Any]
@@ -127,11 +127,15 @@ def _write_state(
 
 def _main_session(connection: Connection, task_id: UUID) -> MainSession | None:
     row = connection.execute(
-        "SELECT state, state_reason, device_id IS NOT NULL FROM hub.session WHERE task_id = %s AND depth = 0"
-        " ORDER BY created_at DESC, id DESC LIMIT 1",
+        f"SELECT state, state_reason, device_id IS NOT NULL, {INTERRUPTED_SQL} FROM hub.session"
+        " WHERE task_id = %s AND depth = 0 ORDER BY created_at DESC, id DESC LIMIT 1",
         (task_id,),
     ).fetchone()
-    return None if row is None else MainSession(state=row[0], state_reason=row[1], placed=bool(row[2]))
+    return (
+        None
+        if row is None
+        else MainSession(state=row[0], state_reason=row[1], placed=bool(row[2]), interrupted=bool(row[3]))
+    )
 
 
 def refresh_task(
@@ -153,7 +157,8 @@ def refresh_task(
         attention.refresh(connection, task.id, now, effects)
         return task
     working = connection.execute(
-        "SELECT EXISTS (SELECT 1 FROM hub.session WHERE task_id = %s AND state = %s)", (task.id, WORKING)
+        f"SELECT EXISTS (SELECT 1 FROM hub.session WHERE task_id = %s AND state = %s AND NOT {INTERRUPTED_SQL})",
+        (task.id, WORKING),
     ).fetchone()
     reason = scheduling_reason
     if reason is None and task.state == SCHEDULING:

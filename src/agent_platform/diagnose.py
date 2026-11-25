@@ -60,6 +60,11 @@ WAITING: dict[str, str] = {
         "The device given to the organization still lacks this workgroup's key; it gets it as soon as a member's"
         " client or a device that holds the key is online. The task starts by itself."
     ),
+    "device_failed": (
+        "Interrupted: the device the task ran on failed. It continues by itself on another device as soon as one is"
+        " free, or there once the device is back. A task tied to that device waits for it; let the platform choose"
+        ' (`agent-platform api PUT /v1/tasks/<task_id>/placement --body \'{"device_id":null,"vm_id":null}\'`).'
+    ),
 }
 REASONS |= WAITING
 # The next step of a task whose newest session failed for a reason that a command fixes

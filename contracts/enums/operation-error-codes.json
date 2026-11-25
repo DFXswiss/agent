@@ -31,6 +31,7 @@
     "merge_outdated",
     "merge_pending",
     "merge_unsupported",
-    "workspace_dirty"
+    "workspace_dirty",
+    "device_failed"
   ]
 }

@@ -1,7 +1,8 @@
 // Tab "Sessions" of a task (06-web.md section 5.3): the tree of the task's sessions – main sessions and their
 // subagent children by `parent_session_id`, depth ≤ 2 – with state, "Triggered by <name>" (the person whose
 // instruction created the session, ADR-083), device (its label, `ui/screens/devices/labels.ts`), model and usage
-// (tokens and cost of the session, slice `usage`); each node links to the session detail `/o/:org/s/:session`
+// (tokens and cost of the session, slice `usage`), "Cancelled because the device failed" for a session the hub ended
+// when it moved the task to another device (ADR-086 section 3); each node links to the session detail `/o/:org/s/:session`
 // (terminal, session chat, children).
 //
 // Many sessions (ADR-086 section 1): the tree is flattened depth first (the depth indents a row) into a
@@ -197,6 +198,11 @@ function Node({ item }: { readonly item: Item }) {
         {node.depth === 0 ? t('task.sessions.main') : t('task.chat.subagent', { path: node.path.join('.') })}
       </span>
       <SessionState state={node.entry.row.state} />
+      {node.entry.row.state === 'stopped' && node.entry.row.state_reason === 'device_failed' && (
+        <span className="text-xs text-gray-600" data-testid="sessions.device-failed">
+          {t('task.sessions.device_failed')}
+        </span>
+      )}
       <Facts entry={node.entry} device={item.device} reachable={item.reachable} usage={item.usage} />
       <TriggeredBy org={org} user={node.entry.row.triggered_by} testId="session.triggered-by" />
     </Link>

@@ -53,6 +53,7 @@ CATEGORIES: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxyType(
                 "model_access_missing",
                 "no_capacity",
                 "operation_refused",
+                "device_failed",
             ),
         ),
         WORKING: (DESCENDING, ("queued", "starting", "working", "operation", "subagents", "quota_wait")),
@@ -111,6 +112,8 @@ SCHEDULING_REASONS: Mapping[str, Outcome] = MappingProxyType(
         "device_offline": (BLOCKED, "device_unreachable"),
         "placement_offline": (BLOCKED, "device_unreachable"),
         "credit_exhausted": (NEEDS_DECISION, "credit_empty"),
+        # the main session's device failed (ADR-086): it continues there or on another device by itself
+        "device_failed": (BLOCKED, "device_failed"),
         # waiting for capacity or for the key of an organization device: quiet, it goes on by itself
         "capacity_exhausted": (WORKING, "queued"),
         "wg_vm_limit": (WORKING, "queued"),
@@ -129,7 +132,7 @@ ENDED = frozenset({"stopped", "failed"})
 QUOTA_CHOICE: Outcome = (NEEDS_DECISION, "quota_choice")
 QUOTA_WAIT: Outcome = (WORKING, "quota_wait")
 RUNNING_OPERATION_STATES = ("accepted", "executing")
-WG_WIDE = frozenset({"device_missing", "device_unreachable", "no_capacity"})
+WG_WIDE = frozenset({"device_missing", "device_unreachable", "no_capacity", "device_failed"})
 """Reasons that concern a whole workgroup (one notification per owner, workgroup and reason, ADR-076 section 5)."""
 
 

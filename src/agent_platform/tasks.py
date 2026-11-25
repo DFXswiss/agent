@@ -25,6 +25,12 @@ assigns the first certified platform candidate (`ensure_device`, rule E-05, ADR-
 as the web client does. `task show` prints the device and VM of the main session and, while the task waits, its
 reason (`waiting`, a code of the closed list of `diagnose`).
 
+ADR-086 (device failure; twin of `web/src/core/sessions/failover.ts`): `task show` prints `device_failure` when the
+main session's row reports one - `interrupted_since` while the session's device failed and the session has not ended
+(the task waits `scheduling/device_failed` and continues there or on another device by itself), `continued_from` when
+the session continues a session lost to a device failure (from the last synchronised checkpoint), and `text` saying
+both. Older hubs send neither field, and a malformed value counts as missing.
+
 The queue (ADR-083 section 3; twin of `web/src/core/chat/queue.ts`): `task queue` lists the task's prompts not yet
 delivered to a live main session in event order (`GET /v1/tasks/{task}/queue`) - position, prompt event, author,
 whether the hub received it from the author's agent (`via_agent`), holding session and device, state (`waiting`,
@@ -51,6 +57,8 @@ from agent_platform.reader import scope_events
 from agent_platform.sessions import runtime_seconds
 from agent_platform.waiting import annotate
 from agent_platform.workvm import latest_runs
+from agent_runner.crypto.encoding import parse_time
+from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.ids import is_uuid7, uuid7
 from agent_runner.crypto.log.state import WG
 
@@ -203,15 +211,51 @@ def _task_row(account: Account, task: str) -> dict[str, Any]:
     return cast(dict[str, Any], task_answer(account, task)["task"])
 
 
-def main_session(answer: dict[str, Any]) -> dict[str, Any] | None:
-    """Device, VM and state of the task's main session (`main_session_id` among `sessions`), None without one."""
+def _main_row(answer: dict[str, Any]) -> dict[str, Any] | None:
+    """The row of the task's main session (`main_session_id` among `sessions`), None without one."""
     wanted = answer["task"].get("main_session_id")
     sessions = answer.get("sessions")
     for item in sessions if isinstance(sessions, list) else []:
         session = item.get("session") if isinstance(item, dict) else None
         if isinstance(session, dict) and wanted is not None and session.get("session_id") == wanted:
-            return {key: session.get(key) for key in ("session_id", "state", "device_id", "vm_id")}
+            return session
     return None
+
+
+def main_session(answer: dict[str, Any]) -> dict[str, Any] | None:
+    """Device, VM and state of the task's main session (`main_session_id` among `sessions`), None without one."""
+    session = _main_row(answer)
+    return None if session is None else {key: session.get(key) for key in ("session_id", "state", "device_id", "vm_id")}
+
+
+ENDED = ("stopped", "failed")
+
+
+def _time(value: object) -> str | None:
+    try:
+        parse_time(value)
+    except CryptoError:
+        return None
+    return cast(str, value)
+
+
+def device_failure(session: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The device failure the main session's row reports (module docstring), None when it reports none."""
+    if session is None:
+        return None
+    since = None if session.get("state") in ENDED else _time(session.get("interrupted_at"))
+    origin = session.get("failover_of") if is_uuid7(session.get("failover_of")) else None
+    if since is None and origin is None:
+        return None
+    notes = []
+    if since is not None:
+        notes.append(
+            f"interrupted since {since}: the device failed; the task continues on another device as soon as one is"
+            " free, or there once the device is back"
+        )
+    if origin is not None:
+        notes.append(f"continued after a device failure (from session {origin})")
+    return {"interrupted_since": since, "continued_from": origin, "text": "; ".join(notes)}
 
 
 def waiting_reason(row: dict[str, Any]) -> str | None:
@@ -301,6 +345,7 @@ def task_show(account: Account, task: str) -> dict[str, Any]:
         "runtime_s": runtime_seconds(row.get("created_at"), row.get("closed_at"), True, time.time()),
         "placement": row.get("placement"),
         "main_session": main_session(answer),
+        "device_failure": device_failure(_main_row(answer)),
         "waiting": waiting_reason(row),
         "next": task_next(row),
         "title": titles[-1] if titles else None,

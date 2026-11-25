@@ -165,3 +165,11 @@ export const samePlacement = (a: Placement | null, b: Placement | null): boolean
 
 /** The reasons that offer "Choose automatically" (a chosen device is full or offline). */
 export const PLACEMENT_REASONS: ReadonlySet<string> = new Set(['placement_full', 'placement_offline']);
+
+/**
+ * Whether a waiting reason of `task` offers "Choose automatically": its chosen device is full or offline, or it failed
+ * (`device_failed`: a task pinned to the failed device waits for it, ADR-086 section 3; an unpinned one moves by
+ * itself).
+ */
+export const offersAutomatic = (task: TaskRow, reason: string): boolean =>
+  PLACEMENT_REASONS.has(reason) || (reason === 'device_failed' && placementOf(task.placement) !== null);

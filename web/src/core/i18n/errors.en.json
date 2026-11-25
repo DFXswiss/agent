@@ -149,6 +149,11 @@
     "body": "The prompt could not be delivered to the session.",
     "action": "Send the prompt again."
   },
+  "device_failed": {
+    "title": "Cancelled because the device failed",
+    "body": "The device this ran on failed. The task continues from the last saved checkpoint once the device is back or another suitable device can take it over.",
+    "action": "Nothing to do – the task continues by itself. If it is tied to that device, let the platform choose one automatically."
+  },
   "device_not_assigned": {
     "title": "Device not assigned",
     "body": "The execution device is not assigned to this workgroup.",

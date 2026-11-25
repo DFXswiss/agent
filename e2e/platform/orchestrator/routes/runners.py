@@ -1,7 +1,12 @@
-"""Runner instances: `GET /runners`, `POST /runners/{name}/stop`, `POST /runners/{name}/start` (same home, so a
-restart keeps identity and store). The start may carry `{"github": {"oauth_client_id"?, "app_slug"?}}` (KOR-65): the
-GitHub ways of the restarted runner (`AGENT_RUNNER_GITHUB_OAUTH_CLIENT_ID`, `AGENT_RUNNER_GITHUB_APP_SLUG`); a missing
-or null member removes the setting, so `{"github": {}}` restores the run's default."""
+"""Runner instances: `GET /runners`, `POST /runners/{name}/stop`, `POST /runners/{name}/hard-kill`, `POST
+/runners/{name}/start` (same home, so a restart keeps identity and store).
+
+`kill` is the hard failure of a device (KOR-58, E2E-67): SIGKILL to the runner's process group at once, no SIGTERM
+first, so the runner reports nothing and ends no session; its VMs stay. Answers `{name, exit, state}` like `stop`.
+
+The start may carry `{"github": {"oauth_client_id"?, "app_slug"?}}` (KOR-65): the GitHub ways of the restarted runner
+(`AGENT_RUNNER_GITHUB_OAUTH_CLIENT_ID`, `AGENT_RUNNER_GITHUB_APP_SLUG`); a missing or null member removes the setting,
+so `{"github": {}}` restores the run's default."""
 
 from __future__ import annotations
 
@@ -26,6 +31,11 @@ def get_runners(ctx: Context, _params: dict[str, str], _body: Any) -> tuple[int,
 def post_stop(ctx: Context, params: dict[str, str], _body: Any) -> tuple[int, Any]:
     runner = _runner(ctx, params)
     return 200, {"name": runner.name, "exit": runner.stop(), "state": runner.state()}
+
+
+def post_kill(ctx: Context, params: dict[str, str], _body: Any) -> tuple[int, Any]:
+    runner = _runner(ctx, params)
+    return 200, {"name": runner.name, "exit": runner.kill(), "state": runner.state()}
 
 
 GITHUB_SETTINGS = {
@@ -62,5 +72,6 @@ def post_start(ctx: Context, params: dict[str, str], body: Any) -> tuple[int, An
 ROUTES = [
     Route("GET", "/runners", get_runners),
     Route("POST", "/runners/{name}/stop", post_stop),
+    Route("POST", "/runners/{name}/hard-kill", post_kill),
     Route("POST", "/runners/{name}/start", post_start),
 ]

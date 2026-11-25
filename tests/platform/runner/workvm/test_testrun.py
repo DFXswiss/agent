@@ -19,14 +19,14 @@ from agent_runner.github import snapshot
 from agent_runner.guestlink.errors import GuestUnreachable
 from agent_runner.operations.extensions import OperationContext, OperationFailed
 from agent_runner.store.migrate import migrate
-from agent_runner.workvm import testrun
+from agent_runner.workvm import jobs, records, testrun
 from agent_runner.workvm.jobs import ShellResult
 from agent_runner.workvm.manager import WorkVms
 from agent_runner.workvm.records import WorkVm
 from agent_runner.workvm.testrun import Store, read_output, summarize
 from agent_runner.workvm.testrun import TestRuns as Runs
 
-from .kit import ORG, SESSION, TASK, World, session
+from .kit import ORG, SESSION, TASK, WG, World, session
 
 OP = "0193000a-0000-7000-8000-0000000000f1"
 OP_B = "0193000a-0000-7000-8000-0000000000f2"
@@ -431,6 +431,107 @@ def test_after_a_restart_a_running_run_ends_error(world: World) -> None:
     (final,) = events(world)
     assert (final["state"], final["reason"]) == ("error", "restart")
     assert final["ended_at"] is not None
+
+
+RUN_ID = "tr-00000000000a"
+
+
+async def left_running(vms: WorkVms, *, command: str = "forever", job: str | None = "j-00000000000a") -> WorkVm:
+    """A run of the daemon before its restart: its row `running`, its VM and (when `job`) its job still there."""
+    vm = await vms.obtain(session(), scope="run", size="standard")
+    if job is not None:
+        await vms.deps.shell_for(vm)(
+            jobs.start_argv(job, "/workspace", 3600),
+            stdin=json.dumps({"command": command, "env": {}}).encode(),
+            timeout=1,
+            limit=10,
+        )
+    async with vms.deps.db.connection() as conn:
+        await conn.execute(
+            "INSERT INTO runner.test_run (run_id, operation_id, session_id, task_id, org_id, wg_id, workvm_id, kind,"
+            " command, cwd, size, timeout_seconds, digest, state, started_at) VALUES (%s, %s, %s, %s, %s, %s, %s,"
+            " 'unit', 'forever', '/workspace', 'standard', 3600, 'd', 'running', %s)",
+            (RUN_ID, OP, SESSION, TASK, ORG, WG, vm.id, vms.deps.now()),
+        )
+    return vm
+
+
+def test_after_a_restart_the_log_of_a_run_whose_vm_still_runs_is_kept_before_the_vm_goes(world: World) -> None:
+    """ADR-086 section 5."""
+    world.scripts["forever"] = (PYTEST_FAIL, "running", None)
+    world.scripts["other"] = (b"x", "exited", 0)
+    captured: list[tuple[str, str, int, str]] = []
+
+    async def capture(vm: WorkVm, identity: Any, job_id: str, output_bytes: int, ref: str) -> dict[str, Any]:
+        assert (await records.get(vms_db[0], vm.id)).state != "deleted"  # type: ignore[union-attr]
+        captured.append((vm.id, job_id, output_bytes, ref))
+        return {"object_id": "0193000a-0000-7000-8000-0000000000c1", "bytes": output_bytes}
+
+    vms_db: list[Any] = []
+
+    async def body(vms: WorkVms) -> int:
+        vms_db.append(vms.deps.db)
+        vm = await left_running(vms, job="j-000000000001")
+        shell = vms.deps.shell_for(vm)
+        await shell(
+            jobs.start_argv("j-000000000002", "/", 0), stdin=b'{"command": "other", "env": {}}', timeout=1, limit=1
+        )
+        await shell(
+            jobs.start_argv("j-000000000003", "/", 0), stdin=b'{"command": "forever", "env": {}}', timeout=1, limit=1
+        )
+        world.helper.jobs["j-000000000001"].output = b"older"
+        world.events.clear()
+        return await runs_for(vms, capture=capture).reconcile()
+
+    assert world.run(body) == 1
+    (vm,) = vm_rows(world)
+    assert (vm["state"], vm["delete_reason"]) == ("deleted", "restart")
+    assert captured == [(vm["id"], "j-000000000003", len(PYTEST_FAIL), RUN_ID)]  # the newest job of the run's command
+    assert world.helper.jobs["j-000000000003"].state == "killed"
+    (row,) = run_rows(world)
+    assert (row["state"], row["result"]["reason"]) == ("error", "restart")
+    assert row["result"]["log"]["bytes"] == len(PYTEST_FAIL)
+    assert row["result"]["summary"] == {"passed": 12, "failed": 3, "skipped": 1, "errors": None}
+    assert row["result"]["tail"].endswith("in 1.20s ====\n")
+    (final,) = events(world)
+    assert (final["state"], final["reason"], final["log"]) == ("error", "restart", row["result"]["log"])
+    assert any("reason=restart logged=1" in line for line in world.logs)
+
+
+@pytest.mark.parametrize("case", ["no_job", "other_job", "unreadable", "stopped", "no_vm", "capture_fails"])
+def test_after_a_restart_a_run_without_readable_output_ends_without_log(world: World, case: str) -> None:
+    world.scripts["forever"] = (b"some output", "running", None)
+
+    async def failing(*_: Any) -> dict[str, Any]:
+        raise RuntimeError("store")
+
+    async def body(vms: WorkVms) -> int:
+        vm = await left_running(
+            vms,
+            job=None if case == "no_job" else "j-00000000000a",
+            command="other" if case == "other_job" else "forever",
+        )
+        if case == "unreadable":
+            world.helper_fail["list"] = ShellResult(1, b"", False)
+        if case == "stopped":
+            await records.update(vms.deps.db, vm.id, state="stopped")
+        if case == "no_vm":
+            async with vms.deps.db.connection() as conn:
+                await conn.execute("UPDATE runner.test_run SET workvm_id = NULL")
+        world.events.clear()
+        return await runs_for(vms, capture=failing if case == "capture_fails" else None).reconcile()
+
+    assert world.run(body) == 1
+    (row,) = run_rows(world)
+    assert (row["state"], row["result"]["reason"], row["result"]["log"]) == ("error", "restart", None)
+    (final,) = events(world)
+    assert final["log"] is None
+    (vm,) = vm_rows(world)
+    # a VM that does not run (or is not named) is left to the work VM reconciliation
+    assert (vm["state"], vm["delete_reason"]) == (
+        ("stopped", None) if case == "stopped" else ("running", None) if case == "no_vm" else ("deleted", "restart")
+    )
+    assert any("reason=restart logged=0" in line for line in world.logs)
 
 
 # -- output ----------------------------------------------------------------------------------------------------------

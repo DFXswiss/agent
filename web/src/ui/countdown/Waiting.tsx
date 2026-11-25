@@ -1,10 +1,11 @@
 // The real reason of a waiting task in the countdown panel (06-web.md section 4.4, ADR-075 section 7) and the step the
 // user can take: "Assign a device" for admins while no device is assigned (the first platform candidate, as in step 1
 // of the send sequence; everyone else learns that an admin can assign one), and "Choose automatically" while the
-// chosen device is full or offline (`PUT /v1/tasks/{task}/placement` with nulls, writers). A chosen device is named.
+// chosen device is full or offline, or failed while the task is pinned to it (`device_failed`, ADR-086 section 3;
+// `PUT /v1/tasks/{task}/placement` with nulls, writers). A chosen device is named.
 import { useState } from 'react';
 import type { TaskRow } from '../../core/store/slices/tasks';
-import { PLACEMENT_REASONS, setTaskPlacement, taskPlacement } from '../../core/tasks/placement';
+import { offersAutomatic, setTaskPlacement, taskPlacement } from '../../core/tasks/placement';
 import { assignFirstCandidate, sendErrorCode } from '../../core/tasks/send';
 import { useI18n } from '../i18n';
 import { useDeviceNames } from '../screens/devices/labels';
@@ -56,7 +57,7 @@ export function WaitingAction({ task, reason }: { readonly task: TaskRow; readon
       ? state.isAdmin(userId)
         ? 'assign'
         : 'ask'
-      : PLACEMENT_REASONS.has(reason) && writer
+      : offersAutomatic(task, reason) && writer
         ? 'automatic'
         : null;
   return (

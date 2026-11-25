@@ -79,6 +79,7 @@ class FakeLima:
     def clone(self, source: str, name: str, *, sets: Sequence[str] = ()) -> None:
         self._check("clone")
         self.world.sets[name] = list(sets)
+        self.world.slot_of[name] = self.slot
         self.world.instances[name] = "Stopped"
 
     def start(self, name: str, **_: Any) -> None:
@@ -100,7 +101,12 @@ class FakeLima:
         return Instance(name=name, status=status, dir="/x", cpus=4, memory_bytes=0, disk_bytes=0, raw={})
 
     def list(self) -> list[Instance]:
-        return [instance for name in list(self.world.instances) if (instance := self.get(name)) is not None]
+        """The instances of this slot's Lima home (an instance a test added directly is in every slot)."""
+        return [
+            instance
+            for name in list(self.world.instances)
+            if self.world.slot_of.get(name, self.slot) == self.slot and (instance := self.get(name)) is not None
+        ]
 
 
 @dataclass
@@ -212,10 +218,10 @@ class FakeHelper:
                     "command": job.command,
                     "state": job.state,
                     "exit_code": job.exit_code,
-                    "started_at": 1700000000000,
+                    "started_at": 1700000000000 + index,
                     "duration_ms": 5,
                 }
-                for job_id, job in self.jobs.items()
+                for index, (job_id, job) in enumerate(self.jobs.items())
             ]
             return ShellResult(0, json.dumps(listed).encode(), False)
         if command == "start":
@@ -335,6 +341,8 @@ class World:
     tmp: Path
     instances: dict[str, str] = field(default_factory=dict)
     sets: dict[str, list[str]] = field(default_factory=dict)
+    slot_of: dict[str, int] = field(default_factory=dict)
+    """The slot whose Lima home holds a cloned instance."""
     calls: list[tuple[str, int]] = field(default_factory=list)
     fail: set[str] = field(default_factory=set)
     lima_stderr: str = ""

@@ -13,7 +13,9 @@
   waits until the previous one is accepted or ended (`refused`/`failed`). A head prompt waits up to `HOLD_S` for an
   earlier stored prompt of its task that is not routed yet (a lost hint), so it is not overtaken. A routed prompt
   older than one the task already handed to a guest is stale and refused (`prompt_stale`); a prompt of a final row
-  is never delivered again; a write never reopens a final row (the journal may end a row at any time).
+  is never delivered again - except the interrupted instruction of a lost session, routed to its successor named in
+  the device state's `failovers` (ADR-086 section 3.4, `queue.route`) -; a write never reopens a final row (the
+  journal may end a row at any time).
 - **Queue of the hub** (ADR-083 section 3, `prompt_queue` of the device state, `hub_queue.py`): `via_agent` (also
   from the `prompt` hint) is kept with the routed rows in the routing's transaction (`queue.mark_via_agent`); every
   event of `withdrawn` is withdrawn (`withdraw`): a row still `pending` becomes `withdrawn`, a prompt without a row
@@ -73,6 +75,7 @@ from agent_runner.reconcile import wire
 from agent_runner.sessions import records
 from agent_runner.sessions.env import SessionEnv
 from agent_runner.sessions.extensions import InitialPrompt
+from agent_runner.sessions.failover import failover_of
 from agent_runner.sessions.records import LocalSession
 from agent_runner.sessions.stop import stop_guest
 
@@ -223,7 +226,10 @@ class Deliverer:
         except PromptRefused as refused:
             await self.reject(conn, refused.code, routing.event_id, routing.session_id)
             return "refused"
-        return await queue.route(conn, prompt, routing.session_id)
+        failover = failover_of(self.env.desired, routing.session_id)
+        return await queue.route(
+            conn, prompt, routing.session_id, failover_from=None if failover is None else failover.from_session
+        )
 
     async def _route_all(self, routings: list[Routing], via_agent: frozenset[str]) -> list[Routing]:
         missing = []

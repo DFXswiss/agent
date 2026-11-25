@@ -471,6 +471,16 @@ describe('composer and controls', () => {
 });
 
 describe('sessions tab', () => {
+  it('says that the hub ended a session because its device failed (KOR-58)', async () => {
+    const { t } = await taskPage({ session: { state: 'stopped', state_reason: 'device_failed' } });
+    fireEvent.click(screen.getByTestId('task.tabs.sessions'));
+    await screen.findByTestId('sessions.tree');
+    expect(screen.getByTestId('sessions.device-failed')).toHaveTextContent('Cancelled because the device failed');
+    // another reason, or a live session: no such line
+    act(() => putSession(t.store, sessionRow(t, { state: 'stopped', state_reason: 'user' }) as never, [], 0));
+    expect(screen.queryByTestId('sessions.device-failed')).toBeNull();
+  });
+
   it('shows the tree with state, device and model, and an empty tab', async () => {
     const { t } = await taskPage({ session: { model_id: 'claude-x' }, locale: 'de' });
     fireEvent.click(screen.getByTestId('task.tabs.sessions'));

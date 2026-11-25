@@ -14,6 +14,7 @@ import hashlib
 import io
 import subprocess
 import sys
+import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -592,6 +593,25 @@ def test_credit_is_checked_only_on_a_platform_device(monkeypatch: pytest.MonkeyP
     assert workvms.deps.exhausted("0192f3a4-0000-7000-8000-0000000000bb") is False
     env.device_kind = "org"
     assert workvms.deps.exhausted(org) is False
+
+
+def test_the_lease_reads_the_hub_client_and_the_desired_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import agent_runner.sync.runtime as sync_runtime  # noqa: PLC0415
+
+    env = SimpleNamespace(db=None, wall=lambda: WALL, device_kind="org", desired={"failover_seconds": 60})
+    monkeypatch.setattr(sessions_service, "service_for", lambda ctx: SimpleNamespace(env=env))
+    client = SimpleNamespace(contact=time.time())
+    found: list[Any] = [None]
+    monkeypatch.setattr(sync_runtime, "runtime", lambda ctx: found[0])
+    workvms = service.workvms_for(context(tmp_path))
+    assert workvms is not None
+    assert workvms.deps.hub_lease() is True  # not enrolled
+    found[0] = SimpleNamespace(client=client)
+    assert workvms.deps.hub_lease() is True
+    client.contact -= 61
+    assert workvms.deps.hub_lease() is False
+    env.desired = None  # the default failover time before the first desired state
+    assert workvms.deps.hub_lease() is True
 
 
 def test_the_capturer_stores_the_last_part_of_a_job_as_a_log(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -149,6 +149,11 @@
     "body": "Der Prompt konnte der Session nicht zugestellt werden.",
     "action": "Sende den Prompt noch einmal."
   },
+  "device_failed": {
+    "title": "Wegen Geräteausfall abgebrochen",
+    "body": "Das Gerät, auf dem dies lief, ist ausgefallen. Die Aufgabe läuft vom letzten gesicherten Stand aus weiter, sobald das Gerät zurück ist oder ein anderes passendes Gerät sie übernehmen kann.",
+    "action": "Nichts zu tun – die Aufgabe geht von selbst weiter. Ist sie an dieses Gerät gebunden, lass die Plattform automatisch eines wählen."
+  },
   "device_not_assigned": {
     "title": "Gerät nicht zugewiesen",
     "body": "Das Ausführungsgerät ist dieser Workgroup nicht zugewiesen.",

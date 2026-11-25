@@ -89,6 +89,10 @@ describe('reasons and actions', () => {
     for (const reason of ['session_failed', 'guest_error', 'device_unreachable', 'no_capacity'])
       expect(action('blocked', reason)).toBe('retry');
     expect(action('blocked', 'operation_refused')).toBeNull();
+    // a failed device: an unpinned task moves by itself, a pinned one waits unless the platform may choose (ADR-086)
+    expect(action('blocked', 'device_failed')).toBeNull();
+    expect(actionOf({ category: 'blocked', reason: 'device_failed' }, true)).toBe('automatic');
+    expect(actionOf({ category: 'blocked', reason: 'session_failed' }, true)).toBe('retry');
     expect(action('working', 'working')).toBeNull();
     expect(action('done', 'idle')).toBeNull();
   });

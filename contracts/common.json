@@ -277,7 +277,8 @@
         "merge_outdated",
         "merge_pending",
         "merge_unsupported",
-        "workspace_dirty"
+        "workspace_dirty",
+        "device_failed"
       ],
       "description": "enums/operation-error-codes.json"
     },
@@ -301,7 +302,8 @@
         "oom",
         "unassigned",
         "hook_unavailable",
-        "model_quota_exhausted"
+        "model_quota_exhausted",
+        "device_failed"
       ],
       "description": "enums/session-failure-reasons.json"
     },

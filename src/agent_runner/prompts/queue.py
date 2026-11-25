@@ -24,6 +24,11 @@
   qualifier of the sender line, `speaker.py`); once set it stays. A row of an open state whose session ended
   (`stopped`, `failed`, or unknown locally) is moved to the session the hub routes it to next (a new main session of
   the task, 03-api.md section 4.6.3); the guest registry of the ended session can no longer accept it.
+  One exception to finality (ADR-086 sections 3.4 and 3.7): the interrupted instruction of a session lost with a
+  failed device (or with this device's restart) is repeated to its successor. When the hub routes a prompt whose row
+  is `accepted` for session L to a session S that the device state lists in `failovers` with `from_session` = L, the
+  row moves to S as `pending` (`route(..., failover_from=L)`) and is delivered once more; once it belongs to S it is
+  final again (a further routing to S changes nothing).
 - `adopt_delivered`: the hub's `delivered_prompt_event_ids` (after a store wipe the only memory of what was delivered)
   make those rows `accepted` - inserted when unknown - so they are never delivered again.
 - `withdraw` (ADR-083 section 3, `prompt_queue.withdrawn` of the device state): a row still `pending` becomes
@@ -218,18 +223,22 @@ async def handed_after(conn: AsyncConnection[Any], task_id: str, scope_seq: int)
     return await cur.fetchone() is not None
 
 
-async def route(conn: AsyncConnection[Any], prompt: StoredPrompt, session_id: str) -> str:
-    """Record that the hub routes `prompt` to `session_id`: the row's state afterwards (`pending` for a new row or one
-    moved from an ended session, `withdrawn` for a new row of a prompt withdrawn before, else the existing state)."""
+async def route(
+    conn: AsyncConnection[Any], prompt: StoredPrompt, session_id: str, *, failover_from: str | None = None
+) -> str:
+    """Record that the hub routes `prompt` to `session_id`: the row's state afterwards (`pending` for a new row, one
+    moved from an ended session, or an `accepted` row of `failover_from` - the lost session `session_id` continues,
+    module docstring -, `withdrawn` for a new row of a prompt withdrawn before, else the existing state)."""
     await conn.execute(
         "INSERT INTO runner.prompt_delivery (event_id, session_id, task_id, scope_seq, state)"
         " VALUES (%s, %s, %s, %s, CASE WHEN EXISTS (SELECT 1 FROM runner.prompt_withdrawal w WHERE w.event_id = %s)"
         " THEN 'withdrawn' ELSE 'pending' END) ON CONFLICT (event_id) DO UPDATE SET"
         " session_id = EXCLUDED.session_id, task_id = EXCLUDED.task_id, scope_seq = EXCLUDED.scope_seq,"
         " state = 'pending', channel = 'prompt', attempts = 0, updated_at = now()"
-        " WHERE runner.prompt_delivery.state = ANY(%s) AND runner.prompt_delivery.session_id <> EXCLUDED.session_id"
+        " WHERE (runner.prompt_delivery.state = ANY(%s) AND runner.prompt_delivery.session_id <> EXCLUDED.session_id"
         " AND NOT EXISTS (SELECT 1 FROM runner.session s WHERE s.id = runner.prompt_delivery.session_id"
-        " AND s.state <> ALL(%s))",
+        " AND s.state <> ALL(%s)))"
+        " OR (runner.prompt_delivery.state = 'accepted' AND runner.prompt_delivery.session_id::text = %s)",
         (
             prompt.event_id,
             session_id,
@@ -238,6 +247,7 @@ async def route(conn: AsyncConnection[Any], prompt: StoredPrompt, session_id: st
             prompt.event_id,
             list(OPEN),
             list(ENDED_SESSION),
+            failover_from,
         ),
     )
     found = await delivery(conn, prompt.event_id)

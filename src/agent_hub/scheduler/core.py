@@ -52,6 +52,8 @@ PLACEMENT_OFFLINE = "placement_offline"
 PLACEMENT_FULL = "placement_full"
 NO_DEVICE = "no_device"
 PLATFORM_ACCESS_REQUIRED = "platform_access_required"
+DEVICE_FAILED = "device_failed"
+"""The task's main session is interrupted because its device failed (ADR-086; set by the task derivation)."""
 RUNNING, STOPPED, OTHER = "running", "stopped", "other"
 CAPACITY_KEYS = ("vm_memory_budget_mib", "vm_memory_used_mib", "vm_slots_total", "vm_slots_free", "pool_ready")
 OPTIONAL_KEYS = (
@@ -70,6 +72,7 @@ UNBOUNDED = MAX_COUNT
 WAITING_FOR_CAPACITY = "waiting_for_capacity"
 WAITING_FOR_DEVICE = "waiting_for_device"
 WAITING_FOR_CREDIT = "waiting_for_credit"
+INTERRUPTED = "interrupted"
 CATEGORIES: Mapping[str, str] = {
     CAPACITY_EXHAUSTED: WAITING_FOR_CAPACITY,
     WG_VM_LIMIT: WAITING_FOR_CAPACITY,
@@ -80,6 +83,7 @@ CATEGORIES: Mapping[str, str] = {
     NO_DEVICE: WAITING_FOR_DEVICE,
     PLATFORM_ACCESS_REQUIRED: WAITING_FOR_DEVICE,
     CREDIT_EXHAUSTED: WAITING_FOR_CREDIT,
+    DEVICE_FAILED: INTERRUPTED,
 }
 """Waiting reason -> category of the situation view (contracts/enums/task-states.json `scheduling_categories`)."""
 

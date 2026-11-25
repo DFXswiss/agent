@@ -315,6 +315,12 @@ class Runner:
         self.stopped_on_request = True
         return self.node.stop(self.name)
 
+    def kill(self) -> int:
+        """SIGKILL to the runner's process group without a SIGTERM (a hard failure of the device, KOR-58): the runner
+        cannot end its sessions or report anything; its VMs stay. `start` brings it back with the same home."""
+        self.stopped_on_request = True
+        return self.node.kill(self.name)
+
     def command(self, *args: str, timeout: float = 120.0) -> dict[str, Any]:
         """`python -m agent_runner <args>` once, with the runner's environment (same home and store)."""
         return self.node.run([self.python, "-m", "agent_runner", *args], env=self.env, timeout=timeout)

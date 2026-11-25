@@ -1,6 +1,8 @@
 // Chat item `test.run` (ADR-080, 13-work-vm.md section 12): a test run of the session in its own fresh VM – kind,
 // a state badge (passed, failed, error, timed out, cancelled, running), exit code, duration, the time until the VM
-// was ready, the command, the summary ("Tests: 3 failed, 12 passed"), the reason of an error or cancellation, the
+// was ready, the command, the summary ("Tests: 3 failed, 12 passed"), the reason of an error or cancellation (a run
+// whose operation the hub ended with `device_failed` while its own event still says running is shown cancelled because
+// the device failed, `shownRun`, ADR-086 section 5), the
 // output tail in a collapsed block and "Open log" for the complete encrypted output (`ui/logs`). The timeline keeps
 // only the latest event of a run (`core/chat/workvm.ts` `latestRuns`). A body that does not follow the contract is a
 // neutral row with a code, never content.
@@ -9,6 +11,7 @@ import type { TimelineItem } from '../../core/chat/timeline';
 import {
   parseTestRun,
   runFailed,
+  shownRun,
   summaryCounts,
   type TestRun,
   type TestState,
@@ -16,6 +19,8 @@ import {
 } from '../../core/chat/testrun';
 import type { ChatItem, ChatItemProps } from '../registries/chat-items';
 import { useSeconds } from '../countdown/parts';
+import { useStore } from '../hooks/useStore';
+import { useAppEnv } from '../shell/context';
 import { useI18n } from '../i18n';
 import { EventLog } from '../logs/LogView';
 import { EventTime } from '../task-tabs/chat/EventTime';
@@ -44,25 +49,28 @@ export function useSummaryText(): (summary: TestSummary | null) => string | null
 
 /** A test run with its result; `log` is the button of its log (or null). */
 export function TestRunView({ run, at, log }: { readonly run: TestRun; readonly at: number; readonly log: ReactNode }) {
+  const { app } = useAppEnv();
   const { t } = useI18n();
   const seconds = useSeconds();
   const summary = useSummaryText()(run.summary);
-  const failed = runFailed(run);
+  const operation = useStore((state) => state.operations.rows[run.operation_id], app.store);
+  const shown = shownRun(run, operation);
+  const failed = runFailed(shown);
   return (
     <div
       className="flex flex-col gap-1 rounded border border-gray-200 px-3 py-2 text-sm"
       data-testid="chat.test.run"
       data-run={run.run_id}
-      data-state={run.state}
+      data-state={shown.state}
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-gray-600">{t(`testrun.kind.${run.kind}`)}</span>
         <span
-          className={`rounded px-1 text-xs ${BADGE[run.state]}`}
+          className={`rounded px-1 text-xs ${BADGE[shown.state]}`}
           data-testid="chat.test.run.state"
           data-failed={failed}
         >
-          {t(`testrun.state.${run.state}`)}
+          {t(`testrun.state.${shown.state}`)}
         </span>
         {run.exit_code !== null && (
           <span className="text-xs text-gray-600" data-testid="chat.test.run.exit">
@@ -89,9 +97,9 @@ export function TestRunView({ run, at, log }: { readonly run: TestRun; readonly 
           {summary}
         </p>
       )}
-      {run.reason !== null && (
-        <p className="text-xs text-gray-600" data-testid="chat.test.run.reason">
-          {t('testrun.reason', { reason: t(`testrun.reason.${run.reason}`) })}
+      {shown.reason !== null && (
+        <p className="text-xs text-gray-600" data-testid="chat.test.run.reason" data-reason={shown.reason}>
+          {t('testrun.reason', { reason: t(`testrun.reason.${shown.reason}`) })}
         </p>
       )}
       {run.tail === '' ? (

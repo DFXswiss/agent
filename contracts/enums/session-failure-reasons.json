@@ -18,6 +18,7 @@
     "oom",
     "unassigned",
     "hook_unavailable",
-    "model_quota_exhausted"
+    "model_quota_exhausted",
+    "device_failed"
   ]
 }

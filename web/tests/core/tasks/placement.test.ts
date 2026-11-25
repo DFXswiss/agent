@@ -6,6 +6,7 @@ import type { SessionRow, TaskRow } from '../../../src/core/store/slices/tasks';
 import {
   applyAutomatic,
   loadWorkgroupDevices,
+  offersAutomatic,
   PLACEMENT_REASONS,
   placementBody,
   placementOf,
@@ -166,6 +167,13 @@ describe('the placement routes', () => {
     });
     const session = sessionRow(t) as SessionRow;
     expect(sessionVm(session)).toBeNull();
+    // "Choose automatically": a chosen device full or offline, or failed while the task is pinned to it (ADR-086)
+    const pinned = { ...row, placement: { device_id: 'd1', vm_id: null } };
+    expect(offersAutomatic(row, 'placement_full')).toBe(true);
+    expect(offersAutomatic(row, 'placement_offline')).toBe(true);
+    expect(offersAutomatic(row, 'device_failed')).toBe(false);
+    expect(offersAutomatic(pinned, 'device_failed')).toBe(true);
+    expect(offersAutomatic(pinned, 'capacity_exhausted')).toBe(false);
     expect(sessionVm({ ...session, vm_id: 'vm-1a2b3c4d' })).toBe('vm-1a2b3c4d');
   });
 });

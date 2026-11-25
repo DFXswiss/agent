@@ -22,7 +22,8 @@
         "device_unreachable",
         "model_access_missing",
         "no_capacity",
-        "operation_refused"
+        "operation_refused",
+        "device_failed"
       ]
     },
     {

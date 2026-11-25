@@ -61,13 +61,15 @@ def test_remote_node_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     assert node.read_text(str(tmp_path / "f.txt")) == "content"
     assert node.archive()
     assert node.stop("sleeper") == -15
+    node.spawn("victim", [sys.executable, "-c", "import time; time.sleep(30)"], env)
+    assert node.kill("victim") == -9
     node.spawn("quick", [sys.executable, "-c", "pass"], env)
     assert node.wait_exit("quick", 10) == 0
     with pytest.raises(NodeError, match="runner-device: unknown process nope"):
         node.alive("nope")
     with pytest.raises(NodeError, match=r"runner-device: GET http://127\.0\.0\.1:1/: "):
         node.http("GET", "http://127.0.0.1:1/", timeout=1)
-    assert node.shutdown() == {"quick": 0, "sleeper": -15}
+    assert node.shutdown() == {"quick": 0, "sleeper": -15, "victim": -9}
     assert node.close() == 0
     assert node.close() == 0
     with pytest.raises(NodeError, match="connection to the device ended"):

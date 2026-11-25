@@ -23,6 +23,10 @@ the stored bytes, operations by their ID; reads have no effect). A failure on a 
 after the answer began, and every answer that does not verify are not repeated. `HubTransportError` names whether the
 connection was reused and the class of the transport error (`describe()`), never secrets.
 
+`contact` is the wall-clock time (Unix seconds) of the last answer that verified (a 2xx answer or a verified
+refusal: the hub answered this device), initially the client's creation; the work VM lease reads it (`sync.lease`,
+ADR-086 section 4). Wall-clock time, because a monotonic clock stands still while the host sleeps.
+
 `hub_origin` is copied and adapted from the legacy `agent_cli.keys.hub_origin` (host line rules).
 """
 
@@ -305,6 +309,8 @@ class HubClient:
         keepalive_expiry: float = KEEPALIVE_EXPIRY_S,
     ) -> None:
         self.origin = hub_origin(hub_url)
+        self.contact = wall()
+        """Wall-clock time of the last verified answer (module docstring)."""
         self.signer = Signer(key_id=key_id, signing_key=signing_key, host=self.origin.host, wall=wall)
         self._hub_key = Ed25519PublicKey.from_public_bytes(hub_key)
         self._max = max_response_bytes
@@ -383,6 +389,7 @@ class HubClient:
             body=answer,
             now=self.signer.wall(),
         )
+        self.contact = self.signer.wall()
         if 300 <= status < 400:
             raise HubTransportError("redirect_refused", status=status)
         if status >= 400:

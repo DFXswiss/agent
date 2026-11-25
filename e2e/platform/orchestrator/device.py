@@ -42,6 +42,7 @@ METHODS = frozenset(
         "wait_exit",
         "alive",
         "stop",
+        "kill",
         "log_tail",
         "processes",
         "run",
@@ -227,6 +228,15 @@ class Device:
             except subprocess.TimeoutExpired:
                 _signal_group(popen.pid, signal.SIGKILL)
                 popen.wait()
+        return int(popen.returncode)
+
+    def kill(self, name: str) -> int:
+        """SIGKILL to the process group at once, without a SIGTERM first: the process cannot react (a hard failure,
+        KOR-58). Processes that left the group (Lima's host agents of the VMs) stay. Returns the exit code."""
+        popen = self._proc(name).popen
+        if popen.poll() is None:
+            _signal_group(popen.pid, signal.SIGKILL)
+            popen.wait()
         return int(popen.returncode)
 
     def processes(self) -> dict[str, dict[str, Any]]:

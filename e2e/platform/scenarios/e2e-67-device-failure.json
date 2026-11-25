@@ -1,0 +1,242 @@
+{
+  "name": "e2e-67-device-failure",
+  "description": "E2E-67 (KOR-58, ADR-086) with two devices: a first turn on device A writes notes.md and ends idle (checkpoint); the second instruction starts a long test.run on A, whose pending result is held (the request of step poll-a is answered only after 480 s, below Claude Code's 600 s request timeout) while A is killed. The hub moves the task to device B after the failure deadline: the successor resumes the same conversation (the first turn in the request, min_messages) and receives the interrupted instruction again, repeats the test.run in a fresh VM on B (passes), answers, and then receives the instruction queued while A was down. The side step `lost` absorbs a late request of A's agent with a failed tool result (its runner is gone); it is never needed by B.",
+  "steps": [
+    {
+      "id": "work",
+      "expect": {
+        "user_text_contains": "E2E65-WORK",
+        "has_tools": true,
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "I will keep the notes first."
+          },
+          {
+            "type": "tool_use",
+            "name": "Write",
+            "input": {
+              "file_path": "${cwd}/notes.md",
+              "content": "# Notes\nkz65-file-n6c1x4\n"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "worked",
+      "expect": {
+        "tool_result_is_error": false,
+        "tool_result_contains": "notes.md"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The notes are written kz65-answer-w2p9e7."
+          }
+        ]
+      }
+    },
+    {
+      "id": "long",
+      "expect": {
+        "user_text_contains": "E2E65-LONG",
+        "has_tool_result": false,
+        "text_absent": ["E2E65-QUEUED"]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Starting the long tests on this device."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "test.run",
+              "params": {
+                "kind": "unit",
+                "command": "echo kz65-log-a1m5 started; sleep 900; echo never",
+                "timeout_seconds": 1800
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "poll-a",
+      "expect": {
+        "tool_result_contains": "\"status\":\"pending\""
+      },
+      "capture": {
+        "op_a": {
+          "regex": "\"operation_id\":\"([0-9a-f-]{36})\"",
+          "source": "messages"
+        }
+      },
+      "delay_ms": 480000,
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op_a}",
+              "wait_seconds": 30
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "again",
+      "expect": {
+        "user_text_contains": "E2E65-LONG",
+        "has_tool_result": false,
+        "min_messages": 5,
+        "text_absent": ["E2E65-QUEUED"]
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Repeating the tests on this device."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "test.run",
+              "params": {
+                "kind": "unit",
+                "command": "echo kz65-log-b2r8 repeated; echo 'Ran 1 test'; echo OK",
+                "timeout_seconds": 600
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "again-wait",
+      "expect": {
+        "tool_result_contains": "\"operation_id\":\""
+      },
+      "capture": {
+        "op_b": {
+          "regex": "\"operation_id\":\"([0-9a-f-]{36})\"",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op_b}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op_b}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op_b}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op_b}",
+              "wait_seconds": 30
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_operation",
+            "input": {
+              "operation_id": "${op_b}",
+              "wait_seconds": 30
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "again-done",
+      "expect": {
+        "tool_result_contains": "\"state\":\"passed\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The repeated tests passed kz65-answer-r4d8m1."
+          }
+        ]
+      }
+    },
+    {
+      "id": "queued",
+      "expect": {
+        "user_text_contains": "E2E65-QUEUED",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Summary after the failover kz65-answer-q3s5k9."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": {
+        "has_tools": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Failover notes"
+          }
+        ]
+      }
+    },
+    {
+      "id": "lost",
+      "expect": {
+        "tool_result_is_error": true
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Stopping here."
+          }
+        ]
+      }
+    }
+  ]
+}

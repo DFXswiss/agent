@@ -79,5 +79,6 @@
   "sessions.device.reachable": "(reachable)",
   "sessions.device.unreachable": "(not reachable)",
   "sessions.runtime": "Runtime {duration}",
+  "sessions.device_failed": "Cancelled because the device failed",
   "runtime": "Runtime {duration}"
 }

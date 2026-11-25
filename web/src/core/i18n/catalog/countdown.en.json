@@ -27,6 +27,7 @@
   "reason.placement_offline": "The chosen device {device} is offline – the task starts as soon as it is back.",
   "reason.keys_pending": "The device with room is still receiving the keys of this workgroup – the task starts as soon as they are there.",
   "reason.platform_access_required": "This organization has no execution device yet – the operator has been notified.",
+  "reason.device_failed": "Interrupted: the device failed – the task continues once the device is back or another suitable device can take it over.",
   "chosen-device": "device",
   "assign-device": "Assign a device",
   "ask-admin": "An admin of the organization can assign one.",

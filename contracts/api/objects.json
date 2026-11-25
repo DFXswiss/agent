@@ -472,6 +472,28 @@
             }
           ],
           "description": "the person whose instruction created the session (ADR-083 section 2): the author of the prompt a main session was created for, the triggering person of the subagent.request of a child session; null when unknown"
+        },
+        "interrupted_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "set while the session's device has failed (ADR-086 section 2); an ended session keeps it. Absent from older hubs."
+        },
+        "failover_of": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the lost session this one continues after a device failure (ADR-086 section 3). Absent from older hubs."
         }
       },
       "required": [

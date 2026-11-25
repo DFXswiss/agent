@@ -248,7 +248,12 @@ def test_order_with_vms_does_not_depend_on_the_input_order() -> None:
 
 
 def test_categories_cover_every_waiting_reason() -> None:
-    assert set(CATEGORIES.values()) == {"waiting_for_capacity", "waiting_for_device", "waiting_for_credit"}
+    assert set(CATEGORIES.values()) == {
+        "waiting_for_capacity",
+        "waiting_for_device",
+        "waiting_for_credit",
+        "interrupted",  # ADR-086: the main session's device failed
+    }
     assert {"capacity_exhausted", "wg_vm_limit", "no_device", "platform_access_required"} <= set(CATEGORIES)
 
 

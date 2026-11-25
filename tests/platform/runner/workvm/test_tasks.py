@@ -20,7 +20,12 @@ class FakeWorkVms:
         self.calls: list[str] = []
         self.pool_wanted = asyncio.Event()
 
-    async def reconcile(self) -> None:
+    async def left_over(self) -> list[str]:
+        self.calls.append("left_over")
+        return ["wvm-left"]
+
+    async def reconcile(self, left: list[str]) -> None:
+        assert left == ["wvm-left"]  # only what was live before the test runs were reconciled
         self.calls.append("reconcile")
 
     async def guard_pass(self) -> list[str]:
@@ -88,6 +93,7 @@ def test_reconcile_then_idle_passes_until_stopping(monkeypatch: pytest.MonkeyPat
         return workvms.calls
 
     assert asyncio.run(run()) == [
+        "left_over",
         "runs",
         "reconcile",
         *["guard_pass", "browser_idle_pass", "idle_pass", "sweep", "pool_pass"] * 3,
@@ -109,6 +115,7 @@ def test_a_stop_during_the_wait_ends_the_task_without_another_pass(monkeypatch: 
         return workvms.calls
 
     assert asyncio.run(run()) == [
+        "left_over",
         "runs",
         "reconcile",
         "guard_pass",
@@ -128,7 +135,7 @@ def test_a_stopped_daemon_reconciles_only(monkeypatch: pytest.MonkeyPatch) -> No
         await tasks.run_workvm(SimpleNamespace(stopping=stopping))
         return workvms.calls
 
-    assert asyncio.run(run()) == ["runs", "reconcile"]
+    assert asyncio.run(run()) == ["left_over", "runs", "reconcile"]
 
 
 def test_an_assigned_pool_entry_refills_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -146,6 +153,7 @@ def test_an_assigned_pool_entry_refills_at_once(monkeypatch: pytest.MonkeyPatch)
         return workvms.calls
 
     assert asyncio.run(run()) == [
+        "left_over",
         "runs",
         "reconcile",
         *["guard_pass", "browser_idle_pass", "idle_pass", "sweep", "pool_pass"] * 2,

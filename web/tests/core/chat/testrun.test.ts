@@ -6,6 +6,7 @@ import {
   parseTestRunResult,
   runFailed,
   selectTestRuns,
+  shownRun,
   summaryCounts,
   type TestRun,
 } from '../../../src/core/chat/testrun';
@@ -75,6 +76,30 @@ describe('parseTestRunResult', () => {
     expect(parseTestRunResult(result())).toEqual(result());
     expect(parseTestRunResult(body())).toBeNull();
     expect(parseTestRunResult(result({ ready_ms: -1 }))).toBeNull();
+  });
+});
+
+describe('shownRun', () => {
+  const failed = { state: 'failed', error_code: 'device_failed' };
+  const running = body({ state: 'running', reason: null });
+
+  it('shows a running run whose operation failed with device_failed as cancelled by the device failure', () => {
+    expect(shownRun(running, failed)).toEqual({ state: 'cancelled', reason: 'device_failed', deviceFailed: true });
+    expect(runFailed(shownRun(running, failed))).toBe(true);
+  });
+
+  it('keeps the run as its event says otherwise', () => {
+    const own = { state: 'running', reason: null, deviceFailed: false };
+    expect(shownRun(running, undefined)).toEqual(own);
+    expect(shownRun(running, null)).toEqual(own);
+    expect(shownRun(running, { state: 'executing', error_code: null })).toEqual(own);
+    expect(shownRun(running, { state: 'failed', error_code: 'timeout' })).toEqual(own);
+    // a run that ended on its own keeps its result, whatever the operation says
+    expect(shownRun(body({ state: 'error', reason: 'restart' }), failed)).toEqual({
+      state: 'error',
+      reason: 'restart',
+      deviceFailed: false,
+    });
   });
 });
 

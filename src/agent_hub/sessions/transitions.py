@@ -25,7 +25,9 @@ caller's audit rows (lock order of `agent_hub.sessions.taskstate`). It
    `agent_hub.sessions.retry` decides before step 4 whether the hub re-schedules, and then step 4 stores the refusal
    without deriving the task and the next attempt is created and placed, which derives it (KOR-14); a `failed`
    with `model_access_unavailable` gets the same attempt when a model credential of the owner arrived while the start
-   ran (`agent_hub.sessions.model_retry`, ADR-079; otherwise the owner's next credential write creates it).
+   ran (`agent_hub.sessions.model_retry`, ADR-079; otherwise the owner's next credential write creates it); a
+   `failed` with `device_shutdown` or `guest_unreachable` of a main session interrupted by a device failure (a device
+   back after a restart) gets its successor on any device (`agent_hub.sessions.failover`, ADR-086 section 3).
 
 The caller sends the effects with `Applied.effects.flush()` **after its commit**. `hub_transition` is the same step for
 changes the hub makes itself (closing a task, stopping a session without device).
@@ -42,7 +44,8 @@ from uuid import UUID
 import psycopg
 
 from agent_hub.errors import HubError
-from agent_hub.sessions import model_retry, prompts, retry, rows
+from agent_hub.scheduler import load
+from agent_hub.sessions import failover, model_retry, prompts, retry, rows
 from agent_hub.sessions.derive import (
     ALLOWED,
     FAILED,
@@ -56,6 +59,7 @@ from agent_hub.sessions.derive import (
 )
 from agent_hub.sessions.effects import Effects
 from agent_hub.sessions.taskstate import Actor, TaskRow, audit, lock_task, refresh_task
+from agent_hub.usage import binding
 
 Connection = psycopg.Connection[Any]
 SESSION_FAILURE_REASONS = frozenset(
@@ -78,6 +82,7 @@ SESSION_FAILURE_REASONS = frozenset(
         "unassigned",
         "hook_unavailable",
         "model_quota_exhausted",
+        "device_failed",
     }
 )
 """A copy of `contracts/enums/session-failure-reasons.json` (a test compares them)."""
@@ -298,6 +303,9 @@ def apply(
     if state == FAILED and checked == model_retry.REASON:
         attempt = model_retry.planned(connection, task, session.id, received_at)
         attempt_reason = model_retry.REASON
+    lost, author = (False, None)
+    if state == FAILED and checked in failover.REBOOT_REASONS:
+        lost, author = failover.interrupted_main(connection, task, session.id)
     record(
         connection,
         task,
@@ -309,16 +317,45 @@ def apply(
         actor=actor,
         effects=applied.effects,
         details=details,
-        derive=attempt is None,
+        derive=attempt is None and not lost,
         wait=wait,
     )
     if attempt is not None:
         retry.start(connection, task, attempt, applied.effects, attempt_reason)
+    if lost:
+        _continue(connection, task, session, author, now=received_at, effects=applied.effects)
     if state == STOPPED:
         prompts.carry_over(
             connection, cast(TaskRow, lock_task(connection, task.id)), session.id, received_at, applied.effects
         )
     return applied
+
+
+def _continue(
+    connection: Connection, task: TaskRow, session: SessionRow, author: UUID | None, *, now: datetime, effects: Effects
+) -> None:
+    """A device back after a restart reported an interrupted main session failed: its successor continues on any
+    device, this one included (`agent_hub.sessions.failover`, ADR-086 section 3); the task is derived either way."""
+    decision = load.decide(
+        connection,
+        task.wg_id,
+        now,
+        binding.online_window(),
+        pin=load.task_pin(connection, task.id),
+        owner=task.owner_id,
+    )
+    found = failover.successor(
+        connection,
+        task,
+        session.id,
+        was=session.state,
+        triggered_by=author,
+        decision=decision,
+        now=now,
+        effects=effects,
+    )
+    if found is None:
+        refresh_task(connection, task, now, Actor("device", session.device_id), effects)
 
 
 def hub_transition(

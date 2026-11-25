@@ -8,6 +8,9 @@ allows), cached for `BOUNDARY_TTL` seconds. The boundary holds whether or not th
 without it the work VMs have no internet (`internet` false). Self mode needs no filter (refused outside `TEST_MODE`
 by the configuration).
 
+The lease of the tools with internet egress (`Deps.hub_lease`, ADR-086 section 4) is `sync.lease.held` over the
+daemon's hub client and the last desired state.
+
 Test runs (`testruns_for`, KOR-43): the daemon's `testrun.TestRuns` over the same work VMs; logs of runs and of long
 jobs are sealed into the context object cache (`agent_runner.contexts.logs`), at most `LOG_MAX_MIB` per log. On a
 platform device an exhausted organization (`billing.state.exhausted` of the last desired state) gets no new VM.
@@ -37,7 +40,8 @@ from agent_runner.billing import state as billing_state
 from agent_runner.errors import RunnerError
 from agent_runner.sessions.events import session_event
 from agent_runner.sessions.records import LocalSession
-from agent_runner.sync.http import HubTransportError
+from agent_runner.sync import lease
+from agent_runner.sync.http import HubClient, HubTransportError
 from agent_runner.vm import records as vm_records
 from agent_runner.vm.capacity import physical_memory_mib
 from agent_runner.vm.lima import Lima
@@ -370,5 +374,14 @@ def workvms_for(context: Any) -> WorkVms | None:
             service.env.device_kind == "platform" and billing_state.exhausted(service.env.desired, org_id)
         ),
         capture=Capturer(context, shell_for),
+        hub_lease=lambda: lease.held(runtime_client(context), service.env.desired),
     )
     return install(context, WorkVms(deps))
+
+
+def runtime_client(context: Any) -> HubClient | None:
+    """The daemon's hub client (None while the device is not enrolled)."""
+    from agent_runner.sync.runtime import runtime  # noqa: PLC0415 - the sync runtime imports every area's hooks
+
+    found = runtime(context)
+    return None if found is None else found.client

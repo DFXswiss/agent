@@ -27,6 +27,7 @@
   "reason.placement_offline": "Das gewählte Gerät {device} ist offline – die Aufgabe startet, sobald es wieder da ist.",
   "reason.keys_pending": "Das Gerät mit freiem Platz erhält noch die Schlüssel dieser Workgroup – die Aufgabe startet, sobald sie da sind.",
   "reason.platform_access_required": "Diese Organisation hat noch kein Ausführungsgerät – der Betreiber wurde benachrichtigt.",
+  "reason.device_failed": "Unterbrochen: Gerät ausgefallen – die Aufgabe läuft weiter, sobald das Gerät zurück ist oder ein anderes passendes Gerät sie übernehmen kann.",
   "chosen-device": "Gerät",
   "assign-device": "Gerät zuweisen",
   "ask-admin": "Ein Admin der Organisation kann eines zuweisen.",

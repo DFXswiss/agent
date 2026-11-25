@@ -812,6 +812,77 @@ describe('task page', () => {
     expect(screen.getByTestId('task.context.fallback')).toHaveAttribute('data-reason', 'unknown');
   });
 
+  it('tells that the main session is interrupted by a device failure, then continued elsewhere (KOR-58)', async () => {
+    const t = await taskWorld();
+    const placement = { device_id: '0190f000-0000-7000-8000-0000000000d1', vm_id: null };
+    const row = taskRow(t, { state: 'scheduling', state_reason: 'device_failed', placement }) as TaskRow;
+    putTasks(t.store, [row]);
+    const put = `PUT /v1/tasks/${row.task_id}/placement`;
+    t.client.on(put, () => ({ task: { ...row, placement: null } }));
+    // an older hub sends neither field: nothing is shown
+    putSession(t.store, sessionRow(t, { state: 'working' }) as never, [], 0);
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}`);
+    expect(screen.queryByTestId('task.device-failure.interrupted')).toBeNull();
+    expect(screen.queryByTestId('task.device-failure.failover')).toBeNull();
+    const since = '2026-11-21T12:05:00.000Z';
+    act(() => putSession(t.store, sessionRow(t, { state: 'working', interrupted_at: since }) as never, [], 0));
+    const notice = screen.getByTestId('task.device-failure.interrupted');
+    expect(notice).toHaveAttribute('role', 'status');
+    expect(notice).toHaveTextContent('Interrupted – the device has been unreachable since');
+    expect(notice).toHaveTextContent('continues once the device is back or another suitable device');
+    // pinned to the failed device: the way out is the automatic choice (ADR-086 section 3, E-05)
+    fireEvent.click(within(notice).getByTestId('countdown.choose-automatic'));
+    await waitFor(() => expect(screen.queryByTestId('countdown.choose-automatic')).toBeNull());
+    expect(t.client.of(put)[0]!.body).toEqual({ device_id: null, vm_id: null });
+    // the hub moved the task: the successor continues the lost session
+    act(() =>
+      putSession(
+        t.store,
+        sessionRow(t, {
+          session_id: '0190f000-0000-7000-8000-0000000000a2',
+          state: 'working',
+          failover_of: '0190f000-0000-7000-8000-0000000000a1',
+        }) as never,
+        [],
+        0,
+      ),
+    );
+    act(() =>
+      putTasks(t.store, [
+        {
+          ...row,
+          state: 'working',
+          state_reason: null,
+          placement: null,
+          main_session_id: '0190f000-0000-7000-8000-0000000000a2',
+          last_activity_at: '2026-11-21T12:10:00.000Z',
+        },
+      ]),
+    );
+    expect(screen.queryByTestId('task.device-failure.interrupted')).toBeNull();
+    expect(screen.getByTestId('task.device-failure.failover')).toHaveTextContent(
+      'Continued after a device failure (from the last saved checkpoint)',
+    );
+  });
+
+  it('shows the device failure in German', async () => {
+    const t = await taskWorld();
+    const row = taskRow(t, { state: 'scheduling', state_reason: 'device_failed' }) as TaskRow;
+    putTasks(t.store, [row]);
+    putSession(
+      t.store,
+      sessionRow(t, { state: 'working', interrupted_at: '2026-11-21T12:05:00.000Z' }) as never,
+      [],
+      0,
+    );
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}`, 'de');
+    expect(screen.getByTestId('task.device-failure.interrupted')).toHaveTextContent(
+      'Unterbrochen – das Gerät ist seit',
+    );
+    // not pinned: the task moves by itself, nothing to choose
+    expect(screen.queryByTestId('countdown.choose-automatic')).toBeNull();
+  });
+
   it('shows the resume notice in German and nothing for a task without a main session', async () => {
     const t = await taskWorld();
     const row = taskRow(t);

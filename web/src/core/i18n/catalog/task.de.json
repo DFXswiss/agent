@@ -79,5 +79,6 @@
   "sessions.device.reachable": "(erreichbar)",
   "sessions.device.unreachable": "(nicht erreichbar)",
   "sessions.runtime": "Laufzeit {duration}",
+  "sessions.device_failed": "Wegen Geräteausfall abgebrochen",
   "runtime": "Laufzeit {duration}"
 }

@@ -886,6 +886,14 @@
       "group": "session"
     },
     {
+      "action": "session.interrupted",
+      "group": "session"
+    },
+    {
+      "action": "session.interruption_ended",
+      "group": "session"
+    },
+    {
       "action": "task.model_consent",
       "group": "task"
     },

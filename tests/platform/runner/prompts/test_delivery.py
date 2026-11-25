@@ -260,6 +260,39 @@ def test_a_prompt_of_an_ended_session_moves_to_the_new_main_session(rig: Rig) ->
     run(rig, body)
 
 
+def test_the_interrupted_prompt_of_a_lost_session_is_delivered_once_more_to_its_successor(rig: Rig) -> None:
+    """ADR-086 sections 3.4 and 3.7: the accepted prompt of the lost session goes to the successor the device state
+    names in `failovers`, once; any other routing of an accepted prompt stays final."""
+
+    async def body(env: Any) -> None:
+        pk = await setup(env)
+        lost = await pk.add_session(1)
+        event_id = add_prompt(env, 1, "p")
+        await pull(env)
+        await pk.route(lost, 1, event_id)
+        await pk.deliverer.advance(lost)
+        await accept(pk, lost, event_id)
+        await pk.set_state(lost, "stopped")
+        other = await pk.add_session(2)
+        successor = await pk.add_session(3)
+        failovers = [{"session_id": successor, "from_session": lost, "cancelled_runs": 0}]
+        pk.kit.session_env.desired = {"failovers": failovers}
+        await pk.route(other, 1, event_id)  # not the successor of the lost session: final
+        assert (await pk.row(event_id)).session_id == lost
+        await pk.route(successor, 1, event_id)
+        moved = await pk.row(event_id)
+        assert (moved.session_id, moved.state, moved.attempts) == (successor, "pending", 0)
+        await pk.deliverer.advance(successor)
+        assert pk.guest.sent() == [event_id, event_id]
+        await accept(pk, successor, event_id)
+        await pk.route(successor, 1, event_id)  # once: accepted by the successor it is final again
+        assert (await pk.row(event_id)).state == "accepted"
+        await pk.deliverer.advance(successor)
+        assert pk.guest.sent() == [event_id, event_id]
+
+    run(rig, body)
+
+
 def test_journal_results(rig: Rig) -> None:
     async def body(env: Any) -> None:
         pk = await setup(env)

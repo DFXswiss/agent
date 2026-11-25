@@ -246,6 +246,32 @@ def test_vm_unreachable_fails_its_active_sessions(rig: Rig) -> None:
     run(rig, body)
 
 
+def test_sessions_whose_vm_is_gone_after_the_vm_reconciliation_fail_once(rig: Rig) -> None:
+    """ADR-086 section 3.7: a host reboot took the VM; the session is reported `failed`, so the hub moves on."""
+
+    async def body(env: Any) -> None:
+        found = await kit(env)
+        svc = make_service(found)
+        ids = [await start_one(found, svc, n) for n in range(1, 6)]
+        assert await svc.vms_lost() == 0  # every VM still there
+        async with env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.session SET state = 'working' WHERE id = ANY(%s)", (ids,))
+            await conn.execute("UPDATE runner.session SET state = 'idle' WHERE id = %s", (ids[1],))
+            await conn.execute("UPDATE runner.session SET state = 'suspended' WHERE id = %s", (ids[2],))
+            await conn.execute("UPDATE runner.session SET vm_id = NULL WHERE id = %s", (ids[3],))
+            await conn.execute("UPDATE runner.session SET vm_id = 'vm-0000ffff' WHERE id = %s", (ids[4],))
+            await conn.execute("UPDATE runner.vm SET state = 'deleted' WHERE id = 'vm-00000001'")
+        assert await svc.vms_lost() == 2
+        for sid in (ids[0], ids[4]):
+            assert (await found.transitions(sid))[-1] == ("failed", "guest_unreachable")
+            assert any(f"vm_lost session_id={sid}" in line for line in found.lines)
+        for sid in ids[1:4]:
+            assert (await found.stored(sid)).state != "failed"
+        assert await svc.vms_lost() == 0  # once
+
+    run(rig, body)
+
+
 # -- stop -----------------------------------------------------------------------------------------------------------
 
 

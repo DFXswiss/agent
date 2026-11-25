@@ -26,7 +26,7 @@ from agent_runner.vm.lima import LimaError
 from agent_runner.workvm import firewall, records
 from agent_runner.workvm import manager as manager_module
 from agent_runner.workvm.jobs import ShellResult, WorkVmError
-from agent_runner.workvm.manager import NO_VM, CallFailed, WorkVms, sizes_fit
+from agent_runner.workvm.manager import NO_LEASE, NO_VM, CallFailed, WorkVms, sizes_fit
 
 from .kit import CHILD, SESSION, START, TASK, TASK_B, Job, World, pack_tar, session
 
@@ -581,6 +581,48 @@ def test_exec_obtains_a_vm_implicitly(world: World) -> None:
         world.run(lambda vms: vms.call(None, session(CHILD, task_id=TASK_B), "workvm_exec", {"command": "true"}))
     assert caught.value.error == "unavailable"
     assert "No work VM could be obtained" in caught.value.message
+
+
+def test_without_the_hub_lease_exec_and_browse_are_refused_and_the_other_tools_go_on(world: World) -> None:
+    """ADR-086 section 4: no command with internet egress, and no implicit VM, after the failover time without hub."""
+    held = [False]
+
+    async def body(vms: WorkVms) -> tuple[list[str], dict[str, Any]]:
+        vms.deps.hub_lease = lambda: held[0]
+        refused: list[str] = []
+        for tool, arguments in (("workvm_exec", {"command": "true"}), ("workvm_browse", {"url": "https://x.test"})):
+            with pytest.raises(CallFailed) as caught:
+                await vms.call(None, session(), tool, arguments)
+            assert caught.value.message == NO_LEASE
+            refused.append(caught.value.error)
+        assert await records.live(vms.deps.db) == []  # no implicit VM was started
+        status = await vms.call(None, session(), "workvm_status", {})
+        held[0] = True
+        await vms.call(None, session(), "workvm_exec", {"command": "true", "sync": "none"})
+        return refused, status
+
+    refused, status = world.run(body)
+    assert refused == ["unavailable", "unavailable"]
+    assert status == {"workvm": None, "jobs": []}
+    assert sum("lease_lost" in line for line in world.logs) == 2
+    assert len(rows(world)) == 1
+
+
+def test_the_lease_is_held_by_default(world: World) -> None:
+    assert world.run(lambda vms: asyncio.sleep(0, vms.deps.hub_lease())) is True
+
+
+def test_reconcile_deletes_only_the_vms_left_over_from_before(world: World) -> None:
+    async def body(vms: WorkVms) -> None:
+        await request(vms)
+        fresh = WorkVms(vms.deps)
+        left = await fresh.left_over()
+        await request(vms, {}, session(CHILD, task_id=TASK_B))  # obtained while the test runs were reconciled
+        await fresh.reconcile(left)
+
+    world.run(body)
+    assert [row["state"] for row in rows(world)] == ["deleted", "running"]
+    assert len(world.instances) == 1
 
 
 def test_status_while_starting_and_with_unreadable_jobs(world: World) -> None:

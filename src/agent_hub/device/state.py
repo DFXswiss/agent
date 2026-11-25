@@ -55,6 +55,8 @@ SECTION_FIELDS: Mapping[str, Callable[[], Any]] = {
     "dfx_keys": lambda: OMIT,
     "dfx_key_held": lambda: OMIT,
     "prompt_queue": lambda: {"via_agent": [], "withdrawn": []},
+    "failover_seconds": lambda: OMIT,
+    "failovers": list,
 }
 """The fields sections provide, with the value of a field no area provides."""
 

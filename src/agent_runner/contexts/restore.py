@@ -13,7 +13,11 @@ decisions/KOR-33.md, review KOR-33 nos. 1, 3, 6, 10, 16-18, 20 and 22). Replaces
    sealed local object is enough, the upload is not awaited. When the source ran on another device, the restore
    reads `GET /v1/device/state` every `HUB_STEP_S` until the hub names a checkpoint of the source (`context`),
    at most `wait_s`. Either way it then continues with the newest checkpoint it has; when the wait ran out it is
-   `stale`, which the harness sentence and the audit say.
+   `stale`, which the harness sentence and the audit say. **After a device failure** (ADR-086 section 3.5) the
+   desired state names the session in `failovers {session_id, from_session, cancelled_runs}`: when `from_session` is
+   the source, nothing is waited for (the failed device never sends that final checkpoint) and the hub's `context`
+   (the checkpoint it pinned at the move) and the local cache are ordered as below. A malformed `failovers` entry is
+   ignored (the restore then waits as for any source of another device).
 2. **Which checkpoint** (review nos. 6, 10): every cached object of the task (refused ones too: their local copy is
    complete) and the hub's `context {object_id, session_id, created_at, size}`, ordered like the hub orders them
    (`agent_hub.contexts.store`): the session first - the session itself, then the source, then the others by the
@@ -41,10 +45,12 @@ decisions/KOR-33.md, review KOR-33 nos. 1, 3, 6, 10, 16-18, 20 and 22). Replaces
    there, not in the create, review no. 9), then the request gets `restore {claude_session_id, object_id, note}`:
    `note` is the one sentence about what changed (`restored_line`: same VM, another VM of this device or a VM of
    another device - review no. 22 -, the checkpoint time, the workspace state and what was left out, `stale`, the
-   work VM). It is not put into the harness context: Claude Code keeps the system prompt of a conversation in its
-   transcript and ignores `--append-system-prompt-file` on `--resume`, so a resumed model never reads the harness
-   file. The guest attaches the note with the current session facts once to the first hook answer of the resumed
-   conversation (`agent_guest.hook_addons.notice`). The audit
+   work VM; after a device failure the failover sentence: the device it ran on failed (or, on the same device, it
+   was restarted following a failure), work after the checkpoint may be lost and the interrupted instruction is
+   repeated, how many test runs were cancelled there). It is not put into the harness context: Claude Code keeps
+   the system prompt of a conversation in its transcript and ignores `--append-system-prompt-file` on `--resume`, so
+   a resumed model never reads the harness file. The guest attaches the note with the current session facts once to
+   the first hook answer of the resumed conversation (`agent_guest.hook_addons.notice`). The audit
    `session.context_restored {object_id, workspace, stale}` (`workspace` = `full`, `partial`, `omitted` or `empty`)
    is only recorded here and sent by the state observer once the guest reports `agent_starting` (review no. 16). A
    fetched checkpoint stays in the cache (`fetched`).
@@ -78,6 +84,7 @@ from agent_runner.orgs.keys import load_scope_key
 from agent_runner.prompts.resume import RESTART_LINE, listed, restarted
 from agent_runner.reconcile import wire
 from agent_runner.sessions import records
+from agent_runner.sessions.failover import Failover, failover_of
 from agent_runner.sessions.records import LocalSession
 from agent_runner.sync.http import HubRefusal, HubTransportError
 from agent_runner.vm import records as vm_records
@@ -103,6 +110,7 @@ STALE_TEXT = (
     " conversation and from the workspace."
 )
 _EARLIEST = datetime.min.replace(tzinfo=UTC)
+WORK_VM_TEXT = " A work VM you used before does not exist any more: request a new one when you need it."
 
 
 class RestoreFailed(Exception):
@@ -201,9 +209,31 @@ def workspace_text(context: archive.Context) -> str:
     }[state]
 
 
-def restored_line(restored: Restored, *, where: str, stale: bool) -> str:
+def cancelled_text(count: int) -> str:
+    """The cancelled test runs of the failed device (empty when none)."""
+    if count == 0:
+        return ""
+    if count == 1:
+        return " 1 test run that was running there was cancelled: start it again when you need its result."
+    return f" {count} test runs that were running there were cancelled: start them again when you need their results."
+
+
+def restored_line(restored: Restored, *, where: str, stale: bool, failover: Failover | None = None) -> str:
     """The one sentence about what changed (`restore.note` of the create request); `where` is `same_vm`, `other_vm`
-    or `other_device`."""
+    or `other_device`; `failover` gives the variant after a device failure (ADR-086 sections 3.5 and 3.7: another
+    device, or this one after its restart; nothing was waited for, so it is never `stale`)."""
+    if failover is not None:
+        moved = (
+            "on a VM of another device because the device it ran on failed"
+            if where == "other_device"
+            else "on this device after it was restarted following a failure"
+        )
+        return (
+            f"This is your own earlier conversation of this task, continued {moved}, from its checkpoint of"
+            f" {restored.manifest['ts']};"
+            f" {workspace_text(restored.context)}. Work after that checkpoint may be lost: the interrupted instruction"
+            f" is repeated next.{cancelled_text(failover.cancelled_runs)}{WORK_VM_TEXT}"
+        )
     place = {
         "same_vm": "in a new sandbox on the same VM",
         "other_vm": "on another VM of this device",
@@ -211,8 +241,8 @@ def restored_line(restored: Restored, *, where: str, stale: bool) -> str:
     }[where]
     return (
         "This is your own earlier conversation of this task, continued from its checkpoint of"
-        f" {restored.manifest['ts']} {place}; {workspace_text(restored.context)}. A work VM you used before does not"
-        f" exist any more: request a new one when you need it.{STALE_TEXT if stale else ''}"
+        f" {restored.manifest['ts']} {place}; {workspace_text(restored.context)}.{WORK_VM_TEXT}"
+        f"{STALE_TEXT if stale else ''}"
     )
 
 
@@ -236,8 +266,11 @@ class Restorer:
         except wire.ResponseInvalid:
             return await self.fallback(session, request, "context_invalid")
         source = _source(session, entry)
+        failover = failover_of(env.sessions.desired, session.id)
+        if failover is not None and failover.from_session != source:
+            failover = None
         stale = False
-        if source is not None:
+        if source is not None and failover is None:
             ref, stale = await self.wait_final(session, source, ref)
         chosen = choose(await self.candidates(session, source, ref))
         if chosen is None:
@@ -253,7 +286,7 @@ class Restorer:
         request["restore"] = {
             "claude_session_id": restored.context.claude_session_id,
             "object_id": object_id,
-            "note": restored_line(restored, where=where, stale=stale),
+            "note": restored_line(restored, where=where, stale=stale, failover=failover),
         }
         detail = {"object_id": object_id, "workspace": restored.context.workspace_state, "stale": stale}
         async with env.sessions.transaction() as conn:
@@ -268,7 +301,7 @@ class Restorer:
             )
         env.line(
             f"context_restored session_id={session.id} object_id={object_id}"
-            f" workspace={detail['workspace']} stale={str(stale).lower()}"
+            f" workspace={detail['workspace']} stale={str(stale).lower()} failover={str(failover is not None).lower()}"
         )
         return "restored"
 

@@ -16,6 +16,11 @@ of `sessions.extensions`.
     its start) fails with `device_shutdown`;
   * subagent sessions (depth > 0) belong to RUN-11 and are left alone.
 - `vm_unreachable(row)` (VM-02 health pass): the active sessions of the VM fail with `guest_unreachable`.
+- `vms_lost()` (task `guestlink`, once after the startup reconciliation of the VM area, ADR-086 section 3.7): a
+  session that has not ended and ran in a VM whose instance is gone (a host reboot or a deleted instance: its row is
+  `deleted` or missing) fails with `guest_unreachable`, so the hub places a successor instead of showing the task
+  working for ever. `idle` and `suspended` sessions run nothing and are left alone (their next prompt resumes them on
+  another VM with the context restore, ADR-072).
 - `run_journals(stopping)` (task `guestlink`): one journal loop (`consume.VmJournal`) per running VM, started when a
   VM becomes running (at the latest after `POLL_S`, at once for a session start) and cancelled when it no longer
   runs; a loop that fails is restarted with backoff (1 s doubling to 30 s).
@@ -53,6 +58,8 @@ BACKOFF_MIN_S = 1.0
 BACKOFF_MAX_S = 30.0
 OWNER_REFUSED = "owner_not_member"
 INTERRUPTED = frozenset({"requested", "vm_assigning", "vm_ready", "sandbox_ready"})
+RESTING = frozenset({"idle", "suspended"})
+"""Session states that run nothing in their VM (`vms_lost` leaves them alone)."""
 NO_LOCAL = frozenset({"requested", "stopped", "failed"})
 """Desired states for which a missing local session is expected: not started yet (`requested`, started by
 `schedule_start`) or ended."""
@@ -215,6 +222,23 @@ class SessionService:
         async with self.env.transaction() as conn:
             for session in await records.listed(conn, vm_id=row.id):
                 await fail(conn, self.env.outbox, session.id, "guest_unreachable", at=self.env.at())
+
+    async def vms_lost(self) -> int:
+        """Fail the sessions whose VM is gone after the startup VM reconciliation (module docstring); their number."""
+        env = self.env
+        lost: list[str] = []
+        async with env.transaction() as conn:
+            for session in await records.listed(conn):
+                if session.vm_id is None or session.state in RESTING:
+                    continue
+                row = await vm_records.get(env.db, session.vm_id)
+                if (row is None or row.state == "deleted") and await fail(
+                    conn, env.outbox, session.id, "guest_unreachable", at=env.at()
+                ):
+                    lost.append(session.id)
+        for session_id in lost:
+            env.line(f"vm_lost session_id={session_id}")
+        return len(lost)
 
     # -- journal loops -------------------------------------------------------------------------------------------
 

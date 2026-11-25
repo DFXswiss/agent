@@ -29,7 +29,8 @@ end, the task fails with the reason and shows "Retry"):
   (`agent_hub.sessions.retry`, `capacity_refusal_limit`).
 
 The attempt is created after every pending prompt and after the refused session (`created_at` order of the routing);
-it is triggered by the author of the first prompt it takes over (`triggered_by`, ADR-083 section 2).
+it is triggered by the author of the first prompt it takes over (`triggered_by`, ADR-083 section 2) and keeps the
+failover marks of a refused successor after a device failure (`failover_of`, `restore_object`, ADR-086 section 3).
 """
 
 from __future__ import annotations
@@ -75,6 +76,9 @@ class Attempt:
 
     created: datetime
     triggered_by: UUID
+    failover: tuple[UUID | None, UUID | None] = (None, None)
+    """`(failover_of, restore_object)` of the refused session: an attempt after a refused successor of a device
+    failure continues the same lost session from the same pinned checkpoint (ADR-086 section 3)."""
 
 
 def _newest(connection: Connection, task_id: UUID, limit: int) -> list[tuple[Any, ...]]:
@@ -110,7 +114,13 @@ def planned(connection: Connection, task: TaskRow, session_id: UUID, now: dateti
         return None
     created: datetime = newest[0][1]
     at = max(now, refused.pending[-1].received_at + prompts.TICK, created + prompts.TICK)
-    return Attempt(created=at, triggered_by=prompts.first_author(refused.pending))
+    marks = cast(
+        tuple[UUID | None, UUID | None],
+        connection.execute(
+            "SELECT failover_of, restore_object FROM hub.session WHERE id = %s", (session_id,)
+        ).fetchone(),
+    )
+    return Attempt(created=at, triggered_by=prompts.first_author(refused.pending), failover=(marks[0], marks[1]))
 
 
 def start(connection: Connection, task: TaskRow, attempt: Attempt, effects: Effects, reason: str = REASON) -> TaskRow:
@@ -151,5 +161,10 @@ def start(connection: Connection, task: TaskRow, attempt: Attempt, effects: Effe
         connection.execute(
             "UPDATE hub.session SET not_before = %s WHERE id = %s",
             (created + timedelta(seconds=settings.refusal_hold_seconds()), session_id),
+        )
+    if attempt.failover[0] is not None:
+        connection.execute(
+            "UPDATE hub.session SET failover_of = %s, restore_object = %s WHERE id = %s",
+            (*attempt.failover, session_id),
         )
     return found

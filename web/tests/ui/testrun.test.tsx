@@ -6,6 +6,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CHUNK_BYTES } from '../../src/core/crypto/runlog';
 import { createI18n } from '../../src/core/i18n';
+import { createStore } from '../../src/core/store';
 import { HubError } from '../../src/core/net/signedFetch';
 import { putEvents } from '../../src/core/store/slices/events';
 import { type OperationRow, putOperations } from '../../src/core/store/slices/operations';
@@ -14,6 +15,7 @@ import { chatItem as runItem } from '../../src/ui/chat-items/workvm.run';
 import { chatItem as stateItem } from '../../src/ui/chat-items/workvm.state';
 import { OperationCard } from '../../src/ui/chat-items/operation/Card';
 import { I18nProvider } from '../../src/ui/i18n';
+import { AppEnvProvider } from '../../src/ui/shell/context';
 import { saveBlob } from '../../src/ui/logs/LogView';
 import { PANEL_TESTS, WorkvmPanel } from '../../src/ui/screens/session/WorkvmPanel';
 import { ascii, buildLog, logPath, logWorld, OBJECT, REF, type LogWorld } from '../core/logs/world';
@@ -77,10 +79,13 @@ const vm = (overrides: Record<string, unknown> = {}) => ({
 
 function renderAlone(item: typeof testItem, body: unknown) {
   const { Component } = item;
+  const app = { store: createStore() } as never;
   return render(
-    <I18nProvider value={createI18n('en')}>
-      <Component item={{ key: 'k', kind: item.kind, at: START, seq: 1, sessionId: MAIN, author: null, body }} />
-    </I18nProvider>,
+    <AppEnvProvider value={{ app, credentials: {} as never, origin: 'https://hub.example' }}>
+      <I18nProvider value={createI18n('en')}>
+        <Component item={{ key: 'k', kind: item.kind, at: START, seq: 1, sessionId: MAIN, author: null, body }} />
+      </I18nProvider>
+    </AppEnvProvider>,
   );
 }
 
@@ -311,6 +316,33 @@ const operation = (t: LogWorld['t'], overrides: Partial<OperationRow> = {}): Ope
   started_at: null,
   finished_at: null,
   ...overrides,
+});
+
+describe('test run cancelled by a device failure (KOR-58)', () => {
+  it('shows a running run as cancelled once the hub ended its operation with device_failed', async () => {
+    const w = await logWorld();
+    mountItem(w, testItem, 'test.run', testRun({ state: 'running', exit_code: null, ended_at: null, summary: null }));
+    const item = screen.getByTestId('chat.test.run');
+    expect(item).toHaveAttribute('data-state', 'running');
+    expect(screen.queryByTestId('chat.test.run.reason')).toBeNull();
+    act(() => putOperations(w.t.store, [operation(w.t, { state: 'executing' })]));
+    expect(item).toHaveAttribute('data-state', 'running');
+    // the hub cannot write the encrypted run event: the operation state wins (ADR-086 section 5)
+    act(() => putOperations(w.t.store, [operation(w.t, { state: 'failed', error_code: 'device_failed' })]));
+    expect(item).toHaveAttribute('data-state', 'cancelled');
+    expect(screen.getByTestId('chat.test.run.state')).toHaveTextContent('Cancelled');
+    expect(screen.getByTestId('chat.test.run.state')).toHaveAttribute('data-failed', 'true');
+    expect(screen.getByTestId('chat.test.run.reason')).toHaveTextContent('Reason: the device failed');
+    expect(screen.queryByTestId('chat.test.run.duration')).toBeNull();
+  });
+
+  it('says so in German', async () => {
+    const w = await logWorld();
+    putOperations(w.t.store, [operation(w.t, { state: 'failed', error_code: 'device_failed' })]);
+    mountItem(w, testItem, 'test.run', testRun({ state: 'running', exit_code: null, ended_at: null }), true, 'de');
+    expect(screen.getByTestId('chat.test.run.state')).toHaveTextContent('Abgebrochen');
+    expect(screen.getByTestId('chat.test.run.reason')).toHaveTextContent('Grund: Gerät ausgefallen');
+  });
 });
 
 describe('operation card of a test run', () => {

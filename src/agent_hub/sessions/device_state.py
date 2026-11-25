@@ -8,7 +8,9 @@
     was created, **on any device** (a session still `stopping` is never resumed from); a session a device refused
     for lack of capacity before it ever worked ran no agent and is skipped: the session before it counts (KOR-14);
   - `context`: the newest complete context checkpoint of the task's main sessions `{object_id, session_id,
-    created_at, size}` (`agent_hub.contexts.store.newest`), from which the runner restores the same conversation
+    created_at, size}` (`agent_hub.contexts.store.newest`) - for the successor of a session lost with its device the
+    checkpoint the hub pinned at the move while it is complete (`session.restore_object`, ADR-086 section 3) -, from
+    which the runner restores the same conversation
     on whatever VM or device it starts the session (03-api.md section 4.6.3, ADR-072 sections 5 and 7). Old runners
     ignore the field; without it a new runner reports the emergency path.
 - per session, only when set: the chosen VM of its task (`vm_id_pref`, ADR-075 section 6, while it is a live VM of the
@@ -52,6 +54,13 @@ def _resume_from(request: StateRequest, task_id: str, session_id: str) -> str | 
     return str(row[0]) if row is not None and row[1] else None
 
 
+def _pinned(request: StateRequest, task_id: str, object_id: object) -> dict[str, Any] | None:
+    """The checkpoint the hub pinned for a successor after a device failure while it is complete (ADR-086 section 3)."""
+    if object_id is None:
+        return None
+    return contexts.complete_checkpoint(request.connection, task_id, str(object_id))
+
+
 def _new_vm_allowed(request: StateRequest, wg_id: str, known: dict[str, bool]) -> bool:
     """`vm_new_allowed` of the workgroup (module docstring), once per workgroup."""
     if wg_id not in known:
@@ -68,7 +77,7 @@ def provide(request: StateRequest) -> Mapping[str, Any]:
         " (SELECT v.id FROM hub.vm v WHERE v.id = t.placement_vm_id AND v.device_id = s.device_id"
         " AND v.wg_id = s.wg_id AND v.state <> 'deleted' AND s.depth = 0), s.github_identity, t.github_identity,"
         " t.state = 'closed', COALESCE(u.fallback_own_to_dfx, false), COALESCE(u.fallback_operator_to_platform, true),"
-        " t.model_consent"
+        " t.model_consent, s.restore_object"
         " FROM hub.session s JOIN hub.task t ON t.id = s.task_id"
         " LEFT JOIN hub.user_settings u ON u.user_id = s.owner_id"
         " WHERE s.device_id = %s AND s.state NOT IN ('stopped', 'failed') ORDER BY s.created_at, s.id",
@@ -105,7 +114,9 @@ def provide(request: StateRequest) -> Mapping[str, Any]:
             previous = _resume_from(request, item["task_id"], item["session_id"])
             if previous is not None:
                 item["resume_from"] = previous
-            checkpoint = contexts.newest(request.connection, item["task_id"])
+            checkpoint = _pinned(request, item["task_id"], row[17]) or contexts.newest(
+                request.connection, item["task_id"]
+            )
             if checkpoint is not None:
                 item["context"] = checkpoint
         sessions.append(item)

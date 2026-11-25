@@ -672,6 +672,29 @@ processed (a child: its inherited stamp), for a work VM the acting user when it 
   otherwise `RESTART_LINE` and audit `session.context_fallback {reason}` (`context_missing`, `context_invalid`,
   `context_unavailable`, `version_incompatible`, `restore_failed`). A checkpoint whose restored agent failed inside
   its start window is not used again on this device.
+- Restore after a device failure (ADR-086 §3.5): a session the device state names in `failovers {session_id,
+  from_session, cancelled_runs}` with `from_session` = its `resume_from` does not wait for the final checkpoint of
+  `from_session` (the failed device never sends it); it restores the newest of the cache and the desired entry's
+  `context` (the checkpoint the hub pinned at the move). Its `note` is the failover sentence: its own earlier
+  conversation, continued on a VM of another device because the device it ran on failed (when the checkpoint's author
+  is this device: continued on this device after it was restarted following a failure, §3.7), from its checkpoint of
+  <manifest `ts`>; the workspace text; work after that checkpoint may be lost and the interrupted instruction is
+  repeated next; when `cancelled_runs` > 0, that number of test runs was cancelled there and is to be started again
+  when their results are needed; the work VM sentence. Log `context_restored … failover=true`. A malformed
+  `failovers` entry is ignored; an old hub sends none. The interrupted instruction (ADR-086 §3.4): a prompt whose
+  delivery row is `accepted` for the lost session is moved to the successor as `pending` when the hub routes it there
+  and delivered once more (`queue.route(..., failover_from=)`); every other final row stays final.
+- Lost VMs after a restart (ADR-086 §3.7): once the startup reconciliation of the VM area ran, the task `guestlink`
+  fails every session that has not ended, is not `idle` or `suspended`, and whose VM row is `deleted` or missing (a
+  host reboot took the instance) with `guest_unreachable` through the outbox (`SessionService.vms_lost`, log
+  `vm_lost session_id=`), so the hub places a successor instead of showing the task working.
+- Work VM lease (ADR-086 §4): `HubClient.contact` is the wall-clock time of the last verified hub answer (a 2xx
+  answer or a verified refusal; the client's creation before the first one; a monotonic clock stands still while the
+  host sleeps). A negative age (the clock went back) counts as no contact. While it is older than `failover_seconds` of
+  the last desired state (default 300 before the first state, from an old hub, or when malformed), `workvm_exec` and
+  `workvm_browse` - and the implicit work VM they would start - are refused with the tool error `unavailable` (the
+  device may have been declared failed and its sessions moved; these tools reach the internet without a hub
+  registration). The other work VM tools, running jobs and running turns go on: a hub outage stops no device.
 - Pull requests: every succeeded `github.create_pull_request` of the device is registered once as an opaque tag
   (`POST /v1/device/pr-links`, ADR-072 §8).
 

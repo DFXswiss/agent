@@ -72,6 +72,12 @@ def test_wait_failures_and_stubborn_processes(device: Device) -> None:
     with pytest.raises(DeviceError, match="no line matching 'never' within 0 s"):
         device.wait_line("stubborn", "never", 0)
     assert device.stop("stubborn", timeout=0.2) == -9
+    # kill: SIGKILL at once, even to a process that would ignore SIGTERM; a second kill answers the same code
+    device.spawn("stubborn", [PY, "-c", stubborn], env)
+    device.wait_line("stubborn", "up", 10)
+    assert device.kill("stubborn") == -9
+    assert not device.alive("stubborn")
+    assert device.kill("stubborn") == -9
     device.spawn("slow", [PY, "-c", "import time; time.sleep(60)"], env)
     with pytest.raises(DeviceError, match="slow did not finish within 0 s"):
         device.wait_exit("slow", 0.1)

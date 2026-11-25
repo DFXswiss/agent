@@ -14,7 +14,10 @@ The hub keeps no prompt table: everything is derived from rows it already has.
   twice - except for a session the device refused with `capacity_exhausted`: the hub's next attempt (a main session
   whose first transition `requested` carries that reason, `agent_hub.sessions.retry`) takes them over (KOR-14); the
   same holds for a session that failed `model_access_unavailable` and the attempt the hub creates once the owner
-  connected model access (`agent_hub.sessions.model_retry`, ADR-079).
+  connected model access (`agent_hub.sessions.model_retry`, ADR-079), and for the successor after a device failure
+  (first transition `requested` with `device_failed`, `agent_hub.sessions.failover`). **Device failure (ADR-086
+  section 3):** a lost session whose turn was running hands on the prompt stored as its `redeliver_event_id` as well,
+  first: the interrupted turn did not finish, so its successor gets that instruction again.
 - **Next session.** When the device itself ends the newest main session of an open task (`stopped`, not after a
   user's "Stop", audit `session.control`) after it delivered a prompt, while prompts are pending there, `carry_over`
   creates the next main session at once, placed by the scheduler, which delivers them. A session the user ended
@@ -47,7 +50,7 @@ import psycopg
 
 from agent_hub.crypto.ids import uuid7
 from agent_hub.scheduler import load
-from agent_hub.sessions.derive import STOPPED, STOPPING
+from agent_hub.sessions.derive import DEVICE_FAILED, STOPPED, STOPPING
 from agent_hub.sessions.effects import Effects
 from agent_hub.sessions.lifecycle import create_main_session
 from agent_hub.sessions.taskstate import HUB, TaskRow
@@ -62,7 +65,9 @@ RETRY_REASON = "capacity_exhausted"
 """The reason of the first transition (`requested`) of the hub's attempt after a refusal for lack of capacity."""
 MODEL_RETRY_REASON = "model_access_unavailable"
 """The reason of the first transition of the hub's attempt after the owner connected model access (ADR-079)."""
-RETRY_REASONS = (RETRY_REASON, MODEL_RETRY_REASON)
+RETRY_REASONS = (RETRY_REASON, MODEL_RETRY_REASON, DEVICE_FAILED)
+"""First-transition reasons of a main session that takes over the undelivered prompts of the one before it, also when
+that one `failed`: the hub's attempts and the successor after a device failure (ADR-086 section 3)."""
 
 
 @dataclass(frozen=True)
@@ -112,6 +117,9 @@ class Main:
     retry: bool = False
     """The hub's next attempt after a refusal for lack of capacity (`agent_hub.sessions.retry`) or after the owner
     connected model access (`agent_hub.sessions.model_retry`, ADR-079)."""
+    redeliver: str | None = None
+    """The prompt the hub hands to its successor again after a device failure (`session.redeliver_event_id`, ADR-086
+    section 3): before the undelivered ones."""
 
 
 def main_sessions(connection: Connection, task_ids: Sequence[UUID | str]) -> dict[str, list[Main]]:
@@ -122,10 +130,12 @@ def main_sessions(connection: Connection, task_ids: Sequence[UUID | str]) -> dic
         " WHERE t.session_id = s.id AND t.state = 'working') + (SELECT count(*) FROM hub.audit a"
         " WHERE a.session_id = s.id AND a.action = 'session.prompt_refused'), s.state,"
         " COALESCE((SELECT t.reason FROM hub.session_transition t WHERE t.session_id = s.id AND t.seq = 1) = ANY(%s),"
-        " false) FROM hub.session s WHERE s.task_id = ANY(%s) AND s.depth = 0 ORDER BY s.task_id, s.created_at, s.id",
+        " false), s.redeliver_event_id"
+        " FROM hub.session s WHERE s.task_id = ANY(%s) AND s.depth = 0 ORDER BY s.task_id, s.created_at, s.id",
         (list(RETRY_REASONS), [UUID(str(task)) for task in task_ids]),
     ):
-        found[str(row[0])].append(Main(str(row[1]), row[2], int(row[3]), row[4], bool(row[5])))
+        again = None if row[6] is None else str(row[6])
+        found[str(row[0])].append(Main(str(row[1]), row[2], int(row[3]), row[4], bool(row[5]), again))
     return found
 
 
@@ -140,7 +150,8 @@ def route(prompts: Sequence[Prompt], sessions: Sequence[Main], task_id: str) -> 
         mine = [*carried, *own]
         item = Routed(task_id, main.session_id, tuple(mine[: main.done]), tuple(mine[main.done :]))
         routed.append(item)
-        carried = item.pending if main.state in CARRIED or (follower is not None and follower.retry) else ()
+        again = tuple(prompt for prompt in item.delivered if prompt.event_id == main.redeliver)
+        carried = (*again, *item.pending) if main.state in CARRIED or (follower is not None and follower.retry) else ()
     return routed
 
 
@@ -163,6 +174,12 @@ def holders(found: Mapping[str, Routed]) -> dict[str, tuple[Prompt, Routed]]:
         for prompt in item.pending:
             held[prompt.event_id] = (prompt, item)
     return held
+
+
+def was_delivered(found: Mapping[str, Routed], event_id: str) -> bool:
+    """The prompt was delivered by some main session of `found` (a `routing` result): one that is pending again after
+    a device failure (ADR-086 section 3) can no longer be withdrawn."""
+    return any(prompt.event_id == event_id for item in found.values() for prompt in item.delivered)
 
 
 def via_agent(connection: Connection, event_ids: Sequence[str]) -> set[str]:

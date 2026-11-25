@@ -91,6 +91,13 @@ def test_scheduler_settings(tmp_path: Path) -> None:
     assert tmp_path.exists()
 
 
+def test_the_failover_deadline() -> None:
+    """ADR-086 section 1 (KOR-58): 300 s by default, at least twice the online window."""
+    assert load_config(hub_environ()).device_failover_seconds == 300
+    config = load_config(hub_environ(AGENT_HUB_DEVICE_ONLINE_SECONDS="5", AGENT_HUB_DEVICE_FAILOVER_SECONDS="10"))
+    assert (config.device_online_seconds, config.device_failover_seconds) == (5, 10)
+
+
 def test_the_headroom_of_a_dfx_key() -> None:
     """ADR-081 section 7 (KOR-50): at most 5 USD beyond a per-device key's booked spend unless configured."""
     assert load_config(hub_environ()).dfx_key_headroom_usd == Decimal(5)
@@ -164,6 +171,8 @@ def test_owner_database_is_forbidden_in_the_hub_process(value: str) -> None:
         ("AGENT_HUB_VMS_PER_WG", "-1", "from 0 to 1000000"),
         ("AGENT_HUB_CAPACITY_REFUSALS", "0", "from 1 to 1000"),
         ("AGENT_HUB_REFUSAL_HOLD_SECONDS", "86401", "from 0 to 86400"),
+        ("AGENT_HUB_DEVICE_FAILOVER_SECONDS", "86401", "from 1 to 86400"),
+        ("AGENT_HUB_DEVICE_FAILOVER_SECONDS", "59", "at least twice AGENT_HUB_DEVICE_ONLINE_SECONDS (60)"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "-1", "non-negative amount"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "1.1234567", "non-negative amount"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "01", "non-negative amount"),

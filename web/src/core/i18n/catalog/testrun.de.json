@@ -17,6 +17,7 @@
   "reason.transfer_failed": "der Arbeitsbereich konnte nicht kopiert werden",
   "reason.vm_lost": "die VM ging verloren",
   "reason.cancelled": "abgebrochen",
+  "reason.device_failed": "Gerät ausgefallen",
   "reason": "Grund: {reason}",
   "exit": "Exit-Code {code}",
   "duration": "{seconds} s",

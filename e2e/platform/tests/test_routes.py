@@ -41,6 +41,9 @@ class StubNode(Node):
         if op == "stop":
             self.alive_names.discard(args["name"])
             return -15
+        if op == "kill":
+            self.alive_names.discard(args["name"])
+            return -9
         if op == "spawn":
             self.alive_names.add(args["name"])
             return 1
@@ -111,6 +114,12 @@ def test_runners(ctx: Context) -> None:
     assert call(ctx, "POST", "/runners/runner-1/start")[1]["state"] == "waiting_for_enrollment"
     assert not stopped(ctx)
     assert call(ctx, "POST", "/runners/runner-9/stop")[0] == 404
+    # a hard kill (KOR-58): SIGKILL, the run's final checks do not expect the runner running
+    assert call(ctx, "POST", "/runners/runner-1/hard-kill")[1] == {"name": "runner-1", "exit": -9, "state": "stopped"}
+    assert stopped(ctx)
+    assert ("kill", {"name": "runner-1"}) in ctx.runner_node.calls  # type: ignore[attr-defined]
+    assert call(ctx, "POST", "/runners/runner-1/start")[0] == 200
+    assert call(ctx, "POST", "/runners/runner-9/hard-kill")[0] == 404
 
 
 def test_a_runner_restarts_with_its_github_ways(ctx: Context) -> None:

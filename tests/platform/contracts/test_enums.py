@@ -80,6 +80,7 @@ SPEC_OPERATION_ERRORS = (
     " identity_forbidden identity_unavailable"  # ADR-078 (contracts/changes/KOR-47.md)
     " conflict_markers conflicts_unresolved merge_outdated merge_pending merge_unsupported"
     " workspace_dirty"  # ADR-084 (contracts/changes/KOR-48.md)
+    " device_failed"  # ADR-086 section 4 (contracts/changes/KOR-58.md)
 )
 SPEC_SESSION_FAILURES = (
     "model_access_unavailable vm_start_failed guest_unreachable sandbox_failed agent_start_failed agent_exited"
@@ -90,6 +91,8 @@ SPEC_SESSION_FAILURES = (
     " hook_unavailable"
     # ADR-081 section 3 (contracts/changes/KOR-50.md): no allowed model access is left for a subagent session
     " model_quota_exhausted"
+    # ADR-086 section 3 (contracts/changes/KOR-58.md): the hub moved the session off a failed device
+    " device_failed"
 )
 # 03-api.md section 6.1 / 02-data-model.md section 4.
 SPEC_OUTBOX_KINDS = (
@@ -164,6 +167,8 @@ KOR47_AUDIT = "github.default github.primary task.github_identity runner.operato
 KOR50_AUDIT = "session.model_switched task.model_consent"
 # ADR-084 section 1 (contracts/changes/KOR-48.md): a person's pull-request link and its removal.
 KOR48_AUDIT = "pr.linked pr.unlinked"
+# ADR-086 section 2 (contracts/changes/KOR-58.md): the hub marks and clears the interruption of a session.
+KOR58_AUDIT = "session.interrupted session.interruption_ended"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 03-api.md section 4.6.2, ADR-075 section 7: reasons of a waiting task beyond the session failure reasons
 SPEC_WAITING_REASONS = "no_device platform_access_required wg_vm_limit placement_full placement_offline keys_pending"
@@ -172,7 +177,8 @@ SPEC_ATTENTION = {
     "needs_decision": ("since_asc", "question approval connection_missing credit_empty device_missing quota_choice"),
     "blocked": (
         "since_desc",
-        "session_failed guest_error device_unreachable model_access_missing no_capacity operation_refused",
+        "session_failed guest_error device_unreachable model_access_missing no_capacity operation_refused"
+        " device_failed",  # ADR-086
     ),
     "working": ("since_desc", "queued starting working operation subagents quota_wait"),  # quota_*: ADR-081
     "done": ("since_desc", "idle closed"),
@@ -291,6 +297,7 @@ def test_audit_actions(index: dict[str, Any]) -> None:
         assert re.fullmatch(r"[a-z_]+(\.[a-z_]+)+", row["action"]), row
     expected = set(SPEC_AUDIT_FIXED.split()) | set(DECIDED_AUDIT.split()) | set(KOR31_AUDIT.split())
     expected |= set(KOR47_AUDIT.split()) | set(KOR50_AUDIT.split()) | set(KOR48_AUDIT.split())
+    expected |= set(KOR58_AUDIT.split())
     for prefix, values in SPEC_AUDIT_PATTERNS.items():
         expected |= {f"{prefix}.{value}" for value in values.split()}
     expected |= {f"read.{e['read_resource']}" for e in index["endpoints"] if e["read_resource"]}
@@ -337,6 +344,7 @@ def test_task_states(contracts: Contracts) -> None:
         "waiting_for_capacity",
         "waiting_for_device",
         "waiting_for_credit",
+        "interrupted",  # ADR-086
     }
 
 

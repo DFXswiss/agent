@@ -1738,5 +1738,17 @@
       "body": "Etwas wurde von einer Person ohne Berechtigung freigegeben und ignoriert.",
       "action": "Keine Aktion nötig."
     }
+  },
+  "device_failed": {
+    "en": {
+      "title": "Cancelled because the device failed",
+      "body": "The device this ran on failed. The task continues from the last saved checkpoint once the device is back or another suitable device can take it over.",
+      "action": "Nothing to do – the task continues by itself. If it is tied to that device, let the platform choose one automatically."
+    },
+    "de": {
+      "title": "Wegen Geräteausfall abgebrochen",
+      "body": "Das Gerät, auf dem dies lief, ist ausgefallen. Die Aufgabe läuft vom letzten gesicherten Stand aus weiter, sobald das Gerät zurück ist oder ein anderes passendes Gerät sie übernehmen kann.",
+      "action": "Nichts zu tun – die Aufgabe geht von selbst weiter. Ist sie an dieses Gerät gebunden, lass die Plattform automatisch eines wählen."
+    }
   }
 }

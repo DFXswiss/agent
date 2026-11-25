@@ -17,6 +17,7 @@ import { formatEventTime, localTimeZone } from '../../../core/i18n';
 import { type OrgState, WG } from '../../../core/log/state';
 import type { Category } from '../../../core/store/slices/attention';
 import type { Directory } from '../../../core/tasks/directory';
+import { taskPlacement } from '../../../core/tasks/placement';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
@@ -63,7 +64,7 @@ function Item({ org, id, category, state, userId, directory, now }: AttentionIte
   if (!state.canRead(userId, WG, task.wg_id)) return null;
   const since = parseTime(row.since);
   const reason = reasonText(category, row, { locale, timeZone: localTimeZone(), now });
-  const action = actionOf(row);
+  const action = actionOf(row, taskPlacement(task) !== null);
   const writer = state.canWriteWg(userId, task.wg_id);
   const assign = state.isAdmin(userId) || (state.private && writer);
   const target = `/o/${encodeURIComponent(org)}/t/${encodeURIComponent(id)}`;

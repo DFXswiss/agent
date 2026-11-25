@@ -22,7 +22,7 @@ from orchestrator.config import RunConfig
 from orchestrator.context import Context
 from orchestrator.control import RouteError, discover, dispatch
 from orchestrator.node import Node
-from orchestrator.routes import login, model, plaintext, quota
+from orchestrator.routes import failover, login, model, plaintext, quota
 from orchestrator.services import Double, Hub, Runner
 from support import CORE
 
@@ -356,6 +356,41 @@ def test_post_budget_restarts_the_hub(ctx: Context, node: FakeNode) -> None:
     assert model.BUDGET not in ctx.hub.env
     for bad in (None, {"usd": 1}, {"usd": "-1"}, {"usd": "0.0000001"}, {}):
         assert call(ctx, "POST", "/hub/budget", bad)[0] == 400
+
+
+def test_post_failover_restarts_the_hub_with_the_deadline(ctx: Context, node: FakeNode) -> None:
+    """KOR-58 (E2E-67): the device failure deadline within a test; null takes the setting away again."""
+    body = {"online_seconds": 30, "failover_seconds": 60}
+    assert call(ctx, "POST", "/hub/failover", body)[0] == 409
+    ctx.hub = Hub(node, "/hub/python", {"A": "1"}, "127.0.0.1", 21006, sleep=lambda _s: None)
+    assert call(ctx, "POST", "/hub/failover", body) == (200, body)
+    assert (ctx.hub.env[failover.ONLINE], ctx.hub.env[failover.FAILOVER]) == ("30", "60")
+    assert node.stopped == ["hub"]
+    assert node.spawned[-1][0] == "hub"
+    assert call(ctx, "POST", "/hub/failover", {"failover_seconds": 120}) == (
+        200,
+        {"online_seconds": None, "failover_seconds": 120},
+    )
+    assert failover.ONLINE not in ctx.hub.env
+    nulls = {"online_seconds": None, "failover_seconds": None}
+    assert call(ctx, "POST", "/hub/failover", nulls) == (200, nulls)
+    assert call(ctx, "POST", "/hub/failover", {}) == (200, nulls)
+    assert failover.FAILOVER not in ctx.hub.env
+    bad: Any
+    for bad in (
+        None,
+        [],
+        {"other": 1},
+        {"online_seconds": 0},
+        {"online_seconds": 3601},
+        {"failover_seconds": 86401},
+        {"failover_seconds": "60"},
+        {"failover_seconds": True},
+        {"online_seconds": 30, "failover_seconds": 59},
+        {"failover_seconds": 59},
+        {"online_seconds": 200},
+    ):
+        assert call(ctx, "POST", "/hub/failover", bad)[0] == 400, bad
 
 
 def test_post_hub_restart_stops_and_starts_the_hub(ctx: Context, node: FakeNode) -> None:

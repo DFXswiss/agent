@@ -107,7 +107,7 @@ credential_notice: credentials | device_id:uuid owner_id:uuid kind:code changed_
 dedupe_slot: operations | wg_id:uuid epoch:number tag:code operation_id:uuid expires_at:time
 device: logs | id:uuid@ids kind:code kem_pub:bytes sig_pub:bytes owner_org:uuid state:code enrolled_at:time
   certified_seq:number agent_version:code@metrics os:code@metrics arch:code@metrics capacity:json@metrics
-  updated_at:time features:codes@metrics
+  updated_at:time features:codes@metrics offline_since:time@metrics
 device_enrollment: logs | invite_id:code device_id:uuid request:json created_at:time certified_at:time
 device_presence: metrics | device_id:uuid hub_instance:code connected_at:time last_heartbeat_at:time
 device_request: operations | id:uuid user_id:uuid device_id:uuid kind:code state:code envelope:json@ciphertext
@@ -177,6 +177,7 @@ session: tasks | id:uuid task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid devic
   model_id:code agent_kind:code agent_version:code estimate_ms:number created_at:time ready_at:time
   first_working_at:time ended_at:time context_restore:code@contexts context_reason:code@contexts not_before:time
   github_identity:uuid wait_until:time dfx_choice:flag wait_at:time triggered_by:uuid@shared
+  interrupted_at:time interruption_ended_at:time failover_of:uuid redeliver_event_id:uuid restore_object:uuid@contexts
 session_ping: notifications | id:uuid session_id:uuid kind:code level:code ref:code created_at:time
   delivered_at:time
 session_transition: tasks | session_id:uuid seq:number state:code reason:code at:time received_at:time

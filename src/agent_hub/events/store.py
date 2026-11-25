@@ -143,13 +143,26 @@ def rotated_at(connection: Connection, scope: str, scope_id: str) -> datetime | 
     return None if record is None else cast(datetime, record[0])
 
 
+LATE_KINDS = frozenset({"test.run"})
+"""Records a device may still bring for a moved session: the end of a test run it ran there (its kept log, ADR-086
+section 5) is a record of the past, not output beside the successor."""
+
+
 def session_device(connection: Connection, header: Mapping[str, object]) -> str | None:
-    """E7: the device the header's session runs on, if the session belongs to the header's task and workgroup."""
+    """E7: the device the header's session runs on, if the session belongs to the header's task and workgroup. A
+    session the hub moved off a failed device (`stopped` with `device_failed`, ADR-086 section 4) has no device for an
+    event the device stamped after the move: what a cut-off device produced beside the successor never reaches the
+    task (earlier events of that session are still taken, and so are `LATE_KINDS`)."""
     record = connection.execute(
-        "SELECT device_id FROM hub.session WHERE id = %s AND task_id = %s AND wg_id = %s",
+        "SELECT device_id, state = 'stopped' AND state_reason IS NOT DISTINCT FROM 'device_failed', ended_at"
+        " FROM hub.session WHERE id = %s AND task_id = %s AND wg_id = %s",
         (header["session"], header["task"], header["scope_id"]),
     ).fetchone()
-    return None if record is None or record[0] is None else str(record[0])
+    if record is None or record[0] is None:
+        return None
+    if record[1] and header["kind"] not in LATE_KINDS and parse_time(cast(str, header["ts"])) > record[2]:
+        return None
+    return str(record[0])
 
 
 class _Logs:

@@ -188,7 +188,8 @@ def withdraw(context: HubContext, user: UUID, task_id: UUID, event_id: UUID) -> 
             return Outcome(body={"state": _repeat(connection, task_id, event, before[0])})
         _held, queue = queued(connection, task_id)
         holder = next(((session, device) for prompt, session, device in queue if prompt.event_id == event), None)
-        if holder is None:
+        if holder is None or prompts.was_delivered(prompts.routing(connection, [task_id]), event):
+            # a prompt delivered again after a device failure (ADR-086) was delivered once: it stays
             raise HubError(CONFLICT)
         session_id, device = holder
         if device is not None and outdated_devices(connection, [str(device)], PROMPT_WITHDRAW):

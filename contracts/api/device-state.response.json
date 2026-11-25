@@ -661,6 +661,38 @@
             "withdrawn"
           ],
           "additionalProperties": false
+        },
+        "failover_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "description": "AGENT_HUB_DEVICE_FAILOVER_SECONDS: after this long offline the hub moves the device's sessions (ADR-086 section 1). Absent from older hubs."
+        },
+        "failovers": {
+          "type": "array",
+          "description": "live main sessions of this device that continue a session of a failed device (ADR-086 section 3); the runner does not wait for a final checkpoint of from_session. Absent from older hubs.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "from_session": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "cancelled_runs": {
+                "$ref": "../common.json#/$defs/count"
+              }
+            },
+            "required": [
+              "session_id",
+              "from_session",
+              "cancelled_runs"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 10000
         }
       },
       "required": [

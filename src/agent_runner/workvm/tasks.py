@@ -1,8 +1,9 @@
 """Daemon task `workvm` (docs/platform/spec/13-work-vm.md sections 6.4, 7 and 12): reconciliation after a restart (the
-test runs still `running` end `error`, every live VM goes), then every `INTERVAL` seconds (and at once after a pool
-entry was assigned) the boundary guard (every live VM and pool entry goes when the host filter check fails), the idle
-pass of the platform browser sessions (`browser_idle`) and of the work VMs, the sweep of failed deletions and orphan
-instances, and the warm pool refill. The task ends at once on a device without work VMs."""
+live VMs are taken first; the test runs still `running` end `error`, with the log of a run VM that still runs, which
+goes after its capture; then every VM taken goes, ADR-086 section 5), then every `INTERVAL` seconds (and at once after a
+pool entry was assigned) the boundary guard (every live VM and pool entry goes when the host filter check fails), the
+idle pass of the platform browser sessions (`browser_idle`) and of the work VMs, the sweep of failed deletions and
+orphan instances, and the warm pool refill. The task ends at once on a device without work VMs."""
 
 from __future__ import annotations
 
@@ -29,8 +30,9 @@ async def run_workvm(context: Any) -> None:
     workvms = workvms_for(context)
     if workvms is None:
         return
+    left = await workvms.left_over()
     await runs_of(context, workvms).reconcile()
-    await workvms.reconcile()
+    await workvms.reconcile(left)
     browsers = browsers_of(context, workvms)
     while not context.stopping.is_set():
         await workvms.guard_pass()

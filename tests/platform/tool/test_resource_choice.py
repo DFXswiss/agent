@@ -286,6 +286,43 @@ def test_task_create_with_placement_and_show(tool: Tool, hub: HubFake, account: 
                                      "vm_id": "vm-0000000b"}  # fmt: skip
     hub.tasks[task]["sessions"] = None
     assert tool.run("task", "show", "--task", task)[1]["main_session"] is None
+    assert tool.run("task", "show", "--task", task)[1]["device_failure"] is None
+
+
+def test_task_show_prints_a_device_failure(tool: Tool, hub: HubFake, account: User) -> None:
+    """ADR-086 (KOR-58): the interruption of the main session and the session it continues; nothing from an old hub."""
+    wg = hub.orgs[private_org(hub, account)].log.state.default_wg
+    task = tool.run("task", "create", "--wg", wg, "--text", "Hi")[1]["task_id"]
+    session, lost, since = uuid7(), uuid7(), "2026-11-25T05:40:00.000Z"
+    row = hub.tasks[task]["task"]
+    row |= {"state": "scheduling", "state_reason": "device_failed", "main_session_id": session}
+
+    def show(**fields: object) -> Any:
+        hub.tasks[task]["sessions"] = [{"session": {"session_id": session, "state": "working", **fields}}]
+        return tool.run("task", "show", "--task", task)[1]
+
+    assert show()["device_failure"] is None
+    assert show(interrupted_at=None, failover_of=None)["device_failure"] is None
+    shown = show(interrupted_at=since)
+    assert shown["waiting"] == "device_failed"
+    assert shown["device_failure"] == {
+        "interrupted_since": since,
+        "continued_from": None,
+        "text": f"interrupted since {since}: the device failed; the task continues on another device as soon as one"
+        " is free, or there once the device is back",
+    }
+    # an ended session is no longer interrupted; malformed values count as missing
+    assert show(interrupted_at=since, state="stopped")["device_failure"] is None
+    assert show(interrupted_at="yesterday", failover_of="x")["device_failure"] is None
+    assert show(interrupted_at=7, failover_of=7)["device_failure"] is None
+    assert show(failover_of=lost)["device_failure"] == {
+        "interrupted_since": None,
+        "continued_from": lost,
+        "text": f"continued after a device failure (from session {lost})",
+    }
+    both = show(interrupted_at=since, failover_of=lost)["device_failure"]
+    assert (both["interrupted_since"], both["continued_from"]) == (since, lost)
+    assert both["text"].endswith(f"; continued after a device failure (from session {lost})")
 
 
 # --- diagnose ---

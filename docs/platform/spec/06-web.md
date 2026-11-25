@@ -289,7 +289,9 @@ The home of an organization shows where people are needed, across all workgroups
   `device_missing` leads admins to assigning a computer (§7.3), others see who can do it; `model_access_missing`
   opens the model settings (§8.2); `credit_empty` says that the operator sets the balance and offers "Continue";
   `session_failed`, `guest_error`, `device_unreachable`, `no_capacity` offer "Try again" (a follow-up prompt starts a
-  new main session); `quota_choice` ("Your subscription is used up until 14:05 – continue with DFX access?") offers
+  new main session); `device_failed` ("Interrupted – the computer failed" / "Unterbrochen – der Rechner ist
+  ausgefallen", `blocked`, ADR-086) offers "Choose a computer automatically" (`PUT /v1/tasks/{task}/placement` with
+  nulls) only for a task pinned to the failed computer, otherwise nothing (the task moves by itself); `quota_choice` ("Your subscription is used up until 14:05 – continue with DFX access?") offers
   "Continue with DFX access" (`POST /v1/tasks/{task}/model-consent`) and, to the task's owner only, "Always" (the
   setting `fallback.own_to_dfx` of §8.2), with the note that DFX access is charged and that the task otherwise
   continues by itself; `quota_wait` names the time ("Waiting for model quota – continues at 14:05") and needs nobody
@@ -352,7 +354,10 @@ with `task.set_title` (shown as "renamed by session").
   – the task starts as soon as it is back"), `no_device` ("No execution device is assigned to this workgroup" with
   the button "Assign a device" for admins, which assigns the first candidate as in §4.3 step 1, else "An admin of the
   organization can assign one"), `platform_access_required` ("This organization has no execution device yet – the
-  operator has been notified"). A chosen device that is busy or offline says so with its name.
+  operator has been notified"). A chosen device that is busy or offline says so with its name. **Interrupted**
+  (category `interrupted`, ADR-086) – `device_failed` ("Interrupted: the device failed – the task continues once the
+  device is back or another suitable device can take it over"); "Choose automatically" only while the task is
+  pinned to the failed device.
 - The task header and the sessions tab name device and VM of the running session ("on <device> · vm-…").
 - `working` reached: panel collapses into a one-line summary "Ready in 4.2 s" (kept in the chat timeline).
 - `failed`: error from the catalog (`state_reason`) and "Retry" (sends the same prompt as a follow-up, §5.2).
@@ -413,6 +418,18 @@ Below the task header, `ContextNotice` reads `context_restore`/`context_reason` 
 A restored row with a reason the client does not know counts as a full restore (the conversation is complete). The
 error catalog has texts for `quota_exceeded` (a checkpoint over its quota; shown only where a device error reaches a
 user).
+
+**Device failure** (KOR-58, ADR-086 §6). `DeviceFailureNotice` reads `interrupted_at` and `failover_of` of the current
+main session (`core/sessions/failover.ts`; missing or malformed: nothing is shown):
+
+| Field | Shown (en / de) |
+|---|---|
+| `interrupted_at`, session not `stopped`/`failed` | warning box (`role="status"`) "Interrupted – the device has been unreachable since {time}. The task continues once the device is back or another suitable device can take it over." / "Unterbrochen – das Gerät ist seit {time} nicht erreichbar. …", with "Choose automatically" for writers while the task is pinned to the failed device |
+| `failover_of` | muted line "Continued on another device after a device failure (from the last saved checkpoint)" / "Nach einem Geräteausfall auf einem anderen Gerät fortgesetzt (Stand des letzten gesicherten Checkpoints)" |
+
+The Sessions tab marks a session `stopped` with `device_failed` "Cancelled because the device failed" / "Wegen
+Geräteausfall abgebrochen"; the error catalog has `device_failed` (session end reason, scheduling reason, operation
+error code).
 
 ### 5.1c Model switch line (task page, KOR-50, [ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md) §5)
 
@@ -522,6 +539,9 @@ with the workgroup key of the manifest's epoch (`src/core/crypto/runlog.ts`, `04
 lines (never the whole log in the page), jumps to the end and downloads the whole log as a file chunk by chunk. A
 truncated log says how much was kept. A work VM that starts implicitly (`workvm.state` `starting`) counts down like an
 open `workvm.request`; a stopped one (paused session) reads "stopped – starts again on the next use".
+A run whose own last event still says running while its operation is `failed` with `device_failed` is shown
+cancelled with "Reason: the device failed" / "Grund: Gerät ausgefallen" (the hub cannot write the encrypted run
+event; the operation state wins, ADR-086 §5).
 
 ### 5.4b Platform browser (KOR-44, ADR-085)
 

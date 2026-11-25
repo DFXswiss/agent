@@ -10,6 +10,8 @@
 // - `quota_choice` (ADR-081 section 5): "Continue with DFX access" (the task's consent, `POST
 //   /v1/tasks/{task}/model-consent`) and, for the task's owner only, "Always" (the setting `fallback.own_to_dfx`);
 //   without an answer the task continues by itself on the own subscription at its release;
+// - `device_failed` of a task pinned to the failed computer (ADR-086 section 3): "Choose a computer automatically"
+//   (`PUT /v1/tasks/{task}/placement` with nulls); an unpinned task continues by itself, so it offers nothing;
 // - `session_failed`, `guest_error`, `device_unreachable`, `no_capacity`: "Try again" (the newest prompt again).
 //
 // Prompts go through the chat's send code (the sealed prompt is kept for a retry after a lost answer). The entry
@@ -22,6 +24,7 @@ import { sendPrompt } from '../../../core/chat/actions';
 import { allowDfxAlways, allowDfxForTask } from '../../../core/credentials/model';
 import type { AttentionRow } from '../../../core/store/slices/attention';
 import type { TaskRow } from '../../../core/store/slices/tasks';
+import { setTaskPlacement } from '../../../core/tasks/placement';
 import { retryPrompt, sendable, sendErrorCode } from '../../../core/tasks/send';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
@@ -233,6 +236,22 @@ export function Actions({
                 {t(always ? 'model.consent.always.saved' : 'model.consent.always.hint')}
               </p>
             )}
+          </>
+        )}
+        {action === 'automatic' && (
+          <>
+            <p className="w-full text-sm text-gray-700" data-testid="attention.automatic.hint">
+              {t('attention.automatic.hint')}
+            </p>
+            <button
+              type="button"
+              className={SECONDARY}
+              disabled={sending}
+              onClick={() => void run(() => setTaskPlacement(app.tasks, task.task_id, null))}
+              data-testid="attention.automatic"
+            >
+              {t('attention.automatic')}
+            </button>
           </>
         )}
         {action === 'retry' && (

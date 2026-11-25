@@ -6,7 +6,8 @@ the device lists ask here). The device WebSocket (`agent_hub.stream.ws`) writes 
 
 - `connect`: the device must be usable by the rule of the signature gate (`agent_hub.device.keys`: `active`, its
   principal enabled, an org device still an active member of its org); the row is (re)written for this connection
-  (`hub_instance`, `connected_at`, heartbeat = now) and `device.connect` is audited;
+  (`hub_instance`, `connected_at`, heartbeat = now), `device.offline_since` is cleared and `device.connect` is
+  audited;
 - `heartbeat`: the heartbeat time and `device.capacity` are updated - only while the row still belongs to this
   connection and the device is still usable (otherwise the connection was superseded by a newer one, or the device was
   decertified or removed, and the socket closes);
@@ -15,6 +16,9 @@ the device lists ask here). The device WebSocket (`agent_hub.stream.ws`) writes 
 - `expire` (job of this area, every few seconds in every hub process): rows whose heartbeat is older than the online
   window are deleted - a hub process that died leaves rows behind, a socket that stopped sending is closed by its own
   process - and `device.disconnect` is audited.
+
+When a device goes offline by `disconnect` or `expire`, `device.offline_since` gets the hub time (only when unset:
+the first moment counts); the failover of ADR-086 measures its deadline from there (`agent_hub.failover`).
 
 Audit rows carry the device as actor and target and, for org devices, the owning org.
 
@@ -113,6 +117,7 @@ def connect(
         " connected_at = EXCLUDED.connected_at, last_heartbeat_at = EXCLUDED.last_heartbeat_at",
         (device_id, instance, now, now),
     )
+    connection.execute("UPDATE hub.device SET offline_since = NULL WHERE id = %s", (device_id,))
     _audit(connection, "device.connect", device_id, now)
     return previous is not None and _fresh(previous[0], now, window)
 
@@ -136,6 +141,10 @@ def heartbeat(
     ).fetchone()
     if owned is None or device is None or not device[0]:
         return Heartbeat(current=False)
+    # a connect through a hub process of an older release did not clear it (ADR-086 section 1)
+    connection.execute(
+        "UPDATE hub.device SET offline_since = NULL WHERE id = %s AND offline_since IS NOT NULL", (device_id,)
+    )
     if device[1] == dict(capacity):
         return Heartbeat(current=True)
     connection.execute(
@@ -153,8 +162,18 @@ def disconnect(connection: Connection, device_id: UUID, instance: str, connected
     ).fetchone()
     if removed is None:
         return False
+    went_offline(connection, [device_id], now)
     _audit(connection, "device.disconnect", device_id, now)
     return True
+
+
+def went_offline(connection: Connection, device_ids: Sequence[UUID], now: datetime) -> None:
+    """Record the hub time the devices went offline (`device.offline_since`, ADR-086 section 1), only when unset."""
+    if device_ids:
+        connection.execute(
+            "UPDATE hub.device SET offline_since = %s WHERE id = ANY(%s::uuid[]) AND offline_since IS NULL",
+            (now, [str(item) for item in device_ids]),
+        )
 
 
 def expire(connection: Connection, now: datetime, window: int) -> list[UUID]:
@@ -164,6 +183,7 @@ def expire(connection: Connection, now: datetime, window: int) -> list[UUID]:
         (now - timedelta(seconds=window),),
     ).fetchall()
     devices = sorted(UUID(str(row[0])) for row in rows)
+    went_offline(connection, devices, now)
     for device in devices:
         _audit(connection, "device.disconnect", device, now)
     return devices
