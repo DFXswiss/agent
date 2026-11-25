@@ -5,10 +5,21 @@
 // (`PUT /v1/workgroups/{wg}/placement`, 06-web.md section 7.3, ADR-075 section 6). Controls the user's verified rights
 // do not allow are not rendered (section 1.2). The rows are a `WindowedList` (ADR-086 section 1: at most `MAX_ROWS`
 // rendered), built once per log change; the members and devices of the create dialog are searchable pickers that
-// render a bounded number of choices (`lists/Picker.tsx`).
-import { useId, useMemo, useState } from 'react';
+// render a bounded number of choices (`lists/Picker.tsx`). A VM of the workgroup that its device reports outdated
+// shows why it waits (or that it moves when its sessions are paused) and offers "Switch now" with a preview of the
+// paused sessions that move along (`POST /v1/workgroups/{wg}/vms/{vm}/switch`, ADR-093; the hub refuses members without
+// administration rights).
+import { type ReactNode, useId, useMemo, useState } from 'react';
 import { actionErrorCode } from '../../../core/org/batch';
-import { type Placement, setWorkgroupPlacement, validChoice } from '../../../core/tasks/placement';
+import {
+  type Placement,
+  setWorkgroupPlacement,
+  validChoice,
+  type WorkgroupDevices,
+} from '../../../core/tasks/placement';
+import { type OutdatedVm, outdatedVms, requestVmSwitch, shortId, switchStatus } from '../../../core/tasks/vmswitch';
+import { formatEventTime, localTimeZone } from '../../../core/i18n';
+import { useNow } from '../../countdown/useNow';
 import { PlacementSelect, useWorkgroupDevices } from '../../composer/DeviceChoice';
 import { Dialog } from '../members/Dialog';
 import { Link, useParams } from 'react-router-dom';
@@ -43,7 +54,8 @@ export type Open =
   | { readonly kind: 'create' }
   | { readonly kind: 'placement'; readonly row: WorkgroupRow }
   | { readonly kind: 'rename'; readonly row: WorkgroupRow }
-  | { readonly kind: 'archive'; readonly row: WorkgroupRow };
+  | { readonly kind: 'archive'; readonly row: WorkgroupRow }
+  | { readonly kind: 'vm-switch'; readonly row: WorkgroupRow; readonly vm: OutdatedVm };
 
 /** A member of the create dialog with the access chosen for it. */
 interface MemberChoice {
@@ -310,11 +322,9 @@ function PlacementDialog(props: {
 }
 
 /** The row's default device ("Default device: Automatic" or "… <device> · vm-…"), read from the hub. */
-function PlacementLine({ org, wg, version }: { readonly org: string; readonly wg: string; readonly version: number }) {
+function PlacementLine({ org, devices }: { readonly org: string; readonly devices: WorkgroupDevices }) {
   const { t } = useI18n();
   const name = useDeviceNames([org]);
-  const devices = useWorkgroupDevices(wg, version);
-  if (devices === null) return null;
   const placement = validChoice(devices.devices, devices.placement);
   const text =
     placement === null
@@ -327,6 +337,103 @@ function PlacementLine({ org, wg, version }: { readonly org: string; readonly wg
   );
 }
 
+/** The outdated VMs of a workgroup: why each waits, and "Switch now" (ADR-093). */
+function VmSwitchList(props: {
+  readonly row: WorkgroupRow;
+  readonly devices: WorkgroupDevices;
+  readonly requested: Readonly<Record<string, string>>;
+  readonly onOpen: (open: Open) => void;
+}) {
+  const { row, devices, requested, onOpen } = props;
+  const { t, locale } = useI18n();
+  const now = useNow(false);
+  const time = (text: string) => formatEventTime(Date.parse(text), { locale, timeZone: localTimeZone(), now });
+  const vms = outdatedVms(devices.devices);
+  if (vms.length === 0) return null;
+  return (
+    <ul className="flex flex-col gap-2 text-sm" data-testid="workgroups.vm-switch">
+      {vms.map((vm) => {
+        const status = switchStatus(vm.upgrade);
+        const at = requested[vm.vm_id];
+        return (
+          <li
+            key={vm.vm_id}
+            className="flex flex-col gap-1"
+            data-testid="workgroups.vm-switch.item"
+            data-vm={vm.vm_id}
+            data-status={status}
+          >
+            <span>{t('workgroups.vm-switch.line', { vm: vm.vm_id, golden: vm.upgrade.golden_version })}</span>
+            {status === 'moves' && <span>{t('workgroups.vm-switch.moves')}</span>}
+            {status === 'switching' && <span>{t('workgroups.vm-switch.switching')}</span>}
+            {status === 'held' &&
+              vm.upgrade.holds.map((hold) => (
+                <span
+                  key={`${hold.reason}.${hold.session_id ?? ''}`}
+                  className="text-amber-800"
+                  data-testid="workgroups.vm-switch.hold"
+                  data-reason={hold.reason}
+                >
+                  {t(`workgroups.vm-switch.hold.${hold.reason}`, {
+                    session:
+                      hold.session_id === null ? t('workgroups.vm-switch.session.none') : shortId(hold.session_id),
+                    time: time(hold.since),
+                  })}
+                </span>
+              ))}
+            {at !== undefined && (
+              <span data-testid="workgroups.vm-switch.requested">
+                {t('workgroups.vm-switch.requested', { time: time(at) })}
+              </span>
+            )}
+            {status !== 'switching' && (
+              <button
+                type="button"
+                className={`${BUTTON} self-start`}
+                onClick={() => onOpen({ kind: 'vm-switch', row, vm })}
+                data-testid="workgroups.vm-switch.open"
+              >
+                {t('workgroups.vm-switch.open')}
+              </button>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** The facts of a row the viewer can read: access, devices, default device and the outdated VMs (one hub read). */
+function AccessFacts({ item }: { readonly item: WorkgroupEntry }) {
+  const { org, row, version, requested, onOpen } = item;
+  const devices = useWorkgroupDevices(row.id, version);
+  return (
+    <>
+      <Facts row={row}>
+        {devices !== null && (
+          <>
+            {' · '}
+            <PlacementLine org={org} devices={devices} />
+          </>
+        )}
+      </Facts>
+      {devices !== null && <VmSwitchList row={row} devices={devices} requested={requested} onOpen={onOpen} />}
+    </>
+  );
+}
+
+function Facts({ row, children }: { readonly row: WorkgroupRow; readonly children?: ReactNode }) {
+  const { t } = useI18n();
+  return (
+    <p className="text-sm text-gray-700">
+      <span data-testid="workgroups.item.access">{t(`workgroups.access.${row.myAccess ?? 'none'}`)}</span>
+      {' · '}
+      <span data-testid="workgroups.item.devices">{t('workgroups.devices', { count: row.devices.length })}</span>
+      {children}
+    </p>
+  );
+}
+
 /** What a workgroup row shows: the row, the org (for the link) and the viewer's rights. */
 interface WorkgroupEntry {
   readonly org: string;
@@ -336,11 +443,13 @@ interface WorkgroupEntry {
   readonly writer: boolean;
   /** Changes after a saved default (the row reads it again). */
   readonly version: number;
+  /** When a switch of a VM was requested here (VM ID -> time). */
+  readonly requested: Readonly<Record<string, string>>;
   readonly onOpen: (open: Open) => void;
 }
 
 function WorkgroupRowView({ item }: { readonly item: WorkgroupEntry }) {
-  const { org, row, admin, writer, version, onOpen } = item;
+  const { org, row, admin, writer, onOpen } = item;
   const { t } = useI18n();
   const name = row.name ?? t('workgroups.unnamed');
   return (
@@ -366,17 +475,7 @@ function WorkgroupRowView({ item }: { readonly item: WorkgroupEntry }) {
           </span>
         )}
       </div>
-      <p className="text-sm text-gray-700">
-        <span data-testid="workgroups.item.access">{t(`workgroups.access.${row.myAccess ?? 'none'}`)}</span>
-        {' · '}
-        <span data-testid="workgroups.item.devices">{t('workgroups.devices', { count: row.devices.length })}</span>
-        {row.myAccess !== null && (
-          <>
-            {' · '}
-            <PlacementLine org={org} wg={row.id} version={version} />
-          </>
-        )}
-      </p>
+      {row.myAccess === null ? <Facts row={row} /> : <AccessFacts item={item} />}
       {writer && (
         <button
           type="button"
@@ -417,6 +516,8 @@ function WorkgroupRowView({ item }: { readonly item: WorkgroupEntry }) {
 const workgroupKey = (entry: WorkgroupEntry) => entry.row.id;
 const workgroupAttributes = (entry: WorkgroupEntry) => ({ 'data-testid': 'workgroups.item', 'data-wg': entry.row.id });
 
+const NONE_REQUESTED: Readonly<Record<string, string>> = {};
+
 /** The workgroup rows in the order of `workgroupRows` (default first, archived last), windowed. */
 export function WorkgroupList(props: {
   readonly org: string;
@@ -426,12 +527,14 @@ export function WorkgroupList(props: {
   readonly writable: (wg: string) => boolean;
   /** Changes after a saved default (the rows read it again). */
   readonly version: number;
+  readonly requested?: Readonly<Record<string, string>>;
   readonly onOpen: (open: Open) => void;
 }) {
-  const { org, rows, admin, writable, version, onOpen } = props;
+  const { org, rows, admin, writable, version, requested = NONE_REQUESTED, onOpen } = props;
   const entries = useMemo(
-    () => rows.map((row): WorkgroupEntry => ({ org, row, admin, writer: writable(row.id), version, onOpen })),
-    [org, rows, admin, writable, version, onOpen],
+    () =>
+      rows.map((row): WorkgroupEntry => ({ org, row, admin, writer: writable(row.id), version, requested, onOpen })),
+    [org, rows, admin, writable, version, requested, onOpen],
   );
   return (
     <WindowedList
@@ -459,6 +562,7 @@ export function WorkgroupsScreen() {
   const directory = useDirectory(org, state !== null);
   const [open, setOpen] = useState<Open | null>(null);
   const [version, setVersion] = useState(0);
+  const [requested, setRequested] = useState<Readonly<Record<string, string>>>(NONE_REQUESTED);
   // rebuilt only when the verified log, the user or the names change, not on every render
   const rows = useMemo(
     () => (state === null || userId === null ? [] : workgroupRows(state, userId, directory)),
@@ -499,6 +603,7 @@ export function WorkgroupsScreen() {
         admin={admin}
         writable={(wg) => state.canWriteWg(userId, wg)}
         version={version}
+        requested={requested}
         onOpen={setOpen}
       />
       {open?.kind === 'create' && (
@@ -514,6 +619,35 @@ export function WorkgroupsScreen() {
           }}
           onClose={close}
         />
+      )}
+      {open?.kind === 'vm-switch' && (
+        <ActionDialog
+          title={t('workgroups.vm-switch.title', { vm: open.vm.vm_id })}
+          testId="workgroups.vm-switch.dialog"
+          confirmLabel={t('workgroups.vm-switch.confirm')}
+          run={async () => {
+            const answer = await requestVmSwitch(app.tasks, open.row.id, open.vm.vm_id);
+            if (answer.requested_at !== null) {
+              const at = answer.requested_at;
+              setRequested((before) => ({ ...before, [open.vm.vm_id]: at }));
+            }
+          }}
+          onDone={() => {
+            setVersion((n) => n + 1);
+            close();
+          }}
+          onClose={close}
+        >
+          <p>{t('workgroups.vm-switch.body')}</p>
+          <p data-testid="workgroups.vm-switch.dialog.sessions">
+            {open.vm.upgrade.sessions.length === 0
+              ? t('workgroups.vm-switch.sessions.none')
+              : t('workgroups.vm-switch.sessions', {
+                  count: open.vm.upgrade.sessions.length,
+                  ids: open.vm.upgrade.sessions.map(shortId).join(', '),
+                })}
+          </p>
+        </ActionDialog>
       )}
       {open?.kind === 'rename' && (
         <RenameDialog org={org} row={open.row} current={open.row.name ?? ''} onClose={close} />

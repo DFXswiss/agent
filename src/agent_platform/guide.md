@@ -262,6 +262,7 @@ agent-platform device assign --org <org_id> [--device <device_id>]   # a device 
 agent-platform device unassign --org <org_id> --device <device_id>  # end that (rotates the keys it held)
 agent-platform device list [--org <org_id>]             # devices, their VMs, sessions, load and limits
 agent-platform wg placement --wg <wg_id> [--device <device_id> [--vm <vm_id>] | --auto]  # default for new tasks
+agent-platform wg vm-switch --wg <wg_id> --vm <vm_id> [--preview]  # move a VM to the newest version now
 agent-platform github connect                           # opens GitHub for your user (see below)
 ```
 

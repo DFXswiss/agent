@@ -786,6 +786,20 @@ describe('task page', () => {
         reason.replace('workspace_', ''),
       );
     }
+    // the session's VM was switched to the new version while it was paused, with all its files (ADR-093)
+    act(() =>
+      putSession(
+        t.store,
+        sessionRow(t, { state: 'working', context_restore: 'restored', context_reason: 'golden_switch' }) as never,
+        [],
+        0,
+      ),
+    );
+    expect(screen.getByTestId('task.context.restored')).toHaveTextContent(
+      'Continued on the new version of the workgroup VM – files carried over.',
+    );
+    expect(screen.getByTestId('task.context.restored')).toHaveAttribute('data-workspace', 'golden_switch');
+    expect(screen.getByTestId('task.context.restored')).toHaveClass('text-gray-600');
     act(() =>
       putSession(
         t.store,

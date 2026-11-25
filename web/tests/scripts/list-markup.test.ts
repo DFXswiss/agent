@@ -23,6 +23,10 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
   'src/ui/shell/header/org-switcher.tsx': { count: 1, reason: 'organisations the user belongs to (a handful)' },
   'src/ui/settings/SettingsScreen.tsx': { count: 1, reason: 'settings sections of the registry (a handful)' },
   'src/ui/screens/task/Tabs.tsx': { count: 1, reason: 'task tabs of the registry (a handful)' },
+  'src/ui/screens/workgroups/WorkgroupsScreen.tsx': {
+    count: 2,
+    reason: 'the outdated VMs of one workgroup (a few) and their holds (at most 16 each, ADR-093)',
+  },
   'src/ui/screens/whiteboard/WhiteboardScreen.tsx': { count: 1, reason: 'the fixed whiteboard levels (org, group…)' },
   'src/ui/composer/Composer.tsx': { count: 1, reason: 'chips of the composer (fixed suggestions)' },
   'src/ui/screens/security/SecurityScreen.tsx': { count: 1, reason: 'static points of the security page' },

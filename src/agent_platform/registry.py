@@ -29,6 +29,7 @@ from agent_platform import (
     sessions,
     subscriptions,
     testruns,
+    vmswitch,
     wgsettings,
     whiteboards,
     workvm,
@@ -57,4 +58,5 @@ MODULES: tuple[Callable[[Any], None], ...] = (
     modelaccess.register,
     pulls.register,
     subscriptions.register,
+    vmswitch.register,
 )

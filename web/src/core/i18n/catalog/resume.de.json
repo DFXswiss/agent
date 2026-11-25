@@ -9,6 +9,7 @@
   "restored": "Fortgesetzt mit vollem Kontext der ursprünglichen Sitzung",
   "restored.workspace_omitted": "Fortgesetzt mit dem vollständigen Gesprächsverlauf; der Arbeitsstand war zu groß und wurde nicht wiederhergestellt.",
   "restored.workspace_partial": "Fortgesetzt mit dem vollständigen Gesprächsverlauf; der Arbeitsstand wurde nur teilweise wiederhergestellt.",
+  "restored.golden_switch": "Auf neuer Fassung der Arbeitsgruppen-VM fortgesetzt – Dateien übernommen.",
   "interrupted": "Unterbrochen – das Gerät ist seit {time} nicht erreichbar. Die Aufgabe läuft weiter, sobald es zurück ist oder ein anderes passendes Gerät sie übernehmen kann.",
   "failover": "Nach einem Geräteausfall fortgesetzt (Stand des letzten gesicherten Checkpoints)"
 }

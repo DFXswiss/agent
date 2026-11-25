@@ -133,6 +133,96 @@ describe('workgroup screen', () => {
     expect(within(row()).getByTestId('workgroups.item.placement')).not.toHaveTextContent('vm-');
   });
 
+  it('says why an outdated VM waits and requests its switch by hand (ADR-093)', async () => {
+    const { w, one } = await wgWorld();
+    const { dev1 } = w.others;
+    const since = '2026-11-25T10:00:00.000Z';
+    const s1 = '01930000-0000-7000-8000-0000000000a1';
+    const s2 = '01930000-0000-7000-8000-0000000000b2';
+    const status = (fields: Record<string, unknown>) => ({
+      golden_version: 'g2',
+      golden_built_at: since,
+      state: 'waiting',
+      holds: [],
+      sessions: [],
+      ...fields,
+    });
+    const vms = [
+      {
+        vm_id: 'vm-aaaaaaaa',
+        state: 'running',
+        sessions: 1,
+        upgrade: status({
+          holds: [
+            { reason: 'session_active', session_id: s1, since },
+            { reason: 'capacity', since },
+          ],
+        }),
+      },
+      { vm_id: 'vm-bbbbbbbb', state: 'stopped', sessions: 0, upgrade: status({ sessions: [s1, s2] }) },
+      { vm_id: 'vm-cccccccc', state: 'running', sessions: 0, upgrade: status({ state: 'switching' }) },
+      { vm_id: 'vm-dddddddd', state: 'stopped', sessions: 0, upgrade: status({}) },
+      { vm_id: 'vm-eeeeeeee', state: 'running', sessions: 0, upgrade: null },
+    ];
+    w.client.on(`GET /v1/workgroups/${w.world.defaultWg}`, () => ({ devices: [], placement: null }));
+    w.client.on(`GET /v1/workgroups/${one}`, () => ({ devices: [{ device_id: dev1.id, online: true, vms }] }));
+    let posts = 0;
+    w.client.on(`POST /v1/workgroups/${one}/vms/vm-bbbbbbbb/switch`, () => {
+      posts += 1;
+      if (posts === 1) throw new HubError('forbidden', 403);
+      return { requested: true, requested_at: since, upgrade: vms[1]!.upgrade };
+    });
+    w.client.on(`POST /v1/workgroups/${one}/vms/vm-dddddddd/switch`, () => ({
+      requested: false,
+      requested_at: null,
+      upgrade: null,
+    }));
+    names(w, {}, { [one]: 'One' });
+    mount(w, at, `/o/${w.org}/workgroups`);
+    const row = () => screen.getAllByTestId('workgroups.item').find((item) => item.dataset.wg === one)!;
+    await waitFor(() => expect(within(row()).getAllByTestId('workgroups.vm-switch.item')).toHaveLength(4));
+    const item = (vm: string) =>
+      within(row())
+        .getAllByTestId('workgroups.vm-switch.item')
+        .find((node) => node.dataset.vm === vm)!;
+    expect(item('vm-aaaaaaaa')).toHaveAttribute('data-status', 'held');
+    expect(item('vm-aaaaaaaa')).toHaveTextContent('vm-aaaaaaaa: a new version is available (g2).');
+    const holds = within(item('vm-aaaaaaaa')).getAllByTestId('workgroups.vm-switch.hold');
+    expect(holds.map((node) => node.dataset.reason)).toEqual(['session_active', 'capacity']);
+    expect(holds[0]).toHaveTextContent('Session 000000a1 is working since');
+    expect(holds[1]).toHaveTextContent('The device has no room for the new VM yet (since');
+    expect(item('vm-bbbbbbbb')).toHaveTextContent('It moves to the new version as soon as its sessions are paused.');
+    expect(item('vm-cccccccc')).toHaveTextContent('It is switching to the new version now.');
+    expect(within(item('vm-cccccccc')).queryByTestId('workgroups.vm-switch.open')).toBeNull();
+    // the preview: which paused sessions move along; a refusal is shown, then the request is stored
+    fireEvent.click(within(item('vm-bbbbbbbb')).getByTestId('workgroups.vm-switch.open'));
+    expect(screen.getByTestId('workgroups.vm-switch.dialog.sessions')).toHaveTextContent(
+      'Paused sessions that move along: 2 (000000a1, 000000b2)',
+    );
+    fireEvent.click(screen.getByTestId('workgroups.vm-switch.dialog.confirm'));
+    await waitFor(() =>
+      expect(screen.getByTestId('workgroups.vm-switch.dialog.error')).toHaveAttribute('data-code', 'forbidden'),
+    );
+    const reads = w.client.of(`GET /v1/workgroups/${one}`).length;
+    fireEvent.click(screen.getByTestId('workgroups.vm-switch.dialog.confirm'));
+    await waitFor(() => expect(screen.queryByTestId('workgroups.vm-switch.dialog')).toBeNull());
+    expect(w.client.of(`POST /v1/workgroups/${one}/vms/vm-bbbbbbbb/switch`).at(-1)!.body).toEqual({});
+    await waitFor(() => expect(w.client.of(`GET /v1/workgroups/${one}`).length).toBeGreaterThan(reads));
+    await waitFor(() =>
+      expect(within(item('vm-bbbbbbbb')).getByTestId('workgroups.vm-switch.requested')).toHaveTextContent(
+        'Switch requested at',
+      ),
+    );
+    // a VM that turned out current: nothing requested, no line
+    fireEvent.click(within(item('vm-dddddddd')).getByTestId('workgroups.vm-switch.open'));
+    expect(screen.getByTestId('workgroups.vm-switch.dialog.sessions')).toHaveTextContent(
+      'No paused session moves along.',
+    );
+    fireEvent.click(screen.getByTestId('workgroups.vm-switch.dialog.confirm'));
+    await waitFor(() => expect(screen.queryByTestId('workgroups.vm-switch.dialog')).toBeNull());
+    expect(within(item('vm-dddddddd')).queryByTestId('workgroups.vm-switch.requested')).toBeNull();
+  });
+
   it('says loading before the log and not found for a non-member', async () => {
     const { w } = await wgWorld();
     mount(w, at, `/o/other/workgroups`);

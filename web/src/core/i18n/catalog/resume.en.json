@@ -9,6 +9,7 @@
   "restored": "Continued with the full context of the original session",
   "restored.workspace_omitted": "Continued with the full conversation; the workspace was too large and was not restored.",
   "restored.workspace_partial": "Continued with the full conversation; the workspace was only partly restored.",
+  "restored.golden_switch": "Continued on the new version of the workgroup VM – files carried over.",
   "interrupted": "Interrupted – the device has been unreachable since {time}. The task continues once the device is back or another suitable device can take it over.",
   "failover": "Continued after a device failure (from the last saved checkpoint)"
 }

@@ -1,7 +1,8 @@
 // How the current main session of a task got its context (ADR-072 sections 5 and 7, KOR-33): the hub reports on
 // every `session_row` `context_restore` ("restored", "fallback" or null) and `context_reason`: with "fallback" why a new
 // AI took over, with "restored" whether the workspace came back only partly (`workspace_partial`) or not at all
-// because it was too large (`workspace_omitted`); the conversation itself is complete in both. Older hubs send neither
+// because it was too large (`workspace_omitted`), or that it continued on the new version of the workgroup VM with all
+// its files (`golden_switch`, ADR-093); the conversation itself is complete in both. Older hubs send neither
 // field, so anything missing or malformed means "nothing to show". A fallback reason the client does not know is
 // shown with the generic text, an unknown reason of a restore as a full restore.
 import { isRecord } from '../registry';
@@ -17,8 +18,9 @@ export const CONTEXT_REASONS = [
 
 export type ContextReason = (typeof CONTEXT_REASONS)[number] | 'unknown';
 
-/** What came back of the workspace with a restored conversation. */
-export type RestoredWorkspace = 'full' | 'partial' | 'omitted';
+/** What came back of the workspace with a restored conversation; `golden_switch`: all of it, after the session's VM
+ * was switched to the new version of the workgroup VM while the session was paused (ADR-093 section 4). */
+export type RestoredWorkspace = 'full' | 'partial' | 'omitted' | 'golden_switch';
 
 export type ContextResume =
   | { readonly kind: 'restored'; readonly workspace: RestoredWorkspace }
@@ -28,6 +30,7 @@ const KNOWN: ReadonlySet<string> = new Set(CONTEXT_REASONS);
 const WORKSPACE: ReadonlyMap<unknown, RestoredWorkspace> = new Map([
   ['workspace_partial', 'partial'],
   ['workspace_omitted', 'omitted'],
+  ['golden_switch', 'golden_switch'],
 ]);
 
 /** The resume outcome of a session row, or null when the row reports none. */

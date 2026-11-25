@@ -22,6 +22,8 @@ describe('contextResume', () => {
     expect(restored(undefined)).toEqual({ kind: 'restored', workspace: 'full' });
     expect(restored('workspace_partial')).toEqual({ kind: 'restored', workspace: 'partial' });
     expect(restored('workspace_omitted')).toEqual({ kind: 'restored', workspace: 'omitted' });
+    // the session's VM was switched to the new version while it was paused (ADR-093)
+    expect(restored('golden_switch')).toEqual({ kind: 'restored', workspace: 'golden_switch' });
     // a reason a restore does not carry, a later code or a malformed value: the conversation is still complete
     for (const reason of ['context_missing', 'workspace_later', 'toString', 7]) {
       expect(restored(reason)).toEqual({ kind: 'restored', workspace: 'full' });

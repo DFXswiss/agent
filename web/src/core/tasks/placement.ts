@@ -15,6 +15,7 @@ import { isRecord } from '../registry';
 import { isTaskRow, putTasks, type SessionRow, type TaskRow } from '../store/slices/tasks';
 import { type Capacity, isCapacity } from '../org/devices';
 import type { TasksContext } from './pull';
+import { upgradeOf, type VmUpgrade } from './vmswitch';
 
 /** A chosen device and optionally one of its VMs (`null` VM = any VM of the device). */
 export interface Placement {
@@ -22,11 +23,13 @@ export interface Placement {
   readonly vm_id: string | null;
 }
 
-/** A live VM of the workgroup on a device with its occupying sessions (`vm_load`). */
+/** A live VM of the workgroup on a device with its occupying sessions (`vm_load`); `upgrade` only while the device
+ * reports it outdated (ADR-093 section 3). */
 export interface VmLoad {
   readonly vm_id: string;
   readonly state: string;
   readonly sessions: number;
+  readonly upgrade?: VmUpgrade;
 }
 
 /** A device of the workgroup (`device_ref`). */
@@ -54,10 +57,17 @@ export function placementOf(value: unknown): Placement | null {
   return { device_id: value.device_id, vm_id: vm };
 }
 
-const vmOf = (value: unknown): VmLoad | null =>
-  isRecord(value) && typeof value.vm_id === 'string' && typeof value.state === 'string' && count(value.sessions)
-    ? { vm_id: value.vm_id, state: value.state, sessions: value.sessions }
-    : null;
+const vmOf = (value: unknown): VmLoad | null => {
+  if (!isRecord(value) || typeof value.vm_id !== 'string' || typeof value.state !== 'string') return null;
+  if (!count(value.sessions)) return null;
+  const upgrade = upgradeOf(value.upgrade);
+  return {
+    vm_id: value.vm_id,
+    state: value.state,
+    sessions: value.sessions,
+    ...(upgrade === null ? {} : { upgrade }),
+  };
+};
 
 const deviceOf = (value: unknown): WorkgroupDevice | null => {
   if (!isRecord(value) || typeof value.device_id !== 'string') return null;
