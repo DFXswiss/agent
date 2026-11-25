@@ -46,3 +46,13 @@ export interface SeedRollup {
 export async function seedRollups(device: string, rollups: readonly SeedRollup[]): Promise<void> {
   await post(`/devices/${device}/rollups`, { rollups });
 }
+
+/** An outbox audit row of `session` as its device writes it (e.g. `session.model_switched`, ADR-081 section 5). */
+export async function seedAudit(
+  device: string,
+  session: string,
+  action: string,
+  detail: Record<string, unknown>,
+): Promise<void> {
+  await post(`/devices/${device}/audit`, { session_id: session, action, detail });
+}

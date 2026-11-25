@@ -14,9 +14,6 @@ import { useAppEnv } from '../../shell/context';
 import { useClock } from '../../settings/sections/model-quotas/summary';
 import '../../../core/i18n/lazy/model';
 
-const ACCESSES: ReadonlySet<string> = new Set(['subscription', 'operator', 'api_key', 'platform']);
-const CAUSES: ReadonlySet<string> = new Set(['exhausted', 'unusable', 'released']);
-
 export function ModelSwitchLine({ row }: { readonly row: TaskRow }) {
   const { app } = useAppEnv();
   const { t } = useI18n();
@@ -40,20 +37,19 @@ export function ModelSwitchLine({ row }: { readonly row: TaskRow }) {
     };
   }, [app, row.org_id, row.task_id, row.state_at, sessionState, round]);
   if (found === null) return null;
-  const access = (kind: string, model: string | null) => {
-    const name = ACCESSES.has(kind) ? t(`model.switch.access.${kind}`) : kind;
-    return model === null ? name : t('model.switch.with-model', { access: name, model });
-  };
+  const access = (kind: string, model: string | null) =>
+    t(model === null ? `model.switch.access.${kind}` : 'model.switch.with-model', {
+      access: t(`model.switch.access.${kind}`),
+      model: model ?? '',
+    });
   const line = t('model.switch.line', {
     from: access(found.fromAccess, found.fromModel),
     to: access(found.toAccess, found.toModel),
   });
-  let cause: string | null = null;
-  if (found.cause === 'exhausted' && found.until !== null) {
-    cause = t('model.switch.cause.exhausted.until', { time: clock(found.until) });
-  } else if (CAUSES.has(found.cause)) {
-    cause = t(`model.switch.cause.${found.cause}`);
-  }
+  const timed = found.cause === 'exhausted' && found.until !== null;
+  const cause = t(timed ? 'model.switch.cause.exhausted.until' : `model.switch.cause.${found.cause}`, {
+    time: clock(found.until ?? 0),
+  });
   return (
     <p
       className="text-sm text-gray-700"
@@ -63,7 +59,7 @@ export function ModelSwitchLine({ row }: { readonly row: TaskRow }) {
       data-to={found.toAccess}
       data-cause={found.cause}
     >
-      {cause === null ? line : `${line} · ${cause}`}
+      {`${line} · ${cause}`}
     </p>
   );
 }

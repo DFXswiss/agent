@@ -18,6 +18,8 @@ written straight into `hub.metric_rollup`.
 - `POST /devices/<id>/quotas {"owner_id", "windows": [{"window", "used_percent", "resets_in_s"?, "severity"?}]}`: the
   subscription windows of an owner as the polling device reports them (`quota` item; the hub accepts it only from the
   device that polls the owner, WEB-10)
+- `POST /devices/<id>/audit {"session_id", "action", "detail"}`: an outbox audit row of a session the device runs (for
+  example `session.model_switched`, ADR-081 section 5: the hub stores the row and notifies the task's owner)
 
 Only loopback, only for tests.
 """
@@ -38,7 +40,7 @@ from agent_hub.device.keys import key_id_of
 
 Json = dict[str, Any]
 SignedHeaders = Callable[[str, Callable[[bytes], bytes], str, str, bytes], dict[str, str]]
-ROUTE_RE = re.compile(r"^/devices/([0-9a-f-]{36})/(vms|metrics|usage|rollups|quotas)$")
+ROUTE_RE = re.compile(r"^/devices/([0-9a-f-]{36})/(vms|metrics|usage|rollups|quotas|audit)$")
 GIB = 1024**3
 SAMPLE_DEFAULTS: Json = {
     "cpu_ratio": 0.5,
@@ -188,6 +190,21 @@ class MetricsDouble:
                 " 'ready') ON CONFLICT DO NOTHING",
                 rows,
             )
+
+    def audit(self, device_id: str, body: Json) -> None:
+        with self.director.pool.connection() as connection:
+            row = connection.execute("SELECT task_id FROM hub.session WHERE id = %s", (body["session_id"],)).fetchone()
+        task_id = None if row is None else str(row[0])
+        item = {
+            "action": str(body["action"]),
+            "result": "ok",
+            "task_id": task_id,
+            "session_id": body["session_id"],
+            "target_kind": "session",
+            "target_id": body["session_id"],
+            "detail": body.get("detail", {}),
+        }
+        self.push(device_id, [("audit", item)])
 
     def route(self, path: str, body: Json) -> Json | None:
         """The answer of a monitoring route, None for another path."""

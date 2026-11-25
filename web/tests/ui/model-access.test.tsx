@@ -232,22 +232,24 @@ describe('model switch line', () => {
         { cause: 'released', from_access: 'platform', to_access: 'subscription', to_model: null },
         'subscription free again',
       ],
-      [{ cause: 'later', to_access: 'other', to_model: null }, '→ other'],
     ];
     for (const [detail, text] of cases) {
       rows = [switchRow(2, detail)];
       hello(t);
       await waitFor(() => expect(screen.getByTestId('task.model-switch')).toHaveTextContent(text));
     }
-    expect(screen.getByTestId('task.model-switch')).not.toHaveTextContent('·');
-    expect(screen.getByTestId('task.model-switch')).toHaveAttribute('data-cause', 'later');
+    expect(screen.getByTestId('task.model-switch')).toHaveAttribute('data-cause', 'released');
     // a failed read keeps what is shown
     t.client.on(`GET /v1/orgs/${t.org}/audit`, () => {
       throw new HubError('unavailable', 503);
     });
     hello(t);
-    await waitFor(() => expect(t.client.of(`GET /v1/orgs/${t.org}/audit`)).toHaveLength(8));
-    expect(screen.getByTestId('task.model-switch')).toHaveAttribute('data-to', 'other');
+    await waitFor(() => expect(t.client.of(`GET /v1/orgs/${t.org}/audit`)).toHaveLength(7));
+    expect(screen.getByTestId('task.model-switch')).toHaveAttribute('data-to', 'subscription');
+    // a row outside the contract's lists is no switch
+    t.client.on(`GET /v1/orgs/${t.org}/audit`, () => ({ rows: [switchRow(3, { cause: 'later' })], next_before: null }));
+    hello(t);
+    await waitFor(() => expect(screen.queryByTestId('task.model-switch')).toBeNull());
   });
 
   it('reads nothing of a session that is not known yet', async () => {
