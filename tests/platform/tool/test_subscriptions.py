@@ -265,7 +265,7 @@ def test_malformed_and_refused_records_end_with_their_code(
     assert tool.run("subscriptions", "add", "--name", "x")[1]["reason"] == "device_outdated"
 
 
-FULL = {
+FULL: dict[str, Any] = {
     "refresh_token": "refresh-token-of-the-test",
     "expires_at": "2026-11-26T06:00:00.000Z",
     "scopes": ["user:inference", "user:profile"],

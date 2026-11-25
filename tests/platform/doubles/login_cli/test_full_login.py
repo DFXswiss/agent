@@ -4,6 +4,7 @@ only when it is refused), the store of the real program, and the rotation of ref
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
@@ -21,23 +22,21 @@ from .conftest import USER, Login
 from .test_authpage import _exchange_body, _token_request
 
 
-class _Out:
+class _Out(io.StringIO):
     """Standard output of an in-process run: hands `stdin` to the double once the input field is drawn."""
 
     def __init__(self, fd: int, stdin: bytes | None) -> None:
-        self.fd, self.stdin, self.text = fd, stdin, ""
+        super().__init__()
+        self.fd, self.stdin = fd, stdin
 
     def write(self, text: str) -> int:
-        self.text += text
+        written = super().write(text)
         if self.fd >= 0 and ">\r\n" in text:
             if self.stdin is not None:
                 os.write(self.fd, self.stdin)
                 os.close(self.fd)
             self.fd = -1
-        return len(text)
-
-    def flush(self) -> None:
-        pass
+        return written
 
 
 def _argv(login: Login, *extra: str) -> list[str]:
@@ -61,14 +60,14 @@ def _run(
     read_fd, write_fd = os.pipe()
     out = _Out(write_fd, stdin)
     try:
-        code = main(argv, stdin_fd=read_fd, out=out, environ={"BROWSER": "/capture", "PATH": "/private", **environ},
-                    run=run)  # type: ignore[arg-type]  # fmt: skip
+        environ = {"BROWSER": "/capture", "PATH": "/private", **environ}
+        code = main(argv, stdin_fd=read_fd, out=out, environ=environ, run=run)
     finally:
         os.close(read_fd)
         if out.fd >= 0 or stdin is None:
             os.close(write_fd)
     screen = Screen(50, cli.DEFAULT_COLUMNS)
-    screen.feed(out.text)
+    screen.feed(out.getvalue())
     return code, [line for line in screen.lines() if line], calls
 
 
