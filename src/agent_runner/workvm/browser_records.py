@@ -128,15 +128,16 @@ async def next_frame(db: Any, browser_id: str) -> int:
     return found[0].frame_seq
 
 
-async def update(db: Any, browser_id: str, **fields: Any) -> None:
-    """Set columns of an open row (column names are keyword names of the code, never input)."""
+async def update(db: Any, browser_id: str, **fields: Any) -> bool:
+    """Set columns of an open row (column names are keyword names of the code, never input); False: it is closed."""
     names = sorted(fields)
     assignments = ", ".join(f"{name} = %s" for name in names)
     async with db.connection() as conn:
-        await conn.execute(
+        cursor = await conn.execute(
             f"UPDATE runner.browser_session SET {assignments} WHERE browser_id = %s AND state = 'open'",
             (*(fields[name] for name in names), browser_id),
         )
+        return bool(cursor.rowcount)
 
 
 async def close(db: Any, browser_id: str, *, reason: str, at: datetime) -> BrowserRow | None:

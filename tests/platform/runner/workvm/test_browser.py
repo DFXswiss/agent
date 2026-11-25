@@ -904,3 +904,160 @@ def test_an_open_row_without_a_vm_gets_one_on_the_next_call(world: World) -> Non
     answer = call(world, "browser_navigate", {"url": "https://a.test/"})
     assert (answer["browser_id"], answer["ok"], answer["notice"]) == ("br-00000000000c", True, browser.RESTART_NOTICE)
     assert ("restarted", "vm_lost") in states(world)
+
+
+# -- races and gaps (review) -----------------------------------------------------------------------------------
+
+
+def slow_start(monkeypatch: pytest.MonkeyPatch, gate: asyncio.Event, started: asyncio.Event) -> None:
+    original = Browsers._start_vm
+
+    async def start(self: Browsers, *args: Any, **kwargs: Any) -> Any:
+        started.set()
+        await gate.wait()
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Browsers, "_start_vm", start)
+
+
+@pytest.mark.parametrize("path", ["restart", "create"])
+def test_a_teardown_waits_for_a_starting_vm_and_leaves_none_running(
+    world: World, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    async def body(vms: WorkVms) -> dict[str, Any]:
+        browsers = make(vms)
+        if path == "restart":
+            await browsers.open(ctx({}))
+            await vms.reconcile()
+        gate, started = asyncio.Event(), asyncio.Event()
+        slow_start(monkeypatch, gate, started)
+        calling = asyncio.ensure_future(browsers.call("env", session(), "browser_navigate", {"url": PAGE_URL}))
+        await started.wait()
+        ending = asyncio.ensure_future(browsers.session_ended(SESSION))
+        await asyncio.sleep(0.01)
+        assert not ending.done()  # it waits for the call that starts the VM
+        gate.set()
+        answer = await calling
+        assert len(await ending) == 1
+        assert SESSION not in browsers.locks
+        return answer
+
+    assert world.run(body)["ok"] is True
+    assert all(vm["state"] == "deleted" for vm in vm_rows(world))
+    assert browser_rows(world)[-1]["close_reason"] == "session_ended"
+
+
+def test_a_vm_started_for_a_browser_closed_meanwhile_goes(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    original = Browsers._start_vm
+
+    async def start(self: Browsers, *args: Any, **kwargs: Any) -> Any:
+        vm = await original(self, *args, **kwargs)
+        sql(
+            world, "UPDATE runner.browser_session SET state = 'closed', closed_at = now(), close_reason = 'task_closed'"
+        )
+        return vm
+
+    async def body(vms: WorkVms) -> None:
+        browsers = make(vms)
+        await browsers.open(ctx({}))
+        await vms.reconcile()
+        monkeypatch.setattr(Browsers, "_start_vm", start)
+        await browsers.call("env", session(), "browser_snapshot", {})
+
+    with pytest.raises(CallFailed) as caught:
+        world.run(body)
+    assert caught.value.error == "unavailable"
+    assert caught.value.message.endswith(browser.CLOSED_TEXT)
+    assert [vm["delete_reason"] for vm in vm_rows(world)].count("browser_closed") == 1
+    assert all(vm["state"] == "deleted" for vm in vm_rows(world))
+
+
+def test_the_idle_pass_sweeps_browser_vms_no_open_browser_refers_to(world: World) -> None:
+    other = session(CHILD, task_id=TASK_B)
+    world.settings = dataclasses.replace(world.settings, slots=3)
+
+    async def body(vms: WorkVms) -> list[str]:
+        browsers = make(vms)
+        await browsers.open(ctx({}))  # referenced: kept
+        orphan = await vms.obtain(other, scope="browser", size="standard")
+        await vms.request(session(), {})  # not a browser VM: kept
+        async with browsers._lock(CHILD):  # its session starts one now: kept
+            assert await browsers.idle_pass() == []
+            assert orphan.id not in [vm["id"] for vm in vm_rows(world) if vm["state"] == "deleted"]
+        await browsers.idle_pass()
+        return [orphan.id]
+
+    [orphan] = world.run(body)
+    found = {vm["id"]: (vm["scope"], vm["state"], vm["delete_reason"]) for vm in vm_rows(world)}
+    assert found[orphan] == ("browser", "deleted", "failed")
+    assert sorted(state for _scope, state, _reason in found.values()) == ["deleted", "running", "running"]
+    assert f"runner.browser orphan_deleted workvm_id={orphan}" in world.logs
+
+
+def test_a_teardown_rechecks_the_row_under_the_lock(world: World) -> None:
+    async def body(vms: WorkVms) -> list[list[str]]:
+        browsers = make(vms)
+        await browsers.open(ctx({}))
+        seen: list[int] = []
+
+        def once(_row: Any) -> bool:
+            seen.append(1)
+            return len(seen) == 1  # chosen when listed, no longer under the lock
+
+        def closing(_row: Any) -> bool:
+            sql(
+                world,
+                "UPDATE runner.browser_session SET state = 'closed', closed_at = now(), close_reason = 'browser_idle'",
+            )
+            return True
+
+        return [await browsers._close_all("browser_idle", once), await browsers._close_all("browser_idle", closing)]
+
+    assert world.run(body) == [[], []]
+
+
+def test_a_start_that_breaks_ends_the_countdown(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def broken(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("broken")
+
+    monkeypatch.setattr(Browsers, "_start_vm", broken)
+
+    async def body(vms: WorkVms) -> None:
+        await make(vms).open(ctx({}))
+
+    with pytest.raises(RuntimeError):
+        world.run(body)
+    assert states(world) == [("starting", None), ("closed", "failed")]
+
+
+def test_a_broken_action_still_gets_its_entry(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def broken(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("broken")
+
+    async def body(vms: WorkVms) -> None:
+        browsers = make(vms)
+        await browsers.call("env", session(), "browser_snapshot", {})
+        monkeypatch.setattr(Browsers, "_run", broken)
+        await browsers.call("env", session(), "browser_click", {"target": "e1"})
+
+    with pytest.raises(RuntimeError):
+        world.run(body)
+    first, second = events(world, "browser.action")
+    assert (first["seq"], second["seq"], second["ok"], second["error"]) == (1, 2, False, browser.BROKEN_ERROR)
+
+
+def test_locks_of_closed_browsers_are_forgotten(world: World) -> None:
+    async def body(vms: WorkVms) -> None:
+        browsers = make(vms)
+        await browsers.open(ctx({}))
+        await browsers.close(ctx({}))
+        assert SESSION not in browsers.locks
+        browsers._prune(SESSION)  # nothing to forget
+        lock = browsers._lock(SESSION)
+        async with lock:
+            browsers._prune(SESSION)  # held: kept
+            assert browsers.locks[SESSION] is lock
+        browsers._prune(SESSION)
+        assert SESSION not in browsers.locks
+
+    world.run(body)

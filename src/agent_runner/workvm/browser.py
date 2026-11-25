@@ -82,6 +82,7 @@ RESTARTED_ERROR = "The browser was started again before this action, so it did n
 SEARCH_OFF = "Automated search is not switched on: open a search page with url, like a person."
 LOST_ERROR = "The browser VM stopped answering and was removed; the next action starts a fresh one."
 FAILED_ERROR = "The browser did not answer as expected."
+BROKEN_ERROR = "The action did not complete on the runner."
 TIMEOUT_ERROR = "timeout"
 CLOSED_TEXT = "The browser session was closed. Try again."
 BLANK = "about:blank"
@@ -204,6 +205,12 @@ class Browsers:
     def _lock(self, session_id: str) -> asyncio.Lock:
         return self.locks.setdefault(session_id, asyncio.Lock())
 
+    def _prune(self, session_id: str) -> None:
+        """Forget the lock of a session whose browser session closed, unless someone holds or waits for it."""
+        lock = self.locks.get(session_id)
+        if lock is not None and not lock.locked() and not getattr(lock, "_waiters", None):
+            del self.locks[session_id]
+
     def _stop_live(self, session_id: str) -> None:
         if self.live is not None:
             self.live.stop(session_id)
@@ -259,14 +266,10 @@ class Browsers:
         async with self._lock(session.id):
             row = await rows.open_of(self.db, session.id)
             closed = None if row is None else await self._close(row, "browser_closed")
-            if closed is not None:
-                return {
-                    "closed": True,
-                    "browser_id": closed.browser_id,
-                    "actions": closed.seq,
-                    "reason": "browser_closed",
-                }
-            last = await rows.last_of(self.db, session.id)
+            last = closed or await rows.last_of(self.db, session.id)
+        self._prune(session.id)
+        if closed is not None:
+            return {"closed": True, "browser_id": closed.browser_id, "actions": closed.seq, "reason": "browser_closed"}
         if last is None:
             return {"closed": False, "browser_id": None, "actions": 0, "reason": None}
         return {"closed": False, "browser_id": last.browser_id, "actions": last.seq, "reason": last.close_reason}
@@ -315,6 +318,49 @@ class Browsers:
         seq = await rows.next_seq(self.db, row.browser_id, self.now())
         if seq is None:
             raise CallFailed("unavailable", CLOSED_TEXT)
+        try:
+            answer, file = await self._perform(
+                env, session, row, vm, seq, tool=tool, arguments=arguments, restarted=restarted
+            )
+        except BaseException:  # the used seq still gets its entry: the record has no gaps
+            broken = _blank(row.url, BROKEN_ERROR)
+            await asyncio.shield(
+                asyncio.ensure_future(
+                    self._finish(row, seq, tool=tool, arguments=arguments, answer=broken, notices=notices, begun=begun)
+                )
+            )
+            raise
+        notice = await self._finish(
+            row, seq, tool=tool, arguments=arguments, answer=answer, notices=notices, begun=begun
+        )
+        return {
+            "browser_id": row.browser_id,
+            "seq": seq,
+            "ok": answer.ok,
+            "error": answer.error,
+            "notice": notice,
+            "url": answer.url,
+            "title": answer.title,
+            "tab": answer.tab,
+            "tabs": answer.tabs,
+            "snapshot": "" if arguments.get("snapshot") is False else answer.snapshot,
+            "result": answer.result,
+            "file": file,
+        }
+
+    async def _perform(
+        self,
+        env: Any,
+        session: LocalSession,
+        row: BrowserRow,
+        vm: WorkVm,
+        seq: int,
+        *,
+        tool: str,
+        arguments: Mapping[str, Any],
+        restarted: bool,
+    ) -> tuple[Answer, dict[str, Any] | None]:
+        """The helper's answer of one action and the file it brought into the workspace."""
         request = dict(arguments)
         file: dict[str, Any] | None = None
         try:
@@ -333,26 +379,27 @@ class Browsers:
                     answer = replace(answer, ok=False, error=error)
         except _Failed as failed:
             answer = _blank(BLANK if restarted else row.url, failed.message)
+        return answer, file
+
+    async def _finish(
+        self,
+        row: BrowserRow,
+        seq: int,
+        *,
+        tool: str,
+        arguments: Mapping[str, Any],
+        answer: Answer,
+        notices: Sequence[str],
+        begun: float,
+    ) -> str | None:
+        """Update the row and write the `browser.action` entry of `seq`; the answer's notice."""
         notice = clean(" ".join([*notices, *([answer.notice] if answer.notice else [])]), NOTICE_LIMIT) or None
         await rows.update(self.db, row.browser_id, url=answer.url, last_call_at=self.now())
         duration_ms = max(0, int((self.clock() - begun) * 1000))
         await self._action_event(
             row, seq, tool=tool, arguments=arguments, answer=answer, notice=notice, duration_ms=duration_ms
         )
-        return {
-            "browser_id": row.browser_id,
-            "seq": seq,
-            "ok": answer.ok,
-            "error": answer.error,
-            "notice": notice,
-            "url": answer.url,
-            "title": answer.title,
-            "tab": answer.tab,
-            "tabs": answer.tabs,
-            "snapshot": "" if arguments.get("snapshot") is False else answer.snapshot,
-            "result": answer.result,
-            "file": file,
-        }
+        return notice
 
     def _search(self, query: str) -> str:
         if not self.settings.search_url:
@@ -492,13 +539,13 @@ class Browsers:
         await self._state(draft, "starting")
         try:
             vm = await self._start_vm(session, implicit=draft.implicit, workvm_id=draft.workvm_id)
-        except OperationFailed:
-            await self._state(draft, "closed", reason="failed")  # the countdown ends
-            raise
-        try:
-            row = await rows.insert(self.db, replace(draft, ready_ms=int((self.clock() - begun) * 1000)))
-        except BaseException:
-            await self.workvms.delete(vm, reason="failed")
+            try:
+                row = await rows.insert(self.db, replace(draft, ready_ms=int((self.clock() - begun) * 1000)))
+            except BaseException:
+                await self.workvms.delete(vm, reason="failed")
+                raise
+        except BaseException:  # the countdown ends on every failure
+            await asyncio.shield(asyncio.ensure_future(self._state(draft, "closed", reason="failed")))
             raise
         await self._state(row, "open")
         self.log(f"opened browser_id={row.browser_id} ready_ms={row.ready_ms} workvm_id={vm.id}")
@@ -539,7 +586,9 @@ class Browsers:
             elif old.state not in ("deleted", "deleting"):
                 await self.workvms.delete(old, reason="vm_lost")
         vm = await self._start_vm(session, implicit=row.implicit, workvm_id=None)
-        await rows.update(self.db, row.browser_id, workvm_id=vm.id)
+        if not await rows.update(self.db, row.browser_id, workvm_id=vm.id):  # closed meanwhile: the VM goes
+            await self.workvms.delete(vm, reason="browser_closed")
+            raise OperationFailed("upstream_error", retryable=True, message=CLOSED_TEXT)
         await self._state(replace(row, workvm_id=vm.id), "restarted", reason=reason)
         self.log(f"restarted browser_id={row.browser_id} reason={reason} workvm_id={vm.id}")
         return vm, True
@@ -584,11 +633,13 @@ class Browsers:
         return closed
 
     async def session_ended(self, session_id: str, *, reason: str = "session_ended") -> list[str]:
-        """The session ended (or its task closed): its browser session closes with the reason."""
-        row = await rows.open_of(self.db, session_id)
-        if row is None or await self._close(row, reason) is None:
-            return []
-        return [row.browser_id]
+        """The session ended (or its task closed): its browser session closes with the reason. Under the session's
+        lock, so a call that opens a browser right now finishes first and its browser closes too."""
+        async with self._lock(session_id):
+            row = await rows.open_of(self.db, session_id)
+            closed = None if row is None else await self._close(row, reason)
+        self._prune(session_id)
+        return [] if closed is None else [closed.browser_id]
 
     async def close_task(self, task_id: str) -> list[str]:
         """Every browser session of a closed task closes (`task_closed`); returns their IDs."""
@@ -600,22 +651,51 @@ class Browsers:
 
     async def idle_pass(self) -> list[str]:
         """Browser sessions without a call for their `idle_seconds` close (`browser_idle`); a session whose call
-        runs now is skipped."""
+        runs now is skipped. Then browser VMs no open browser session refers to go (`sweep`)."""
         now = self.now()
-        return await self._close_all(
+        closed = await self._close_all(
             "browser_idle",
-            lambda row: (
-                not self._lock(row.session_id).locked()
-                and now - row.last_call_at >= timedelta(seconds=row.idle_seconds)
-            ),
+            lambda row: now - row.last_call_at >= timedelta(seconds=row.idle_seconds),
+            wait=False,
         )
+        await self.sweep()
+        return closed
 
-    async def _close_all(self, reason: str, chosen: Callable[[BrowserRow], bool]) -> list[str]:
+    async def _close_all(self, reason: str, chosen: Callable[[BrowserRow], bool], *, wait: bool = True) -> list[str]:
+        """Close the chosen open browser sessions under their session's lock (a call that starts a VM finishes
+        first); without `wait` a session whose call runs now is skipped."""
         closed: list[str] = []
         for row in await rows.open_rows(self.db):
-            if chosen(row) and await self._close(row, reason) is not None:
+            if not chosen(row):
+                continue
+            lock = self._lock(row.session_id)
+            if not wait and lock.locked():
+                continue
+            async with lock:
+                fresh = await rows.open_of(self.db, row.session_id)
+                done = None
+                if fresh is not None and fresh.browser_id == row.browser_id and chosen(fresh):
+                    done = await self._close(fresh, reason)
+            self._prune(row.session_id)
+            if done is not None:
                 closed.append(row.browser_id)
         return closed
+
+    async def sweep(self) -> list[str]:
+        """Delete live browser VMs that no open browser session refers to (left by a race with a teardown) unless
+        their session is starting one now; returns their IDs."""
+        referenced = {row.workvm_id for row in await rows.open_rows(self.db)}
+        removed: list[str] = []
+        for vm in await vm_records.live(self.db, "starting", "running", "stopping", "stopped"):
+            if vm.scope != BROWSER_SCOPE or vm.id in referenced:
+                continue
+            lock = self.locks.get(vm.session_id or vm.requested_by)
+            if lock is not None and lock.locked():
+                continue
+            await self.workvms.delete(vm, reason="failed")
+            self.log(f"orphan_deleted workvm_id={vm.id}")
+            removed.append(vm.id)
+        return removed
 
     # -- events ------------------------------------------------------------------------------------------------
 

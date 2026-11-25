@@ -1,12 +1,13 @@
 """The runner's side of the browser helper in the VM (docs/platform/spec/13-work-vm.md section 13.3).
 
-The runner runs `sudo -n /usr/local/bin/workvm-browser call|selftest|stream ...` over Lima's SSH. The VM belongs to
-the session and its root may have replaced the helper, so every answer is untrusted: a `call` answer is one JSON line
-of at most `ANSWER_LIMIT` bytes with exactly the keys of `ANSWER_KEYS` and their types (`parse_answer`), a screencast
-frame is a header line of at most `HEADER_LIMIT` bytes with exactly `{bytes, width, height}` followed by at most
-`FRAME_LIMIT` JPEG bytes (`parse_header`). Anything else raises `WorkVmError("workvm_answer_invalid")`, which the
-caller treats as a failed helper (`vm_lost`). Texts are cut to the limits of the answer and the event (never
-rejected for their length; the byte cap bounds them), NUL and lone surrogates become U+FFFD.
+The runner runs `sudo -n /usr/local/bin/workvm-browser call|selftest|stream ...` over Lima's SSH. The VM belongs to the
+session and its root may have replaced the helper, so every answer is untrusted: a `call` answer is one JSON line of at
+most `ANSWER_LIMIT` bytes with exactly the keys of `ANSWER_KEYS` and their types (`parse_answer`), a screencast frame is
+a header line of at most `HEADER_LIMIT` bytes with exactly `{bytes, width, height}` followed by at most `FRAME_LIMIT`
+JPEG bytes (`parse_header`); JSON nested too deeply for the parser is invalid too. Anything else raises
+`WorkVmError("workvm_answer_invalid")`, which the caller treats as a failed helper (`vm_lost`). Texts are cut to the
+limits of the answer and the event (never rejected for their length; the byte cap bounds them), NUL and lone surrogates
+become U+FFFD.
 """
 
 from __future__ import annotations
@@ -185,7 +186,7 @@ def parse_answer(result: ShellResult) -> Answer:
         raise _invalid()
     try:
         data = json.loads(result.stdout.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
         raise _invalid() from None
     answer = _object(data, ANSWER_KEYS)
     result_text = answer["result"]
@@ -211,7 +212,7 @@ def selftest_ok(result: ShellResult) -> bool:
         return False
     try:
         data = json.loads(result.stdout.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
         return False
     return isinstance(data, dict) and set(data) == {"ok"} and data["ok"] is True
 
@@ -222,7 +223,7 @@ def parse_header(line: bytes) -> Header:
         raise _invalid()
     try:
         data = json.loads(line.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):
         raise _invalid() from None
     header = _object(data, frozenset({"bytes", "width", "height"}))
     return Header(

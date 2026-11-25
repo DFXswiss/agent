@@ -100,6 +100,7 @@ def test_an_answer_outside_the_schema_is_invalid(value: Any) -> None:
         ShellResult(0, b"x" * (helper.ANSWER_LIMIT + 1), False),
         ShellResult(0, b"\xff", False),
         ShellResult(0, b"{", False),
+        ShellResult(0, b"[" * 100000 + b"]" * 100000, False),  # nested deeper than the parser goes
     ],
 )
 def test_a_broken_answer_is_invalid(shell: ShellResult) -> None:
@@ -117,6 +118,7 @@ def test_a_broken_answer_is_invalid(shell: ShellResult) -> None:
         (result({"ok": True}, code=1), False),
         (result({"ok": True}, truncated=True), False),
         (ShellResult(0, b"\xff", False), False),
+        (ShellResult(0, b"[" * 100000, False), False),
     ],
 )
 def test_selftest(shell: ShellResult, ok: bool) -> None:
@@ -133,6 +135,7 @@ def test_frame_headers() -> None:
         b'{"bytes": 1, "width": 1}',
         b"[]",
         b"\xff",
+        b"[" * 4000,
         b" " * 4097,
     ):
         with pytest.raises(WorkVmError):
