@@ -132,6 +132,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | session-workvm | screens/session (work VM panel and runtime, KOR-29) | `session workvm --session` | done |
 | task-workvm-items | screens/task (work VM runs and states in the chat) | `task show`, `task follow` | done |
 | test-runs | screens/session, screens/task (test runs: list, show, log; ADR-080, KOR-43) | `test list --session\|--task`, `test show --session\|--task`, `test log --session\|--task --offset --limit --output` | done |
+| platform-browser | screens/session (tab Browser: action record with pictures, live picture, bandwidth), screens/task (chat card of the browser session; ADR-085, KOR-44) | `browser list --session\|--task`, `browser show --session --browser`, `browser frames --session --browser --output`, `browser frames --session --output --follow --kbps --seconds` | done |
 | task-waiting | screens/task (held operations: the waiting card that asks the person who gave the instruction to connect GitHub, ADR-066, or to take the one step that gives the connection access to the repository, ADR-077) | `task show`, `task follow`, `github connect` | done |
 | task-guest-errors | screens/task (errors the guest reported, `session.error`, ADR-064) | `task show`, `task follow` | done |
 | task-runtime | screens/task (runtime of the task and its sessions, reachability of the session's device, KOR-40) | `task show`, `session show --session` | done |
@@ -247,11 +248,11 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/platform/log` | devices-assign, platform-invites |
 | `POST /v1/recovery/begin` | recover |
 | `POST /v1/recovery/finish` | recover |
-| `GET /v1/scopes/{scope}/events` | task-view, session-follow, session-terminal, operations, wg-settings, tasks-overview, session-workvm, task-workvm-items, task-waiting, task-guest-errors |
+| `GET /v1/scopes/{scope}/events` | task-view, session-follow, session-terminal, operations, wg-settings, tasks-overview, session-workvm, task-workvm-items, task-waiting, task-guest-errors, platform-browser |
 | `POST /v1/session/end` | sign-out |
 | `GET /v1/sessions/{session}` | session-view, monitoring, session-workvm, task-runtime, triggered-by |
 | `POST /v1/sessions/{session}/control` | session-control |
-| `GET /v1/stream` | session-follow |
+| `GET /v1/stream` | session-follow, platform-browser |
 | `POST /v1/tasks` | task-create, task-github-identity |
 | `GET /v1/tasks/{task}` | task-view, task-runtime |
 | `GET /v1/tasks/{task}/charges` | task-charges, consumption-per-person |

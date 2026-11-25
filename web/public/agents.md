@@ -348,6 +348,10 @@ agent-platform test list --session <session_id>               # its test runs (o
 agent-platform test show <run_id> --session <session_id>      # one run: state, summary, end of the output, log
 agent-platform test log <run_id> --session <session_id> [--offset 0] [--limit 65536]   # the full output, decrypted
 agent-platform test log <run_id> --session <session_id> --output run.log                  # the whole log into a file
+agent-platform browser list --session <session_id>            # its browser sessions (or --task <task_id>), newest first
+agent-platform browser show --session <session_id> [--browser <browser_id>] [--limit 20]   # the action record
+agent-platform browser frames --session <session_id> --output pictures                     # the recorded pictures
+agent-platform browser frames --session <session_id> --output live --follow [--kbps 1000] [--seconds 60]   # watch live
 ```
 
 When an operation of a session needs GitHub and your user has no usable GitHub connection, or the connection does not
@@ -401,6 +405,18 @@ back one of your user's own waiting prompts; `peer_outdated` means the session's
 operation (`task operations`) and a session (`session show`) name the person whose instruction they followed from in
 `triggered_by` (null: not attributed), and `billing` and `task charges` give the consumption per person in `people`
 (`user_id` null: not attributed) when the hub sends it.
+
+Sessions open web pages in the platform browser (a temporary VM per browser session, `browser.open` or implicitly by
+the first browser tool; ADR-085). `browser list` gives the browser sessions (`browser_id` `br-…`, `state`
+`starting|open|restarted|closed`, `implicit`, `url`, `actions`, `opened_at`, `closed_at`, `reason`, `workvm_id`).
+`browser show` gives the record of every action (`seq`, `at`, `tool`, `action`, `target`, `text` – `"••••"` for
+a password –, `url`, `title`, `ok`, `error`, `notice`) with the size of the picture after it (`image`), never the
+picture itself; `--limit N` keeps the newest N. `browser frames --output DIR` writes those pictures as
+`<browser_id>-<seq>.jpg`. With `--follow` it watches the session's open browser live (the newest open one, or
+`--browser`) for `--seconds` (default 60, at most 3600) or until Ctrl-C at `--kbps` (100-10000, default 1000), and
+writes each new picture as `live-<seq>.jpg`; pictures come only while someone watches and only when the page changes.
+`ended` says why it stopped (`deadline`, `interrupted`, `stream_closed`); `no_open_browser` means there is nothing to
+watch.
 
 **Whiteboards** (one per organization, workgroup and task; `--wg` and `--task` choose the level):
 
