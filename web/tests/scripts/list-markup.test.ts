@@ -36,6 +36,15 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     reason: 'repositories, patterns and errors of one settings document (bounded by its schema)',
   },
   'src/ui/screens/invite/org/OrgInvite.tsx': { count: 1, reason: 'workgroups granted by one invitation' },
+  'src/ui/screens/wg-settings/ProfilesSection.tsx': {
+    count: 3,
+    reason:
+      'rights profiles of one org and workgroup (built-in roles and administrative set), the three read reaches, the operation types of the platform (closed list)',
+  },
+  'src/ui/screens/task/TaskProfile.tsx': {
+    count: 1,
+    reason: 'native <option>s of the rights profiles usable in the workgroup (administrative set)',
+  },
   'src/ui/settings/sections/passkeys/PasskeyList.tsx': { count: 1, reason: 'passkeys of one account (a handful)' },
   'src/ui/settings/sections/credentials/CredentialList.tsx': {
     count: 1,
