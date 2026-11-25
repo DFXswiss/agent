@@ -1,6 +1,6 @@
 // Which routes need an unlocked identity (06-web.md section 2.4: every route with a right other than `anon`), and the
 // sign-in target that brings the user back. `next` only ever names a path of this origin.
-const PROTECTED = [/^\/o\//, /^\/settings(\/|$)/, /^\/notifications(\/|$)/, /^\/platform\//];
+const PROTECTED = [/^\/o\//, /^\/settings(\/|$)/, /^\/subscriptions(\/|$)/, /^\/notifications(\/|$)/, /^\/platform\//];
 
 export function needsUnlock(pathname: string): boolean {
   return PROTECTED.some((pattern) => pattern.test(pathname));

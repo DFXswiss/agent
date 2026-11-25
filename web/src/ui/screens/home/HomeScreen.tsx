@@ -5,11 +5,12 @@
 //   chips are shown while the organization has no task yet, otherwise behind "Suggestions". A user without write
 //   access anywhere sees a short note instead (controls the rights do not allow are not rendered, section 1).
 // - The counters: "Waiting for me", "Stuck", "Running", "Finished today" (since local midnight), and below them the
-//   organization's subscriptions ("Subscriptions: n available · m used up – next release 14:05", ADR-081 section 6).
+//   organization's subscriptions ("Subscriptions: n available · m used up – next release 14:05", ADR-081 section 6),
+//   then the card "My subscriptions" with every subscription of the user (KOR-68, `ui/subscriptions/`).
 // - The four groups in this order: "Needs your decision", "Stuck", "Running", "Recently finished" (the last links the
 //   default workgroup's full task list), each a windowed list paged by the hub (`AttentionGroup.tsx`).
 // Live `attention` frames update the entries and the counters (batched in the store, counters at most once a second).
-import { useId, useMemo, useState } from 'react';
+import { lazy, Suspense, useId, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { selectNoTask } from '../../../core/attention/view';
 import { CATEGORIES, type AttentionSummary } from '../../../core/store/slices/attention';
@@ -24,6 +25,9 @@ import { useDirectory, useOrgView } from '../tasks/hooks';
 import { AttentionGroup } from './AttentionGroup';
 import { useSummary } from './hooks';
 import { QuotaCounter } from './QuotaCounter';
+
+// the user's own subscriptions at a glance (KOR-68): a chunk of its own, the situation view does not wait for it
+const SubscriptionsCard = lazy(() => import('../../subscriptions/SubscriptionsCard'));
 
 /** The counters in their order: test ID suffix and field of the summary. */
 const COUNTERS: readonly [string, keyof AttentionSummary][] = [
@@ -152,6 +156,9 @@ export function HomeScreen() {
       </div>
       <Counters org={org} />
       <QuotaCounter org={org} />
+      <Suspense fallback={null}>
+        <SubscriptionsCard />
+      </Suspense>
       {CATEGORIES.map((category) => (
         <AttentionGroup
           key={category}
