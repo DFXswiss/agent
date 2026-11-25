@@ -63,7 +63,9 @@ export function MergeFields({
           onChange={(event) => edit({ mergeChecksGreen: event.target.checked })}
           data-testid="wg-settings.merge.green"
         />
-        <label htmlFor={`${id}-green`}>{t('wg-settings.merge.green')}</label>
+        <label htmlFor={`${id}-green`} className="flex min-h-11 items-center">
+          {t('wg-settings.merge.green')}
+        </label>
       </div>
       <div className="flex min-h-11 items-center gap-2">
         <input
@@ -74,7 +76,9 @@ export function MergeFields({
           onChange={(event) => edit({ separateDuties: event.target.checked })}
           data-testid="wg-settings.merge.separate"
         />
-        <label htmlFor={`${id}-separate`}>{t('wg-settings.merge.separate')}</label>
+        <label htmlFor={`${id}-separate`} className="flex min-h-11 items-center">
+          {t('wg-settings.merge.separate')}
+        </label>
       </div>
     </fieldset>
   );
