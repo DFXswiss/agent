@@ -53,3 +53,16 @@ the ADR.
     notice (no double submit).
 16. **Watched kinds drive everything** (design review L15): the one list decides reads, pulls, device hints, the bus
     payload (kind and session, so no process reads a heavy event nobody watches) and the stream replay.
+17. **Newest-first events** (web volume): `GET /v1/scopes/{scope}/events` gains `before`/`next_before`, so the record
+    view opens with one page whatever the length of the record.
+18. **Pictures as `data:` URLs.** The hub's CSP allows images from `self` and `data:` only; the record and live
+    pictures are shown as `data:image/jpeg` URLs instead of widening the CSP to `blob:`.
+19. **Registration in place where KOR-43 did** (code review L10). The device live route sits in the stream area's
+    router, the browser idle pass in the work VM daemon task and the task-close/credit teardown in the existing
+    `workvm` reconcile step, next to the run VMs of KOR-43 they share their lifecycle with; hints, shutdown, executors,
+    journal handlers and migrations use the registries.
+20. **Evidence left to the first device with the host filter** (code review M5): E2E-66 runs in TEST_MODE, where the
+    browser VM reaches the device's loopback on purpose (the test site). That the browser VM reaches neither the device
+    nor the internal network is the attack case WVM-11, pending like WVM-01 … WVM-05 until the roll-out on a device
+    with the host filter. Watching a foreign task's browser is refused by the hub's rights check (hub tests, WVM-12);
+    the E2E scenario has no second organization.

@@ -546,7 +546,7 @@ search is not switched on: open a search page with url, like a person."
   largest `kbps` among valid leases) or `409 not_watched` (no valid lease; the runner stops streaming). A frame (≤ 512
   KiB ciphertext, 04-crypto.md §4.13; `epoch` an epoch of the workgroup, else `400`) replaces `hub.browser_live` of
   the session (one row, unlogged) and is published
-  as `browser_live {session_id, wg_id, frame}` through the bus as a reference (`{session_id, seq}`); every hub process
+  as `browser_live {session_id, frame}` (to the readers of the session's workgroup) through the bus as a reference (`{session_id, seq}`); every hub process
   reads the row and sends the frame to its streams watching that session. The hub keeps no other frame.
 - **Runner**: on the hint it starts `workvm-browser stream` for the session's open browser session (none open: it
   ignores the hint), seals each frame, posts it when the byte budget allows (`kbps`, capped by
