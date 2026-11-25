@@ -22,6 +22,11 @@
   "src/agent_guest/api_routes/model.py": {
    "MAX_BODY": "size"
   },
+  "src/agent_guest/api_routes/orchestrator_mcp.py": {
+   "MAX_ANSWER": "size",
+   "MAX_BODY": "size",
+   "ROUTE_MAX_BODY": "size"
+  },
   "src/agent_guest/apisock.py": {
    "MAX_LINE": "size"
   },
@@ -47,6 +52,9 @@
   },
   "src/agent_guest/control_routes/journal.py": {
    "DEFAULT_LIMIT": "page"
+  },
+  "src/agent_guest/control_routes/orchestrator.py": {
+   "RELAY_ANSWER_MAX_BODY": "size"
   },
   "src/agent_guest/control_routes/pending.py": {
    "MAX_WAIT_SECONDS": "time"
@@ -116,6 +124,9 @@
   },
   "src/agent_guest/metrics.py": {
    "MAX_COUNT": "integer"
+  },
+  "src/agent_guest/orchestrator.py": {
+   "RELOAD_MAX_SECONDS": "time"
   },
   "src/agent_guest/pings.py": {
    "MAX_LIST": "page"
@@ -802,6 +813,12 @@
    "MAX_PATTERNS": "open",
    "MAX_REPOSITORIES": "open"
   },
+  "src/agent_runner/orchestrator/journal.py": {
+   "MAX_BODY": "size",
+   "MAX_RELAYS_PER_SESSION": "rate",
+   "MAX_RESPONSE": "size",
+   "MAX_TARGET": "size"
+  },
   "src/agent_runner/orgs/book.py": {
    "MAX_REFUSED": "answer"
   },
@@ -1032,6 +1049,7 @@
    "address[:64]": "size"
   },
   "src/agent_hub/agents/vectors.py": {
+   "fp[:20]": "integer",
    "sealed[:40]": "size"
   },
   "src/agent_hub/audit/placement.py": {
@@ -1062,6 +1080,7 @@
    "main.entries[:20]": "integer"
   },
   "src/agent_runner/crypto/agents/vectors.py": {
+   "fp[:20]": "integer",
    "sealed[:40]": "size"
   },
   "src/agent_runner/crypto/keys.py": {
@@ -1179,6 +1198,7 @@
    "/oneOf/1/properties/failover_seconds/maximum": "time",
    "/oneOf/1/properties/failovers/maxItems": "answer",
    "/oneOf/1/properties/github_defaults/maxItems": "answer",
+   "/oneOf/1/properties/orchestrators/maxItems": "answer",
    "/oneOf/1/properties/orgs/maxItems": "answer",
    "/oneOf/1/properties/pending_prompts/maxItems": "answer",
    "/oneOf/1/properties/pings/maxItems": "answer",
@@ -1543,6 +1563,9 @@
    "/$defs/body_session_terminal/properties/frames/maxItems": "answer",
    "/$defs/body_session_terminal/properties/rows/maximum": "integer",
    "/$defs/body_usage/properties/status/maximum": "integer"
+  },
+  "contracts/guest/relay-answer.request.json": {
+   "/oneOf/0/properties/status/maximum": "external"
   },
   "contracts/guest/session-context-export.response.json": {
    "/properties/transcript_files/maxItems": "answer",
