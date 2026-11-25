@@ -30,7 +30,7 @@ class Subscriptions:
     records: dict[str, Json] = field(default_factory=dict)
     readings: dict[str, Json | None] = field(default_factory=dict)
     announce: bool = False
-    """`GET /v1/me/devices` lists `features` (the tests of this area switch it on; other suites see the rows as before)."""
+    """`GET /v1/me/devices` lists `features` (on in the tests of this area; other suites see the rows as before)."""
     outdated: set[str] = field(default_factory=set)
     puts: list[Json] = field(default_factory=list)
     conflicts: int = 0
