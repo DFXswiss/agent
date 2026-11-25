@@ -24,7 +24,7 @@
   "usage.empty": "No usage yet.",
   "usage.row": "{label}: {total} (model {tokens}, runtime {runtime})",
   "load-failed": "Credit and usage could not be loaded: {reason}",
-  "reload": "Try again",
+  "reload": "Reload",
   "loading": "Loading …",
   "tab": "Costs",
   "task.empty": "No charges for this task.",

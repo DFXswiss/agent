@@ -24,7 +24,7 @@
   "usage.empty": "Noch kein Verbrauch.",
   "usage.row": "{label}: {total} (Modell {tokens}, Laufzeit {runtime})",
   "load-failed": "Guthaben und Verbrauch konnten nicht geladen werden: {reason}",
-  "reload": "Erneut versuchen",
+  "reload": "Neu laden",
   "loading": "Wird geladen …",
   "tab": "Kosten",
   "task.empty": "Für diese Aufgabe fielen keine Kosten an.",
