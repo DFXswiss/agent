@@ -32,6 +32,29 @@ describe('bodies', () => {
     expect(isSubscriptionRecord(body({ name: 'Team', note: 'n', use: { pool: true, orgs: [ORG] } }))).toBe(true);
     expect(isSubscriptionRecord({ email: null, kind: 'setup_token' })).toBe(true);
     expect(isSubscriptionRecord({ ...body(), expires_at: TS, kind: 'login_token' })).toBe(true);
+    const full = {
+      ...body(),
+      kind: 'oauth_login',
+      expires_at: TS,
+      refresh_token: 'refresh-token-of-a-test',
+      scopes: ['user:inference', 'user:profile'],
+      subscription_type: 'max',
+      rate_limit_tier: 'default_claude_max_20x',
+    };
+    expect(isSubscriptionRecord(full)).toBe(true);
+    expect(isSubscriptionRecord({ email: null, kind: 'oauth_login', relogin: 'renewal_refused' })).toBe(true);
+    for (const bad of [
+      { ...full, refresh_token: 'a b' },
+      { ...full, refresh_token: 1 },
+      { ...full, scopes: 'user:profile' },
+      { ...full, scopes: Array.from({ length: 33 }, () => 'user:profile') },
+      { ...full, scopes: ['User'] },
+      { ...full, scopes: [1] },
+      { ...full, subscription_type: 'a b' },
+      { ...full, rate_limit_tier: 7 },
+      { ...full, relogin: 'other' },
+    ])
+      expect(isSubscriptionRecord(bad)).toBe(false);
     for (const bad of [
       null,
       { email: null },
@@ -224,6 +247,18 @@ describe('changes', () => {
     expect('use' in (await hub.opened(A))).toBe(false);
     await logoutSubscription(t.context, A);
     expect(await hub.opened(A)).toEqual({ email: 'team@example.com', kind: 'setup_token', name: 'New' });
+  });
+
+  it('logs a full login out with both tokens and keeps its other fields when it is renamed', async () => {
+    const { t, hub } = await world();
+    const full = { kind: 'oauth_login', refresh_token: 'refresh-token-of-a-test', scopes: ['user:profile'] };
+    await hub.add(A, body({ name: 'Old', ...full }));
+    await renameSubscription(t.context, A, 'New');
+    expect(await hub.opened(A)).toMatchObject({ name: 'New', ...full });
+    await logoutSubscription(t.context, A);
+    const after = await hub.opened(A);
+    expect('token' in after || 'refresh_token' in after).toBe(false);
+    expect(after.scopes).toEqual(['user:profile']);
   });
 
   it('refuses bad input, the primary record and gone records, and retries one concurrent write', async () => {
