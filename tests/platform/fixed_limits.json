@@ -1215,7 +1215,8 @@
    "/oneOf/1/properties/quota_poll_owners/maxItems": "answer",
    "/oneOf/1/properties/requests/maxItems": "answer",
    "/oneOf/1/properties/rotation_pending/maxItems": "answer",
-   "/oneOf/1/properties/sessions/maxItems": "answer"
+   "/oneOf/1/properties/sessions/maxItems": "answer",
+   "/oneOf/1/properties/subscriptions/properties/shared/maxItems": "answer"
   },
   "contracts/api/device-subscriptions-list.response.json": {
    "/properties/subscriptions/maxItems": "open"
@@ -1406,6 +1407,9 @@
   "contracts/api/session-get.response.json": {
    "/properties/children/maxItems": "page",
    "/properties/transitions/maxItems": "answer"
+  },
+  "contracts/api/subscription-put.request.json": {
+   "/properties/use/properties/orgs/maxItems": "open"
   },
   "contracts/api/subscriptions-list.response.json": {
    "/properties/subscriptions/maxItems": "open"

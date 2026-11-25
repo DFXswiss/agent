@@ -10,6 +10,28 @@
     },
     "expected_version": {
       "$ref": "../common.json#/$defs/count"
+    },
+    "use": {
+      "type": "object",
+      "description": "the plaintext mirror of the use sealed in the record (ADR-090 section 3): the hub lists the subscription to the devices serving these organizations (or, with pool, to platform devices); the runner acts on the sealed use only. Absent: the mirror stays as it is.",
+      "properties": {
+        "pool": {
+          "type": "boolean"
+        },
+        "orgs": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "minItems": 0,
+          "maxItems": 50
+        }
+      },
+      "required": [
+        "pool",
+        "orgs"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

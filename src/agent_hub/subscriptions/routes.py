@@ -11,10 +11,11 @@
 | `PUT /v1/device/subscriptions/{id}` | `device_eligible`: answering a `claude.login` of the owner, or a re-seal |
 
 A browser write is signed by the caller's identity or the caller's own-identity agent (ADR-082 section 9.5) and sealed
-under the caller's current `CK` epoch (`agent_hub.credentials.records.put_identity` with kind `claude_subscription`):
-a new record is never primary, and a write of the primary record is `403 forbidden` (it is written through `PUT
-/v1/me/credentials/claude_subscription`, whose body form the deployed web client knows). Reads and deletes of a record
-that is not the caller's are `404 not_found`.
+under the caller's current `CK` epoch (`agent_hub.credentials.records.put_identity` with kind `claude_subscription`): a
+new record is never primary, and a write of the primary record is `403 forbidden` (it is written through `PUT
+/v1/me/credentials/claude_subscription`, whose body form the deployed web client knows). `use` (optional) replaces the
+plaintext mirror of the record's sealed use (`store.set_use`; ADR-090 section 3); without it the mirror stays. Reads and
+deletes of a record that is not the caller's are `404 not_found`.
 
 A device writes a user's further subscription while answering an active `claude.login` of that user
 (`request_id`, `agent_hub.requests.store.authorizes_write`), or - without `request_id` - **re-seals** one: the stored
@@ -59,12 +60,21 @@ Version = Annotated[int, Field(strict=True, ge=0, le=MAX_SAFE_INTEGER)]
 KIND = records.SUBSCRIPTION
 
 
+class UseBody(BaseModel):
+    """`use` of `PUT /v1/subscriptions/{id}`: the mirror of the sealed use (ADR-090 section 3)."""
+
+    model_config = ConfigDict(extra="forbid")
+    pool: Annotated[bool, Field(strict=True)]
+    orgs: list[Uuid] = Field(max_length=50)
+
+
 class PutBody(BaseModel):
     """Body of `PUT /v1/subscriptions/{id}` (the record form is checked by `records`)."""
 
     model_config = ConfigDict(extra="forbid")
     record: dict[str, Any]
     expected_version: Version
+    use: UseBody | None = None
 
 
 class DevicePutBody(BaseModel):
@@ -132,6 +142,8 @@ async def put_subscription(context: Context, principal: CurrentPrincipal, id: st
             root_key=context.config.platform_root_key,
             kind=KIND,
         )
+        if body.use is not None:
+            store.set_use(connection, record_id, user, pool=body.use.pool, orgs=list(body.use.orgs), now=now)
         return change, account_change(connection, user, "credential_changed", now, target=KIND)
 
     change, account = await _in_transaction(context, work)

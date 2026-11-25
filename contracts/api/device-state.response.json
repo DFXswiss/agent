@@ -515,12 +515,33 @@
         },
         "subscriptions": {
           "type": "object",
-          "description": "KOR-69, ADR-090: sent by a hub that accepts quota.subscription_id and the subscription endpoints of section 6.1; api tells the runner it may send them",
+          "description": "KOR-69, ADR-090: sent by a hub that accepts quota.subscription_id and the subscription endpoints of section 6.1; api tells the runner it may send them; shared lists the further subscriptions this device may be asked to use (their mirrored use names an organization the device serves, or the operator's pool on a platform device; the runner checks the sealed use)",
           "properties": {
             "api": {
               "type": "integer",
               "minimum": 1,
               "description": "subscriptions interface version; KOR-69 sends 1"
+            },
+            "shared": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "subscription_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "owner_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  }
+                },
+                "required": [
+                  "subscription_id",
+                  "owner_id"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0,
+              "maxItems": 10000
             }
           },
           "required": [

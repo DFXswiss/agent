@@ -135,6 +135,7 @@ RULES: tuple[TableRule, ...] = (
     TableRule("quota_unreadable", "owner_id = ANY(%(users)s)"),
     # the newest reading of each non-primary subscription of the org's users (KOR-69, ADR-090)
     TableRule("subscription_quota", "owner_id = ANY(%(users)s)"),
+    TableRule("subscription_use", "owner_id = ANY(%(users)s)"),
     # model access with fallback (KOR-50, ADR-081): the limit of an owner, the snapshots and issuers of the devices,
     # the per-device DFX keys of the org (envelope ciphertext only) and the cost waiting for a key's booking
     TableRule("quota_limit", "owner_id = ANY(%(users)s)"),

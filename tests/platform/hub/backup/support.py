@@ -376,6 +376,11 @@ class Estate:
                 " device_id) VALUES (%s, %s, %s, false, %s, %s)",
                 (self.subscription, writer.id, Jsonb([{"window": "seven_day", "used_percent": 12.0}]), now, device.id),
             ),
+            (
+                "INSERT INTO hub.subscription_use (credential_id, owner_id, pool, orgs, set_at) VALUES (%s, %s, false,"
+                " ARRAY[%s]::uuid[], %s)",
+                (self.subscription, writer.id, org, now),
+            ),
             # model access with fallback (KOR-50): a limit, a snapshot, an issuer, a key and its waiting cost
             (
                 "INSERT INTO hub.quota_limit (owner_id, at, until, readable, device_id, fetched_at)"

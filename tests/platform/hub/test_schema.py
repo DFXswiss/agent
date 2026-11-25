@@ -514,6 +514,8 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     "event_audit_cover": [("scope_id", U), ("covered_seq", BI)],
     # the subscription refuses the read of its quotas (KOR-40, migration 0016)
     "quota_unreadable": [("owner_id", U), ("since", TS), ("device_id", U)],
+    # the use of a further subscription as its owner's client tells it (KOR-69, migration 0034, ADR-090 section 3)
+    "subscription_use": [("credential_id", U), ("owner_id", U), ("pool", BOOL), ("orgs", A), ("set_at", TS)],
     # the newest reading of every non-primary subscription (KOR-69, migration 0033, ADR-090)
     "subscription_quota": [
         ("credential_id", U),

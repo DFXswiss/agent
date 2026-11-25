@@ -13,6 +13,8 @@ and delete it. Further records are created without the mark and never get it.
   descending), each with its newest reading: the primary record's from the owner's `quota_snapshot` (the newest
   fetch and its device, every window of that device's newest report) or `quota_unreadable`; a further record's from
   `subscription_quota`; `null` before the first reading.
+- `set_use(...)` / `shared_for(...)`: the plaintext mirror of a further subscription's `use` (ADR-090 section 3) and
+  the subscriptions a device is told about (`GET /v1/device/state` `subscriptions.shared`).
 - `store_reading(connection, ...)`: the `quota` item of a further subscription (`agent_hub.usage.outbox`): kept when
   the record is a non-primary subscription of the owner (anything else is dropped without an error: the record may
   have been deleted or marked meanwhile), the newer `fetched_at` wins.
@@ -28,6 +30,7 @@ from uuid import UUID
 import psycopg
 from psycopg.types.json import Jsonb
 
+from agent_hub.credentials.eligibility import is_eligible
 from agent_hub.credentials.records import (
     IDENTITY_COLUMNS,
     SUBSCRIPTION,
@@ -163,3 +166,37 @@ def store_reading(
             "device": device,
         },
     )
+
+
+def set_use(
+    connection: Connection, record_id: UUID, owner: UUID, *, pool: bool, orgs: list[str], now: datetime
+) -> None:
+    """The mirror of a further subscription's sealed `use` (ADR-090 section 3): replaced, or removed when it allows
+    nothing (measure only)."""
+    if not pool and not orgs:
+        connection.execute("DELETE FROM hub.subscription_use WHERE credential_id = %s", (record_id,))
+        return
+    connection.execute(
+        "INSERT INTO hub.subscription_use (credential_id, owner_id, pool, orgs, set_at) VALUES (%s, %s, %s,"
+        " %s::uuid[], %s) ON CONFLICT (credential_id) DO UPDATE SET pool = EXCLUDED.pool, orgs = EXCLUDED.orgs,"
+        " set_at = EXCLUDED.set_at",
+        (record_id, owner, pool, sorted(set(orgs)), now),
+    )
+
+
+SHARED = (
+    "SELECT u.credential_id::text, u.owner_id::text FROM hub.subscription_use u"
+    " JOIN hub.credential c ON c.id = u.credential_id AND NOT c.is_primary"
+    " WHERE (u.pool AND %(platform)s) OR u.orgs && %(orgs)s::uuid[] ORDER BY u.credential_id"
+)
+
+
+def shared_for(connection: Connection, device: UUID, orgs: list[str], platform: bool) -> list[dict[str, str]]:
+    """The further subscriptions whose mirrored use names an organization the device serves (or the operator's pool,
+    for a platform device) and whose owner's `CK` the device holds; the runner checks the sealed `use` itself."""
+    rows = connection.execute(SHARED, {"orgs": orgs, "platform": platform}).fetchall()
+    return [
+        {"subscription_id": record, "owner_id": owner}
+        for record, owner in rows
+        if is_eligible(connection, device, owner)
+    ]
