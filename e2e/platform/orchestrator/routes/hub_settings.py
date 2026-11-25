@@ -1,4 +1,4 @@
-"""`POST /hub/subagent-limits`: restart the hub with other subagent limits (ADR-088 section 2; KOR-45, E2E-24, E2E-67).
+"""`POST /hub/subagent-limits`: restart the hub with other subagent limits (ADR-088 section 2; KOR-45, E2E-24, E2E-68).
 
 Body `{"depth"?, "running"?, "total"?, "runtime_seconds"?}`: each a whole number 0-1000000 (0 = no limit) sets
 `AGENT_HUB_SUBAGENT_MAX_<NAME>` for the restarted hub; a name left out goes back to the hub's default, so `{}` restores

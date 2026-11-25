@@ -34,7 +34,7 @@ DENIED = frozenset({"not_found", "forbidden"})
 @dataclass(frozen=True)
 class QueryCall:
     """A read of `session` (the session of the bearer token) with the tool's checked `arguments` and the instructing
-    human of the read's turn, captured when the read arrived (`actor_id`, ADR-087 section 1; None: unknown)."""
+    human of the read's turn, captured when the read arrived (`actor_id`, ADR-089 section 1; None: unknown)."""
 
     context: Any
     session: LocalSession
@@ -47,7 +47,7 @@ class QueryCall:
 class QueryOutcome:
     """The tool's result (`mcp/tools/<tool>.output.json`) or error code and English sentence, the number of objects
     returned (`result_count`), the audited target and the workgroup read (`read_wg_id`, None on the organization
-    level, ADR-087 section 4)."""
+    level, ADR-089 section 4)."""
 
     result: Any = None
     error: str | None = None

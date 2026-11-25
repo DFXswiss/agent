@@ -5,7 +5,7 @@ Concept references: [§8 point 5](../KONZEPT.md#k-8-b5), [§8 point 6](../KONZEP
 [Idee 26](../KONZEPT.md#k-idee-26), [Idee 43](../KONZEPT.md#k-idee-43); rules [E-02](../KONZEPT.md#e-02),
 [E-04](../KONZEPT.md#e-04), [E-05](../KONZEPT.md#e-05), [E-11](../KONZEPT.md#e-11), [E-19](../KONZEPT.md#e-19);
 interpretations [A1](../KONZEPT.md#a-1), [A5](../KONZEPT.md#a-5), [A7](../KONZEPT.md#a-7), [A10](../KONZEPT.md#a-10),
-[A11](../KONZEPT.md#a-11), [A14](../KONZEPT.md#a-14). Design: [ADR-087](../adr/087-sessions-read-like-their-human.md)
+[A11](../KONZEPT.md#a-11), [A14](../KONZEPT.md#a-14). Design: [ADR-089](../adr/089-sessions-read-like-their-human.md)
 and [ADR-088](../adr/088-full-subagents-and-limits-as-settings.md), reviewed with fresh context before the build.
 
 1. **Two decisions, not one.** Reading (rights, keys, audit, plaintext) and subagents/limits touch different parts and
@@ -74,7 +74,7 @@ and [ADR-088](../adr/088-full-subagents-and-limits-as-settings.md), reviewed wit
 17. **Situation view.** `limit_exceeded` is its own reason `blocked/limit_reached` (it was the generic
     `operation_refused`), so the view says that a limit of the platform was reached.
 18. **E2E-24 sets the former limits** through a new orchestrator route (`POST /hub/subagent-limits`, a restart of the
-    hub with other settings) instead of relying on defaults, so it keeps testing the refusals; E2E-67 sets the running
+    hub with other settings) instead of relying on defaults, so it keeps testing the refusals; E2E-68 sets the running
     limit to 1 for the clear message.
 19. **Rollout order:** hub, runner, golden (ADR-088 §5).
 20. **No new parity rows.** The web client gains no action (the limits are operator settings; follow-ups are a

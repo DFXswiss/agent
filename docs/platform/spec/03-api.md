@@ -608,7 +608,7 @@ The work VM tools (`workvm_*`, `13-work-vm.md` §3) and the platform browser too
 `browser_download`, `browser_screenshot`; KOR-44, `13-work-vm.md` §13.4) are forwarded
 as `workvm.call` and are not reads (no `platform.read`, no read audit).
 
-Read scope (ADR-087): a session reads what both the task owner and the instructing human of the read's turn may
+Read scope (ADR-089): a session reads what both the task owner and the instructing human of the read's turn may
 read, evaluated on the verified membership log at call time (`agent_runner.queries.rights`). The instructing human
 (the turn's acting user; for a child the acting user of the instruction it accepted last) is captured when the
 `platform.query` record is journaled and handed to the tool with the call. Own org (workgroup names, members, org

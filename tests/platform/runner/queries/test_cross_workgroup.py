@@ -1,4 +1,4 @@
-"""U-RUN-queries across workgroups (ADR-087, key model section 8, 03-api.md section 8.1 "Read scope").
+"""U-RUN-queries across workgroups (ADR-089, key model section 8, 03-api.md section 8.1 "Read scope").
 
 A session reads another workgroup W when its task owner and the instructing human of the read's turn both may read W
 (explicit access or an admin's inherited read; archived W included) and this device is assigned to W. The instructing
@@ -401,7 +401,7 @@ def test_workgroup_arguments_are_checked(rig: Rig) -> None:
 
 
 def test_the_human_captured_when_the_read_arrived_is_used(rig: Rig) -> None:
-    """The race of ADR-087 section 1: a prompt of another person accepted while a read is answered (here: the turn's
+    """The race of ADR-089 section 1: a prompt of another person accepted while a read is answered (here: the turn's
     acting user changes between the journal record and the tool) does not lend its rights to the earlier read."""
 
     async def body(k: RKit) -> None:

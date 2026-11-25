@@ -1,4 +1,4 @@
-"""`get_task {task_id}` (03-api.md section 8.1, ADR-087): one task of a workgroup the session may read - the hub's
+"""`get_task {task_id}` (03-api.md section 8.1, ADR-089): one task of a workgroup the session may read - the hub's
 task row names it - with its sessions and operations (`GET /v1/device/tasks/{task}`) and the title of its verified
 `task.meta` event of that workgroup's scope. A task of any other workgroup is `not_found`, like an unknown one.
 Workgroup level.

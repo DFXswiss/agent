@@ -5,7 +5,7 @@ The answers are verified against the pinned hub key by the hub client. The hub s
 owner, times; 04-crypto.md section 7) but titles only as `task.meta` events, so the reads take the titles from the
 verified events (`sessions.profiles`). A hub answer is still only metadata of a party that must not widen the read
 scope: every row of a task list must belong to the session's org and the listed workgroup, a single task must belong
-to the session's org and to a workgroup the session may read (`ReadScope.readable`, ADR-087; any other is `not_found`
+to the session's org and to a workgroup the session may read (`ReadScope.readable`, ADR-089; any other is `not_found`
 "There is no such task you can read.", whatever the reason), and rows or fields that do not have the form of the
 contract are dropped (lists) or make the read `unavailable` (a single task). A refusal `403`/`404` is "no such task"
 (`None`); an unreachable hub or any other refusal is `unavailable`. The hub names the workgroup of a task, but the

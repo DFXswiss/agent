@@ -1,4 +1,4 @@
-"""`list_tasks {state?, limit? <= 100, before?, workgroup_id?}` (03-api.md section 8.1, ADR-087): the tasks of the
+"""`list_tasks {state?, limit? <= 100, before?, workgroup_id?}` (03-api.md section 8.1, ADR-089): the tasks of the
 session's workgroup or of another workgroup the session may read (`workgroup_id`, `ReadScope.readable`), newest
 first, one page from `GET /v1/device/workgroups/{wg}/tasks` (metadata) with the titles of the verified `task.meta`
 events of that workgroup's scope (empty while the device holds none). Workgroup level.

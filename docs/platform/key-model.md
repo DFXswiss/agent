@@ -166,7 +166,7 @@ it never holds or derives a scope key, a private key, a PRF output, a code or a 
 zero-knowledge canary scan, KM-36). It sees the metadata of rights and key distribution (who is entitled to which
 epoch, who wrapped for whom, when a rotation happened) and the counters of [A4](KONZEPT.md#a-4). The read log of
 sessions is metadata too (IDs only): which session read which workgroup or task when and on whose instruction
-([ADR-087](adr/087-sessions-read-like-their-human.md) §4).
+([ADR-089](adr/089-sessions-read-like-their-human.md) §4).
 
 An **active** hub can do more, and the model does not hide it ([04 §9](spec/04-crypto.md#9-threat-model)):
 withhold data and serve an old log (detected per client, KM-08); **serve malicious JavaScript**, which receives every
@@ -180,7 +180,7 @@ present an invented organization to a platform device ([gap KOR-55](#kor-55--tru
 Until KOR-45 ([ADR-024](adr/024-session-read-scope.md)) a session read with the rights of its task owner
 **intersected with its own workgroup**; other workgroups were visible by name only. The device holds exactly the keys
 of its assigned workgroups (KM-14), so this is also what it *can* read. KOR-45 lifted the intersection with the
-workgroup ([ADR-087](adr/087-sessions-read-like-their-human.md): points 1, 2 and 4-6 below are built, way B of point 3
+workgroup ([ADR-089](adr/089-sessions-read-like-their-human.md): points 1, 2 and 4-6 below are built, way B of point 3
 is not). The key model requires of it:
 
 1. **Rights:** a session reads what both the task owner **and** the human whose instruction it is working on may read
@@ -464,7 +464,7 @@ decision of the owner ([E-25](KONZEPT.md#e-25)); point 6 built with the orchestr
 ### KOR-45 – Reading across workgroups
 
 The requirements of [§8](#8-reading-across-workgroups) points 1, 2 and 4–6 (KM-34); point 3 only after
-[decision D3](#decisions-for-the-orchestrator). Built by KOR-45 with way A ([ADR-087](adr/087-sessions-read-like-their-human.md));
+[decision D3](#decisions-for-the-orchestrator). Built by KOR-45 with way A ([ADR-089](adr/089-sessions-read-like-their-human.md));
 the intersection is evaluated only by the runner (the hub never evaluates a session read), so its cases are a runner
 test, not a shared vector.
 

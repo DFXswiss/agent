@@ -1,4 +1,4 @@
-"""`list_members {scope: "org" | "workgroup", workgroup_id?}` (03-api.md section 8.1, ADR-087).
+"""`list_members {scope: "org" | "workgroup", workgroup_id?}` (03-api.md section 8.1, ADR-089).
 
 - `org` (organization level): every active user (`role` admin/member) and device (`role` device) of the org;
 - `workgroup` (workgroup level): the users with explicit access to the session's workgroup or to another workgroup

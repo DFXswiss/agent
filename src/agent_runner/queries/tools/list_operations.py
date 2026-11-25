@@ -3,7 +3,7 @@ registered (`runner.operation`, newest first) with state, error code and creatio
 
 Operations of the task requested on another device (a task moved between devices) are not listed: the hub's
 `GET /v1/device/tasks/{task}` has no creation time; `get_task` lists every operation of the task. For the same reason
-the tool has no `task_id` for another task (ADR-087 section 3 names `list_operations {task_id?}`): the result's
+the tool has no `task_id` for another task (ADR-089 section 3 names `list_operations {task_id?}`): the result's
 `created_at` is required and the hub's task detail has none, so the operations of another readable task are read with
 `get_task` (id, type, state) until the hub adds the creation time.
 """

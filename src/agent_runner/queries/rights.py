@@ -1,4 +1,4 @@
-"""Read scope of a session at call time (ADR-087, 03-api.md section 8.1 "Read scope", 04-crypto.md section 4.3).
+"""Read scope of a session at call time (ADR-089, 03-api.md section 8.1 "Read scope", 04-crypto.md section 4.3).
 
 A session reads what both its **task owner** and the **instructing human** of the read's turn may read, evaluated
 against the verified membership log at the moment of the call (`OrgBook`, never a cached answer of the hub). The
@@ -50,7 +50,7 @@ class ReadRefused(Exception):
 
 
 class NotServed(ReadRefused):
-    """Readable by the people but not by this device: it is not assigned to the workgroup (ADR-087 section 2). The
+    """Readable by the people but not by this device: it is not assigned to the workgroup (ADR-089 section 2). The
     sentence names the workgroup by `name`, by its ID while the name is not known."""
 
     def __init__(self, wg_id: str, name: str | None = None) -> None:

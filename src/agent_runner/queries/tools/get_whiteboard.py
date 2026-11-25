@@ -1,4 +1,4 @@
-"""`get_whiteboard {level, task_id?, workgroup_id?}` (03-api.md section 8.1, ADR-087): the live entries of the org
+"""`get_whiteboard {level, task_id?, workgroup_id?}` (03-api.md section 8.1, ADR-089): the live entries of the org
 whiteboard (organization level), of the session's workgroup or of another workgroup the session may read
 (`workgroup_id`, level `workgroup`), or of a task of a readable workgroup (level `task`; the hub's task row names its
 workgroup), newest first, from the kept verified whiteboard events sealed in that scope (`projection.entries`).

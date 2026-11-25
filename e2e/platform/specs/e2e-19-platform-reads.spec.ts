@@ -1,10 +1,10 @@
-// E2E-19 (07-testing.md section 2.1; 03-api.md sections 8, 8.1, 10; ADR-087): session platform reads. The session calls
+// E2E-19 (07-testing.md section 2.1; 03-api.md sections 8, 8.1, 10; ADR-089): session platform reads. The session calls
 // every MCP read tool; the answers match what the user sees in the web (workgroups, members, the task and its prompt,
 // its own operation). A task of another workgroup of the same org is read by its ID: the session reads what its owner
-// and the instructing person may both read (ADR-087), here the same person, the org's only member and an admin, who
+// and the instructing person may both read (ADR-089), here the same person, the org's only member and an admin, who
 // may read every workgroup, and the device serves that workgroup (the task ran there), so its task, messages and task
 // whiteboard are answered and `list_workgroups` names it `read`. This org cannot express a workgroup the owner may not
-// read; the `not_found` case (a member without the right instructs the session) is E2E-67. Every read is audited at the
+// read; the `not_found` case (a member without the right instructs the session) is E2E-68. Every read is audited at the
 // hub (`read.session.<tool>`, naming the workgroup read) and written as an encrypted `platform.read` event of the task
 // (tool, arguments, result count). Runs on T1.
 import { readFileSync } from 'node:fs';
@@ -224,7 +224,7 @@ test('@E2E-19 @R-8.7 @R-8.8 @R-8.9 @R-P.5 @needs-vm the session reads what its o
     timeout: 30_000,
   });
 
-  // The other workgroup, readable for the owner (ADR-087): its task, its messages and its (empty) task whiteboard.
+  // The other workgroup, readable for the owner (ADR-089): its task, its messages and its (empty) task whiteboard.
   expect(value(14)).toMatchObject({ id: foreign, owner_id: own!.owner_id });
   expect((value(15).messages as { kind: string; text: string }[])[0]).toMatchObject({
     kind: 'prompt',
@@ -245,7 +245,7 @@ test('@E2E-19 @R-8.7 @R-8.8 @R-8.9 @R-P.5 @needs-vm the session reads what its o
   expect(audit.map((row) => row.action).sort()).toEqual(READS.map((tool) => `read.session.${tool}`).sort());
   expect(audit.every((row) => row.session_id === session!.id)).toBe(true);
   expect(audit.every((row) => row.result === 'ok')).toBe(true);
-  // the last three reads are those of the other workgroup's task (ADR-087 section 4), on the owner's instruction
+  // the last three reads are those of the other workgroup's task (ADR-089 section 4), on the owner's instruction
   const foreignReads = audit.slice(-3).map((row) => [row.action, row.detail.read_wg_id, row.detail.triggered_by]);
   expect(foreignReads.sort()).toEqual([
     ['read.session.get_task', research, own!.owner_id],

@@ -186,7 +186,7 @@ def test_invalid_arguments_are_params_invalid_and_not_forwarded(
         ("get_whiteboard", "org-with-id", {"level": "org", "task_id": TASK_ID}),
         ("get_whiteboard", "workgroup-with-id", {"level": "workgroup", "task_id": TASK_ID}),
         ("get_whiteboard", "task-without-id", {"level": "task"}),
-        # ADR-087: workgroup_id only for level / scope workgroup
+        # ADR-089: workgroup_id only for level / scope workgroup
         ("get_whiteboard", "org-with-workgroup", {"level": "org", "workgroup_id": TASK_ID}),
         ("get_whiteboard", "task-with-workgroup", {"level": "task", "task_id": TASK_ID, "workgroup_id": TASK_ID}),
         ("list_members", "org-with-workgroup", {"scope": "org", "workgroup_id": TASK_ID}),

@@ -1,4 +1,4 @@
-# ADR-087: Sessions read like their human
+# ADR-089: Sessions read like their human
 
 Status: Accepted (2026-11-25) – supersedes [ADR-024](024-session-read-scope.md) (its default-workgroup addendum was
 already superseded by interpretation [A13](../KONZEPT.md#a-13)); amends [ADR-058](058-admins-read-every-workgroup.md)

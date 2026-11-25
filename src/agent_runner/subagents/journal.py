@@ -4,7 +4,7 @@
 The guest journals every read of a forwarded platform tool as `platform.query {pending_id, tool, arguments}` and waits
 for `POST /v1/pending/{id}/answer`. The handler runs inside the journal page's transaction (`sessions.consume`): for a
 session that runs on this VM it captures the instructing human of the read's turn (`credentials.acting.stamp`, in
-the guest's journal order, ADR-087 section 1) and hands both to the controller (`controller.Subagents.spawn_query`),
+the guest's journal order, ADR-089 section 1) and hands both to the controller (`controller.Subagents.spawn_query`),
 which answers it
 outside the transaction with the tool registered at `<area>/query_tools.py:TOOLS` (`get_subagent_result` here, the
 other read tools from RUN-08), after recording the `platform.read` event and the `read.session.<tool>` audit. A read
@@ -74,7 +74,7 @@ async def platform_query(journal: Any, conn: AsyncConnection[Any], record: Journ
     if controller is None:
         journal.env.log(f"runner.subagents query_unrouted tool={tool} session_id={session.id}")
         return
-    # the instructing human at this point of the journal, before a later prompt of the guest's order (ADR-087)
+    # the instructing human at this point of the journal, before a later prompt of the guest's order (ADR-089)
     actor_id = await acting.stamp(conn, session)
     controller.spawn_query(journal.vm, session, pending_id, tool, arguments, actor_id=actor_id)
 

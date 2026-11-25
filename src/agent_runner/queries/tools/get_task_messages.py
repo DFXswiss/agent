@@ -1,4 +1,4 @@
-"""`get_task_messages {task_id, after?, limit? <= 200}` (03-api.md section 8.1, ADR-087): the chat of a task of a
+"""`get_task_messages {task_id, after?, limit? <= 200}` (03-api.md section 8.1, ADR-089): the chat of a task of a
 workgroup the session may read (the hub's task row names it) - prompts and outputs in the hub's scope order (`seq`),
 decrypted from the kept verified events sealed in that workgroup's scope (`projection.messages`), from `after`
 (exclusive), with `next_after` while more follow. Prompts this device withdrew are left out (ADR-083 section 3).

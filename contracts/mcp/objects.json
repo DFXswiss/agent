@@ -22,7 +22,7 @@
         },
         "workgroup_id": {
           "$ref": "../common.json#/$defs/uuid",
-          "description": "another workgroup the session may read (ADR-087); only for scope workgroup, default: the session's workgroup"
+          "description": "another workgroup the session may read (ADR-089); only for scope workgroup, default: the session's workgroup"
         }
       },
       "required": [
@@ -49,7 +49,7 @@
         },
         "workgroup_id": {
           "$ref": "../common.json#/$defs/uuid",
-          "description": "another workgroup the session may read (ADR-087); default: the session's workgroup"
+          "description": "another workgroup the session may read (ADR-089); default: the session's workgroup"
         }
       },
       "required": [],
@@ -104,7 +104,7 @@
         },
         "workgroup_id": {
           "$ref": "../common.json#/$defs/uuid",
-          "description": "another workgroup the session may read (ADR-087); only for level workgroup, default: the session's workgroup"
+          "description": "another workgroup the session may read (ADR-089); only for level workgroup, default: the session's workgroup"
         }
       },
       "required": [

@@ -24,7 +24,7 @@ keeps it so).
   this child makes it unknown. An instruction still waiting for its turn changes nothing, and neither does a
   repeated acceptance of an instruction older than one the child already accepted.
 - `stamp(conn, session)`: the acting user at the receipt of an operation request (journal handler) and of a forwarded
-  read (ADR-087): the turn's acting user of a main session; of a child session (`depth` > 0) the acting user of its
+  read (ADR-089): the turn's acting user of a main session; of a child session (`depth` > 0) the acting user of its
   turn once it accepted an instruction, before that (and for a child older than the instructions) the acting user of
   the `subagent.request` that started it - children inherit the person who instructed their parent's turn. The stamp
   is stored with the operation and never changes: a held operation keeps it, whoever writes later.

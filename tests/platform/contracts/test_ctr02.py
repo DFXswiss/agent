@@ -463,7 +463,7 @@ def test_browser_tools_take_the_snapshot_switch_and_leave_their_choices_to_the_r
 def test_whiteboard_task_id_rule_is_left_to_the_implementations(contracts: Contracts) -> None:
     """03-api.md section 8.1 `get_whiteboard {level, task_id?, workgroup_id?}`: the schema accepts every level with an
     optional task and workgroup ID; `task_id` exactly for level task and `workgroup_id` only for level workgroup are
-    checked by the guest and the runner (ADR-087)."""
+    checked by the guest and the runner (ADR-089)."""
     rel = "mcp/tools/get_whiteboard.input.json"
     for level in ("org", "workgroup", "task"):
         contracts.validate(rel, {"level": level})

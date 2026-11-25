@@ -1,4 +1,4 @@
-"""MCP tool ``get_whiteboard`` (03-api.md §8.1, read scope ADR-087).
+"""MCP tool ``get_whiteboard`` (03-api.md §8.1, read scope ADR-089).
 
 ``{level: "org" | "workgroup" | "task", task_id?, workgroup_id?}``: ``task_id`` exactly for level ``task``,
 ``workgroup_id`` only for level ``workgroup``. The contract schema is a plain object (the model API refuses a

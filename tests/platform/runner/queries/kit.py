@@ -19,7 +19,7 @@ dispatcher, ADR-038) with every registered read tool, so a read goes the real wa
 `platform.query` -> journal handler -> dispatcher -> tool of this area -> `platform.read` event, audit, answer.
 `RKit.read(sid, tool, arguments)` returns the answer the guest received; `RKit.session(...)` inserts a working session
 of any task, workgroup and owner on the workgroup's VM; `RKit.instruct(sid, actor)` sets the acting user of its turn
-(the instructing human of ADR-087; None, the default of a fresh session: unknown).
+(the instructing human of ADR-089; None, the default of a fresh session: unknown).
 
 `TaskHub` adds `GET /v1/device/workgroups/{wg}/tasks` and `GET /v1/device/tasks/{task}` to the rig's hub, answering
 from `tasks` (every answer checked against `contracts/`).
@@ -332,7 +332,7 @@ class RKit:
 
     async def instruct(self, sid: str, actor: str | None) -> None:
         """Make `actor` the acting user of the session's current turn (`runner.session.turn_actor`, as an accepted
-        prompt of that person does; None: several people or none), read by the next forwarded read (ADR-087)."""
+        prompt of that person does; None: several people or none), read by the next forwarded read (ADR-089)."""
         async with self.env.pool.connection() as conn, conn.transaction():
             await conn.execute("UPDATE runner.session SET turn_actor = %s WHERE id = %s", (actor, sid))
 

@@ -1,4 +1,4 @@
-// E2E-67 (KOR-45, ADR-087, ADR-088; 03-api.md sections 8, 8.1, 9; 07-testing.md section 2.1): sessions read like
+// E2E-68 (KOR-45, ADR-089, ADR-088; 03-api.md sections 8, 8.1, 9; 07-testing.md section 2.1): sessions read like
 // their human, and subagents are full sessions within limits that are settings.
 // - Reads across workgroups: Ada (owner, explicit write access to the workgroups A and B) has a task and a whiteboard
 //   entry in B; the platform device serves both workgroups (assigned to each when the first task there is sent). Her
@@ -39,7 +39,7 @@ import { uuid7 } from '../../../web/src/core/encoding/ids';
 import type { Page } from '@playwright/test';
 
 const scenario: unknown = JSON.parse(
-  readFileSync(new URL('../scenarios/e2e-67-read-like-their-human.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../scenarios/e2e-68-read-like-their-human.json', import.meta.url), 'utf8'),
 );
 const ADA_NAME = 'Ada kz67-name-a5u1';
 const BOB_NAME = 'Bob kz67-name-b8i4';
@@ -79,7 +79,7 @@ const CANARIES = [
 ];
 /** The turns of the child: the request (instruction 0) and three follow-ups. */
 const TURNS = 4;
-/** The tools whose reads of workgroup B Ada's instruction allows (ADR-087 section 3). */
+/** The tools whose reads of workgroup B Ada's instruction allows (ADR-089 section 3). */
 const B_READS = ['list_tasks', 'get_whiteboard', 'get_task', 'get_task_messages'];
 
 interface JournalRecord {
@@ -152,14 +152,14 @@ const setLimits = (orchestrator: Orchestrator, limits: Record<string, number>) =
 
 test.describe.configure({ mode: 'serial' });
 
-test('@E2E-67 @R-8.7 @R-8.8 @R-8.9 @R-13.4 @R-13.8 @needs-vm a session reads what its owner and its instructing human may both read, and its subagents take follow-ups until stopped within limits that are settings', async ({
+test('@E2E-68 @R-8.7 @R-8.8 @R-8.9 @R-13.4 @R-13.8 @needs-vm a session reads what its owner and its instructing human may both read, and its subagents take follow-ups until stopped within limits that are settings', async ({
   page,
   browser,
   e2e,
   orchestrator,
   authenticator,
 }) => {
-  test.skip(e2e.topology !== 't1', 'E2E-67 runs on T1 (07-testing.md section 2.1)');
+  test.skip(e2e.topology !== 't1', 'E2E-68 runs on T1 (07-testing.md section 2.1)');
   test.setTimeout(1_500_000);
   // The hub restarts with the running limit 1 before anything else runs (the runners reconnect and take it with the
   // device state); every other limit keeps its default.
@@ -290,7 +290,7 @@ test('@E2E-67 @R-8.7 @R-8.8 @R-8.9 @R-13.4 @R-13.8 @needs-vm a session reads wha
     expect(byBob[1]!.input).toEqual({ workgroup_id: wgB });
     expect(byBob[2]!.input).toEqual({ task_id: taskB });
 
-    // The read log: the workgroup read and the instructing human of every read (ADR-087 section 4).
+    // The read log: the workgroup read and the instructing human of every read (ADR-089 section 4).
     const reads = (await auditRows(orchestrator, taskA)).filter(
       (row) => row.action.startsWith('read.session.') && row.session_id === main!.id,
     );

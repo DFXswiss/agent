@@ -1,4 +1,4 @@
-"""MCP tool ``list_members`` (03-api.md §8.1, read scope ADR-087).
+"""MCP tool ``list_members`` (03-api.md §8.1, read scope ADR-089).
 
 ``{scope: "org" | "workgroup", workgroup_id?}``: ``workgroup_id`` only for scope ``workgroup`` (the contract schema is
 a plain object, so this rule is checked here: a call that breaks it is ``params_invalid`` and is not forwarded).

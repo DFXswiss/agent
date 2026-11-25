@@ -73,7 +73,7 @@ def test_only_the_parent_reads_its_child_and_every_read_is_recorded(rig: Rig) ->
             (child, "denied", parent),
             (parent, "denied", audits[3]["target_id"]),
         ]
-        # the instructing human of the parent's turn (ADR-087 section 4); a subagent read is of no workgroup
+        # the instructing human of the parent's turn (ADR-089 section 4); a subagent read is of no workgroup
         async with env.pool.connection() as conn:
             row = await (
                 await conn.execute("SELECT turn_actor::text FROM runner.session WHERE id = %s", (parent,))

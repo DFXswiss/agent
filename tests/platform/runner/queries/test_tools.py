@@ -1,4 +1,4 @@
-"""U-RUN-queries: every read tool against the fixture org (03-api.md section 8.1, ADR-087, 05-runner.md section 2.2):
+"""U-RUN-queries: every read tool against the fixture org (03-api.md section 8.1, ADR-089, 05-runner.md section 2.2):
 two readable workgroups of the device and one it does not serve, several members, profiles, prompts, outputs and
 whiteboards from verified pulled events, task metadata from the device endpoints. Every answer is checked against
 `contracts/mcp/tools/<tool>.output.json` (or `mcp/tool-error.json`) by the kit."""

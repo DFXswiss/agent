@@ -53,7 +53,7 @@ message when one is reached, reporting caps never make monitoring blind), rules 
   more after it ended answers an empty `final_text`.
 - **Rights** are the parent's (A1): the instructing human of a child's turn is the acting user of the instruction that
   turn works on - set when the child accepts the instruction's prompt (prompt ID = operation ID), like the turn actor of
-  a main session - and it decides the child's reads (ADR-087), its operations' `triggered_by` and its personal
+  a main session - and it decides the child's reads (ADR-089), its operations' `triggered_by` and its personal
   connections (ADR-070) through the one function `credentials.acting.stamp`.
 - **Older guests.** A guest before this ADR (golden with guest version < 0.3.0) validates `get_subagent_result`
   against the former contract (no result while `idle`) and does not know the new operation types. Children whose VM

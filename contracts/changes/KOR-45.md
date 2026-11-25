@@ -1,6 +1,6 @@
 # KOR-45 – contract changes
 
-ADR-027 section 3. Design: ADR-087 (sessions read like their human) and ADR-088 (full subagents and limits as
+ADR-027 section 3. Design: ADR-089 (sessions read like their human) and ADR-088 (full subagents and limits as
 settings). Every change widens what was valid except where noted ("defect fix": a fixed copy of a limit that is a
 setting now).
 
@@ -22,7 +22,7 @@ setting now).
 - `enums/attention.json`: reason `limit_reached` of category `blocked` (a subagent limit refused a request).
 - `api/session-get.response.json` `children`: up to 1000 IDs (was 10, the former total limit per task).
 
-## Reading like the human (ADR-087)
+## Reading like the human (ADR-089)
 
 - `mcp/objects.json`: optional `workgroup_id` (uuid) in the inputs of `list_tasks`, `get_whiteboard` (level
   `workgroup` only) and `list_members` (scope `workgroup` only); fixtures under `mcp/tools/<tool>.input/`. An older

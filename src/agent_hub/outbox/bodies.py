@@ -509,7 +509,7 @@ class HookDenied(Strict):
 
 
 class ReadCount(Strict):
-    """`contracts/audit/read.session.<tool>.json`: the workgroup read and the instructing human (ADR-087 section 4)."""
+    """`contracts/audit/read.session.<tool>.json`: the workgroup read and the instructing human (ADR-089 section 4)."""
 
     result_count: Count
     read_wg_id: Uuid7 | None = None

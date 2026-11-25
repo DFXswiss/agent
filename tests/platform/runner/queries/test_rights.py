@@ -1,4 +1,4 @@
-"""U-RUN-queries rights: the task owner's rights at call time from the verified log (ADR-087, 03-api.md section 8.1).
+"""U-RUN-queries rights: the task owner's rights at call time from the verified log (ADR-089, 03-api.md section 8.1).
 
 An owner who loses the workgroup access keeps the organization level and is `forbidden` on the workgroup level; a
 removed owner reads nothing; a device that is no longer assigned to the session's workgroup or cannot act for the org

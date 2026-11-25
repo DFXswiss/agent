@@ -1,7 +1,7 @@
 """`get_operation {operation_id, wait_seconds? <= 30}` (03-api.md sections 8.1 and 9): the current outcome of an
 operation of the session's task, from the operation pipeline (`Pipeline.wait_answer`, RUN-07): at once when it is
 final, else after `wait_seconds` (default 0) with `status:"pending"`. An operation of another task, or one this
-device does not know, is `not_found` - also of a task of another readable workgroup (ADR-087 section 3: parameters
+device does not know, is `not_found` - also of a task of another readable workgroup (ADR-089 section 3: parameters
 and results stay with the session's own task). Workgroup level.
 """
 

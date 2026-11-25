@@ -1,5 +1,5 @@
 """U-RUN-queries read log: every call of a read tool becomes one outbox audit `read.session.<tool>` (detail
-`{result_count, read_wg_id, triggered_by}`, ADR-087 section 4) and - when the tool checked its arguments - one
+`{result_count, read_wg_id, triggered_by}`, ADR-089 section 4) and - when the tool checked its arguments - one
 `platform.read` event `{tool, arguments, result_count}` of the session's workgroup (03-api.md sections 6.1, 8 and 10,
 02-data-model.md section 2.9), also for reads refused on rights; arguments a tool refused are audited but never sealed
 (KOR-03, AUD-01 A-18); event bodies and audits match `contracts/`."""
@@ -27,7 +27,7 @@ CALLS: tuple[tuple[str, dict[str, Any], str, int], ...] = (
     ("list_members", {"scope": "nobody"}, "failed", 0),
 )
 READ_WGS = (WG, None, None, WG, WG, WG, WG, None, WG, WG_ONE, None, None)
-"""The audited `read_wg_id` of each call (ADR-087 section 4): null on the organization level and before a workgroup
+"""The audited `read_wg_id` of each call (ADR-089 section 4): null on the organization level and before a workgroup
 was chosen; the refused task of workgroup one names that workgroup."""
 TARGETS = {
     "get_context": "session",

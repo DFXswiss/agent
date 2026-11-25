@@ -38,7 +38,7 @@
   instruction, `turns.ping_id`); without one the end is logged.
 - **Reads** (`spawn_query`, the `platform.query` journal handler): every forwarded read of a tool with a provider is
   answered by the registered `QueryTool` with the instructing human the journal handler captured when the read arrived
-  (ADR-087 section 1), recorded as `read.session.<tool>` audit (naming the workgroup read and that human,
+  (ADR-089 section 1), recorded as `read.session.<tool>` audit (naming the workgroup read and that human,
   `read_wg_id`/`triggered_by`) and - when the tool checked the arguments - as `platform.read` event, then answered to
   the guest - once per pending call, at most
   `MAX_READS_PER_SESSION` at a time per session. The event body must match `events/platform.read.json`, whose
@@ -562,7 +562,7 @@ class Subagents:
         The event's `ref` is the read target (04-crypto.md section 4.3: the hub refuses an empty one), the audited
         target ID - a UUID, as the header contract requires: the tools name checked IDs or scope IDs, else the session.
         The audit detail also names the workgroup read (`read_wg_id`, null on the organization level) and the
-        instructing human (`triggered_by`, null when unknown; ADR-087 section 4).
+        instructing human (`triggered_by`, null when unknown; ADR-089 section 4).
         """
         at = self.env.at()
         target = outcome.target_id or session.id

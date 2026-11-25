@@ -1,4 +1,4 @@
-"""`list_workgroups {}` (03-api.md section 8.1, ADR-087): the names of all workgroups of the organization - also of
+"""`list_workgroups {}` (03-api.md section 8.1, ADR-089): the names of all workgroups of the organization - also of
 workgroups the session cannot read (names are organization metadata every member sees) - with `my_access`, the
 **session's** access: the task owner's explicit `read`/`write` for the session's own workgroup, `read` for another
 workgroup the session may read (`ReadScope.readable`: owner and instructing human, served by this device), null
