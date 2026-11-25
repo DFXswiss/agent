@@ -735,6 +735,12 @@
   "src/agent_runner/login/capture.py": {
    "MAX_URL": "size"
   },
+  "src/agent_runner/login/full_login.py": {
+   "MAX_EXPIRY_MS": "integer",
+   "MAX_FILE": "size",
+   "MAX_SCOPES": "answer",
+   "rate_limit_tier": "size"
+  },
   "src/agent_runner/login/pty.py": {
    "MAX_OUTPUT": "size"
   },
@@ -876,6 +882,9 @@
   "src/agent_runner/quota/parsers.py": {
    "MAX_PERCENT": "integer",
    "MAX_WINDOWS": "page"
+  },
+  "src/agent_runner/quota/renewal.py": {
+   "MAX_EXPIRES_IN": "time"
   },
   "src/agent_runner/quota/subscription.py": {
    "MAX_RETRY_AFTER_S": "time",
@@ -1542,6 +1551,7 @@
    "/$defs/seq/maximum": "integer"
   },
   "contracts/credentials/claude_subscription.json": {
+   "/properties/scopes/maxItems": "answer",
    "/properties/use/properties/orgs/maxItems": "open"
   },
   "contracts/credentials/github.json": {
