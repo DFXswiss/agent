@@ -50,6 +50,7 @@ export function SubscriptionCard({ item, onChanged }: { readonly item: Subscript
   };
   const title = item.primary ? t('subscription-login.primary') : (item.name ?? t('subscription-login.unnamed'));
   const changeable = !item.primary && item.status !== 'unverifiable';
+  const removable = !item.primary && item.status === 'unverifiable' && open === 'none';
   return (
     <article className="flex flex-col gap-2 rounded border border-gray-300 p-3" data-testid={`subcard.${item.id}`}>
       <h4 className="font-semibold">{title}</h4>
@@ -102,6 +103,11 @@ export function SubscriptionCard({ item, onChanged }: { readonly item: Subscript
           </button>
         </div>
       )}
+      {removable && (
+        <button type="button" className={BUTTON} onClick={() => setOpen('remove')} data-testid="subcard.remove">
+          {t('subscription-login.remove')}
+        </button>
+      )}
       {open === 'login' && (
         <SubscriptionLogin
           input={{ subscriptionId: item.id, mode: 'manual' }}
@@ -117,6 +123,7 @@ export function SubscriptionCard({ item, onChanged }: { readonly item: Subscript
           <label htmlFor={`subname-${item.id}`}>{t('subscription-login.name')}</label>
           <input
             id={`subname-${item.id}`}
+            maxLength={64}
             className="min-h-11 rounded border border-gray-400 px-3"
             value={name}
             onChange={(event) => setName(event.target.value)}
@@ -125,6 +132,7 @@ export function SubscriptionCard({ item, onChanged }: { readonly item: Subscript
           <label htmlFor={`subnote-${item.id}`}>{t('subscription-login.note')}</label>
           <input
             id={`subnote-${item.id}`}
+            maxLength={500}
             className="min-h-11 rounded border border-gray-400 px-3"
             value={note}
             onChange={(event) => setNote(event.target.value)}

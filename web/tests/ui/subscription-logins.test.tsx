@@ -259,6 +259,9 @@ describe('SubscriptionCard', () => {
     const broken = screen.getByTestId(`subcard.${other}`);
     expect(broken).toHaveTextContent('Subscription');
     expect(within(broken).getByTestId('subcard.status')).toHaveAttribute('data-status', 'unverifiable');
+    fireEvent.click(within(broken).getByTestId('subcard.remove')); // a record that does not open can still go
+    fireEvent.click(within(broken).getByTestId('subcard.remove.yes'));
+    await waitFor(() => expect(screen.queryByTestId(`subcard.${other}`)).toBeNull());
   });
 });
 
@@ -304,5 +307,74 @@ describe('the page My subscriptions', () => {
     await waitFor(() => expect(d.sent).toHaveLength(2));
     await d.respond(1, { step: 'done' }, true);
     expect(await screen.findByTestId('subscriptions.add')).toBeVisible();
+  });
+});
+
+describe('the login dialog', () => {
+  it('offers the mailbox with an optional address', async () => {
+    const { d } = await page();
+    fireEvent.click(await screen.findByTestId('submanage.add'));
+    fireEvent.change(screen.getByTestId('subadd.name'), { target: { value: 'Mail' } });
+    fireEvent.click(screen.getByTestId('subadd.automatic'));
+    fireEvent.change(screen.getByTestId('subadd.email'), { target: { value: 'bad' } });
+    expect(screen.getByTestId('subadd.start')).toBeDisabled();
+    fireEvent.change(screen.getByTestId('subadd.email'), { target: { value: '' } });
+    expect(screen.getByTestId('subadd.start')).toBeEnabled();
+    fireEvent.change(screen.getByTestId('subadd.email'), { target: { value: 'alias+2@example.com' } });
+    fireEvent.click(screen.getByTestId('subadd.start'));
+    await waitFor(() => expect(d.sent).toHaveLength(1));
+  });
+
+  it('starts nothing more once it is closed while it starts', async () => {
+    const { t, d } = await page();
+    const gate: { open?: (() => void) | undefined; fail?: (() => void) | undefined } = {};
+    const devices = t.client.request.bind(t.client);
+    let mode: 'hold' | 'fail' | 'post' | 'pass' = 'hold';
+    t.client.request = async (method: string, target: string, options?: { body?: unknown }) => {
+      const held = mode === 'post' ? target === '/v1/device-requests' : target === '/v1/me/devices';
+      if (held && mode !== 'pass') {
+        await new Promise<void>((resolve, reject) => {
+          gate.open = resolve;
+          gate.fail = () => reject(new Error('gone'));
+        });
+      }
+      return devices(method, target, options);
+    };
+    fireEvent.click(await screen.findByTestId('submanage.add'));
+    fireEvent.change(screen.getByTestId('subadd.name'), { target: { value: 'X' } });
+    fireEvent.click(screen.getByTestId('subadd.start'));
+    await waitFor(() => expect(gate.open).toBeDefined());
+    fireEvent.click(screen.getByTestId('sublogin.close'));
+    await act(async () => gate.open!());
+    gate.open = undefined;
+    fireEvent.click(screen.getByTestId('submanage.add'));
+    fireEvent.change(screen.getByTestId('subadd.name'), { target: { value: 'Y' } });
+    fireEvent.click(screen.getByTestId('subadd.start'));
+    await waitFor(() => expect(gate.fail).toBeDefined());
+    mode = 'fail';
+    fireEvent.click(screen.getByTestId('sublogin.close'));
+    await act(async () => gate.fail!());
+    expect(d.sent).toHaveLength(0);
+    // closed while the request is posted: the answer opens no dialog
+    gate.open = undefined;
+    mode = 'post';
+    fireEvent.click(screen.getByTestId('submanage.add'));
+    fireEvent.change(screen.getByTestId('subadd.name'), { target: { value: 'Z' } });
+    fireEvent.click(screen.getByTestId('subadd.start'));
+    await waitFor(() => expect(gate.open).toBeDefined());
+    fireEvent.click(screen.getByTestId('sublogin.close'));
+    await act(async () => gate.open!());
+    expect(screen.queryByTestId('claude.waiting')).toBeNull();
+    mode = 'pass';
+  });
+
+  it('keeps an organization the user left and the pool switchable', async () => {
+    await page({
+      seed: (hub) => hub.add(A, body({ name: 'Team', use: { pool: true, orgs: [ORG] } })),
+    });
+    const card = await screen.findByTestId(`subcard.${A}`);
+    fireEvent.click(within(card).getByTestId('subcard.use'));
+    expect(within(card).getByTestId(`subuse.org.${ORG}`)).toBeChecked();
+    expect(within(card).getByTestId('subuse.pool')).toBeChecked();
   });
 });

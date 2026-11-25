@@ -38,7 +38,8 @@ export function UseEditor({
   const platform = useStore((state) => (state.orgs.platform === null ? null : state.orgs.platform.state), app.store);
   const userId = useStore((state) => state.me.userId, app.store);
   const operator = platform !== null && userId !== null && platform.hasRole(userId, OPERATOR_ROLE);
-  const orgs = meOrgs(profile).map((item) => item.org_id);
+  // an organization the user left, or the pool after losing the role, stays visible so it can be switched off
+  const orgs = [...new Set([...meOrgs(profile).map((item) => item.org_id), ...use.orgs])];
   const [shared, setShared] = useState(use.pool || use.orgs.length > 0);
   const [pool, setPool] = useState(use.pool);
   const [chosen, setChosen] = useState<readonly string[]>(use.orgs);
@@ -82,7 +83,7 @@ export function UseEditor({
       </label>
       {shared && (
         <div className="ml-6 flex flex-col gap-1">
-          {operator && (
+          {(operator || use.pool) && (
             <label className="flex min-h-11 items-center gap-2">
               <input type="checkbox" checked={pool} onChange={() => setPool(!pool)} data-testid="subuse.pool" />
               {t('subscription-login.use.pool')}

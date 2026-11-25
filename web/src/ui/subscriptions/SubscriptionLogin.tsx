@@ -2,7 +2,7 @@
 // itself (an online one that announced `subscriptions`, `subscriptionDevices`), the `claude.login` request names the
 // subscription (and, for a new one, its label and note); then the relay of the credentials section runs
 // (`LoginRequest`: open the link, paste the code, done). The token is created on the device and never reaches this page.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { type LoginInput, startSubscriptionLogin, subscriptionDevices } from '../../core/credentials/subscriptions';
 import { type PreparedRequest, requestErrorCode } from '../../core/requests/client';
 import { useI18n } from '../i18n';
@@ -30,16 +30,26 @@ export function SubscriptionLogin({
   const { t } = useI18n();
   const reason = useReason();
   const [phase, setPhase] = useState<Phase>({ kind: 'starting' });
+  // the input of the first render: a re-render of the caller (a new object) never starts a second login
+  const first = useRef(input);
   useEffect(() => {
     if (phase.kind !== 'starting') return;
-    // the dialog is unmounted by "Close": a late answer then changes nothing that is shown
+    let closed = false;
     subscriptionDevices(app.tasks)
       .then(async (found) => {
+        if (closed) return;
         if (found.preselected === null) return setPhase({ kind: 'none' });
-        setPhase({ kind: 'request', prepared: await startSubscriptionLogin(app.tasks, found.preselected, input) });
+        const prepared = await startSubscriptionLogin(app.tasks, found.preselected, first.current);
+        if (!closed) setPhase({ kind: 'request', prepared });
       })
-      .catch((error: unknown) => setPhase({ kind: 'error', code: requestErrorCode(error) }));
-  }, [app, input, phase]);
+      .catch((error: unknown) => {
+        if (!closed) setPhase({ kind: 'error', code: requestErrorCode(error) });
+      });
+    // "Close" or a new attempt: a late answer changes nothing that is shown and starts nothing more
+    return () => {
+      closed = true;
+    };
+  }, [app, phase]);
   const done = useCallback(() => onDone(), [onDone]);
   const retry = () => setPhase({ kind: 'starting' });
   return (
