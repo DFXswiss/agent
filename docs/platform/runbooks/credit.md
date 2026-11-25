@@ -20,7 +20,7 @@ The release changes nothing until a price list is in force. Order:
 4. **Credit for the existing organizations**: there is no automatic start credit
    ([E-14](../KONZEPT.md#e-14)); `AGENT_HUB_BILLING_START_CREDIT_USD` stays unset or `0`. Before the price list of
    step 5 comes into force, the operator distributes credit by hand to every existing organization that should keep
-   working on DFX resources (section 2, e.g. `agent-hub billing credit --org <org-id> --add <usd> --reason "..."`);
+   working on DFX resources (section 2: directly in the database or with `agent-hub billing credit`);
    otherwise every organization is exhausted at once. New organizations start with 0 until the operator credits them.
 5. **Price list**: `agent-hub billing price-list add --file docs/platform/billing/price-list-2026-11-24.json`. The
    command refuses a list that misses a model of the hub's model catalog and names every organization that would have
@@ -32,17 +32,10 @@ Change prices later the same way with a new file (a new version; earlier charges
 
 ## 2. Setting credit
 
-Preferred – the operator command (history entry with the reason, audit row `credit.changed`):
-
-```sh
-agent-hub billing credit --org <org-id> --add 50 --reason "credit for November"
-agent-hub billing credit --org <org-id> --set 10 --reason "correction"
-agent-hub billing credit --all-orgs --add 5 --reason "goodwill"
-agent-hub billing show [--org <org-id>]          # balance, exhausted, account columns (JSON lines)
-```
-
-Direct in the database (as the hub's owner or writer role, `psql` on the hub database) – one statement sets the
-balance of one organization to an amount in **micro-USD** (USD × 1 000 000):
+Credit is distributed only by the operator, directly on the hub device (remote shell); there is no public endpoint
+and no view for it ([E-14](../KONZEPT.md#e-14)). The way the operator uses is the direct one in the database (as the
+hub's owner or writer role, `psql` on the hub database) – one statement sets the balance of one organization to an
+amount in **micro-USD** (USD × 1 000 000):
 
 ```sql
 INSERT INTO hub.credit_account (org_id, balance_micro_usd) VALUES ('<org-id>', 50 * 1000000)
@@ -51,6 +44,16 @@ INSERT INTO hub.credit_account (org_id, balance_micro_usd) VALUES ('<org-id>', 5
 
 To add instead of set: `UPDATE hub.credit_account SET balance_micro_usd = balance_micro_usd + 50 * 1000000 WHERE
 org_id = '<org-id>';` (reading a value and writing it back would lose the charges booked in between).
+
+The same works with the operator command on the hub device, which also stores the reason in the history (audit row
+`credit.changed`):
+
+```sh
+agent-hub billing credit --org <org-id> --add 50 --reason "credit for November"
+agent-hub billing credit --org <org-id> --set 10 --reason "correction"
+agent-hub billing credit --all-orgs --add 5 --reason "goodwill"
+agent-hub billing show [--org <org-id>]          # balance, exhausted, account columns (JSON lines)
+```
 
 What happens: only `balance_micro_usd` changes. Within 5 s the hub's settle job sees that it differs from
 `booked_micro_usd`, records the difference in the history (`manual`, actor `database`), writes the audit row and aligns

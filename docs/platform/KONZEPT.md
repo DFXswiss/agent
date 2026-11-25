@@ -533,12 +533,16 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   der Oberfläche, das Guthaben setzt der Betreiber (Befehl mit Audit, zusätzlich dokumentierter direkter Weg in der
   Datenbank). Guthaben entsteht nur auf zwei Wegen: gekauft oder vom Betreiber manuell verteilt; ein automatisches
   Startguthaben gibt es nicht, auch nicht für neue Organisationen (Ergänzung vom 2026-11-25). Der Kauf ist heute
-  nicht gebaut (kein Zahlungsweg, siehe oben).
+  nicht gebaut (kein Zahlungsweg, siehe oben). Verteilt wird Guthaben durch einen direkten Eingriff des Betreibers
+  auf dem Hub-Gerät; ein öffentlicher Endpunkt oder eine Ansicht zum Verteilen wird nicht gebaut (Ergänzung vom
+  2026-11-25).
 - **Wortlaut:** „zahlungswege gibt es keinen, man kann nur guthaben verbrauchen, guthaben aufladen aktuell nicht
   möglich. guthaben setze ich nach eigenem gutdünken manuell in der db über […]. wir starten einfach mal so.“
   (interner Zugangsweg gekürzt). Am 2026-11-25 11:12 auf die Frage nach 20 USD Startguthaben je neuer
   Organisation: „es gibt kein automatisches startguthaben, guthaben wird nur entweder gekauft oder manuell von mir
-  verteilt. das ist alles“
+  verteilt. das ist alles“; am selben Vormittag: „das verteilen mache ich mit direktem remote ssh eingriff auf
+  […], kein öffentlicher api endpoint notwneid.g“ (Gerätename gekürzt; gemeint ist das Hub-Gerät, „notwneid.g“ =
+  notwendig)
 - **Bezug:** präzisiert [Idee 47](#k-idee-47) („nach Aufladung“ = nach einer Gutschrift des Betreibers) und
   [Idee 46](#k-idee-46); die Ergänzung beantwortet die offene Frage F1 aus
   [ADR-079](adr/079-no-approval-as-precondition.md) (Startguthaben statt Freigabe): kein Startguthaben.
