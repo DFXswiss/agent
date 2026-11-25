@@ -78,6 +78,9 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `MODEL_UPSTREAM_ANTHROPIC` / `MODEL_UPSTREAM_OPENROUTER` | `https://api.anthropic.com` / `https://openrouter.ai/api` | doubles in tests |
 | `ANTHROPIC_USAGE_URL` | `https://api.anthropic.com/api/oauth/usage` | quota polling |
 | `LOGIN_ARGV` | `["claude","setup-token"]` (JSON array) | login-CLI double in tests; the default needs Claude Code on the host at the golden's pin (doctor `login_cli`) |
+| `SUBSCRIPTION_LOGIN_ARGV` | `["claude","auth","login","--claudeai"]` (JSON array) | the full login of a further subscription (§11.5, ADR-091); `--email <address>` is appended when known |
+| `CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | token endpoint of the renewal of further subscriptions (§10.6, ADR-091); loopback `http` only in test mode |
+| `CLAUDE_OAUTH_CLIENT_ID` | `9d1c250a-e61b-44d9-88ed-5944d1962f5e` | client ID of that renewal (the pinned Claude Code's) |
 | `LOGIN_AUTOMATION` | `on` for platform devices (platform install profile), `off` for org devices | `on` enables §11.3 (needs the `login` extra; the platform install profile includes it) |
 | `GOLDEN_TEMPLATE` | `images/golden.yaml` of the checkout | the build also reads `images/`, `src/agent_guest/` and `contracts/` next to the template; missing → `golden_source_missing` (KOR-03) |
 | `TEST_MODE` | `0` | allows loopback HTTP and double upstreams; MUST be `0` in production (doctor warns) |
