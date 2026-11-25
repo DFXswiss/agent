@@ -92,11 +92,13 @@ The delegated sites are the repository `check_argv`, the A38 trusted precheck,
 `readiness_argv`, and only the `run` step of the A38 suite. The A38 suite's
 `policy` and `verify` steps stay local because they only read and write files
 in the run directory. Git, `gh`, `ps`, lane starts, and the conflict remedy's
-`check_argv` are never delegated. A failing operator command keeps the existing
-handling: an infrastructure exit code goes through `check_command_unavailable`,
-and a non-zero check stays a check failure. A worker's resolved
-`check_execution` is part of the execution binding; without the key the hashed
-dict is unchanged.
+`check_argv` are never delegated. A failing operator command keeps each site's
+existing handling: for the repository `check_argv`, the A38 trusted precheck,
+and the A38 suite, an infrastructure exit code goes through
+`check_command_unavailable` and any other non-zero exit stays a check failure;
+for `readiness_argv` every non-zero exit raises `readiness failed: ...`. A
+worker's resolved `check_execution` is part of the execution binding; without
+the key the hashed dict is unchanged.
 
 `repository_owners` is a distinct, case-insensitive list of valid 1–39 character
 GitHub organization or user logins (no leading, trailing, or consecutive

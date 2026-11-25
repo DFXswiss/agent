@@ -22346,6 +22346,43 @@ def test_readiness_uses_the_configured_check_execution(
     assert not Path(profile).exists()
 
 
+@pytest.mark.no_pg
+def test_readiness_failure_reports_the_operator_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_github
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    worker = make_worker(tmp_path)
+    cfg = worker.repositories["example/project"]
+    head = "a" * 40
+    base = "b" * 40
+    task = {
+        "id": "55555555-5555-4555-8555-555555555557",
+        "session_id": worker.session_id,
+        "payload": {
+            "coordinator": {
+                "worktree": str(worktree),
+                "head_sha": head,
+                "source": {"repo": "example/project", "number": 7},
+            }
+        },
+    }
+    monkeypatch.setattr(
+        coordinator_github,
+        "run_bounded",
+        lambda *a, **k: Completed(1, "", "readiness exploded"),
+    )
+
+    with pytest.raises(
+        CoordinatorError, match="readiness failed: readiness exploded"
+    ):
+        coordinator_github._readiness_for_head(
+            worker, task, cfg, head=head, base_sha=base
+        )
+
+
 @pytest.mark.parametrize("delegated", [False, True])
 def test_a38_trusted_precheck_uses_the_configured_check_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delegated: bool
@@ -22566,6 +22603,7 @@ def test_a38_suite_delegates_only_the_run_step(
     monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
     policy = load_policy(_a38_policy_text())
     seen: dict[str, list[str]] = {}
+    written: dict[str, Path] = {}
 
     def _a38_step(argv: list[str]) -> str:
         inner = argv[argv.index("--") + 1 :] if "--" in argv else argv
@@ -22578,8 +22616,9 @@ def test_a38_suite_delegates_only_the_run_step(
         seen[step] = list(argv)
         if step == "run":
             inner = argv[argv.index("--") + 1 :]
+            written["report"] = Path(inner[inner.index("--output") + 1])
             _write_coordinator_a38_policy_report(
-                Path(inner[inner.index("--output") + 1]),
+                written["report"],
                 policy=policy,
                 head=head,
                 base=base,
@@ -22612,6 +22651,9 @@ def test_a38_suite_delegates_only_the_run_step(
         "a38",
         "verify",
     ]
+    verify_file = Path(seen["verify"][seen["verify"].index("--file") + 1])
+    assert verify_file == written["report"]
+    assert verify_file.name == "report.md"
     assert "--" not in seen["policy"]
     assert "--" not in seen["verify"]
     argv = seen["run"]
@@ -22637,3 +22679,554 @@ def test_a38_suite_delegates_only_the_run_step(
         "run",
     ]
     assert "AGENT_COORDINATOR_SESSION=" + worker.session_id in inner
+
+
+def _a38_tests_row(store: Store, task_id: str, **updates: Any) -> dict[str, Any]:
+    """Point an A38 task at the tests phase with optional checkpoint updates."""
+    task = store.row("task", task_id)
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint["phase"] = "tests"
+    checkpoint.update(updates)
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    return task
+
+
+def _without_check_argv(worker: Any) -> Any:
+    from dataclasses import replace
+
+    cfg = worker.repositories["example/project"]
+    return replace(
+        worker,
+        repositories={"example/project": replace(cfg, check_argv=())},
+    )
+
+
+def _patch_a38_measurement_io(
+    monkeypatch: pytest.MonkeyPatch,
+    fake: FakeGh,
+    *,
+    changed_paths: list[str] | None = None,
+    markdown_only: bool = False,
+    visibility: bool = False,
+) -> None:
+    """Fake only the A38 measurement's Git commands and GitHub reads."""
+    from agent_cli import coordinator_a38
+
+    paths = changed_paths if changed_paths is not None else ["src/app.py"]
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_pull_a38_context",
+        lambda *_a, **_k: (fake.base, paths, markdown_only, False),
+    )
+    monkeypatch.setattr(
+        coordinator_a38, "scoped", lambda *_a, **_k: lambda _argv: Completed(0, "", "")
+    )
+    monkeypatch.setattr(coordinator_a38, "gh_json", lambda *_a, **_k: visibility)
+    monkeypatch.setattr(coordinator_a38, "pr_state", lambda *_a, **_k: "OPEN")
+
+    def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
+        if parts[0] == "fetch":
+            return Completed(0, "", "")
+        if parts[:2] == ("cat-file", "-e"):
+            return Completed(0, "", "")
+        if parts[0] == "rev-parse":
+            return Completed(0, fake.base + "\n", "")
+        if parts[0] == "show":
+            return Completed(0, _a38_policy_text(), "")
+        raise AssertionError(parts)
+
+    monkeypatch.setattr(coordinator_a38, "git", fake_git)
+
+
+def _a38_cli_fake(
+    *,
+    policy: int = 0,
+    run: int = 0,
+    verify: int = 0,
+    write_run: bytes | None = None,
+) -> Any:
+    """Answer the suite's policy/run/verify steps; run may write the report."""
+
+    def fake_cli(argv, *, worker, cwd):  # noqa: ANN001
+        if argv[0] == "policy":
+            return Completed(policy, "", "")
+        if argv[0] == "run":
+            if write_run is not None:
+                Path(argv[argv.index("--output") + 1]).write_bytes(write_run)
+            return Completed(run, "", "")
+        if argv[0] == "verify":
+            return Completed(verify, "", "")
+        raise AssertionError(argv)
+
+    return fake_cli
+
+
+def test_a38_tests_phase_refuses_a_non_a38_worker(tmp_path: Path) -> None:
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store = Store(tmp_path)
+    worker = make_worker(tmp_path)
+
+    with pytest.raises(
+        CoordinatorError, match="A38 tests phase called for a non-A38 worker"
+    ):
+        phase_a38_tests(
+            store,
+            worker,
+            {"id": "not-a38", "payload": {"coordinator": {}}},
+            lambda _argv: Completed(0, "", ""),
+        )
+
+
+def test_a38_tests_phase_requires_a_pull_request_number(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    task = _a38_tests_row(store, task_id)
+    checkpoint = task["payload"]["coordinator"]
+    checkpoint.pop("pr_number", None)
+    task.pop("ref", None)
+    store.write(
+        "task",
+        "update",
+        task_id,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+
+    with pytest.raises(
+        CoordinatorError, match="A38 measurement requires a pull request number"
+    ):
+        phase_a38_tests(store, worker, store.row("task", task_id), fake)
+
+
+def test_a38_inventory_waiver_retries_when_live_context_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    _a38_tests_row(store, task_id)
+
+    def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
+        if parts[0] == "fetch" or parts[:2] == ("cat-file", "-e"):
+            return Completed(0, "", "")
+        raise AssertionError(parts)
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._pull_a38_context",
+        lambda *_a, **_k: (fake.base, ["docs/guide.md"], True, False),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._stable_live_pr_context", lambda *_a, **_k: None
+    )
+
+    lines = phase_a38_tests(
+        store, worker, store.row("task", task_id), lambda _argv: Completed(0, "", "")
+    )
+
+    assert lines == [
+        "PR state temporarily unavailable before A38 inventory waiver "
+        "finalization; retrying"
+    ]
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert saved["phase"] == "tests"
+    assert "report_waiver" not in saved["a38"]
+
+
+def test_a38_inventory_waiver_refuses_a_draft_head_that_differs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    _a38_tests_row(store, task_id)
+    _patch_a38_measurement_io(
+        monkeypatch, fake, changed_paths=["docs/guide.md"], markdown_only=True
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._stable_live_pr_context",
+        lambda *_a, **_k: {
+            "repo": "example/project",
+            "number": 42,
+            "head": fake.head,
+            "base_sha": fake.base,
+            "base_name": "develop",
+            "state": "OPEN",
+        },
+    )
+
+    def changed_head(_store, _worker, task, _runner):  # noqa: ANN001
+        task["payload"]["coordinator"]["head_sha"] = "c" * 40
+        return []
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", changed_head)
+
+    with pytest.raises(
+        CoordinatorError,
+        match="published pull request head differs from the A38 waiver head",
+    ):
+        phase_a38_tests(
+            store, worker, store.row("task", task_id), lambda _argv: Completed(0, "", "")
+        )
+
+
+def test_a38_inventory_waiver_remeasures_on_a_second_metadata_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    _a38_tests_row(store, task_id)
+    _patch_a38_measurement_io(
+        monkeypatch, fake, changed_paths=["docs/guide.md"], markdown_only=True
+    )
+    contexts = iter(
+        (
+            {
+                "repo": "example/project",
+                "number": 42,
+                "head": fake.head,
+                "base_sha": fake.base,
+                "base_name": "develop",
+                "state": "OPEN",
+            },
+            {
+                "repo": "example/project",
+                "number": 42,
+                "head": fake.head,
+                "base_sha": "d" * 40,
+                "base_name": "develop",
+                "state": "OPEN",
+            },
+        )
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._stable_live_pr_context",
+        lambda *_a, **_k: next(contexts),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.ensure_draft", lambda *_a, **_k: []
+    )
+
+    lines = phase_a38_tests(
+        store, worker, store.row("task", task_id), lambda _argv: Completed(0, "", "")
+    )
+
+    assert lines == [
+        "PR metadata changed after A38 inventory measurement; invalidating "
+        "the waiver and remeasuring"
+    ]
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert saved["phase"] == "tests"
+    assert saved["a38"]["pending_base_sha"] == "d" * 40
+    assert "report_waiver" not in saved["a38"]
+
+
+def test_a38_inventory_waiver_handles_a_merge_after_the_draft_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    _a38_tests_row(store, task_id)
+    _patch_a38_measurement_io(
+        monkeypatch, fake, changed_paths=["docs/guide.md"], markdown_only=True
+    )
+    contexts = iter(
+        (
+            {
+                "repo": "example/project",
+                "number": 42,
+                "head": fake.head,
+                "base_sha": fake.base,
+                "base_name": "develop",
+                "state": "OPEN",
+            },
+            {
+                "repo": "example/project",
+                "number": 42,
+                "head": fake.head,
+                "base_sha": fake.base,
+                "base_name": "develop",
+                "state": "MERGED",
+            },
+        )
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._stable_live_pr_context",
+        lambda *_a, **_k: next(contexts),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.ensure_draft", lambda *_a, **_k: []
+    )
+
+    lines = phase_a38_tests(
+        store, worker, store.row("task", task_id), lambda _argv: Completed(0, "", "")
+    )
+
+    assert lines == [
+        "PR merged during the A38 inventory waiver; verifying the merge"
+    ]
+    saved = store.row("task", task_id)["payload"]["coordinator"]
+    assert saved["phase"] == "await_merge"
+    assert saved["a38"]["report_waiver"]["head"] == fake.head
+    assert saved["a38"]["report_waiver"]["reason"] == "markdown-only change set"
+
+
+def test_a38_stale_report_intent_is_discarded_before_measuring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    worker = _without_check_argv(worker)
+    task = _a38_tests_row(
+        store,
+        task_id,
+        a38={
+            **store.row("task", task_id)["payload"]["coordinator"]["a38"],
+            "report_intent": {
+                "head": "c" * 40,
+                "base_sha": fake.base,
+                "policy_revision": fake.base,
+                "activity_id": "aa000001-0000-4000-8000-000000000300",
+                "body_sha256": "d" * 64,
+                "private": False,
+            },
+        },
+    )
+    _patch_a38_measurement_io(monkeypatch, fake)
+    monkeypatch.setattr(coordinator_a38, "_run_cli", _a38_cli_fake(run=1))
+
+    lines = phase_a38_tests(
+        store, worker, store.row("task", task_id), lambda _argv: Completed(0, "", "")
+    )
+
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert lines == [f"A38 failed on {fake.head[:7]}; routing to implementer"]
+    assert "report_intent" not in checkpoint["a38"]
+    assert checkpoint["phase"] == "implement"
+    assert saved["state"] == "implementing"
+    assert checkpoint["evidence"]["tests_pass"] is False
+    assert checkpoint["evidence"]["tests_head"] == fake.head
+
+
+def test_a38_invalid_recovery_intent_is_discarded_before_measuring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import hashlib
+
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    worker = _without_check_argv(worker)
+    head = fake.head
+    base = fake.base
+    body = "not a local CI report"
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
+    activity_id = "aa000001-0000-4000-8000-000000000301"
+    task = _a38_tests_row(
+        store,
+        task_id,
+        a38={
+            **store.row("task", task_id)["payload"]["coordinator"]["a38"],
+            "report_intent": {
+                "head": head,
+                "base_sha": base,
+                "policy_revision": base,
+                "activity_id": activity_id,
+                "body_sha256": digest,
+                "private": False,
+            },
+        },
+    )
+    store.write(
+        "activity",
+        "insert",
+        activity_id,
+        {
+            "id": activity_id,
+            "session_id": worker.session_id,
+            "type": "comment.post",
+            "payload": coordinator_a38._report_activity_payload(
+                task,
+                repo="example/project",
+                number=42,
+                body=body,
+                head=head,
+                base_sha=base,
+                policy_revision=base,
+                body_sha256=digest,
+                private=False,
+            ),
+            "execution_status": "pending",
+        },
+    )
+    _patch_a38_measurement_io(monkeypatch, fake)
+    monkeypatch.setattr(coordinator_a38, "_run_cli", _a38_cli_fake(run=1))
+
+    lines = phase_a38_tests(
+        store, worker, store.row("task", task_id), lambda _argv: Completed(0, "", "")
+    )
+
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert lines == [f"A38 failed on {fake.head[:7]}; routing to implementer"]
+    assert "report_intent" not in checkpoint["a38"]
+    assert checkpoint["phase"] == "implement"
+    assert saved["state"] == "implementing"
+    retired = store.row("activity", activity_id)
+    assert retired["execution_status"] == "error"
+    assert retired["execution_error"] == (
+        "A38 report intent payload failed current validation"
+    )
+
+
+def test_a38_precheck_failure_resets_non_dict_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    _a38_tests_row(store, task_id, evidence="stale")
+    _patch_a38_measurement_io(monkeypatch, fake)
+    monkeypatch.setattr(
+        coordinator_a38,
+        "run_bounded",
+        lambda *_a, **_k: Completed(1, "precheck output", ""),
+    )
+
+    lines = phase_a38_tests(
+        store, worker, store.row("task", task_id), lambda _argv: Completed(0, "", "")
+    )
+
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert lines == [f"trusted precheck failed on {fake.head[:7]}; routing to implementer"]
+    assert checkpoint["phase"] == "implement"
+    assert saved["state"] == "implementing"
+    assert checkpoint["evidence"] == {}
+
+
+def test_a38_suite_failure_resets_non_dict_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    worker = _without_check_argv(worker)
+    _a38_tests_row(store, task_id, evidence="stale")
+    _patch_a38_measurement_io(monkeypatch, fake)
+    monkeypatch.setattr(coordinator_a38, "_run_cli", _a38_cli_fake(run=1))
+
+    lines = phase_a38_tests(
+        store, worker, store.row("task", task_id), lambda _argv: Completed(0, "", "")
+    )
+
+    saved = store.row("task", task_id)
+    checkpoint = saved["payload"]["coordinator"]
+    assert lines == [f"A38 failed on {fake.head[:7]}; routing to implementer"]
+    assert checkpoint["phase"] == "implement"
+    assert saved["state"] == "implementing"
+    assert checkpoint["evidence"] == {}
+
+
+def test_a38_verified_report_that_cannot_be_read_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    worker = _without_check_argv(worker)
+    _a38_tests_row(store, task_id)
+    _patch_a38_measurement_io(monkeypatch, fake)
+    monkeypatch.setattr(
+        coordinator_a38, "_run_cli", _a38_cli_fake(write_run=b"\xff\xfe")
+    )
+
+    with pytest.raises(CoordinatorError, match="verified A38 report cannot be read"):
+        phase_a38_tests(
+            store, worker, store.row("task", task_id), lambda _argv: Completed(0, "", "")
+        )
+
+
+def test_a38_run_path_that_is_not_a_directory_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    worker = _without_check_argv(worker)
+    _a38_tests_row(store, task_id)
+    _patch_a38_measurement_io(monkeypatch, fake)
+    run_dir = coordinator_a38.control_dir(worker, task_id) / "a38" / fake.head
+    run_dir.parent.mkdir(parents=True, exist_ok=True)
+    run_dir.write_text("not a managed directory", encoding="utf-8")
+
+    with pytest.raises(
+        CoordinatorError, match="A38 run path is not a managed directory"
+    ):
+        phase_a38_tests(
+            store, worker, store.row("task", task_id), lambda _argv: Completed(0, "", "")
+        )
+
+
+def test_a38_run_directory_is_recreated_fresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    worker = _without_check_argv(worker)
+    _a38_tests_row(store, task_id)
+    _patch_a38_measurement_io(monkeypatch, fake)
+    monkeypatch.setattr(coordinator_a38, "_run_cli", _a38_cli_fake(run=1))
+    run_dir = coordinator_a38.control_dir(worker, task_id) / "a38" / fake.head
+    run_dir.mkdir(parents=True)
+    (run_dir / "sentinel.txt").write_text("old", encoding="utf-8")
+
+    lines = phase_a38_tests(
+        store, worker, store.row("task", task_id), lambda _argv: Completed(0, "", "")
+    )
+
+    assert lines == [f"A38 failed on {fake.head[:7]}; routing to implementer"]
+    assert run_dir.is_dir()
+    assert not (run_dir / "sentinel.txt").exists()
+
+
+def test_a38_run_directory_creation_failure_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_a38
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store, worker, fake, task_id = _a38_first_comment_env(tmp_path, monkeypatch)
+    worker = _without_check_argv(worker)
+    _a38_tests_row(store, task_id)
+    _patch_a38_measurement_io(monkeypatch, fake)
+    blocker = coordinator_a38.control_dir(worker, task_id) / "a38"
+    blocker.parent.mkdir(parents=True, exist_ok=True)
+    blocker.write_text("blocking file", encoding="utf-8")
+
+    with pytest.raises(
+        CoordinatorError, match="cannot create a fresh A38 run directory"
+    ):
+        phase_a38_tests(
+            store, worker, store.row("task", task_id), lambda _argv: Completed(0, "", "")
+        )

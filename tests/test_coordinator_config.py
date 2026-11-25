@@ -638,3 +638,48 @@ def test_check_execution_refuses_anything_but_a_delegate_operator(tmp_path, valu
         'argv of nonempty single-line strings',
     ):
         load_coordinator_config(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ('payload', 'error'),
+    [
+        ([], 'coordinator.json accepts only workers'),
+        ({'workers': {}, 'extra': 1}, 'coordinator.json accepts only workers'),
+        ({'workers': []}, 'workers must be an object or null'),
+    ],
+)
+def test_coordinator_json_envelope_is_validated(tmp_path, payload, error):
+    (tmp_path / 'coordinator.json').write_text(json.dumps(payload))
+    with pytest.raises(StoreError, match=error):
+        load_coordinator_config(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ('field', 'value', 'error'),
+    [
+        ('reply_logins', ['Bad_Login'], 'invalid reply login'),
+        ('repositories', [], 'repositories must be an object'),
+        ('repository_owners', 'ExampleUser', 'repository_owners must be a list'),
+    ],
+)
+def test_worker_structure_is_validated(tmp_path, field, value, error):
+    data = config(tmp_path)
+    data['workers']['selected-session'][field] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(StoreError, match=error):
+        load_coordinator_config(tmp_path)
+
+
+@pytest.mark.parametrize('entry', [[], {'base': 'develop'}])
+def test_repository_entry_requires_base_publication_and_both_commands(
+    tmp_path, entry
+):
+    data = config(tmp_path)
+    data['workers']['selected-session']['repositories']['example/project'] = entry
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(
+        StoreError,
+        match='repository requires base, publication_repo, check_argv and '
+        'readiness_argv',
+    ):
+        load_coordinator_config(tmp_path)
