@@ -374,18 +374,20 @@ def _rows(account: Account, wg: str, query: dict[str, Any]) -> tuple[list[Any], 
     return rows, answer.get("next_before")
 
 
-def _open_rows(account: Account, wg: str) -> list[Any]:
+def _open_rows(account: Account, wg: str) -> tuple[list[Any], bool]:
     """The newest tasks that are not closed: the hub filters by one task state only, `open` is every state but
-    `closed` (KOR-67), so the tool pages and filters (at most `LIST_LIMIT` tasks from at most `OPEN_PAGES` pages)."""
+    `closed` (KOR-67), so the tool pages and filters (at most `LIST_LIMIT` tasks from at most `OPEN_PAGES` pages).
+    The flag is true when tasks were cut off or pages were left unread."""
     found: list[Any] = []
     query: dict[str, Any] = {}
+    before: Any = None
     for _page in range(OPEN_PAGES):
         rows, before = _rows(account, wg, query)
         found += [row for row in rows if isinstance(row, dict) and row.get("state") != "closed"]
         if len(found) >= LIST_LIMIT or not isinstance(before, str):
             break
         query = {"before": before}
-    return found[:LIST_LIMIT]
+    return found[:LIST_LIMIT], len(found) > LIST_LIMIT or isinstance(before, str)
 
 
 def task_list(account: Account, wg: str, state: str | None) -> dict[str, Any]:
@@ -393,7 +395,11 @@ def task_list(account: Account, wg: str, state: str | None) -> dict[str, Any]:
     if state is not None and state not in STATES:
         raise PlatformError("invalid_argument")
     org = find_org(account, _id(wg))
-    rows = _open_rows(account, wg) if state == "open" else _rows(account, wg, {"state": state} if state else {})[0]
+    if state == "open":
+        rows, truncated = _open_rows(account, wg)
+    else:
+        rows, before = _rows(account, wg, {"state": state} if state else {})
+        truncated = isinstance(before, str)
     found = titles(account, org, wg)
     tasks = [
         {
@@ -406,7 +412,7 @@ def task_list(account: Account, wg: str, state: str | None) -> dict[str, Any]:
         for row in rows
         if isinstance(row, dict)
     ]
-    return {"org_id": org, "wg_id": wg, "tasks": tasks}
+    return {"org_id": org, "wg_id": wg, "tasks": tasks, "truncated": truncated}
 
 
 def task_follow(account: Account, task: str, after: int, wait: int) -> dict[str, Any]:
