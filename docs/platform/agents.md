@@ -548,6 +548,14 @@ agent-platform notifications list [--unread]
 agent-platform notifications read --all                          # or --id <id> (repeatable)
 agent-platform quotas                                            # unreadable_since: the login may not read them
 agent-platform quotas [--org <org_id>]                           # with --org: own and operator subscriptions, DFX access, release
+agent-platform subscriptions list                                # every Claude subscription: status, use, remaining quota
+agent-platform subscriptions add --name "Team" [--note "..."]    # logged in on a platform device; answers the link
+agent-platform subscriptions add --name "Mail" --automatic [--email <address>]  # through the mailbox, no browser
+agent-platform subscriptions login --id <subscription_id>        # log it in again ("not_logged_in", refused token)
+agent-platform subscriptions rename --id <subscription_id> --name "Review"
+agent-platform subscriptions note --id <subscription_id> --note "..."   # or --clear
+agent-platform subscriptions logout --id <subscription_id>       # drops the token; revoke it at the provider too
+agent-platform subscriptions remove --id <subscription_id>
 agent-platform settings set --fallback on                        # own subscription used up: continue on DFX access
 agent-platform settings set --fallback-platform off              # operator subscriptions used up: wait instead
 agent-platform billing --org <org_id>                            # credit balance, prices, credit history, usage
@@ -566,6 +574,14 @@ agent-platform platform list
 agent-platform platform revoke --id <invite_id>
 agent-platform security                                          # checks the web build against its manifest
 ```
+
+Claude subscriptions (rule E-31): each subscription has its own login on a platform device, is measured and renewed
+there and never comes to a computer of your user. `subscriptions add` answers the authorization link in `next`: your
+user opens it, approves and gives you the code, which you send with `claude login --request <request_id> --code`
+(stdin); with `--automatic` the device signs in through your user's mailbox credential. A new subscription is only
+measured; the primary one (`own sessions`, written by `claude login` and `claude connect`) serves your user's own
+sessions. `status` per subscription: `logged_in`, `not_logged_in` (then `next` names the login command),
+`not_readable` (the provider refuses to show its quota) or `unverifiable`.
 
 `recovery new` needs your user's own key: with your own key (`identity: "own"`) it opens the settings page in your
 user's browser instead (`opened`), as `passkey add` does; tell your user to choose "New recovery code" there. For the
