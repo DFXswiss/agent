@@ -149,6 +149,17 @@ export function parseSettings(input: SettingsInput): Parsed {
   };
 }
 
+/** The merge fields of the input with their defaults (nothing set: no rule). */
+export function mergeValues(input: SettingsInput) {
+  return {
+    verdicts: input.mergeVerdicts ?? 0,
+    profile: input.mergeVerdictProfile ?? 'review',
+    approvals: input.mergeApprovals ?? 0,
+    green: input.mergeChecksGreen ?? false,
+    separate: input.separateDuties ?? false,
+  };
+}
+
 /** The merge criteria of the input, null when none is set (module comment). */
 function mergeCriteria(input: SettingsInput, errors: FieldError[]): MergeCriteria | null {
   const verdicts = input.mergeVerdicts ?? 0;

@@ -11,6 +11,7 @@ import { epochKey, WG } from '../../../src/core/log/state';
 import {
   checkBody,
   DEFAULTS,
+  mergeValues,
   parseSettings,
   REPO_RE,
   saveSettings,
@@ -249,6 +250,20 @@ describe('merge criteria and separate duties (ADR-090)', () => {
     expect(parseSettings({ ...BASE, mergeVerdictProfile: 'qa' })).toMatchObject({
       settings: { merge_criteria: { verdict_profile: 'qa' } },
     });
+  });
+
+  it('gives the merge fields with their defaults', () => {
+    expect(mergeValues(BASE)).toEqual({ verdicts: 0, profile: 'review', approvals: 0, green: false, separate: false });
+    expect(
+      mergeValues({
+        ...BASE,
+        mergeVerdicts: 2,
+        mergeVerdictProfile: 'qa',
+        mergeApprovals: 1,
+        mergeChecksGreen: true,
+        separateDuties: true,
+      }),
+    ).toEqual({ verdicts: 2, profile: 'qa', approvals: 1, green: true, separate: true });
   });
 
   it('refuses invalid counts and profile names', () => {

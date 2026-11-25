@@ -2,7 +2,7 @@
 // form): passed verdicts of review sessions on the head, their profile, green checks, approving GitHub reviews and
 // separate duties. Every field is optional and off by default: without them only GitHub's own rules decide (E-11).
 import { useId } from 'react';
-import type { SettingsInput } from '../../../core/wg-settings/settings';
+import { mergeValues, type SettingsInput } from '../../../core/wg-settings/settings';
 import { useI18n } from '../../i18n';
 
 const FIELD = 'min-h-11 w-24 rounded border border-gray-300 px-2';
@@ -16,6 +16,7 @@ export function MergeFields({
 }) {
   const { t } = useI18n();
   const id = useId();
+  const values = mergeValues(input);
   const count = (value: string): number => (value.trim() === '' ? 0 : Number(value));
   return (
     <fieldset className="flex flex-col gap-2 rounded border border-gray-200 p-3" data-testid="wg-settings.merge">
@@ -28,7 +29,7 @@ export function MergeFields({
           type="number"
           min={0}
           className={FIELD}
-          value={input.mergeVerdicts ?? 0}
+          value={values.verdicts}
           onChange={(event) => edit({ mergeVerdicts: count(event.target.value) })}
           data-testid="wg-settings.merge.verdicts"
         />
@@ -36,7 +37,7 @@ export function MergeFields({
         <input
           id={`${id}-profile`}
           className="min-h-11 w-40 rounded border border-gray-300 px-2"
-          value={input.mergeVerdictProfile ?? 'review'}
+          value={values.profile}
           onChange={(event) => edit({ mergeVerdictProfile: event.target.value })}
           spellCheck={false}
           data-testid="wg-settings.merge.profile"
@@ -49,7 +50,7 @@ export function MergeFields({
           type="number"
           min={0}
           className={FIELD}
-          value={input.mergeApprovals ?? 0}
+          value={values.approvals}
           onChange={(event) => edit({ mergeApprovals: count(event.target.value) })}
           data-testid="wg-settings.merge.approvals"
         />
@@ -59,7 +60,7 @@ export function MergeFields({
           id={`${id}-green`}
           type="checkbox"
           className="h-5 w-5"
-          checked={input.mergeChecksGreen ?? false}
+          checked={values.green}
           onChange={(event) => edit({ mergeChecksGreen: event.target.checked })}
           data-testid="wg-settings.merge.green"
         />
@@ -72,7 +73,7 @@ export function MergeFields({
           id={`${id}-separate`}
           type="checkbox"
           className="h-5 w-5"
-          checked={input.separateDuties ?? false}
+          checked={values.separate}
           onChange={(event) => edit({ separateDuties: event.target.checked })}
           data-testid="wg-settings.merge.separate"
         />

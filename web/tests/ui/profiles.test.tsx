@@ -129,6 +129,11 @@ describe('the profile of a task and the role of a session', () => {
     fireEvent.click(screen.getByTestId('task.profile.save'));
     await waitFor(() => expect(t.client.of(`PUT /v1/tasks/${TASK}/agent-profile`)).toHaveLength(2));
     expect(t.store.getState().tasks.tasks[TASK]!.agent_profile).toEqual(REVIEW);
+    fireEvent.click(await screen.findByTestId('task.profile.change'));
+    fireEvent.change(await screen.findByTestId('task.profile.select'), { target: { value: '' } });
+    fireEvent.click(screen.getByTestId('task.profile.save'));
+    await waitFor(() => expect(t.client.of(`PUT /v1/tasks/${TASK}/agent-profile`)).toHaveLength(3));
+    expect(t.client.of(`PUT /v1/tasks/${TASK}/agent-profile`)[2]!.body).toEqual({ profile: null });
   });
 
   it('names the profile and reports a failed list', async () => {
