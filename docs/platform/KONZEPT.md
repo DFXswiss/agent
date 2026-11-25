@@ -783,7 +783,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   ihrem ausdrücklichen Schalten genutzt.
 - **Umsetzung:** gebaut – [ADR-090](adr/090-every-subscription-logged-in-centrally.md) (KOR-69): mehrere
   Anmeldungen je Inhaber und Messung, Verwendung je Abo und Umzug von den Token-Dateien; die Ansicht in der
-  Oberfläche: [ADR-091](adr/091-subscriptions-at-a-glance.md) (KOR-68).
+  Oberfläche: [ADR-091](adr/091-subscriptions-at-a-glance.md) (KOR-68); Anmeldung auf der Seite „Meine Abos“ („Abo
+  hinzufügen“, „Jetzt anmelden“) und Verwaltung im Abschnitt „Claude-Abos“ der Einstellungen.
 
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
