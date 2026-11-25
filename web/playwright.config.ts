@@ -21,13 +21,14 @@ const MOBILE_SPECS = [
   'performance.spec.ts',
   'community.spec.ts',
 ].map((name) => `**/e2e/${name}`);
-/** Device specs that also run on the phones (the waiting card of KOR-25 must work on a phone). */
+/** Device specs that also run on the phones (the waiting card of KOR-25 and the platform browser must work on a phone). */
 const MOBILE_DEVICE_SPECS = [
   '**/devices/responsive.spec.ts',
   '**/devices/task-overview.spec.ts',
   '**/devices/waiting.spec.ts',
   '**/devices/attention.spec.ts',
   '**/devices/pulls.spec.ts',
+  '**/devices/browser.spec.ts',
 ];
 
 export default defineConfig({
