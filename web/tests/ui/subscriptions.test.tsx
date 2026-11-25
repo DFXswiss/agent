@@ -252,8 +252,8 @@ describe('the review of KOR-68', () => {
     toggle(provider, true);
     const ages = (await screen.findAllByTestId('subscriptions.account.age')).map((found) => found.textContent);
     expect(ages).toEqual([
-      'measured 2 h ago · device 0190f000',
-      'measured 5 min ago · device —',
+      'measured 2 h ago · platform device',
+      'measured 5 min ago · platform device',
       'measured 5 min ago · token file',
     ]);
     cleanup();
@@ -395,7 +395,7 @@ describe('the page', () => {
     expect(within(account(id(7))).getByTestId('subscriptions.account.none')).toHaveTextContent(
       'cannot be opened (forbidden)',
     );
-    expect(account(id(7))).toHaveTextContent(id(7));
+    expect(account(id(7))).toHaveTextContent('subscription');
     expect(within(account('operator:team-a')).getByTestId('subscriptions.account.used')).toHaveTextContent('40%');
     expect(within(account('operator:team-b')).getByTestId('subscriptions.account.none')).toHaveTextContent(
       'not measured yet',
@@ -445,7 +445,7 @@ describe('the page', () => {
       '—',
       '5h: 20%Week: 50%Week opus: 75%',
       '5h: 2 h 5 minWeek: 1 d 3 hWeek opus: —',
-      '0190f000',
+      'platform device',
       '5 min ago',
       '5 min ago',
     ]);
@@ -460,7 +460,7 @@ describe('the page', () => {
       '—',
       'Week: 95%',
       'Week: <1 min',
-      '0190f000',
+      'platform device',
       '2 h ago',
       '5 min ago',
     ]);
@@ -473,7 +473,7 @@ describe('the page', () => {
       '—',
       '—',
       '—',
-      '—',
+      'platform device',
       '5 min ago',
     ]);
     expect(text(4)[1]).toBe('—');
@@ -482,7 +482,7 @@ describe('the page', () => {
     expect(text(7)).toEqual([
       'Claude',
       '—',
-      id(7),
+      'subscription',
       'cannot be opened (forbidden)',
       '—',
       '—',
@@ -503,7 +503,7 @@ describe('the page', () => {
       'usable',
       'fullest window: 40%',
       'fullest window: 3 h 0 min',
-      '—',
+      'token file',
       '5 min ago',
       '—',
     ]);
@@ -516,7 +516,7 @@ describe('the page', () => {
     expect(spare[3]).toHaveTextContent('not logged inLog in now');
     fireEvent.click(login);
     expect(within(spare[3]!).getByTestId('subscriptions.row.login-hint')).toHaveTextContent(
-      `Your agent logs it in with: agent-platform subscriptions login --id ${id(3)}`,
+      'Your agent logs it in again: agent-platform subscriptions list names the command.',
     );
     fireEvent.click(login);
     expect(within(spare[3]!).queryByTestId('subscriptions.row.login-hint')).toBeNull();

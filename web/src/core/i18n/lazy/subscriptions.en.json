@@ -9,7 +9,7 @@
   "add": "Add subscription",
   "add.hint": "Your agent adds one with: agent-platform subscriptions add --name <name>",
   "login": "Log in now",
-  "login.hint": "Your agent logs it in with: agent-platform subscriptions login --id {id}",
+  "login.hint": "Your agent logs it in again: agent-platform subscriptions list names the command.",
   "detailed": "detailed",
   "sort": "sort by used",
   "accounts": "Accounts",
@@ -57,6 +57,7 @@
   "col.changed": "Changed",
   "settings.link": "Open “My subscriptions”",
   "by.file": "token file",
-  "by.device": "device {id}",
-  "old": "old ({age})"
+  "by.device": "platform device",
+  "old": "old ({age})",
+  "unnamed": "subscription"
 }

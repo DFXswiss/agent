@@ -66,7 +66,7 @@ function Row({ row, now }: { readonly row: SubscriptionRow; readonly now: number
         )}
         {hint && (
           <span className="block text-gray-700" data-testid="subscriptions.row.login-hint">
-            {t('subscriptions.login.hint', { id: row.key })}
+            {t('subscriptions.login.hint')}
           </span>
         )}
       </td>
@@ -92,7 +92,13 @@ function Row({ row, now }: { readonly row: SubscriptionRow; readonly now: number
               </span>
             ))}
       </td>
-      <td className={`${cell} font-mono`}>{row.reading?.deviceId?.slice(0, 8) ?? '—'}</td>
+      <td className={cell}>
+        {row.source === 'operator'
+          ? t('subscriptions.by.file')
+          : row.reading === null
+            ? '—'
+            : t('subscriptions.by.device')}
+      </td>
       <td className={cell}>{row.reading === null ? '—' : age(row.reading.fetchedAt, now)}</td>
       <td className={cell}>{row.changedAt === null ? '—' : age(row.changedAt, now)}</td>
     </tr>

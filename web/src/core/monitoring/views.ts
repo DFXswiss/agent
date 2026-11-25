@@ -30,7 +30,7 @@ export const VIEW_PATTERNS = {
   'wg-settings': ['/o/:org/w/:wg/settings'],
   monitoring: ['/o/:org/monitoring'],
   audit: ['/o/:org/audit'],
-  settings: ['/settings'],
+  settings: ['/settings', '/subscriptions'],
   'platform-invites': ['/platform/invites'],
   security: ['/security'],
   invite: ['/invite'],

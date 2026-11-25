@@ -53,7 +53,8 @@ export function useTexts() {
       : window.startsWith('weekly:')
         ? t('subscriptions.window.model', { model: window.slice('weekly:'.length) })
         : t(`subscriptions.window.${window}`);
-  const rowName = (row: SubscriptionRow): string => row.name ?? (row.primary ? t('subscriptions.own') : row.key);
+  const rowName = (row: SubscriptionRow): string =>
+    row.name ?? (row.primary ? t('subscriptions.own') : (row.email ?? t('subscriptions.unnamed')));
   return { t, locale, until, age, windowName, rowName };
 }
 
@@ -125,9 +126,7 @@ function Account({ row, now }: { readonly row: SubscriptionRow; readonly now: nu
             data-old={old ? 'yes' : 'no'}
           >
             {t('subscriptions.recorded', { age: age(read, now) })}
-            {row.source === 'operator'
-              ? ` · ${t('subscriptions.by.file')}`
-              : ` · ${t('subscriptions.by.device', { id: row.reading!.deviceId?.slice(0, 8) ?? '—' })}`}
+            {row.source === 'operator' ? ` · ${t('subscriptions.by.file')}` : ` · ${t('subscriptions.by.device')}`}
           </span>
         )}
       </span>

@@ -9,7 +9,7 @@
   "add": "Abo hinzufügen",
   "add.hint": "Dein Agent fügt eines hinzu mit: agent-platform subscriptions add --name <Name>",
   "login": "Jetzt anmelden",
-  "login.hint": "Dein Agent meldet es an mit: agent-platform subscriptions login --id {id}",
+  "login.hint": "Dein Agent meldet es wieder an: agent-platform subscriptions list nennt den Befehl.",
   "detailed": "ausführlich",
   "sort": "nach Verbrauch sortieren",
   "accounts": "Konten",
@@ -57,6 +57,7 @@
   "col.changed": "Geändert",
   "settings.link": "„Meine Abos“ öffnen",
   "by.file": "Token-Datei",
-  "by.device": "Gerät {id}",
-  "old": "alt ({age})"
+  "by.device": "Plattformgerät",
+  "old": "alt ({age})",
+  "unnamed": "Abo"
 }
