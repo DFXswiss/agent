@@ -46,7 +46,13 @@ export const REVOKE_URL = 'https://claude.ai/settings';
 const CONCURRENT = new Set(['version_conflict', 'epoch_stale']);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TOKEN_RE = /^[!-~]{1,4096}$/;
-const BODY_KEYS = ['token', 'email', 'kind', 'expires_at', 'name', 'note', 'use'];
+// The full login of KOR-71 (ADR-092) adds the refresh token, its scopes and plan, and the mark of a refused renewal.
+const FULL_KEYS = ['refresh_token', 'scopes', 'subscription_type', 'rate_limit_tier', 'relogin'];
+const BODY_KEYS = ['token', 'email', 'kind', 'expires_at', 'name', 'note', 'use', ...FULL_KEYS];
+const KINDS = ['setup_token', 'login_token', 'oauth_login'];
+const PLAN_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+const SCOPE_RE = /^[a-z_:]{1,64}$/;
+const MAX_SCOPES = 32;
 
 export interface SubscriptionUse {
   readonly pool: boolean;
@@ -92,13 +98,32 @@ export const isUse = (value: unknown): value is SubscriptionUse =>
   value.orgs.every((org) => typeof org === 'string' && UUID_RE.test(org)) &&
   new Set(value.orgs).size === value.orgs.length;
 
+const isPlan = (value: unknown): boolean => value === undefined || (typeof value === 'string' && PLAN_RE.test(value));
+
+/** The fields of a full login (ADR-092), each optional. */
+function isFullLogin(value: Record<string, unknown>): boolean {
+  const scopes = value.scopes;
+  return (
+    (value.refresh_token === undefined ||
+      (typeof value.refresh_token === 'string' && TOKEN_RE.test(value.refresh_token))) &&
+    (scopes === undefined ||
+      (Array.isArray(scopes) &&
+        scopes.length <= MAX_SCOPES &&
+        scopes.every((item) => typeof item === 'string' && SCOPE_RE.test(item)))) &&
+    isPlan(value.subscription_type) &&
+    isPlan(value.rate_limit_tier) &&
+    (value.relogin === undefined || value.relogin === 'renewal_refused')
+  );
+}
+
 /** A body of `contracts/credentials/claude_subscription.json` (also of a further subscription). */
 export function isSubscriptionRecord(value: unknown): value is Record<string, unknown> {
   if (!isRecord(value) || !('email' in value) || !('kind' in value)) return false;
   if (!Object.keys(value).every((key) => BODY_KEYS.includes(key))) return false;
   const email = value.email;
   return (
-    (value.kind === 'setup_token' || value.kind === 'login_token') &&
+    KINDS.includes(String(value.kind)) &&
+    isFullLogin(value) &&
     (email === null || (typeof email === 'string' && email.length <= 254 && EMAIL_RE.test(email))) &&
     (value.token === undefined || (typeof value.token === 'string' && TOKEN_RE.test(value.token))) &&
     (value.expires_at === undefined || typeof value.expires_at === 'string') &&
@@ -347,7 +372,10 @@ export function noteSubscription(context: RequestsContext, id: string, note: str
 
 export function logoutSubscription(context: RequestsContext, id: string): Promise<void> {
   return changeSubscription(context, id, (body) => {
+    // nothing left that a device could renew (ADR-092)
     delete body.token;
+    delete body.refresh_token;
+    delete body.relogin;
   });
 }
 
