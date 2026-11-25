@@ -21,6 +21,11 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
   'src/ui/shell/Nav.tsx': { count: 1, reason: 'navigation entries of the registry (a handful)' },
   'src/ui/shell/Header.tsx': { count: 1, reason: 'header items of the registry (a handful)' },
   'src/ui/shell/header/org-switcher.tsx': { count: 1, reason: 'organisations the user belongs to (a handful)' },
+  'src/ui/subscriptions/SubscriptionManager.tsx': {
+    count: 1,
+    reason: 'subscriptions of the user (at most 40, ADR-090)',
+  },
+  'src/ui/subscriptions/UseEditor.tsx': { count: 1, reason: 'organisations the user belongs to (a handful)' },
   'src/ui/settings/SettingsScreen.tsx': { count: 1, reason: 'settings sections of the registry (a handful)' },
   'src/ui/screens/task/Tabs.tsx': { count: 1, reason: 'task tabs of the registry (a handful)' },
   'src/ui/screens/whiteboard/WhiteboardScreen.tsx': { count: 1, reason: 'the fixed whiteboard levels (org, group…)' },
