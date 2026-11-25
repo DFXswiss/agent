@@ -473,6 +473,12 @@ agent-platform wg ungrant --wg <wg_id> --user <user_id>          # changes the w
 agent-platform wg rename --wg <wg_id> --name "Research"
 agent-platform wg archive --wg <wg_id>
 agent-platform wg settings --wg <wg_id> [--protected-branch main] [--pr-draft-default true]
+agent-platform wg settings --wg <wg_id> --merge-verdicts 1 --merge-checks-green true --separate-duties true
+agent-platform profile list --wg <wg_id>                         # roles and own profiles (voluntary restrictions)
+agent-platform profile set --wg <wg_id> --name triage --operation github.get_issue --reads task
+agent-platform profile delete --wg <wg_id> --name triage         # --org <org_id> for an organization's profile
+agent-platform task profile --task <task_id> --profile review    # --clear: every right again
+agent-platform review verdicts --task <task_id>                  # review verdicts and security reports
 agent-platform repos list --wg <wg_id>
 agent-platform repos allow --wg <wg_id> --repo owner/name        # an empty list allows every repository
 agent-platform repos disallow --wg <wg_id> --repo owner/name

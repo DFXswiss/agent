@@ -60,6 +60,10 @@ BOUNDS: dict[str, str] = {
     "/v1/device/wraps": KEYS,
     "/v1/github-identities/{id}": ONE,
     "/v1/subscriptions/{id}": ONE,
+    "/v1/workgroups/{wg}/agent-profiles": (
+        "structural: the built-in roles and the own profiles of one organization and workgroup, each created by an"
+        " explicit change of a writer or an admin (administrative set)"
+    ),
     "/v1/health": ONE,
     "/v1/me": "structural: the user's memberships and passkeys (administrative actions)",
     "/v1/me/agents": "structural: the user's agents (each one a confirmed pairing)",

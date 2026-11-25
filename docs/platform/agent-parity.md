@@ -181,7 +181,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | task-agent-profile | screens/task (the rights profile of the task's main sessions, ADR-090) | `task profile --task --profile\|--clear` | done |
 | wg-merge-criteria | screens/wg-settings (merge criteria and separate duties, ADR-090 sections 5 and 6) | `wg settings --wg --merge-verdicts --merge-verdict-profile --merge-checks-green --merge-approvals --separate-duties` | done |
 | review-verdicts | task-tabs/operations (review verdicts and security reports of a task) | `review verdicts --task` | done |
-| session-role | screens/home, task-tabs/sessions (the role of every session in the session tree) | `task show --task` (the sessions carry `agent_profile`) | done |
+| session-role | screens/home, task-tabs/sessions (the role of every session in the session tree) | `task show --task` (the session rows carry their rights profile) | done |
 
 ## Routes
 

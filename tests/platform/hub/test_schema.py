@@ -276,6 +276,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("placement_vm_id", T),
         ("github_identity", U),  # KOR-47, migration 0022
         ("model_consent", BOOL),  # KOR-50, migration 0025 (ADR-081)
+        ("agent_profile", J),  # KOR-51, migration 0032 (ADR-090)
     ],
     "task_transition": [("task_id", U), ("seq", INT), ("state", T), ("reason", T), ("at", TS), ("by_id", U)],
     # KOR-39, migration 0011 (ADR-076): the attention record of a task, a projection
@@ -331,6 +332,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("redeliver_event_id", U),
         ("restore_object", U),
         ("orchestrator_at", TS),  # KOR-57, migration 0032 (ADR-082 section 6)
+        ("agent_profile", J),  # KOR-51, migration 0032 (ADR-090)
     ],
     # 2.4.2 context checkpoints and pull-request links (KOR-33, ADR-072)
     "context_object": [
@@ -476,6 +478,17 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     ],
     # default GitHub identities of orgs and workgroups (KOR-47, migration 0022)
     "github_default": [("scope", T), ("scope_id", U), ("identity_id", U), ("set_by", U), ("set_at", TS)],
+    # own rights profiles of orgs and workgroups (KOR-51, migration 0032, ADR-090)
+    "agent_profile": [
+        ("scope", T),
+        ("scope_id", U),
+        ("org_id", U),
+        ("name", T),
+        ("operations", A),
+        ("reads", T),
+        ("updated_by", U),
+        ("updated_at", TS),
+    ],
     "device_request": [
         ("id", U),
         ("user_id", U),
@@ -798,6 +811,7 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "device_response": ("request_id", "seq"),
     "credential_notice": ("device_id", "owner_id", "kind"),
     "github_default": ("scope", "scope_id"),
+    "agent_profile": ("scope", "scope_id", "name"),
     "metric_sample": ("entity_kind", "entity_id", "ts"),
     "metric_rollup": ("entity_kind", "entity_id", "ts"),
     "quota_snapshot": ("owner_id", "window"),

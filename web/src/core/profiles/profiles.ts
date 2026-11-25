@@ -87,9 +87,6 @@ export async function listProfiles(context: RequestsContext, wg: string): Promis
   };
 }
 
-const path = (scope: 'org' | 'wg', id: string, name: string): string =>
-  `/v1/${scope === 'org' ? 'orgs' : 'workgroups'}/${encodeURIComponent(id)}/agent-profiles/${encodeURIComponent(name)}`;
-
 /** `PUT …/agent-profiles/{name}` of a workgroup (writers) or an organization (admins). */
 export async function saveProfile(
   context: RequestsContext,
@@ -97,14 +94,17 @@ export async function saveProfile(
   id: string,
   profile: AgentProfile,
 ): Promise<void> {
-  await context.client.request('PUT', path(scope, id, profile.name), {
-    body: { operations: [...new Set(profile.operations)].sort(), reads: profile.reads },
-  });
+  const body = { body: { operations: [...new Set(profile.operations)].sort(), reads: profile.reads } };
+  const [owner, name] = [encodeURIComponent(id), encodeURIComponent(profile.name)];
+  if (scope === 'org') await context.client.request('PUT', `/v1/orgs/${owner}/agent-profiles/${name}`, body);
+  else await context.client.request('PUT', `/v1/workgroups/${owner}/agent-profiles/${name}`, body);
 }
 
 /** `DELETE …/agent-profiles/{name}`; assignments keep their snapshot. */
 export async function deleteProfile(context: RequestsContext, scope: 'org' | 'wg', id: string, name: string) {
-  await context.client.request('DELETE', path(scope, id, name));
+  const [owner, profile] = [encodeURIComponent(id), encodeURIComponent(name)];
+  if (scope === 'org') await context.client.request('DELETE', `/v1/orgs/${owner}/agent-profiles/${profile}`);
+  else await context.client.request('DELETE', `/v1/workgroups/${owner}/agent-profiles/${profile}`);
 }
 
 /** `PUT /v1/tasks/{task}/agent-profile` (null clears it); the task row in the store follows. */

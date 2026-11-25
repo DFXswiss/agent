@@ -254,6 +254,12 @@ class Estate:
                 (org, company, writer.id, now),
             ),
             (
+                # an own rights profile of the org (ADR-090)
+                "INSERT INTO hub.agent_profile (scope, scope_id, org_id, name, operations, reads, updated_by,"
+                " updated_at) VALUES ('org', %s, %s, 'triage', %s, 'task', %s, %s)",
+                (org, org, ["github.get_issue"], writer.id, now),
+            ),
+            (
                 "INSERT INTO hub.agent (id, user_id, kem_pub, sig_pub, state, bundle_ct, label_ct, claim_hash,"
                 " created_at, expires_at, confirmed_at, claimed_at, last_used_at)"
                 " VALUES (%s, %s, %s, %s, 'active', %s, %s, %s, %s, %s, %s, %s, %s)",

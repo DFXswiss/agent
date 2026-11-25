@@ -11,7 +11,7 @@ Rechteprofile und Rollen (Idee 42) kommen als freiwillig einstellbare Einschrän
 under the rules [E-11](../KONZEPT.md#e-11) (restrictions are voluntary options, never a precondition),
 [E-04](../KONZEPT.md#e-04) (agents reach everything people reach), [E-05](../KONZEPT.md#e-05) (a refusal names the
 step that resolves it) and [E-19](../KONZEPT.md#e-19) (a class of errors is closed by a lasting check). Closes the open
-deviation "A1 mit Idee 26" of `KONZEPT.md` part D. Builds on [ADR-088](088-full-subagents-and-limits-as-settings.md)
+deviation "A1 mit Idee 26" of [part D](../KONZEPT.md#d-offen). Builds on [ADR-088](088-full-subagents-and-limits-as-settings.md)
 (full subagents), [ADR-089](089-sessions-read-like-their-human.md) (reads), [ADR-078](078-github-identities.md)
 (identities) and [ADR-080](080-test-runs-as-operations.md) (`test.run`).
 
@@ -184,7 +184,7 @@ parent's profile at the hub. An older guest gets no profile and refuses nothing 
 
 ### 9. Specification
 03-api.md §§4.10, 8.3, 9 (types, H2b, `child_profile`), 05-runner.md §§12, 13 (pre-check, children, tools),
-06-web.md (session tree, situation view, settings), 01-requirements.md K-42 and K-31, KONZEPT part D (A1 with Idee 26)
+06-web.md (session tree, situation view, settings), 01-requirements.md K-42 and K-31, [KONZEPT part D](../KONZEPT.md#d-offen) (A1 with Idee 26)
 and `agent-parity.md`.
 
 ## Consequences

@@ -55,7 +55,7 @@ def test_profiles(tool: Tool, hub: HubFake, account: User) -> None:
         "task",
     )
     assert code == 0, saved
-    assert saved == {"name": "triage", "operations": ["github.get_issue"], "reads": "task", "scope": "wg"}
+    assert saved == {"ok": True, "name": "triage", "operations": ["github.get_issue"], "reads": "task", "scope": "wg"}
     assert seen[-1] == (
         "PUT",
         f"/v1/workgroups/{wg}/agent-profiles/triage",
@@ -63,7 +63,11 @@ def test_profiles(tool: Tool, hub: HubFake, account: User) -> None:
     )
     assert tool.run("profile", "set", "--org", org, "--name", "auditor")[1]["scope"] == "org"
     assert seen[-1][1] == f"/v1/orgs/{org}/agent-profiles/auditor"
-    assert tool.run("profile", "delete", "--org", org, "--name", "auditor")[1] == {"name": "auditor", "deleted": True}
+    assert tool.run("profile", "delete", "--org", org, "--name", "auditor")[1] == {
+        "ok": True,
+        "name": "auditor",
+        "deleted": True,
+    }
     assert tool.run("profile", "delete", "--wg", wg, "--name", "triage")[1]["deleted"] is True
     assert tool.run("profile", "set", "--name", "x")[1]["reason"] == "wg_or_org"
     assert tool.run("profile", "set", "--wg", wg, "--org", org, "--name", "x")[1]["reason"] == "wg_or_org"
@@ -74,6 +78,7 @@ def test_task_profile(tool: Tool, hub: HubFake, account: User) -> None:
     seen = _routes(hub)
     task = uuid7()
     assert tool.run("task", "profile", "--task", task, "--profile", "review")[1] == {
+        "ok": True,
         "task_id": task,
         "profile": PROFILE,
     }
@@ -85,7 +90,7 @@ def test_task_profile(tool: Tool, hub: HubFake, account: User) -> None:
     assert account.id
 
 
-def test_review_verdicts(tool: Tool, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_review_verdicts(tool: Tool, account: User, monkeypatch: pytest.MonkeyPatch) -> None:
     task = uuid7()
     verdict = {"verdict_id": "v", "outcome": "passed"}
     rows = [
@@ -112,3 +117,4 @@ def test_review_verdicts(tool: Tool, monkeypatch: pytest.MonkeyPatch) -> None:
     assert code == 0, found
     assert [(item["operation_id"], item["result"]) for item in found["items"]] == [("a", verdict), ("b", None)]
     assert found["unverified"] == 2
+    assert account.id
