@@ -137,7 +137,8 @@ Status: Accepted (2026-11-24, after an independent design review; findings and t
   must become quiet – the least busy of up to three 2 s windows counts – and a view that never answers again counts as
   frozen after 20 s instead of hanging the run); (4) the
   volume projects run with one worker each, the phone after the desktop, and in a full run after every other
-  project; the phone runs every route, tab and list but not the live-load and scaling checks or the settings
+  project (amended by HOT-21: both run at once, from the start of the run, each in a lane with a hub and a cached
+  data set of its own; `decisions/HOT-21.md`); the phone runs every route, tab and list but not the live-load and scaling checks or the settings
   sections below their screen (they test the client's work per event and per item, already bounded on the desktop;
   `PHONE_EXEMPT`). Before counting, the list's window controls are used five times – more rows than the largest
   window – and no shared list may then show more than 200 rows (`MAX_SHOWN`). The HOT-05 spec `e2e/devices/chat-volume.spec.ts` uses the same calibration (`e2e/volume/speed.ts`).

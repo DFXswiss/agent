@@ -220,7 +220,8 @@ serves the web build). Each stage is a separate signed commit per repository.
   heavy as the views and still drift with the load between the two measurements); the browser's own CPU throttling
   as a reference (it does not see the other processes on the device). The volume projects run with one worker each,
   the phone after the desktop and, in a full run, after every other project (`dependencies` in
-  `playwright.config.ts`; selected alone with `--project` they start at once). The HOT-05 spec
+  `playwright.config.ts`; selected alone with `--project` they start at once). Amended by HOT-21: no dependencies any
+  more; both projects run at once in lanes of their own from the start of the run (`decisions/HOT-21.md`). The HOT-05 spec
   `e2e/devices/chat-volume.spec.ts` uses the same calibration for its input, scroll, quiet-window and burst bounds.
 - **One user per worker, each view a fresh page**: each worker onboards its own user, joins the volume org as admin
   and signs in once (the slow first verification); every view is then opened with a page load and the passkey unlock

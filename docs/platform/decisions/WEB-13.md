@@ -53,6 +53,8 @@ Smartphone, accessibility, connectivity, error pages and the security page (06-w
    of a Markdown block are inline targets (WCAG 2.5.8 inline exception) and exempt. The sweep of signed-in routes needs
    the device double, so it lives in `e2e/devices/` (not `e2e/responsive.spec.ts` as the package text names it); the
    phone projects of device specs run after the `devices` project (`dependencies`), one device spec at a time.
+   Amended by HOT-21: each phone's device project runs in a lane with a hub of its own, at the same time as `devices`
+   (`decisions/HOT-21.md`).
 10. **Performance (section 12.2).** Measured on the production build (minified), not on the unminified coverage build.
     `npm run build:check` fails above 300 KiB gzip of initial JavaScript (entry scripts, module preloads and their
     static imports, `build/budget.ts`); currently about 215 KiB. The TTI test (`e2e/performance.spec.ts`) builds the

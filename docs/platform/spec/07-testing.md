@@ -235,7 +235,8 @@ therefore of `make platform-web`/`make platform-ci` of every package.
   `web/e2e/fixtures/env.ts`) from the start of the run, beside the other projects; no project depends on another
   (Playwright runs dependent projects in phases one after the other). The data set of a lane comes from a cache
   (`scripts/hub_test_volume_cache.py`: rows, state and hub signing key per schema and generator state, 12 h,
-  directory `WEB_E2E_VOLUME_CACHE`, else `web/node_modules/.cache/volume-data`); without a usable entry the first
+  directory `WEB_E2E_VOLUME_CACHE`, else `web/node_modules/.cache/volume-data`; `pg_dump`/`pg_restore` of the
+  server's major version, `WEB_E2E_PG_BIN` names their directory); without a usable entry the first
   worker of the lane seeds it (`POST /volume/seed`) and the device double stores it. The volume org's founder holds
   the community key and hands it to the lane's browser users. The time budgets are scaled by the calibrated slowdown
   (below), so the gate does not need a quiet machine. Browser coverage is not collected in these projects (the precise V8 counters would distort the
