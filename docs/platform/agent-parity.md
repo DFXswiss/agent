@@ -54,6 +54,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | subscriptions-login | Claude subscriptions (log a subscription in again) | `subscriptions login --id` | done |
 | subscriptions-edit | Claude subscriptions (label and note) | `subscriptions rename --id --name`, `subscriptions note --id --note\|--clear` | done |
 | subscriptions-logout | Claude subscriptions (drop the token, keep name, note and use) | `subscriptions logout --id` | done |
+| subscriptions-use | Claude subscriptions (use per subscription: only measured, organizations, the operator's pool; ADR-090 §3) | `subscriptions use --id --measure --pool --org` | done |
 | subscriptions-remove | Claude subscriptions (remove a subscription and its readings) | `subscriptions remove --id` | done |
 | model-quotas | settings/model-quotas (model access and quotas of the active organization: own subscription, operator subscriptions with state and release or "not readable" with the last observed limit, DFX access, summary; ADR-081) | `quotas --org` | done |
 | github-status | settings/github | `github status` | done |

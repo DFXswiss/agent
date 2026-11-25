@@ -26,6 +26,11 @@ measure only). The token is created on the device and never printed here.
   `PUT /v1/subscriptions/{id}`; one retry after `version_conflict`/`epoch_stale`. The primary record is not changed
   here (`invalid_argument`, `reason: primary`). The provider offers no revocation of a setup token: `logout` answers
   `revoke_at` (where the user revokes it).
+- `subscriptions use --id (--measure | [--pool] [--org <org_id>]...)`: which sessions besides the user's own may use
+  the subscription (ADR-090 section 3): the sealed `use` of the record and, in the same `PUT`, its plaintext mirror
+  for the hub (which tells the devices of those organizations); `--measure` switches every use off. `--pool` counts
+  only for a user with the platform role `operator` (the organizations of the root-signed platform log). Every write
+  of `rename`, `note`, `logout` and `use` sends the mirror of the use it sealed.
 - `subscriptions remove --id`: `DELETE /v1/subscriptions/{id}` (`404` counts as done).
 """
 
@@ -327,11 +332,11 @@ def change(account: Account, record_id: str, edit: Any) -> dict[str, Any]:
             ts=format_time(datetime.now(UTC)),
         )
         record = seal_credential(keys[latest], fields, body_json(body), account.signer.sig)
+        mirror = body.get("use", {"pool": False, "orgs": []})
         body.clear()
+        put = {"record": record, "expected_version": version, "use": mirror}
         try:
-            stored = account.call(
-                "PUT", f"/v1/subscriptions/{segment(record_id)}", {"record": record, "expected_version": version}
-            )
+            stored = account.call("PUT", f"/v1/subscriptions/{segment(record_id)}", put)
         except PlatformError as error:
             if error.fields.get("hub_error") in CONCURRENT:
                 continue
@@ -361,6 +366,21 @@ def note(account: Account, args: Any, _context: Context) -> dict[str, Any]:
 def logout(account: Account, args: Any, _context: Context) -> dict[str, Any]:
     result = change(account, uuid_argument(args.id), lambda body: body.pop("token", None))
     return {**result, "status": "not_logged_in", "revoke_at": REVOKE_AT}
+
+
+def use(account: Account, args: Any, _context: Context) -> dict[str, Any]:
+    orgs = sorted({uuid_argument(org) for org in args.org or []})
+    if args.measure == bool(args.pool or orgs) or len(orgs) > MAX_ORGS:
+        raise PlatformError("invalid_argument", reason="use")
+    wanted = {"pool": bool(args.pool), "orgs": orgs}
+
+    def edit(body: dict[str, Any]) -> None:
+        body.pop("use", None)
+        if not args.measure:
+            body["use"] = dict(wanted)
+
+    result = change(account, uuid_argument(args.id), edit)
+    return {**result, "use": wanted}
 
 
 def remove(account: Account, args: Any, _context: Context) -> dict[str, Any]:
@@ -452,6 +472,19 @@ def register(tree: Tree) -> None:
         words="abmelden ausloggen widerrufen logout sign out revoke",
     )
     sub.add_argument("--id", required=True)
+    sub = tree.command(
+        group,
+        "use",
+        use,
+        "which sessions may use a subscription: --measure (only measured), the operator pool or organizations",
+        writes=True,
+        example="agent-platform subscriptions use --id <subscription_id> --org <org_id>",
+        words="verwendung freigeben nutzen messen organisation pool use share measure organization",
+    )
+    sub.add_argument("--id", required=True)
+    sub.add_argument("--measure", action="store_true", help="only measure it (the default of a new subscription)")
+    sub.add_argument("--pool", action="store_true", help="the operator's pool (platform role operator only)")
+    sub.add_argument("--org", action="append", help="an organization whose sessions may use it (repeatable)")
     sub = tree.command(
         group,
         "remove",

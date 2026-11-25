@@ -554,6 +554,8 @@ agent-platform subscriptions add --name "Mail" --automatic [--email <address>]  
 agent-platform subscriptions login --id <subscription_id>        # log it in again ("not_logged_in", refused token)
 agent-platform subscriptions rename --id <subscription_id> --name "Review"
 agent-platform subscriptions note --id <subscription_id> --note "..."   # or --clear
+agent-platform subscriptions use --id <subscription_id> --org <org_id>   # sessions of that org may use it
+agent-platform subscriptions use --id <subscription_id> --measure      # only measured again (the default)
 agent-platform subscriptions logout --id <subscription_id>       # drops the token; revoke it at the provider too
 agent-platform subscriptions remove --id <subscription_id>
 agent-platform settings set --fallback on                        # own subscription used up: continue on DFX access
@@ -579,8 +581,9 @@ Claude subscriptions (rule E-31): each subscription has its own login on a platf
 there and never comes to a computer of your user. `subscriptions add` answers the authorization link in `next`: your
 user opens it, approves and gives you the code, which you send with `claude login --request <request_id> --code`
 (stdin); with `--automatic` the device signs in through your user's mailbox credential. A new subscription is only
-measured; the primary one (`own sessions`, written by `claude login` and `claude connect`) serves your user's own
-sessions. `status` per subscription: `logged_in`, `not_logged_in` (then `next` names the login command),
+measured until your user switches it on with `subscriptions use` (organizations by ID; `--pool` for the operator's
+pool); nobody else's session uses it otherwise. The primary one (`own sessions`, written by `claude login` and `claude
+connect`) serves your user's own sessions. `status` per subscription: `logged_in`, `not_logged_in` (then `next` names the login command),
 `not_readable` (the provider refuses to show its quota) or `unverifiable`.
 
 `recovery new` needs your user's own key: with your own key (`identity: "own"`) it opens the settings page in your

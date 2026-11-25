@@ -215,3 +215,21 @@ def test_rename_note_logout_and_remove_seal_the_record_again(tool: Tool, hub: Hu
     assert tool.run("subscriptions", "remove", "--id", record_id)[1]["status"] == "removed"
     state_of(hub).refuse_delete = True
     assert tool.run("subscriptions", "remove", "--id", broken)[1]["hub_error"] == "forbidden"
+
+
+def test_use_seals_the_choice_and_sends_its_mirror(tool: Tool, hub: HubFake, account: User) -> None:
+    record_id = add(hub, account.id, sealed(hub, account, body(name="Team")))
+    other = "01930001-0000-7000-8000-0000000000bb"
+    done = tool.run("subscriptions", "use", "--id", record_id, "--org", ORG, "--org", other, "--org", ORG)[1]
+    assert done["use"] == {"pool": False, "orgs": sorted([ORG, other])}
+    assert stored(hub, account, record_id)["use"] == {"pool": False, "orgs": sorted([ORG, other])}
+    assert state_of(hub).puts[-1]["use"] == {"pool": False, "orgs": sorted([ORG, other])}
+    tool.run("subscriptions", "use", "--id", record_id, "--pool")
+    assert stored(hub, account, record_id)["use"] == {"pool": True, "orgs": []}
+    tool.run("subscriptions", "rename", "--id", record_id, "--name", "Kept")
+    assert state_of(hub).puts[-1]["use"] == {"pool": True, "orgs": []}  # every write sends the mirror it sealed
+    tool.run("subscriptions", "use", "--id", record_id, "--measure")
+    assert "use" not in stored(hub, account, record_id)
+    assert state_of(hub).puts[-1]["use"] == {"pool": False, "orgs": []}
+    for argv in (("--measure", "--pool"), ()):
+        assert tool.run("subscriptions", "use", "--id", record_id, *argv)[1]["reason"] == "use", argv

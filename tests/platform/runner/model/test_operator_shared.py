@@ -1,0 +1,235 @@
+"""U-RUN-model (KOR-69, ADR-090 section 3): shared subscriptions of users in the operator pool. Entries `sub-<record>`
+come from `subscriptions.shared` of the desired state, are read from verified records and serve only the organizations
+their sealed `use` allows (`orgs`, or `pool` for an owner with the platform role `operator` and an organization the
+platform log grants); without a directory the pool holds them alone."""
+
+from __future__ import annotations
+
+import asyncio
+import io
+from collections.abc import Awaitable, Callable
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
+
+import pytest
+
+from agent_runner.metrics.sampler import Sampler
+from agent_runner.model import access, gateways, operator, provision
+from agent_runner.model.operator import BLOCKED, USABLE, Entry, Pool, Use
+from agent_runner.quota import operator as quota_operator
+
+from ..credentials.kit import ALICE, BOB, Env, ck, kit_env, make_record
+from ..credentials.subscription_kit import KIND, SubscriptionHub, subscription_body
+from .test_operator import Clock, pool_dir, put, token
+
+ORG = "0b9c6a52-4a35-4c1e-9d8e-8f3a0e8d5b11"
+OTHER = "1b9c6a52-4a35-4c1e-9d8e-8f3a0e8d5b12"
+VALID = token(7)
+Body = Callable[[Env, SubscriptionHub], Awaitable[None]]
+
+
+def shared_pool(clock: Clock | None = None, directory: Path | None = None) -> Pool:
+    return Pool(directory=directory, orgs=frozenset(), clock=clock or Clock(), wall=lambda: 5000.0)
+
+
+def add_shared(pool: Pool, name: str, *, version: int = 1, pool_flag: bool = False, orgs: tuple[str, ...] = ()) -> None:
+    pool.shared[name] = Entry((0, 0, version, 0), VALID, None)
+    pool.uses[name] = Use(owner=ALICE, pool=pool_flag, orgs=frozenset(orgs), version=version)
+
+
+def platform(roles: set[tuple[str, str]], granted: dict[str, bool]) -> Any:
+    state = SimpleNamespace(operator_subscriptions=granted)
+    state.has_role = lambda user, role: (user, role) in roles
+    state.operator_subscribed = lambda org: granted.get(org, False)
+    return state
+
+
+def test_a_shared_entry_serves_only_what_its_sealed_use_allows(tmp_path: Path) -> None:
+    pool = shared_pool()
+    add_shared(pool, "sub-a", orgs=(ORG,))
+    add_shared(pool, "sub-p", pool_flag=True)
+    assert pool.allowed("sub-a", ORG)
+    assert not pool.allowed("sub-a", OTHER)
+    assert not pool.allowed("sub-a", None)
+    assert not pool.allowed("sub-p", OTHER)  # no verified platform log yet
+    pool.platform = lambda: cast(Any, platform({(ALICE, "operator")}, {OTHER: True, ORG: False}))
+    assert pool.allowed("sub-p", OTHER)
+    assert not pool.allowed("sub-p", ORG)  # the log revoked it
+    pool.platform = lambda: cast(Any, platform(set(), {OTHER: True}))
+    assert not pool.allowed("sub-p", OTHER)  # the owner is no operator
+    assert not pool.allowed("nothing", ORG)
+    assert pool.serves(ORG)
+    assert not pool.serves(OTHER)
+    assert pool.choose(org_id=ORG) == "sub-a"
+    assert pool.choose() is None  # without an organization: token files only
+    assert pool.choose(org_id=OTHER) is None
+    pool.scan()  # no directory: no files, the shared entries stay
+    assert (pool.files, sorted(pool.entries())) == ({}, ["sub-a", "sub-p"])
+    assert pool.state("sub-a") == USABLE
+    assert pool.current("sub-a") == (VALID, (0, 0, 1, 0))
+    assert VALID not in repr(pool)
+
+
+def test_a_refused_shared_entry_is_blocked_until_a_new_login(tmp_path: Path) -> None:
+    clock = Clock()
+    directory = pool_dir(tmp_path)
+    put(directory, "f", token(1))
+    pool = shared_pool(clock, directory)
+    pool.orgs = frozenset({ORG})
+    add_shared(pool, "sub-a", orgs=(ORG,))
+    pool.scan()
+    assert sorted(pool.entries()) == ["f", "sub-a"]
+    pool.delivered_at["s1"] = clock.now - 100
+    pool.observe("sub-a", 401, (0, 0, 1, 0), "s1")
+    assert pool.state("sub-a") == BLOCKED
+    assert pool.choose(org_id=ORG) == "f"
+    pool.scan()
+    assert pool.state("sub-a") == BLOCKED  # a scan keeps the block of an unchanged shared entry
+    add_shared(pool, "sub-a", version=2, orgs=(ORG,))
+    pool.scan()
+    assert pool.state("sub-a") == USABLE
+    pool.deferred["sub-a"] = clock.now + 10
+    pool.directory = None
+    pool.blocked["gone"] = (1, 1, 1, 1)
+    pool.scan()
+    assert ("gone" in pool.blocked, "sub-a" in pool.deferred, pool.files) == (False, True, {})
+    observed = pool.observe("missing", 401, None, "s2")
+    assert observed is False
+
+
+def test_the_shared_rows_of_the_desired_state_and_a_sealed_use_are_checked() -> None:
+    record = "01930099-0000-7000-8000-0000000000c1"
+    rows = [
+        {"subscription_id": record, "owner_id": ALICE},
+        {"subscription_id": "x", "owner_id": ALICE},
+        {"subscription_id": record},
+        "junk",
+    ]
+    assert operator.listed_shared({"subscriptions": {"api": 1, "shared": rows}}) == [(record, ALICE)]
+    for desired in (None, {}, {"subscriptions": None}, {"subscriptions": {"shared": "x"}}):
+        assert operator.listed_shared(desired) == []
+    assert operator._use(ALICE, 1, {"pool": True, "orgs": [ORG]}) == Use(ALICE, True, frozenset({ORG}), 1)
+    for value in (None, {"pool": "yes", "orgs": []}, {"pool": False, "orgs": "x"}, {"pool": False, "orgs": ["x"]}):
+        assert operator._use(ALICE, 1, value) is None
+
+
+def run(dsn: str, body: Body) -> None:
+    async def main() -> None:
+        async with kit_env(dsn) as env:
+            await env.add_ck()
+            await body(env, SubscriptionHub(env.hub).install())
+
+    asyncio.run(main())
+
+
+def listing(monkeypatch: pytest.MonkeyPatch, rows: list[tuple[str, str]]) -> None:
+    shared = [{"subscription_id": record, "owner_id": owner} for record, owner in rows]
+    desired = {"subscriptions": {"api": 1, "shared": shared}}
+    monkeypatch.setattr(
+        gateways, "running_service", lambda _context: SimpleNamespace(env=SimpleNamespace(desired=desired))
+    )
+
+
+def test_without_a_directory_the_pool_is_made_for_listed_shared_subscriptions(
+    store_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def body(env: Env, hub: SubscriptionHub) -> None:
+        context = env.context
+        assert operator._desired(context) is None  # no session service
+        assert operator.ensure(SimpleNamespace(config=None)) is None
+        assert await operator.refreshed(context) is None
+        record = hub.add(subscription_body(token=VALID, use={"pool": False, "orgs": [ORG]}), owner=ALICE)
+        listing(monkeypatch, [(record, ALICE)])
+        pool = await operator.refreshed(context)
+        assert pool is not None
+        assert operator.ensure(context) is pool
+        assert pool.directory is None
+        name = "sub-" + record
+        assert sorted(pool.entries()) == [name]
+        picked = await operator.pick(context, ORG)
+        assert picked is not None
+        assert picked[0] == name
+        assert await operator.peek(context, ORG) == name
+        assert await operator.pick(context, OTHER) is None
+        assert await operator.peek(context, OTHER) is None
+        before = pool.shared[name]
+        await operator.refresh_shared(context, pool)
+        assert pool.shared[name] is before  # the same version is not opened again
+        # metrics and the operator's quota show token files only
+        assert Sampler.operator(cast(Any, SimpleNamespace(context=context))) is None
+        assert quota_operator.snapshot(context) is None
+        # no longer listed: no entry
+        listing(monkeypatch, [])
+        await operator.refresh_shared(context, pool)
+        assert pool.entries() == {}
+
+    run(store_dsn, body)
+
+
+def test_a_listed_record_that_cannot_serve_is_no_entry(store_dsn: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def body(env: Env, hub: SubscriptionHub) -> None:
+        context = env.context
+        use = {"pool": False, "orgs": [ORG]}
+        logged_out = hub.add(subscription_body(token=None, use=use), owner=ALICE)
+        unused = hub.add(subscription_body(token=VALID), owner=ALICE)
+        primary = hub.add(subscription_body(token=VALID, use=use), owner=ALICE, primary=True)
+        theirs = hub.add(subscription_body(token=VALID, use=use), owner=ALICE)
+        broken = "01930099-0000-7000-8000-0000000000c9"
+        hub.served[broken] = hub.served[unused].__class__(
+            ALICE, False, make_record(subscription_body(), owner=ALICE, kind=KIND, record_id=broken, key=ck(BOB))
+        )
+        missing = "01930099-0000-7000-8000-0000000000ca"
+        hub.refusals[missing] = (403, {"error": "forbidden"})
+        rows = [
+            (logged_out, ALICE),
+            (unused, ALICE),
+            (primary, ALICE),
+            (theirs, BOB),
+            (broken, ALICE),
+            (missing, ALICE),
+        ]
+        listing(monkeypatch, rows)
+        pool = await operator.refreshed(context)
+        assert pool is not None
+        assert pool.entries() == {}
+        log = context.log.getvalue()
+        assert f"shared_unusable id={logged_out} reason=unused" in log
+        assert f"shared_unusable id={unused} reason=unused" in log
+        assert f"shared_unusable id={broken} reason=invalid" in log
+        assert f"shared_unusable id={missing} reason=fetch" in log
+        asked = hub.asked.count(missing)
+        await operator.refresh_shared(context, pool)
+        assert hub.asked.count(missing) == asked  # not asked again within FETCH_RETRY_S
+        pool.clock = lambda: 10_000.0
+        await operator.refresh_shared(context, pool)
+        assert hub.asked.count(missing) == asked + 1
+
+    run(store_dsn, body)
+
+
+def test_a_bound_session_moves_when_its_use_no_longer_allows_its_organization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = shared_pool()
+    add_shared(pool, "sub-a", orgs=(OTHER,))
+    add_shared(pool, "sub-b", orgs=(ORG,))
+    bound: list[tuple[str, str]] = []
+
+    async def refreshed(_context: Any) -> Pool:
+        return pool
+
+    async def bind(_context: Any, _pool: Pool, session_id: str, name: str) -> None:
+        bound.append((session_id, name))
+
+    monkeypatch.setattr(operator, "refreshed", refreshed)
+    monkeypatch.setattr(operator, "bind", bind)
+    monkeypatch.setattr(access, "upstream_anthropic", lambda _context: "https://upstream.invalid")
+    monkeypatch.setattr(provision, "owner_credential", lambda **_kw: {"auth_value": "x"})
+    context = SimpleNamespace(log=io.StringIO())
+    env = SimpleNamespace(context=context, catalog=None)
+    session = SimpleNamespace(id="s1", org_id=ORG, owner_id=ALICE)
+    target = asyncio.run(gateways.operator_target(cast(Any, env), cast(Any, session), "sub-a"))
+    assert bound == [("s1", "sub-b")]
+    assert target is not None
+    assert "operator_file_switched session_id=s1 from=sub-a to=sub-b" in context.log.getvalue()
