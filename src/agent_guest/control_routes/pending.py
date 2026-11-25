@@ -9,7 +9,9 @@ answers with ``POST /v1/pending/{id}/answer``; the API process waits for the ans
   answer ``409 state_conflict`` (an identical repeat is accepted)
 * op ``pending.create {session_id, kind: "operation" | "query" | "workvm", body} -> {pending_id}`` - ``body`` is the
   journal body without ``pending_id``; it is validated with the ID added (``request_invalid`` with pointers); the
-  kind ``relay`` is the orchestrator tool's alone (``orch.sock``, ``control_routes/orchestrator.py``) and refused here
+  kind ``relay`` is the orchestrator tool's alone (``orch.sock``, ``control_routes/orchestrator.py``) and refused here;
+  an operation the session's rights profile does not allow is recorded ``local_check: "rejected"`` with
+  ``rights_denied`` (``profiles.refusal``, ADR-090 section 3), so the runner never executes it
 * op ``pending.wait {pending_id, session_id, timeout <= 33} -> {state: "answered", answer} | {state: "waiting"}``;
   33 s is the longest MCP wait (``get_operation``/``get_subagent_result``: ``wait_seconds`` ≤ 30 plus the read margin,
   GST-07; the work VM tools: ``wait_seconds`` ≤ 30 plus 5 s, KOR-29), below the 35 s limit of the ``/mcp`` route
@@ -19,6 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from agent_guest import profiles, sessions
 from agent_guest.control import ControlContext
 from agent_guest.journal import JournalError
 from agent_guest.routing import HttpError, Request, Response, Route, json_response
@@ -46,6 +49,10 @@ def create(context: ControlContext, args: dict[str, Any]) -> dict[str, Any]:
         or "pending_id" in body
     ):
         raise StateError("request_invalid")
+    if kind == "operation" and body.get("local_check") == "passed":
+        refused = profiles.refusal(sessions.manager(context).profile(session_id), body.get("type"))
+        if refused is not None:
+            body = {**body, "local_check": "rejected", "local_error": refused}
     try:
         pending_id = context.pending.create(session_id, kind, body)
     except JournalError as error:

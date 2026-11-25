@@ -111,7 +111,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Protocol
 
-from agent_guest import contexts, harness, registry, tmux, toolsready
+from agent_guest import contexts, harness, profiles, registry, tmux, toolsready
 from agent_guest.clock import iso_ms
 from agent_guest.control import ControlContext
 from agent_guest.driver import AgentDriver, ClaudeCodeDriver, DriverError, Launch
@@ -307,6 +307,8 @@ class _Start:
     """The sender line of the initial prompt (ADR-083 section 1), stored with its registration."""
     mcp_configs: tuple[str, ...] = ()
     """Further MCP configurations of the agent (the orchestrator's second server after the claim, 05 section 17.5)."""
+    profile: Mapping[str, Any] | None = None
+    """The session's rights profile (ADR-090 section 3), None without."""
 
 
 @dataclass
@@ -433,6 +435,7 @@ class SessionManager:
             prompt=None if prompt is None else (prompt["prompt_id"], prompt["text"]),
             harness_version=rules.version,
             speaker=None if prompt is None else prompt.get("speaker"),
+            profile=data.get("profile"),
         )
         try:
             self._command(data["session_id"], start)
@@ -491,6 +494,7 @@ class SessionManager:
                 "request_sha256": digest,
                 "identity": _identity(data),
                 "access": data["model"]["access"],
+                "profile": data.get("profile"),
                 "stopped_at": None,
                 **keys,
             }
@@ -580,6 +584,7 @@ class SessionManager:
                 "request_sha256": digest,
                 "identity": _identity(data),
                 "access": data["model"]["access"],
+                "profile": data.get("profile"),
                 "stopped_at": None,
                 **keys,
             }
@@ -637,6 +642,7 @@ class SessionManager:
             model_id=start.model_id,
             access=start.access,
             mcp_configs=start.mcp_configs,
+            disallowed=profiles.disallowed_tools(start.profile),
         )
         limits = start.limits
         extra = [
@@ -1108,6 +1114,11 @@ class SessionManager:
         every create or resume, it may change between resumes), None when unknown."""
         access = self._meta(session_id).get("access")
         return access if isinstance(access, str) else None
+
+    def profile(self, session_id: str) -> dict[str, Any] | None:
+        """The rights profile of the session's current start (ADR-090 section 3), None without one."""
+        found = self._meta(session_id).get("profile")
+        return found if isinstance(found, dict) else None
 
     def depth(self, session_id: str) -> int | None:
         """The depth of the session's stored identity (0: the main session of its task), None when unknown."""

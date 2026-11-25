@@ -61,6 +61,8 @@ class Launch:
     """The model access (``subscription``, ``api_key``, ``platform``); it decides about ``WebSearch``."""
     mcp_configs: tuple[str, ...] = ()
     """Further ``--mcp-config`` files after the platform's (absolute paths of the image)."""
+    disallowed: tuple[str, ...] = ()
+    """Platform tools the session's rights profile does not offer (``profiles.disallowed_tools``, ADR-090)."""
 
 
 class AgentDriver(Protocol):
@@ -106,7 +108,7 @@ class ClaudeCodeDriver:
             "--tools",
             f"{TOOLS},{WEB_SEARCH_TOOL}" if web_search else TOOLS,
             "--disallowedTools",
-            DISALLOWED_TOOLS if web_search else f"{DISALLOWED_TOOLS},{WEB_SEARCH_TOOL}",
+            ",".join([DISALLOWED_TOOLS, *([] if web_search else [WEB_SEARCH_TOOL]), *launch.disallowed]),
             "--permission-mode",
             "dontAsk",
             "--disable-slash-commands",

@@ -75,6 +75,7 @@ def test_the_command_line_never_carries_a_prompt() -> None:
         "model_id",
         "access",
         "mcp_configs",
+        "disallowed",
     ]
     assert not hasattr(ClaudeCodeDriver, "prompt_fits")
     assert "--" not in ClaudeCodeDriver("2.1.330").argv(Launch(SID, HARNESS, RESUME, "claude-sonnet-5-5"))
@@ -134,3 +135,17 @@ def test_kind_version_and_factory() -> None:
     assert isinstance(driver, ClaudeCodeDriver)
     with pytest.raises(DriverError):
         driver_for("codex", "1.0")
+
+
+def test_a_rights_profile_shortens_the_tool_list(driver: ClaudeCodeDriver) -> None:
+    """ADR-090 section 3: the platform tools a session's profile does not allow are not offered at all."""
+    launch = Launch(
+        session_id=SID,
+        harness_file=HARNESS,
+        access="subscription",
+        disallowed=("mcp__platform__browser_click", "mcp__platform__workvm_exec"),
+    )
+    argv = driver.argv(launch)
+    assert argv[argv.index("--disallowedTools") + 1] == (
+        "Bash,Agent,Task,WebFetch,NotebookEdit,Skill,mcp__platform__browser_click,mcp__platform__workvm_exec"
+    )
