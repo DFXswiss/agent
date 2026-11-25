@@ -212,7 +212,9 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/me/devices` | github-connect, github-token, github-company-accounts, credential-claude-relay, credential-check, pr-view, pr-fix-conflicts |
 | `GET /v1/me/quotas` | quotas |
 | `GET /v1/me/subscriptions` | subscriptions-list |
-| `GET /v1/subscriptions/{id}` | subscriptions-list |
+| `GET /v1/subscriptions/{id}` | subscriptions-list, subscriptions-edit, subscriptions-use, subscriptions-logout |
+| `PUT /v1/subscriptions/{id}` | subscriptions-edit, subscriptions-use, subscriptions-logout |
+| `DELETE /v1/subscriptions/{id}` | subscriptions-remove |
 | `POST /v1/me/recovery/begin` | recovery-new |
 | `DELETE /v1/me/registration` | register |
 | `PUT /v1/me/settings` | settings-language, settings-model, attention-model-always |
