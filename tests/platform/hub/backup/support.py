@@ -63,6 +63,8 @@ class Estate:
     session: str
     charge: str = "01930028-0000-7000-8000-0000000000c1"
     """The ID of the estate's charge (KOR-31)."""
+    subscription: str = "01930028-0000-7000-8000-0000000000c2"
+    """The ID of the writer's further subscription (KOR-69)."""
 
     @property
     def org(self) -> str:
@@ -362,6 +364,17 @@ class Estate:
             (
                 "INSERT INTO hub.quota_unreadable (owner_id, since, device_id) VALUES (%s, %s, %s)",
                 (writer.id, now, device.id),
+            ),
+            # a further subscription of the writer and its reading (KOR-69, ADR-090)
+            (
+                "INSERT INTO hub.credential (id, owner_id, kind, version, epoch, header_text, ct, sig, updated_at,"
+                " created_at, is_primary) VALUES (%s, %s, 'claude_subscription', 1, 1, '{}', %s, %s, %s, %s, false)",
+                (self.subscription, writer.id, secrets.token_bytes(40), secrets.token_bytes(64), now, now),
+            ),
+            (
+                "INSERT INTO hub.subscription_quota (credential_id, owner_id, windows, unreadable, fetched_at,"
+                " device_id) VALUES (%s, %s, %s, false, %s, %s)",
+                (self.subscription, writer.id, Jsonb([{"window": "seven_day", "used_percent": 12.0}]), now, device.id),
             ),
             # model access with fallback (KOR-50): a limit, a snapshot, an issuer, a key and its waiting cost
             (

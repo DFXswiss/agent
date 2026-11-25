@@ -513,6 +513,21 @@
           ],
           "additionalProperties": false
         },
+        "subscriptions": {
+          "type": "object",
+          "description": "KOR-69, ADR-090: sent by a hub that accepts quota.subscription_id and the subscription endpoints of section 6.1; api tells the runner it may send them",
+          "properties": {
+            "api": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "subscriptions interface version; KOR-69 sends 1"
+            }
+          },
+          "required": [
+            "api"
+          ],
+          "additionalProperties": false
+        },
         "dfx_keys": {
           "type": "object",
           "description": "only for the elected issuer (the online platform device with the smallest ID that announced dfx_key_state issuer true; ADR-081 section 7): the keys to create and the keys to watch",

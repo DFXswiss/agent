@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/requests/claude.login.request.json",
   "title": "device request body claude.login",
-  "description": "first request {mode} (manual = setup-token relay, automatic = mailbox automation, 05-runner.md section 11.3); follow-up request (header follows set) {code} (05-runner.md section 11.2)",
+  "description": "first request {mode} (manual = setup-token relay, automatic = mailbox automation, 05-runner.md section 11.3) with, for a subscription record of ADR-090, subscription_id (the record to fill; a new ID creates it), name and note (taken for a new record, for an existing one only when given) and, for automatic, email (the address to sign in with when it is not the mailbox's own); follow-up request (header follows set) {code} (05-runner.md section 11.2)",
   "oneOf": [
     {
       "type": "object",
@@ -13,6 +13,18 @@
             "manual",
             "automatic"
           ]
+        },
+        "subscription_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "name": {
+          "$ref": "../credentials/claude_subscription.json#/$defs/name"
+        },
+        "note": {
+          "$ref": "../credentials/claude_subscription.json#/$defs/note"
+        },
+        "email": {
+          "$ref": "../credentials/claude_subscription.json#/$defs/email"
         }
       },
       "required": [

@@ -1,0 +1,69 @@
+{
+  "description": "Endpoints of Claude subscriptions (ADR-090, KOR-69): the subscriptions of a user with their readings, one subscription record, its primary mark, and the device's read and write of subscription records.",
+  "rights": [
+    "user",
+    "device_eligible"
+  ],
+  "auth": [
+    "browser",
+    "device"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/me/subscriptions",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/subscriptions/{id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/subscriptions/{id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/subscriptions/{id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/subscriptions",
+      "rights": [
+        "device_eligible"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/subscriptions/{id}",
+      "rights": [
+        "device_eligible"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/device/subscriptions/{id}",
+      "rights": [
+        "device_eligible"
+      ],
+      "section": "6.1"
+    }
+  ]
+}

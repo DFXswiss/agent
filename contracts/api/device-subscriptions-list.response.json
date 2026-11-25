@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-subscriptions-list.response.json",
+  "title": "GET /v1/device/subscriptions response",
+  "description": "The metadata of every subscription record of the owner, newest change first (03-api.md section 6.1).",
+  "type": "object",
+  "properties": {
+    "subscriptions": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/subscription_meta"
+      },
+      "minItems": 0,
+      "maxItems": 40
+    }
+  },
+  "required": [
+    "subscriptions"
+  ],
+  "additionalProperties": false
+}

@@ -22,21 +22,27 @@ report than the stored one (a late retry, a report of the previous polling devic
 `unavailable: true` (the usage endpoint refused the owner's token) drops the owner's windows fetched at or before it,
 so `GET /v1/me/quotas` answers no rows and the web shows "not available" instead of an old snapshot (KOR-05).
 
-Either form may carry `limited` (KOR-50, ADR-081 section 6): the latest observed limit of the owner's subscription,
-kept in `hub.quota_limit` (a newer observation replaces an older one, never the reverse). A report without it that was
-fetched after the stored limit was observed releases it: its `until` becomes the fetch time unless it lies earlier,
-and the time of the limit stays visible.
+With `subscription_id` (KOR-69, ADR-090 section 4) the reading belongs to that further subscription of the owner:
+it is kept in `hub.subscription_quota` (`agent_hub.subscriptions.store.store_reading`; the newer fetch wins, a record
+that is gone or primary drops it silently) and touches neither the owner's windows nor its limit.
+
+Without it, either form may carry `limited` (KOR-50, ADR-081 section 6): the latest observed limit of the owner's
+subscription, kept in `hub.quota_limit` (a newer observation replaces an older one, never the reverse). A report without
+it that was fetched after the stored limit was observed releases it: its `until` becomes the fetch time unless it lies
+earlier, and the time of the limit stays visible.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import cast
+from uuid import UUID
 
 from agent_hub.errors import HubError
 from agent_hub.outbox.base import Handler, ItemContext, moment, session_on_device
 from agent_hub.outbox.bodies import QuotaBody, UsageBody
 from agent_hub.sessions import rows
+from agent_hub.subscriptions.store import store_reading
 from agent_hub.usage import binding
 from agent_hub.usage.budget import utc_day
 from agent_hub.usage.polling import polls_for
@@ -124,6 +130,17 @@ def handle_quota(item: ItemContext, body: QuotaBody) -> None:
     if not polls_for(item.connection, item.device, body.owner_id, item.now, binding.online_window()):
         raise HubError("forbidden")
     fetched = moment(body.fetched_at)
+    if body.subscription_id is not None:
+        windows = None if body.unavailable else [entry.model_dump() for entry in body.windows]
+        store_reading(
+            item.connection,
+            subscription=UUID(body.subscription_id),
+            owner=UUID(body.owner_id),
+            windows=windows,
+            fetched_at=fetched,
+            device=item.device,
+        )
+        return
     limited = body.limited
     if limited is None:
         item.connection.execute(RELEASE_LIMIT, (fetched, body.owner_id, fetched, fetched))

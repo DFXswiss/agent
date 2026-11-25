@@ -360,6 +360,8 @@ class QuotaBody(Strict):
     observed limit (`limited`, KOR-50)."""
 
     owner_id: Uuid7
+    subscription_id: Uuid7 | None = None
+    """A further subscription of the owner (KOR-69, ADR-090 section 4); absent: the owner's primary record."""
     windows: list[QuotaWindow] = Field(default_factory=list, max_length=16)
     unavailable: Literal[True] | None = None
     fetched_at: Time
@@ -367,7 +369,7 @@ class QuotaBody(Strict):
 
     @model_validator(mode="after")
     def _windows_once(self) -> QuotaBody:
-        _absent_not_null(self, ("unavailable", "limited"))
+        _absent_not_null(self, ("subscription_id", "unavailable", "limited"))
         # exactly one of the two forms of the contract: windows (at least one), or the marker without `windows`
         if ("unavailable" in self.model_fields_set) == ("windows" in self.model_fields_set) or (
             self.unavailable is None and not self.windows

@@ -916,6 +916,22 @@
     {
       "action": "read.org.quotas",
       "group": "read"
+    },
+    {
+      "action": "read.me.subscriptions",
+      "group": "read"
+    },
+    {
+      "action": "read.subscription",
+      "group": "read"
+    },
+    {
+      "action": "read.device.subscription",
+      "group": "read"
+    },
+    {
+      "action": "read.device.subscriptions",
+      "group": "read"
     }
   ]
 }

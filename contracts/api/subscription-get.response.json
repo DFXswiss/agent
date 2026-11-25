@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/subscription-get.response.json",
+  "title": "GET /v1/subscriptions/{id} response",
+  "description": "An own subscription record (03-api.md section 4.8, ADR-090).",
+  "type": "object",
+  "properties": {
+    "owner_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "primary": {
+      "type": "boolean"
+    },
+    "record": {
+      "$ref": "../common.json#/$defs/credential_record"
+    }
+  },
+  "required": [
+    "owner_id",
+    "primary",
+    "record"
+  ],
+  "additionalProperties": false
+}

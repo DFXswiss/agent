@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-subscription-put.request.json",
+  "title": "PUT /v1/device/subscriptions/{id} request",
+  "description": "A user's further subscription record written by a device while answering a claude.login request of that user (request_id), or without request_id re-sealed under the owner's current CK epoch when the stored version is under an older one (ADR-090 sections 1 and 2).",
+  "type": "object",
+  "properties": {
+    "owner_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "record": {
+      "$ref": "../common.json#/$defs/credential_record"
+    },
+    "expected_version": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "request_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "owner_id",
+    "record",
+    "expected_version"
+  ],
+  "additionalProperties": false
+}

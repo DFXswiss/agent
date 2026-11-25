@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/subscription-delete.response.json",
+  "title": "DELETE /v1/subscriptions/{id} response",
+  "description": "Empty body.",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

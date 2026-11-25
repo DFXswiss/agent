@@ -1,0 +1,51 @@
+{
+  "subscriptions": [
+    {
+      "id": "01930060-0000-7000-8000-000000000060",
+      "owner_id": "0193000a-0000-7000-8000-00000000000a",
+      "primary": false,
+      "version": 1,
+      "epoch": 1,
+      "created_at": "2026-11-25T12:00:00.000Z",
+      "updated_at": "2026-11-25T12:00:00.000Z",
+      "reading": {
+        "fetched_at": "2026-11-25T12:00:00.000Z",
+        "device_id": "01930002-0000-7000-8000-000000000002",
+        "unreadable": false,
+        "windows": [
+          {
+            "window": "seven_day",
+            "used_percent": 12.5,
+            "resets_at": "2026-11-25T12:00:00.000Z",
+            "severity": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "01930061-0000-7000-8000-000000000061",
+      "owner_id": "0193000a-0000-7000-8000-00000000000a",
+      "primary": true,
+      "version": 1,
+      "epoch": 1,
+      "created_at": "2026-11-25T12:00:00.000Z",
+      "updated_at": "2026-11-25T12:00:00.000Z",
+      "reading": {
+        "fetched_at": "2026-11-25T12:00:00.000Z",
+        "device_id": "01930002-0000-7000-8000-000000000002",
+        "unreadable": true,
+        "windows": []
+      }
+    },
+    {
+      "id": "01930062-0000-7000-8000-000000000062",
+      "owner_id": "0193000a-0000-7000-8000-00000000000a",
+      "primary": false,
+      "version": 1,
+      "epoch": 1,
+      "created_at": "2026-11-25T12:00:00.000Z",
+      "updated_at": "2026-11-25T12:00:00.000Z",
+      "reading": null
+    }
+  ]
+}

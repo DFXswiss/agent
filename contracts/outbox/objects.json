@@ -418,12 +418,15 @@
       "additionalProperties": false
     },
     "body_quota": {
-      "description": "The windows the device fetched for the owner, or `unavailable: true` when the usage endpoint refused the owner's subscription token (401/403; 05-runner.md section 10.6): the hub then drops the owner's older windows. Optional `limited` (KOR-50, ADR-081 section 6): the latest observed limit of the owner's subscription; sent only to a hub whose device state carries model_fallback.api >= 1.",
+      "description": "The windows the device fetched for the owner, or `unavailable: true` when the usage endpoint refused the owner's subscription token (401/403; 05-runner.md section 10.6): the hub then drops the owner's older windows. Optional `limited` (KOR-50, ADR-081 section 6): the latest observed limit of the owner's subscription; sent only to a hub whose device state carries model_fallback.api >= 1. Optional `subscription_id` (KOR-69, ADR-090 section 4): the reading belongs to that non-primary subscription record of the owner (without it: the owner's primary record); sent only to a hub whose device state carries subscriptions.api >= 1.",
       "anyOf": [
         {
           "type": "object",
           "properties": {
             "owner_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "subscription_id": {
               "$ref": "../common.json#/$defs/uuid"
             },
             "windows": {
@@ -452,6 +455,9 @@
           "type": "object",
           "properties": {
             "owner_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "subscription_id": {
               "$ref": "../common.json#/$defs/uuid"
             },
             "unavailable": {

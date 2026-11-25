@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/subscription-get.request.json",
+  "title": "GET /v1/subscriptions/{id} request",
+  "description": "No query parameters.",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

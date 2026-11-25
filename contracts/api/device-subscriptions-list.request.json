@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-subscriptions-list.request.json",
+  "title": "GET /v1/device/subscriptions request",
+  "description": "Query owner_id: a user the device is eligible for (03-api.md section 6.1, ADR-090).",
+  "type": "object",
+  "properties": {
+    "owner_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "owner_id"
+  ],
+  "additionalProperties": false
+}

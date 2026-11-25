@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/subscription-delete.request.json",
+  "title": "DELETE /v1/subscriptions/{id} request",
+  "description": "No query parameters; hard delete of an own subscription record and its reading (03-api.md section 4.8, ADR-090).",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

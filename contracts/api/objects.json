@@ -2044,6 +2044,159 @@
           "additionalProperties": false
         }
       ]
+    },
+    "subscription_meta": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "owner_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "primary": {
+          "type": "boolean"
+        },
+        "version": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "epoch": {
+          "$ref": "../common.json#/$defs/epoch"
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "updated_at": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "id",
+        "owner_id",
+        "primary",
+        "version",
+        "epoch",
+        "created_at",
+        "updated_at"
+      ],
+      "additionalProperties": false,
+      "description": "metadata of a Claude subscription (a claude_subscription credential record, ADR-090); never the token, address, name or note"
+    },
+    "subscription_reading": {
+      "type": "object",
+      "properties": {
+        "fetched_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "device_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "unreadable": {
+          "type": "boolean"
+        },
+        "windows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "window": {
+                "type": "string",
+                "pattern": "^(five_hour|seven_day|weekly:[A-Za-z0-9._-]{1,64})$"
+              },
+              "used_percent": {
+                "type": "number",
+                "minimum": 0
+              },
+              "resets_at": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "severity": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-z_]{1,32}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "window",
+              "used_percent",
+              "resets_at",
+              "severity"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 16
+        }
+      },
+      "required": [
+        "fetched_at",
+        "device_id",
+        "unreadable",
+        "windows"
+      ],
+      "additionalProperties": false,
+      "description": "the newest reading of a subscription's quota by the device that measures it (05-runner.md section 10.6); unreadable: the usage endpoint refused the token (windows empty)"
+    },
+    "subscription_row": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "owner_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "primary": {
+          "type": "boolean"
+        },
+        "version": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "epoch": {
+          "$ref": "../common.json#/$defs/epoch"
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "updated_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "reading": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/subscription_reading"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "owner_id",
+        "primary",
+        "version",
+        "epoch",
+        "created_at",
+        "updated_at",
+        "reading"
+      ],
+      "additionalProperties": false,
+      "description": "a subscription of the caller with its newest reading (null before the first one)"
     }
   }
 }

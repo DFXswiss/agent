@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/subscriptions-list.response.json",
+  "title": "GET /v1/me/subscriptions response",
+  "description": "Every Claude subscription of the caller, newest change first, each with its newest reading (03-api.md section 4.8, ADR-090).",
+  "type": "object",
+  "properties": {
+    "subscriptions": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/subscription_row"
+      },
+      "minItems": 0,
+      "maxItems": 40
+    }
+  },
+  "required": [
+    "subscriptions"
+  ],
+  "additionalProperties": false
+}

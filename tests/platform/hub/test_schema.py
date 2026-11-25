@@ -514,6 +514,15 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     "event_audit_cover": [("scope_id", U), ("covered_seq", BI)],
     # the subscription refuses the read of its quotas (KOR-40, migration 0016)
     "quota_unreadable": [("owner_id", U), ("since", TS), ("device_id", U)],
+    # the newest reading of every non-primary subscription (KOR-69, migration 0033, ADR-090)
+    "subscription_quota": [
+        ("credential_id", U),
+        ("owner_id", U),
+        ("windows", J),
+        ("unreadable", BOOL),
+        ("fetched_at", TS),
+        ("device_id", U),
+    ],
     # model access with fallback (KOR-50, migration 0025, ADR-081)
     "quota_limit": [
         ("owner_id", U),
@@ -933,8 +942,9 @@ def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns:
         ("task_attention", "(wg_id, category, since)"),
         ("task_attention", "(owner_id, category, wg_id)"),
         ("event", "(task_id, received_at DESC) WHERE (kind = 'prompt'::text)"),
-        ("credential", "(owner_id, kind) WHERE (kind <> 'github'::text)"),
-        ("credential", "(owner_id) WHERE ((kind = 'github'::text) AND is_primary)"),
+        ("credential", "(owner_id, kind) WHERE is_primary"),
+        ("credential", "(owner_id, updated_at DESC, id DESC) WHERE (kind = 'claude_subscription'::text)"),
+        ("subscription_quota", "(owner_id)"),
         ("pr_link", '(wg_id, created_at DESC, epoch DESC, tag COLLATE "C" DESC)'),
     ],
 )

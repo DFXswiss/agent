@@ -16,28 +16,31 @@ only the metadata of 04-crypto.md section 7 (owner, kind, version, epoch). Every
    record ID of the stored record (`request_invalid`, pointer `/record/header/id`); a new record whose ID is used by
    another record is `409 id_conflict`.
 
-**GitHub identities (ADR-078).** An owner may hold up to `MAX_GITHUB_RECORDS` `github` records (each kind other than
-`github` stays one record per owner). The owner is a user (`owner_kind = user`, sealed under the user's `CK`) or an
-organization (`org`, a company record; never primary). A company record is sealed under the **org credential key**
-(the `cred` scope of the org, KM-35), whose only readers are the org's devices assigned to a workgroup: the admin who
-writes it creates the next epoch with every write (`key {epoch, wraps}`: epoch = current + 1, else `409
-version_conflict`; one wrap of that epoch for every reader device, else `request_invalid` with pointer `/key/wraps`;
-the wraps pass W3 of `agent_hub.wraps.rules` with the admin as wrapper), and the record carries that epoch. A user
-has at most one **primary** `github` record. `put_record`, `get_record`, `delete_record` and `list_records` (the
-endpoints from before) address only user-owned records and, of kind `github`, only the primary record: a create
-(`expected_version` 0) without a primary record stores a new primary record, and after the primary record is deleted
-they answer as if there were no record (no other record is promoted). `put_identity` / `delete_identity` /
-`make_primary` address one `github` record by its ID (`agent_hub.github`): a new user record becomes primary only
-when the user has no primary record; more than `MAX_GITHUB_RECORDS` records of one owner are `size_exceeded`.
+**GitHub identities (ADR-078) and subscriptions (ADR-090).** An owner may hold up to `MAX_RECORDS[kind]` records of a
+kind in `MULTI_KINDS` (`github`, and for users `claude_subscription`); each other kind stays one record per owner. The
+owner is a user (`owner_kind = user`, sealed under the user's `CK`) or an organization (`org`, a company record; never
+primary). A company record is sealed under the **org credential key** (the `cred` scope of the org, KM-35), whose only
+readers are the org's devices assigned to a workgroup: the admin who writes it creates the next epoch with every write
+(`key {epoch, wraps}`: epoch = current + 1, else `409 version_conflict`; one wrap of that epoch for every reader device,
+else `request_invalid` with pointer `/key/wraps`; the wraps pass W3 of `agent_hub.wraps.rules` with the admin as
+wrapper), and the record carries that epoch. A user has at most one **primary** record of each kind (every record of a
+kind outside `MULTI_KINDS` is primary). `put_record`, `get_record`, `delete_record` and `list_records` (the endpoints
+from before) address only user-owned primary records: a create (`expected_version` 0) without a primary record stores a
+new primary record, and after the primary record is deleted they answer as if there were no record (no other record is
+promoted). `put_identity` / `delete_identity` address one record of a kind in `MULTI_KINDS` by its ID (`make_primary` a
+`github` record) (`agent_hub.github`, `agent_hub.subscriptions`): a new user `github` record becomes primary only when
+the user has no primary record, a new `claude_subscription` record never (ADR-090 section 1: measure only until its
+owner switches it on, and no endpoint moves its mark); more than `MAX_RECORDS[kind]` records of one owner are
+`size_exceeded`.
 
-`delete_record` removes the row (hard delete: nothing of the record remains; the audit keeps kind and version).
-`rotate` applies a `CK` rotation atomically: the new epoch (current + 1, else `409 version_conflict`), its wraps (W3 of
+`delete_record` removes the row (hard delete: nothing of the record remains; the audit keeps kind and version). `rotate`
+applies a `CK` rotation atomically: the new epoch (current + 1, else `409 version_conflict`), its wraps (W3 of
 `agent_hub.wraps.rules`, including the owner's self-wrap) and every stored record re-encrypted under the new epoch by
-the owner (same IDs and kinds, `version` + 1; a missing, extra or stale record is `409 version_conflict`). Of the
-`github` records the rotation must hold the primary one; a non-primary one may be re-encrypted with it (same rules)
-or left out (it keeps its epoch until a current client re-seals it, ADR-078 section 1). A refusal of
-any part leaves everything unchanged. Each write appends `credential.put` / `credential.delete` / `credential.rotate`
-to the audit (the first two with `owner_kind`) and writes the change notices of `agent_hub.credentials.notices`.
+the owner (same IDs and kinds, `version` + 1; a missing, extra or stale record is `409 version_conflict`). The rotation
+must hold every primary record; a non-primary one may be re-encrypted with it (same rules) or left out (it keeps its
+epoch until a current client re-seals it, ADR-078 section 1). A refusal of any part leaves everything unchanged. Each
+write appends `credential.put` / `credential.delete` / `credential.rotate` to the audit (the first two with
+`owner_kind`) and writes the change notices of `agent_hub.credentials.notices`.
 """
 
 from __future__ import annotations
@@ -65,11 +68,16 @@ Connection = psycopg.Connection[Any]
 KINDS = credential_format.KINDS
 CRED = "cred"
 GITHUB = "github"
+SUBSCRIPTION = "claude_subscription"
+MULTI_KINDS = frozenset({GITHUB, SUBSCRIPTION})
 USER, ORG = "user", "org"
 MAX_GITHUB_RECORDS = 20
 """At most this many `github` records per owner (ADR-078 section 1)."""
-_LEGACY = "owner_kind = 'user' AND (kind <> 'github' OR is_primary)"
-"""The records the endpoints from before address: user-owned, and of kind `github` only the primary one."""
+MAX_SUBSCRIPTIONS = 40
+"""At most this many `claude_subscription` records per user (ADR-090 section 1)."""
+MAX_RECORDS = {GITHUB: MAX_GITHUB_RECORDS, SUBSCRIPTION: MAX_SUBSCRIPTIONS}
+_LEGACY = "owner_kind = 'user' AND is_primary"
+"""The records the endpoints from before address: user-owned primary ones (every record of a single kind is)."""
 MAX_CT_CHARS = 87382
 """The `ct` limit of `contracts/common.json` `credential_record` (64 KiB)."""
 
@@ -200,6 +208,11 @@ def _has_primary(connection: Connection, owner: UUID) -> bool:
     return row is not None
 
 
+def _new_primary(connection: Connection, owner: Owner, kind: str) -> bool:
+    """A new record of `put_identity` is primary: a user's first `github` record, never a subscription."""
+    return kind == GITHUB and owner.kind == USER and not _has_primary(connection, owner.id)
+
+
 def _insert(
     connection: Connection,
     *,
@@ -210,12 +223,12 @@ def _insert(
     now: datetime,
     primary: bool,
 ) -> UUID:
-    """Store a new record (`size_exceeded` beyond `MAX_GITHUB_RECORDS`, `409 id_conflict` for a used ID)."""
-    if kind == GITHUB:
+    """Store a new record (`size_exceeded` beyond `MAX_RECORDS`, `409 id_conflict` for a used ID)."""
+    if kind in MAX_RECORDS:
         count = connection.execute(
-            "SELECT count(*) FROM hub.credential WHERE owner_id = %s AND kind = 'github'", (owner.id,)
+            "SELECT count(*) FROM hub.credential WHERE owner_id = %s AND kind = %s", (owner.id, kind)
         ).fetchone()
-        if cast(tuple[int], count)[0] >= MAX_GITHUB_RECORDS:
+        if cast(tuple[int], count)[0] >= MAX_RECORDS[kind]:
             raise HubError("size_exceeded")
     record_id = UUID(cast(str, header["id"]))
     try:
@@ -315,7 +328,7 @@ def put_record(
     now: datetime,
     root_key: bytes,
 ) -> Change:
-    """Store a new version of the user's record of `kind` (of kind `github`: the primary one; module docstring)."""
+    """Store a new version of the user's primary record of `kind` (module docstring)."""
     lock_owner(connection, owner)
     header = verify_record(record, owner=owner, kind=kind, author=author, epoch=cred_epoch(connection, str(owner)))
     content = _checked_content(record, header, expected_version)
@@ -341,8 +354,7 @@ def put_record(
 
 
 def delete_record(connection: Connection, *, owner: Author, kind: str, now: datetime, root_key: bytes) -> Change:
-    """Hard-delete the user's record of `kind` (of kind `github`: the primary one; `404 not_found` when there is
-    none)."""
+    """Hard-delete the user's primary record of `kind` (`404 not_found` when there is none)."""
     lock_owner(connection, owner.id)
     row = connection.execute(
         f"DELETE FROM hub.credential WHERE owner_id = %s AND kind = %s AND {_LEGACY} RETURNING id, version",
@@ -365,7 +377,8 @@ def delete_record(connection: Connection, *, owner: Author, kind: str, now: date
 
 @dataclass(frozen=True)
 class Identity:
-    """A stored `github` record with the metadata the identity endpoints show."""
+    """A stored record of a kind in `MULTI_KINDS` with the metadata its endpoints show (a GitHub identity or a
+    subscription)."""
 
     id: UUID
     owner: Owner
@@ -377,6 +390,7 @@ class Identity:
     sig: bytes
     created_at: datetime
     updated_at: datetime
+    kind: str = GITHUB
 
     def meta(self) -> dict[str, Any]:
         """The `github_identity_meta` object."""
@@ -401,31 +415,43 @@ class Identity:
         }
 
 
-IDENTITY_COLUMNS = "id, owner_id, owner_kind, is_primary, version, epoch, header_text, ct, sig, created_at, updated_at"
+IDENTITY_COLUMNS = (
+    "id, owner_id, owner_kind, is_primary, version, epoch, header_text, ct, sig, created_at, updated_at, kind"
+)
 
 
 def identity_of(row: Sequence[Any]) -> Identity:
     """An `Identity` from a row of `IDENTITY_COLUMNS`."""
     return Identity(
-        row[0], Owner(row[1], row[2]), row[3], row[4], row[5], row[6], bytes(row[7]), bytes(row[8]), row[9], row[10]
+        row[0],
+        Owner(row[1], row[2]),
+        row[3],
+        row[4],
+        row[5],
+        row[6],
+        bytes(row[7]),
+        bytes(row[8]),
+        row[9],
+        row[10],
+        row[11],
     )
 
 
-def owner_identities(connection: Connection, owner_id: UUID) -> list[dict[str, Any]]:
-    """The metadata of every `github` record of an owner (user or organization), newest change first (then ID
+def owner_identities(connection: Connection, owner_id: UUID, kind: str = GITHUB) -> list[dict[str, Any]]:
+    """The metadata of every record of `kind` of an owner (user or organization), newest change first (then ID
     descending)."""
     rows = connection.execute(
-        f"SELECT {IDENTITY_COLUMNS} FROM hub.credential WHERE owner_id = %s AND kind = 'github'"
+        f"SELECT {IDENTITY_COLUMNS} FROM hub.credential WHERE owner_id = %s AND kind = %s"
         " ORDER BY updated_at DESC, id DESC",
-        (owner_id,),
+        (owner_id, kind),
     ).fetchall()
     return [identity_of(row).meta() for row in rows]
 
 
-def load_identity(connection: Connection, record_id: UUID) -> Identity | None:
-    """The `github` record with the ID, None if there is none."""
+def load_identity(connection: Connection, record_id: UUID, kind: str = GITHUB) -> Identity | None:
+    """The record of `kind` with the ID, None if there is none."""
     row = connection.execute(
-        f"SELECT {IDENTITY_COLUMNS} FROM hub.credential WHERE id = %s AND kind = 'github'", (record_id,)
+        f"SELECT {IDENTITY_COLUMNS} FROM hub.credential WHERE id = %s AND kind = %s", (record_id, kind)
     ).fetchone()
     return None if row is None else identity_of(row)
 
@@ -462,8 +488,9 @@ def put_identity(
     now: datetime,
     root_key: bytes,
     key: OrgKey | None = None,
+    kind: str = GITHUB,
 ) -> Change:
-    """Store a version of the owner's `github` record `record_id` (module docstring): the checks of `put_record`, with
+    """Store a version of the owner's record `record_id` of `kind` (module docstring): the checks of `put_record`, with
     the record addressed by its ID (a record of another owner or kind under the ID is `409 id_conflict`). A user's
     record is sealed under the user's current `CK` epoch; a company record (owner an organization) comes with `key`,
     the next epoch of the org's credential key, which is stored with its wraps in the same transaction (`key` is
@@ -472,7 +499,7 @@ def put_identity(
     if (key is not None) != (owner.kind == ORG):
         raise HubError("request_invalid", detail={"pointers": ["/key"]})
     epoch = key.epoch if key is not None else cred_epoch(connection, str(owner.id))
-    header = verify_record(record, owner=owner.id, kind=GITHUB, author=author, epoch=epoch)
+    header = verify_record(record, owner=owner.id, kind=kind, author=author, epoch=epoch)
     if header["id"] != str(record_id):
         raise HubError("request_invalid", detail={"pointers": ["/record/header/id"]})
     content = _checked_content(record, header, expected_version)
@@ -480,7 +507,7 @@ def put_identity(
         "SELECT owner_id, kind, version, header_text, ct, sig FROM hub.credential WHERE id = %s FOR UPDATE",
         (record_id,),
     ).fetchone()
-    if row is not None and (row[0], row[1]) != (owner.id, GITHUB):
+    if row is not None and (row[0], row[1]) != (owner.id, kind):
         raise HubError("id_conflict")
     if row is not None and (row[3], bytes(row[4]), bytes(row[5])) == content:
         unchanged()
@@ -492,23 +519,21 @@ def put_identity(
     if key is not None:
         recipients = _new_org_epoch(connection, owner.id, key, author=author, now=now, root_key=root_key)
     if row is None:
-        primary = owner.kind == USER and not _has_primary(connection, owner.id)
-        _insert(connection, owner=owner, kind=GITHUB, header=header, content=content, now=now, primary=primary)
+        primary = _new_primary(connection, owner, kind)
+        _insert(connection, owner=owner, kind=kind, header=header, content=content, now=now, primary=primary)
     else:
         _update(connection, record_id, header, content, now)
     version = cast(int, header["version"])
-    _put_audit(connection, author, owner, record_id=record_id, version=version, now=now, kind=GITHUB)
-    devices = notices.note_change(
-        connection, owner.id, [GITHUB], now, root_key=root_key, except_device=author.device_id
-    )
+    _put_audit(connection, author, owner, record_id=record_id, version=version, now=now, kind=kind)
+    devices = notices.note_change(connection, owner.id, [kind], now, root_key=root_key, except_device=author.device_id)
     return Change(version=version, devices=tuple(devices), recipients=recipients)
 
 
 def delete_identity(
     connection: Connection, identity: Identity, *, actor: Author, now: datetime, root_key: bytes
 ) -> Change:
-    """Hard-delete a `github` record; the defaults naming it go with it (foreign key), no other record becomes
-    primary."""
+    """Hard-delete a record of a kind in `MULTI_KINDS`; what names it goes with it (foreign keys: defaults, readings),
+    no other record becomes primary."""
     lock_owner(connection, identity.owner.id, identity.owner.kind)
     row = connection.execute("DELETE FROM hub.credential WHERE id = %s RETURNING version", (identity.id,)).fetchone()
     if row is None:
@@ -520,10 +545,10 @@ def delete_identity(
         now,
         target_kind="credential",
         target_id=str(identity.id),
-        detail={"kind": GITHUB, "version": row[0], "owner_kind": identity.owner.kind},
+        detail={"kind": identity.kind, "version": row[0], "owner_kind": identity.owner.kind},
         org_id=identity.owner.id if identity.owner.kind == ORG else None,
     )
-    devices = notices.note_change(connection, identity.owner.id, [GITHUB], now, root_key=root_key)
+    devices = notices.note_change(connection, identity.owner.id, [identity.kind], now, root_key=root_key)
     return Change(version=row[0], devices=tuple(devices))
 
 
@@ -589,7 +614,7 @@ def rotate(
     for kind, record_id, version, primary in connection.execute(
         "SELECT kind, id, version, is_primary FROM hub.credential WHERE owner_id = %s FOR UPDATE", (owner.id,)
     ):
-        if kind == GITHUB and not primary:
+        if kind in MULTI_KINDS and not primary:
             optional[str(record_id)] = (record_id, version)
         else:
             stored[kind] = (record_id, version)
@@ -645,8 +670,7 @@ def rotate(
 
 
 def list_records(connection: Connection, owner: UUID) -> list[dict[str, Any]]:
-    """The metadata of the user's records (of kind `github` the primary one), newest change first (then kind
-    descending)."""
+    """The metadata of the user's primary records, newest change first (then kind descending)."""
     rows = connection.execute(
         f"SELECT kind, version, epoch, updated_at FROM hub.credential WHERE owner_id = %s AND {_LEGACY}"
         " ORDER BY updated_at DESC, kind DESC",
@@ -659,6 +683,6 @@ def list_records(connection: Connection, owner: UUID) -> list[dict[str, Any]]:
 
 
 def get_record(connection: Connection, owner: UUID, kind: str) -> dict[str, Any] | None:
-    """The stored record of the user and kind (of kind `github` the primary one), None if there is none."""
+    """The user's stored primary record of the kind, None if there is none."""
     stored = _stored(connection, owner, kind)
     return None if stored is None else record_json(stored.header_text, stored.ct, stored.sig)

@@ -2850,6 +2850,135 @@
       "read_resource": "platform.ui_health",
       "streaming": false,
       "owner": "KOR-35"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/subscriptions",
+      "name": "subscriptions-list",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/subscriptions-list.request.json",
+      "response": "api/subscriptions-list.response.json",
+      "read_resource": "me.subscriptions",
+      "streaming": false,
+      "owner": "KOR-69"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/subscriptions/{id}",
+      "name": "subscription-get",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/subscription-get.request.json",
+      "response": "api/subscription-get.response.json",
+      "read_resource": "subscription",
+      "streaming": false,
+      "owner": "KOR-69"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/subscriptions/{id}",
+      "name": "subscription-put",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/subscription-put.request.json",
+      "response": "api/subscription-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-69"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/subscriptions/{id}",
+      "name": "subscription-delete",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/subscription-delete.request.json",
+      "response": "api/subscription-delete.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-69"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/subscriptions",
+      "name": "device-subscriptions-list",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device_eligible"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/device-subscriptions-list.request.json",
+      "response": "api/device-subscriptions-list.response.json",
+      "read_resource": "device.subscriptions",
+      "streaming": false,
+      "owner": "KOR-69"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/subscriptions/{id}",
+      "name": "device-subscription-get",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device_eligible"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/device-subscription-get.request.json",
+      "response": "api/device-subscription-get.response.json",
+      "read_resource": "device.subscription",
+      "streaming": false,
+      "owner": "KOR-69"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/device/subscriptions/{id}",
+      "name": "device-subscription-put",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device_eligible"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/device-subscription-put.request.json",
+      "response": "api/device-subscription-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-69"
     }
   ]
 }

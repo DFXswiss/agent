@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/subscription-put.request.json",
+  "title": "PUT /v1/subscriptions/{id} request",
+  "description": "Store a version of an own further subscription record (expected_version 0 creates it, never primary; the primary record is written through PUT /v1/me/credentials/claude_subscription), sealed under the caller's CK, author the caller or the caller's own-identity agent (03-api.md section 4.8, ADR-090).",
+  "type": "object",
+  "properties": {
+    "record": {
+      "$ref": "../common.json#/$defs/credential_record"
+    },
+    "expected_version": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "record",
+    "expected_version"
+  ],
+  "additionalProperties": false
+}
