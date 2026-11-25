@@ -43,6 +43,7 @@ frames of another hub process (`agent_hub.stream.bus`). Only loopback, only for 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -480,18 +481,48 @@ def handler(director: Director) -> type[BaseHTTPRequestHandler]:
 
 def volume_lane(director: Director, environ: Mapping[str, str]) -> None:
     """A lane of the volume gate (`scripts/hub_test_server.py --volume-cache`): take over the cached data set's
-    state, or store the data set in the cache once it is seeded (`scripts/hub_test_volume_cache.py`)."""
+    state, or - holding the lane's seeding lock - seed at once (once the hub answers), store the data set in the cache
+    and release the lock, done or failed (`scripts/hub_test_volume_cache.py`)."""
     if "WEB_E2E_VOLUME_STATE" in environ:
         director.volume.restore(json.loads(environ["WEB_E2E_VOLUME_STATE"]))
-    elif "WEB_E2E_VOLUME_SNAPSHOT" in environ:
-        target = Path(environ["WEB_E2E_VOLUME_SNAPSHOT"])
-        admin_url, signing_key = environ["WEB_E2E_VOLUME_ADMIN_URL"], environ["WEB_E2E_HUB_SIGNING_KEY"]
-        cache = _sibling("hub_test_volume_cache")
+        return
+    if "WEB_E2E_VOLUME_SNAPSHOT" not in environ:
+        return
+    target, lock = Path(environ["WEB_E2E_VOLUME_SNAPSHOT"]), Path(environ["WEB_E2E_VOLUME_LOCK"])
+    admin_url, signing_key = environ["WEB_E2E_VOLUME_ADMIN_URL"], environ["WEB_E2E_HUB_SIGNING_KEY"]
+    cache = _sibling("hub_test_volume_cache")
+    holder = os.getppid()  # the hub test server took the lock
 
-        def snapshot(state: Json) -> None:
-            cache.store(target.parent, target.name, admin_url, state, signing_key)
+    def snapshot(state: Json) -> None:
+        cache.store(target.parent, target.name, admin_url, state, signing_key)
 
-        director.volume.snapshot = snapshot
+    def finished() -> None:
+        cache.release(lock, holder)
+
+    director.volume.snapshot = snapshot
+    director.volume.finished = finished
+
+    def seed() -> None:
+        try:
+            wait_for_hub(director)
+        except RuntimeError as error:
+            print(f"volume: {error}", flush=True)
+            finished()
+            return
+        director.volume.start({}, director.root.public_key().public_bytes_raw())
+
+    threading.Thread(target=seed, daemon=True).start()
+
+
+def wait_for_hub(director: Director, seconds: float = 120.0) -> None:
+    """Waits until the hub answers `GET /v1/health`."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        with contextlib.suppress(httpx.HTTPError):
+            if director.http.get(director.hub + "/v1/health").status_code == 200:
+                return
+        time.sleep(0.2)
+    raise RuntimeError(f"the hub did not answer within {seconds:.0f} s")
 
 
 def main(argv: Sequence[str] | None = None) -> int:

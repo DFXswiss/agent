@@ -19,8 +19,8 @@ own suite).
 
 With `--volume-cache DIR` (a lane of the volume gate, decisions/HOT-21.md) the volume data set comes from the cache
 of `scripts/hub_test_volume_cache.py`: a usable entry is restored into the migrated database before the hub starts
-(with the entry's hub signing key, its state handed to the device double); without one, the device double seeds on
-request and stores a new entry.
+(with the entry's hub signing key, its state handed to the device double); without one, the lane that takes the
+seeding lock lets its device double seed at once and store a new entry, and the other lanes wait for it.
 
     python scripts/hub_test_server.py --port 20262 --root-key <b64u> [--director-port 20264] [--volume-cache DIR]
 """
@@ -31,10 +31,12 @@ import argparse
 import importlib.util
 import os
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from types import FrameType
 from typing import Any
@@ -93,48 +95,84 @@ def volume_cache() -> Any:
     return module
 
 
-def volume_data(cache: Path, admin_url: str, signing_key: str) -> tuple[str, dict[str, str]]:
-    """The cached volume data set restored into the database at `admin_url`, or how the device double stores a new
-    one: the hub's signing key and the device double's environment."""
+WAIT_SECONDS = 2.0
+"""How often a lane waiting for another lane's seed looks for the entry."""
+
+
+def volume_data(cache: Path, admin_url: str, signing_key: str, renew: Callable[[], None]) -> tuple[str, dict[str, str]]:
+    """The cached volume data set restored into the database at `admin_url`, or how the device double seeds and stores
+    a new one: the hub's signing key and the device double's environment. Without a usable entry one lane takes the
+    seeding lock and seeds; the others wait for its entry (or take the lock over when its holder ended without one).
+    An entry that cannot be restored is removed, the database made anew (`renew`) and the data set seeded instead."""
     module = volume_cache()
-    name = module.key()
-    entry = module.usable(cache, name)
-    if entry is None:
-        print(f"volume data set {name}: not cached, seeded on request", flush=True)
-        snapshot = {"WEB_E2E_VOLUME_SNAPSHOT": str(cache / name), "WEB_E2E_VOLUME_ADMIN_URL": admin_url}
-        return signing_key, {**snapshot, "WEB_E2E_HUB_SIGNING_KEY": signing_key}
-    module.restore(admin_url, entry)
-    print(f"volume data set {name}: restored from the cache", flush=True)
-    state = (entry / "state.json").read_text()
-    return (entry / "signing.key").read_text().strip(), {"WEB_E2E_VOLUME_STATE": state}
+    name = module.key(server_major=module.server_major(admin_url))
+    waiting = False
+    while True:
+        entry = module.usable(cache, name)
+        if entry is not None:
+            try:
+                module.restore(admin_url, entry)
+            except Exception as error:  # a damaged entry costs one seed, never a red run
+                print(f"volume data set {name}: the cached entry failed ({error}), seeded instead", flush=True)
+                shutil.rmtree(entry, ignore_errors=True)
+                renew()
+            else:
+                print(f"volume data set {name}: restored from the cache", flush=True)
+                state = (entry / "state.json").read_text()
+                return (entry / "signing.key").read_text().strip(), {"WEB_E2E_VOLUME_STATE": state}
+        lock = module.claim(cache, name)
+        if lock is not None:
+            break
+        if not waiting:
+            print(f"volume data set {name}: another lane seeds it, waiting for its entry", flush=True)
+            waiting = True
+        time.sleep(WAIT_SECONDS)
+    print(f"volume data set {name}: not cached, seeding now", flush=True)
+    seeding = {"WEB_E2E_VOLUME_SNAPSHOT": str(cache / name), "WEB_E2E_VOLUME_LOCK": str(lock)}
+    return signing_key, {**seeding, "WEB_E2E_VOLUME_ADMIN_URL": admin_url, "WEB_E2E_HUB_SIGNING_KEY": signing_key}
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--port", type=int, required=True)
-    parser.add_argument("--root-key", required=True)
-    parser.add_argument("--director-port", type=int, default=None)
-    parser.add_argument("--volume-cache", type=Path, default=None)
-    args = parser.parse_args(argv)
-    environ = dict(os.environ)
-    params = admin_params(environ)
-    suffix = secrets.token_hex(6)
-    name, owner, writer = f"t_web_{suffix}", f"t_web_owner_{suffix}", f"t_web_writer_{suffix}"
-    owner_password, writer_password = secrets.token_hex(32), secrets.token_hex(32)
+def create_database(params: dict[str, Any], name: str, roles: Sequence[tuple[str, str]]) -> None:
+    """The throwaway database, owned by the first of the fresh `roles` (name, password)."""
     with psycopg.connect(**params, autocommit=True) as admin:
-        for role, password in ((owner, owner_password), (writer, writer_password)):
+        for role, password in roles:
             admin.execute(
                 sql.SQL("CREATE ROLE {} {} PASSWORD {}").format(
                     sql.Identifier(role), ROLE_ATTRIBUTES, sql.Literal(password)
                 )
             )
-        admin.execute(sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(name), sql.Identifier(owner)))
+        admin.execute(sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(name), sql.Identifier(roles[0][0])))
+
+
+def arguments(argv: Sequence[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--root-key", required=True)
+    parser.add_argument("--director-port", type=int, default=None)
+    parser.add_argument("--volume-cache", type=Path, default=None)
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = arguments(argv)
+    environ = dict(os.environ)
+    params = admin_params(environ)
+    suffix = secrets.token_hex(6)
+    name, owner, writer = f"t_web_{suffix}", f"t_web_owner_{suffix}", f"t_web_writer_{suffix}"
+    owner_password, writer_password = secrets.token_hex(32), secrets.token_hex(32)
+    create_database(params, name, ((owner, owner_password), (writer, writer_password)))
     hub: subprocess.Popen[bytes] | None = None
     director: subprocess.Popen[bytes] | None = None
+    volume_env: dict[str, str] = {}
 
-    def stop(_signum: int, _frame: FrameType | None) -> None:
+    def stop(signum: int, _frame: FrameType | None) -> None:
         if hub is not None:
             hub.terminate()
+            return
+        # still preparing (migration, restore): end now; the cleanup below runs without further interruption
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        raise SystemExit(128 + signum)
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
@@ -142,11 +180,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         base = {key: value for key, value in environ.items() if not key.startswith("AGENT_HUB_")}
         writer_url = url(params, writer, writer_password, name)
         migrate_env = {**base, OWNER_VARIABLE: url(params, owner, owner_password, name), WRITER_VARIABLE: writer_url}
-        subprocess.run([sys.executable, "-m", "agent_hub.db", "migrate"], env=migrate_env, check=True)
-        signing_key, volume_env = secrets.token_hex(32), dict[str, str]()
+
+        def migrate() -> None:
+            subprocess.run([sys.executable, "-m", "agent_hub.db", "migrate"], env=migrate_env, check=True)
+
+        def renew() -> None:
+            with psycopg.connect(**params, autocommit=True) as admin:
+                admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
+                admin.execute(
+                    sql.SQL("CREATE DATABASE {} OWNER {}").format(sql.Identifier(name), sql.Identifier(owner))
+                )
+            migrate()
+
+        migrate()
+        signing_key = secrets.token_hex(32)
         if args.volume_cache is not None:
             admin_url = make_conninfo(**{**params, "dbname": name})
-            signing_key, volume_env = volume_data(args.volume_cache, admin_url, signing_key)
+            signing_key, volume_env = volume_data(args.volume_cache, admin_url, signing_key, renew)
         hub_env = {
             **base,
             "AGENT_HUB_PUBLIC_URL": f"http://localhost:{args.port}",
@@ -184,6 +234,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if director is not None:
             director.terminate()
             director.wait()
+        if "WEB_E2E_VOLUME_LOCK" in volume_env:
+            volume_cache().release(Path(volume_env["WEB_E2E_VOLUME_LOCK"]))
         with psycopg.connect(**params, autocommit=True) as admin:
             admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(name)))
             for role in (writer, owner):

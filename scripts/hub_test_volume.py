@@ -224,6 +224,8 @@ class Seeder:
         self.director = director
         self.snapshot = snapshot
         """Called with the exported state once the data set is complete, before any follow-up route changes it."""
+        self.finished: Callable[[], None] | None = None
+        """Called when the seed has ended, done or failed (after the snapshot)."""
         self.pool = director.pool
         self.lock = threading.Lock()
         self.state: Json = {"state": "idle"}
@@ -258,8 +260,11 @@ class Seeder:
         try:
             data = self.seed(counts)
             data["seconds"] = round(time.monotonic() - started, 1)
-            if self.snapshot is not None:
-                self.snapshot(self.export({"state": "done", "data": data}))
+            if self.snapshot is not None and counts == COUNTS:  # a shrunk data set is never cached
+                try:
+                    self.snapshot(self.export({"state": "done", "data": data}))
+                except Exception as error:  # the seed stands; only the next run seeds again
+                    print(f"volume: the data set could not be cached: {error}", flush=True)
             with self.lock:
                 self.state = {"state": "done", "data": data}
             self.serve_forever()
@@ -270,6 +275,9 @@ class Seeder:
                     "error": f"{type(error).__name__}: {error}",
                     "trace": traceback.format_exc(limit=-4),
                 }
+        finally:
+            if self.finished is not None:
+                self.finished()
 
     # --- helpers ---
 
@@ -997,12 +1005,17 @@ class Seeder:
         return len(served)
 
     def serve_forever(self) -> None:
-        """`serve_community` once a second for the rest of the process (a failed round is printed and tried again)."""
+        """`serve_community` once a second for the rest of the process (a failed round is tried again; a failure is
+        printed once until it changes)."""
+        last = ""
         while True:
             try:
                 self.serve_community()
+                last = ""
             except Exception as error:  # printed; the next round tries again
-                print(f"volume: community key service failed: {error}", flush=True)
+                if str(error) != last:
+                    print(f"volume: community key service failed: {error}", flush=True)
+                last = str(error)
             time.sleep(1.0)
 
     # --- the cached data set (decisions/HOT-21.md) ---
@@ -1036,7 +1049,7 @@ class Seeder:
             "community": [self.community_key[0], b64u_encode(self.community_key[1])],
         }
 
-    def restore(self, saved: Json) -> None:
+    def restore(self, saved: Json, *, serve: bool = True) -> None:
         """Takes over an exported state (its database restored next to it) and serves the community key."""
 
         def actor(item: Json) -> Actor:
@@ -1056,7 +1069,8 @@ class Seeder:
         state = dict(saved["state"])
         with self.lock:
             self.state = {**state, "data": {**state["data"], "cached": True}}
-        threading.Thread(target=self.serve_forever, daemon=True).start()
+        if serve:
+            threading.Thread(target=self.serve_forever, daemon=True).start()
 
     # --- follow-up routes ---
 
