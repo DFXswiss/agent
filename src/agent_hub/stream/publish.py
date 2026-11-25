@@ -11,9 +11,12 @@ from the row in `data` (`agent_hub.stream.sse`).
 The default fan-out is `LIVE`: it hands every frame to the live services attached to it - one per running hub app
 (`agent_hub.stream.service`), which delivers it to its own browsers and devices and, over the PostgreSQL bus, to every
 other hub process (`agent_hub.stream.bus`). Without an attached service a frame is dropped: nobody is connected to this
-process, and the hub never queues frames or hints (03-api.md section 6.2). `event` and `terminal` frames are announced
-by `agent_hub.events.notify` and reach every process through the event channel `hub_events` (which the bus listens
-to), so the live services ignore them here. Tests install `MemoryPublisher` with `set_publisher`.
+process, and the hub never queues frames or hints (03-api.md section 6.2). The frames of events (`event` and the frames
+of the watched kinds, `agent_hub.events.watched`) are announced by `agent_hub.events.notify` and reach every process
+through the event channel `hub_events` (which the bus listens to), so the live services ignore them here. A live frame
+of a platform browser travels as the internal reference `BROWSER_LIVE_REF` (`agent_hub.stream.browser`): every
+process reads the frame from the database and sends it as `browser_live`. Tests install `MemoryPublisher` with
+`set_publisher`.
 """
 
 from __future__ import annotations
@@ -33,6 +36,8 @@ BROWSER_FRAMES = frozenset(
         "hello",
         "event",
         "terminal",
+        "browser_action",
+        "browser_live",
         "task",
         "session",
         "operation",
@@ -49,7 +54,10 @@ BROWSER_FRAMES = frozenset(
 # An internal frame that is never sent to a browser: it ends the open streams of the keys in `data["key_ids"]` of the
 # user (a revoked agent, an ended browser session; KOR-24), in every hub process.
 CLOSE_KEYS = "close_keys"
-PUBLISHED_FRAMES = (BROWSER_FRAMES - {"hello", "resync"}) | {CLOSE_KEYS}
+# An internal frame that is never sent to a browser: `{session_id, seq}` names the new latest live frame of a session's
+# platform browser (`hub.browser_live`, KOR-44); every hub process reads it and sends `browser_live` to its streams.
+BROWSER_LIVE_REF = "browser_live_ref"
+PUBLISHED_FRAMES = (BROWSER_FRAMES - {"hello", "resync", "browser_live"}) | {CLOSE_KEYS, BROWSER_LIVE_REF}
 # 03-api.md section 6.2: every hint of GET /v1/device/ws; `hello` is sent by the socket itself.
 DEVICE_HINTS = frozenset(
     {
@@ -65,6 +73,7 @@ DEVICE_HINTS = frozenset(
         "request",
         "ping",
         "decertified",
+        "browser",
     }
 )
 PUBLISHED_HINTS = DEVICE_HINTS - {"hello"}

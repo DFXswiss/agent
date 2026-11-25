@@ -120,11 +120,12 @@ def test_messages_of_other_instances_events_and_invalid_payloads(migrated_db: Hu
         _notify(migrated_db, STREAM_CHANNEL, "not json")
         _notify(migrated_db, STREAM_CHANNEL, encode("me", item))  # own message: skipped
         _notify(migrated_db, STREAM_CHANNEL, "")  # wake-up: ignored
-        event = {"org_id": str(ORG), "scope": "org", "scope_id": str(ORG), "scope_seq": 3}
+        event = {"org_id": str(ORG), "scope": "org", "scope_id": str(ORG), "scope_seq": 3, "kind": "org.profile"}
+        event["session"] = None
         _notify(migrated_db, "hub_events", json.dumps(event))
         _notify(migrated_db, "hub_events", "{}")
         bus.send(encode("other", item))
-        assert recorder.next() == ("event", Appended(ORG, "org", ORG, 3))
+        assert recorder.next() == ("event", Appended(ORG, "org", ORG, 3, "org.profile"))
         assert recorder.next() == ("message", BusMessage("other", item))
         with pytest.raises(queue.Empty):
             recorder.next(0.3)

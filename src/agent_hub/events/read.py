@@ -4,7 +4,8 @@
 on it (browsers, `agent_hub.events.routes`; devices, HUB-08). `read_events` returns the stored events of one scope
 in ascending `scope_seq` after a cursor, with the optional filters `kinds`, `task`, `session` and `ref`:
 
-- `session.terminal` is returned only when `kinds` lists it (ADR-016: terminal output is read on demand);
+- a watched kind (`agent_hub.events.watched`: `session.terminal`, `browser.action`) is returned only when `kinds`
+  lists it (ADR-016, ADR-085: terminal output and the browser record are read on demand);
 - `limit` events at most; `next_after` is the `scope_seq` of the last returned event when further matching events
   exist, else None; `head` is the scope's current `scope_seq` (0 while it has no event).
 
@@ -23,9 +24,9 @@ from uuid import UUID
 import psycopg
 
 from agent_hub.crypto.encoding import b64u_encode, format_time
+from agent_hub.events import watched
 
 Connection = psycopg.Connection[Any]
-TERMINAL_KIND = "session.terminal"
 PAGE_DEFAULT = 200
 PAGE_MAX = 1000
 
@@ -87,8 +88,8 @@ def read_events(
     clauses = ["scope_id = %s", "scope_seq > %s"]
     params: list[Any] = [scope_id, after]
     if kinds is None:
-        clauses.append("kind <> %s")
-        params.append(TERMINAL_KIND)
+        clauses.append("kind <> ALL(%s)")
+        params.append(sorted(watched.KINDS))
     else:
         clauses.append("kind = ANY(%s)")
         params.append(sorted(kinds))

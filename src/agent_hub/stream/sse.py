@@ -1,12 +1,16 @@
 """The browser live channel `GET /v1/stream` (03-api.md section 5, 06-web.md section 1.3, ADR-016).
 
 A browser opens one stream per active org with its signed request, read with `fetch` streaming. Query: `org`,
-`terminal` (repeatable, at most 3 watched sessions), `cursors` (`<scope_id>:<seq>,…`), `monitoring=1`, `account=1`.
+`terminal` (repeatable, at most 3 sessions whose terminal output it watches), `browser` (repeatable, at most 3
+sessions whose platform browser it watches, KOR-44) with `browser_kbps` (100-10000, default 1000), `cursors`
+(`<scope_id>:<seq>,…`), `monitoring=1`, `account=1`.
 
 **Rights.** The caller must be an active member of the org (else `404 not_found`, like every read). Readable scopes
 are the org scope and every workgroup the user reads (`wg_access`, 03-api.md section 3); a watched session must be a
 session of the org in a readable workgroup (`task:read`, else `404 not_found`). Every frame is filtered per stream:
-`event` only for readable scopes and never `session.terminal`; `terminal` only for watched sessions; frames of one
+`event` only for readable scopes and never a watched kind (`agent_hub.events.watched`); `terminal` and
+`browser_action` only for sessions watched with `terminal=` and `browser=`; `browser_live` only for sessions watched
+with `browser=`; frames of one
 workgroup (task, session and operation rows, or `wg_id=` at `publish`) only for readers of that workgroup - a row
 without a workgroup and a `metrics` frame with VM or session samples but without `wg_id=` reach nobody (fail closed);
 `metrics` only with `monitoring=1`; user frames (`wraps`, `device_response`, `notification`) only to that user's
@@ -17,12 +21,19 @@ stream, a session in a workgroup the user no longer reads is no longer watched.
 
 **Order of a connect.** The stream is registered (live frames are held back), the heads of all readable scopes are read
 and sent as `hello {stream_id, heads, hub_time}`, then the events after each readable cursor are replayed in ascending
-order (`event`, and `terminal` of watched sessions; cursors of unreadable scopes are ignored). If a scope has more than
+order (`event`, and `terminal` of watched sessions; `browser.action` is never replayed, its pictures would fill the
+buffer; cursors of unreadable scopes are ignored), then the stored latest live frame of every session watched with
+`browser=` (`agent_hub.stream.browser`). If a scope has more than
 `REPLAY_LIMIT` (1000) events after its cursor, or all scopes together more than `REPLAY_TOTAL_FRAMES` events or
 `REPLAY_TOTAL_BYTES` stored bytes, nothing is replayed and `resync {reason: "replay_limit"}` follows. The held-back live
 frames come next; per scope a frame at or below what the stream already sent (the head in `hello` or the last replayed
 event) is dropped, so a frame is not sent twice by this stream. Delivery stays at-least-once across reconnects; the
 client de-duplicates by `(scope_id, scope_seq)`.
+
+**Live pictures** (13-work-vm.md section 13.6). `browser_live` frames do not queue in the buffer: a stream has one slot
+per session watched with `browser=`, a newer frame replaces one not sent yet, and the slots never cause an overflow.
+A stream sends a held frame only within its own byte budget of `browser_kbps` kbit/s (a token bucket that holds at most
+one second of budget, at least one frame); a frame larger than what is left waits until the budget allows.
 
 **Flow.** A heartbeat comment is sent every 15 s. Frames wait in a per-stream buffer of `BUFFER_FRAMES` frames and
 `BUFFER_BYTES` bytes; when a slow reader lets it overflow, the buffer is dropped (except a `hello` not yet sent) and
@@ -34,10 +45,12 @@ stream with `buffer_overflow`.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
+import time
 from collections import deque
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, cast
@@ -48,11 +61,11 @@ import psycopg
 from agent_hub.crypto.encoding import format_time
 from agent_hub.crypto.ids import uuid7
 from agent_hub.errors import HubError
+from agent_hub.events import watched as watched_kinds
 from agent_hub.events.read import stored_json
 from agent_hub.stream.publish import Published
 
 Connection = psycopg.Connection[Any]
-TERMINAL_KIND = "session.terminal"
 HEARTBEAT_SECONDS = 15.0
 HEARTBEAT = b": heartbeat\n\n"
 BUFFER_FRAMES = 4096
@@ -61,10 +74,16 @@ REPLAY_LIMIT = 1000
 REPLAY_TOTAL_FRAMES = 2000
 REPLAY_TOTAL_BYTES = 4 * 1024 * 1024
 MAX_TERMINALS = 3
+MAX_BROWSERS = 3
+KBPS_DEFAULT = 1000
+KBPS_MIN = 100
+KBPS_MAX = 10000
+LIVE_FRAME = "browser_live"
 MAX_CURSORS = 256
 USER_FRAMES = frozenset({"wraps", "notification", "device_response"})
 _UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _CURSOR_RE = re.compile(r"(" + _UUID_RE.pattern + r"):(0|[1-9][0-9]{0,15})")
+_KBPS_RE = re.compile(r"[1-9][0-9]{2,4}")
 
 
 @dataclass(frozen=True)
@@ -77,6 +96,14 @@ class StreamQuery:
     monitoring: bool
     account: bool = False
     """`account=1`: the stream also carries the user's account notifications (no org; KOR-24)."""
+    browsers: frozenset[UUID] = frozenset()
+    """`browser=`: the sessions whose platform browser the stream watches (KOR-44)."""
+    browser_kbps: int = KBPS_DEFAULT
+
+    @property
+    def sessions(self) -> frozenset[UUID]:
+        """Every session the stream watches, with either parameter."""
+        return self.terminals | self.browsers
 
 
 @dataclass(frozen=True)
@@ -97,13 +124,31 @@ def _uuid(text: str) -> UUID:
     return UUID(text)
 
 
+def _sessions(items: Iterable[str], limit: int) -> frozenset[UUID]:
+    found = [_uuid(item) for item in items]
+    if len(found) > limit or len(set(found)) != len(found):
+        raise HubError("request_invalid")
+    return frozenset(found)
+
+
 def parse_query(
-    org: str, terminal: Iterable[str], cursors: str | None, monitoring: str | None, account: str | None = None
+    org: str,
+    terminal: Iterable[str],
+    cursors: str | None,
+    monitoring: str | None,
+    account: str | None = None,
+    *,
+    browser: Iterable[str] = (),
+    browser_kbps: str | None = None,
 ) -> StreamQuery:
     """Check the query (`400 request_invalid` for anything outside contracts/ws/sse/query.json)."""
-    watched = [_uuid(item) for item in terminal]
-    if len(watched) > MAX_TERMINALS or len(set(watched)) != len(watched):
-        raise HubError("request_invalid")
+    watched = _sessions(terminal, MAX_TERMINALS)
+    browsers = _sessions(browser, MAX_BROWSERS)
+    kbps = KBPS_DEFAULT
+    if browser_kbps is not None:
+        if _KBPS_RE.fullmatch(browser_kbps) is None or not KBPS_MIN <= int(browser_kbps) <= KBPS_MAX:
+            raise HubError("request_invalid")
+        kbps = int(browser_kbps)
     positions: dict[UUID, int] = {}
     if cursors is not None:
         parts = cursors.split(",")
@@ -116,7 +161,7 @@ def parse_query(
             positions[UUID(match.group(1))] = int(match.group(2))
     if monitoring not in (None, "1") or account not in (None, "1"):
         raise HubError("request_invalid")
-    return StreamQuery(_uuid(org), frozenset(watched), positions, monitoring == "1", account == "1")
+    return StreamQuery(_uuid(org), watched, positions, monitoring == "1", account == "1", browsers, kbps)
 
 
 def frame_bytes(frame: str, data: Mapping[str, Any]) -> bytes:
@@ -188,36 +233,68 @@ def read_event(connection: Connection, scope_id: UUID, scope_seq: int) -> LiveEv
     return None if row is None else live_event(row)
 
 
-_REPLAY_FILTER = (
-    "FROM hub.event WHERE scope_id = %s AND scope_seq > %s AND (kind <> %s OR session_id = ANY(%s::uuid[]))"
-)
+Watching = Mapping[str, frozenset[UUID]]
+"""The sessions a stream watches per stream parameter of a watched kind (`terminal`, `browser`)."""
 
 
-def replay_size(connection: Connection, scope_id: UUID, after: int, watched: Iterable[UUID]) -> tuple[int, int]:
+def _replay_filter(scope_id: UUID, after: int, watching: Watching) -> tuple[str, list[Any]]:
+    """The rows a replay sends: every kind but the watched ones, and a replayed watched kind (terminal output) only of
+    the sessions watched with its parameter (`agent_hub.events.watched`)."""
+    clauses = ["scope_id = %s", "scope_seq > %s"]
+    params: list[Any] = [scope_id, after]
+    for item in watched_kinds.WATCHED:
+        if item.replay:
+            clauses.append("(kind <> %s OR session_id = ANY(%s::uuid[]))")
+            params += [item.kind, sorted(str(session) for session in watching.get(item.param, ()))]
+        else:
+            clauses.append("kind <> %s")
+            params.append(item.kind)
+    return "FROM hub.event WHERE " + " AND ".join(clauses), params
+
+
+def replay_size(connection: Connection, scope_id: UUID, after: int, watching: Watching) -> tuple[int, int]:
     """Number and stored bytes of the events a replay of the scope after `after` would send."""
+    where, params = _replay_filter(scope_id, after, watching)
     row = connection.execute(
-        f"SELECT count(*), coalesce(sum(octet_length(ct) + octet_length(header_text)), 0) {_REPLAY_FILTER}",
-        (scope_id, after, TERMINAL_KIND, sorted(str(item) for item in watched)),
+        f"SELECT count(*), coalesce(sum(octet_length(ct) + octet_length(header_text)), 0) {where}", params
     ).fetchone()
     count, size = cast(tuple[int, int], row)  # an aggregate always returns one row
     return int(count), int(size)
 
 
-def replay_events(connection: Connection, scope_id: UUID, after: int, watched: Iterable[UUID]) -> list[LiveEvent]:
+def replay_events(connection: Connection, scope_id: UUID, after: int, watching: Watching) -> list[LiveEvent]:
     """The events of the scope after `after` for this stream (at most `REPLAY_LIMIT`)."""
+    where, params = _replay_filter(scope_id, after, watching)
     rows = connection.execute(
-        f"SELECT {_EVENT_COLUMNS} {_REPLAY_FILTER} ORDER BY scope_seq LIMIT %s",
-        (scope_id, after, TERMINAL_KIND, sorted(str(item) for item in watched), REPLAY_LIMIT),
+        f"SELECT {_EVENT_COLUMNS} {where} ORDER BY scope_seq LIMIT %s", [*params, REPLAY_LIMIT]
     ).fetchall()
     return [live_event(row) for row in rows]
 
 
+def latest_frames(connection: Connection, sessions: Iterable[UUID]) -> dict[UUID, Mapping[str, Any]]:
+    """The stored latest live frame of each of the sessions that has one (`hub.browser_live`)."""
+    ids = sorted(str(item) for item in sessions)
+    if not ids:
+        return {}
+    rows = connection.execute(
+        "SELECT session_id, frame FROM hub.browser_live WHERE session_id = ANY(%s::uuid[])", (ids,)
+    ).fetchall()
+    return {UUID(str(row[0])): row[1] for row in rows}
+
+
+def live_bytes(session: UUID, frame: Mapping[str, Any]) -> bytes:
+    """The SSE frame `browser_live {session_id, frame}`."""
+    return frame_bytes(LIVE_FRAME, {"session_id": str(session), "frame": frame})
+
+
 @dataclass(frozen=True)
 class Opening:
-    """What a new stream sends first: `hello`, the replay and, past the replay limit, a resync."""
+    """What a new stream sends first: `hello`, the replay and, past the replay limit, a resync; then the stored latest
+    live frames of its watched browsers."""
 
     chunks: list[bytes]
     sent: dict[UUID, int]
+    live: dict[UUID, bytes] = field(default_factory=dict)
 
 
 def opening(
@@ -226,10 +303,14 @@ def opening(
     query: StreamQuery,
     *,
     scopes: frozenset[UUID],
-    watched: frozenset[UUID],
+    watching: Watching,
     now: datetime,
 ) -> Opening:
-    """Read the heads and the replay of a new stream (module docstring)."""
+    """Read the heads, the replay and the latest live frames of a new stream (module docstring)."""
+    live = {
+        session: live_bytes(session, frame)
+        for session, frame in latest_frames(connection, watching.get("browser", ())).items()
+    }
     heads = scope_heads(connection, scopes)
     hello = {
         "stream_id": stream_id,
@@ -243,21 +324,21 @@ def opening(
     ]
     frames = size = 0
     for scope, cursor in due:
-        count, stored = replay_size(connection, scope, cursor, watched)
+        count, stored = replay_size(connection, scope, cursor, watching)
         frames, size = frames + count, size + stored
         if count > REPLAY_LIMIT or frames > REPLAY_TOTAL_FRAMES or size > REPLAY_TOTAL_BYTES:
-            return Opening([*chunks, resync_bytes("replay_limit")], sent)
+            return Opening([*chunks, resync_bytes("replay_limit")], sent, live)
     replays: list[LiveEvent] = []
     for scope, cursor in due:
-        replays.extend(replay_events(connection, scope, cursor, watched))
+        replays.extend(replay_events(connection, scope, cursor, watching))
     for item in replays:
         chunks.append(event_bytes(item))
         sent[item.scope_id] = max(sent[item.scope_id], item.scope_seq)
-    return Opening(chunks, sent)
+    return Opening(chunks, sent, live)
 
 
 def event_bytes(item: LiveEvent) -> bytes:
-    frame = "terminal" if item.kind == TERMINAL_KIND else "event"
+    frame = watched_kinds.frame_of(item.kind)
     return frame_bytes(frame, {"scope_id": str(item.scope_id), "scope_seq": item.scope_seq, "event": item.event})
 
 
@@ -303,6 +384,7 @@ class BrowserStream:
     query: StreamQuery
     scopes: frozenset[UUID]
     watched: frozenset[UUID]
+    """The sessions whose terminal output the stream watches (`terminal=`)."""
     buffer: int = BUFFER_FRAMES
     byte_limit: int = BUFFER_BYTES
     key_id: str | None = None
@@ -318,10 +400,25 @@ class BrowserStream:
     _bytes: int = 0
     _hello_pending: bool = False
     _wake: asyncio.Event = field(default_factory=asyncio.Event)
+    browsers: frozenset[UUID] = frozenset()
+    """The sessions whose platform browser the stream watches (`browser=`)."""
+    clock: Callable[[], float] = time.monotonic
+    _live: dict[UUID, bytes] = field(default_factory=dict)
+    _tokens: float = 0.0
+    _filled_at: float | None = None
 
     @property
     def org(self) -> UUID:
         return self.query.org
+
+    def watching(self) -> dict[str, frozenset[UUID]]:
+        """The watched sessions per stream parameter (`agent_hub.events.watched`)."""
+        return {"terminal": self.watched, "browser": self.browsers}
+
+    @property
+    def rate(self) -> float:
+        """The live byte budget per second (`browser_kbps`)."""
+        return self.query.browser_kbps * 1000 / 8
 
     def _enqueue(self, chunk: bytes) -> None:
         if self.finished:
@@ -340,6 +437,9 @@ class BrowserStream:
         for chunk in opened.chunks:
             self._enqueue(chunk)
         self._hello_pending = bool(opened.chunks)
+        for session, chunk in opened.live.items():
+            if session in self.browsers:
+                self._live.setdefault(session, chunk)  # a frame that arrived meanwhile is newer
         early, self._early = self._early, []
         self._primed = True
         if self._early_overflow:
@@ -365,7 +465,8 @@ class BrowserStream:
             return
         if item.scope_seq <= self.sent.get(item.scope_id, 0):
             return
-        if item.kind == TERMINAL_KIND and item.session_id not in self.watched:
+        spec = watched_kinds.BY_KIND.get(item.kind)
+        if spec is not None and item.session_id not in self.watching()[spec.param]:
             return
         self.sent[item.scope_id] = item.scope_seq
         self._enqueue(event_bytes(item))
@@ -395,6 +496,41 @@ class BrowserStream:
             self.refresh = True
         self._enqueue(frame_bytes(item.frame, item.data))
 
+    def offer_live(self, session: UUID, chunk: bytes) -> None:
+        """A live frame (`live_bytes`) of a session: it takes the session's slot (replacing a frame not sent yet) when
+        the stream watches the session's browser; it waits there for the opening and the byte budget."""
+        if self.finished or session not in self.browsers:
+            return
+        self._live[session] = chunk
+        self._wake.set()
+
+    def _live_wait(self, now: float) -> float | None:
+        """Seconds until the first held live frame fits the budget (0: now); None without one or before the
+        opening."""
+        if not self._live or not self._primed:
+            return None
+        self._fill(now)
+        size = min(len(next(iter(self._live.values()))), self.rate)
+        return max(0.0, (size - self._tokens) / self.rate)
+
+    def _fill(self, now: float) -> None:
+        if self._filled_at is None:
+            self._tokens = self.rate  # a new stream may send its first second at once
+        else:
+            self._tokens = min(self.rate, self._tokens + (now - self._filled_at) * self.rate)
+        self._filled_at = now
+
+    def _take_live(self, now: float) -> list[bytes]:
+        """The held live frames that fit the budget, oldest slot first (a frame larger than one second of budget goes
+        out once the bucket is full and leaves it in debt)."""
+        taken: list[bytes] = []
+        while (wait := self._live_wait(now)) is not None and wait == 0.0:
+            session = next(iter(self._live))
+            chunk = self._live.pop(session)
+            self._tokens -= len(chunk)
+            taken.append(chunk)
+        return taken
+
     def resync_for(self, item: Published) -> None:
         """A frame too large for the bus reached another process (its data is not known here): resync unless the
         frame type or its explicit workgroup excludes this stream (a resync carries no content)."""
@@ -420,24 +556,32 @@ class BrowserStream:
         self.finished = True
         self._wake.set()
 
-    def update_rights(self, scopes: frozenset[UUID] | None, watched: frozenset[UUID]) -> None:
-        """New rights: None ends the stream (no longer a member)."""
+    def update_rights(
+        self, scopes: frozenset[UUID] | None, watched: frozenset[UUID], browsers: frozenset[UUID] | None = None
+    ) -> None:
+        """New rights: None ends the stream (no longer a member); `watched` and `browsers` are the sessions it may still
+        watch (`browsers` unchanged when None)."""
         if scopes is None:
             self.close()
             return
         self.scopes = scopes
         self.watched = watched
+        if browsers is not None:
+            self.browsers = browsers
+            self._live = {session: chunk for session, chunk in self._live.items() if session in browsers}
 
     async def take(self, timeout: float) -> list[bytes]:
-        """The queued frames; an empty list when `timeout` passed without one (a heartbeat is due)."""
-        if not self._items and not self.finished:
+        """The queued frames and the live frames the budget allows; an empty list when `timeout` passed without one
+        (or a held live frame's wait ended without it fitting yet)."""
+        wait = self._live_wait(self.clock())
+        if not self._items and not self.finished and wait != 0.0:
             self._wake.clear()
-            try:
-                await asyncio.wait_for(self._wake.wait(), timeout)
-            except TimeoutError:
-                return []
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._wake.wait(), timeout if wait is None else min(timeout, wait))
         items = list(self._items)
         self._items.clear()
         self._bytes = 0
         self._hello_pending = False
+        if not self.finished:
+            items += self._take_live(self.clock())
         return items

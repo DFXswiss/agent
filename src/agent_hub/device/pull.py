@@ -7,10 +7,11 @@ known or not, is `404 not_found`. Without a cursor the pull covers every scope t
 
 What a scope returns:
 
-- workgroup scope: every kind except `session.terminal` (terminal output is read only by browsers, ADR-016);
+- workgroup scope: every kind except the watched kinds (`agent_hub.events.watched`: terminal output and the browser
+  record are read only by browsers, ADR-016, ADR-085);
 - org scope: `org.profile`, `wg.profile`, `member.profile`, `device.profile` and the org-level whiteboard kinds.
 
-`kinds` narrows this further (an unknown kind is `400 request_invalid`; `session.terminal` is never returned). The
+`kinds` narrows this further (an unknown kind is `400 request_invalid`; a watched kind is never returned). The
 answer holds at most `limit` events (default 200, max 1000): the scopes in the order of the cursors (sorted by scope
 ID without cursors), each ascending by `scope_seq`, as `{scope_id, scope_seq, received_at, event}`; `more` is true
 while further matching events exist after the returned ones.
@@ -27,14 +28,15 @@ import psycopg
 
 from agent_hub.device.access import DeviceView
 from agent_hub.errors import HubError
-from agent_hub.events.read import TERMINAL_KIND, read_events
+from agent_hub.events import watched
+from agent_hub.events.read import read_events
 from agent_hub.log.events import KIND_RULES
 from agent_hub.log.state import ORG
 
 Connection = psycopg.Connection[Any]
 PAGE_DEFAULT = 200
 PAGE_MAX = 1000
-WG_KINDS = frozenset(rule.kind for rule in KIND_RULES if rule.scope != ORG) - {TERMINAL_KIND}
+WG_KINDS = frozenset(rule.kind for rule in KIND_RULES if rule.scope != ORG) - watched.KINDS
 ORG_KINDS = frozenset(
     {
         "org.profile",

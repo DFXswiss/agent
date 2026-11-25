@@ -3,17 +3,19 @@
 **Channel.** `send` runs `pg_notify(CHANNEL, payload)` for every newly stored event inside the storing transaction;
 PostgreSQL delivers it to every `LISTEN`ing connection only when that transaction commits (never on a rollback), so
 every hub process (HUB-07's bus) learns of every committed event. The payload is canonical JSON with identifiers and
-the order only: `{"org_id", "scope", "scope_id", "scope_seq"}` (well below the 8000-byte limit of PostgreSQL). It
-never carries content (header fields beyond these, ciphertext, signatures); a listener reads the event with
-`agent_hub.events.read`. `parse` checks a payload and returns it as `Appended`.
+the order, and the kind and session that tell a listener whether it needs the event at all:
+`{"org_id", "scope", "scope_id", "scope_seq", "kind", "session"}` (`session` null without one; well below the
+8000-byte limit of PostgreSQL). A hub process reads a watched kind only when one of its streams watches the session
+(13-work-vm.md section 13.6). It never carries content (other header fields, ciphertext, signatures); a listener reads
+the event with `agent_hub.events.read`. `parse` checks a payload and returns it as `Appended`.
 
 **Announcement.** After the caller's commit, `announce(stored)` handles every newly stored (not replayed) event:
 
-- the browser frame `event {scope_id, scope_seq, event}` (or `terminal` for `session.terminal`) to the org's
-  browsers through `agent_hub.stream.publish` (the stream filters by the scopes and watched sessions of each browser,
-  HUB-07);
+- the browser frame `event {scope_id, scope_seq, event}` (for a watched kind its own frame, `terminal` or
+  `browser_action`, `agent_hub.events.watched`) to the org's browsers through `agent_hub.stream.publish` (the stream
+  filters by the scopes and watched sessions of each browser, HUB-07);
 - the device hint `events {scope_id, scope_seq}` to every active device that reads the scope, except the author
-  (not for `session.terminal`, which device pulls never return);
+  (not for a watched kind, which device pulls never return);
 - the internal signal `event.appended` (`agent_hub.signals`, ADR-027 section 4) with `event_id`, `org_id`, `scope`,
   `scope_id`, `scope_seq`, `kind`, `author_id`, `notify` (1 for a `whiteboard.entry` sent with `notify:true`, else
   0) and, when set, `wg_id`, `task_id`, `session_id` and `ref` (only when `ref` is identifier text in the sense of
@@ -34,6 +36,7 @@ import psycopg
 
 from agent_hub import signals
 from agent_hub.crypto.encoding import canonical
+from agent_hub.events import watched
 from agent_hub.stream.publish import Audience, publish
 
 if TYPE_CHECKING:  # the store imports this module
@@ -42,9 +45,9 @@ if TYPE_CHECKING:  # the store imports this module
 LOG = logging.getLogger("agent_hub.events")
 CHANNEL = "hub_events"
 SIGNAL = "event.appended"
-TERMINAL_KIND = "session.terminal"
-PAYLOAD_KEYS = frozenset({"org_id", "scope", "scope_id", "scope_seq"})
+PAYLOAD_KEYS = frozenset({"org_id", "scope", "scope_id", "scope_seq", "kind", "session"})
 _SCOPES = frozenset({"org", "wg"})
+_KIND_RE = re.compile(r"[a-z][a-z0-9_]{0,63}(\.[a-z][a-z0-9_]{0,63}){0,3}")
 _SIGNAL_TEXT_RE = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 
 
@@ -56,11 +59,20 @@ class Appended:
     scope: str
     scope_id: UUID
     scope_seq: int
+    kind: str = ""
+    session_id: UUID | None = None
 
 
 def payload(stored: StoredEvent) -> str:
     """The notification text of a stored event."""
-    body = {"org_id": stored.org_id, "scope": stored.scope, "scope_id": stored.scope_id, "scope_seq": stored.scope_seq}
+    body = {
+        "org_id": stored.org_id,
+        "scope": stored.scope,
+        "scope_id": stored.scope_id,
+        "scope_seq": stored.scope_seq,
+        "kind": stored.kind,
+        "session": stored.session_id,
+    }
     return canonical(body).decode("ascii")
 
 
@@ -84,7 +96,17 @@ def parse(text: str) -> Appended:
     seq = data["scope_seq"]
     if data["scope"] not in _SCOPES or isinstance(seq, bool) or not isinstance(seq, int) or seq < 1:
         raise ValueError("not an event notification")
-    return Appended(_uuid(data["org_id"]), cast(str, data["scope"]), _uuid(data["scope_id"]), seq)
+    kind, session = data["kind"], data["session"]
+    if not isinstance(kind, str) or _KIND_RE.fullmatch(kind) is None:
+        raise ValueError("not an event notification")
+    return Appended(
+        _uuid(data["org_id"]),
+        cast(str, data["scope"]),
+        _uuid(data["scope_id"]),
+        seq,
+        kind,
+        None if session is None else _uuid(session),
+    )
 
 
 def signal_ids(stored: StoredEvent) -> dict[str, UUID | int | str]:
@@ -119,10 +141,9 @@ def announce(stored: list[StoredEvent]) -> None:
 
 
 def _announce(item: StoredEvent) -> None:
-    frame = "terminal" if item.kind == TERMINAL_KIND else "event"
     data = {"scope_id": item.scope_id, "scope_seq": item.scope_seq, "event": item.event}
-    publish(Audience("org", UUID(item.org_id)), frame, data)
-    hinted = () if item.kind == TERMINAL_KIND else sorted(item.devices)  # device pulls never return terminal
+    publish(Audience("org", UUID(item.org_id)), watched.frame_of(item.kind), data)
+    hinted = () if item.kind in watched.KINDS else sorted(item.devices)  # device pulls never return watched kinds
     for device in hinted:
         publish(Audience("device", UUID(device)), "events", {"scope_id": item.scope_id, "scope_seq": item.scope_seq})
     signals.emit(SIGNAL, **signal_ids(item))

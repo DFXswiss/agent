@@ -10,6 +10,13 @@ reaches it. All registries live on the event loop; publishers and the bus thread
   here - and offered to the org's streams; a frame of another process is delivered like a local one; an oversized
   frame of another process becomes a `resync`/`reconcile` for its audience; a lost bus connection resyncs every
   stream and sends every device `reconcile`.
+- Watched kinds (`agent_hub.events.watched`): a committed event of a watched kind is read only when a local stream
+  watches its session with the kind's parameter (the event notification names kind and session).
+- Platform browsers (KOR-44, `agent_hub.stream.browser`): the service keeps the lease of every session whose browser a
+  local stream watches (written when the first stream starts watching, renewed every `renew_seconds` with the hint
+  `browser` to the session's device, deleted when the last one stops) and turns a published `BROWSER_LIVE_REF` (local
+  or from the bus) into one read of the stored frame per process and new frame, then into `browser_live` for the
+  streams watching the session (`BrowserStream.offer_live`).
 - A `close_keys` frame (`agent_hub.stream.publish.CLOSE_KEYS`, from any process) ends the user's streams opened with
   one of its keys (a revoked agent, an ended browser session; KOR-24); it is never sent to a browser.
 - `close_all()` (shutdown): every stream gets `resync {hub_restart}` and ends, every device socket is closed with
@@ -34,11 +41,12 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from agent_hub.crypto.encoding import format_time
 from agent_hub.crypto.ids import uuid7
 from agent_hub.errors import HubError
+from agent_hub.events import watched as watched_kinds
 from agent_hub.events.notify import Appended
 from agent_hub.http.context import HubContext
-from agent_hub.stream import presence
+from agent_hub.stream import browser, presence
 from agent_hub.stream.bus import Bus, BusMessage, Connect, encode
-from agent_hub.stream.publish import CLOSE_KEYS, LIVE, Audience, Published
+from agent_hub.stream.publish import BROWSER_LIVE_REF, CLOSE_KEYS, LIVE, Audience, Published, hint
 from agent_hub.stream.sse import (
     BUFFER_FRAMES,
     HEARTBEAT,
@@ -46,6 +54,7 @@ from agent_hub.stream.sse import (
     BrowserStream,
     LiveEvent,
     StreamQuery,
+    live_bytes,
     opening,
     read_event,
     readable_scopes,
@@ -55,6 +64,8 @@ from agent_hub.stream.ws import HINT_BUFFER, INTERNAL, POLICY, RESTART, DeviceSo
 
 LOG = logging.getLogger("agent_hub.stream")
 FLUSH_SECONDS = 5.0
+EVENT_FRAMES = frozenset({watched_kinds.EVENT_FRAME, *watched_kinds.FRAMES})
+"""Frames announced for events: every process learns of them through `hub_events`, never through `hub_stream`."""
 T = TypeVar("T")
 
 
@@ -69,8 +80,10 @@ class StreamService:
         buffer: int = BUFFER_FRAMES,
         hint_buffer: int = HINT_BUFFER,
         connect: Connect = psycopg.connect,
+        renew_seconds: float = browser.RENEW_SECONDS,
     ) -> None:
         self.context = context
+        self.renew_seconds = renew_seconds
         self.instance = uuid7()
         self.heartbeat_seconds = heartbeat_seconds
         self.buffer = buffer
@@ -82,6 +95,14 @@ class StreamService:
         self.devices: dict[UUID, DeviceSocket] = {}
         self._connected: dict[UUID, datetime] = {}
         self._orgs: frozenset[UUID] = frozenset()
+        self.browser_watchers: dict[UUID, set[BrowserStream]] = {}
+        """The local streams watching each session's browser (event-loop thread)."""
+        self._watching: dict[str, frozenset[UUID]] = {}
+        """The sessions watched by local streams per stream parameter (read by the bus and publishing threads)."""
+        self._live_sent: dict[UUID, tuple[str, int]] = {}
+        self._lease_lock = asyncio.Lock()
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._renewer: asyncio.Task[None] | None = None
         self.bus = Bus(
             context.config.database.connect_kwargs(),
             context.pool,
@@ -101,10 +122,19 @@ class StreamService:
         if not await asyncio.to_thread(self.bus.wait_ready):
             LOG.error("live bus: not listening yet; frames of other hub processes arrive once it is")
         LIVE.attach(self)
+        self._renewer = asyncio.create_task(self._renew_loop())
 
     async def stop(self) -> None:
-        """Close every stream and socket, detach and stop the bus."""
+        """Close every stream and socket, end the renewals, delete the leases, detach and stop the bus."""
         self.close_all()
+        if self._renewer is not None:
+            self._renewer.cancel()
+            await asyncio.gather(self._renewer, return_exceptions=True)
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        try:
+            await asyncio.to_thread(self._transaction, browser.release_instance, self.instance, self.context.clock())
+        except Exception:
+            LOG.error("live service: the watch leases could not be deleted (they end with their time)", exc_info=True)
         LIVE.detach(self)
         await asyncio.to_thread(self.bus.stop)
 
@@ -132,9 +162,12 @@ class StreamService:
 
     def publish(self, item: Published) -> None:
         """A frame published in this process: to the other processes and to the receivers here."""
-        if item.audience.kind != "device" and item.frame in ("event", "terminal"):
+        if item.audience.kind != "device" and item.frame in EVENT_FRAMES:
             return  # events reach every process through hub_events (agent_hub.stream.bus)
         self.bus.send(encode(self.instance, item))
+        if item.frame == BROWSER_LIVE_REF:
+            self._read_live(item)  # the publisher's worker thread (agent_hub.stream.routes)
+            return
         self._call(self._deliver, item)
 
     # --- bus callbacks (listener thread) ---
@@ -142,12 +175,18 @@ class StreamService:
     def _on_event(self, appended: Appended) -> None:
         if appended.org_id not in self._orgs:
             return
+        spec = watched_kinds.BY_KIND.get(appended.kind)
+        if spec is not None and appended.session_id not in self._watching.get(spec.param, frozenset()):
+            return  # a watched kind nobody here watches: not read
         with self.context.pool.connection() as connection:
             found = read_event(connection, appended.scope_id, appended.scope_seq)
         if found is not None:
             self._call(self._deliver_event, found)
 
     def _on_message(self, message: BusMessage) -> None:
+        if not message.oversized and message.item.frame == BROWSER_LIVE_REF:
+            self._read_live(message.item)
+            return
         if message.oversized:
             self._call(self._deliver_resync, message.item)
         else:
@@ -155,6 +194,17 @@ class StreamService:
 
     def _on_gap(self) -> None:
         self._call(self._gap)
+
+    def _read_live(self, item: Published) -> None:
+        """Read the frame a `BROWSER_LIVE_REF` names, only when a local stream watches the session (any thread but
+        the event loop's)."""
+        session = UUID(str(item.data["session_id"]))
+        if session not in self._watching.get("browser", frozenset()):
+            return
+        with self.context.pool.connection() as connection:
+            stored = browser.read_live(connection, session)
+        if stored is not None:
+            self._call(self._deliver_live, session, stored)
 
     # --- delivery (event-loop thread) ---
 
@@ -178,6 +228,19 @@ class StreamService:
             return
         for stream in self._browsers(item.audience):
             stream.offer(item)
+
+    def _deliver_live(self, session: UUID, stored: browser.Stored) -> None:
+        """A stored frame to the streams watching the session, once per frame (a repeated reference of a frame that
+        was already sent, or of a row replaced meanwhile by one that was sent, is dropped)."""
+        if self._live_sent.get(session) == (stored.browser_id, stored.seq):
+            return
+        watchers = self.browser_watchers.get(session)
+        if not watchers:
+            return
+        self._live_sent[session] = (stored.browser_id, stored.seq)
+        chunk = live_bytes(session, stored.frame)
+        for stream in list(watchers):
+            stream.offer_live(session, chunk)
 
     def _deliver_event(self, item: LiveEvent) -> None:
         for stream in list(self.by_org.get(item.org_id, ())):
@@ -214,6 +277,16 @@ class StreamService:
         self.by_org.setdefault(stream.org, set()).add(stream)
         self.by_user.setdefault(stream.user_id, set()).add(stream)
         self._orgs = frozenset(self.by_org)
+        for session in stream.browsers:
+            self.browser_watchers.setdefault(session, set()).add(stream)
+        self._snapshot()
+
+    def _snapshot(self) -> None:
+        streams = [stream for items in self.by_org.values() for stream in items]
+        self._watching = {
+            "terminal": frozenset(session for stream in streams for session in stream.watched),
+            "browser": frozenset(self.browser_watchers),
+        }
 
     def abandon(self, stream: BrowserStream) -> None:
         """Forget a stream that was opened but will never be served (its route failed after `open_browser`)."""
@@ -227,27 +300,81 @@ class StreamService:
                 if not streams:
                     del table[key]
         self._orgs = frozenset(self.by_org)
+        self._unwatch(stream, stream.browsers)
+
+    def _unwatch(self, stream: BrowserStream, sessions: frozenset[UUID]) -> None:
+        """The stream no longer watches these browsers: a session nobody here watches any more loses its lease."""
+        ended: set[UUID] = set()
+        for session in sessions:
+            watchers = self.browser_watchers.get(session)
+            if watchers is None or stream not in watchers:
+                continue
+            watchers.discard(stream)
+            if not watchers:
+                del self.browser_watchers[session]
+                self._live_sent.pop(session, None)
+                ended.add(session)
+        self._snapshot()
+        if ended:
+            self._spawn(self._sync(ended))
+
+    def _spawn(self, work: Any) -> None:
+        task = asyncio.get_running_loop().create_task(work)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    # --- watch leases (event-loop thread; agent_hub.stream.browser) ---
+
+    def _wishes(self, sessions: set[UUID] | frozenset[UUID]) -> dict[UUID, int | None]:
+        watchers = self.browser_watchers
+        return {
+            session: max(stream.query.browser_kbps for stream in watchers[session]) if session in watchers else None
+            for session in sessions
+        }
+
+    def _write_leases(self, wishes: dict[UUID, int | None], sweep: bool) -> None:
+        hints = self._transaction(browser.write_leases, self.instance, wishes, self.context.clock(), sweep=sweep)
+        for session, device in hints:
+            hint(device, browser.HINT, {"session_id": str(session)})
+
+    async def _sync(self, sessions: set[UUID] | frozenset[UUID], *, sweep: bool = False) -> None:
+        """Bring this process's leases of the sessions in line with its streams (serialized, so a lease is never
+        written after the deletion that followed it)."""
+        async with self._lease_lock:
+            try:
+                await asyncio.to_thread(self._write_leases, self._wishes(sessions), sweep)
+            except Exception:
+                LOG.error("live service: the watch leases could not be written", exc_info=True)
+
+    async def _renew_loop(self) -> None:
+        while True:
+            await asyncio.sleep(self.renew_seconds)
+            await self._sync(set(self.browser_watchers), sweep=True)
 
     async def open_browser(self, user_id: UUID, query: StreamQuery, key_id: str | None = None) -> BrowserStream:
         """Check the rights, register the stream and queue its opening frames (`HubError` before streaming); `key_id`
         is the key that signed the request (its revocation ends the stream)."""
         if self.closing:
             raise HubError("unavailable")
-        scopes, watched = await asyncio.to_thread(self._transaction, self._rights, query.org, user_id, query.terminals)
-        if scopes is None or watched != query.terminals:
+        scopes, watched = await asyncio.to_thread(self._transaction, self._rights, query.org, user_id, query.sessions)
+        if scopes is None or watched != query.sessions:
             raise HubError("not_found")
         if self.is_closing():  # the hub began to shut down during the read: never register after `close_all`
             raise HubError("unavailable")
-        stream = BrowserStream(user_id, query, scopes, watched, buffer=self.buffer, key_id=key_id)
+        stream = BrowserStream(
+            user_id, query, scopes, query.terminals, buffer=self.buffer, key_id=key_id, browsers=query.browsers
+        )
         self._add(stream)
         try:
+            if query.browsers:
+                await self._sync(query.browsers)
             opened = await asyncio.to_thread(
                 self._transaction,
                 opening,
                 stream.stream_id,
                 query,
                 scopes=scopes,
-                watched=watched,
+                watching=stream.watching(),
                 now=self.context.clock(),
             )
         except BaseException:
@@ -259,12 +386,15 @@ class StreamService:
     async def _refresh(self, stream: BrowserStream) -> None:
         try:
             scopes, watched = await asyncio.to_thread(
-                self._transaction, self._rights, stream.org, stream.user_id, stream.watched
+                self._transaction, self._rights, stream.org, stream.user_id, stream.watched | stream.browsers
             )
         except Exception:
             LOG.error("stream %s: the rights could not be read again", stream.stream_id, exc_info=True)
             return
-        stream.update_rights(scopes, watched)
+        lost = stream.browsers - watched
+        stream.update_rights(scopes, stream.watched & watched, stream.browsers & watched)
+        if scopes is not None and lost:
+            self._unwatch(stream, lost)
 
     async def browser_body(self, stream: BrowserStream) -> AsyncIterator[bytes]:
         """The bytes of an open stream: frames, a heartbeat comment every `heartbeat_seconds`, until it ends."""

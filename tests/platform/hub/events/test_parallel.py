@@ -174,6 +174,8 @@ def test_notify_reaches_a_second_connection_after_commit(scene: Scene, migrated_
         "scope": "wg",
         "scope_id": scene.wg,
         "scope_seq": 1,
+        "kind": stored.kind,
+        "session": None,
     }
     parsed = notify.parse(received[0].payload)
     assert (str(parsed.org_id), parsed.scope, str(parsed.scope_id), parsed.scope_seq) == (

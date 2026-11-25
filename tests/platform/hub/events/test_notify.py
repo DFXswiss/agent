@@ -32,14 +32,33 @@ def _stored(**changes: object) -> StoredEvent:
     return StoredEvent(**values)  # type: ignore[arg-type]
 
 
-def test_payload_holds_only_identifiers_and_order() -> None:
+def test_payload_holds_only_identifiers_order_kind_and_session() -> None:
     stored = _stored()
     assert json.loads(notify.payload(stored)) == {
         "org_id": stored.org_id,
         "scope": "wg",
         "scope_id": stored.scope_id,
         "scope_seq": 3,
+        "kind": "platform.read",
+        "session": None,
     }
+    session = new_id()
+    parsed = notify.parse(notify.payload(_stored(kind="browser.action", session_id=session)))
+    assert (parsed.kind, parsed.session_id) == ("browser.action", uuid.UUID(session))
+    assert notify.parse(notify.payload(stored)).session_id is None
+
+
+def _payload(**changes: object) -> str:
+    body: dict[str, object] = {
+        "org_id": new_id(),
+        "scope": "org",
+        "scope_id": new_id(),
+        "scope_seq": 1,
+        "kind": "org.profile",
+        "session": None,
+    }
+    body.update(changes)
+    return json.dumps(body)
 
 
 @pytest.mark.parametrize(
@@ -53,6 +72,10 @@ def test_payload_holds_only_identifiers_and_order() -> None:
         json.dumps({"org_id": new_id(), "scope": "org", "scope_id": new_id(), "scope_seq": "1"}),
         json.dumps({"org_id": new_id().upper(), "scope": "org", "scope_id": new_id(), "scope_seq": 1}),
         json.dumps({"org_id": new_id(), "scope": "org", "scope_id": new_id(), "scope_seq": 1, "kind": "prompt"}),
+        _payload(kind="Prompt"),
+        _payload(kind=1),
+        _payload(session="x"),
+        _payload(extra=1),
     ],
 )
 def test_parse_refuses_other_payloads(text: str) -> None:
