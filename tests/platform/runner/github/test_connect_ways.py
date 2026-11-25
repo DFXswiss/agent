@@ -101,6 +101,7 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
                 "github.ways",
                 "github.identities",
                 "prompt.withdraw",
+                "subscriptions",
             ),
         ),
         (
@@ -113,6 +114,7 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
                 "github.ways",
                 "github.identities",
                 "prompt.withdraw",
+                "subscriptions",
             ),
         ),
         (
@@ -125,6 +127,7 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
                 "github.ways",
                 "github.identities",
                 "prompt.withdraw",
+                "subscriptions",
                 "github.device_flow",
                 "github.oauth_app",
             ),
@@ -139,6 +142,7 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
                 "github.ways",
                 "github.identities",
                 "prompt.withdraw",
+                "subscriptions",
                 "github.device_flow",
                 "github.operator",
             ),
