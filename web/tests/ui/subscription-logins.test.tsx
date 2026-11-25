@@ -255,3 +255,14 @@ describe('SubscriptionCard', () => {
     expect(within(broken).getByTestId('subcard.status')).toHaveAttribute('data-status', 'unverifiable');
   });
 });
+
+describe('settings section', () => {
+  it('shows the manager under its title', async () => {
+    const { t } = await world();
+    const { section, SubscriptionLoginsSection } = await import('../../src/ui/settings/sections/subscription-logins');
+    expect(section).toMatchObject({ id: 'subscription-logins', titleKey: 'subscription-login.title' });
+    mount(t, [{ path: '/s', element: <SubscriptionLoginsSection /> }], '/s');
+    expect(await screen.findByTestId('subscriptions.empty')).toBeVisible();
+    expect(screen.getByTestId('subscription-logins.section')).toHaveTextContent('platform device');
+  });
+});

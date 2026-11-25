@@ -33,5 +33,7 @@
   "use.measure": "Nur messen",
   "use.shared": "Für Sitzungen von …",
   "use.pool": "Betreiber-Pool",
-  "use.save": "Verwendung speichern"
+  "use.save": "Verwendung speichern",
+  "title": "Claude-Abos",
+  "intro": "Jedes Abo wird auf einem Plattformgerät angemeldet und dort gemessen; auf Ihrem Rechner läuft nichts. Ein neues Abo wird nur gemessen, bis Sie wählen, wer es nutzen darf."
 }
