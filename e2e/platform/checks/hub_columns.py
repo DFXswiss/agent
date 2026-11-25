@@ -36,7 +36,8 @@ CATEGORIES: dict[str, str] = {
     "the task, session and operation metadata (ADR-076)",
     "audit": "Audit and read-log rows (actor, action, target IDs, result)",
     "credentials": "Credential metadata (owner, owner kind user/org, kind, version, epoch, times, primary mark); "
-    "default GitHub identities (record ID) of organizations and workgroups",
+    "default GitHub identities (record ID) of organizations and workgroups; the use mirror of a shared Claude "
+    "subscription (organizations, operator pool; ADR-090)",
     "settings": "User settings (model access preference, model choice, locale, fallback of the model access)",
     "community": "Community metadata (14-community.md section 2.3, ADR-069): message IDs, authors, sequence numbers, "
     "times, sizes, tombstones, key epochs and checks, key requests, members, read positions, mutes, moderators",
@@ -161,6 +162,9 @@ pr_link: contexts | wg_id:uuid@ids epoch:number tag:code task_id:uuid@ids sessio
 principal: ids | id:uuid kind:code created_at:time disabled_at:time
 quota_snapshot: metrics | owner_id:uuid window:code used_percent:number resets_at:time severity:code
   fetched_at:time device_id:uuid
+subscription_quota: metrics | credential_id:uuid owner_id:uuid windows:json unreadable:flag fetched_at:time
+  device_id:uuid
+subscription_use: credentials | credential_id:uuid owner_id:uuid pool:flag orgs:json set_at:time
 quota_unreadable: metrics | owner_id:uuid since:time device_id:uuid
 quota_limit: metrics | owner_id:uuid at:time until:time readable:flag device_id:uuid fetched_at:time
 operator_quota: metrics | device_id:uuid at:time snapshot:json received_at:time

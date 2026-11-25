@@ -359,6 +359,8 @@ bearing on keys).
 | [E-27](KONZEPT.md#e-27) | An agent account without a human: created by invitation, signed in with the agent's own key, no passkey. | carried (pending KOR-62) | [§1](#1-principals) |
 | [E-28](KONZEPT.md#e-28) | Personal message of the requester at the consent. | none | – |
 | [E-29](KONZEPT.md#e-29) | GitHub with every repository the account can reach (the token stays a `github` credential under the user's `CK`). | none | – |
+| [E-30](KONZEPT.md#e-30) | Overview of all own subscriptions (readings only; the hub sees numbers and times, no address or name). | none | – |
+| [E-31](KONZEPT.md#e-31) | Every subscription is a `claude_subscription` record under the user's `CK`, logged in and renewed by an eligible device; its use is sealed in the record (ADR-090). | none | – |
 | [A1](KONZEPT.md#a-1) | Subagents have the parent's rights and no keys. | carried | [§1](#1-principals) |
 | [A2](KONZEPT.md#a-2) | Conflict fix by merge commit. | none | – |
 | [A3](KONZEPT.md#a-3) | The hardening is built: the agent has its own identity as a sub-principal and is rotated out on revocation (ADR-082); the rekey of the user's identity for copies made before is a decision of the owner. | decision needed | KM-28, KM-30, KM-39 |
