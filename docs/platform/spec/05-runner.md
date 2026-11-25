@@ -267,7 +267,8 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
   names (`vm_id_pref`, a user's choice) when it is a live VM of the workgroup; (2) for a subagent the VM of its parent,
   for a main session with `resume_from` the VM of that session – both regardless of the limit; (3) a running VM of
   the workgroup with room (`SESSIONS_PER_VM` minus its occupying sessions): most room first, then the smallest VM ID;
-  (4) a stopped VM of the workgroup with room (restart; golden replacement as in §3.5), smallest VM ID; (5) a new VM
+  (4) a stopped VM of the workgroup with room (restart; replaced by a VM of the newest golden instead when it may
+  move, §3.6 – the new VM first, then the old one is deleted), smallest VM ID; (5) a new VM
   from the pool, else a clone, when a slot is free (§3.4) – without a ready golden yet (a device just added still
   builds it) `capacity_exhausted` (`golden`), not `vm_start_failed` (KOR-67); (6) else the session fails
   `capacity_exhausted`.
@@ -298,17 +299,49 @@ live channel announces `log.org_assign` and `vm.choice` (`Agent-Features`, ADR-0
 - Workgroup unassigned (also by `device_unassign_org`), workgroup archived, org removed this device, device
   decertified: stop sessions (`stopping` reason `unassigned`), `limactl delete -f` of every VM of the workgroup, delete scope keys of that workgroup after rotation is
   observed or immediately when removed from the org.
-- Golden upgrade: a workgroup VM keeps its golden version for its lifetime. At the next start of a stopped VM
-  whose golden is not the newest ready one, which has no `suspended` session and whose sessions have no due context
-  checkpoint (retire hooks of `vm/extensions.py`, §6.6), the runner deletes it and assigns a fresh pool/clone VM of
-  the newest golden instead. A later main session of the task, and a `suspended` session
-  whose VM is gone, continues the original conversation from the task's newest context checkpoint (§6.6, ADR-072);
-  only when no checkpoint can be restored does its harness say to read the history with `get_task_messages`
-  (reported emergency path, `03-api.md` §4.6.3).
+- Golden upgrade (ADR-093, §3.6): a workgroup VM keeps its golden version for its lifetime and is replaced by a VM
+  of the newest ready golden once it may move – by itself (§3.6) or at the next start of the stopped VM (§3.3 step 4).
+  The new VM is assigned and running before the old one is deleted. A later main session of the task, and a
+  `suspended` session whose VM is gone, continues the original conversation from the task's newest context
+  checkpoint (§6.6, ADR-072); only when no checkpoint can be restored does its harness say to read the history with
+  `get_task_messages` (reported emergency path, `03-api.md` §4.6.3).
 - Pool VMs of a retired golden are deleted and refilled.
 - Startup reconciliation: `limactl list --json` vs `runner.vm`; unknown `arp-*` instances are deleted (one Lima
   refuses to delete is logged, `vm.unknown_delete_failed`, and reconciliation continues; the empty directory of an
   interrupted clone is removed); known instances missing in Lima are marked `deleted`.
+
+### 3.6 Switch to the newest golden (ADR-093, KOR-70)
+
+A live workgroup VM (`running` or `stopped`) whose golden is not the newest `ready` one is *outdated*. It **may
+move** when every session on it that is not `stopped`/`failed` is a main session in `suspended` whose newest context
+checkpoint is complete: not due, taken with workspace state `full` or `empty` (`runner.context_session.
+checkpoint_state`, written with every taken or identical checkpoint, `dropped` when a request ended without one), its
+newest object in the local cache and no failed restore from that object (retire hook `checkpoints`, §6.6).
+Otherwise it is *held*; each cause is reported with `since` (persisted, `runner.golden_switch_hold`):
+`session_active` (a session that is not paused, also the main orchestrator, which is never suspended), `subagent` (a
+child that has not ended: it has its own workspace and no checkpoint), `checkpoint_due`, `checkpoint_missing`,
+`workspace_incomplete` (above `CONTEXT_WORKSPACE_MIB` or 100 000 entries, or entries left out), `capacity`,
+`switch_failed`.
+
+Task `vm-pool` runs the switch after every refill (60 s and after every assignment), requested VMs first, each under
+its workgroup's lock (a session start waits meanwhile and then chooses the new VM):
+
+1. a hold by a session or an incomplete workspace: nothing happens;
+2. a stopped VM held only by due or missing checkpoints is started to take them (when a slot is free without
+   stopping another workgroup's VM; attempts 5 min apart, doubling, at most 1 h);
+3. a running VM is stopped – the retire hooks take the final checkpoints of its sessions – and judged again; a hold
+   then leaves it stopped as it is;
+4. a pool VM of the newest golden, else a clone (no other workgroup's VM is stopped for it), is assigned and
+   running; then the old VM is deleted (`vm_state` `deleted` with `replaced_by`) and `runner.golden_switch` records
+   it. A failure deletes nothing (`capacity`, `switch_failed`; next attempt after the backoff).
+
+The paused sessions keep their `vm_id`; their next prompt resumes them (§6.3) on a VM of the workgroup – normally the
+new one – restored from the checkpoint; the restore note says "on the new version of the workgroup VM … your files
+were carried over" and the audit `session.context_restored` carries `moved: golden`. The status goes to the hub with
+`vm_state` (`upgrade`, `null` once current) whenever it changes, only to a hub whose desired state names `vm_switch`
+(an older hub refuses unknown fields). The desired state's `vm_switch` lists the VMs a member with administration
+rights asked to switch now (`POST /v1/workgroups/{wg}/vms/{vm}/switch`); reconcile step `vm_switch` (order 85) hands
+them to the switch, which applies the same rules.
 
 ## 4. Sandbox (two independent layers, ADR-008)
 
