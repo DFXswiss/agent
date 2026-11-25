@@ -12,6 +12,7 @@ import { bodyJson, canonical, canonicalText, parseJson } from '../../../src/core
 import { formatTime, parseTime } from '../../../src/core/encoding/time';
 import { aesKey, seal as aeadSeal } from '../../../src/core/crypto/aead';
 import * as agent from '../../../src/core/crypto/agent';
+import * as browserframe from '../../../src/core/crypto/browserframe';
 import * as bundle from '../../../src/core/crypto/bundle';
 import * as context from '../../../src/core/crypto/context';
 import * as runlog from '../../../src/core/crypto/runlog';
@@ -67,6 +68,7 @@ export const TITLE_CASES: Any = parseJson(
 /** The vector files this package consumes (04-crypto.md sections 1-4); the title cases come on top. */
 export const CONSUMED = [
   'agent',
+  'browserframe',
   'bundle',
   'context',
   'credential',
@@ -236,6 +238,9 @@ export const OPS: Record<string, (a: Any) => Promise<unknown>> = {
       prLinkBinding(a),
       a.sealed,
     ),
+  check_frame: async (a) => browserframe.checkFrame(a.frame),
+  open_frame: async (a) =>
+    browserframe.openFrame(Secret.of(b(a.workgroup_key)), a.frame, { session: a.session, wg: a.wg }),
 };
 
 /** Operations whose name one vector file uses for its own function (`agent.json` `parse_code`: the agent and return
@@ -700,6 +705,28 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
     const sealed = await runlog.sealChunk(key, manifest.object, part.index, b(part.plaintext), b(part.nonce));
     same(sealed, part.sealed, 'sealed part');
     same(await runlog.openChunk(key, manifest.object, part.index, sealed), part.plaintext, 'opened part');
+  },
+  browserframe: async (data) => {
+    const wk = Secret.of(b(data.workgroup_key));
+    const header = {
+      browser: data.browser,
+      session: data.session,
+      wg: data.wg,
+      epoch: data.epoch,
+      seq: data.seq,
+      ts: data.ts,
+    };
+    same(
+      [data.limits.frame_bytes, data.limits.frame_ct_min, data.limits.frame_ct_max],
+      [browserframe.FRAME_BYTES, browserframe.FRAME_CT_MIN, browserframe.FRAME_CT_MAX],
+      'limits',
+    );
+    await sameAesKey(await browserframe.frameKey(wk, b(data.salt), data.browser), data.k_frame, 'k_frame');
+    same(fromUtf8(browserframe.frameAad(header)), data.aad, 'frame AAD');
+    const jpeg = b(data.jpeg);
+    same(await browserframe.sealFrame(wk, header, jpeg, b(data.salt), b(data.nonce)), data.frame, 'sealed frame');
+    same(browserframe.checkFrame(data.frame), data.frame, 'checked frame');
+    same(await browserframe.openFrame(wk, data.frame, { session: data.session, wg: data.wg }), jpeg, 'opened frame');
   },
   title: async (data) => {
     for (const item of data.cases) same(deriveTitle(item.prompt), item.title, `title ${item.name}`);
