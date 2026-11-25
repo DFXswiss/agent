@@ -11,8 +11,9 @@
 //   the newest page only, an older page is read when the window reaches beyond the held entries;
 // - the note that the work VM's own browser is neither recorded nor live (E-09).
 //
-// Pictures are shown from object URLs of the decrypted JPEG bytes, revoked as soon as a row leaves the window or the
-// picture changes. The record's position text is announced (`aria-live`) only after the user moved the window.
+// Pictures are shown as `data:` URLs of the decrypted JPEG bytes (the hub's CSP allows `img-src 'self' data:`, not
+// `blob:`), made only for the rows in the window and the main picture and dropped with them. The record's position text is announced (`aria-live`) only after the user moved the window.
+import './texts';
 import { type ChangeEvent, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { type Bandwidth, BANDWIDTH_IDS, bandwidthOf, kbpsOf } from '../../core/browser/bandwidth';
 import { frameAge, showsAge } from '../../core/browser/live';
@@ -37,15 +38,16 @@ export interface BrowserTabProps {
   readonly session: string;
 }
 
-/** An object URL of JPEG bytes, revoked when the bytes change or the component goes. */
-export function useObjectUrl(bytes: Uint8Array | null): string | null {
-  const url = useMemo(
-    () =>
-      bytes === null ? null : URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'image/jpeg' })),
-    [bytes],
-  );
-  useEffect(() => (url === null ? undefined : () => URL.revokeObjectURL(url)), [url]);
-  return url;
+/** The `data:` URL of JPEG bytes (base64 in pieces: a picture is up to 512 KiB). */
+export function jpegUrl(bytes: Uint8Array): string {
+  let binary = '';
+  for (let at = 0; at < bytes.length; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+  return `data:image/jpeg;base64,${btoa(binary)}`;
+}
+
+/** The `data:` URL of JPEG bytes while they are shown. */
+export function useJpegUrl(bytes: Uint8Array | null): string | null {
+  return useMemo(() => (bytes === null ? null : jpegUrl(bytes)), [bytes]);
 }
 
 /** The picture of a record entry (read on demand); undefined while it is being read. */
@@ -87,7 +89,7 @@ function Picture({ watch, current }: { readonly watch: BrowserWatch; readonly cu
     return null;
   }, [entries]);
   const recordedBytes = usePicture(watch.record, frame === null ? recorded : null);
-  const url = useObjectUrl(frame?.jpeg ?? recordedBytes ?? null);
+  const url = useJpegUrl(frame?.jpeg ?? recordedBytes ?? null);
   const age = frame === null ? 0 : frameAge(frame.ts, now);
   const action = recorded?.action ?? null;
   const shown =
@@ -152,7 +154,7 @@ function Picture({ watch, current }: { readonly watch: BrowserWatch; readonly cu
 function RowPicture({ record, entry }: { readonly record: ActionRecord; readonly entry: RecordEntry }) {
   const { t } = useI18n();
   const bytes = usePicture(record, entry);
-  const url = useObjectUrl(bytes ?? null);
+  const url = useJpegUrl(bytes ?? null);
   const action = entry.action!;
   if (action.image === null) {
     return (
@@ -373,7 +375,7 @@ class Running {
   };
 }
 
-export function BrowserTab({ org, wg, task, session }: BrowserTabProps) {
+export default function BrowserTab({ org, wg, task, session }: BrowserTabProps) {
   const { app } = useAppEnv();
   const { t } = useI18n();
   const [bandwidth, setBandwidth] = useState<Bandwidth>(() => bandwidthOf(app.prefs.browserBandwidth()));

@@ -5,14 +5,14 @@
 // entries, pictures only for rows in the window), refusal, failures, the work VM note, and a record of 5 000 actions
 // with bounded rows and decoded pictures.
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Prefs } from '../../src/core/account/prefs';
 import type { BrowserContext } from '../../src/core/browser/watch';
 import type { BrowserListener } from '../../src/core/browser/watchlist';
 import { CryptoError } from '../../src/core/crypto/errors';
 import { HubError } from '../../src/core/net/signedFetch';
 import { putEvents } from '../../src/core/store/slices/events';
-import { BrowserTab, RECORD_ROWS } from '../../src/ui/browser/BrowserTab';
+import BrowserTab, { RECORD_ROWS } from '../../src/ui/browser/BrowserTab';
 import { chatItem } from '../../src/ui/chat-items/browser.state';
 import { KNOWN_TYPES } from '../../src/ui/chat-items/operation/Card';
 import { SessionScreen } from '../../src/ui/screens/session/SessionScreen';
@@ -32,40 +32,33 @@ import { MAIN, mount, TASK, verified } from './chat-world';
 
 const START = Date.parse('2026-11-25T12:00:00.000Z');
 
-// object URLs of jsdom do not exist: count the ones made and not yet revoked
-const urls = { made: 0, alive: new Set<string>() };
-const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+afterEach(() => vi.useRealTimers());
 
-beforeEach(() => {
-  urls.made = 0;
-  urls.alive.clear();
-  URL.createObjectURL = vi.fn(() => {
-    const url = `blob:test/${(urls.made += 1)}`;
-    urls.alive.add(url);
-    return url;
-  });
-  URL.revokeObjectURL = vi.fn((url: string) => {
-    urls.alive.delete(url);
-  });
-});
-
-afterEach(() => {
-  URL.createObjectURL = original.create;
-  URL.revokeObjectURL = original.revoke;
-  vi.useRealTimers();
-});
+/** The pictures in the page (data URLs of decoded JPEGs; the CSP allows no `blob:`). */
+const shownPictures = () => document.querySelectorAll('img[src^="data:image/jpeg;base64,"]').length;
 
 describe('chat item browser.state', () => {
-  function card(t: TaskWorld, body: unknown, sessionId: string | null = MAIN, at = START) {
+  /** The chat item of `body` (its card is a lazy chunk: resolves once it is shown). */
+  async function card(t: TaskWorld, body: unknown, sessionId: string | null = MAIN, at = START) {
     const { Component } = chatItem;
     const item = { key: 'k', kind: 'browser.state', at, seq: 1, sessionId, author: null, body };
-    return mount(t, [{ path: '/o/:org/t/:task', element: <Component item={item} /> }], `/o/${t.org}/t/${TASK}`);
+    const mounted = mount(
+      t,
+      [{ path: '/o/:org/t/:task', element: <Component item={item} /> }],
+      `/o/${t.org}/t/${TASK}`,
+    );
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-testid="chat.browser.state"], [data-testid="chat.workvm.invalid"]'),
+      ).not.toBeNull(),
+    );
+    return mounted;
   }
 
   it('counts down while starting and says "Delayed" after the 10 s target', async () => {
     const t = await taskWorld();
     vi.useFakeTimers({ now: START + 4000, toFake: ['setInterval', 'clearInterval', 'Date'] });
-    card(
+    await card(
       t,
       state({ state: 'starting', implicit: true, operation_id: null, workvm_id: null, url: null, ready_ms: null }),
     );
@@ -83,7 +76,7 @@ describe('chat item browser.state', () => {
 
   it('shows an open browser with page, actions, VM ready time and "Watch live" into the Browser tab', async () => {
     const t = await taskWorld();
-    const { router } = card(t, state({ actions: 3 }));
+    const { router } = await card(t, state({ actions: 3 }));
     expect(screen.getByTestId('chat.browser.state')).toHaveAttribute('data-browser', BROWSER);
     expect(screen.getByTestId('chat.browser.state.title')).toHaveTextContent('Browser open');
     expect(screen.queryByTestId('chat.browser.state.implicit')).toBeNull();
@@ -104,17 +97,17 @@ describe('chat item browser.state', () => {
     [{ state: 'closed', url: '', opened_at: null }, 'Browser closed', false],
   ])('shows %o', async (overrides, title, watch) => {
     const t = await taskWorld();
-    card(t, state(overrides));
+    await card(t, state(overrides));
     expect(screen.getByTestId('chat.browser.state.title')).toHaveTextContent(title);
     expect(screen.queryByTestId('browser.watch') !== null).toBe(watch);
   });
 
   it('has no "Watch live" without a session and a neutral row for a body that does not follow the contract', async () => {
     const t = await taskWorld();
-    card(t, state(), null);
+    await card(t, state(), null);
     expect(screen.queryByTestId('browser.watch')).toBeNull();
     const other = await taskWorld();
-    card(other, { ...state(), extra: 1 });
+    await card(other, { ...state(), extra: 1 });
     expect(screen.getByTestId('chat.workvm.invalid')).toBeInTheDocument();
   });
 });
@@ -155,7 +148,7 @@ async function tab(
     const { browser, seq, ts } = frame as { browser: string; seq: number; ts: string };
     return { browser, seq, ts: Date.parse(ts), jpeg: new Uint8Array([seq]) };
   });
-  const context: BrowserContext = { ...hub.context(), store: t.store, watch, opener };
+  const context: BrowserContext = { ...hub.context(), store: t.store, watches: () => ({ watch }), opener };
   const items = new Map(Object.entries(storage));
   const prefs = new Prefs({
     getItem: (key) => items.get(key) ?? null,
@@ -299,10 +292,12 @@ describe('browser tab', () => {
     const context: BrowserContext = {
       ...new RecordHub([]).context(),
       store: t.store,
-      watch: (_org, _session, listener) => {
-        listeners.push(listener);
-        return { setKbps: () => undefined, release: () => undefined };
-      },
+      watches: () => ({
+        watch: (_org: string, _session: string, listener: BrowserListener) => {
+          listeners.push(listener);
+          return { setKbps: () => undefined, release: () => undefined };
+        },
+      }),
       opener: () => () => Promise.reject(new CryptoError('decrypt_failed')),
     };
     putEvents(t.store, WG, [read(10, { kind: 'browser.state', body: state() })]);
@@ -325,7 +320,7 @@ describe('browser tab', () => {
     const context: BrowserContext = {
       ...hub.context(),
       store: t.store,
-      watch: () => ({ setKbps: () => undefined, release: () => undefined }),
+      watches: () => ({ watch: () => ({ setKbps: () => undefined, release: () => undefined }) }),
       opener: () => () => Promise.reject(new Error('none')),
     };
     let release!: () => void;
@@ -379,7 +374,7 @@ describe('browser tab', () => {
     await waitFor(() => expect(screen.getAllByTestId('browser.record.picture')).toHaveLength(RECORD_ROWS));
     t.unmount();
     expect(t.handle.release).toHaveBeenCalled();
-    expect(urls.alive.size).toBe(0);
+    expect(shownPictures()).toBe(0);
   });
 });
 
@@ -393,11 +388,11 @@ describe('record volume', () => {
     expect(t.hub.read.mock.calls.flatMap(([, , items]) => items)).toHaveLength(RECORD_ROWS);
     await waitFor(() => expect(screen.getAllByTestId('browser.record.picture')).toHaveLength(RECORD_ROWS));
     // the window's pictures and the main picture are decoded, nothing else
-    expect(urls.alive.size).toBeLessThanOrEqual(RECORD_ROWS + 1);
+    expect(shownPictures()).toBeLessThanOrEqual(RECORD_ROWS + 1);
     for (let page = 0; page < 5; page += 1) fireEvent.click(screen.getByTestId('browser.record.older'));
     await waitFor(() => expect(rows()[0]).toHaveAttribute('data-seq', '4900'));
     await waitFor(() => expect(screen.getAllByTestId('browser.record.picture')).toHaveLength(RECORD_ROWS));
-    expect(urls.alive.size).toBeLessThanOrEqual(RECORD_ROWS + 1);
+    expect(shownPictures()).toBeLessThanOrEqual(RECORD_ROWS + 1);
     // paging back 100 entries read only the pages up to the window, not the record
     const pages = t.hub.requests.filter((target) => target.includes(`limit=${RECORD_ROWS}&`));
     expect(pages.length).toBe(6);
