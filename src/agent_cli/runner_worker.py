@@ -36,7 +36,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-from . import github_accounts, ingest, reap, runner_status, workspace
+from . import github_accounts, github_act, ingest, reap, runner_status, workspace
 from .ai_accounts import AccountError as AIAccountError
 from .ai_accounts import load_ai_accounts
 from .github_accounts import AccountError as GitHubAccountError
@@ -125,7 +125,7 @@ FAILED_WORKTREE = "job worktree does not match this directory"
 FAILED_EXPECTED_LOGIN = "policy expected_gh_user is missing"
 FAILED_HEAD = "job worktree has no full commit"
 FAILED_DIFF_TOO_LARGE = "diff too large for one review"
-FAILED_PROMPT_WRITE = "review prompt could not be written"
+FAILED_PROMPT_WRITE = "job prompt could not be written"
 FAILED_LANE_START = "review lane could not start"
 FAILED_REVIEW_EMPTY = "review lane returned no review"
 FAILED_REVIEW_TOO_LONG = "review too long to post"
@@ -472,6 +472,36 @@ def build_analysis_spec(
 def _review_body(text: str) -> str:
     """The lane's text without its STATUS and RESULT protocol lines."""
     return _PROTOCOL_LINE_RE.sub("", text).strip()
+
+
+# The analysis is posted as the runner login's own comment, so a control
+# marker the lane quotes would act as if this script had written it: a status
+# marker lets a later status edit overwrite the analysis, and an activity
+# marker makes `comment.post` treat another activity's comment as already
+# posted. Both patterns come from their producers, so the removal cannot drift
+# from what the executor later looks for.
+_ANALYSIS_MARKER_RE = re.compile(
+    f"(?:{runner_status.STATUS_MARKER_RE.pattern})"
+    f"|(?:{github_act.ACTIVITY_MARKER_RE.pattern})"
+)
+
+
+def _analysis_body(text: str) -> str:
+    """The lane's text without protocol lines or copied control markers.
+
+    Removal repeats until a pass changes nothing, because one pass can leave a
+    fresh marker behind: in `<!-- agent-activity:<!-- agent-activity:x -->ID -->`
+    the pass removes the inner marker and the two halves close up into a valid
+    `<!-- agent-activity:ID -->`; the same nesting works for the status marker.
+    A hostile log can supply the right id because an activity id is a uuid5 of
+    public fields. The loop terminates: every pass that removes anything makes
+    the text shorter.
+    """
+    body = _review_body(text)
+    while True:
+        body, removed = _ANALYSIS_MARKER_RE.subn("", body)
+        if not removed:
+            return body.strip()
 
 
 def _number(ref: Any) -> int:
@@ -1114,7 +1144,7 @@ def _run_worker_body(
         temporary = paths.logs / f"{job_id}.prompt.tmp"
         temporary.write_text(spec, encoding="utf-8")
         # Publish the prompt atomically: a lane started from a half-written
-        # file would read a truncated review request.
+        # file would read a truncated request.
         os.replace(temporary, prompt_file)
     except OSError:
         raise _WorkerError(FAILED_PROMPT_WRITE) from None
@@ -1192,7 +1222,7 @@ def _run_worker_body(
         "blocked",
     ):
         raise _WorkerError(f"analysis lane ended {status}")
-    body = _review_body(result.stdout or "")
+    body = _analysis_body(result.stdout or "")
     if not body:
         raise _WorkerError(FAILED_ANALYSIS_EMPTY)
     final_body = (

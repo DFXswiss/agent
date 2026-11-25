@@ -457,8 +457,9 @@ def _worker_preflight(paths: RunnerPaths) -> None:
 
     A job started here begins a real lane and posts a real output, so every
     input the worker needs must already be present. Checking before the lock
-    and the store means a broken installation never leaves a half-created job;
-    `doctor` reports these problems and more.
+    and the store means a broken installation never leaves a half-created job.
+    `doctor` reports the allowed-skill template problems and its other checks;
+    the unconditional `prompts/pr-review.md` requirement belongs to dispatch.
 
     A policy allows a *queue type*; the catalogue maps it to the skill whose id
     names a worker and a `runner.json` entry. A queue type no skill carries is

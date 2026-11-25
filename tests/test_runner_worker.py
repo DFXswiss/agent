@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 import agent_cli.runner_worker as runner_worker
+from agent_cli import github_act, runner_status
 from agent_cli.finalize import transcript_has_marker
 from agent_cli.ingest import job_row
 from agent_cli.lane import LaneResult
@@ -1664,6 +1665,157 @@ def test_log_error_fails_closed_when_the_analysis_is_empty(
     assert posted == []
     assert runner_worker.FAILED_ANALYSIS_EMPTY in _transcript(paths)
     assert "DONE log-error" not in _transcript(paths)
+
+
+def test_log_error_removes_control_markers_from_the_posted_analysis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The analysis is posted as the runner login's own comment. A log that
+    # quotes this job's status marker would let a later status edit overwrite
+    # that comment, and a quoted activity marker would make `comment.post`
+    # treat another activity's comment as already posted. Both disappear from
+    # the posted body, inline and on their own line, while the text stays.
+    paths = _write_worker_files(tmp_path)
+    job = _insert_analysis_job(tmp_path, paths, monkeypatch)
+    status_marker = runner_status.status_marker(job["id"], job["created_at"])
+    activity_marker = github_act.ACTIVITY_MARKER.format(id="0" * 36)
+    posted: list[str] = []
+
+    code, _out = _run(
+        paths,
+        tmp_path,
+        launch=_fake_launch(
+            [],
+            protocol_result="done",
+            stdout=(
+                f"Likely cause {status_marker} inline.\n"
+                f"{status_marker}\n"
+                f"Next step {activity_marker} after.\n"
+                f"{activity_marker}\n"
+                "STATUS: complete\n"
+                "RESULT: done\n"
+            ),
+        ),
+        execute=_done_executor(posted, activity_type="comment.post"),
+    )
+
+    assert code == 0
+    assert len(posted) == 1
+    store = Store(tmp_path)
+    try:
+        row = store.row("activity", posted[0])
+    finally:
+        store.close()
+    assert row is not None
+    body = row["payload"]["body"]
+    assert status_marker not in body
+    assert activity_marker not in body
+    assert "Likely cause" in body
+    assert "inline." in body
+    assert "Next step" in body
+    assert "after." in body
+    assert "STATUS:" not in body
+    assert "RESULT:" not in body
+
+
+def test_log_error_treats_an_analysis_of_only_control_markers_as_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Removing the markers leaves nothing to post. The worker fails the same
+    # way as for any other empty analysis instead of posting an empty comment.
+    paths = _write_worker_files(tmp_path)
+    job = _insert_analysis_job(tmp_path, paths, monkeypatch)
+    status_marker = runner_status.status_marker(job["id"], job["created_at"])
+    activity_marker = github_act.ACTIVITY_MARKER.format(id="1" * 36)
+    posted: list[str] = []
+
+    code, _out = _run(
+        paths,
+        tmp_path,
+        launch=_fake_launch(
+            [],
+            protocol_result="done",
+            stdout=(
+                f"{status_marker}\n"
+                f"{status_marker}{activity_marker}\n"
+                f"{activity_marker}\n"
+                "STATUS: complete\n"
+                "RESULT: done\n"
+            ),
+        ),
+        execute=_done_executor(posted, activity_type="comment.post"),
+    )
+
+    assert code == 2
+    assert posted == []
+    assert runner_worker.FAILED_ANALYSIS_EMPTY in _transcript(paths)
+    assert "DONE log-error" not in _transcript(paths)
+
+
+def test_log_error_removes_markers_nested_inside_other_markers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One removal pass is not enough. A marker nested inside another is not
+    # matched at its start, so the pass removes the inner marker and the two
+    # halves close up into a fresh, valid marker: the job's own status marker
+    # or the analysis activity id. That id is a uuid5 of public fields, so a
+    # hostile log can build the nesting around the exact one. Removal has to
+    # reach a fixed point; the text around the nesting stays.
+    paths = _write_worker_files(tmp_path)
+    job = _insert_analysis_job(tmp_path, paths, monkeypatch)
+    status_marker = runner_status.status_marker(job["id"], job["created_at"])
+    activity_id = runner_worker._analysis_activity_id(
+        job_id="job-1",
+        created_at=job["created_at"],
+        attempts=job["attempts"],
+        head=HEAD,
+    )
+    activity_marker = github_act.ACTIVITY_MARKER.format(id=activity_id)
+    # Each nested marker regenerates the real control marker after one pass.
+    nested_status = (
+        f"<!-- agent-runner-job:{status_marker}"
+        f"{job['id']}:{job['created_at']} -->"
+    )
+    nested_activity = (
+        f"<!-- agent-activity:{activity_marker}{activity_id} -->"
+    )
+    posted: list[str] = []
+
+    code, _out = _run(
+        paths,
+        tmp_path,
+        launch=_fake_launch(
+            [],
+            protocol_result="done",
+            stdout=(
+                f"Likely cause {nested_status} inline.\n"
+                f"{nested_status}\n"
+                f"Next step {nested_activity} after.\n"
+                f"{nested_activity}\n"
+                "STATUS: complete\n"
+                "RESULT: done\n"
+            ),
+        ),
+        execute=_done_executor(posted, activity_type="comment.post"),
+    )
+
+    assert code == 0
+    assert len(posted) == 1
+    store = Store(tmp_path)
+    try:
+        row = store.row("activity", posted[0])
+    finally:
+        store.close()
+    assert row is not None
+    assert row["type"] == "comment.post"
+    body = row["payload"]["body"]
+    # No marker of either kind survives, nested or regenerated.
+    assert "<!-- agent-activity:" not in body
+    assert "<!-- agent-runner-job:" not in body
+    assert "Likely cause" in body
+    assert "inline." in body
+    assert "Next step" in body
+    assert "after." in body
 
 
 def test_log_error_rejects_an_oversized_analysis_instead_of_truncating(

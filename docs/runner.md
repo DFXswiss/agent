@@ -327,9 +327,14 @@ both skills; only the facts read and the shape of the output branch:
    * `pr-review`: require `RESULT: approved` or `RESULT: rejected`, and refuse
      an empty review or a formatted body over 60,000 characters.
    * `log-error`: require `RESULT: done` or `RESULT: blocked`, and refuse an
-     empty analysis or a formatted body over 60,000 characters. The posted
-     body is `Analysis at \`<head[:12]>\` (<vendor>, <model>): <done|blocked>`,
-     a blank line, then the text.
+     empty analysis or a formatted body over 60,000 characters. Every status
+     marker (`<!-- agent-runner-job:<job id>:<timestamp> -->`) and activity
+     marker (`<!-- agent-activity:<id> -->`) is removed from the text before
+     the body is built, so a marker quoted from a log cannot let a later status
+     edit overwrite the analysis or make the executor treat another activity's
+     comment as already posted. The posted body is
+     `Analysis at \`<head[:12]>\` (<vendor>, <model>): <done|blocked>`,
+     a blank line, then the remaining text.
 9. Insert a deterministic activity bound to the GitHub account validated before
    the lane. Its id includes the job generation (`created_at`), the attempt
    count and the head, so a re-queued generation and a retry each get their own
