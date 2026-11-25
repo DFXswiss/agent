@@ -472,7 +472,8 @@ Node with the image's Playwright; the runner runs it over Lima's SSH as `sudo /u
   `/var/lib/workvm-browser/` the runner brings into the workspace: the download, or the PNG of `browser_screenshot`)
   or null. Snapshots cover the main frame and its frames (refs unique across frames); a popup becomes a new tab.
 - `stream FPS QUALITY WIDTH` – prints the screencast of the active tab (Chromium `Page.startScreencast`, a frame only
-  when the page changed): per frame one header line `{"bytes":N,"width":W,"height":H}` and N JPEG bytes; ends with
+  when the page changed; one picture at once when the stream starts or the tab changes, and again after 10 s without
+  a frame, so a page at rest shows too): per frame one header line `{"bytes":N,"width":W,"height":H}` and N JPEG bytes; ends with
   stdin.
 - `selftest` – starts the daemon, opens `about:blank`, prints `{"ok":true}`.
 The runner caps every answer (header line ≤ 4 KiB, call answer ≤ 4 MiB, frame ≤ 512 KiB), validates it against a

@@ -784,6 +784,10 @@ async function save(download) {
   return { path: file, name, bytes: fs.statSync(file).size };
 }
 
+// A screencast sends a frame only when the page paints; a page at rest may send none. So a picture of the page is
+// sent at once when the stream starts or the active tab changes, and again after KEYFRAME_MS without any frame.
+const KEYFRAME_MS = 10000;
+
 async function stream(browser, socket, options) {
   const interval = 1000 / options.fps;
   let current = null;
@@ -794,6 +798,26 @@ async function stream(browser, socket, options) {
   socket.on('drain', () => {
     blocked = false;
   });
+  const emit = (bytes) => {
+    if (closed || blocked) return;
+    last = Date.now();
+    const size = jpegSize(bytes) || { width: 0, height: 0 };
+    socket.write(JSON.stringify({ bytes: bytes.length, width: size.width, height: size.height }) + '\n');
+    if (!socket.write(bytes)) blocked = true;
+  };
+  const keyframe = async (page) => {
+    const cdp = session;
+    if (!cdp) return;
+    const scale = Math.min(1, options.width / VIEWPORT.width);
+    const shot = await cdp
+      .send('Page.captureScreenshot', {
+        format: 'jpeg',
+        quality: options.quality,
+        clip: { x: 0, y: 0, width: VIEWPORT.width, height: VIEWPORT.height, scale },
+      })
+      .catch(() => null);
+    if (shot && shot.data && cdp === session && page === current) emit(Buffer.from(shot.data, 'base64'));
+  };
   const detach = async () => {
     if (!session) return;
     const old = session;
@@ -808,14 +832,8 @@ async function stream(browser, socket, options) {
     session = cdp;
     cdp.on('Page.screencastFrame', (frame) => {
       cdp.send('Page.screencastFrameAck', { sessionId: frame.sessionId }).catch(() => {});
-      const now = Date.now();
-      if (closed || blocked || cdp !== session || now - last < interval) return;
-      last = now;
-      const bytes = Buffer.from(frame.data, 'base64');
-      const size = jpegSize(bytes) || { width: 0, height: 0 };
-      const header = JSON.stringify({ bytes: bytes.length, width: size.width, height: size.height }) + '\n';
-      socket.write(header);
-      if (!socket.write(bytes)) blocked = true;
+      if (cdp !== session || Date.now() - last < interval) return;
+      emit(Buffer.from(frame.data, 'base64'));
     });
     await cdp.send('Page.startScreencast', {
       format: 'jpeg',
@@ -824,6 +842,7 @@ async function stream(browser, socket, options) {
       maxHeight: Math.round((options.width * VIEWPORT.height) / VIEWPORT.width),
       everyNthFrame: 1,
     });
+    await keyframe(page);
   };
   const ended = new Promise((resolve) => {
     socket.on('close', resolve);
@@ -834,6 +853,7 @@ async function stream(browser, socket, options) {
     while (!closed) {
       const page = await browser.page();
       if (page !== current) await attach(page).catch(() => detach());
+      else if (Date.now() - last >= KEYFRAME_MS) await keyframe(page);
       closed = await Promise.race([ended.then(() => true), sleep(250).then(() => false)]);
     }
   } finally {

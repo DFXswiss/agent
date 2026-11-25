@@ -405,6 +405,10 @@ def test_stream_prints_header_lines_and_jpeg_frames(helper: Helper, site: str) -
         assert len(frame) == header["bytes"]
         assert 0 < header["width"] <= 640
         assert 0 < header["height"] <= 400
+        # a page at rest still shows: a picture again after the keyframe time without any paint
+        second = json.loads(process.stdout.readline())
+        assert process.stdout.read(second["bytes"])[:2] == b"\xff\xd8"
+        assert 0 < second["width"] <= 640
         process.stdin.close()
         assert process.wait(timeout=10) == 0
     finally:
