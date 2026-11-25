@@ -1,0 +1,1086 @@
+#!/usr/bin/env node
+// Platform browser helper of the browser VM (docs/platform/spec/13-work-vm.md section 13.3, ADR-085 section 5).
+//
+//   workvm-browser serve                     the daemon: one persistent Chromium context behind a root-only socket
+//   workvm-browser call                      stdin: {tool, arguments}; stdout: one JSON answer line (at most 25 s)
+//   workvm-browser stream FPS QUALITY WIDTH  stdout: screencast frames of the active tab until stdin closes;
+//                                            per frame a header line {"bytes":N,"width":W,"height":H} and N JPEG bytes
+//   workvm-browser selftest                  starts the daemon, opens about:blank, prints {"ok":true}
+//
+// `call` and `stream` start the daemon as the transient unit `workvm-browser` when the socket does not answer and wait
+// for it (at most 15 s). The answer of `call` is {ok, error, notice, url, title, tab, tabs, snapshot, masked, result,
+// image, file}; a failed action is ok:false with error, never a crash, and the answer always shows the current page.
+// The snapshot is built from the DOM of the main frame and its frames (section 13.4 line format); its refs are the
+// attribute `data-wb-ref` (`e12`, `f1e3` in frame f1), valid until the next snapshot. Nothing here restricts what a
+// page does: the VM is a temporary browser VM and the runner treats every answer as untrusted.
+//
+// Test overrides (never set in the image; sudo resets the environment): WORKVM_BROWSER_DIR (state directory),
+// WORKVM_BROWSER_SOCKET (socket path), WORKVM_BROWSER_START=direct (start the daemon as a child process instead of
+// through systemd-run).
+'use strict';
+const childProcess = require('child_process');
+const crypto = require('crypto');
+const fs = require('fs');
+const net = require('net');
+const path = require('path');
+
+const NODE_MODULES = '/usr/local/lib/nodejs/lib/node_modules';
+const BROWSERS = '/opt/playwright-browsers';
+if (!process.env.PLAYWRIGHT_BROWSERS_PATH && fs.existsSync(BROWSERS)) process.env.PLAYWRIGHT_BROWSERS_PATH = BROWSERS;
+
+const DIR = process.env.WORKVM_BROWSER_DIR || '/var/lib/workvm-browser';
+const SOCKET = process.env.WORKVM_BROWSER_SOCKET || '/run/workvm-browser.sock';
+const DIRECT_START = process.env.WORKVM_BROWSER_START === 'direct';
+const UNIT = 'workvm-browser';
+const VIEWPORT = { width: 1280, height: 800 };
+const START_WAIT_MS = 15000;
+const CALL_MS = 25000;
+const STATE_RESERVE_MS = 4000;
+const NAVIGATION_MS = 15000;
+const ACTION_MS = 8000;
+const WAIT_MAX_MS = 20000;
+const SNAPSHOT_LIMIT = 24000;
+const RESULT_LIMIT = 24000;
+const ERROR_LIMIT = 2048;
+const NOTICE_LIMIT = 1024;
+const TRUNCATED = '[…truncated]';
+const IMAGE_BYTES = 100 * 1024;
+const IMAGE_LADDER = [
+  [960, 60],
+  [960, 45],
+  [960, 30],
+  [640, 30],
+];
+const MAX_TABS = 64;
+const MAX_FRAMES = 32;
+const REQUEST_LIMIT = 4 * 1024 * 1024;
+const REF_RE = /^(f[0-9]+)?e[0-9]+$/;
+
+function loadPlaywright() {
+  try {
+    return require('playwright');
+  } catch (error) {
+    return require(path.join(NODE_MODULES, 'playwright'));
+  }
+}
+
+function text(value, limit) {
+  const s = String(value === undefined || value === null ? '' : value);
+  return s.length > limit ? s.slice(0, limit) : s;
+}
+
+function message(error) {
+  const raw = error && error.message ? error.message : String(error);
+  const cut = raw.split('\nCall log:')[0].replace(/\u001b\[[0-9;]*m/g, '').trim();
+  return text(cut || 'failed', ERROR_LIMIT);
+}
+
+class Timeout extends Error {}
+
+function within(promise, ms) {
+  let timer;
+  const guard = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Timeout('timeout')), Math.max(ms, 0));
+  });
+  return Promise.race([promise, guard]).finally(() => clearTimeout(timer));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// ---- snapshot (runs inside a frame) -------------------------------------------------------------------------------
+
+function buildSnapshot(prefix) {
+  const LEAF = {
+    link: true, button: true, textbox: true, searchbox: true, checkbox: true, radio: true, combobox: true,
+    listbox: true, slider: true, spinbutton: true, switch: true, tab: true, menuitem: true, menuitemcheckbox: true,
+    menuitemradio: true, option: true, heading: true, img: true, iframe: true,
+  };
+  const NO_REF = { heading: true, img: true, iframe: true };
+  const SKIP = { script: true, style: true, noscript: true, template: true, head: true, meta: true, link: true };
+  const TEXT_INPUTS = { text: 1, email: 1, password: 1, tel: 1, url: 1, search: 1, date: 1, 'datetime-local': 1,
+    month: 1, time: 1, week: 1, color: 1, file: 1 };
+  for (const old of document.querySelectorAll('[data-wb-ref]')) old.removeAttribute('data-wb-ref');
+  const lines = [];
+  let count = 0;
+  let buffer = '';
+  const clean = (value, limit) => {
+    const s = String(value || '').replace(/\s+/g, ' ').trim();
+    return s.length > limit ? s.slice(0, limit) + '…' : s;
+  };
+  const quote = (value) => JSON.stringify(value);
+  const flush = () => {
+    const s = clean(buffer, 1000);
+    buffer = '';
+    if (s) lines.push('- text ' + quote(s));
+  };
+  const shown = (el) => {
+    if (el.getAttribute('aria-hidden') === 'true' || el.hidden) return false;
+    if (getComputedStyle(el).display === 'contents') return true;
+    if (typeof el.checkVisibility === 'function') return el.checkVisibility({ visibilityProperty: true });
+    const style = getComputedStyle(el);
+    return style.display !== 'none' && style.visibility !== 'hidden';
+  };
+  const roleOf = (el) => {
+    const explicit = (el.getAttribute('role') || '').trim().split(/\s+/)[0];
+    if (explicit && LEAF[explicit]) return explicit;
+    const tag = el.localName;
+    if (/^h[1-6]$/.test(tag)) return 'heading';
+    if (tag === 'a' && el.hasAttribute('href')) return 'link';
+    if (tag === 'button' || tag === 'summary') return 'button';
+    if (tag === 'textarea') return 'textbox';
+    if (tag === 'select') return el.multiple || el.size > 1 ? 'listbox' : 'combobox';
+    if (tag === 'img') return el.getAttribute('alt') ? 'img' : null;
+    if (tag === 'iframe' || tag === 'frame') return 'iframe';
+    if (tag === 'input') {
+      const type = (el.getAttribute('type') || 'text').toLowerCase();
+      if (type === 'hidden') return null;
+      if (type === 'checkbox') return 'checkbox';
+      if (type === 'radio') return 'radio';
+      if (type === 'range') return 'slider';
+      if (type === 'number') return 'spinbutton';
+      if (type === 'search') return 'searchbox';
+      if (type === 'button' || type === 'submit' || type === 'reset' || type === 'image') return 'button';
+      if (TEXT_INPUTS[type]) return 'textbox';
+      return 'textbox';
+    }
+    if (el.isContentEditable && !(el.parentElement && el.parentElement.isContentEditable)) return 'textbox';
+    return null;
+  };
+  const byIds = (ids) =>
+    ids
+      .split(/\s+/)
+      .map((id) => document.getElementById(id))
+      .filter(Boolean)
+      .map((node) => node.textContent)
+      .join(' ');
+  const nameOf = (el, role) => {
+    const labelledby = el.getAttribute('aria-labelledby');
+    if (labelledby) {
+      const s = clean(byIds(labelledby), 200);
+      if (s) return s;
+    }
+    const aria = clean(el.getAttribute('aria-label'), 200);
+    if (aria) return aria;
+    const tag = el.localName;
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+      const type = (el.getAttribute('type') || '').toLowerCase();
+      if (tag === 'input' && (type === 'button' || type === 'submit' || type === 'reset')) {
+        return clean(el.value || (type === 'submit' ? 'Submit' : type === 'reset' ? 'Reset' : ''), 200);
+      }
+      if (tag === 'input' && type === 'image') return clean(el.getAttribute('alt') || 'Submit', 200);
+      const labels = el.labels ? Array.from(el.labels).map((label) => label.innerText || label.textContent) : [];
+      const label = clean(labels.join(' '), 200);
+      if (label) return label;
+      const placeholder = clean(el.getAttribute('placeholder'), 200);
+      if (placeholder) return placeholder;
+      return clean(el.getAttribute('title') || el.getAttribute('name'), 200);
+    }
+    if (tag === 'img') return clean(el.getAttribute('alt'), 200);
+    if (tag === 'iframe' || tag === 'frame') return clean(el.getAttribute('title') || el.getAttribute('name'), 200);
+    let own = clean(el.innerText || el.textContent, 200);
+    if (!own) {
+      const image = el.querySelector('img[alt]');
+      own = image ? clean(image.getAttribute('alt'), 200) : '';
+    }
+    return own || clean(el.getAttribute('title'), 200);
+  };
+  const emit = (el, role) => {
+    let line = '- ' + role + ' ' + quote(nameOf(el, role));
+    if (!NO_REF[role]) {
+      count += 1;
+      const ref = prefix + count;
+      el.setAttribute('data-wb-ref', ref);
+      line += ' [ref=' + ref + ']';
+    }
+    const tag = el.localName;
+    if (role === 'heading') {
+      const level = /^h[1-6]$/.test(tag) ? tag.slice(1) : el.getAttribute('aria-level') || '2';
+      line += ' [level=' + level + ']';
+    }
+    if (role === 'iframe') {
+      const frame = el.getAttribute('data-wb-frame');
+      if (frame) line += ' [frame=' + frame + ']';
+    }
+    if (role === 'link' && el.href) line += ' href=' + clean(el.href, 500);
+    if (tag === 'input' || tag === 'textarea') {
+      const type = (el.getAttribute('type') || '').toLowerCase();
+      if (type === 'checkbox' || type === 'radio') {
+        if (el.checked) line += ' checked';
+      } else if (type === 'password') {
+        line += ' type=password';
+        if (el.value) line += ' value="••••"';
+      } else if (type === 'file') {
+        const names = el.files ? Array.from(el.files).map((file) => file.name).join(', ') : '';
+        line += ' type=file';
+        if (names) line += ' value=' + quote(clean(names, 500));
+      } else if (!['button', 'submit', 'reset', 'image'].includes(type) && el.value) {
+        line += ' value=' + quote(clean(el.value, 500));
+      }
+    } else if (role === 'textbox' && el.isContentEditable) {
+      const value = clean(el.innerText, 500);
+      if (value) line += ' value=' + quote(value);
+    } else if (el.getAttribute('aria-checked') === 'true') {
+      line += ' checked';
+    }
+    if (tag === 'select') {
+      const chosen = Array.from(el.selectedOptions || []).map((option) => clean(option.label || option.text, 200));
+      if (chosen.length) line += ' value=' + quote(chosen.join(', '));
+    }
+    if (el.disabled || el.getAttribute('aria-disabled') === 'true') line += ' disabled';
+    if (el.getAttribute('aria-expanded') === 'true') line += ' expanded';
+    lines.push(line);
+    if (tag === 'select') {
+      const options = Array.from(el.options || []);
+      for (const option of options.slice(0, 50)) {
+        lines.push('  - option ' + quote(clean(option.label || option.text, 200)) + (option.selected ? ' selected' : ''));
+      }
+      if (options.length > 50) lines.push('  - … ' + (options.length - 50) + ' more options');
+    }
+  };
+  const inline = (el) => {
+    const display = getComputedStyle(el).display;
+    return display === 'inline' || display === 'contents';
+  };
+  const visit = (el) => {
+    if (SKIP[el.localName]) return;
+    if (el.localName !== 'slot' && !shown(el)) return;
+    const role = roleOf(el);
+    if (role && LEAF[role]) {
+      flush();
+      emit(el, role);
+      return;
+    }
+    const isInline = inline(el);
+    if (!isInline) flush();
+    let children = el.childNodes;
+    if (el.shadowRoot) children = el.shadowRoot.childNodes;
+    else if (el.localName === 'slot') children = el.assignedNodes({ flatten: true });
+    for (const child of children) {
+      if (child.nodeType === 3) buffer += child.data;
+      else if (child.nodeType === 1) visit(child);
+    }
+    if (!isInline) flush();
+  };
+  if (document.body) visit(document.body);
+  flush();
+  return lines.join('\n');
+}
+
+// ---- JPEG size ----------------------------------------------------------------------------------------------------
+
+function jpegSize(buffer) {
+  let i = 2;
+  while (i + 9 < buffer.length) {
+    if (buffer[i] !== 0xff) {
+      i += 1;
+      continue;
+    }
+    const marker = buffer[i + 1];
+    if (marker === 0xff) {
+      i += 1;
+      continue;
+    }
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      i += 2;
+      continue;
+    }
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      return { height: buffer.readUInt16BE(i + 5), width: buffer.readUInt16BE(i + 7) };
+    }
+    i += 2 + buffer.readUInt16BE(i + 2);
+  }
+  return null;
+}
+
+// ---- the daemon ---------------------------------------------------------------------------------------------------
+
+class Browser {
+  constructor(context) {
+    this.context = context;
+    this.active = null;
+    this.notices = [];
+    this.dialog = { action: 'accept', text: undefined };
+    this.internal = 0;
+    this.frames = new WeakMap();
+    this.queue = Promise.resolve();
+    for (const page of context.pages()) this.adopt(page, false);
+    context.on('page', (page) => this.adopt(page, this.internal === 0));
+  }
+
+  adopt(page, activate) {
+    page.on('dialog', (dialog) => this.answerDialog(dialog));
+    page.on('download', (download) => {
+      if (!page.__wbExpectDownload) {
+        this.note(`A download started (${download.suggestedFilename()}); use browser_download to keep a file.`);
+      }
+    });
+    page.on('close', () => {
+      if (this.active === page) {
+        const pages = this.pages();
+        this.active = pages.length ? pages[pages.length - 1] : null;
+      }
+    });
+    if (activate || !this.active) {
+      if (this.active && this.active !== page) this.note('A new tab opened and is now the active tab.');
+      this.active = page;
+    }
+  }
+
+  answerDialog(dialog) {
+    const kind = dialog.type();
+    const verb = this.dialog.action === 'dismiss' ? 'dismissed' : 'accepted';
+    this.note(`The ${kind} dialog ${JSON.stringify(text(dialog.message(), 300))} was ${verb}.`);
+    const done = this.dialog.action === 'dismiss' ? dialog.dismiss() : dialog.accept(this.dialog.text);
+    done.catch(() => {});
+  }
+
+  note(value) {
+    this.notices.push(value);
+  }
+
+  pages() {
+    return this.context.pages().filter((page) => !page.isClosed());
+  }
+
+  async page() {
+    if (this.active && !this.active.isClosed()) return this.active;
+    const pages = this.pages();
+    if (pages.length) {
+      this.active = pages[pages.length - 1];
+      return this.active;
+    }
+    this.active = await this.context.newPage();
+    return this.active;
+  }
+
+  run(request) {
+    const next = this.queue.then(() => this.call(request));
+    this.queue = next.catch(() => {});
+    return next;
+  }
+
+  async call(request) {
+    const started = Date.now();
+    const deadline = started + CALL_MS;
+    const left = () => deadline - Date.now();
+    const answer = { ok: true, error: null, masked: false, result: null, file: null };
+    const tool = request && typeof request.tool === 'string' ? request.tool : null;
+    const args = request && request.arguments && typeof request.arguments === 'object' ? request.arguments : {};
+    const actionBudget = left() - STATE_RESERVE_MS;
+    try {
+      const handler = TOOLS[tool];
+      if (!handler) throw new Error(`Unknown tool ${JSON.stringify(text(tool, 64))}.`);
+      await within(handler.call(this, args, answer), actionBudget);
+    } catch (error) {
+      answer.ok = false;
+      answer.error = error instanceof Timeout ? 'timeout' : message(error);
+    }
+    const wantSnapshot = tool === 'browser_snapshot' || args.snapshot !== false;
+    await this.state(answer, wantSnapshot, deadline);
+    return answer;
+  }
+
+  async state(answer, wantSnapshot, deadline) {
+    const left = () => Math.max(deadline - Date.now(), 0);
+    let page = null;
+    try {
+      page = await within(this.page(), Math.min(2000, left()));
+    } catch (error) {
+      page = null;
+    }
+    answer.url = page ? page.url() : '';
+    answer.title = page ? await this.title(page, Math.min(1000, left())) : '';
+    const pages = this.pages().slice(0, MAX_TABS);
+    const titles = await Promise.all(pages.map((tab) => this.title(tab, Math.min(1000, left()))));
+    answer.tabs = pages.map((tab, index) => ({ index, url: tab.url(), title: titles[index], active: tab === page }));
+    const index = pages.indexOf(page);
+    answer.tab = index < 0 ? 0 : index;
+    answer.snapshot = '';
+    if (wantSnapshot && page) {
+      try {
+        answer.snapshot = await within(this.snapshot(page), Math.min(4000, left() - 1500));
+      } catch (error) {
+        answer.snapshot = '';
+        this.note('The snapshot could not be taken (the page was busy); call browser_snapshot again.');
+      }
+    }
+    answer.image = null;
+    if (page) {
+      try {
+        answer.image = await within(this.image(page), Math.min(3000, left() - 200));
+      } catch (error) {
+        answer.image = null;
+      }
+    }
+    const notice = this.notices.join(' ');
+    answer.notice = notice ? text(notice, NOTICE_LIMIT) : null;
+    this.notices = [];
+    return answer;
+  }
+
+  async title(page, ms) {
+    try {
+      return text(await within(page.title(), ms), 1024);
+    } catch (error) {
+      return '';
+    }
+  }
+
+  async snapshot(page) {
+    const frames = new Map();
+    const order = [];
+    let number = 0;
+    for (const frame of page.frames()) {
+      if (frame === page.mainFrame() || number >= MAX_FRAMES) continue;
+      number += 1;
+      const name = 'f' + number;
+      try {
+        const element = await frame.frameElement();
+        await element.evaluate((el, value) => el.setAttribute('data-wb-frame', value), name);
+        frames.set(name, frame);
+        order.push([name, frame]);
+      } catch (error) {
+        number -= 1;
+      }
+    }
+    this.frames.set(page, frames);
+    const texts = new Map();
+    texts.set('main', await page.mainFrame().evaluate(buildSnapshot, 'e'));
+    for (const [name, frame] of order) {
+      try {
+        texts.set(name, await within(frame.evaluate(buildSnapshot, name + 'e'), 1500));
+      } catch (error) {
+        texts.set(name, '- text "(frame not readable)"');
+      }
+    }
+    const compose = (key, indent, seen) => {
+      const out = [];
+      for (const line of (texts.get(key) || '').split('\n')) {
+        if (!line) continue;
+        out.push(indent + line);
+        const match = / \[frame=(f[0-9]+)\]/.exec(line);
+        if (match && texts.has(match[1]) && !seen.has(match[1])) {
+          seen.add(match[1]);
+          out.push(...compose(match[1], indent + '  ', seen));
+        }
+      }
+      return out;
+    };
+    let result = compose('main', '', new Set()).join('\n');
+    if (result.length > SNAPSHOT_LIMIT) {
+      const room = SNAPSHOT_LIMIT - TRUNCATED.length - 1;
+      const cut = result.lastIndexOf('\n', room);
+      result = result.slice(0, cut > 0 ? cut : room) + '\n' + TRUNCATED;
+    }
+    return result;
+  }
+
+  async image(page) {
+    const session = await this.context.newCDPSession(page);
+    try {
+      const metrics = await session.send('Page.getLayoutMetrics');
+      const view = metrics.cssVisualViewport || metrics.visualViewport;
+      for (const [width, quality] of IMAGE_LADDER) {
+        const scale = Math.min(1, width / view.clientWidth);
+        const shot = await session.send('Page.captureScreenshot', {
+          format: 'jpeg',
+          quality,
+          clip: { x: view.pageX, y: view.pageY, width: view.clientWidth, height: view.clientHeight, scale },
+        });
+        const bytes = Buffer.from(shot.data, 'base64');
+        if (bytes.length <= IMAGE_BYTES) {
+          const size = jpegSize(bytes) || {
+            width: Math.round(view.clientWidth * scale),
+            height: Math.round(view.clientHeight * scale),
+          };
+          return { width: size.width, height: size.height, jpeg: shot.data };
+        }
+      }
+      return null;
+    } finally {
+      session.detach().catch(() => {});
+    }
+  }
+
+  async target(value) {
+    if (typeof value !== 'string' || !value || value.length > 1024) {
+      throw new Error('target must be a ref of the last snapshot (e12) or a Playwright selector.');
+    }
+    const page = await this.page();
+    const ref = REF_RE.exec(value);
+    if (ref) {
+      let frame = page.mainFrame();
+      if (ref[1]) {
+        frame = (this.frames.get(page) || new Map()).get(ref[1]);
+        if (!frame || frame.isDetached()) throw new Error(`Unknown ref ${value}: take a new snapshot.`);
+      }
+      const locator = frame.locator(`[data-wb-ref="${value}"]`);
+      if ((await locator.count()) === 0) {
+        throw new Error(`Unknown ref ${value}: the page changed since the last snapshot; take a new snapshot.`);
+      }
+      return locator.first();
+    }
+    return page.locator(value);
+  }
+
+  async settle(page) {
+    await sleep(150);
+    await page.waitForLoadState('load', { timeout: 3000 }).catch(() => {});
+  }
+
+  async newTab(url) {
+    const page = await this.context.newPage();
+    this.active = page;
+    if (url) await this.goto(page, url, 'load');
+    return page;
+  }
+
+  async goto(page, url, waitUntil) {
+    if (typeof url !== 'string' || !/^(https?:\/\/|about:blank$)/i.test(url)) {
+      throw new Error('url must be an http or https address.');
+    }
+    const response = await page.goto(url, { waitUntil, timeout: NAVIGATION_MS });
+    if (response && response.status() >= 400) this.note(`The page answered with HTTP status ${response.status()}.`);
+  }
+}
+
+const WAIT_UNTIL = { load: 'load', domcontentloaded: 'domcontentloaded', networkidle: 'networkidle' };
+
+function waitTimeout(args) {
+  const value = Number.isInteger(args.timeout_ms) ? args.timeout_ms : 10000;
+  return Math.max(0, Math.min(value, WAIT_MAX_MS));
+}
+
+const TOOLS = {
+  async browser_navigate(args) {
+    const page = await this.page();
+    const waitUntil = WAIT_UNTIL[args.wait_until] || 'load';
+    if (args.url !== undefined) return this.goto(page, args.url, waitUntil);
+    const options = { waitUntil, timeout: NAVIGATION_MS };
+    if (args.history === 'reload') return page.reload(options);
+    if (args.history === 'back' || args.history === 'forward') {
+      const before = page.url();
+      const response = await (args.history === 'back' ? page.goBack(options) : page.goForward(options));
+      if (response === null && page.url() === before) this.note(`There was no page to go ${args.history} to.`);
+      return response;
+    }
+    throw new Error('navigate needs url or history.');
+  },
+
+  async browser_snapshot() {},
+
+  async browser_click(args) {
+    const page = await this.page();
+    const button = ['left', 'right', 'middle'].includes(args.button) ? args.button : 'left';
+    const clickCount = args.double ? 2 : 1;
+    if (args.target === undefined && Number.isFinite(args.x) && Number.isFinite(args.y)) {
+      await page.mouse.click(args.x, args.y, { button, clickCount });
+    } else {
+      const locator = await this.target(args.target);
+      if (args.double) await locator.dblclick({ button, timeout: ACTION_MS });
+      else await locator.click({ button, timeout: ACTION_MS });
+    }
+    await this.settle(await this.page());
+  },
+
+  async browser_hover(args) {
+    await (await this.target(args.target)).hover({ timeout: ACTION_MS });
+  },
+
+  async browser_type(args, answer) {
+    const locator = await this.target(args.target);
+    const value = typeof args.text === 'string' ? args.text : '';
+    answer.masked = await locator.evaluate(
+      (el) => el instanceof HTMLInputElement && el.type.toLowerCase() === 'password',
+      undefined,
+      { timeout: ACTION_MS },
+    );
+    if (args.clear === false) {
+      await locator.focus({ timeout: ACTION_MS });
+      await locator.evaluate((el) => {
+        if (typeof el.setSelectionRange === 'function' && typeof el.value === 'string') {
+          try {
+            el.setSelectionRange(el.value.length, el.value.length);
+          } catch (error) {
+            // inputs like email do not support a selection
+          }
+        }
+      });
+      await (await this.page()).keyboard.insertText(value);
+    } else {
+      await locator.fill(value, { timeout: ACTION_MS });
+    }
+    if (args.submit) {
+      await locator.press('Enter', { timeout: ACTION_MS });
+      await this.settle(await this.page());
+    }
+  },
+
+  async browser_select(args) {
+    const values = Array.isArray(args.values) ? args.values.map(String) : [];
+    if (!values.length) throw new Error('values must name at least one option.');
+    await (await this.target(args.target)).selectOption(values, { timeout: ACTION_MS });
+    await this.settle(await this.page());
+  },
+
+  async browser_press(args) {
+    if (typeof args.key !== 'string' || !args.key) throw new Error('key is required.');
+    const page = await this.page();
+    await page.keyboard.press(args.key);
+    await this.settle(await this.page());
+  },
+
+  async browser_scroll(args) {
+    if (args.target !== undefined) {
+      await (await this.target(args.target)).scrollIntoViewIfNeeded({ timeout: ACTION_MS });
+      return;
+    }
+    const page = await this.page();
+    const dy = Number.isFinite(args.dy) ? args.dy : 600;
+    await page.mouse.move(VIEWPORT.width / 2, VIEWPORT.height / 2);
+    await page.mouse.wheel(0, dy);
+    await sleep(250);
+  },
+
+  async browser_wait(args) {
+    const page = await this.page();
+    const timeout = waitTimeout(args);
+    if (Number.isInteger(args.ms)) await page.waitForTimeout(Math.max(0, Math.min(args.ms, WAIT_MAX_MS)));
+    if (typeof args.url === 'string' && args.url) {
+      if (!page.url().includes(args.url)) {
+        await page.waitForURL((url) => url.href.includes(args.url), { timeout, waitUntil: 'commit' });
+      }
+    }
+    if (typeof args.text === 'string' && args.text) {
+      await page.getByText(args.text).first().waitFor({ state: 'visible', timeout });
+    }
+    if (typeof args.gone === 'string' && args.gone) {
+      await page.getByText(args.gone).first().waitFor({ state: 'hidden', timeout });
+    }
+  },
+
+  async browser_evaluate(args, answer) {
+    if (typeof args.expression !== 'string' || !args.expression) throw new Error('expression is required.');
+    const page = await this.page();
+    const value = await page.evaluate(args.expression);
+    let json = JSON.stringify(value);
+    if (json === undefined) json = 'null';
+    answer.result = json.length > RESULT_LIMIT ? json.slice(0, RESULT_LIMIT - TRUNCATED.length) + TRUNCATED : json;
+  },
+
+  async browser_upload(args) {
+    const files = Array.isArray(args.files) ? args.files : [];
+    if (!files.length || !files.every((file) => typeof file === 'string' && path.isAbsolute(file))) {
+      throw new Error('files must list the files to upload.');
+    }
+    await (await this.target(args.target)).setInputFiles(files, { timeout: ACTION_MS });
+  },
+
+  async browser_dialog(args) {
+    if (args.action !== 'accept' && args.action !== 'dismiss') throw new Error('action must be accept or dismiss.');
+    this.dialog = { action: args.action, text: typeof args.text === 'string' ? args.text : undefined };
+  },
+
+  async browser_tabs(args) {
+    const pages = this.pages();
+    const action = args.action || 'list';
+    if (action === 'list') return;
+    if (action === 'new') {
+      this.internal += 1;
+      try {
+        await this.newTab(args.url);
+      } finally {
+        this.internal -= 1;
+      }
+      return;
+    }
+    const current = pages.indexOf(await this.page());
+    const index = Number.isInteger(args.index) ? args.index : current;
+    if (index < 0 || index >= pages.length) throw new Error(`There is no tab ${index}.`);
+    if (action === 'select') {
+      this.active = pages[index];
+      await this.active.bringToFront();
+      return;
+    }
+    if (action === 'close') {
+      await pages[index].close();
+      if (!this.pages().length) await this.newTab(null);
+      return;
+    }
+    throw new Error('action must be list, new, select or close.');
+  },
+
+  async browser_download(args, answer) {
+    let download;
+    if (args.url !== undefined) {
+      if (typeof args.url !== 'string' || !/^https?:\/\//i.test(args.url)) {
+        throw new Error('url must be an http or https address.');
+      }
+      this.internal += 1;
+      const page = await this.context.newPage().finally(() => {
+        this.internal -= 1;
+      });
+      page.__wbExpectDownload = true;
+      try {
+        const event = page.waitForEvent('download', { timeout: NAVIGATION_MS }).catch(() => null);
+        const loaded = page.goto(args.url, { timeout: NAVIGATION_MS }).then(
+          () => 'page',
+          () => 'download',
+        );
+        download = await Promise.race([event, loaded.then((kind) => (kind === 'page' ? sleep(1500) : event))]);
+        if (!download) throw new Error('No download started from this URL (it opened a page or failed).');
+        answer.file = await save(download);
+      } finally {
+        await page.close().catch(() => {});
+      }
+      return;
+    }
+    const page = await this.page();
+    const locator = await this.target(args.target);
+    page.__wbExpectDownload = true;
+    try {
+      let failure = null;
+      const event = page.waitForEvent('download', { timeout: ACTION_MS }).catch((error) => {
+        failure = error;
+        return null;
+      });
+      await locator.click({ timeout: ACTION_MS });
+      download = await event;
+      if (!download) throw failure || new Error('No download started.');
+      answer.file = await save(download);
+    } finally {
+      page.__wbExpectDownload = false;
+    }
+  },
+
+  async browser_screenshot(args, answer) {
+    const page = await this.page();
+    const dir = path.join(DIR, 'screenshots');
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const name = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.png`;
+    const file = path.join(dir, name);
+    await page.screenshot({ path: file, fullPage: args.full_page === true, type: 'png', timeout: ACTION_MS });
+    answer.file = { path: file, name, bytes: fs.statSync(file).size };
+  },
+};
+
+function safeName(value) {
+  const base = path.basename(String(value || '')).replace(/[\u0000-\u001f\u007f/\\]/g, '_').trim();
+  const name = base && base !== '.' && base !== '..' ? base : 'download';
+  return Buffer.byteLength(name) > 200 ? name.slice(0, 100) : name;
+}
+
+async function save(download) {
+  const dir = path.join(DIR, 'downloads', `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const name = safeName(download.suggestedFilename());
+  const file = path.join(dir, name);
+  await download.saveAs(file);
+  const failure = await download.failure();
+  if (failure) throw new Error(`The download failed: ${failure}`);
+  return { path: file, name, bytes: fs.statSync(file).size };
+}
+
+async function stream(browser, socket, options) {
+  const interval = 1000 / options.fps;
+  let current = null;
+  let session = null;
+  let last = 0;
+  let closed = false;
+  let blocked = false;
+  socket.on('drain', () => {
+    blocked = false;
+  });
+  const detach = async () => {
+    if (!session) return;
+    const old = session;
+    session = null;
+    await old.send('Page.stopScreencast').catch(() => {});
+    await old.detach().catch(() => {});
+  };
+  const attach = async (page) => {
+    await detach();
+    current = page;
+    const cdp = await browser.context.newCDPSession(page);
+    session = cdp;
+    cdp.on('Page.screencastFrame', (frame) => {
+      cdp.send('Page.screencastFrameAck', { sessionId: frame.sessionId }).catch(() => {});
+      const now = Date.now();
+      if (closed || blocked || cdp !== session || now - last < interval) return;
+      last = now;
+      const bytes = Buffer.from(frame.data, 'base64');
+      const size = jpegSize(bytes) || { width: 0, height: 0 };
+      const header = JSON.stringify({ bytes: bytes.length, width: size.width, height: size.height }) + '\n';
+      socket.write(header);
+      if (!socket.write(bytes)) blocked = true;
+    });
+    await cdp.send('Page.startScreencast', {
+      format: 'jpeg',
+      quality: options.quality,
+      maxWidth: options.width,
+      maxHeight: Math.round((options.width * VIEWPORT.height) / VIEWPORT.width),
+      everyNthFrame: 1,
+    });
+  };
+  const ended = new Promise((resolve) => {
+    socket.on('close', resolve);
+    socket.on('error', resolve);
+    socket.on('end', resolve);
+  });
+  try {
+    while (!closed) {
+      const page = await browser.page();
+      if (page !== current) await attach(page).catch(() => detach());
+      closed = await Promise.race([ended.then(() => true), sleep(250).then(() => false)]);
+    }
+  } finally {
+    closed = true;
+    await detach();
+    socket.destroy();
+  }
+}
+
+function readLine(socket, limit) {
+  return new Promise((resolve, reject) => {
+    let data = Buffer.alloc(0);
+    const onData = (chunk) => {
+      data = Buffer.concat([data, chunk]);
+      const end = data.indexOf(10);
+      if (end >= 0) {
+        socket.removeListener('data', onData);
+        const rest = data.subarray(end + 1);
+        if (rest.length) socket.unshift(rest);
+        resolve(data.subarray(0, end).toString('utf8'));
+      } else if (data.length > limit) {
+        socket.removeListener('data', onData);
+        reject(new Error('request too large'));
+      }
+    };
+    socket.on('data', onData);
+    socket.once('error', reject);
+    socket.once('end', () => resolve(data.length ? data.toString('utf8') : null));
+  });
+}
+
+function parseStreamOptions(value) {
+  const fps = Number(value && value.fps);
+  const quality = Number(value && value.quality);
+  const width = Number(value && value.width);
+  if (!Number.isInteger(fps) || fps < 1 || fps > 30) return null;
+  if (!Number.isInteger(quality) || quality < 1 || quality > 100) return null;
+  if (!Number.isInteger(width) || width < 64 || width > 4096) return null;
+  return { fps, quality, width };
+}
+
+async function serve() {
+  if (await ping()) {
+    process.stderr.write('workvm-browser: already serving\n');
+    return;
+  }
+  const { chromium } = loadPlaywright();
+  process.on('unhandledRejection', (error) => process.stderr.write(`workvm-browser: ${message(error)}\n`));
+  for (const sub of ['profile', 'downloads', 'screenshots']) fs.mkdirSync(path.join(DIR, sub), { recursive: true, mode: 0o700 });
+  fs.chmodSync(DIR, 0o700);
+  const context = await chromium.launchPersistentContext(path.join(DIR, 'profile'), {
+    headless: true,
+    args: ['--no-sandbox'],
+    viewport: VIEWPORT,
+    acceptDownloads: true,
+    downloadsPath: path.join(DIR, 'downloads'),
+  });
+  context.on('close', () => {
+    process.stderr.write('workvm-browser: the browser closed\n');
+    process.exit(1);
+  });
+  const browser = new Browser(context);
+  await browser.page();
+  fs.mkdirSync(path.dirname(SOCKET), { recursive: true });
+  fs.rmSync(SOCKET, { force: true });
+  const server = net.createServer((socket) => {
+    socket.on('error', () => {});
+    readLine(socket, REQUEST_LIMIT)
+      .then(async (line) => {
+        let request = null;
+        try {
+          request = JSON.parse(line || 'null');
+        } catch (error) {
+          request = null;
+        }
+        if (request && request.ping) {
+          socket.end('{"pong":true}\n');
+          return;
+        }
+        if (request && request.stream) {
+          const options = parseStreamOptions(request.stream);
+          if (!options) {
+            socket.destroy();
+            return;
+          }
+          await stream(browser, socket, options);
+          return;
+        }
+        const answer = await browser.run(request);
+        socket.end(JSON.stringify(answer) + '\n');
+      })
+      .catch((error) => {
+        process.stderr.write(`workvm-browser: ${message(error)}\n`);
+        socket.destroy();
+      });
+  });
+  const previous = process.umask(0o177);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(SOCKET, resolve);
+  });
+  process.umask(previous);
+  fs.chmodSync(SOCKET, 0o600);
+  fs.writeFileSync(path.join(DIR, 'serve.pid'), `${process.pid}\n`, { mode: 0o600 });
+  const stop = () => {
+    server.close();
+    context.close().finally(() => process.exit(0));
+  };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+  process.stderr.write(`workvm-browser: serving on ${SOCKET}\n`);
+}
+
+// ---- clients ------------------------------------------------------------------------------------------------------
+
+function connect() {
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(SOCKET);
+    socket.once('connect', () => resolve(socket));
+    socket.once('error', reject);
+  });
+}
+
+async function ping() {
+  let socket;
+  try {
+    socket = await within(connect(), 2000);
+    socket.write('{"ping":true}\n');
+    const line = await within(readLine(socket, 1024), 2000);
+    return line !== null && JSON.parse(line).pong === true;
+  } catch (error) {
+    return false;
+  } finally {
+    if (socket) socket.destroy();
+  }
+}
+
+function startDaemon() {
+  const script = path.resolve(__filename);
+  if (DIRECT_START) {
+    fs.mkdirSync(DIR, { recursive: true, mode: 0o700 });
+    const log = fs.openSync(path.join(DIR, 'serve.log'), 'a', 0o600);
+    const child = childProcess.spawn(process.execPath, [script, 'serve'], {
+      detached: true,
+      stdio: ['ignore', 'ignore', log],
+      env: process.env,
+    });
+    fs.closeSync(log);
+    child.unref();
+    return;
+  }
+  const setenv = ['PLAYWRIGHT_BROWSERS_PATH', 'NODE_PATH']
+    .filter((name) => process.env[name])
+    .map((name) => `--setenv=${name}=${process.env[name]}`);
+  childProcess.spawnSync(
+    'systemd-run',
+    [`--unit=${UNIT}`, '--collect', '--quiet', ...setenv, process.execPath, script, 'serve'],
+    { stdio: ['ignore', 'ignore', 'ignore'] },
+  );
+}
+
+async function ensureDaemon() {
+  if (await ping()) return;
+  startDaemon();
+  const until = Date.now() + START_WAIT_MS;
+  while (Date.now() < until) {
+    await sleep(200);
+    if (await ping()) return;
+  }
+  throw new Error('the browser daemon did not start');
+}
+
+function readStdin(limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    process.stdin.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > limit) reject(new Error('request too large'));
+      chunks.push(chunk);
+    });
+    process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    process.stdin.on('error', reject);
+  });
+}
+
+async function request(body) {
+  const socket = await connect();
+  socket.write(JSON.stringify(body) + '\n');
+  const line = await within(readLine(socket, 64 * 1024 * 1024), CALL_MS + 3000);
+  socket.destroy();
+  if (line === null) throw new Error('the browser daemon closed the connection');
+  return line;
+}
+
+async function call() {
+  const raw = await readStdin(REQUEST_LIMIT);
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch (error) {
+    body = { tool: null, arguments: {} };
+  }
+  await ensureDaemon();
+  process.stdout.write((await request(body)) + '\n');
+}
+
+async function streamClient(argv) {
+  const options = parseStreamOptions({ fps: Number(argv[0]), quality: Number(argv[1]), width: Number(argv[2]) });
+  if (!options) {
+    process.stderr.write('usage: workvm-browser stream FPS(1-30) QUALITY(1-100) WIDTH(64-4096)\n');
+    process.exit(2);
+  }
+  await ensureDaemon();
+  const socket = await connect();
+  socket.write(JSON.stringify({ stream: options }) + '\n');
+  socket.pipe(process.stdout);
+  const finish = () => {
+    socket.destroy();
+    process.exit(0);
+  };
+  process.stdout.on('error', finish);
+  process.stdin.on('end', finish);
+  process.stdin.on('close', finish);
+  process.stdin.resume();
+  socket.on('close', () => process.exit(0));
+}
+
+async function selftest() {
+  await ensureDaemon();
+  const answer = JSON.parse(await request({ tool: 'browser_navigate', arguments: { url: 'about:blank' } }));
+  if (answer.ok !== true) throw new Error(answer.error || 'the browser did not open about:blank');
+  process.stdout.write('{"ok":true}\n');
+}
+
+async function main(argv) {
+  const mode = argv[0];
+  if (mode === 'serve') return serve();
+  if (mode === 'call') return call();
+  if (mode === 'stream') return streamClient(argv.slice(1));
+  if (mode === 'selftest') return selftest();
+  process.stderr.write('usage: workvm-browser serve|call|stream FPS QUALITY WIDTH|selftest\n');
+  process.exit(2);
+}
+
+if (require.main === module) {
+  main(process.argv.slice(2)).catch((error) => {
+    process.stderr.write(`workvm-browser: ${message(error)}\n`);
+    process.exit(1);
+  });
+}

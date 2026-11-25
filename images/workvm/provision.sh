@@ -4,8 +4,8 @@
 # Runs once as root inside the image build VM, from a copy of this repository's `images/`:
 #   sudo bash <bundle>/images/workvm/provision.sh
 # Installs a developer's Ubuntu: build tools, Git, Python, Node, a container runtime, a browser (Playwright with
-# Chromium), SSH over vsock for Lima and the job helper. Nothing is restricted for root; the session installs
-# everything else itself. No credential is ever written into the image. Idempotent; the guard file ends it early.
+# Chromium), SSH over vsock for Lima, the job helper and the platform browser helper. Nothing is restricted for
+# root; the session installs everything else itself. No credential is ever written into the image. Idempotent; the guard file ends it early.
 set -euo pipefail
 umask 022
 
@@ -50,6 +50,7 @@ systemctl enable --now sshd-vsock.socket
 log "job helper"
 install -m 0755 "$FILES/usr/local/sbin/workvm-job" /usr/local/sbin/workvm-job
 install -m 0755 "$FILES/usr/local/bin/workvm-browse" /usr/local/bin/workvm-browse
+install -m 0755 "$FILES/usr/local/bin/workvm-browser" /usr/local/bin/workvm-browser
 install -d -m 0700 /var/lib/workvm/jobs
 install -d -m 0755 /workspace
 
@@ -96,5 +97,9 @@ log "clean up"
 apt-get clean
 rm -rf "$CACHE"
 /usr/local/sbin/workvm-job selftest
+# The platform browser (13-work-vm.md section 13.3): start the daemon once, then leave no profile in the image.
+/usr/local/bin/workvm-browser selftest
+systemctl stop workvm-browser.service 2>/dev/null || true
+rm -rf /var/lib/workvm-browser /run/workvm-browser.sock
 touch "$GUARD"
 log "done"
