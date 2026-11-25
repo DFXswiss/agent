@@ -170,7 +170,7 @@ session: tasks | id:uuid task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid devic
   parent_session_id:uuid origin_operation_id:uuid depth:number state:code state_reason:code model_access:code
   model_id:code agent_kind:code agent_version:code estimate_ms:number created_at:time ready_at:time
   first_working_at:time ended_at:time context_restore:code@contexts context_reason:code@contexts not_before:time
-  github_identity:uuid wait_until:time dfx_choice:flag
+  github_identity:uuid wait_until:time dfx_choice:flag wait_at:time
 session_ping: notifications | id:uuid session_id:uuid kind:code level:code ref:code created_at:time
   delivered_at:time
 session_transition: tasks | session_id:uuid seq:number state:code reason:code at:time received_at:time

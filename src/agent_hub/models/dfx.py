@@ -8,8 +8,9 @@ them (`issuer`); only it gets `dfx_keys` in its device state.
 member of an organization whose credit is not exhausted gets one request row in `hub.dfx_key` (one row per org device
 and organization that is not revoked, `dfx_key_live`). A row whose org device left the organization, was removed or
 decertified, or is disabled, is revoked: its envelope is dropped at once. The issuer's state lists the open requests
-of active billing and orgs that are not exhausted (`requests`, with the org device's KEM public key from the hub's
-device registry) and every issued key that is not closed (`keys`): `headroom_usd` is the org's balance divided by
+that have headroom (`requests`, with the org device's KEM public key from the hub's device registry and the
+`headroom_usd` of its org's keys, the limit of the new key; no headroom - billing not active, the org exhausted - no
+request is listed) and every issued key that is not closed (`keys`): `headroom_usd` is the org's balance divided by
 the `platform` factor of the price list in force and evenly over the org's live keys, at most
 `AGENT_HUB_DFX_KEY_HEADROOM_USD`; `disabled` while the org is exhausted or billing is not active; `revoke` for a
 revoked key (then `disabled` and no headroom).
@@ -146,7 +147,6 @@ def rooms(connection: Connection, orgs: Sequence[str], now: datetime, cap: Decim
 
 def issuer_state(connection: Connection, now: datetime, cap: Decimal) -> dict[str, list[dict[str, Any]]]:
     """`dfx_keys` of the elected issuer (module docstring)."""
-    active = credit.active(connection, now)
     open_requests = connection.execute(
         "SELECT k.request_id, k.org_id, k.device_id, d.kem_pub FROM hub.dfx_key k"
         " JOIN hub.device d ON d.id = k.device_id WHERE k.issued_at IS NULL AND k.revoked_at IS NULL"
@@ -157,7 +157,6 @@ def issuer_state(connection: Connection, now: datetime, cap: Decimal) -> dict[st
         " WHERE issued_at IS NOT NULL AND closed_at IS NULL ORDER BY issued_at, key_ref"
     ).fetchall()
     orgs = sorted({str(row[1]) for row in [*open_requests, *keys]})
-    exhausted = credit.exhausted_orgs(connection, orgs, now)
     room = rooms(connection, orgs, now, cap)
     requests = [
         {
@@ -165,9 +164,10 @@ def issuer_state(connection: Connection, now: datetime, cap: Decimal) -> dict[st
             "org_id": str(org),
             "device_id": str(device),
             "device_kem": b64u_encode(bytes(kem)),
+            "headroom_usd": room[str(org)].headroom_usd,
         }
         for request, org, device, kem in open_requests
-        if active and not exhausted[str(org)]
+        if room[str(org)].headroom_usd > 0
     ]
     listed = []
     for key_ref, org, device, revoke in keys:

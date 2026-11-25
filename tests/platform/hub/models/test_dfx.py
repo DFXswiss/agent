@@ -58,10 +58,16 @@ def test_requests_need_active_billing_and_credit(keys: Keys, published: MemoryPu
     request = keys.request_id()
     kem = keys.rows("SELECT kem_pub FROM hub.device WHERE id = %s", keys.device.id)[0][0]
     assert keys.requests() == [
-        {"request_id": request, "org_id": keys.org, "device_id": keys.device.id, "device_kem": b64u_encode(bytes(kem))}
+        {
+            "request_id": request,
+            "org_id": keys.org,
+            "device_id": keys.device.id,
+            "device_kem": b64u_encode(bytes(kem)),
+            "headroom_usd": 4.716981,  # the limit of the new key: 5 USD start credit / factor 1.06
+        }
     ]
     assert keys.plan() == []  # one live request per org device and org
-    # an exhausted org gets no request listed (and no new one)
+    # an exhausted org has no headroom: its request is not listed (and no new one is made)
     keys.execute(
         "INSERT INTO hub.credit_account (org_id, balance_micro_usd, booked_micro_usd) VALUES (%s, 0, 0)", keys.org
     )
@@ -369,3 +375,40 @@ def test_only_an_org_device_with_a_live_key_weighs_its_sessions(keys: Keys) -> N
     _task, platform_session = keys.bill.meter.session("platform", device=keys.issuer)
     assert keys.cost(platform_session, 700, device=keys.issuer) == ("ok", None)
     assert keys.rows("SELECT cost_micro_usd FROM hub.dfx_key_cost") == [(300,)]
+
+
+def test_the_issuer_sees_every_live_key_whoever_issued_it(keys: Keys) -> None:
+    """The issuer deletes `dfx-*` keys the hub neither lists nor requests: every issued key that is not closed is
+    listed - of every org, issued by a device that lost the election, of an exhausted org, being revoked."""
+    keys.issuer_ready()
+    keys.bill.add_prices()
+    other_org, gone, now = new_id(), new_id(), keys.hub.clock()
+    rows = [
+        (keys.org, keys.device.id, "dfx-key-elder", None, None),  # issued by a former issuer
+        (other_org, new_id(), "dfx-key-other", None, None),  # another org, exhausted
+        (keys.org, gone, "dfx-key-gone", now, None),  # being revoked
+        (keys.org, new_id(), "dfx-key-shut", now, now),  # closed: deleted already
+    ]
+    for org, device, key_ref, revoked, closed in rows:
+        keys.execute(
+            "INSERT INTO hub.dfx_key (request_id, org_id, device_id, requested_at, issuer_device_id, key_ref,"
+            " issued_at, revoked_at, closed_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            new_id(),
+            org,
+            device,
+            now,
+            new_id(),
+            key_ref,
+            now,
+            revoked,
+            closed,
+        )
+    keys.execute(
+        "INSERT INTO hub.credit_account (org_id, balance_micro_usd, booked_micro_usd) VALUES (%s, 0, 0)", other_org
+    )
+    listed = {key["key_ref"]: (key["disabled"], key["revoke"]) for key in keys.listed()}
+    assert listed == {
+        "dfx-key-elder": (False, False),
+        "dfx-key-other": (True, False),
+        "dfx-key-gone": (True, True),
+    }

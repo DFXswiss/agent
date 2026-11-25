@@ -195,3 +195,85 @@ def test_a_switch_of_an_unknown_task_notifies_nobody(keys: Keys) -> None:
     detail = {"from_access": "subscription", "to_access": "platform", "until": None}
     with keys.hub.pool.connection() as connection:
         assert rules.switch_rule(connection, UUID(new_id()), detail, keys.hub.clock()) == []
+
+
+def _wait(keys: Keys, session: str, until: str | None, choice: bool, at: str, *, device: Any = None) -> tuple[str, Any]:
+    body = {"session_id": session, "wait_until": until, "dfx_choice": choice, "at": at}
+    return keys.status("session_wait", body, device or keys.device)
+
+
+def test_a_session_wait_holds_any_live_main_session(keys: Keys) -> None:
+    """ADR-081 sections 3 and 4: the runner reports the wait of a session that is not paused (a new main session in
+    its start chain, a working one); a cleared wait gives the task back to the other rules."""
+    binding.bind(keys.hub.config)
+    task, session = keys.bill.meter.session("subscription")
+    keys.execute("UPDATE hub.session SET state = 'agent_starting' WHERE id = %s", session)
+    until = keys.bill.meter.time(7200)
+    assert _wait(keys, session, until, True, keys.bill.meter.time(-1)) == ("ok", None)
+    assert _attention(keys, task) == ("needs_decision", "quota_choice", "session", session, parse_time(until))
+    # an older report changes nothing; the same report again neither
+    assert _wait(keys, session, None, False, keys.bill.meter.time(-30)) == ("ok", None)
+    assert _wait(keys, session, until, True, keys.bill.meter.time(-1)) == ("ok", None)
+    assert _attention(keys, task)[:2] == ("needs_decision", "quota_choice")
+    # a transition that is no quota pause keeps the wait
+    _transition(keys, session, "working")
+    assert keys.rows("SELECT wait_until, dfx_choice FROM hub.session WHERE id = %s", session) == [
+        (parse_time(until), True)
+    ]
+    # without a wait time there is no choice; cleared, the task works again
+    assert _wait(keys, session, None, True, keys.bill.meter.time()) == ("ok", None)
+    assert keys.rows("SELECT wait_until, dfx_choice FROM hub.session WHERE id = %s", session) == [(None, False)]
+    assert _attention(keys, task)[:2] == ("working", "working")
+    # the end of the session clears a wait
+    assert _wait(keys, session, until, False, keys.bill.meter.time()) == ("ok", None)
+    assert _attention(keys, task)[:2] == ("working", "quota_wait")
+    _transition(keys, session, "failed", "agent_exited")
+    assert keys.rows("SELECT wait_until FROM hub.session WHERE id = %s", session) == [(None,)]
+
+
+def test_a_session_wait_comes_from_the_session_s_device(keys: Keys) -> None:
+    _task, session = keys.bill.meter.session("subscription")
+    at = keys.bill.meter.time(-1)
+    assert _wait(keys, session, None, False, at, device=keys.issuer) == ("rejected", "forbidden")
+    assert _wait(keys, new_id(), None, False, at) == ("rejected", "not_found")
+
+
+def test_a_changed_fallback_reaches_the_devices_of_the_owner(keys: Keys, published: MemoryPublisher) -> None:
+    keys.bill.meter.session("subscription")
+    writer = keys.bill.scene.writer
+    settings = {"model_access": "auto", "model_id": None, "locale": "en"}
+
+    def put(**fallback: bool) -> set[str]:
+        published.clear()
+        body = {**settings, "fallback": fallback} if fallback else settings
+        assert writer.browser.put("/v1/me/settings", json=body).status_code == 200
+        return {str(entry.audience.id) for entry in published.items() if entry.frame == "reconcile"}
+
+    assert put() == set()  # a first row with the defaults changes nothing
+    assert put(own_to_dfx=True, operator_to_platform=True) == {keys.device.id}
+    assert put(own_to_dfx=True, operator_to_platform=True) == set()
+    assert put() == set()
+
+
+def test_an_operator_subscription_switch_is_named(keys: Keys) -> None:
+    task, session = keys.bill.meter.session("subscription")
+    detail = {
+        "from_access": "operator",
+        "to_access": "platform",
+        "from_model": None,
+        "to_model": None,
+        "cause": "exhausted",
+        "until": None,
+    }
+    body = {
+        "action": "session.model_switched",
+        "result": "ok",
+        "session_id": session,
+        "target_kind": "session",
+        "target_id": session,
+        "detail": detail,
+    }
+    assert keys.status("audit", body, keys.device) == ("ok", None)
+    assert keys.rows("SELECT ref FROM hub.notification WHERE kind = 'model.switched' AND task_id = %s", task) == [
+        ("operator:platform:",)
+    ]

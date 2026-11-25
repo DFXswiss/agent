@@ -253,5 +253,12 @@ def test_a_main_session_waiting_for_model_quota() -> None:
     assert derive.derive(_inputs("idle", main_state="idle", main_reason="model_quota_exhausted")) == Attention(
         "done", "idle"
     )
+    # a wait time holds any live main session (KOR-50: the item session_wait), an ended one never
+    assert derive.derive(_inputs("working", main_state="working", main_wait_until=until)) == wait
+    assert derive.derive(_inputs("starting", main_state="agent_starting", main_wait_until=until)) == wait
+    assert derive.derive(_inputs("idle", main_state="stopped", main_wait_until=until)) == Attention("done", "idle")
+    assert derive.derive(_inputs("scheduling", main_id=None, task_reason="no_device")) == Attention(
+        "needs_decision", "device_missing"
+    )
     for category, reason in (derive.QUOTA_CHOICE, derive.QUOTA_WAIT):
         assert reason in derive.CATEGORIES[category][1]

@@ -1020,6 +1020,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "dfx_key_state",
                         "dfx_key_issued",
                         "dfx_key_usage",
+                        "session_wait",
                     ],
                 }
             ],
@@ -1279,9 +1280,9 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.stream.terminal": {"properties": {}, "required": []},
     "read.task.charges": {"properties": {}, "required": []},
     "read.task.contexts": {"properties": {}, "required": []},
-    "read.task.log": {"properties": {}, "required": []},
-    "read.task.log.chunk": {"properties": {}, "required": []},
     "read.task": {"properties": {}, "required": []},
+    "read.task.log.chunk": {"properties": {}, "required": []},
+    "read.task.log": {"properties": {}, "required": []},
     "read.task.operations": {"properties": {}, "required": []},
     "read.user.identity": {"properties": {}, "required": []},
     "read.user.lookup": {"properties": {}, "required": []},
@@ -1451,8 +1452,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "session.model_switched": {
         "properties": {
-            "from_access": [{"type": "string", "enum": ["subscription", "api_key", "platform"]}],
-            "to_access": [{"type": "string", "enum": ["subscription", "api_key", "platform"]}],
+            "from_access": [{"type": "string", "enum": ["subscription", "api_key", "platform", "operator"]}],
+            "to_access": [{"type": "string", "enum": ["subscription", "api_key", "platform", "operator"]}],
             "from_model": [{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"}, {"type": "null"}],
             "to_model": [{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"}, {"type": "null"}],
             "cause": [{"type": "string", "enum": ["exhausted", "unusable", "released"]}],

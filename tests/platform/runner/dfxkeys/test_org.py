@@ -62,6 +62,8 @@ def test_an_accepted_envelope_is_stored_sealed_and_opened_per_provisioning(org_d
             await accept(context, {"dfx_key_held": [entry]})
             assert await rows(context) == [(ORG, KEY_REF, ISSUER)]
             assert org_key(context, ORG) == SUB
+            assert dfxkey.has_key(context, ORG)
+            assert not dfxkey.has_key(context, OTHER_ORG)
             assert platform_key(context, ORG) == SUB
             assert platform_key(context) is None  # an org device without the session's org has no key
             assert platform_key(context, OTHER_ORG) is None

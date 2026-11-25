@@ -87,7 +87,7 @@ SPEC_SESSION_FAILURES = (
 SPEC_OUTBOX_KINDS = (
     "event session_transition vm_state operation_transition usage quota metrics audit wrap"
     " runtime"  # 12-billing.md section 4 (contracts/changes/KOR-31.md)
-    " operator_quota dfx_key_state dfx_key_issued dfx_key_usage"  # ADR-081 (contracts/changes/KOR-50.md)
+    " operator_quota dfx_key_state dfx_key_issued dfx_key_usage session_wait"  # ADR-081 (contracts/changes/KOR-50.md)
 )
 SPEC_OUTBOX_AUDIT = (
     "hook.denied read.session.<tool> ping.delivered session.prompt_refused model.provider_outside_allowlist"

@@ -86,12 +86,14 @@ def test_a_waiting_start_in_the_start_chain_and_the_credit_flipping_the_choice(s
 
 def test_the_recheck_of_an_unusable_own_credential_moves_once_per_period(store_dsn: str) -> None:
     async def body(found: FKit) -> None:
+        assert (await found.start(model_access_pref="subscription")).started
         found.env.hub.records[(ALICE, "claude_subscription")] = make_record(
             {"token": TOKEN, "email": None, "kind": "setup_token"}, kind="claude_subscription", epoch=2
         )
-        assert (await found.start(model_access_pref="subscription")).started
         await found.state(session_id(), "working")
-        await mark(found)  # the own subscription, whose record no longer opens
+        await mark(found)  # the own subscription, whose record no longer opens on this device
+        async with found.env.pool.connection() as conn:
+            await conn.execute("DELETE FROM runner.credential_cache")
         await fallback.run_once(found.deliverer)
         for _ in range(3):
             found.wall.now += 5
@@ -115,7 +117,7 @@ def test_an_older_hub_gets_no_wait_items(store_dsn: str) -> None:
 
 def test_runs_never_overlap_and_a_wait_recorded_meanwhile_stays_held(store_dsn: str, monkeypatch: Any) -> None:
     async def body(found: FKit) -> None:
-        sid = await_session = session_id()
+        sid = session_id()
         assert (await found.start()).started
         await found.state(sid, "working")
         await mark(found)
@@ -137,7 +139,7 @@ def test_runs_never_overlap_and_a_wait_recorded_meanwhile_stays_held(store_dsn: 
         monkeypatch.setattr(fallback, "check", check)
         await asyncio.gather(fallback.run_once(found.deliverer), fallback.run_once(found.deliverer))
         assert overlapped == []
-        assert pauses.held(found.context, await_session)
+        assert pauses.held(found.context, sid)
         assert pauses.held(found.context, "01930005-0000-7000-8000-000000000099")  # not seen by a run yet
         assert fallback.run_lock(found.context) is fallback.run_lock(found.context)
         assert not pauses.held(None, sid)

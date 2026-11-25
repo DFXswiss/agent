@@ -16,7 +16,8 @@
 - `PUT /v1/me/settings`: `model_access`, `model_id` (null or a model of `/v1/config.models` allowed for the chosen
   access kind; `auto` allows every listed model) and `locale` (02-data-model.md section 2.1); optionally `fallback`
   `{own_to_dfx, operator_to_platform}` (ADR-081 section 1, KOR-50), without it the stored fallback settings stay. The
-  settings of `GET /v1/me` and the answer of the PUT always carry `fallback` (defaults false/true).
+  settings of `GET /v1/me` and the answer of the PUT always carry `fallback` (defaults false/true). A changed
+  fallback sends `reconcile {}` to the devices running the user's live sessions after the commit.
 The read log of the GETs is written by the pipeline (`read_resource`).
 """
 
@@ -46,6 +47,7 @@ from agent_hub.http.routing import HubRouter
 from agent_hub.me import recovery_code
 from agent_hub.me.recovery_code import RecoveryAssertion
 from agent_hub.notifications.rules import Notification, publish_rows
+from agent_hub.stream.publish import hint
 
 router = HubRouter()
 
@@ -59,6 +61,10 @@ class BundlePut(Strict):
     bundle_ct: BundleCt
     new_recovery_id: B64u16Id | None = None
     assertion: RecoveryAssertion | None = None
+
+
+DEFAULT_FALLBACK = (False, True)
+"""`(own_to_dfx, operator_to_platform)` without stored settings (ADR-081 section 1)."""
 
 
 class Fallback(Strict):
@@ -263,6 +269,11 @@ def put_settings(context: HubContext, user_id: uuid.UUID, settings: Settings) ->
     fallback = settings.fallback
     own, operator = (None, None) if fallback is None else (fallback.own_to_dfx, fallback.operator_to_platform)
     with transaction(context.pool) as connection:
+        before = connection.execute(
+            "SELECT fallback_own_to_dfx, fallback_operator_to_platform FROM hub.user_settings WHERE user_id = %s"
+            " FOR UPDATE",
+            (user_id,),
+        ).fetchone()
         row = connection.execute(
             "INSERT INTO hub.user_settings (user_id, model_access, model_id, locale, updated_at, fallback_own_to_dfx,"
             " fallback_operator_to_platform) VALUES (%s, %s, %s, %s, %s, COALESCE(%s, false), COALESCE(%s, true))"
@@ -274,6 +285,19 @@ def put_settings(context: HubContext, user_id: uuid.UUID, settings: Settings) ->
             (user_id, settings.model_access, settings.model_id, settings.locale, now, own, operator, own, operator),
         ).fetchone()
         body = settings_body(cast(tuple[Any, ...], row))
+        after = (body["fallback"]["own_to_dfx"], body["fallback"]["operator_to_platform"])
+        devices = (
+            []
+            if (DEFAULT_FALLBACK if before is None else tuple(before)) == after
+            else [
+                uuid.UUID(str(found[0]))
+                for found in connection.execute(
+                    "SELECT DISTINCT device_id FROM hub.session WHERE owner_id = %s AND device_id IS NOT NULL"
+                    " AND state NOT IN ('stopped', 'failed') ORDER BY device_id",
+                    (user_id,),
+                ).fetchall()
+            ]
+        )
         append_audit(
             connection,
             AuditRow(
@@ -290,6 +314,8 @@ def put_settings(context: HubContext, user_id: uuid.UUID, settings: Settings) ->
                 },
             ),
         )
+    for device in devices:  # the runners deliver the new fallback with the owner's sessions (KOR-50)
+        hint(device, "reconcile")
     return body
 
 

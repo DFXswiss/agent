@@ -52,7 +52,7 @@ def management_file(tmp_path: Path) -> Path:
 
 
 def test_the_names_are_known() -> None:
-    assert {"OPENROUTER_MANAGEMENT_KEY_FILE", "DFX_KEY_MAX_HEADROOM_USD"} <= set(NAMES)
+    assert {"OPENROUTER_MANAGEMENT_KEY_FILE", "DFX_KEY_MAX_HEADROOM_USD", "DFX_KEY_MAX_PER_ORG"} <= set(NAMES)
 
 
 def test_defaults(base: dict[str, str]) -> None:
@@ -121,3 +121,15 @@ def test_an_invalid_headroom_cap_is_refused(base: dict[str, str], text: str) -> 
 
 def test_usd_text() -> None:
     assert [usd_text(m) for m in (5_000_000, 2_500_000, 1, 0, 12_340_000)] == ["5", "2.5", "0.000001", "0", "12.34"]
+
+
+def test_the_live_keys_per_organization(base: dict[str, str]) -> None:
+    assert load(base).dfx_key_max_per_org == 50
+    base["AGENT_RUNNER_DFX_KEY_MAX_PER_ORG"] = "3"
+    cfg = load(base)
+    assert cfg.dfx_key_max_per_org == 3
+    assert environment(cfg)["AGENT_RUNNER_DFX_KEY_MAX_PER_ORG"] == "3"
+    assert load(environment(cfg)) == cfg
+    for bad in ("0", "100001", "x"):
+        base["AGENT_RUNNER_DFX_KEY_MAX_PER_ORG"] = bad
+        refused(base, "DFX_KEY_MAX_PER_ORG")

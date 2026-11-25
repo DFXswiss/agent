@@ -312,6 +312,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("github_identity", U),  # KOR-47, migration 0022
         ("wait_until", TS),  # KOR-50, migration 0025 (ADR-081)
         ("dfx_choice", BOOL),
+        ("wait_at", TS),
     ],
     # 2.4.2 context checkpoints and pull-request links (KOR-33, ADR-072)
     "context_object": [

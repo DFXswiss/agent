@@ -308,10 +308,8 @@ async def _own_step(
     known = await _limits(env)
     if isinstance(status, str):
         walk.unusable = True
-        recheck = _now(env, known) + limits.RECHECK_S
-        if known is not None:
-            recheck = known.recheck(f"{limits.own_key(desired.owner_id)}:{kind}", recheck - limits.RECHECK_S)
-        walk.releases.append((recheck, None))
+        assert known is not None  # without a daemon context no own credential is known (`owner_status`)
+        walk.releases.append((known.recheck(f"{limits.own_key(desired.owner_id)}:{kind}", known.wall()), None))
         return
     secret, version = status
     choice = _select(env, replace(base, preference=kind, credentials=frozenset({kind})))
