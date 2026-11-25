@@ -2,8 +2,9 @@
 // dashboard): the provider rows – "detailed" opens all of them, "sort by used" orders them by the used share of their
 // week – and below the table of every subscription: provider, account, name, status, note, use, listed, plan, used,
 // reset, device, checked, changed. Only the user reads it (the data are the user's own, `loadSubscriptions`).
-// "Add subscription" and "Log in now" are the places where the login dialogs hang in (KOR-69); until then they name the
-// agent tool's command.
+// "Add subscription" and "Log in now" open the login dialogs of KOR-69 (ADR-090 section 2: the login runs on a
+// platform device, the user opens the link and pastes the code); name, note, use, log out and remove are in the
+// settings section "Claude subscriptions".
 import { useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { providerGroups, providerName, type SubscriptionRow } from '../../../core/subscriptions/subscriptions';
@@ -11,6 +12,8 @@ import { useNow } from '../../countdown/useNow';
 import { useStore } from '../../hooks/useStore';
 import { useAppEnv } from '../../shell/context';
 import { loginTarget } from '../../shell/guard';
+import { AddSubscription } from '../../subscriptions/AddSubscription';
+import { SubscriptionLogin } from '../../subscriptions/SubscriptionLogin';
 import { useReason } from '../../settings/sections/github/reason';
 import { ProviderList, percent, TICK_MS, useTexts } from '../../subscriptions/ProviderList';
 import { useSubscriptions } from '../../subscriptions/useSubscriptions';
@@ -42,9 +45,17 @@ function useText(row: SubscriptionRow): string {
   return parts.length === 0 ? t('subscriptions.use.measure') : parts.join(', ');
 }
 
-function Row({ row, now }: { readonly row: SubscriptionRow; readonly now: number }) {
+function Row({
+  row,
+  now,
+  onChanged,
+}: {
+  readonly row: SubscriptionRow;
+  readonly now: number;
+  readonly onChanged: () => void;
+}) {
   const { t, age, until, windowName, rowName } = useTexts();
-  const [hint, setHint] = useState(false);
+  const [login, setLogin] = useState(false);
   const windows = row.reading?.windows ?? [];
   const cell = 'px-2 py-1';
   return (
@@ -54,20 +65,25 @@ function Row({ row, now }: { readonly row: SubscriptionRow; readonly now: number
       <td className={cell}>{rowName(row)}</td>
       <td className={cell} data-testid="subscriptions.row.status">
         {t(`subscriptions.status.${row.status}`, { code: row.code ?? '' })}
-        {row.status === 'not_logged_in' && (
+        {row.status === 'not_logged_in' && row.source === 'record' && !row.primary && !login && (
           <button
             type="button"
             className="ml-2 underline"
-            onClick={() => setHint(!hint)}
+            onClick={() => setLogin(true)}
             data-testid="subscriptions.row.login"
           >
             {t('subscriptions.login')}
           </button>
         )}
-        {hint && (
-          <span className="block text-gray-700" data-testid="subscriptions.row.login-hint">
-            {t('subscriptions.login.hint')}
-          </span>
+        {login && (
+          <SubscriptionLogin
+            input={{ subscriptionId: row.key, mode: 'manual' }}
+            onDone={() => {
+              setLogin(false);
+              onChanged();
+            }}
+            onClose={() => setLogin(false)}
+          />
         )}
       </td>
       <td className={cell}>{row.note ?? '—'}</td>
@@ -105,7 +121,15 @@ function Row({ row, now }: { readonly row: SubscriptionRow; readonly now: number
   );
 }
 
-function Table({ rows, now }: { readonly rows: readonly SubscriptionRow[]; readonly now: number }) {
+function Table({
+  rows,
+  now,
+  onChanged,
+}: {
+  readonly rows: readonly SubscriptionRow[];
+  readonly now: number;
+  readonly onChanged: () => void;
+}) {
   const { t } = useTexts();
   return (
     <div
@@ -128,7 +152,7 @@ function Table({ rows, now }: { readonly rows: readonly SubscriptionRow[]; reado
         </thead>
         <tbody>
           {rows.map((row) => (
-            <Row key={row.key} row={row} now={now} />
+            <Row key={row.key} row={row} now={now} onChanged={onChanged} />
           ))}
         </tbody>
       </table>
@@ -193,23 +217,29 @@ export function SubscriptionsScreen() {
             </label>
           </div>
           <ProviderList groups={providerGroups(rows, sorted)} now={now} detailed={detailed} />
-          <Table rows={rows} now={now} />
+          <Table rows={rows} now={now} onChanged={reload} />
         </>
       )}
       {rows !== null && (
         <div className="flex flex-col gap-1">
-          <button
-            type="button"
-            className="min-h-11 self-start rounded border border-gray-400 px-4"
-            onClick={() => setAdding(!adding)}
-            data-testid="subscriptions.add"
-          >
-            {t('subscriptions.add')}
-          </button>
+          {!adding && (
+            <button
+              type="button"
+              className="min-h-11 self-start rounded border border-gray-400 px-4"
+              onClick={() => setAdding(true)}
+              data-testid="subscriptions.add"
+            >
+              {t('subscriptions.add')}
+            </button>
+          )}
           {adding && (
-            <p className="text-sm text-gray-700" data-testid="subscriptions.add-hint">
-              {t('subscriptions.add.hint')}
-            </p>
+            <AddSubscription
+              onAdded={() => {
+                setAdding(false);
+                reload();
+              }}
+              onClose={() => setAdding(false)}
+            />
           )}
         </div>
       )}

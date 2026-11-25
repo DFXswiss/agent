@@ -97,8 +97,8 @@ const noToken = () => expect(document.body.innerHTML).not.toContain(TOKEN);
 describe('SubscriptionManager', () => {
   it('adds a subscription and logs it in with the link and the code', async () => {
     const { hub, d } = await page();
-    expect(await screen.findByTestId('subscriptions.empty')).toBeVisible();
-    fireEvent.click(screen.getByTestId('subscriptions.add'));
+    expect(await screen.findByTestId('submanage.empty')).toBeVisible();
+    fireEvent.click(screen.getByTestId('submanage.add'));
     const start = screen.getByTestId('subadd.start');
     expect(start).toBeDisabled();
     fireEvent.change(screen.getByTestId('subadd.name'), { target: { value: 'Team 2' } });
@@ -119,21 +119,21 @@ describe('SubscriptionManager', () => {
 
   it('closes the form, reports a missing device and a refused start', async () => {
     const { d } = await page({ features: [] });
-    fireEvent.click(await screen.findByTestId('subscriptions.add'));
+    fireEvent.click(await screen.findByTestId('submanage.add'));
     fireEvent.click(screen.getByTestId('subadd.close'));
-    fireEvent.click(screen.getByTestId('subscriptions.add'));
+    fireEvent.click(screen.getByTestId('submanage.add'));
     fireEvent.change(screen.getByTestId('subadd.name'), { target: { value: 'X' } });
     fireEvent.click(screen.getByTestId('subadd.start'));
     expect(await screen.findByTestId('sublogin.no-device')).toBeVisible();
     fireEvent.click(screen.getByTestId('sublogin.close'));
-    expect(screen.getByTestId('subscriptions.add')).toBeVisible();
+    expect(screen.getByTestId('submanage.add')).toBeVisible();
     expect(d.sent).toHaveLength(0);
   });
 
   it('retries a refused start', async () => {
     const { d } = await page();
     d.refuse(new HubError('rate_limited', 429));
-    fireEvent.click(await screen.findByTestId('subscriptions.add'));
+    fireEvent.click(await screen.findByTestId('submanage.add'));
     fireEvent.change(screen.getByTestId('subadd.name'), { target: { value: 'X' } });
     fireEvent.click(screen.getByTestId('subadd.start'));
     expect(await screen.findByTestId('sublogin.failed')).toHaveAttribute('data-code', 'rate_limited');
@@ -150,17 +150,17 @@ describe('SubscriptionManager', () => {
       return { subscriptions: [] };
     });
     mount(t, [{ path: '/s', element: <SubscriptionManager /> }], '/s');
-    expect(await screen.findByTestId('subscriptions.failed')).toHaveAttribute('data-code', 'unavailable');
+    expect(await screen.findByTestId('submanage.failed')).toHaveAttribute('data-code', 'unavailable');
     fail = false;
-    fireEvent.click(screen.getByTestId('subscriptions.retry'));
-    expect(await screen.findByTestId('subscriptions.empty')).toBeVisible();
+    fireEvent.click(screen.getByTestId('submanage.retry'));
+    expect(await screen.findByTestId('submanage.empty')).toBeVisible();
   });
 });
 
 async function withCard(extra: Parameters<SubHub['add']>[2] = {}, content: unknown = body({ name: 'Team' })) {
   const found = await page();
   await found.hub.add(A, content, { reading: reading(10), ...extra });
-  fireEvent.click(await screen.findByTestId('subscriptions.add'));
+  fireEvent.click(await screen.findByTestId('submanage.add'));
   fireEvent.click(screen.getByTestId('subadd.close'));
   return found;
 }
@@ -169,7 +169,7 @@ describe('SubscriptionCard', () => {
   it('logs a subscription in that is not logged in, and in again', async () => {
     const { hub, d } = await page();
     await hub.add(A, { email: null, kind: 'setup_token', name: 'Out' });
-    fireEvent.click(await screen.findByTestId('subscriptions.add'));
+    fireEvent.click(await screen.findByTestId('submanage.add'));
     fireEvent.click(screen.getByTestId('subadd.close'));
     const card = await screen.findByTestId(`subcard.${A}`);
     expect(within(card).getByTestId('subcard.status')).toHaveAttribute('data-status', 'not_logged_in');
@@ -237,7 +237,7 @@ describe('SubscriptionCard', () => {
     expect(await screen.findByTestId('subcard.failed')).toHaveAttribute('data-code', 'forbidden');
     hub.failDelete = null;
     fireEvent.click(within(card).getByTestId('subcard.remove.yes'));
-    expect(await screen.findByTestId('subscriptions.empty')).toBeVisible();
+    expect(await screen.findByTestId('submanage.empty')).toBeVisible();
   });
 
   it('shows the primary and an unverifiable subscription without actions', async () => {
@@ -245,7 +245,7 @@ describe('SubscriptionCard', () => {
     await hub.add(A, body(), { primary: true });
     const other = '0190f000-0000-7000-8000-0000000000c7';
     await hub.add(other, body(), { owner: ORG });
-    fireEvent.click(await screen.findByTestId('subscriptions.add'));
+    fireEvent.click(await screen.findByTestId('submanage.add'));
     fireEvent.click(screen.getByTestId('subadd.close'));
     const primary = await screen.findByTestId(`subcard.${A}`);
     expect(primary).toHaveTextContent('Own sessions');
@@ -262,7 +262,7 @@ describe('settings section', () => {
     const { section, SubscriptionLoginsSection } = await import('../../src/ui/settings/sections/subscription-logins');
     expect(section).toMatchObject({ id: 'subscription-logins', titleKey: 'subscription-login.title' });
     mount(t, [{ path: '/s', element: <SubscriptionLoginsSection /> }], '/s');
-    expect(await screen.findByTestId('subscriptions.empty')).toBeVisible();
+    expect(await screen.findByTestId('submanage.empty')).toBeVisible();
     expect(screen.getByTestId('subscription-logins.section')).toHaveTextContent('platform device');
   });
 });

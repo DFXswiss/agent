@@ -15,5 +15,5 @@ test('a new user finds the card on the home page and the way to add a subscripti
   await expect(page.getByTestId('subscriptions.page')).toBeVisible();
   await expect(page.getByTestId('subscriptions.empty')).toBeVisible();
   await page.getByTestId('subscriptions.add').click();
-  await expect(page.getByTestId('subscriptions.add-hint')).toContainText('agent-platform subscriptions add');
+  await expect(page.getByTestId('subadd.name')).toBeVisible();
 });

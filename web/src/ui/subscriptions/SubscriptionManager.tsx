@@ -35,31 +35,31 @@ export function SubscriptionManager() {
     reload();
   }, [reload]);
   return (
-    <section className="flex flex-col gap-3" data-testid="subscriptions.manager">
+    <section className="flex flex-col gap-3" data-testid="submanage.manager">
       {adding ? (
         <AddSubscription onAdded={added} onClose={() => setAdding(false)} />
       ) : (
-        <button type="button" className={PRIMARY} onClick={() => setAdding(true)} data-testid="subscriptions.add">
+        <button type="button" className={PRIMARY} onClick={() => setAdding(true)} data-testid="submanage.add">
           {t('subscription-login.add')}
         </button>
       )}
       {state.kind === 'loading' && (
-        <p aria-live="polite" data-testid="subscriptions.loading">
+        <p aria-live="polite" data-testid="submanage.loading">
           {t('subscription-login.loading')}
         </p>
       )}
       {state.kind === 'error' && (
         <>
-          <p role="alert" data-testid="subscriptions.failed" data-code={state.code}>
+          <p role="alert" data-testid="submanage.failed" data-code={state.code}>
             {t('subscription-login.load-failed', { reason: reason(state.code) })}
           </p>
-          <button type="button" className={BUTTON} onClick={reload} data-testid="subscriptions.retry">
+          <button type="button" className={BUTTON} onClick={reload} data-testid="submanage.retry">
             {t('subscription-login.retry')}
           </button>
         </>
       )}
       {state.kind === 'ready' && state.items.length === 0 && (
-        <p data-testid="subscriptions.empty">{t('subscription-login.empty')}</p>
+        <p data-testid="submanage.empty">{t('subscription-login.empty')}</p>
       )}
       {state.kind === 'ready' &&
         state.items.map((item) => <SubscriptionCard key={item.id} item={item} onChanged={reload} />)}
