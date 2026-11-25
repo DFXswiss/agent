@@ -584,7 +584,7 @@ def test_exec_obtains_a_vm_implicitly(world: World) -> None:
 
 
 def test_without_the_hub_lease_exec_and_browse_are_refused_and_the_other_tools_go_on(world: World) -> None:
-    """ADR-086 section 4: no command with internet egress, and no implicit VM, after the failover time without hub."""
+    """ADR-087 section 4: no command with internet egress, and no implicit VM, after the failover time without hub."""
     held = [False]
 
     async def body(vms: WorkVms) -> tuple[list[str], dict[str, Any]]:

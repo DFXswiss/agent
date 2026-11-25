@@ -526,7 +526,7 @@ def _device_audit(
 
 def complete_checkpoint(connection: Connection, task_id: str, object_id: str) -> dict[str, Any] | None:
     """The checkpoint `object_id` of the task in the form of `newest` while it is complete (a pinned checkpoint,
-    ADR-086 section 3), None once it is gone."""
+    ADR-087 section 3), None once it is gone."""
     row = connection.execute(
         "SELECT o.id, o.session_id, o.created_at, o.size FROM hub.context_object o WHERE o.task_id = %s AND o.id = %s"
         " AND o.state = 'complete' AND o.kind = 'context'",

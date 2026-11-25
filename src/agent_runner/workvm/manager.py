@@ -24,7 +24,7 @@
   object in the background (`capture`, injected); its final `workvm.run` event names the log, and the teardown of its
   VM waits for the capture (at most `CAPTURE_TIMEOUT`).
 - **credit**: on a platform device an exhausted organization gets no new VM (`credit_exhausted`).
-- **lease** (ADR-086 section 4): `workvm_exec` and `workvm_browse` (and the implicit VM they start) reach the internet
+- **lease** (ADR-087 section 4): `workvm_exec` and `workvm_browse` (and the implicit VM they start) reach the internet
   without a hub registration; they are refused `unavailable` (`NO_LEASE`) while the runner has not reached the hub for
   longer than the failover time (`Deps.hub_lease`, `sync.lease`). The other tools and running jobs go on.
 
@@ -174,7 +174,7 @@ class Deps:
     capture: Callable[[WorkVm, Identity, str, int], Awaitable[dict[str, Any] | None]] | None = None
     """Stores the output of a final job (`vm, identity, job_id, output_bytes`) as a log; returns its `log_ref`."""
     hub_lease: Callable[[], bool] = field(default_factory=lambda: _always)
-    """The runner's lease of the tools with internet egress (`sync.lease.held`, ADR-086 section 4)."""
+    """The runner's lease of the tools with internet egress (`sync.lease.held`, ADR-087 section 4)."""
 
 
 def _tail(text: str, limit: int) -> str:

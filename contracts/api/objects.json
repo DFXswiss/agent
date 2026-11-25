@@ -482,7 +482,7 @@
               "type": "null"
             }
           ],
-          "description": "set while the session's device has failed (ADR-086 section 2); an ended session keeps it. Absent from older hubs."
+          "description": "set while the session's device has failed (ADR-087 section 2); an ended session keeps it. Absent from older hubs."
         },
         "failover_of": {
           "anyOf": [
@@ -493,7 +493,7 @@
               "type": "null"
             }
           ],
-          "description": "the lost session this one continues after a device failure (ADR-086 section 3). Absent from older hubs."
+          "description": "the lost session this one continues after a device failure (ADR-087 section 3). Absent from older hubs."
         }
       },
       "required": [

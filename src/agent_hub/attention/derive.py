@@ -112,7 +112,7 @@ SCHEDULING_REASONS: Mapping[str, Outcome] = MappingProxyType(
         "device_offline": (BLOCKED, "device_unreachable"),
         "placement_offline": (BLOCKED, "device_unreachable"),
         "credit_exhausted": (NEEDS_DECISION, "credit_empty"),
-        # the main session's device failed (ADR-086): it continues there or on another device by itself
+        # the main session's device failed (ADR-087): it continues there or on another device by itself
         "device_failed": (BLOCKED, "device_failed"),
         # waiting for capacity or for the key of an organization device: quiet, it goes on by itself
         "capacity_exhausted": (WORKING, "queued"),

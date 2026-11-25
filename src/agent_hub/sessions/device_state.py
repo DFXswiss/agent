@@ -9,7 +9,7 @@
     for lack of capacity before it ever worked ran no agent and is skipped: the session before it counts (KOR-14);
   - `context`: the newest complete context checkpoint of the task's main sessions `{object_id, session_id,
     created_at, size}` (`agent_hub.contexts.store.newest`) - for the successor of a session lost with its device the
-    checkpoint the hub pinned at the move while it is complete (`session.restore_object`, ADR-086 section 3) -, from
+    checkpoint the hub pinned at the move while it is complete (`session.restore_object`, ADR-087 section 3) -, from
     which the runner restores the same conversation
     on whatever VM or device it starts the session (03-api.md section 4.6.3, ADR-072 sections 5 and 7). Old runners
     ignore the field; without it a new runner reports the emergency path.
@@ -55,7 +55,7 @@ def _resume_from(request: StateRequest, task_id: str, session_id: str) -> str | 
 
 
 def _pinned(request: StateRequest, task_id: str, object_id: object) -> dict[str, Any] | None:
-    """The checkpoint the hub pinned for a successor after a device failure while it is complete (ADR-086 section 3)."""
+    """The checkpoint the hub pinned for a successor after a device failure while it is complete (ADR-087 section 3)."""
     if object_id is None:
         return None
     return contexts.complete_checkpoint(request.connection, task_id, str(object_id))

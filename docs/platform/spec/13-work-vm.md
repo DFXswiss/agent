@@ -384,14 +384,14 @@ and exit code are kept outside the VM. The work VM stays unrestricted (E-08).
   at most 300 s), the VM deleted (`run_ended`, or the cancel reason), then the row and the final event written.
 - `runner.test_run` (migration 0022) keeps every run (`running` until it ended, then its result). After a restart every
   run still `running` ends `error` (`restart`) with its final event, and the pipeline fails the operation found
-  `executing` (`timeout`): a run is never executed twice. The log stays (ADR-086 §5): the daemon task `workvm` first
+  `executing` (`timeout`): a run is never executed twice. The log stays (ADR-087 §5): the daemon task `workvm` first
   takes the live VMs, then reconciles the runs, then deletes the VMs it took (a VM obtained meanwhile stays). For a run
   whose VM is still `running`, the newest job of the VM with the run's command is killed (`KILL`), its tail and
   complete output are kept as in a run's `finally` (log of kind `log`, `ref` = the run ID, at most 300 s), the result
   and the final event carry `log`, `tail` and `summary`, and only then the VM is deleted (`restart`). A VM that is
   gone or not running, a job that is not found and a failed capture leave the run without log, as before. Log line
   `runner.testrun ended run_id= state=error reason=restart logged=`.
-- A run of a session on a device that failed (ADR-086 §3.3) is ended by the hub: the operation `test.run` ends
+- A run of a session on a device that failed (ADR-087 §3.3) is ended by the hub: the operation `test.run` ends
   `failed` with the error code `device_failed`. The platform does not run it again; the successor session is told
   how many runs were cancelled (05-runner.md §6.6) and starts them again in a fresh VM when it needs their results.
 - Log line `runner.testrun ready run_id= ready_ms= workvm_id=` (the start time of a run VM, A9) and `runner.testrun

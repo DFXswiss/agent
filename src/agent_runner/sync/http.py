@@ -25,7 +25,7 @@ connection was reused and the class of the transport error (`describe()`), never
 
 `contact` is the wall-clock time (Unix seconds) of the last answer that verified (a 2xx answer or a verified
 refusal: the hub answered this device), initially the client's creation; the work VM lease reads it (`sync.lease`,
-ADR-086 section 4). Wall-clock time, because a monotonic clock stands still while the host sleeps.
+ADR-087 section 4). Wall-clock time, because a monotonic clock stands still while the host sleeps.
 
 `hub_origin` is copied and adapted from the legacy `agent_cli.keys.hub_origin` (host line rules).
 """

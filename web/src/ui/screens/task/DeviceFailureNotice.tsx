@@ -1,4 +1,4 @@
-// The device failure notice of a task (ADR-086 sections 2, 3 and 6, KOR-58): while the current main session is
+// The device failure notice of a task (ADR-087 sections 2, 3 and 6, KOR-58): while the current main session is
 // interrupted (its device failed while it was active and the session has not ended), a visible notice names since when
 // the device is unreachable and that the task continues by itself – once the device is back or another suitable
 // device can take it over; a task pinned to that device offers "Choose automatically" to writers (E-05,

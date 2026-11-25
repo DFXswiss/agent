@@ -1,4 +1,4 @@
-// The device failure of a task's current main session (ADR-086 sections 2, 3 and 6, KOR-58): the hub reports on every
+// The device failure of a task's current main session (ADR-087 sections 2, 3 and 6, KOR-58): the hub reports on every
 // `session_row` `interrupted_at` (the session's device failed while it was active; the session continues there or on
 // another device by itself) and `failover_of` (this session continues the session lost to a device failure, from the
 // last synchronised checkpoint). Older hubs send neither field, so anything missing or malformed means "nothing to

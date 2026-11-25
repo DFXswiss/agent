@@ -1,6 +1,6 @@
-# KOR-58 – Decisions (device failure, ADR-086)
+# KOR-58 – Decisions (device failure, ADR-087)
 
-Small decisions taken while building ADR-086; architecture-relevant ones are in the ADR itself.
+Small decisions taken while building ADR-087; architecture-relevant ones are in the ADR itself.
 
 1. **Deadline 300 s, at least twice the online window.** Short outages and runner restarts (seconds to a minute)
    never move anything; a smaller setting stops the hub at start (fail-closed like every setting). The deadline counts
@@ -31,7 +31,7 @@ Small decisions taken while building ADR-086; architecture-relevant ones are in 
 10. **Locks without waiting** (findings 1, 15): task, failed devices and sessions are taken `FOR UPDATE SKIP LOCKED`
     after the audit lock; a device that is connecting or a session a `control` holds is handled at the next sweep.
     After a move the lost device gets `reconcile`.
-11. **Not changed (documented in ADR-086, Consequences):** liveness stays the device WebSocket (finding 14; a socket
+11. **Not changed (documented in ADR-087, Consequences):** liveness stays the device WebSocket (finding 14; a socket
     broken for five minutes is a fault, and the moved session is stopped on the next reconcile); VMs of a failed device
     still count in `AGENT_HUB_VMS_PER_WG` until it is back (finding 11; default 100 per workgroup); successors of
     several workgroups can overbook a device, which then refuses and ADR-049 re-places (finding 16); consumption of a
@@ -45,5 +45,5 @@ Small decisions taken while building ADR-086; architecture-relevant ones are in 
     a loss of the whole host it is gone (finding 10). Incremental log upload during a run was not built (E-25).
 15. **Browser sessions (KOR-44, merged while this package was built):** a `browser.*` operation of the lost session that
     is `accepted` or `executing` ends `failed`/`device_failed` like any other; the browser VM of the failed device goes
-    with it, and the successor opens a new browser when it repeats the interrupted instruction (ADR-086 §5). The record
+    with it, and the successor opens a new browser when it repeats the interrupted instruction (ADR-087 §5). The record
     of the earlier browser session stays.

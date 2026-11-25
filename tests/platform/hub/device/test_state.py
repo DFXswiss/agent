@@ -28,7 +28,7 @@ EMPTY_SECTIONS: dict[str, Any] = {
     "github_defaults": [],
     "model_fallback": {"api": 1},  # KOR-50; dfx_keys only for the issuer, dfx_key_held only for org devices
     "prompt_queue": {"via_agent": [], "withdrawn": []},
-    "failover_seconds": 300,  # ADR-086
+    "failover_seconds": 300,  # ADR-087
     "failovers": [],
 }
 

@@ -13,7 +13,7 @@ decisions/KOR-33.md, review KOR-33 nos. 1, 3, 6, 10, 16-18, 20 and 22). Replaces
    sealed local object is enough, the upload is not awaited. When the source ran on another device, the restore
    reads `GET /v1/device/state` every `HUB_STEP_S` until the hub names a checkpoint of the source (`context`),
    at most `wait_s`. Either way it then continues with the newest checkpoint it has; when the wait ran out it is
-   `stale`, which the harness sentence and the audit say. **After a device failure** (ADR-086 section 3.5) the
+   `stale`, which the harness sentence and the audit say. **After a device failure** (ADR-087 section 3.5) the
    desired state names the session in `failovers {session_id, from_session, cancelled_runs}`: when `from_session` is
    the source, nothing is waited for (the failed device never sends that final checkpoint) and the hub's `context`
    (the checkpoint it pinned at the move) and the local cache are ordered as below. A malformed `failovers` entry is
@@ -220,7 +220,7 @@ def cancelled_text(count: int) -> str:
 
 def restored_line(restored: Restored, *, where: str, stale: bool, failover: Failover | None = None) -> str:
     """The one sentence about what changed (`restore.note` of the create request); `where` is `same_vm`, `other_vm`
-    or `other_device`; `failover` gives the variant after a device failure (ADR-086 sections 3.5 and 3.7: another
+    or `other_device`; `failover` gives the variant after a device failure (ADR-087 sections 3.5 and 3.7: another
     device, or this one after its restart; nothing was waited for, so it is never `stale`)."""
     if failover is not None:
         moved = (

@@ -8,7 +8,7 @@ allows), cached for `BOUNDARY_TTL` seconds. The boundary holds whether or not th
 without it the work VMs have no internet (`internet` false). Self mode needs no filter (refused outside `TEST_MODE`
 by the configuration).
 
-The lease of the tools with internet egress (`Deps.hub_lease`, ADR-086 section 4) is `sync.lease.held` over the
+The lease of the tools with internet egress (`Deps.hub_lease`, ADR-087 section 4) is `sync.lease.held` over the
 daemon's hub client and the last desired state.
 
 Test runs (`testruns_for`, KOR-43): the daemon's `testrun.TestRuns` over the same work VMs; logs of runs and of long

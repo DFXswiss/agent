@@ -15,7 +15,7 @@ The hub keeps no prompt table: everything is derived from rows it already has.
   whose first transition `requested` carries that reason, `agent_hub.sessions.retry`) takes them over (KOR-14); the
   same holds for a session that failed `model_access_unavailable` and the attempt the hub creates once the owner
   connected model access (`agent_hub.sessions.model_retry`, ADR-079), and for the successor after a device failure
-  (first transition `requested` with `device_failed`, `agent_hub.sessions.failover`). **Device failure (ADR-086
+  (first transition `requested` with `device_failed`, `agent_hub.sessions.failover`). **Device failure (ADR-087
   section 3):** a lost session whose turn was running hands on the prompt stored as its `redeliver_event_id` as well,
   first: the interrupted turn did not finish, so its successor gets that instruction again.
 - **Next session.** When the device itself ends the newest main session of an open task (`stopped`, not after a
@@ -67,7 +67,7 @@ MODEL_RETRY_REASON = "model_access_unavailable"
 """The reason of the first transition of the hub's attempt after the owner connected model access (ADR-079)."""
 RETRY_REASONS = (RETRY_REASON, MODEL_RETRY_REASON, DEVICE_FAILED)
 """First-transition reasons of a main session that takes over the undelivered prompts of the one before it, also when
-that one `failed`: the hub's attempts and the successor after a device failure (ADR-086 section 3)."""
+that one `failed`: the hub's attempts and the successor after a device failure (ADR-087 section 3)."""
 
 
 @dataclass(frozen=True)
@@ -118,7 +118,7 @@ class Main:
     """The hub's next attempt after a refusal for lack of capacity (`agent_hub.sessions.retry`) or after the owner
     connected model access (`agent_hub.sessions.model_retry`, ADR-079)."""
     redeliver: str | None = None
-    """The prompt the hub hands to its successor again after a device failure (`session.redeliver_event_id`, ADR-086
+    """The prompt the hub hands to its successor again after a device failure (`session.redeliver_event_id`, ADR-087
     section 3): before the undelivered ones."""
 
 
@@ -178,7 +178,7 @@ def holders(found: Mapping[str, Routed]) -> dict[str, tuple[Prompt, Routed]]:
 
 def was_delivered(found: Mapping[str, Routed], event_id: str) -> bool:
     """The prompt was delivered by some main session of `found` (a `routing` result): one that is pending again after
-    a device failure (ADR-086 section 3) can no longer be withdrawn."""
+    a device failure (ADR-087 section 3) can no longer be withdrawn."""
     return any(prompt.event_id == event_id for item in found.values() for prompt in item.delivered)
 
 

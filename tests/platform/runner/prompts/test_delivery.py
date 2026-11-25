@@ -261,7 +261,7 @@ def test_a_prompt_of_an_ended_session_moves_to_the_new_main_session(rig: Rig) ->
 
 
 def test_the_interrupted_prompt_of_a_lost_session_is_delivered_once_more_to_its_successor(rig: Rig) -> None:
-    """ADR-086 sections 3.4 and 3.7: the accepted prompt of the lost session goes to the successor the device state
+    """ADR-087 sections 3.4 and 3.7: the accepted prompt of the lost session goes to the successor the device state
     names in `failovers`, once; any other routing of an accepted prompt stays final."""
 
     async def body(env: Any) -> None:

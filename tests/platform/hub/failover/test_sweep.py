@@ -1,4 +1,4 @@
-"""U-HUB-failover (KOR-58, ADR-086): a device that stays away beyond `AGENT_HUB_DEVICE_FAILOVER_SECONDS` interrupts
+"""U-HUB-failover (KOR-58, ADR-087): a device that stays away beyond `AGENT_HUB_DEVICE_FAILOVER_SECONDS` interrupts
 its active sessions; the hub moves each task deterministically to another suitable device, ends the lost session
 (`stopped`/`device_failed`), hands its prompts on in order (the interrupted instruction first), fails its running test
 runs and never lets the lost device report for it again. Without another device the task waits and says so; a device

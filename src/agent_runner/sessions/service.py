@@ -16,7 +16,7 @@ of `sessions.extensions`.
     its start) fails with `device_shutdown`;
   * subagent sessions (depth > 0) belong to RUN-11 and are left alone.
 - `vm_unreachable(row)` (VM-02 health pass): the active sessions of the VM fail with `guest_unreachable`.
-- `vms_lost()` (task `guestlink`, once after the startup reconciliation of the VM area, ADR-086 section 3.7): a
+- `vms_lost()` (task `guestlink`, once after the startup reconciliation of the VM area, ADR-087 section 3.7): a
   session that has not ended and ran in a VM whose instance is gone (a host reboot or a deleted instance: its row is
   `deleted` or missing) fails with `guest_unreachable`, so the hub places a successor instead of showing the task
   working for ever. `idle` and `suspended` sessions run nothing and are left alone (their next prompt resumes them on

@@ -1,5 +1,5 @@
 """U-RUN-contexts: the successor of a session on a failed device restores the checkpoint the hub pinned at the move
-without waiting for a final checkpoint that never comes, and its note says so (ADR-086 section 3.5)."""
+without waiting for a final checkpoint that never comes, and its note says so (ADR-087 section 3.5)."""
 
 from __future__ import annotations
 

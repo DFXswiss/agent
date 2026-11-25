@@ -1,6 +1,6 @@
 # KOR-58 – contract changes
 
-ADR-027 section 3 (additive: every message that was valid stays valid). Device failure (ADR-086): the active sessions
+ADR-027 section 3 (additive: every message that was valid stays valid). Device failure (ADR-087): the active sessions
 of a device that stays away beyond `AGENT_HUB_DEVICE_FAILOVER_SECONDS` are interrupted, their tasks move to another
 suitable device and continue there from the last synchronised checkpoint.
 

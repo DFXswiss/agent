@@ -2,7 +2,7 @@
 // subagent children by `parent_session_id`, depth ≤ 2 – with state, "Triggered by <name>" (the person whose
 // instruction created the session, ADR-083), device (its label, `ui/screens/devices/labels.ts`), model and usage
 // (tokens and cost of the session, slice `usage`), "Cancelled because the device failed" for a session the hub ended
-// when it moved the task to another device (ADR-086 section 3); each node links to the session detail `/o/:org/s/:session`
+// when it moved the task to another device (ADR-087 section 3); each node links to the session detail `/o/:org/s/:session`
 // (terminal, session chat, children).
 //
 // Many sessions (ADR-086 section 1): the tree is flattened depth first (the depth indents a row) into a

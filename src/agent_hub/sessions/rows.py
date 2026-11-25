@@ -9,9 +9,9 @@ newest `task.meta` event of the task. A session row also names how a new main se
 conversation, null while nothing was reported; ADR-072 section 7). `github_identity` is the GitHub identity chosen
 for the session (ADR-078 section 3, null without a choice); `triggered_by` who triggered it (the author of the prompt
 a main session was created for, the triggering person of a child session's `subagent.request`, null when unknown;
-ADR-083 section 2). `interrupted_at` is set while the session's device has failed (ADR-086 section 2, null otherwise;
+ADR-083 section 2). `interrupted_at` is set while the session's device has failed (ADR-087 section 2, null otherwise;
 an ended session keeps it), `failover_of` names, for a session the hub started on another device after a device
-failure, the lost session it continues (ADR-086 section 3).
+failure, the lost session it continues (ADR-087 section 3).
 """
 
 from __future__ import annotations

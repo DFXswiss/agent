@@ -30,7 +30,7 @@ end, the task fails with the reason and shows "Retry"):
 
 The attempt is created after every pending prompt and after the refused session (`created_at` order of the routing);
 it is triggered by the author of the first prompt it takes over (`triggered_by`, ADR-083 section 2) and keeps the
-failover marks of a refused successor after a device failure (`failover_of`, `restore_object`, ADR-086 section 3).
+failover marks of a refused successor after a device failure (`failover_of`, `restore_object`, ADR-087 section 3).
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class Attempt:
     triggered_by: UUID
     failover: tuple[UUID | None, UUID | None] = (None, None)
     """`(failover_of, restore_object)` of the refused session: an attempt after a refused successor of a device
-    failure continues the same lost session from the same pinned checkpoint (ADR-086 section 3)."""
+    failure continues the same lost session from the same pinned checkpoint (ADR-087 section 3)."""
 
 
 def _newest(connection: Connection, task_id: UUID, limit: int) -> list[tuple[Any, ...]]:

@@ -1,6 +1,6 @@
 """Daemon task `workvm` (docs/platform/spec/13-work-vm.md sections 6.4, 7 and 12): reconciliation after a restart (the
 live VMs are taken first; the test runs still `running` end `error`, with the log of a run VM that still runs, which
-goes after its capture; then every VM taken goes, ADR-086 section 5), then every `INTERVAL` seconds (and at once after a
+goes after its capture; then every VM taken goes, ADR-087 section 5), then every `INTERVAL` seconds (and at once after a
 pool entry was assigned) the boundary guard (every live VM and pool entry goes when the host filter check fails), the
 idle pass of the platform browser sessions (`browser_idle`) and of the work VMs, the sweep of failed deletions and
 orphan instances, and the warm pool refill. The task ends at once on a device without work VMs."""

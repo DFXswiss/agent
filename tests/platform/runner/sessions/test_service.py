@@ -247,7 +247,7 @@ def test_vm_unreachable_fails_its_active_sessions(rig: Rig) -> None:
 
 
 def test_sessions_whose_vm_is_gone_after_the_vm_reconciliation_fail_once(rig: Rig) -> None:
-    """ADR-086 section 3.7: a host reboot took the VM; the session is reported `failed`, so the hub moves on."""
+    """ADR-087 section 3.7: a host reboot took the VM; the session is reported `failed`, so the hub moves on."""
 
     async def body(env: Any) -> None:
         found = await kit(env)

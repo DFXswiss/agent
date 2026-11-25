@@ -1,5 +1,5 @@
 {
-  "description": "Task states (02-data-model.md section 2.4): derived from the sessions except closed (user action). Reasons while scheduling (03-api.md section 4.6.2, ADR-075 section 7) with their category for the situation view; credit_exhausted (12-billing.md section 7); device_failed: the main session's device failed and the task waits to continue there or on another device (category interrupted, ADR-086).",
+  "description": "Task states (02-data-model.md section 2.4): derived from the sessions except closed (user action). Reasons while scheduling (03-api.md section 4.6.2, ADR-075 section 7) with their category for the situation view; credit_exhausted (12-billing.md section 7); device_failed: the main session's device failed and the task waits to continue there or on another device (category interrupted, ADR-087).",
   "states": [
     "scheduling",
     "starting",

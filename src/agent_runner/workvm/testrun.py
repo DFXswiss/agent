@@ -23,7 +23,7 @@
 
 After a restart (`reconcile`, before the work VM reconciliation deletes the VMs left over, `tasks.py`) every row
 still `running` ends `error` (`restart`) with its final event, and the pipeline fails the operation found `executing`
-(`timeout`): a run never runs twice. **The log stays** (ADR-086 section 5): when the run's VM is still `running`, its
+(`timeout`): a run never runs twice. **The log stays** (ADR-087 section 5): when the run's VM is still `running`, its
 job (the newest of the VM's jobs with the run's command) is killed and its output kept like in step 5 (`_keep`: tail,
 counts and the log of kind `log` with the run ID as `ref`, within `CAPTURE_TIMEOUT`), and the result and the final
 event carry `log`, `tail` and `summary`; only then is the VM deleted (`restart`). When the VM is gone, does not answer

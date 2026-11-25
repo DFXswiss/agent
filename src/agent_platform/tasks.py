@@ -25,7 +25,7 @@ assigns the first certified platform candidate (`ensure_device`, rule E-05, ADR-
 as the web client does. `task show` prints the device and VM of the main session and, while the task waits, its
 reason (`waiting`, a code of the closed list of `diagnose`).
 
-ADR-086 (device failure; twin of `web/src/core/sessions/failover.ts`): `task show` prints `device_failure` when the
+ADR-087 (device failure; twin of `web/src/core/sessions/failover.ts`): `task show` prints `device_failure` when the
 main session's row reports one - `interrupted_since` while the session's device failed and the session has not ended
 (the task waits `scheduling/device_failed` and continues there or on another device by itself), `continued_from` when
 the session continues a session lost to a device failure (from the last synchronised checkpoint), and `text` saying

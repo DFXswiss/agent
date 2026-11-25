@@ -2,7 +2,7 @@
 // a state badge (passed, failed, error, timed out, cancelled, running), exit code, duration, the time until the VM
 // was ready, the command, the summary ("Tests: 3 failed, 12 passed"), the reason of an error or cancellation (a run
 // whose operation the hub ended with `device_failed` while its own event still says running is shown cancelled because
-// the device failed, `shownRun`, ADR-086 section 5), the
+// the device failed, `shownRun`, ADR-087 section 5), the
 // output tail in a collapsed block and "Open log" for the complete encrypted output (`ui/logs`). The timeline keeps
 // only the latest event of a run (`core/chat/workvm.ts` `latestRuns`). A body that does not follow the contract is a
 // neutral row with a code, never content.

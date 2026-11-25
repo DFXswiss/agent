@@ -1,5 +1,5 @@
--- 0030_device_failure: interrupted sessions of a failed device and their successor on another device (KOR-58,
--- ADR-086; 02-data-model.md sections 2.1 and 2.4).
+-- 0031_device_failure: interrupted sessions of a failed device and their successor on another device (KOR-58,
+-- ADR-087; 02-data-model.md sections 2.1 and 2.4).
 --
 -- `device.offline_since` is the hub time at which the device went offline (its presence row was deleted by a
 -- disconnect or by the expiry job); a connect clears it. A device without presence row now counts as offline since

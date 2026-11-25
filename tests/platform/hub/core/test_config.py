@@ -92,7 +92,7 @@ def test_scheduler_settings(tmp_path: Path) -> None:
 
 
 def test_the_failover_deadline() -> None:
-    """ADR-086 section 1 (KOR-58): 300 s by default, at least twice the online window."""
+    """ADR-087 section 1 (KOR-58): 300 s by default, at least twice the online window."""
     assert load_config(hub_environ()).device_failover_seconds == 300
     config = load_config(hub_environ(AGENT_HUB_DEVICE_ONLINE_SECONDS="5", AGENT_HUB_DEVICE_FAILOVER_SECONDS="10"))
     assert (config.device_online_seconds, config.device_failover_seconds) == (5, 10)

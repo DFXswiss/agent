@@ -1,5 +1,5 @@
 """`POST /hub/failover` (`{"online_seconds": n | null, "failover_seconds": m | null}`): restarts the hub with
-`AGENT_HUB_DEVICE_ONLINE_SECONDS` and `AGENT_HUB_DEVICE_FAILOVER_SECONDS` (KOR-58, ADR-086 section 1; E2E-67: a device
+`AGENT_HUB_DEVICE_ONLINE_SECONDS` and `AGENT_HUB_DEVICE_FAILOVER_SECONDS` (KOR-58, ADR-087 section 1; E2E-67: a device
 failure within a test instead of 5 minutes). `null` (or a missing member) removes the setting, so the hub's default
 applies again (30 and 300 s). The values follow the hub's own rule - online 1..3600, failover 1..86400 and at least
 twice the online window that applies - so the hub never refuses to start; the runners send a heartbeat every 15 s, so

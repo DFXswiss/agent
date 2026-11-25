@@ -290,7 +290,7 @@ The home of an organization shows where people are needed, across all workgroups
   opens the model settings (§8.2); `credit_empty` says that the operator sets the balance and offers "Continue";
   `session_failed`, `guest_error`, `device_unreachable`, `no_capacity` offer "Try again" (a follow-up prompt starts a
   new main session); `device_failed` ("Interrupted – the computer failed" / "Unterbrochen – der Rechner ist
-  ausgefallen", `blocked`, ADR-086) offers "Choose a computer automatically" (`PUT /v1/tasks/{task}/placement` with
+  ausgefallen", `blocked`, ADR-087) offers "Choose a computer automatically" (`PUT /v1/tasks/{task}/placement` with
   nulls) only for a task pinned to the failed computer, otherwise nothing (the task moves by itself); `quota_choice` ("Your subscription is used up until 14:05 – continue with DFX access?") offers
   "Continue with DFX access" (`POST /v1/tasks/{task}/model-consent`) and, to the task's owner only, "Always" (the
   setting `fallback.own_to_dfx` of §8.2), with the note that DFX access is charged and that the task otherwise
@@ -355,7 +355,7 @@ with `task.set_title` (shown as "renamed by session").
   the button "Assign a device" for admins, which assigns the first candidate as in §4.3 step 1, else "An admin of the
   organization can assign one"), `platform_access_required` ("This organization has no execution device yet – the
   operator has been notified"). A chosen device that is busy or offline says so with its name. **Interrupted**
-  (category `interrupted`, ADR-086) – `device_failed` ("Interrupted: the device failed – the task continues once the
+  (category `interrupted`, ADR-087) – `device_failed` ("Interrupted: the device failed – the task continues once the
   device is back or another suitable device can take it over"); "Choose automatically" only while the task is
   pinned to the failed device.
 - The task header and the sessions tab name device and VM of the running session ("on <device> · vm-…").
@@ -419,7 +419,7 @@ A restored row with a reason the client does not know counts as a full restore (
 error catalog has texts for `quota_exceeded` (a checkpoint over its quota; shown only where a device error reaches a
 user).
 
-**Device failure** (KOR-58, ADR-086 §6). `DeviceFailureNotice` reads `interrupted_at` and `failover_of` of the current
+**Device failure** (KOR-58, ADR-087 §6). `DeviceFailureNotice` reads `interrupted_at` and `failover_of` of the current
 main session (`core/sessions/failover.ts`; missing or malformed: nothing is shown):
 
 | Field | Shown (en / de) |
@@ -541,7 +541,7 @@ truncated log says how much was kept. A work VM that starts implicitly (`workvm.
 open `workvm.request`; a stopped one (paused session) reads "stopped – starts again on the next use".
 A run whose own last event still says running while its operation is `failed` with `device_failed` is shown
 cancelled with "Reason: the device failed" / "Grund: Gerät ausgefallen" (the hub cannot write the encrypted run
-event; the operation state wins, ADR-086 §5).
+event; the operation state wins, ADR-087 §5).
 
 ### 5.4b Platform browser (KOR-44, ADR-085)
 

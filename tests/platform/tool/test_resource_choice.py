@@ -290,7 +290,7 @@ def test_task_create_with_placement_and_show(tool: Tool, hub: HubFake, account: 
 
 
 def test_task_show_prints_a_device_failure(tool: Tool, hub: HubFake, account: User) -> None:
-    """ADR-086 (KOR-58): the interruption of the main session and the session it continues; nothing from an old hub."""
+    """ADR-087 (KOR-58): the interruption of the main session and the session it continues; nothing from an old hub."""
     wg = hub.orgs[private_org(hub, account)].log.state.default_wg
     task = tool.run("task", "create", "--wg", wg, "--text", "Hi")[1]["task_id"]
     session, lost, since = uuid7(), uuid7(), "2026-11-25T05:40:00.000Z"

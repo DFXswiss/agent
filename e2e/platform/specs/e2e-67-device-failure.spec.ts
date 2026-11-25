@@ -1,4 +1,4 @@
-// E2E-67 (KOR-58, ADR-086; 03-api.md section 4.6.5): a device failure interrupts a cloud session, which continues on
+// E2E-67 (KOR-58, ADR-087; 03-api.md section 4.6.5): a device failure interrupts a cloud session, which continues on
 // another device. Short deadlines (`POST /hub/failover`: online window 30 s, failure deadline 60 s; the runners send a
 // heartbeat every 15 s) instead of 5 minutes.
 // 1. Two devices: two further runner instances, A and B, certified platform devices of a workgroup of their own. The
@@ -405,7 +405,7 @@ test('@E2E-67 @R-14.6 @needs-vm @needs-workvm a session of a failed device conti
         { timeout: 60_000 },
       )
       .toBe(0);
-    // The run A executed: the restarted runner ends it `error/restart` and keeps its log (ADR-086 section 5).
+    // The run A executed: the restarted runner ends it `error/restart` and keeps its log (ADR-087 section 5).
     await expect
       .poll(
         async () =>

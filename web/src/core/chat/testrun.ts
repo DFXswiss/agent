@@ -10,7 +10,7 @@
 //   is red;
 // - `shownRun`: state and reason as shown – a run whose own last event still says `running` while the hub ended its
 //   operation `failed` with `device_failed` is cancelled by the device failure (the hub cannot write the encrypted run
-//   event, so the operation state wins; ADR-086 section 5).
+//   event, so the operation state wins; ADR-087 section 5).
 import {
   type Check,
   count,

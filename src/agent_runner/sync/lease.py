@@ -1,4 +1,4 @@
-"""The runner's lease of the work VM tools (ADR-086 section 4; docs/platform/spec/05-runner.md section 6.6).
+"""The runner's lease of the work VM tools (ADR-087 section 4; docs/platform/spec/05-runner.md section 6.6).
 
 `workvm_exec` and `workvm_browse` reach the internet from the work VM without a hub registration. A device the hub
 cannot reach may have been declared failed and its sessions moved to another device; such a device must not go on

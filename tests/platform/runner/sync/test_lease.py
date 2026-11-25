@@ -1,5 +1,5 @@
 """U-RUN-sync (lease): the last verified hub answer and the failover time of the desired state decide whether the work
-VM tools with internet egress may run (ADR-086 section 4, 05-runner.md section 6.6)."""
+VM tools with internet egress may run (ADR-087 section 4, 05-runner.md section 6.6)."""
 
 from __future__ import annotations
 

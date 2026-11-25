@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/audit/session.interrupted.json",
   "title": "audit detail session.interrupted",
-  "description": "detail of audit rows with action session.interrupted: the hub marked an active session interrupted because its device stayed offline beyond AGENT_HUB_DEVICE_FAILOVER_SECONDS (ADR-086 section 2); offline_since is the hub time the device went offline. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "description": "detail of audit rows with action session.interrupted: the hub marked an active session interrupted because its device stayed offline beyond AGENT_HUB_DEVICE_FAILOVER_SECONDS (ADR-087 section 2); offline_since is the hub time the device went offline. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
   "type": "object",
   "properties": {
     "offline_since": {

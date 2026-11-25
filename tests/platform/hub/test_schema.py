@@ -133,7 +133,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("capacity", J),
         ("updated_at", TS),
         ("features", A),
-        ("offline_since", TS),  # KOR-58, migration 0030 (ADR-086)
+        ("offline_since", TS),  # KOR-58, migration 0031 (ADR-087)
     ],
     "device_presence": [("device_id", U), ("hub_instance", T), ("connected_at", TS), ("last_heartbeat_at", TS)],
     "device_enrollment": [("invite_id", T), ("device_id", U), ("request", J), ("created_at", TS), ("certified_at", TS)],
@@ -322,7 +322,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("dfx_choice", BOOL),
         ("wait_at", TS),
         ("triggered_by", U),  # KOR-46
-        ("interrupted_at", TS),  # KOR-58, migration 0030 (ADR-086)
+        ("interrupted_at", TS),  # KOR-58, migration 0031 (ADR-087)
         ("interruption_ended_at", TS),
         ("failover_of", U),
         ("redeliver_event_id", U),

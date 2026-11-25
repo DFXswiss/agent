@@ -14,7 +14,7 @@
   earlier stored prompt of its task that is not routed yet (a lost hint), so it is not overtaken. A routed prompt
   older than one the task already handed to a guest is stale and refused (`prompt_stale`); a prompt of a final row
   is never delivered again - except the interrupted instruction of a lost session, routed to its successor named in
-  the device state's `failovers` (ADR-086 section 3.4, `queue.route`) -; a write never reopens a final row (the
+  the device state's `failovers` (ADR-087 section 3.4, `queue.route`) -; a write never reopens a final row (the
   journal may end a row at any time).
 - **Queue of the hub** (ADR-083 section 3, `prompt_queue` of the device state, `hub_queue.py`): `via_agent` (also
   from the `prompt` hint) is kept with the routed rows in the routing's transaction (`queue.mark_via_agent`); every

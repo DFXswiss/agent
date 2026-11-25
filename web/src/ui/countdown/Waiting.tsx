@@ -1,7 +1,7 @@
 // The real reason of a waiting task in the countdown panel (06-web.md section 4.4, ADR-075 section 7) and the step the
 // user can take: "Assign a device" for admins while no device is assigned (the first platform candidate, as in step 1
 // of the send sequence; everyone else learns that an admin can assign one), and "Choose automatically" while the
-// chosen device is full or offline, or failed while the task is pinned to it (`device_failed`, ADR-086 section 3;
+// chosen device is full or offline, or failed while the task is pinned to it (`device_failed`, ADR-087 section 3;
 // `PUT /v1/tasks/{task}/placement` with nulls, writers). A chosen device is named.
 import { useState } from 'react';
 import type { TaskRow } from '../../core/store/slices/tasks';

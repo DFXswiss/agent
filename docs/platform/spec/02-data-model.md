@@ -92,7 +92,7 @@ timestamptz NULL and `session.dfx_choice` bool default false (the wait of a sess
 `model_quota_exhausted`) and `task_attention.wait_until` timestamptz NULL (the time a `quota_wait` / `quota_choice`
 record continues by itself).
 
-Device failure (KOR-58, ADR-086, migration `0030_device_failure`): `device.offline_since` (hub time the device went
+Device failure (KOR-58, ADR-087, migration `0031_device_failure`): `device.offline_since` (hub time the device went
 offline; cleared by a connect or heartbeat); `session.interrupted_at` (an active session of a failed device; it
 stays) and `interruption_ended_at` (its device was back before a move; interrupted while the first is newer),
 `failover_of` (the lost session a successor continues), `redeliver_event_id` (the prompt a lost session hands to its

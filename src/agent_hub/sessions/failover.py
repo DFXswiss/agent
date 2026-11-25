@@ -1,4 +1,4 @@
-"""The successor of a main session lost with its device (ADR-086 section 3).
+"""The successor of a main session lost with its device (ADR-087 section 3).
 
 Two writers create it: the job `failover.sweep` (`agent_hub.failover.sweep`) when it moves a task off a failed device,
 and the transitions (`agent_hub.sessions.transitions.apply`) when a device that comes back after a restart reports an

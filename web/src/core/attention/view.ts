@@ -4,7 +4,7 @@
 //   its category's generic text (a newer hub may add reasons);
 // - the next step of an entry (`actionOf`): an answer field, approve / decline, connect GitHub, assign a computer,
 //   the model settings, "Continue" after an empty balance, "Continue with DFX access" while the own subscription is
-//   used up (ADR-081 section 5), "Choose automatically" while a task pinned to a failed device waits for it (ADR-086
+//   used up (ADR-081 section 5), "Choose automatically" while a task pinned to a failed device waits for it (ADR-087
 //   section 3; an unpinned task continues on another device or there by itself), "Try again" only where a new attempt
 //   can help, nothing else for a refused action ("Open task" is always offered);
 // - the text of a reason that continues by itself at a time (`quota_wait`, `quota_choice`) names that time

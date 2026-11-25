@@ -252,7 +252,7 @@ def test_categories_cover_every_waiting_reason() -> None:
         "waiting_for_capacity",
         "waiting_for_device",
         "waiting_for_credit",
-        "interrupted",  # ADR-086: the main session's device failed
+        "interrupted",  # ADR-087: the main session's device failed
     }
     assert {"capacity_exhausted", "wg_vm_limit", "no_device", "platform_access_required"} <= set(CATEGORIES)
 

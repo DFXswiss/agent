@@ -1,4 +1,4 @@
-// U-WEB-core-session-failover (KOR-58, ADR-086 sections 2, 3 and 6): the interruption of a session by a device failure
+// U-WEB-core-session-failover (KOR-58, ADR-087 sections 2, 3 and 6): the interruption of a session by a device failure
 // and the continuation of a lost session, tolerant of hubs that do not send `interrupted_at` and `failover_of`.
 import { describe, expect, it } from 'vitest';
 import { deviceFailure } from '../../../src/core/sessions/failover';

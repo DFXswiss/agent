@@ -457,7 +457,7 @@ async def left_running(vms: WorkVms, *, command: str = "forever", job: str | Non
 
 
 def test_after_a_restart_the_log_of_a_run_whose_vm_still_runs_is_kept_before_the_vm_goes(world: World) -> None:
-    """ADR-086 section 5."""
+    """ADR-087 section 5."""
     world.scripts["forever"] = (PYTEST_FAIL, "running", None)
     world.scripts["other"] = (b"x", "exited", 0)
     captured: list[tuple[str, str, int, str]] = []

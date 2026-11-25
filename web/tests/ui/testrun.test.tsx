@@ -327,7 +327,7 @@ describe('test run cancelled by a device failure (KOR-58)', () => {
     expect(screen.queryByTestId('chat.test.run.reason')).toBeNull();
     act(() => putOperations(w.t.store, [operation(w.t, { state: 'executing' })]));
     expect(item).toHaveAttribute('data-state', 'running');
-    // the hub cannot write the encrypted run event: the operation state wins (ADR-086 section 5)
+    // the hub cannot write the encrypted run event: the operation state wins (ADR-087 section 5)
     act(() => putOperations(w.t.store, [operation(w.t, { state: 'failed', error_code: 'device_failed' })]));
     expect(item).toHaveAttribute('data-state', 'cancelled');
     expect(screen.getByTestId('chat.test.run.state')).toHaveTextContent('Cancelled');

@@ -1,4 +1,4 @@
-# ADR-086: Device failure – interrupted cloud sessions continue on another device, temporary VMs start again
+# ADR-087: Device failure – interrupted cloud sessions continue on another device, temporary VMs start again
 
 Status: Accepted (2026-11-25)
 
@@ -31,7 +31,7 @@ ADR-080 (test runs), ADR-083 (ordered prompt queue) and ADR-049 (the hub's next 
 - New setting `AGENT_HUB_DEVICE_FAILOVER_SECONDS` (default **300**, 1–86400, at least twice
   `AGENT_HUB_DEVICE_ONLINE_SECONDS`; a smaller value stops the hub at start, fail-closed like every setting). A short
   network wobble or a runner restart (seconds to a minute) never triggers anything.
-- `hub.device.offline_since` (migration `0030_device_failure`): set to the hub time when the device goes offline (its
+- `hub.device.offline_since` (migration `0031_device_failure`): set to the hub time when the device goes offline (its
   presence row is deleted by a disconnect or by the expiry job; only when it is not set yet), cleared when it
   connects. A device without presence row at migration time gets the migration time. Only hub times are used, never a
   device clock; a hub outage does not age devices (the expiry after a hub restart writes the restart time, and devices
@@ -148,7 +148,7 @@ For every task whose newest main session is live on a failed device (interrupted
 - `session_row`: `interrupted_at`, `failover_of`; `task_row` unchanged (state `scheduling`, reason `device_failed`).
   Audit actions `session.interrupted`, `session.interruption_ended`. Enums: session end reason `device_failed`,
   scheduling reason `device_failed` with category `interrupted`, attention reason `device_failed`, operation error code
-  `device_failed`. Device state: `failover_seconds` and `failovers`. Migration `0030_device_failure`.
+  `device_failed`. Device state: `failover_seconds` and `failovers`. Migration `0031_device_failure`.
 - Web and `agent-platform task show` show the interruption and the continuation. No new action: the move needs none,
   and "Automatic" placement and device assignment (ADR-075) are the existing ways out.
 

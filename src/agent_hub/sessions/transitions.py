@@ -27,7 +27,7 @@ caller's audit rows (lock order of `agent_hub.sessions.taskstate`). It
    with `model_access_unavailable` gets the same attempt when a model credential of the owner arrived while the start
    ran (`agent_hub.sessions.model_retry`, ADR-079; otherwise the owner's next credential write creates it); a
    `failed` with `device_shutdown` or `guest_unreachable` of a main session interrupted by a device failure (a device
-   back after a restart) gets its successor on any device (`agent_hub.sessions.failover`, ADR-086 section 3).
+   back after a restart) gets its successor on any device (`agent_hub.sessions.failover`, ADR-087 section 3).
 
 The caller sends the effects with `Applied.effects.flush()` **after its commit**. `hub_transition` is the same step for
 changes the hub makes itself (closing a task, stopping a session without device).
@@ -335,7 +335,7 @@ def _continue(
     connection: Connection, task: TaskRow, session: SessionRow, author: UUID | None, *, now: datetime, effects: Effects
 ) -> None:
     """A device back after a restart reported an interrupted main session failed: its successor continues on any
-    device, this one included (`agent_hub.sessions.failover`, ADR-086 section 3); the task is derived either way."""
+    device, this one included (`agent_hub.sessions.failover`, ADR-087 section 3); the task is derived either way."""
     decision = load.decide(
         connection,
         task.wg_id,

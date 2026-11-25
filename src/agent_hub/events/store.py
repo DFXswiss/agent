@@ -144,13 +144,13 @@ def rotated_at(connection: Connection, scope: str, scope_id: str) -> datetime | 
 
 
 LATE_KINDS = frozenset({"test.run"})
-"""Records a device may still bring for a moved session: the end of a test run it ran there (its kept log, ADR-086
+"""Records a device may still bring for a moved session: the end of a test run it ran there (its kept log, ADR-087
 section 5) is a record of the past, not output beside the successor."""
 
 
 def session_device(connection: Connection, header: Mapping[str, object]) -> str | None:
     """E7: the device the header's session runs on, if the session belongs to the header's task and workgroup. A
-    session the hub moved off a failed device (`stopped` with `device_failed`, ADR-086 section 4) has no device for an
+    session the hub moved off a failed device (`stopped` with `device_failed`, ADR-087 section 4) has no device for an
     event the device stamped after the move: what a cut-off device produced beside the successor never reaches the
     task (earlier events of that session are still taken, and so are `LATE_KINDS`)."""
     record = connection.execute(

@@ -18,7 +18,7 @@ the device lists ask here). The device WebSocket (`agent_hub.stream.ws`) writes 
   process - and `device.disconnect` is audited.
 
 When a device goes offline by `disconnect` or `expire`, `device.offline_since` gets the hub time (only when unset:
-the first moment counts); the failover of ADR-086 measures its deadline from there (`agent_hub.failover`).
+the first moment counts); the failover of ADR-087 measures its deadline from there (`agent_hub.failover`).
 
 Audit rows carry the device as actor and target and, for org devices, the owning org.
 
@@ -141,7 +141,7 @@ def heartbeat(
     ).fetchone()
     if owned is None or device is None or not device[0]:
         return Heartbeat(current=False)
-    # a connect through a hub process of an older release did not clear it (ADR-086 section 1)
+    # a connect through a hub process of an older release did not clear it (ADR-087 section 1)
     connection.execute(
         "UPDATE hub.device SET offline_since = NULL WHERE id = %s AND offline_since IS NOT NULL", (device_id,)
     )
@@ -168,7 +168,7 @@ def disconnect(connection: Connection, device_id: UUID, instance: str, connected
 
 
 def went_offline(connection: Connection, device_ids: Sequence[UUID], now: datetime) -> None:
-    """Record the hub time the devices went offline (`device.offline_since`, ADR-086 section 1), only when unset."""
+    """Record the hub time the devices went offline (`device.offline_since`, ADR-087 section 1), only when unset."""
     if device_ids:
         connection.execute(
             "UPDATE hub.device SET offline_since = %s WHERE id = ANY(%s::uuid[]) AND offline_since IS NULL",

@@ -10,7 +10,7 @@
 // - `quota_choice` (ADR-081 section 5): "Continue with DFX access" (the task's consent, `POST
 //   /v1/tasks/{task}/model-consent`) and, for the task's owner only, "Always" (the setting `fallback.own_to_dfx`);
 //   without an answer the task continues by itself on the own subscription at its release;
-// - `device_failed` of a task pinned to the failed computer (ADR-086 section 3): "Choose a computer automatically"
+// - `device_failed` of a task pinned to the failed computer (ADR-087 section 3): "Choose a computer automatically"
 //   (`PUT /v1/tasks/{task}/placement` with nulls); an unpinned task continues by itself, so it offers nothing;
 // - `session_failed`, `guest_error`, `device_unreachable`, `no_capacity`: "Try again" (the newest prompt again).
 //

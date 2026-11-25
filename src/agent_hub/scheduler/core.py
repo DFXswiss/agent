@@ -53,7 +53,7 @@ PLACEMENT_FULL = "placement_full"
 NO_DEVICE = "no_device"
 PLATFORM_ACCESS_REQUIRED = "platform_access_required"
 DEVICE_FAILED = "device_failed"
-"""The task's main session is interrupted because its device failed (ADR-086; set by the task derivation)."""
+"""The task's main session is interrupted because its device failed (ADR-087; set by the task derivation)."""
 RUNNING, STOPPED, OTHER = "running", "stopped", "other"
 CAPACITY_KEYS = ("vm_memory_budget_mib", "vm_memory_used_mib", "vm_slots_total", "vm_slots_free", "pool_ready")
 OPTIONAL_KEYS = (

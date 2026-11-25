@@ -99,7 +99,7 @@ DEFAULT_REFUSAL_HOLD_SECONDS = 60
 DEFAULT_DFX_KEY_HEADROOM = Decimal(5)
 MAX_REFUSAL_HOLD_SECONDS = 86400
 DEFAULT_DEVICE_FAILOVER_SECONDS = 300
-"""How long a device stays away before its sessions count as interrupted and may move (ADR-086 section 1)."""
+"""How long a device stays away before its sessions count as interrupted and may move (ADR-087 section 1)."""
 MAX_DEVICE_FAILOVER_SECONDS = 86400
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent / "static"
 MAX_CATALOG_BYTES = 1024 * 1024
@@ -220,7 +220,7 @@ class HubConfig:
     capacity_refusals: int = DEFAULT_CAPACITY_REFUSALS
     refusal_hold_seconds: int = DEFAULT_REFUSAL_HOLD_SECONDS
     device_failover_seconds: int = DEFAULT_DEVICE_FAILOVER_SECONDS
-    """`AGENT_HUB_DEVICE_FAILOVER_SECONDS`: a device offline this long has failed (ADR-086 section 1; default 300, at
+    """`AGENT_HUB_DEVICE_FAILOVER_SECONDS`: a device offline this long has failed (ADR-087 section 1; default 300, at
     least twice `device_online_seconds`)."""
 
     def signer(self) -> HubSigner:
@@ -292,7 +292,7 @@ def _bounded_int(environ: Mapping[str, str], name: str, default: int, pattern: r
 
 
 def _failover_seconds(environ: Mapping[str, str]) -> int:
-    """`AGENT_HUB_DEVICE_FAILOVER_SECONDS`, at least twice the online window (ADR-086 section 1: a short outage or a
+    """`AGENT_HUB_DEVICE_FAILOVER_SECONDS`, at least twice the online window (ADR-087 section 1: a short outage or a
     runner restart never moves a session)."""
     online = _bounded_int(
         environ, DEVICE_ONLINE_SECONDS, DEFAULT_DEVICE_ONLINE_SECONDS, _SECONDS_RE, MAX_DEVICE_ONLINE_SECONDS

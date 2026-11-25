@@ -167,7 +167,7 @@ describe('the placement routes', () => {
     });
     const session = sessionRow(t) as SessionRow;
     expect(sessionVm(session)).toBeNull();
-    // "Choose automatically": a chosen device full or offline, or failed while the task is pinned to it (ADR-086)
+    // "Choose automatically": a chosen device full or offline, or failed while the task is pinned to it (ADR-087)
     const pinned = { ...row, placement: { device_id: 'd1', vm_id: null } };
     expect(offersAutomatic(row, 'placement_full')).toBe(true);
     expect(offersAutomatic(row, 'placement_offline')).toBe(true);

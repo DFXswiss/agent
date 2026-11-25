@@ -1,4 +1,4 @@
-"""Device failure: interrupted sessions and their move to another device (ADR-086; 03-api.md section 4.6.5).
+"""Device failure: interrupted sessions and their move to another device (ADR-087; 03-api.md section 4.6.5).
 
 A device has **failed** while it is offline (no fresh `device_presence` row) and `device.offline_since` lies
 `AGENT_HUB_DEVICE_FAILOVER_SECONDS` or more back (`agent_hub.stream.presence` sets it). `sweep(context)` runs every
@@ -53,7 +53,7 @@ from agent_hub.sessions.transitions import SessionRow, record
 
 Connection = psycopg.Connection[Any]
 ACTIVE = frozenset({*STARTUP, WORKING, RESUMING, STOPPING})
-"""Session states in which a session does something: these are interrupted (ADR-086 section 2)."""
+"""Session states in which a session does something: these are interrupted (ADR-087 section 2)."""
 INTERRUPTED = "session.interrupted"
 INTERRUPTION_ENDED = "session.interruption_ended"
 RUN_TYPE = "test.run"
@@ -162,7 +162,7 @@ def end(connection: Connection, task: TaskRow, session: Live, now: datetime, eff
 
 
 def end_operations(connection: Connection, session_ids: list[UUID], now: datetime, effects: Effects) -> int:
-    """The operations of the ended sessions (ADR-086 section 4): every one `accepted` or `executing` ends `failed` with
+    """The operations of the ended sessions (ADR-087 section 4): every one `accepted` or `executing` ends `failed` with
     `device_failed` and frees its dedupe slot (its outcome on the lost device is unknown; a test run is cancelled), and
     the slots of their `subagent.request` and `human.*` operations are freed (their results belong to the lost
     session). Rows another transaction holds are left alone. The number of test runs ended."""
@@ -203,7 +203,7 @@ def end_operations(connection: Connection, session_ids: list[UUID], now: datetim
 def target(
     connection: Connection, task: TaskRow, failed: Failed, now: datetime, online_seconds: int
 ) -> Placement | None:
-    """The device the task moves to, None while there is none (ADR-086 section 3, points 1-2): the scheduler's
+    """The device the task moves to, None while there is none (ADR-087 section 3, points 1-2): the scheduler's
     candidates for the task without the failed device, only devices of the same organization when the failed one is
     an organization's own, decided by `choose`."""
     found = load.inputs(

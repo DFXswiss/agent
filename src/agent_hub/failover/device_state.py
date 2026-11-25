@@ -1,4 +1,4 @@
-"""The fields `failover_seconds` and `failovers` of `GET /v1/device/state` (03-api.md section 6.1, ADR-086 sections 3
+"""The fields `failover_seconds` and `failovers` of `GET /v1/device/state` (03-api.md section 6.1, ADR-087 sections 3
 and 4; ADR-027 section 4: `<area>/device_state.py:SECTION`).
 
 - `failover_seconds`: `AGENT_HUB_DEVICE_FAILOVER_SECONDS`, after which the hub moves the sessions of a device that

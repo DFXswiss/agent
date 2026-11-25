@@ -1,4 +1,4 @@
-"""The device state's `failovers` (ADR-086 section 3; contracts/api/device-state.response.json): the live main
+"""The device state's `failovers` (ADR-087 section 3; contracts/api/device-state.response.json): the live main
 sessions of this device that continue a session lost with a failed device (`from_session`), with the number of the lost
 session's test runs the hub cancelled. Read by the context restore (no wait for the lost session's final checkpoint,
 the failover note) and the prompt routing (the interrupted instruction, accepted by the lost session, is delivered

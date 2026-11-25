@@ -9,7 +9,7 @@ are final: a report after them is a refused transition. Reporting the current st
 
 **Task state.** A `closed` task stays closed (only a user leaves it, by a follow-up prompt). Otherwise: any session
 `working` that is not interrupted ⇒ `working`; else by the main session (the newest session of depth 0): a live main
-session interrupted because its device failed (ADR-086 section 2) ⇒ `scheduling` with the reason `device_failed`;
+session interrupted because its device failed (ADR-087 section 2) ⇒ `scheduling` with the reason `device_failed`;
 `requested` without a device ⇒
 `scheduling` with the scheduler's reason, every other start-up state and `resuming` ⇒ `starting`, `idle`, `suspended`,
 `stopping` and `stopped` ⇒ `idle` (the task waits for the user), `failed` ⇒ `failed` with the session's reason (a
@@ -40,10 +40,10 @@ SCHEDULING, STARTING, CLOSED = "scheduling", "starting", "closed"
 INTERRUPTED_SQL = (
     "(interrupted_at IS NOT NULL AND (interruption_ended_at IS NULL OR interruption_ended_at < interrupted_at))"
 )
-"""SQL over a `hub.session` row: it is interrupted now (ADR-086 section 2)."""
+"""SQL over a `hub.session` row: it is interrupted now (ADR-087 section 2)."""
 DEVICE_FAILED = "device_failed"
 """The task's reason while its main session is interrupted, and the end reason of a session the hub moved away from a
-failed device (ADR-086)."""
+failed device (ADR-087)."""
 TASK_STATES = (SCHEDULING, STARTING, WORKING, IDLE, FAILED, CLOSED)
 
 
@@ -70,7 +70,7 @@ class MainSession:
     state_reason: str | None
     placed: bool
     interrupted: bool = False
-    """Its device failed while it was active (`session.interrupted_at`, ADR-086 section 2)."""
+    """Its device failed while it was active (`session.interrupted_at`, ADR-087 section 2)."""
 
 
 def task_state(

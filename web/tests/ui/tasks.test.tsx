@@ -830,7 +830,7 @@ describe('task page', () => {
     expect(notice).toHaveAttribute('role', 'status');
     expect(notice).toHaveTextContent('Interrupted – the device has been unreachable since');
     expect(notice).toHaveTextContent('continues once the device is back or another suitable device');
-    // pinned to the failed device: the way out is the automatic choice (ADR-086 section 3, E-05)
+    // pinned to the failed device: the way out is the automatic choice (ADR-087 section 3, E-05)
     fireEvent.click(within(notice).getByTestId('countdown.choose-automatic'));
     await waitFor(() => expect(screen.queryByTestId('countdown.choose-automatic')).toBeNull());
     expect(t.client.of(put)[0]!.body).toEqual({ device_id: null, vm_id: null });

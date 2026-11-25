@@ -1,5 +1,5 @@
 """Daemon task `guestlink` (05-runner.md section 1.1): after the startup reconciliation of the VM area the sessions
-whose VM is gone fail (`SessionService.vms_lost`, ADR-086 section 3.7), then the journal loops of the running VMs
+whose VM is gone fail (`SessionService.vms_lost`, ADR-087 section 3.7), then the journal loops of the running VMs
 (`SessionService.run_journals`). The task ends at once on a device that is not enrolled.
 """
 

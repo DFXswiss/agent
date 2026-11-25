@@ -1,6 +1,6 @@
 {
   "name": "e2e-67-single-device",
-  "description": "E2E-67 (KOR-58, ADR-086) with the organization's only own device: a first turn writes solo.md and ends idle (checkpoint). The second instruction's answer is held 240 s while the runner is killed: the task waits interrupted (device_failed); the runner comes back with its VMs, so the same session goes on and the held answer arrives. The third instruction's request is held 420 s while the runner is killed again; its VMs are deleted before it starts (a reboot): it reports the session failed and the hub starts the successor on the same device, which resumes the conversation and receives the interrupted third instruction again.",
+  "description": "E2E-67 (KOR-58, ADR-087) with the organization's only own device: a first turn writes solo.md and ends idle (checkpoint). The second instruction's answer is held 240 s while the runner is killed: the task waits interrupted (device_failed); the runner comes back with its VMs, so the same session goes on and the held answer arrives. The third instruction's request is held 420 s while the runner is killed again; its VMs are deleted before it starts (a reboot): it reports the session failed and the hub starts the successor on the same device, which resumes the conversation and receives the interrupted third instruction again.",
   "steps": [
     {
       "id": "solo-work",

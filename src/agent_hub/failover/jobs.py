@@ -1,4 +1,4 @@
-"""The job of the failover area (ADR-086, ADR-027 section 4 `<area>/jobs.py:JOBS`).
+"""The job of the failover area (ADR-087, ADR-027 section 4 `<area>/jobs.py:JOBS`).
 
 `failover.sweep` runs `agent_hub.failover.sweep.sweep` every `INTERVAL_SECONDS` in every hub process: it interrupts
 the active sessions of failed devices, moves their tasks to another device when one can take them and clears the

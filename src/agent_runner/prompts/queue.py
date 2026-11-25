@@ -24,7 +24,7 @@
   qualifier of the sender line, `speaker.py`); once set it stays. A row of an open state whose session ended
   (`stopped`, `failed`, or unknown locally) is moved to the session the hub routes it to next (a new main session of
   the task, 03-api.md section 4.6.3); the guest registry of the ended session can no longer accept it.
-  One exception to finality (ADR-086 sections 3.4 and 3.7): the interrupted instruction of a session lost with a
+  One exception to finality (ADR-087 sections 3.4 and 3.7): the interrupted instruction of a session lost with a
   failed device (or with this device's restart) is repeated to its successor. When the hub routes a prompt whose row
   is `accepted` for session L to a session S that the device state lists in `failovers` with `from_session` = L, the
   row moves to S as `pending` (`route(..., failover_from=L)`) and is delivered once more; once it belongs to S it is
