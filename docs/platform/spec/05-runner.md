@@ -264,7 +264,9 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
   for a main session with `resume_from` the VM of that session – both regardless of the limit; (3) a running VM of
   the workgroup with room (`SESSIONS_PER_VM` minus its occupying sessions): most room first, then the smallest VM ID;
   (4) a stopped VM of the workgroup with room (restart; golden replacement as in §3.5), smallest VM ID; (5) a new VM
-  from the pool, else a clone, when a slot is free (§3.4); (6) else the session fails `capacity_exhausted`.
+  from the pool, else a clone, when a slot is free (§3.4) – without a ready golden yet (a device just added still
+  builds it) `capacity_exhausted` (`golden`), not `vm_start_failed` (KOR-67); (6) else the session fails
+  `capacity_exhausted`.
 
 ### 3.4 Capacity
 
@@ -275,7 +277,9 @@ slots (RAM is returned on stop; Spike A high-water-mark finding). Reported in ev
 `02-data-model.md` §2.1). If a session needs a VM and `vm_slots_free = 0`: stop the least recently used idle
 VM of another workgroup (no running or suspended session younger than `VM_IDLE_SECONDS`), else fail the request
 with `capacity_exhausted` (the hub then re-schedules: a new main session of the task, `03-api.md` §4.6.2, ADR-049;
-the refused session ID is never started again).
+the refused session ID is never started again). A device without a ready golden and without a VM (a new one that
+still builds its first golden, ADR-074 amendment KOR-67) reports `vm_slots_free = 0` and `pool_ready = 0`, so the hub
+places nothing on it until the golden is ready.
 
 The capacity report also carries (all optional for the hub, ADR-075): `cpus` and `memory_total_mib` of the host,
 `disk_free_mib` of the volume holding `$LIMA_HOME`, `vms_running`, `sessions_active` (occupying sessions),

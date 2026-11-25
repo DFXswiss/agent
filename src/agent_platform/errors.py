@@ -121,8 +121,9 @@ CODES = frozenset(NEXT)
 # A different next step for one reason of a code (the texts are fixed here as well).
 NEXT_FOR_REASON: dict[tuple[str, str], str] = {
     ("install_failed", "admin_dialog_over_ssh"): (
-        "Over ssh macOS shows no administrator dialog: run `sudo -v` in this session (the account's password, once), "
-        "then this command again at once; or run it in a terminal on the Mac's screen."
+        "Over ssh macOS shows no administrator dialog, and this account may not use `sudo` without a password: run the "
+        "command as an account that may (a `NOPASSWD` rule), as root through `sudo` is refused; or run it in a "
+        "terminal on the Mac's screen, where the dialog appears."
     ),
     ("state_damaged", "keychain_unreadable"): (
         "The agent's keys are in the login keychain, which this session cannot read (it is locked, for example over "

@@ -297,7 +297,7 @@ when the workgroup has no execution device yet: it waits with `no_device` until 
 Mac to run their tasks, connect it – your user never needs a terminal for it (ADR-074):
 
 ```sh
-agent-platform device add --this-computer [--org <org_id>] [--wg <wg_id> ...]   # default: the default workgroup
+agent-platform device add --this-computer [--org <org_id>] [--wg <wg_id> ...] [--wait]   # default: default wg
 agent-platform device remove --this-computer                                   # unpair and remove everything
 ```
 
@@ -310,10 +310,10 @@ dialog: …"; with the dialog it returns `admin: "dialog"`, run as root `admin: 
 way. Nobody needs to be logged in at the screen: the runner runs as the account that ran `device add` and starts again
 after a restart, so run `device add` as your user's own account (as root it refuses with `owner_root`, as a service
 account below user ID 501 with `owner_not_regular`). Over ssh without `sudo` rights macOS cannot show the dialog: the
-command stops at once with `admin_dialog_over_ssh` and names the step (`sudo -v` in the session, then again).
-Right after it the Mac builds the image for its tasks (a few minutes): the result says `ready: false` with a `next`;
-tasks created meanwhile wait and then start by themselves. `device add --this-computer --wait` returns only when the
-Mac is ready.
+command stops at once with `admin_dialog_over_ssh` and says what works instead. Right after it the Mac builds the
+image for its tasks (a few minutes): the result says `ready: false` with a `next`; tasks created meanwhile wait (or
+run on another device of the workgroup) and then start by themselves. `device add --this-computer --wait` returns
+when the Mac is ready, also for a Mac that is a device already.
 Then tell your user the `notice` of the result in your own words: whoever administers the Mac can read the content of
 the tasks it runs for the organization, also of workgroups your user is not a member of. When the Mac cannot be a
 device (`mac_unsupported`), the command opens what fixes it (Software Update, storage settings) where it can; say in

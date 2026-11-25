@@ -42,12 +42,12 @@ EXCEPTIONS = {
     "mcp": "a server on stdin and stdout for a chat program (test_mcp, test_realhub_mcp)",
     "install-connector": "writes the connector into the chat program's configuration of this computer (test_mcp)",
     "passkey add": "opens the user's browser for the new passkey (test_security)",
-    "github connect": "reads the login of the GitHub CLI of this computer (test_identities)",
+    "github connect": "would take the token of the GitHub CLI logged in on the computer of the test (test_devicereq)",
 }
 # Commands that change the account for the ones after them: run in this order at the end.
 LAST = ("task close", "wg archive", "member remove", "org leave", "agents revoke", "recover")
 REFUSED = {"invalid_argument", "internal"}
-HUB_REFUSED = {"request_invalid", "invalid_argument"}
+HUB_REFUSED = {"request_invalid", "invalid_argument", "internal"}
 PLACEHOLDER = re.compile(r"<[^<>]*>|\$[A-Z]+|…|https://agent\.dfx\.swiss")
 STDIN_TEXT = "An example text kor67."
 
@@ -130,6 +130,7 @@ def test_the_examples_name_commands_and_the_exceptions_exist() -> None:
     assert acceptable(1, {"ok": False, "error": "not_found", "next": "x"})
     assert not acceptable(1, {"ok": False, "error": "hub_refused", "hub_error": "request_invalid", "next": "x"})
     assert not acceptable(1, {"ok": False, "error": "not_found"})
+    assert not acceptable(1, {"ok": False, "error": "hub_refused", "hub_error": "internal", "next": "x"})
 
 
 def alone(real: RealHub, name: str) -> tuple[Tool, str]:

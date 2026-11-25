@@ -215,3 +215,17 @@ def test_the_capacity_report(harness: Harness) -> None:
         "vms_max": 3,
     }
     assert report == {**without_disk, "disk_free_mib": 51200}
+
+
+def test_a_device_without_a_ready_golden_reports_no_room(harness: Harness) -> None:
+    """KOR-67: a device that still builds its first golden (no VM either) offers no slot, so the hub places nothing on
+    it and the task waits or runs elsewhere; once the golden is ready its slots count again."""
+    harness.settings = settings(sessions_per_vm=4, max_vms=3)
+
+    async def body(manager: VmManager) -> Any:
+        return await manager.report()
+
+    before = harness.run(rows_only(body), reconcile=False)
+    assert (before["vm_slots_free"], before["pool_ready"], before["vm_slots_total"]) == (0, 0, 3)
+    harness.add_golden()
+    assert harness.run(rows_only(body), reconcile=False)["vm_slots_free"] == 3

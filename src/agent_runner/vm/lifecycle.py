@@ -16,7 +16,8 @@ workgroup for a session, in the deterministic order of ADR-075 section 4 (05-run
 4. a new VM when the hub allows one (`new_allowed`, the hub's `vm_new_allowed`): warm pool (`Pool.take`), else clone
    + start on the hot path (`Provisioner.create`); while the device has no ready golden yet (a device just added
    builds it, KOR-67) this is `capacity_exhausted` (`golden`): the hub places the next attempt and the task waits
-   instead of failing;
+   instead of failing. Such a device reports no free slot in its heartbeat (`report`), so the hub places nothing on
+   it until the golden is ready; the refusal only covers the time before that heartbeat;
 5. else `capacity_exhausted` (the hub places the next attempt).
 
 The choice runs under an
@@ -133,12 +134,16 @@ class VmManager:
 
     async def report(self) -> dict[str, object]:
         """The heartbeat's `capacity`: the five base counters plus the counters and settings of ADR-075
-        section 2 (`cpus` and `disk_free_mib` only when known)."""
+        section 2 (`cpus` and `disk_free_mib` only when known); no free slot without a ready golden and a VM."""
         env = self.env
         capacity = await self.capacity()
         vms, sessions = await records.load(env.db)
+        free = capacity.heartbeat()
+        if vms == 0 and await records.ready_golden(env.db) is None:
+            # a device without a ready golden (a new one builds it, KOR-67) has no room yet: the hub places nothing here
+            free |= {"vm_slots_free": 0, "pool_ready": 0}
         report: dict[str, object] = {
-            **capacity.heartbeat(),
+            **free,
             "memory_total_mib": env.physical_mib(),
             "vms_running": vms,
             "sessions_active": sessions,

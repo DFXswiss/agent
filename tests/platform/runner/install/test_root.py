@@ -952,13 +952,15 @@ def test_lima_directories_the_installation_made_are_removed_and_reported(kit: Ki
 def test_an_own_lima_instance_keeps_lima_and_is_no_leftover_of_ours(kit: Kit, keys: Keys) -> None:
     installed_for_removal(kit, keys, created=(".lima", "Library/Caches/lima"))  # Lima never ran for the runner
     home = owner_of(kit.layout).home
-    (home / ".lima/mine").mkdir(parents=True)  # an instance the owner made with Lima
+    (home / ".lima/mine").mkdir(parents=True)  # an instance the owner made with Lima, and Lima's configuration
+    (home / ".lima/_config").mkdir()
     kit.run.answer(as_owner(RMDIR, str(home / ".lima")), rc=1, stderr="Directory not empty")
     nothing_left(kit)
     runner_commands(kit.run, {"uninstall": runner_doc()})
     result = root.uninstall(kit.system, [keys.public])
     assert not {"created:.lima", "created:Library/Caches/lima"} & set(result["removed"])
     assert (home / ".lima/mine").is_dir()
+    assert (home / ".lima/_config").is_dir()
     assert result["leftovers"] == [f"path:{home / '.lima'}"]
 
 

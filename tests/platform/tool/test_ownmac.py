@@ -418,6 +418,18 @@ def test_over_ssh_without_sudo_there_is_no_dialog(mac: Mac) -> None:
     assert ownmac.admin_way(mac.machine) == "root"
 
 
+def test_an_installed_device_is_named_before_the_ssh_refusal(mac: Mac, hub: HubFake, opened: Account) -> None:
+    real_step(mac, sudo=False)
+    mac.machine.system.env = {"SSH_TTY": "/dev/ttys001"}
+    mac.state(enrolled=True, device_id="dev-9")
+    with refused("device_installed", device_id="dev-9"):
+        ownmac.device_add(opened, mac.machine, None, [])
+    mac.state(enrolled=False, enrollment="failed")
+    with refused("install_failed", reason="admin_dialog_over_ssh"):
+        ownmac.device_add(opened, mac.machine, None, [])
+    assert mac.fetch.urls == []  # nothing downloaded
+
+
 def test_admin_way_of_the_seam_is_the_dialog_it_stands_in_for(mac: Mac) -> None:
     mac.machine.system.geteuid = lambda: 0
     assert ownmac.admin_way(mac.machine) == "dialog"
@@ -629,6 +641,17 @@ def test_device_add_refusals_before_the_dialog(mac: Mac, hub: HubFake, account: 
     mac.state(enrolled=True, device_id="dev-9")
     with refused("device_installed", device_id="dev-9"):
         ownmac.device_add(opened, mac.machine, None, [])
+    # with --wait a Mac that is a device already only waits until it is ready (KOR-67)
+    mac.state(enrolled=True, device_id="dev-9", golden="ready")
+    assert ownmac.device_add(opened, mac.machine, None, [], wait=True) == {
+        "device_id": "dev-9",
+        "golden": "ready",
+        "ready": True,
+    }
+    mac.state(enrolled=True, device_id="dev-9", golden="build_failed")
+    failed = ownmac.device_add(opened, mac.machine, None, [], wait=True)
+    assert (failed["ready"], failed["next"]) == (False, ownmac.NEXT_GOLDEN_FAILED)
+    mac.state(enrolled=True, device_id="dev-9")
     # an installation that runs as another account is never enrolled with this user's org
     mac.state(enrolled=False, enrollment="failed", owner="bob")
     with refused("device_installed", reason="other_owner"):

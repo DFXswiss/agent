@@ -157,10 +157,12 @@ The maintenance daemon (root, payload code only) runs every 15 minutes:
 
 **Amendment (KOR-67).** The run `postinstall` starts right after an enrollment waits until the runner answers (its
 store still starts; at most two minutes) and builds the golden at once – before, it found no readable status, reported
-`not_enrolled` and left the build to the next run 15 minutes later. Until a golden is ready the runner refuses a
-session with `capacity_exhausted` (`golden`), so the hub places the next attempt and the task waits instead of failing
-`vm_start_failed`; `device add` reports `ready` and with `--wait` waits for it. Over ssh without `sudo` rights `device
-add` stops before anything is downloaded (`install_failed`, `admin_dialog_over_ssh`): macOS shows no dialog there.
+`not_enrolled` and left the build to the next run 15 minutes later. Until a golden is ready the device reports no
+free slot (no VM either), so the hub places nothing on it and the task waits or runs on another device; a start that
+comes before that heartbeat is refused `capacity_exhausted` (`golden`) instead of failing `vm_start_failed`.
+`device add` reports `ready` (a failed build: `ready: false` with its state and the next step) and with `--wait` waits
+for it, also on a Mac that is a device already. Over ssh without `sudo` rights `device add` stops before anything is
+downloaded (`install_failed`, `admin_dialog_over_ssh`): macOS shows no dialog there.
 `~/.lima` and `~/Library/Caches/lima` the installation found missing are recorded and removed again (`~/.lima` only
 when nothing but Lima's `_config` is in it); what stays is a leftover.
 

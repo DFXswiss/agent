@@ -60,21 +60,30 @@ person) and E-19 (the class, not the single case).
     a keychain that cannot be read is `state_damaged`/`keychain_unreadable` with `security unlock-keychain` as next
     step; a hanging `security` call counts as failed instead of ending in `internal`; every result naming the
     connected agent prints `keys` (where they are). `device add` over ssh without `sudo` rights stops before the
-    download with `install_failed`/`admin_dialog_over_ssh` (macOS shows no dialog there) instead of failing after it.
+    download with `install_failed`/`admin_dialog_over_ssh` (macOS shows no dialog there) instead of failing after it;
+    its next step names an account with `NOPASSWD` or a terminal on the screen – not `sudo -v`, whose grant an
+    agent's commands without a terminal do not share. An agent alone over ssh on a Mac whose account has neither
+    cannot add it (a person or an administrator has to act once); this is the remaining limit of E-27 here.
 13. **`no_device` (finding 5):** since KOR-49/KOR-63 the text named `device assign` but still ended "try again
     later"; it now names `device assign` and `device add --this-computer` and no waiting.
 14. **Golden of a new device (finding 6):** cause: `postinstall` starts the maintenance run at once after the
     enrollment, but the runner's store still starts, its status is unreadable, so the run reported `not_enrolled`
     and built nothing; the next run 15 minutes later built it. The run now asks again while the runner is loaded
-    (at most 60 × 2 s). A session that finds no ready golden is refused `capacity_exhausted` (`golden`) instead of
-    `vm_start_failed`: the hub's existing re-scheduling (ADR-049/ADR-075) keeps the task waiting and starts it by
-    itself; it is shown as waiting for capacity (`capacity_exhausted`, whose next step now names a device still
-    building its image) – a separate label "device sets itself up" would need a new waiting reason in hub and web
-    and is left as a follow-up. `device add` reports `ready` and, until then, a `next`; `--wait` waits up to 30
-    minutes.
+    (at most 60 × 2 s; a run where the runner is loaded but never answers takes these two minutes longer). A device
+    without a ready golden and without a VM reports no free slot in its heartbeat, so the hub places nothing there
+    (the task waits `capacity_exhausted` or runs on another device; no refusal after refusal); a start that comes
+    before that heartbeat is refused `capacity_exhausted` (`golden`) instead of `vm_start_failed`, and the hub's
+    re-scheduling (ADR-049/ADR-075) starts it later by itself. A build that fails for good leaves the device without
+    room (the task waits, `device add --wait` names the failed state and the next step) rather than failing tasks.
+    The wait is shown as waiting for capacity (`capacity_exhausted`, whose next step now names a device still
+    building its image); a separate label "device sets itself up" would need a new waiting reason in hub, contracts
+    and web – deliberately not built here (E-25 scope, `cli.py` and hub left alone), noted as a follow-up for the
+    orchestrator. `device add` reports `ready` and, until then, a `next`; `--wait` waits up to 30 minutes, also on a
+    Mac that is a device already (it then only waits).
 15. **Lima directories (finding 7):** `~/.lima` and `~/Library/Caches/lima` that did not exist at the installation are
-    recorded (`maintenance.json`, `created`) and removed with the device: Lima's `_config` and the cache, then
-    `~/.lima` only when it is empty (an instance the owner made with Lima stays and is reported under `leftovers`).
+    recorded (`maintenance.json`, `created`) and removed with the device: the cache, and Lima's `_config` with
+    `~/.lima` only when nothing else is in it (an instance the owner made with Lima keeps both; `~/.lima` is then
+    reported under `leftovers`). The separate `leftovers` command (without the removed memory) does not know them.
 16. **`model_access_unavailable` (finding 8):** the hub already starts the task again by itself once the owner stores
     model access (ADR-079, also for tasks on an own device: the attempt is placed like any other). The tool now gives
     `next` in `task show` and `task follow` for a failed task (`diagnose.FAILED`: `claude connect` or

@@ -856,7 +856,7 @@ def keys_of(environ: Mapping[str, str], agent_id: str) -> dict[str, str]:
     home = Home.from_env(environ)
     try:
         state = home.load()
-    except PlatformError:
+    except (PlatformError, OSError):
         return {}
     where = home.keys_at(state.get("key_store")) if state.get("agent_id") == agent_id else None
     return {} if where is None else {"keys": where}

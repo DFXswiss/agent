@@ -61,6 +61,13 @@ WAIT_S = 900.0
 # The golden of a new device is built right after its enrollment (`maintain`, KOR-67): `device add --wait` waits for it.
 GOLDEN_WAIT_S = 1800.0
 READY_GOLDEN = ("ready", "built")
+PENDING_GOLDEN = ("not_enrolled", "unknown")
+"""Golden states of `state.json` before the first build ran; any other state but `READY_GOLDEN` is a failed build."""
+NEXT_GOLDEN_FAILED = (
+    "This computer could not build the image for its tasks (see `golden`); its maintenance service tries again every "
+    "15 minutes. Meanwhile tasks wait for it or run on another device of the workgroup (`agent-platform device "
+    "assign`)."
+)
 NEXT_PREPARING = (
     "This computer builds the image for its tasks now (a few minutes); tasks on it wait and then start by themselves. "
     "`agent-platform device add --this-computer --wait` waits until it is ready."
@@ -232,15 +239,17 @@ def device_add(
     account: Account, machine: Machine, org: str | None, wgs: list[str], *, wait: bool = False
 ) -> dict[str, Any]:
     check_caller(machine)
-    admin_way(machine)  # over ssh without sudo: refused before the download (asked again right before the step)
     checks = check_mac(machine)
     state = read_state(machine)
     if state is not None and state.get("enrolled") is True:
+        if wait:  # this Mac is a device already: wait until it is ready for tasks
+            return readiness(machine, golden_ready(machine, state, ""))
         raise PlatformError("device_installed", device_id=str(state.get("device_id", "")))
     owner = str(state.get("owner", "")) if state is not None else ""
     if owner and owner != machine.user():
         # The installation runs as another account: enrolling it would give that account this user's org keys.
         raise PlatformError("device_installed", reason="other_owner")
+    admin_way(machine)  # over ssh without sudo: refused before the download (asked again right before the step)
     feed, package = fetch_release(machine, account.origin)
     chosen_org, chosen = _workgroups(account, org, wgs)
     folder = Path(machine.temp())
@@ -268,25 +277,39 @@ def device_add(
         raise PlatformError("install_failed", reason=str(final.get("enrollment_error", final.get("enrollment"))))
     if final.get("disabled_in_login_items") is True:
         machine.system.run([OPEN, LOGIN_ITEMS])
-    if wait and final.get("golden") not in READY_GOLDEN:
-        with contextlib.suppress(PlatformError):  # not ready in time: the result says so (`ready`, `next`)
-            final = wait_for(machine, lambda found: found.get("golden") in READY_GOLDEN, started, GOLDEN_WAIT_S)
-    ready = final.get("golden") in READY_GOLDEN
+    if wait:
+        final = golden_ready(machine, final, started)
     return {
         "device_id": final.get("device_id", ""),
         "org_id": chosen_org,
         "workgroups": chosen,
         "version": final.get("version", feed.version),
         "daemon": final.get("daemon", "unknown"),
-        "golden": final.get("golden", "unknown"),
-        "ready": ready,
-        **({} if ready else {"next": NEXT_PREPARING}),
+        **readiness(machine, final),
         "owner": final.get("owner", ""),
         "checks": checks,
         "admin": way,
         "dialog": admin.INSTALL_SENTENCE if way == DIALOG else admin.DIRECT_INSTALL_SENTENCE,
         "notice": NOTICE,
     }
+
+
+def golden_ready(machine: Machine, state: dict[str, Any], started: str) -> dict[str, Any]:
+    """The public state once its golden is no longer pending (ready, or a failed build), at most `GOLDEN_WAIT_S`."""
+    if state.get("golden", "unknown") not in PENDING_GOLDEN:
+        return state
+    with contextlib.suppress(PlatformError):  # not ready in time: the result says so (`ready`, `next`)
+        return wait_for(machine, lambda found: found.get("golden", "unknown") not in PENDING_GOLDEN, started,
+                        GOLDEN_WAIT_S)  # fmt: skip
+    return read_state(machine) or state
+
+
+def readiness(machine: Machine, state: dict[str, Any]) -> dict[str, Any]:
+    """`device_id`, `golden` and `ready` of the public state, with the `next` step while it is not ready."""
+    golden = str(state.get("golden", "unknown"))
+    ready = golden in READY_GOLDEN
+    step = {} if ready else {"next": NEXT_PREPARING if golden in PENDING_GOLDEN else NEXT_GOLDEN_FAILED}
+    return {"device_id": state.get("device_id", ""), "golden": golden, "ready": ready, **step}
 
 
 def device_remove(account: Account, machine: Machine) -> dict[str, Any]:
@@ -335,7 +358,7 @@ def _remove(account: Account, args: argparse.Namespace, context: Context) -> dic
 
 
 ADD_LOOKUP = {
-    "example": "agent-platform device add --this-computer [--org <org_id>] [--wg <wg_id> ...]",
+    "example": "agent-platform device add --this-computer [--org <org_id>] [--wg <wg_id> ...] [--wait]",
     "words": "eigener mac rechner computer gerät anbinden installieren dialog ohne dialog sudo ssh fernzugriff "
     "own mac computer device connect install dialog without dialog sudo ssh remote headless",
 }
@@ -365,7 +388,9 @@ def register(tree: Tree) -> None:
     sub.add_argument("--org", help="the organization (default: the only one)")
     sub.add_argument("--wg", action="append", default=[], help="workgroup to assign, repeatable (default: default)")
     sub.add_argument("--this-computer", action="store_true", help="the computer this command runs on (the default)")
-    sub.add_argument("--wait", action="store_true", help="also wait until the device is ready for tasks (its image)")
+    sub.add_argument(
+        "--wait", action="store_true", help="wait until the device is ready for tasks (its image; also when added)"
+    )
     sub = tree.command(
         group,
         "remove",

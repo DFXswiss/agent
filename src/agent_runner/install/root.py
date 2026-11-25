@@ -49,8 +49,8 @@ MAX_REQUEST = 4096
 # left waits for that, at most UNLOAD_POLLS times UNLOAD_POLL_S (measured in a macOS guest: a few seconds).
 # Lima's own directories below the owner's home, recorded in `created` when the installation found them missing
 # (KOR-67): its configuration (`~/.lima/_config`: network settings and the SSH key Lima makes for its instances) and
-# its download cache. A removal takes `_config` and then `~/.lima` itself only when nothing else is in it (an
-# instance the owner made with Lima stays), and the cache.
+# its download cache. A removal takes `_config` and `~/.lima` only when nothing else is in it (an instance the owner
+# made with Lima keeps both), and the cache.
 LIMA_CONFIG = ".lima"
 LIMA_CACHE = "Library/Caches/lima"
 UNLOAD_POLLS = 30
@@ -345,6 +345,11 @@ def recorded_owner(system: System) -> owner.Owner | None:
     return owner.lookup(system, name) if name else None
 
 
+def _only_lima_config(lima: Path) -> bool:
+    """`~/.lima` holds Lima's `_config` and nothing else (the owner's own Lima instances keep their configuration)."""
+    return lima.is_dir() and not lima.is_symlink() and {entry.name for entry in lima.iterdir()} == {"_config"}
+
+
 def _remove_owner_dirs(system: System, found: owner.Owner, removed: list[str]) -> list[Path]:
     """Remove the runner's home and what the installation created below the owner's home (innermost first; Lima's
     directories as `LIMA_CONFIG` says); returns Lima's directories it had created, for the leftovers."""
@@ -360,7 +365,7 @@ def _remove_owner_dirs(system: System, found: owner.Owner, removed: list[str]) -
             if path.exists() and system.run(ctx.as_owner([RM, "-rf", str(path)])).returncode == 0:
                 removed.append(f"created:{parent}")
             continue
-        if parent == LIMA_CONFIG and (path / "_config").exists():
+        if parent == LIMA_CONFIG and _only_lima_config(path):
             system.run(ctx.as_owner([RM, "-rf", str(path / "_config")]))
         if system.run(ctx.as_owner([RMDIR, str(path)])).returncode == 0:
             removed.append(f"created:{parent}")

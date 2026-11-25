@@ -330,8 +330,8 @@ def _rows(account: Account, wg: str, query: dict[str, Any]) -> tuple[list[Any], 
 
 
 def _open_rows(account: Account, wg: str) -> list[Any]:
-    """The newest tasks that are not closed: the hub filters by one state of a task's sessions only, `open` is every
-    state but `closed` (KOR-67), so the tool pages and filters (at most `OPEN_PAGES` pages)."""
+    """The newest tasks that are not closed: the hub filters by one task state only, `open` is every state but
+    `closed` (KOR-67), so the tool pages and filters (at most `LIST_LIMIT` tasks from at most `OPEN_PAGES` pages)."""
     found: list[Any] = []
     query: dict[str, Any] = {}
     for _page in range(OPEN_PAGES):
