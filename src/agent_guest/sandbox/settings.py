@@ -4,10 +4,11 @@ Layer 1 of the sandbox: `/etc/claude-code/managed-settings.json` (root 0644) is 
 
     python3 -E -s -m agent_guest.sandbox.settings --output /etc/claude-code/managed-settings.json
 
-and is identical in every VM of that golden image. The settings allow only the file tools and the platform MCP
-tools, deny every other tool, protect configuration and system paths, accept only managed rules, hooks and MCP
-servers, and send every hook event to the guest API (`http://127.0.0.1:7700/hooks/<Event>`). There are no command
-hooks, no stdio MCP servers and no command status line: each would need an exec exception in the OS sandbox.
+and is identical in every VM of that golden image. The settings allow only the file tools, the platform MCP tools and
+Claude Code's own web search (refused per session for the platform access), deny every other tool, protect
+configuration and system paths, accept only managed rules, hooks and MCP servers, and send every hook event to the
+guest API (`http://127.0.0.1:7700/hooks/<Event>`). There are no command hooks, no stdio MCP servers and no command
+status line: each would need an exec exception in the OS sandbox.
 """
 
 from __future__ import annotations
@@ -46,8 +47,27 @@ MCP_TOOLS: tuple[str, ...] = (
     "workvm_status",
     "workvm_sync",
     "workvm_browse",
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_click",
+    "browser_hover",
+    "browser_type",
+    "browser_select",
+    "browser_press",
+    "browser_scroll",
+    "browser_wait",
+    "browser_evaluate",
+    "browser_upload",
+    "browser_dialog",
+    "browser_tabs",
+    "browser_download",
+    "browser_screenshot",
 )
 FILE_TOOLS: tuple[str, ...] = ("Read", "Glob", "Grep", "Edit", "Write")
+# Claude Code's own web search runs at the model provider (13-work-vm.md section 13.7). These settings are shared by
+# every session of the VM, so they allow it; the command line (``driver``) and the PreToolUse policy refuse it per
+# session for the platform access.
+ALLOWED_TOOLS: tuple[str, ...] = ("WebSearch",)
 DENIED_TOOLS: tuple[str, ...] = (
     "Bash",
     "PowerShell",
@@ -59,7 +79,6 @@ DENIED_TOOLS: tuple[str, ...] = (
     "BashOutput",
     "Monitor",
     "WebFetch",
-    "WebSearch",
     "NotebookEdit",
     "Skill",
     "Workflow",
@@ -154,7 +173,7 @@ def build_settings() -> dict[str, Any]:
         "permissions": {
             "defaultMode": "dontAsk",
             "disableBypassPermissionsMode": "disable",
-            "allow": list(FILE_TOOLS) + [f"mcp__{MCP_SERVER}__{tool}" for tool in MCP_TOOLS],
+            "allow": list(FILE_TOOLS) + list(ALLOWED_TOOLS) + [f"mcp__{MCP_SERVER}__{tool}" for tool in MCP_TOOLS],
             "deny": deny,
         },
         "disableAutoMode": "disable",

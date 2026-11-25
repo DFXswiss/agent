@@ -19,6 +19,10 @@ A sub-package, so the tool registry (``registry.modules`` lists plain modules on
   ``MAX_WAIT_SECONDS``; the tools without ``wait_seconds`` (``workvm_kill``, ``workvm_status``, ``workvm_sync``,
   ``workvm_browse``) so wait ``MAX_WAIT_SECONDS``. No answer in time is the tool error ``timeout``
   (``WorkvmNoAnswer``, which points the session to ``workvm_status``: the command or sync may still be running)
+* ``browser_tool(name, description)`` - a platform browser tool (13-work-vm.md section 13.4, KOR-44): forwarded
+  exactly like a work VM tool (pending kind ``workvm``, journal ``workvm.call``, wait ``MAX_WAIT_SECONDS``); the
+  description ends with ``BROWSER_ANSWER`` (the answer every browser tool shares) and no answer in time is
+  ``BrowserNoAnswer`` (the tool error ``timeout`` pointing to ``browser_snapshot``)
 * ``storable(value)`` - no NUL character or lone surrogate in any string (keys included) and at most ``MAX_DEPTH``
   levels of nesting: the runner's rule for journal records (``agent_runner.operations.journal.storable``, PostgreSQL
   ``jsonb``), which skips any other record without an answer. ``read`` and ``forward`` (so ``ask`` and every read)
@@ -42,6 +46,7 @@ MAX_WAIT_SECONDS = 33.0
 WORKVM_WAIT_SECONDS = 30
 WORKVM_MARGIN_SECONDS = 5.0
 MAX_DEPTH = 64
+BROWSER_PREFIX = "browser_"
 _UNSTORABLE_RE = re.compile("[\\x00\\ud800-\\udfff]")
 
 
@@ -132,13 +137,37 @@ class WorkvmNoAnswer(ToolError):
         )
 
 
+class BrowserNoAnswer(ToolError):
+    """The runner did not answer a platform browser call in time (tool error ``timeout``)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "timeout",
+            "The platform browser did not answer in time; the action may still have happened. Look at the page "
+            "with browser_snapshot before you repeat it.",
+        )
+
+
 def workvm(call: ToolCall) -> Any:
     wait = min(WORKVM_MARGIN_SECONDS + call.arguments.get("wait_seconds", WORKVM_WAIT_SECONDS), MAX_WAIT_SECONDS)
     answer = ask(call, "workvm", {"tool": call.tool, "arguments": call.arguments}, wait)
     if answer is None:
-        raise WorkvmNoAnswer
+        raise BrowserNoAnswer if call.tool.startswith(BROWSER_PREFIX) else WorkvmNoAnswer
     return outcome(call, answer)
 
 
 def workvm_tool(name: str, description: str) -> Tool:
     return Tool(name=name, description=description, handler=workvm)
+
+
+BROWSER_ANSWER = (
+    ' Every answer is the page after the action: url, title, tabs and a snapshot whose lines \'- role "name" '
+    "[ref=e12]' name the elements; target is such a ref (f1e3 inside a frame) or a Playwright selector (text=Sign in, "
+    "#user). snapshot false leaves the snapshot out. A failed action is ok false with error and the current page, so "
+    "correct it and go on. The first browser call opens the platform browser (recorded and watched live by the user, "
+    "unlike the work VM's browser); close it with request_operation browser.close when you are done."
+)
+
+
+def browser_tool(name: str, description: str) -> Tool:
+    return workvm_tool(name, description + BROWSER_ANSWER)

@@ -8,6 +8,10 @@ Rules in this order; the first match decides (rule numbers as in 05 section 5.3,
    (journaled as rule 1); the caller requests the operation ``human.question`` with ``question_text(tool_input)``
    before it answers (KOR-39, ADR-076 section 3). A subagent's call, or one without any question text, falls
    through to rule 2
+1b. ``WebSearch`` of a session whose model access offers Claude Code's own web search (``web_search``: access
+   ``api_key`` or ``subscription``, 13-work-vm.md section 13.7) -> allow (journaled as rule 1); for the platform
+   access it falls through to rule 2. The search runs at the model provider, not in the sandbox; ``WebFetch`` stays
+   denied
 2. a tool other than ``Read``, ``Glob``, ``Grep``, ``Edit``, ``Write`` -> deny ``tool_forbidden``
 3. ``Glob.pattern`` / ``Grep.glob`` that starts with ``/`` or ``~``, has a ``..`` segment or a NUL -> deny
    ``pattern_outside_workspace``; brace alternatives (``{/etc,x}``, ``{..,x}``) and backslash escapes (``\\.\\.``)
@@ -68,9 +72,27 @@ PLATFORM_TOOLS = frozenset(
         "workvm_status",
         "workvm_sync",
         "workvm_browse",
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_click",
+        "browser_hover",
+        "browser_type",
+        "browser_select",
+        "browser_press",
+        "browser_scroll",
+        "browser_wait",
+        "browser_evaluate",
+        "browser_upload",
+        "browser_dialog",
+        "browser_tabs",
+        "browser_download",
+        "browser_screenshot",
     }
 )
 FILE_TOOLS = frozenset({"Read", "Glob", "Grep", "Edit", "Write"})
+WEB_SEARCH_TOOL = "WebSearch"
+# 13-work-vm.md section 13.7: model accesses whose provider runs Claude Code's own web search.
+WEB_SEARCH_ACCESS = frozenset({"api_key", "subscription"})
 WRITE_TOOLS = frozenset({"Edit", "Write"})
 ASK_TOOL = "AskUserQuestion"
 QUESTION_MAX = 4000
@@ -287,9 +309,13 @@ class Policy:
     def _resolve(self, path: str) -> str:
         return resolve(path, self._lstat, self._readlink)
 
-    def evaluate(self, tool_name: str, tool_input: Mapping[str, object], *, ask: bool = False) -> Decision:
-        """The decision for one call; ``ask``: the call is ``AskUserQuestion`` of a main session with a question."""
-        if tool_name.startswith(PLATFORM_PREFIX) and tool_name[len(PLATFORM_PREFIX) :] in PLATFORM_TOOLS:
+    def evaluate(
+        self, tool_name: str, tool_input: Mapping[str, object], *, ask: bool = False, web_search: bool = False
+    ) -> Decision:
+        """The decision for one call; ``ask``: the call is ``AskUserQuestion`` of a main session with a question;
+        ``web_search``: the session's model access offers ``WebSearch`` (rule 1b)."""
+        platform = tool_name.startswith(PLATFORM_PREFIX) and tool_name[len(PLATFORM_PREFIX) :] in PLATFORM_TOOLS
+        if platform or (web_search and tool_name == WEB_SEARCH_TOOL):
             return Decision("allow", 1)
         if ask and tool_name == ASK_TOOL:
             return Decision("deny", 1, deny_reason("question_passed"))

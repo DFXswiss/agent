@@ -28,7 +28,7 @@ BASE = [
     "--tools",
     "Read,Glob,Grep,Edit,Write",
     "--disallowedTools",
-    "Bash,Agent,Task,WebFetch,WebSearch,NotebookEdit,Skill",
+    "Bash,Agent,Task,WebFetch,NotebookEdit,Skill,WebSearch",
     "--permission-mode",
     "dontAsk",
     "--disable-slash-commands",
@@ -46,6 +46,20 @@ def test_minimal_command_line_is_exactly_the_specified_one(driver: ClaudeCodeDri
     assert driver.argv(Launch(session_id=SID, harness_file=HARNESS)) == BASE
 
 
+@pytest.mark.parametrize("access", ["subscription", "api_key"])
+def test_web_search_is_offered_only_to_anthropic_access(driver: ClaudeCodeDriver, access: str) -> None:
+    """13-work-vm.md section 13.7: the managed settings allow WebSearch for every session of the VM; the command line
+    offers it per start."""
+    argv = driver.argv(Launch(SID, HARNESS, access=access))
+    assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep,Edit,Write,WebSearch"
+    assert argv[argv.index("--disallowedTools") + 1] == "Bash,Agent,Task,WebFetch,NotebookEdit,Skill"
+
+
+@pytest.mark.parametrize("access", ["platform", "unknown"])
+def test_web_search_is_disallowed_for_every_other_access(driver: ClaudeCodeDriver, access: str) -> None:
+    assert driver.argv(Launch(SID, HARNESS, access=access)) == BASE
+
+
 def test_resume_and_model_follow_in_order(driver: ClaudeCodeDriver) -> None:
     launch = Launch(SID, HARNESS, resume_claude_session_id=RESUME, model_id="claude-sonnet-5-5")
     assert driver.argv(launch) == [*BASE, "--resume", RESUME, "--model", "claude-sonnet-5-5"]
@@ -59,6 +73,7 @@ def test_the_command_line_never_carries_a_prompt() -> None:
         "harness_file",
         "resume_claude_session_id",
         "model_id",
+        "access",
     ]
     assert not hasattr(ClaudeCodeDriver, "prompt_fits")
     assert "--" not in ClaudeCodeDriver("2.1.330").argv(Launch(SID, HARNESS, RESUME, "claude-sonnet-5-5"))

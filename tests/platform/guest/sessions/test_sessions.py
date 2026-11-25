@@ -154,6 +154,7 @@ def test_create_builds_user_directories_harness_and_records(
     assert meta["stopped_at"] is None
     assert len(meta["request_sha256"]) == 64
     assert meta["identity"] == {"task_id": TASK, "parent_session_id": None, "depth": 0}
+    assert meta["access"] == "platform"
 
 
 def test_the_token_is_only_stored_as_hash(
@@ -240,6 +241,9 @@ def test_subagent_session_and_subscription_access(
     ]
     assert "--model" not in argv
     assert argv[-1] == session_paths.harness_file(SESSION)
+    # 13-work-vm.md section 13.7: the subscription access may use Claude Code's own web search.
+    assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep,Edit,Write,WebSearch"
+    assert manager.access(SESSION) == "subscription"
     with context.journal.transaction() as db:
         assert db.execute("SELECT COUNT(*) FROM prompt_registry").fetchone()[0] == 0
 
@@ -674,9 +678,12 @@ def test_suspend_and_resume_with_a_new_token(
     manager.stop(SESSION, "suspended")
     manager.stop(SESSION, "suspended")
     assert states(context) == ["sandbox_ready", "agent_starting", "suspended"]
-    resumed = request(resume_claude_session_id=RESUME)
+    assert manager.access(SESSION) == "platform"
+    resumed = request(resume_claude_session_id=RESUME, model={"access": "api_key", "model_id": None, "env": {}})
     resumed.pop("initial_prompt")
     manager.create(resumed)
+    # the access of the new start replaces the recorded one (it decides about WebSearch)
+    assert manager.access(SESSION) == "api_key"
     second = context.state.session(SESSION)
     assert first is not None
     assert second is not None
@@ -688,6 +695,7 @@ def test_suspend_and_resume_with_a_new_token(
     assert manager.start(SESSION)
     argv = launch(session_paths)["argv"]
     assert argv[argv.index("--resume") + 1] == RESUME
+    assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep,Edit,Write,WebSearch"
     assert records(context)[-1]["claude_session_id"] == RESUME
 
 
@@ -1161,6 +1169,14 @@ def test_cleanup_forgets_the_tools_mark(
     assert manager.cleanup() == [SESSION]
     with context.journal.transaction() as db:
         assert db.execute("SELECT 1 FROM guest_meta WHERE key LIKE 'tools_ready:%'").fetchone() is None
+
+
+def test_the_access_comes_from_the_meta_file(manager: sessions.SessionManager, context: ControlContext) -> None:
+    assert control_hooks.session_access(context, SESSION) is None
+    manager._write_meta(SESSION, {"access": "api_key"})
+    assert control_hooks.session_access(context, SESSION) == "api_key"
+    manager._write_meta(SESSION, {"access": 1})
+    assert manager.access(SESSION) is None
 
 
 def test_the_depth_comes_from_the_stored_identity(manager: sessions.SessionManager, context: ControlContext) -> None:

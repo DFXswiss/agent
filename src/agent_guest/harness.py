@@ -98,6 +98,29 @@ TOOLS: tuple[tuple[str, str, dict[str, Any]], ...] = (
         "open a web page in the Chromium of your work VM (read, screenshot, click, fill)",
         {"url": "https://example.com/", "action": "screenshot"},
     ),
+    (
+        "browser_navigate",
+        "open a page in the platform browser (recorded, watched live; opens it on first use)",
+        {"url": "https://example.com/"},
+    ),
+    ("browser_snapshot", "the page of the platform browser with fresh refs", {}),
+    ("browser_click", "click an element (ref or selector) or a viewport point", {"target": "e12"}),
+    ("browser_hover", "move the mouse over an element", {"target": "e12"}),
+    ("browser_type", "fill a field, optionally submit", {"target": "e3", "text": "user@example.com", "submit": False}),
+    ("browser_select", "choose options of a select", {"target": "e5", "values": ["CH"]}),
+    ("browser_press", "press a key or chord", {"key": "Enter"}),
+    ("browser_scroll", "scroll the page or an element into view", {"dy": 600}),
+    (
+        "browser_wait",
+        "wait for text, its absence, a URL or some milliseconds",
+        {"text": "Signed in", "timeout_ms": 10000},
+    ),
+    ("browser_evaluate", "the JSON value of a JavaScript expression in the page", {"expression": "document.title"}),
+    ("browser_upload", "workspace files into a file input", {"target": "e7", "paths": ["out/report.pdf"]}),
+    ("browser_dialog", "how the next dialogs are answered", {"action": "dismiss"}),
+    ("browser_tabs", "list, open, select or close tabs", {"action": "list"}),
+    ("browser_download", "download a file into the workspace", {"target": "e9"}),
+    ("browser_screenshot", "a PNG of the page into the workspace (view it with Read)", {"full_page": True}),
 )
 
 

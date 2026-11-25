@@ -17,5 +17,8 @@ TOOL = _forward.workvm_tool(
     "your workspace at path (default .workvm/screenshots/<job_id>.png), view it with Read; click clicks selector, "
     "fill types text into selector, both then read the page. wait_ms waits after loading. Obtains a work VM "
     "automatically if you have none. For complex flows (logins, several steps, assertions) write a Playwright "
-    "script and run it with workvm_exec.",
+    "script and run it with workvm_exec. This browser is neither recorded nor watched by the user and is meant for "
+    "automation, tests and apps running in your work VM; for what a person would do in a browser (sign-ins, forms, "
+    "downloads, checking a page on the internet) use the platform browser (browser_* tools), which is recorded and "
+    "watched live.",
 )

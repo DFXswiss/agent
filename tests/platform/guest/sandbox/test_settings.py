@@ -22,7 +22,8 @@ FIXTURE = Path(__file__).resolve().parent / "fixtures" / "managed-settings.json"
 REPO_ROOT = Path(__file__).resolve().parents[4]
 HOOK_BASE = "http://127.0.0.1:7700/hooks/"
 
-# 03-api.md section 8.1, in table order, then the work VM tools of 13-work-vm.md section 3.
+# 03-api.md section 8.1, in table order, then the work VM tools of 13-work-vm.md section 3 and the platform browser
+# tools of section 13.4.
 SPEC_MCP_TOOLS = [
     "get_context",
     "list_workgroups",
@@ -42,6 +43,21 @@ SPEC_MCP_TOOLS = [
     "workvm_status",
     "workvm_sync",
     "workvm_browse",
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_click",
+    "browser_hover",
+    "browser_type",
+    "browser_select",
+    "browser_press",
+    "browser_scroll",
+    "browser_wait",
+    "browser_evaluate",
+    "browser_upload",
+    "browser_dialog",
+    "browser_tabs",
+    "browser_download",
+    "browser_screenshot",
 ]
 # 05-runner.md section 5.2.
 SPEC_EVENTS = [
@@ -76,7 +92,6 @@ SPEC_DENIED_TOOLS = [
     "BashOutput",
     "Monitor",
     "WebFetch",
-    "WebSearch",
     "NotebookEdit",
     "Skill",
     "Workflow",
@@ -149,8 +164,10 @@ def test_auto_mode_is_disabled(managed: dict[str, Any]) -> None:
     assert managed["disableAutoMode"] == "disable"
 
 
-def test_allow_list_is_the_file_tools_and_every_platform_tool(managed: dict[str, Any]) -> None:
-    expected = ["Read", "Glob", "Grep", "Edit", "Write"] + [f"mcp__platform__{tool}" for tool in SPEC_MCP_TOOLS]
+def test_allow_list_is_the_file_tools_web_search_and_every_platform_tool(managed: dict[str, Any]) -> None:
+    # 13-work-vm.md section 13.7: WebSearch is refused per session (command line, policy) for the platform access.
+    expected = ["Read", "Glob", "Grep", "Edit", "Write", "WebSearch"]
+    expected += [f"mcp__platform__{tool}" for tool in SPEC_MCP_TOOLS]
     assert managed["permissions"]["allow"] == expected
 
 

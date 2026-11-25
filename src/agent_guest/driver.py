@@ -8,7 +8,12 @@ variables and nothing is inherited) and the agent version reported in the sessio
 Interface:
 
 * ``AgentDriver`` - protocol: ``kind``, ``version``, ``argv(launch)``, ``model_env(access, env)``
-* ``Launch`` - the per-start input of ``argv`` (session, harness file, resume ID, model)
+* ``Launch`` - the per-start input of ``argv`` (session, harness file, resume ID, model, model access)
+
+Web search (13-work-vm.md section 13.7): Claude Code's own ``WebSearch`` runs at the model provider. The managed
+settings (shared by every session of the VM) allow it; the command line offers it (``--tools``) only to a session whose
+model access is in ``policy.WEB_SEARCH_ACCESS`` and lists it in ``--disallowedTools`` for every other access, and the
+PreToolUse policy allows it by the same access (rule 1b).
 
 The command line never carries a prompt (HOT-09): Claude Code would start the turn at once, while its MCP servers
 still connect in the background, so the turn would run without the platform tools. Every first prompt is delivered
@@ -24,13 +29,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
+from agent_guest.policy import WEB_SEARCH_ACCESS, WEB_SEARCH_TOOL
 from agent_guest.sandbox import unit
 
 AGENT_KIND = "claude-code"
 CLAUDE_BINARY = unit.CLAUDE_BINARY
 MCP_CONFIG = "/opt/agent-guest/mcp.json"
 TOOLS = "Read,Glob,Grep,Edit,Write"
-DISALLOWED_TOOLS = "Bash,Agent,Task,WebFetch,WebSearch,NotebookEdit,Skill"
+DISALLOWED_TOOLS = "Bash,Agent,Task,WebFetch,NotebookEdit,Skill"
 # 05 section 10.3: the model variables exist only for the platform access (the runner fills them from the catalog).
 MODEL_ENV_ACCESS = "platform"
 _ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -49,6 +55,8 @@ class Launch:
     harness_file: str
     resume_claude_session_id: str | None = None
     model_id: str | None = None
+    access: str = MODEL_ENV_ACCESS
+    """The model access (``subscription``, ``api_key``, ``platform``); it decides about ``WebSearch``."""
 
 
 class AgentDriver(Protocol):
@@ -83,6 +91,7 @@ class ClaudeCodeDriver:
         """The command line of 05 section 4.1, without a prompt (module docstring)."""
         if not _ID_RE.fullmatch(launch.session_id):
             raise DriverError("session id")
+        web_search = launch.access in WEB_SEARCH_ACCESS
         args = [
             self.binary,
             "--restricted",
@@ -90,9 +99,9 @@ class ClaudeCodeDriver:
             "--mcp-config",
             self.mcp_config,
             "--tools",
-            TOOLS,
+            f"{TOOLS},{WEB_SEARCH_TOOL}" if web_search else TOOLS,
             "--disallowedTools",
-            DISALLOWED_TOOLS,
+            DISALLOWED_TOOLS if web_search else f"{DISALLOWED_TOOLS},{WEB_SEARCH_TOOL}",
             "--permission-mode",
             "dontAsk",
             "--disable-slash-commands",

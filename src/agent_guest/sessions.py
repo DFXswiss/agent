@@ -294,6 +294,7 @@ class _Start:
     kind: str
     model_id: str | None
     model_env: dict[str, str]
+    access: str
     limits: dict[str, int]
     resume: str | None
     prompt: tuple[str, str] | None
@@ -420,6 +421,7 @@ class SessionManager:
             kind="main" if data["depth"] == 0 else "subagent",
             model_id=model["model_id"],
             model_env=dict(model["env"]),
+            access=model["access"],
             limits=dict(data["limits"]),
             resume=resume,
             prompt=None if prompt is None else (prompt["prompt_id"], prompt["text"]),
@@ -479,7 +481,13 @@ class SessionManager:
                 start="fresh" if resume is None else "replaced",
                 sentence=_note(data),
             )
-            meta = {"request_sha256": digest, "identity": _identity(data), "stopped_at": None, **keys}
+            meta = {
+                "request_sha256": digest,
+                "identity": _identity(data),
+                "access": data["model"]["access"],
+                "stopped_at": None,
+                **keys,
+            }
             self._write_meta(session_id, meta)
         except (OSError, SessionError):
             for step in reversed(undo):
@@ -562,7 +570,13 @@ class SessionManager:
                 base = self.paths.session_dir(existing.id)
                 contexts.restore(staged, base, lambda path: self.system.chown(path, existing.uid))
             harness.write(self.paths.harness_file(existing.id), text)
-            meta = {"request_sha256": digest, "identity": _identity(data), "stopped_at": None, **keys}
+            meta = {
+                "request_sha256": digest,
+                "identity": _identity(data),
+                "access": data["model"]["access"],
+                "stopped_at": None,
+                **keys,
+            }
             self._write_meta(existing.id, meta)
         except OSError:
             raise SessionError("sandbox_failed") from None
@@ -615,6 +629,7 @@ class SessionManager:
             harness_file=self.paths.harness_file(session_id),
             resume_claude_session_id=start.resume,
             model_id=start.model_id,
+            access=start.access,
         )
         limits = start.limits
         extra = [
@@ -1045,6 +1060,12 @@ class SessionManager:
 
     def _meta_file(self, session_id: str) -> str:
         return f"{self.paths.meta_dir}/{session_id}.json"
+
+    def access(self, session_id: str) -> str | None:
+        """The model access of the session's current start (``subscription``, ``api_key``, ``platform``; recorded with
+        every create or resume, it may change between resumes), None when unknown."""
+        access = self._meta(session_id).get("access")
+        return access if isinstance(access, str) else None
 
     def depth(self, session_id: str) -> int | None:
         """The depth of the session's stored identity (0: the main session of its task), None when unknown."""

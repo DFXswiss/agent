@@ -1,6 +1,7 @@
-"""The work VM tools of 13-work-vm.md section 3 (KOR-29): forwarding as journal record ``workvm.call`` (pending kind
-``workvm``), the answer checked against the tool's output schema, the guest-side wait (``wait_seconds`` + 5 s, at most
-33 s), the ``timeout`` that points to ``workvm_status``, runner errors and an unreachable control process.
+"""The work VM tools of 13-work-vm.md section 3 (KOR-29) and the platform browser tools of section 13.4 (KOR-44):
+forwarding as journal record ``workvm.call`` (pending kind ``workvm``), the answer checked against the tool's output
+schema, the guest-side wait (``wait_seconds`` + 5 s, at most 33 s), the ``timeout`` that points to ``workvm_status``
+(``browser_snapshot`` for a browser tool), runner errors and an unreachable control process.
 """
 
 from __future__ import annotations
@@ -26,6 +27,29 @@ from tests.platform.guest.mcp_tools.conftest import FakeRunner, contract_fixture
 Runner = Callable[..., FakeRunner]
 
 WORKVM_TOOLS = ("workvm_exec", "workvm_output", "workvm_kill", "workvm_status", "workvm_sync", "workvm_browse")
+BROWSER_TOOLS = (
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_click",
+    "browser_hover",
+    "browser_type",
+    "browser_select",
+    "browser_press",
+    "browser_scroll",
+    "browser_wait",
+    "browser_evaluate",
+    "browser_upload",
+    "browser_dialog",
+    "browser_tabs",
+    "browser_download",
+    "browser_screenshot",
+)
+FORWARDED_TOOLS = (*WORKVM_TOOLS, *BROWSER_TOOLS)
+BROWSER_TIMEOUT = {
+    "error": "timeout",
+    "message": "The platform browser did not answer in time; the action may still have happened. Look at the page "
+    "with browser_snapshot before you repeat it.",
+}
 JOB_ID = "j-0123456789ab"
 PENDING_ID = "01a1ee56-5e00-7028-8f1b-340691d99f28"
 TIMEOUT = {
@@ -103,6 +127,8 @@ def test_every_work_vm_tool_is_registered_with_a_description() -> None:
     assert "Read" in tools["workvm_browse"].description
     assert "Playwright script" in tools["workvm_browse"].description
     assert "workvm_exec" in tools["workvm_browse"].description
+    assert "neither recorded nor watched" in tools["workvm_browse"].description
+    assert "browser_*" in tools["workvm_browse"].description
     assert "request one" not in tools["workvm_status"].description
 
 
@@ -144,7 +170,40 @@ def test_the_other_tools_wait_the_route_limit_and_time_out_with_a_hint(
     assert control.created == [(SESSION_ID, "workvm", {"tool": tool, "arguments": arguments})]
 
 
-@pytest.mark.parametrize("tool", WORKVM_TOOLS)
+def test_every_browser_tool_is_forwarded_with_the_shared_answer_text() -> None:
+    tools = load_tools()
+    assert sorted(name for name in tools if name.startswith("browser_")) == sorted(BROWSER_TOOLS)
+    for name in BROWSER_TOOLS:
+        description = tools[name].description
+        assert tools[name].handler is _forward.workvm
+        assert description.endswith(_forward.BROWSER_ANSWER), name
+        assert len(description) > len(_forward.BROWSER_ANSWER) + 60, name
+    shared = _forward.BROWSER_ANSWER
+    for text in ("[ref=e12]", "f1e3", "Playwright selector", "snapshot false", "ok false", "browser.close"):
+        assert text in shared, text
+    assert "recorded and watched live" in shared
+    navigate = tools["browser_navigate"].description
+    for text in ("human.question", "workvm_browse", "browser.open", "cannot reach your work VM", "like a person"):
+        assert text in navigate, text
+    assert "masked" in tools["browser_type"].description
+    assert ".browser/downloads/<file name>" in tools["browser_download"].description
+    assert ".browser/screenshots/<browser_id>-<seq>.png" in tools["browser_screenshot"].description
+
+
+@pytest.mark.parametrize("tool", BROWSER_TOOLS)
+def test_an_unanswered_browser_call_times_out_with_the_snapshot_hint(
+    schemas: SchemaSet, contracts_dir: Path, tool: str
+) -> None:
+    arguments = valid(contracts_dir, tool, "input")[0][1]
+    control = RecordingControl()
+    with pytest.raises(_forward.BrowserNoAnswer) as caught:
+        run(schemas, control, tool, arguments)
+    assert {"error": caught.value.code, "message": caught.value.message} == BROWSER_TIMEOUT
+    assert control.waits == [_forward.MAX_WAIT_SECONDS]
+    assert control.created == [(SESSION_ID, "workvm", {"tool": tool, "arguments": arguments})]
+
+
+@pytest.mark.parametrize("tool", FORWARDED_TOOLS)
 def test_every_valid_output_fixture_is_returned(schemas: SchemaSet, contracts_dir: Path, tool: str) -> None:
     arguments = valid(contracts_dir, tool, "input")[0][1]
     outputs = valid(contracts_dir, tool, "output")
@@ -153,7 +212,7 @@ def test_every_valid_output_fixture_is_returned(schemas: SchemaSet, contracts_di
         assert run(schemas, RecordingControl(ok(copy.deepcopy(document))), tool, arguments) == document, stem
 
 
-@pytest.mark.parametrize("tool", WORKVM_TOOLS)
+@pytest.mark.parametrize("tool", FORWARDED_TOOLS)
 def test_an_invalid_or_foreign_result_is_unavailable(schemas: SchemaSet, contracts_dir: Path, tool: str) -> None:
     arguments = valid(contracts_dir, tool, "input")[0][1]
     other = "workvm_status" if tool != "workvm_status" else "workvm_sync"
@@ -209,7 +268,7 @@ def test_valid_calls_are_journaled_as_workvm_call_and_answered(
         return ok(valid(contracts_dir, body["tool"], "output")[0][1])
 
     runner = fake_runner(answer)
-    cases = [(tool, document) for tool in WORKVM_TOOLS for _, document in valid(contracts_dir, tool, "input")]
+    cases = [(tool, document) for tool in FORWARDED_TOOLS for _, document in valid(contracts_dir, tool, "input")]
     for tool, document in cases:
         result = mcp.tool(tool, document)
         assert result["isError"] is False, (tool, result)

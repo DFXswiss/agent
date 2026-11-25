@@ -15,6 +15,8 @@ made here:
   ``local_check:"passed"``; the runner checks, seals and registers it as usual, nobody waits for its answer), then
   the call is denied with ``question_passed`` and journaled as rule 1 (no ``hook.denied`` audit: the operation is the
   record). A subagent's call is denied by rule 2 as before.
+  Rule 1b (13-work-vm.md section 13.7): ``WebSearch`` is allowed when the model access of the session's current start
+  (``session_access``, recorded in the session's meta file) is in ``WEB_SEARCH_ACCESS``; else it is denied by rule 2.
 * op ``hook.post_tool_use {session_id, body}`` - journals ``session.tool`` for ``Write``/``Edit`` (05 section 5.5);
   other tools come from the transcript (GST-05)
 * op ``file.changed {session_id, path}`` - the file hint ``file_changed(session, path)`` of PostToolUse
@@ -40,6 +42,8 @@ from agent_guest.policy import (
     PATTERN_KEYS,
     QUESTION_MAX,
     TOOL_NAME_RE,
+    WEB_SEARCH_ACCESS,
+    WEB_SEARCH_TOOL,
     WRITE_TOOLS,
     Policy,
     harness_path,
@@ -96,6 +100,11 @@ def session_depth(context: ControlContext, session_id: str) -> int | None:
     return sessions.manager(context).depth(session_id)
 
 
+def session_access(context: ControlContext, session_id: str) -> str | None:
+    """The model access of the session's current start, None when unknown."""
+    return sessions.manager(context).access(session_id)
+
+
 def _question(args: dict[str, Any], tool_name: object) -> str | None:
     if "question" not in args:
         return None
@@ -137,7 +146,10 @@ def pre_tool_use(context: ControlContext, args: dict[str, Any]) -> dict[str, Any
     question = _question(args, tool_name)
     session = _session(context, args["session_id"])
     ask = question is not None and session_depth(context, session.id) == 0
-    decision = Policy(session.workspace, harness_path(session.id)).evaluate(tool_name, tool_input, ask=ask)
+    web_search = tool_name == WEB_SEARCH_TOOL and session_access(context, session.id) in WEB_SEARCH_ACCESS
+    decision = Policy(session.workspace, harness_path(session.id)).evaluate(
+        tool_name, tool_input, ask=ask, web_search=web_search
+    )
     if ask:
         assert question is not None
         _ask(context, session.id, question)
