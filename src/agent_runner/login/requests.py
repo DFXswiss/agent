@@ -10,6 +10,11 @@ may add `subscription_id` - the further subscription the login fills, a new ID c
 for the record; an existing one keeps its own unless given) and, for `automatic`, `email` - the address to sign in with
 instead of the mailbox's own; a malformed one of them is `upstream_error`):
 
+With `subscription_id` the login is the full login (`SUBSCRIPTION_LOGIN_ARGV`, section 11.6, ADR-091, KOR-71): the
+command gets `--email <address>` when an address is known (the automatic login's, else the one the record holds), the
+record stores `{token, refresh_token, expires_at, scopes, subscription_type?, rate_limit_tier?, email,
+kind:"oauth_login"}`, and a login without `user:profile` and `user:inference` ends `scope_missing`.
+
 - `manual` (setup-token relay, section 11.2): start the login command (`relay.LoginSession`), response 1
   `{step:"authorize", url}`, wait for the follow-up with the code until shortly before the request expires, type it,
   read the token, store the `claude_subscription` credential `{token, email, kind:"setup_token"}` under the owner's
@@ -54,10 +59,11 @@ import httpx
 
 from agent_cli.account_login import Mailbox
 from agent_runner.credentials import subscriptions
-from agent_runner.credentials.cache import CredentialUnavailable, opened, put
+from agent_runner.credentials.cache import CredentialUnavailable, RecordRefused, opened, put
 from agent_runner.errors import RunnerError
 from agent_runner.login import automation
 from agent_runner.login.automation import CODE_RE, EMAIL_RE, MAX_EMAIL, AutomationFailed, mailbox_fields
+from agent_runner.login.full_login import FullLogin
 from agent_runner.login.relay import LoginFailed, LoginOptions, LoginSession, options
 from agent_runner.model.selection import load_catalog
 from agent_runner.requests.service import RESPOND_DELAYS, Flow, FollowUp
@@ -168,8 +174,27 @@ async def _plan(flow: Flow, opts: LoginOptions) -> tuple[Mailbox, str] | None:
     return await _mailbox(flow)
 
 
-async def _store(flow: Flow, token: str, email: str | None, target: Mapping[str, object]) -> None:
-    body: dict[str, object] = {"token": token, "email": email, "kind": "setup_token"}
+async def _known_email(flow: Flow, record_id: str) -> str | None:
+    """The address the further subscription already holds (the `--email` of a new login), None when there is none
+    or the record cannot be read."""
+    try:
+        found = await subscriptions.fetch(flow.context, record_id)
+        if found is None or found.primary or found.owner != flow.user:
+            return None
+        async with subscriptions.opened(flow.context, found) as body:
+            email = body.get("email")
+    except (CredentialUnavailable, RecordRefused, HubRefusal, HubTransportError):
+        return None
+    return email if isinstance(email, str) and EMAIL_RE.fullmatch(email) else None
+
+
+async def _store(flow: Flow, login: str | FullLogin, email: str | None, target: Mapping[str, object]) -> None:
+    if isinstance(login, FullLogin):
+        body = login.body()
+        if email is not None or body["email"] is None:
+            body["email"] = email if email is not None else body["email"]
+    else:
+        body = {"token": login, "email": email, "kind": "setup_token"}
     record_id = target.get("subscription_id")
     try:
         if isinstance(record_id, str):
@@ -203,6 +228,11 @@ async def _login(flow: Flow, session: LoginSession, opts: LoginOptions) -> None:
     plan = await _plan(flow, opts) if mode == "automatic" else None
     if plan is not None and "email" in wanted:
         plan = (plan[0], str(wanted["email"]))
+    if session.full:
+        record_id = str(wanted["subscription_id"])
+        hint = plan[1] if plan is not None else await _known_email(flow, record_id)
+        if hint is not None:
+            session.argv = (*session.argv, "--email", hint)
     url = await session.start(opts)
     _line(flow, f"started mode={mode}")
     code = None if plan is None else await _automate(flow, url, plan, opts, session.workdir)
@@ -225,8 +255,8 @@ async def _login(flow: Flow, session: LoginSession, opts: LoginOptions) -> None:
         assert plan is not None
         email = plan[1]
     try:
-        token = await session.finish(code, opts)
-        await _store(flow, token, email, wanted)
+        login: str | FullLogin = await (session.finish_full(code, opts) if session.full else session.finish(code, opts))
+        await _store(flow, login, email, wanted)
     except LoginFailed as failed:
         await _fail(flow, failed.code, target, shape=failed.shape)
         return
@@ -240,7 +270,9 @@ async def _login(flow: Flow, session: LoginSession, opts: LoginOptions) -> None:
 
 async def claude_login(flow: Flow) -> None:
     config = flow.context.config
-    session = LoginSession(config.tmp_dir, flow.id, config.login_argv, flow.context.host.env.get("PATH", ""))
+    full = isinstance(flow.body.get("subscription_id"), str)
+    argv = config.subscription_login_argv if full else config.login_argv
+    session = LoginSession(config.tmp_dir, flow.id, argv, flow.context.host.env.get("PATH", ""), full=full)
     try:
         await _login(flow, session, options(flow.context))
     except LoginFailed as failed:

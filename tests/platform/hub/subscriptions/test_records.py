@@ -1,7 +1,8 @@
 """U-HUB-subscriptions (ADR-090 sections 1 and 2, 03-api.md sections 4.8 and 6.1): several Claude subscriptions per
 user. Further subscriptions are written through `/v1/subscriptions/{id}` (never primary, never the primary record),
 read and deleted there like the primary record; a device reads them when it is eligible for the owner's `CK` and
-writes them while answering the owner's `claude.login` or to re-seal one under the owner's current epoch."""
+writes them while answering the owner's `claude.login`, to re-seal one under the owner's current epoch or to renew one
+(ADR-091 section 2: the device that measures the owner, or the one that wrote the stored version)."""
 
 from __future__ import annotations
 
@@ -202,9 +203,10 @@ def test_a_device_reseals_a_record_under_an_older_epoch_only(desk: Desk) -> None
     assert (stale.status_code, stale.json()) == (400, {"error": "epoch_stale"})
     current = desk.record(writer, KIND, record_id=record["header"]["id"], version=2, epoch=2, author=device)
     assert _device_put(client, writer, current, 1, None).json() == {"version": 2}
-    # now it is under the current epoch, and an unknown or primary record is never re-sealed
+    # now it is under the current epoch and written by the device itself, which may write it again (it finishes its
+    # renewal, ADR-091 section 2); an unknown or primary record is never re-sealed
     later = desk.record(writer, KIND, record_id=record["header"]["id"], version=3, epoch=2, author=device)
-    assert _device_put(client, writer, later, 2, None).status_code == 403
+    assert _device_put(client, writer, later, 2, None).json() == {"version": 3}
     assert _device_put(client, writer, desk.record(writer, KIND, epoch=2, author=device), 0, None).status_code == 403
     legacy = desk.record(writer, KIND, epoch=2)
     assert desk.put(writer, legacy, 0).status_code == 200
@@ -213,3 +215,46 @@ def test_a_device_reseals_a_record_under_an_older_epoch_only(desk: Desk) -> None
     assert _device_put(client, writer, primary, 1, None).status_code == 403
     # a reseal names the record's owner
     assert _device_put(client, desk.scene.reader, current, 2, None).status_code == 403
+
+
+def _online(desk: Desk, device: Actor) -> None:
+    now = desk.hub.clock()
+    desk.world.rows(
+        "INSERT INTO hub.device_presence (device_id, hub_instance, connected_at, last_heartbeat_at)"
+        " VALUES (%s, 'test', %s, %s) RETURNING device_id",
+        device.id,
+        now,
+        now,
+    )
+
+
+def test_the_measuring_device_renews_a_further_subscription(desk: Desk) -> None:
+    writer, device = desk.scene.writer, desk.scene.device
+    client = desk.client(device)
+    record = _created(desk, writer)  # written by the owner, under the current epoch
+    record_id = record["header"]["id"]
+    renewed = desk.record(writer, KIND, record_id=record_id, version=2, author=device)
+    # not while the device does not measure the owner (it is offline)
+    assert _device_put(client, writer, renewed, 1, None).status_code == 403
+    _online(desk, device)
+    response = _device_put(client, writer, renewed, 1, None)
+    assert response.json() == {"version": 2}, response.text
+    assert _changed(client) == [writer.id]
+    # a stale renewal loses against a newer version; the primary record is never renewed
+    assert _device_put(client, writer, renewed, 1, None).json()["error"] == "version_conflict"
+    legacy = desk.record(writer, KIND)
+    assert desk.put(writer, legacy, 0).status_code == 200
+    primary = desk.record(writer, KIND, record_id=legacy["header"]["id"], version=2, author=device)
+    assert _device_put(client, writer, primary, 1, None).status_code == 403
+    # once the owner wrote the newest version, a device that no longer measures the owner may not write it; the
+    # device that wrote the stored version may (it finishes its renewal)
+    by_owner = desk.record(writer, KIND, record_id=record_id, version=3)
+    assert _put(writer, by_owner, 2).json() == {"version": 3}
+    desk.world.rows("DELETE FROM hub.device_presence WHERE device_id = %s RETURNING device_id", device.id)
+    late = desk.record(writer, KIND, record_id=record_id, version=4, author=device)
+    assert _device_put(client, writer, late, 3, None).status_code == 403
+    _online(desk, device)
+    assert _device_put(client, writer, late, 3, None).json() == {"version": 4}
+    desk.world.rows("DELETE FROM hub.device_presence WHERE device_id = %s RETURNING device_id", device.id)
+    again = desk.record(writer, KIND, record_id=record_id, version=5, author=device)
+    assert _device_put(client, writer, again, 4, None).json() == {"version": 5}

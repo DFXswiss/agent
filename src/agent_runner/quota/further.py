@@ -17,6 +17,12 @@ device state carries `subscriptions.api >= 1` (an older hub would refuse the ite
 - **result**: `quota {owner_id, subscription_id, windows, fetched_at}` for a valid document with windows,
   `quota {owner_id, subscription_id, unavailable: true, fetched_at}` for `401`/`403`; nothing else is sent. The
   readings mark no limit: further subscriptions serve no session of the owner.
+- **renewal** (KOR-71, ADR-091 section 2; `renewal.Renewer`): on every tick, first every renewal this device stored
+  but the hub has not confirmed is written again (`renewal.flush`, also for owners this device no longer measures);
+  then a full login (`kind: "oauth_login"` with both tokens) of a measured owner is renewed `RENEW_BEFORE_S` before
+  its `expires_at`, and a `401` of the usage endpoint for such a record renews it at once instead of marking it not
+  readable (a record that was renewed is measured at the next tick, with the new token). The expiry of each record
+  version is read once (`expiry`).
 """
 
 from __future__ import annotations
@@ -31,6 +37,7 @@ import httpx
 from agent_runner.credentials import subscriptions
 from agent_runner.credentials.cache import CredentialUnavailable
 from agent_runner.orgs.db import session as store_session
+from agent_runner.quota import renewal
 from agent_runner.quota.parsers import UsageInvalid, windows_snapshot
 from agent_runner.quota.reader import ClientFactory, default_client
 from agent_runner.quota.subscription import (
@@ -73,13 +80,41 @@ class FurtherPoller:
     """Record ID -> its schedule."""
     reseal_after: dict[str, float] = field(default_factory=dict)
     """Record ID -> when a re-seal may be tried again (one try per `POLL_S` that wrote nothing)."""
+    expiry: dict[str, tuple[int, float | None]] = field(default_factory=dict)
+    """Record ID -> (version, expiry of its access token or None when it is no renewable full login)."""
+    renewer: renewal.Renewer | None = None
 
     def line(self, text: str) -> None:
         self.context.log.write(f"runner.quota {text}\n")
         self.context.log.flush()
 
+    def renewals(self) -> renewal.Renewer:
+        if self.renewer is None:
+            self.renewer = renewal.Renewer(context=self.context)
+        self.renewer.client = self.client
+        return self.renewer
+
+    async def renew_due(self, item: subscriptions.Subscription, now: float, *, force: bool = False) -> bool:
+        """Renew a full login when it is due (module docstring); True when a new version was written."""
+        known = self.expiry.get(item.id)
+        if known is None or known[0] != item.version:
+            try:
+                async with subscriptions.opened(self.context, item) as body:
+                    known = (item.version, renewal.expires(body))
+            except CredentialUnavailable:
+                known = (item.version, None)
+            self.expiry[item.id] = known
+        if known[1] is None or not (force or now >= known[1] - renewal.RENEW_BEFORE_S):
+            return False
+        return await self.renewals().renew(item, now)
+
     async def tick(self, desired: Mapping[str, Any] | None, now: float) -> None:
         named = owners(desired) if api(desired) else []
+        if api(desired):
+            for waiting in await renewal.pending(self.context):
+                await self.renewals().renew(
+                    subscriptions.Subscription(waiting.id, waiting.owner, False, waiting.base_version, {}), now
+                )
         for owner in [name for name in self.listed if name not in named]:
             del self.listed[owner]
         seen: set[str] = set()
@@ -95,11 +130,15 @@ class FurtherPoller:
                     if await subscriptions.reseal(self.context, item):
                         continue  # measured at the next tick, with the re-sealed version
                     self.reseal_after[item.id] = now + POLL_S
+                if await self.renew_due(item, now):
+                    continue  # measured at the next tick, with the new token
                 await self.due(item, now)
         for record_id in [name for name in self.records if name not in seen]:
             del self.records[record_id]
         for record_id in [name for name in self.reseal_after if name not in seen]:
             del self.reseal_after[record_id]
+        for record_id in [name for name in self.expiry if name not in seen]:
+            del self.expiry[record_id]
 
     async def due(self, item: subscriptions.Subscription, now: float) -> None:
         state = self.records.setdefault(item.id, OwnerState())
@@ -144,6 +183,8 @@ class FurtherPoller:
     ) -> None:
         status = response.status_code
         base = {"owner_id": item.owner, "subscription_id": item.id}
+        if status == 401 and await self.renew_due(item, now, force=True):
+            return
         if status in (401, 403):
             state.unavailable_version = item.version
             state.unavailable_until = now + UNAVAILABLE_S

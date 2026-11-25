@@ -8,7 +8,7 @@
 | `DELETE /v1/subscriptions/{id}` | `user`: an own subscription record (also the primary one) |
 | `GET /v1/device/subscriptions?owner_id=` | `device_eligible`: the metadata of every subscription of the owner |
 | `GET /v1/device/subscriptions/{id}` | `device_eligible`: the device holds the owner's `CK` |
-| `PUT /v1/device/subscriptions/{id}` | `device_eligible`: answering a `claude.login` of the owner, or a re-seal |
+| `PUT /v1/device/subscriptions/{id}` | `device_eligible`: a `claude.login` of the owner, a re-seal or a renewal |
 
 A browser write is signed by the caller's identity or the caller's own-identity agent (ADR-082 section 9.5) and sealed
 under the caller's current `CK` epoch (`agent_hub.credentials.records.put_identity` with kind `claude_subscription`): a
@@ -18,10 +18,13 @@ plaintext mirror of the record's sealed use (`store.set_use`; ADR-090 section 3)
 deletes of a record that is not the caller's are `404 not_found`.
 
 A device writes a user's further subscription while answering an active `claude.login` of that user
-(`request_id`, `agent_hub.requests.store.authorizes_write`), or - without `request_id` - **re-seals** one: the stored
-record is a non-primary subscription of the owner under an older epoch than the owner's current `CK` epoch, and the
-new version is under the current epoch (checked by `put_identity`); anything else is `403 forbidden`, as is a write
-of a device that is not eligible for the owner's `CK`. A device read needs the same eligibility (`404 not_found`
+(`request_id`, `agent_hub.requests.store.authorizes_write`), or - without `request_id` - **re-seals** or **renews**
+one (ADR-090 section 1, ADR-091 section 2): the stored record is a non-primary subscription of the owner and either
+lies under an older epoch than the owner's current `CK` epoch, or the device is the one that measures the owner now
+(`agent_hub.usage.polling.polls_for`, the rule of the `quota` items), or the device wrote the stored version itself
+(it finishes a renewal it started before the measuring duty moved); the new version is under the current epoch
+(checked by `put_identity`). Anything else is `403 forbidden`, as is a write of a device that is not eligible for the
+owner's `CK`. A device read needs the same eligibility (`404 not_found`
 otherwise, also for a malformed or missing `owner_id`); only the list clears the device's change notice of `(owner,
 claude_subscription)` up to the time it read (it shows every record of the owner).
 
@@ -32,7 +35,9 @@ writes the account notification `credential_changed` (target `claude_subscriptio
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable
+from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -50,6 +55,8 @@ from agent_hub.notifications.rules import Notification, publish_rows
 from agent_hub.orgs.routes import parse_id, user_id
 from agent_hub.requests.store import authorizes_write
 from agent_hub.subscriptions import store
+from agent_hub.usage import binding
+from agent_hub.usage.polling import polls_for
 from agent_hub.wraps.rules import cred_epoch
 
 router = HubRouter()
@@ -198,13 +205,18 @@ async def get_device_subscription(context: Context, principal: ActiveDevice, id:
     return await _in_transaction(context, work)
 
 
-def _reseal_allowed(connection: Any, record_id: UUID, owner: UUID) -> bool:
-    """The stored record is a further subscription of the owner under an older epoch than the owner's current one."""
+def _device_write_allowed(connection: Any, record_id: UUID, owner: UUID, device: UUID, now: datetime) -> bool:
+    """A write without a request (module docstring): a further subscription of the owner that is re-sealed, renewed by
+    the measuring device or renewed by the device that wrote the stored version."""
     found = records.load_identity(connection, record_id, KIND)
     if found is None or found.owner.id != owner or found.primary:
         return False
     current = cred_epoch(connection, str(owner))
-    return current is not None and found.epoch < current
+    if current is not None and found.epoch < current:
+        return True
+    if polls_for(connection, device, owner, now, binding.online_window()):
+        return True
+    return bool(json.loads(found.header_text).get("author") == str(device))
 
 
 @router.put("/v1/device/subscriptions/{id}", auth="device", right="device_eligible")
@@ -216,7 +228,7 @@ async def put_device_subscription(
 
     def work(connection: Any) -> records.Change:
         if body.request_id is None:
-            allowed = _reseal_allowed(connection, record_id, owner_id)
+            allowed = _device_write_allowed(connection, record_id, owner_id, device, now)
         else:
             allowed = authorizes_write(
                 connection, device, owner_id, request_id=UUID(body.request_id), kind=KIND, now=now

@@ -27,6 +27,11 @@ SUPPORTED_PLATFORM = "darwin"
 DEFAULT_HOME_RELATIVE = ".local/share/agent-runner"
 DEFAULT_HOME = "~/" + DEFAULT_HOME_RELATIVE
 DEFAULT_LOGIN_ARGV = ("claude", "setup-token")
+DEFAULT_SUBSCRIPTION_LOGIN_ARGV = ("claude", "auth", "login", "--claudeai")
+"""The full login of a further subscription (ADR-091 section 1); `--email <address>` is appended when known."""
+DEFAULT_CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+DEFAULT_CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+"""Token endpoint and client ID the pinned Claude Code renews its login with (ADR-091 section 2)."""
 OPERATOR_GITHUB_ONE_USER = "OPERATOR_GITHUB_USERS:one_user_only"
 """The error name of an `OPERATOR_GITHUB_USERS` with more than one user (`doctor` and the daemon refuse it)."""
 DeviceKind = Literal["org", "platform"]
@@ -58,6 +63,9 @@ NAMES = (
     "MODEL_UPSTREAM_OPENROUTER",
     "ANTHROPIC_USAGE_URL",
     "LOGIN_ARGV",
+    "SUBSCRIPTION_LOGIN_ARGV",
+    "CLAUDE_TOKEN_URL",
+    "CLAUDE_OAUTH_CLIENT_ID",
     "LOGIN_AUTOMATION",
     "GOLDEN_TEMPLATE",
     "TEST_MODE",
@@ -140,6 +148,7 @@ _URL_DEFAULTS = {
     "MODEL_UPSTREAM_ANTHROPIC": "https://api.anthropic.com",
     "MODEL_UPSTREAM_OPENROUTER": "https://openrouter.ai/api",
     "ANTHROPIC_USAGE_URL": "https://api.anthropic.com/api/oauth/usage",
+    "CLAUDE_TOKEN_URL": DEFAULT_CLAUDE_TOKEN_URL,
 }
 _DIGITS_RE = re.compile(r"^[0-9]{1,9}$")
 _CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
@@ -257,6 +266,11 @@ class Config:
     browser_live_max_kbps: int = 3000
     """Cap of the live picture's bandwidth in kbit/s (ADR-085 section 6)."""
     browser_search_url: str = ""
+    subscription_login_argv: tuple[str, ...] = DEFAULT_SUBSCRIPTION_LOGIN_ARGV
+    """The full login of a further subscription (ADR-091 section 1)."""
+    claude_token_url: str = DEFAULT_CLAUDE_TOKEN_URL
+    """The token endpoint the measuring device renews further subscriptions at (ADR-091 section 2)."""
+    claude_oauth_client_id: str = DEFAULT_CLAUDE_OAUTH_CLIENT_ID
     """URL template with `{q}` that `browser_navigate {query}` opens; empty = automated search is off (F9)."""
 
     @property
@@ -344,6 +358,13 @@ def load_config(
         model_upstream_openrouter=urls["MODEL_UPSTREAM_OPENROUTER"],
         anthropic_usage_url=urls["ANTHROPIC_USAGE_URL"],
         login_argv=_login_argv(raw("LOGIN_ARGV")),
+        subscription_login_argv=_login_argv(
+            raw("SUBSCRIPTION_LOGIN_ARGV"), "SUBSCRIPTION_LOGIN_ARGV", DEFAULT_SUBSCRIPTION_LOGIN_ARGV
+        ),
+        claude_token_url=urls["CLAUDE_TOKEN_URL"],
+        claude_oauth_client_id=_client_id(
+            raw("CLAUDE_OAUTH_CLIENT_ID") or DEFAULT_CLAUDE_OAUTH_CLIENT_ID, "CLAUDE_OAUTH_CLIENT_ID"
+        ),
         login_automation=automation_raw == "on",
         login_automation_set=raw("LOGIN_AUTOMATION") != "",
         golden_template=_optional(
@@ -463,6 +484,10 @@ def environment(config: Config) -> dict[str, str]:
             out[PREFIX + name] = url
     if config.login_argv != DEFAULT_LOGIN_ARGV:
         out[PREFIX + "LOGIN_ARGV"] = json.dumps(list(config.login_argv))
+    if config.subscription_login_argv != DEFAULT_SUBSCRIPTION_LOGIN_ARGV:
+        out[PREFIX + "SUBSCRIPTION_LOGIN_ARGV"] = json.dumps(list(config.subscription_login_argv))
+    if config.claude_oauth_client_id != DEFAULT_CLAUDE_OAUTH_CLIENT_ID:
+        out[PREFIX + "CLAUDE_OAUTH_CLIENT_ID"] = config.claude_oauth_client_id
     if config.login_automation_set:
         out[PREFIX + "LOGIN_AUTOMATION"] = "on" if config.login_automation else "off"
     if config.test_mode:
@@ -733,19 +758,19 @@ def _app_slug(value: str) -> str:
     return value
 
 
-def _login_argv(value: str) -> tuple[str, ...]:
+def _login_argv(value: str, name: str = "LOGIN_ARGV", default: tuple[str, ...] = DEFAULT_LOGIN_ARGV) -> tuple[str, ...]:
     if value == "":
-        return DEFAULT_LOGIN_ARGV
+        return default
     try:
         parsed = json.loads(value)
     except ValueError:
-        raise RunnerError("config_invalid", "LOGIN_ARGV") from None
+        raise RunnerError("config_invalid", name) from None
     if (
         not isinstance(parsed, list)
         or not parsed
         or not all(isinstance(item, str) and item and "\x00" not in item for item in parsed)
     ):
-        raise RunnerError("config_invalid", "LOGIN_ARGV")
+        raise RunnerError("config_invalid", name)
     return tuple(parsed)
 
 

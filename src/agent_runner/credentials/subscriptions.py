@@ -237,18 +237,8 @@ async def opened(context: Any, found: Subscription) -> AsyncIterator[dict[str, A
         body.clear()
 
 
-async def _put(
-    context: Any,
-    owner: str,
-    record_id: str,
-    version: int,
-    body: Mapping[str, object],
-    *,
-    request_id: str | None,
-    delays: Sequence[float] = (),
-    sleep: Sleep | None = None,
-) -> int | None:
-    """Seal `body` as version `version + 1` under the newest epoch and write it; None after a `version_conflict`."""
+async def seal(context: Any, owner: str, record_id: str, version: int, body: Mapping[str, object]) -> dict[str, Any]:
+    """`body` sealed as version `version + 1` under the newest `CK` epoch this device holds (author this device)."""
     sync, identity = cache._sync(context), context.identity
     epoch = await cache.newest_epoch(context, owner)
     if epoch is None:
@@ -264,6 +254,23 @@ async def _put(
         ts=time_text(sync.wall()),
     )
     record = credential_format.seal_credential(key, header, body_json(dict(body)), identity.keys.signing_key())
+    return cast(dict[str, Any], record)
+
+
+async def _put(
+    context: Any,
+    owner: str,
+    record_id: str,
+    version: int,
+    body: Mapping[str, object],
+    *,
+    request_id: str | None,
+    delays: Sequence[float] = (),
+    sleep: Sleep | None = None,
+) -> int | None:
+    """Seal `body` as version `version + 1` under the newest epoch and write it; None after a `version_conflict`."""
+    sync = cache._sync(context)
+    record = await seal(context, owner, record_id, version, body)
     out: dict[str, object] = {"owner_id": owner, "record": record, "expected_version": version}
     if request_id is not None:
         out["request_id"] = request_id

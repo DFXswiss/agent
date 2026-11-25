@@ -11,6 +11,9 @@
    after the URL and drops what is typed before), types the authorization code and watches the screen: the error
    message ends the login at once with `code_invalid` (the program stays open with "Press Enter to retry"); otherwise
    the command must end within `token_wait`, and the token is read from its last screen (`setup_token.parse_token`).
+   With `full` (`SUBSCRIPTION_LOGIN_ARGV`, a further subscription; ADR-091, `full_login.py`) the URL is the code
+   page's link on the screen, a refusing `security` comes first in `PATH`, and `finish_full` reads the login the
+   program stored (`scope_missing` without `user:profile` and `user:inference`).
 3. `close` kills the command's process group and removes the temporary directory; it is idempotent and runs on every
    path (success, failure, cancellation by the request service).
 
@@ -35,7 +38,8 @@ from pathlib import Path
 from typing import Any
 
 from agent_runner.identity import ensure_private_dir
-from agent_runner.login import capture, pty, setup_token
+from agent_runner.login import capture, full_login, pty, setup_token
+from agent_runner.login.full_login import FullLogin, LoginUnusable
 from agent_runner.login.pty import PtyProcess, SpawnFailed
 
 URL_POLL = 0.1
@@ -89,10 +93,11 @@ def resolve(argv: tuple[str, ...], path: str) -> list[str]:
     return [program, *argv[1:]]
 
 
-def login_env(workdir: Path, program: str) -> dict[str, str]:
+def login_env(workdir: Path, program: str, private_bin: Path | None = None) -> dict[str, str]:
     """The complete environment of the login command: paths only below `workdir`, the program's directory and the
-    system directories in `PATH`; nothing inherited."""
-    search = [os.path.dirname(program), *SYSTEM_PATH]
+    system directories in `PATH` (after `private_bin`, the refusing `security` of the full login); nothing
+    inherited."""
+    search = [*([] if private_bin is None else [str(private_bin)]), os.path.dirname(program), *SYSTEM_PATH]
     return {
         "PATH": os.pathsep.join(dict.fromkeys(search)),
         "HOME": str(workdir / "home"),
@@ -109,7 +114,11 @@ def login_env(workdir: Path, program: str) -> dict[str, str]:
 class LoginSession:
     """One run of the login command (see the module docstring)."""
 
-    def __init__(self, tmp_dir: Path, request_id: str, argv: tuple[str, ...], search_path: str) -> None:
+    def __init__(
+        self, tmp_dir: Path, request_id: str, argv: tuple[str, ...], search_path: str, *, full: bool = False
+    ) -> None:
+        self.full = full
+        """The full login of a further subscription (`full_login`, ADR-091) instead of `claude setup-token`."""
         self.tmp_dir = tmp_dir
         self.workdir = tmp_dir / f"login-{request_id}"
         self.argv = argv
@@ -125,8 +134,13 @@ class LoginSession:
         for sub in ("home", "config", "tmp"):
             os.mkdir(self.workdir / sub, 0o700)
         capture.write_helper(self.workdir)
+        private_bin = None
+        if self.full:
+            private_bin = self.workdir / "bin"
+            os.mkdir(private_bin, 0o700)
+            full_login.write_security(private_bin)
         argv = resolve(self.argv, self.search_path)
-        env = login_env(self.workdir, argv[0])
+        env = login_env(self.workdir, argv[0], private_bin)
         try:
             self.process = PtyProcess.spawn(argv, env, self.workdir)
         except SpawnFailed:
@@ -137,7 +151,7 @@ class LoginSession:
         deadline = process.loop.time() + seconds
         while True:
             try:
-                url = capture.captured(self.workdir)
+                url = full_login.screen_url(process.screen.lines()) if self.full else capture.captured(self.workdir)
             except capture.UrlInvalid:
                 raise LoginFailed("login_cli_failed") from None
             if url is not None:
@@ -151,6 +165,22 @@ class LoginSession:
 
     async def finish(self, code: str, opts: LoginOptions) -> str:
         """Type the code once the input field is shown; the token."""
+        process, lines = await self._complete(code, opts)
+        token = setup_token.parse_token(lines)
+        if token is None:
+            raise LoginFailed("token_invalid", _shape(process))
+        return token
+
+    async def finish_full(self, code: str, opts: LoginOptions) -> FullLogin:
+        """Type the code once the input field is shown; the login the program stored (`full_login.read_login`)."""
+        process, _lines = await self._complete(code, opts)
+        try:
+            return full_login.read_login(self.workdir / "config")
+        except LoginUnusable as unusable:
+            raise LoginFailed(unusable.code, _shape(process)) from None
+
+    async def _complete(self, code: str, opts: LoginOptions) -> tuple[PtyProcess, list[str]]:
+        """Type the code and wait for the program to end successfully; its last screen."""
         process = self.process
         assert process is not None
         await _until(process, opts.prompt_wait, lambda p: _prompt_shown(p) or _error_shown(p))
@@ -172,10 +202,7 @@ class LoginSession:
         if status != 0:
             failed = "code_invalid" if setup_token.shown(lines, setup_token.ERROR_LABEL) else "login_cli_failed"
             raise LoginFailed(failed, _shape(process))
-        token = setup_token.parse_token(lines)
-        if token is None:
-            raise LoginFailed("token_invalid", _shape(process))
-        return token
+        return process, lines
 
     def close(self) -> None:
         """Kill the command and remove the temporary directory (idempotent)."""
