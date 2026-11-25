@@ -10,9 +10,10 @@ workgroup for a session, in the deterministic order of ADR-075 section 4 (05-run
 2. a running VM of the workgroup with room (`SESSIONS_PER_VM` minus its occupying sessions, unbounded with 0): most
    room first, then the smallest VM ID;
 3. a stopped VM of the workgroup with room, smallest VM ID -> restart it (`limactl start`, health `assigned` to this
-   workgroup), unless its golden is not the newest ready one, it has no `suspended` session and no retire hook keeps
-   it (`vm.extensions`: e.g. context checkpoints still due, KOR-33): then it is deleted and replaced by a new VM (a
-   replacement, allowed even when the hub allows no new VM);
+   workgroup), unless its golden is not the newest ready one, no retire hook keeps it (`vm.extensions`: e.g. context
+   checkpoints still due, KOR-33) and it may move (`golden_switch.judge`: every session on it is a paused main session
+   with a complete checkpoint, ADR-093): then a new VM (pool or clone, as in 4.) replaces it and only then it is
+   deleted (a replacement, allowed even when the hub allows no new VM; a failed clone leaves it as it is);
 4. a new VM when the hub allows one (`new_allowed`, the hub's `vm_new_allowed`): warm pool (`Pool.take`), else clone
    + start on the hot path (`Provisioner.create`); while the device has no ready golden yet (a device just added
    builds it, KOR-67) this is `capacity_exhausted` (`golden`): the hub places the next attempt and the task waits
@@ -48,7 +49,9 @@ Further rules:
   deleted (one that Lima cannot delete is logged, `vm.unknown_delete_failed`, and does not stop the
   reconciliation); token files without a live row are removed.
 - `refill()` (task `vm-pool`, after every assignment and every 60 s): pool VMs of a retired golden are deleted, then
-  the pool is filled (`Pool.refill`).
+  the pool is filled (`Pool.refill`); then `golden_switch.run_pass()` moves outdated workgroup VMs whose sessions are
+  all paused with complete checkpoints to the newest golden (`vm.golden_switch`, ADR-093; it uses
+  `restart_for_switch`, `stop_for_switch` and `replacement`, which never stop another workgroup's VM for a slot).
 """
 
 from __future__ import annotations
@@ -67,6 +70,7 @@ from agent_runner.guestlink.errors import GuestError
 from agent_runner.vm import records
 from agent_runner.vm.capacity import Capacity, lru_victim
 from agent_runner.vm.extensions import Retire
+from agent_runner.vm.golden_switch import GoldenSwitch, judge
 from agent_runner.vm.lima import LimaError, LimaNotFound
 from agent_runner.vm.pool import HEALTH_CALL_S, Pool, Provisioner, VmEnv, failure_fields
 from agent_runner.vm.records import GoldenRef, VmRow
@@ -100,6 +104,7 @@ class VmManager:
         self._failures: dict[str, int] = {}
         self._recovered: set[str] = set()
         self._arp_re = re.compile("^" + re.escape(env.lima.prefix) + r"arp-[0-9a-f]{8}$")
+        self.golden_switch = GoldenSwitch(self)
 
     # -- coordination ------------------------------------------------------------------------------------------
 
@@ -216,27 +221,51 @@ class VmManager:
             if (
                 golden is None
                 or row.golden_version == golden.version
-                or await records.has_suspended(env.db, row.id)
                 or await self.retire.pending(row)
+                or (await judge(env, self.retire, row)).holds
             ):
                 return await self._restart(row)
             env.log("vm.golden_replaced", {"vm_id": row.id, "golden_version": golden.version})
-            self._forget(row.id)
-            await env.delete(row)
-        elif not new_allowed:
+            return await self.replacement(golden, row, replaced_by=self.golden_switch.hub_reads_status)
+        if not new_allowed:
             # the hub's workgroup limit (`AGENT_HUB_VMS_PER_WG`): no further VM for this session
             raise RunnerError("capacity_exhausted", "vm_new_allowed")
         if golden is None:
             raise RunnerError("capacity_exhausted", "golden")
+        return await self._new_vm(golden, org_id, wg_id)
+
+    async def _new_vm(self, golden: GoldenRef, org_id: str, wg_id: str, *, evict: bool = True) -> VmRow:
         taken = await self.pool.take(golden, org_id, wg_id)
         if taken is not None:
             return taken
         self.wake_refill()
-        return await self._clone(golden, org_id, wg_id)
+        return await self._clone(golden, org_id, wg_id, evict=evict)
 
-    async def _clone(self, golden: GoldenRef, org_id: str, wg_id: str) -> VmRow:
+    # -- the switch to a newer golden (`vm.golden_switch`, ADR-093; callers hold the workgroup lock) -------------
+
+    async def replacement(self, golden: GoldenRef, old: VmRow, *, replaced_by: bool) -> VmRow:
+        """A running VM of `golden` for the workgroup of the stopped VM `old` (pool or clone; another workgroup's VM
+        is never stopped for it), then `old` is deleted and the switch recorded. A failure leaves `old` as it is."""
         env = self.env
-        async with self._slot(wg_id) as release:
+        assert old.org_id is not None
+        assert old.wg_id is not None
+        new = await self._new_vm(golden, old.org_id, old.wg_id, evict=False)
+        await records.record_switch(env.db, old.id, new.id, golden.version, env.now())
+        self._forget(old.id)
+        await env.delete(old, replaced_by=new.id if replaced_by else None)
+        return new
+
+    async def restart_for_switch(self, row: VmRow) -> VmRow:
+        """Start a stopped VM so its checkpoints can be taken (no other workgroup's VM is stopped for it)."""
+        return await self._restart(row, evict=False)
+
+    async def stop_for_switch(self, row: VmRow) -> VmRow:
+        """Stop a running VM; the retire hooks take the final checkpoints of its sessions first."""
+        return await self._stop(row)
+
+    async def _clone(self, golden: GoldenRef, org_id: str, wg_id: str, *, evict: bool = True) -> VmRow:
+        env = self.env
+        async with self._slot(wg_id, evict=evict) as release:
             vm_id, name = env.new_ids()
             token = env.random_token()
             row = await records.insert(
@@ -283,10 +312,10 @@ class VmManager:
             return await records.get(self.env.db, vm_id)
         return None
 
-    async def _restart(self, row: VmRow) -> VmRow:
+    async def _restart(self, row: VmRow, *, evict: bool = True) -> VmRow:
         """Start a stopped (or interrupted `stopping`) VM of the workgroup again."""
         env = self.env
-        async with self._slot(row.wg_id):
+        async with self._slot(row.wg_id, evict=evict):
             try:
                 await self._start_assigned(row)
                 running = await env.set_state(row, "running", expect=("stopped", "stopping"), last_session_at=env.now())
@@ -336,8 +365,9 @@ class VmManager:
         return health.state == "assigned" and health.wg_id == row.wg_id
 
     @contextlib.asynccontextmanager
-    async def _slot(self, wg_id: str | None) -> AsyncIterator[Callable[[], None]]:
-        """Claim one slot for a restart or clone while it runs (section 3.4), or raise `capacity_exhausted`.
+    async def _slot(self, wg_id: str | None, *, evict: bool = True) -> AsyncIterator[Callable[[], None]]:
+        """Claim one slot for a restart or clone while it runs (section 3.4), or raise `capacity_exhausted`; without
+        `evict` no other workgroup's VM is stopped for it (a pool VM may still be given up).
 
         Yields `release`: a clone calls it once its `assigning` row exists, because from then on the row occupies the
         slot (`capacity.SLOT_STATES`); counting both would take two slots per clone (PFM-01, PERF-05). A restart keeps
@@ -346,7 +376,7 @@ class VmManager:
         # Check and claim under the pool's slot lock (the check awaits the store): a concurrent clone, restart or
         # refill sees the slot as used.
         async with self.pool.slot_lock:
-            await self._free_slot(wg_id)
+            await self._free_slot(wg_id, evict=evict)
             self.reserved += 1
         held = True
 
@@ -361,7 +391,7 @@ class VmManager:
         finally:
             release()
 
-    async def _free_slot(self, wg_id: str | None) -> None:
+    async def _free_slot(self, wg_id: str | None, *, evict: bool = True) -> None:
         env = self.env
         capacity = await self.capacity()
         if capacity.slots_free > 0:
@@ -370,6 +400,8 @@ class VmManager:
             if await env.delete(candidate, expect=("pool",)) is not None:
                 env.log("vm.slot_from_pool", {"vm_id": candidate.id})
                 return
+        if not evict:
+            raise RunnerError("capacity_exhausted")
         victim = lru_victim(
             await records.usage(env.db), exclude_wg=wg_id, now=env.now(), idle_seconds=env.settings.vm_idle_seconds
         )

@@ -396,7 +396,9 @@ def test_working_sessions_are_checkpointed_periodically(rig: Rig) -> None:
                 wg_id=WG,
                 at=ck.contexts.now() + timedelta(seconds=1),
             )
-            await store.taken(conn, sid, due_at=ck.contexts.now(), sha256="0" * 64, at=ck.contexts.now())
+            await store.taken(
+                conn, sid, due_at=ck.contexts.now(), sha256="0" * 64, workspace="full", at=ck.contexts.now()
+            )
             cur = await conn.execute(
                 "SELECT due_at IS NOT NULL FROM runner.context_session WHERE session_id = %s", (sid,)
             )

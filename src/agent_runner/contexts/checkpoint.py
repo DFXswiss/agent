@@ -193,7 +193,14 @@ class Checkpointer:
                 raise _Stop("archive_invalid code=context_invalid")
             if found.content_sha256 == due.archive_sha256:
                 async with env.sessions.transaction() as conn:
-                    await store.taken(conn, sid, due_at=due.due_at, sha256=found.content_sha256, at=env.now())
+                    await store.taken(
+                        conn,
+                        sid,
+                        due_at=due.due_at,
+                        sha256=found.content_sha256,
+                        workspace=found.workspace_state,
+                        at=env.now(),
+                    )
                 env.line(f"checkpoint_identical session_id={sid}")
                 return None
             async with env.sessions.transaction() as conn:
@@ -211,7 +218,14 @@ class Checkpointer:
                     size=stored.bytes,
                     at=env.now(),
                 )
-                await store.taken(conn, sid, due_at=due.due_at, sha256=found.content_sha256, at=env.now())
+                await store.taken(
+                    conn,
+                    sid,
+                    due_at=due.due_at,
+                    sha256=found.content_sha256,
+                    workspace=found.workspace_state,
+                    at=env.now(),
+                )
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
         env.line(

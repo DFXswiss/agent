@@ -1,8 +1,9 @@
 """Rows of the context area (`store/migrations/0017_context.sql`; ADR-072 sections 4 and 7).
 
 - `context_session`: one row per main session of this device that was ever due for a checkpoint (`mark_due`, `due`,
-  `taken`, `postpone`, `drop_due`, `pending`, `mark_vm_due`, `due_on_vm`), plus the restore it started with
-  (`set_restored`, `take_restore_audit`, `mark_restore_started`, `mark_restore_failed`, `restore_failed`).
+  `taken`, `postpone`, `drop_due`, `pending`, `mark_vm_due`, `due_on_vm`, `checkpoint_holds`: whether the newest
+  checkpoint is complete, `checkpoint_state` of migration `0034_golden_switch`, ADR-093), plus the restore it started
+  with (`set_restored`, `take_restore_audit`, `mark_restore_started`, `mark_restore_failed`, `restore_failed`).
 - `context_object`: the encrypted checkpoints of the local cache (`insert_object`, `get_object`, `objects_of_task`,
   `uploads`, `uploaded`, `finish_object`, `retry_upload`, `restart_upload`, `delete_object`, `cache_rows`), and the
   logs of test runs and work VM jobs (`kind` `log`, KOR-43, ADR-080 section 3; `objects_of_task` lists only
@@ -170,22 +171,61 @@ async def pending(conn: AsyncConnection[Any], session_id: str) -> bool:
     return await cur.fetchone() is not None
 
 
-async def taken(conn: AsyncConnection[Any], session_id: str, *, due_at: datetime, sha256: str, at: datetime) -> None:
-    """The checkpoint that was due at `due_at` is taken; a request that arrived meanwhile stays due."""
+async def taken(
+    conn: AsyncConnection[Any], session_id: str, *, due_at: datetime, sha256: str, workspace: str, at: datetime
+) -> None:
+    """The checkpoint that was due at `due_at` is taken (or identical) with the workspace state `workspace`; a request
+    that arrived meanwhile stays due."""
     await conn.execute(
-        "UPDATE runner.context_session SET archive_sha256 = %s, last_at = %s, attempts = 0, next_at = NULL,"
-        " due_at = CASE WHEN due_at <= %s THEN NULL ELSE due_at END WHERE session_id = %s",
-        (sha256, at, due_at, session_id),
+        "UPDATE runner.context_session SET archive_sha256 = %s, checkpoint_state = %s, last_at = %s, attempts = 0,"
+        " next_at = NULL, due_at = CASE WHEN due_at <= %s THEN NULL ELSE due_at END WHERE session_id = %s",
+        (sha256, workspace, at, due_at, session_id),
     )
 
 
 async def drop_due(conn: AsyncConnection[Any], session_id: str, *, due_at: datetime, at: datetime) -> None:
-    """No checkpoint can be taken for this request (nothing to save, or it failed for good)."""
+    """No checkpoint can be taken for this request (nothing to save, or it failed for good): `dropped`."""
     await conn.execute(
-        "UPDATE runner.context_session SET last_at = %s, attempts = 0, next_at = NULL,"
+        "UPDATE runner.context_session SET last_at = %s, attempts = 0, next_at = NULL, checkpoint_state = 'dropped',"
         " due_at = CASE WHEN due_at <= %s THEN NULL ELSE due_at END WHERE session_id = %s",
         (at, due_at, session_id),
     )
+
+
+COMPLETE_STATES = frozenset({"full", "empty"})
+"""Checkpoint states whose workspace came along completely (ADR-093 section 1)."""
+
+
+async def checkpoint_holds(conn: AsyncConnection[Any], session_ids: list[str]) -> dict[str, str | None]:
+    """Per session: None when its newest checkpoint is complete (not due, taken with a complete workspace, its newest
+    object in the local cache and no restore from that object failed here before), else the hold reason
+    `checkpoint_due`, `checkpoint_missing` or `workspace_incomplete` (ADR-093 section 1). A session never checkpointed
+    here is `checkpoint_missing`."""
+    found: dict[str, str | None] = dict.fromkeys(session_ids, "checkpoint_missing")
+    if not session_ids:
+        return found
+    cursor = conn.cursor(row_factory=dict_row)
+    await cursor.execute(
+        "SELECT c.session_id::text AS session_id, c.due_at IS NOT NULL AS due, c.archive_sha256, c.checkpoint_state,"
+        " EXISTS (SELECT 1 FROM (SELECT o.object_id FROM runner.context_object o WHERE o.session_id = c.session_id"
+        " AND o.kind = 'context' ORDER BY o.created_at DESC, o.object_id DESC LIMIT 1) newest"
+        " WHERE NOT EXISTS (SELECT 1 FROM runner.context_session f WHERE f.task_id = c.task_id"
+        " AND f.restored_object_id = newest.object_id AND f.restore_failed)) AS cached"
+        " FROM runner.context_session c WHERE c.session_id = ANY(%s::uuid[])",
+        (session_ids,),
+    )
+    for row in await cursor.fetchall():
+        state = row["checkpoint_state"]
+        if row["due"]:
+            reason: str | None = "checkpoint_due"
+        elif row["archive_sha256"] is None or state is None or state == "dropped" or not row["cached"]:
+            reason = "checkpoint_missing"
+        elif state not in COMPLETE_STATES:
+            reason = "workspace_incomplete"
+        else:
+            reason = None
+        found[row["session_id"]] = reason
+    return found
 
 
 async def postpone(conn: AsyncConnection[Any], session_id: str, *, next_at: datetime) -> None:

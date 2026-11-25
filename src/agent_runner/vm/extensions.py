@@ -2,23 +2,28 @@
 
 Discovered with `registry.discover` (areas in sorted order), so other areas add files and never edit this area:
 
-- `<area>/vm_retire.py:RETIRE_HOOKS`: sequence of `RetireHook(name, flush, pending)`.
+- `<area>/vm_retire.py:RETIRE_HOOKS`: sequence of `RetireHook(name, flush, pending, checkpoints=None)`.
   `flush(context, row)` runs before a running workgroup VM is stopped (idle stop, LRU stop, unhealthy restart or
   stop) or deleted (its workgroup was removed); `Retire.flush` waits at most `FLUSH_WAIT_S` for all hooks together -
   a hook that takes longer is cancelled, a failing one is logged, and the VM goes away in either case (a hook never
   blocks the VM area). `pending(context, row) -> bool` is asked before a stopped VM is replaced by a clone of a newer
-  golden: when any hook answers True the VM is restarted instead (like a VM with a `suspended` session) and replaced
-  at a later start; a failing hook counts as False.
+  golden: when any hook answers True the VM is restarted instead and replaced at a later start; a failing hook counts
+  as False.
+  `checkpoints(context, row, session_ids) -> {session_id: reason | None}` (optional, ADR-093 section 1) judges the
+  paused main sessions of an outdated VM: None when the session's newest checkpoint is complete, else the hold reason
+  (`checkpoint_due`, `checkpoint_missing`, `workspace_incomplete`). `Retire.checkpoints` answers for every session: a
+  session no hook vouches for is held (the first reason a hook named, else `checkpoint_missing`); a failing hook is
+  logged and vouches for nobody. Without such a hook no paused session ever moves (`vm.golden_switch`).
 
 KOR-33 registers `contexts.checkpoint` (`contexts/vm_retire.py`): the due context checkpoints of the VM's sessions
-are taken before it goes away, and a stopped VM with due checkpoints is not replaced.
+are taken before it goes away, and a stopped VM with due checkpoints is not replaced; KOR-70 adds its `checkpoints`.
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -31,6 +36,8 @@ _NAME_RE = re.compile(r"[a-z][a-z0-9._-]{0,63}")
 
 Flush = Callable[[Any, VmRow], Awaitable[None]]
 Pending = Callable[[Any, VmRow], Awaitable[bool]]
+Checkpoints = Callable[[Any, VmRow, list[str]], Awaitable[Mapping[str, str | None]]]
+MISSING = "checkpoint_missing"
 Log = Callable[[str, dict[str, Any]], None]
 
 
@@ -39,6 +46,7 @@ class RetireHook:
     name: str
     flush: Flush
     pending: Pending
+    checkpoints: Checkpoints | None = None
 
 
 def retire_hooks(package: str = registry.ROOT_PACKAGE) -> list[RetireHook]:
@@ -53,6 +61,7 @@ def retire_hooks(package: str = registry.ROOT_PACKAGE) -> list[RetireHook]:
                 or not _NAME_RE.fullmatch(item.name)
                 or not callable(item.flush)
                 or not callable(item.pending)
+                or (item.checkpoints is not None and not callable(item.checkpoints))
             ):
                 raise RunnerError("registry_invalid", f"{area}.vm_retire")
             if item.name in seen:
@@ -100,3 +109,22 @@ class Retire:
             except Exception as exc:
                 self.log("vm.retire_failed", {"vm_id": row.id, "hook": hook.name, "error": type(exc).__name__})
         return False
+
+    async def checkpoints(self, row: VmRow, session_ids: list[str]) -> dict[str, str | None]:
+        """Per paused session: None when a hook vouches for its checkpoint, else the hold reason (module docstring)."""
+        found: dict[str, str | None] = {}
+        for hook in self.hooks:
+            if hook.checkpoints is None:
+                continue
+            try:
+                answer = await hook.checkpoints(self.context, row, list(session_ids))
+            except Exception as exc:
+                self.log("vm.retire_failed", {"vm_id": row.id, "hook": hook.name, "error": type(exc).__name__})
+                continue
+            for session_id in session_ids:
+                if session_id not in answer:
+                    continue
+                reason = answer[session_id]
+                if reason is None or session_id not in found:
+                    found[session_id] = reason  # a vouching hook wins, else the first reason named
+        return {session_id: found.get(session_id, MISSING) for session_id in session_ids}

@@ -7,6 +7,9 @@ a VM belongs to one workgroup for its life, and the VM of a session is the `vm_i
 (`assign_session`, written by `VmManager.ensure_vm` under the workgroup lock; `occupancy` counts the occupying
 sessions per VM).
 
+`runner.golden_switch` records a VM replaced by one of a newer golden while sessions on it were paused (`record_switch`,
+`switched_to`; ADR-093), `sessions_on` lists the sessions on a VM that are not stopped or failed.
+
 The control token itself is kept in `$AGENT_RUNNER_HOME/vm/<vm_id>.token` (0600, directory 0700, written once and
 atomically) and in memory; `TokenStore.read` refuses a file whose hash differs from the row (`vm_token_invalid`).
 
@@ -238,11 +241,6 @@ async def usage(db: Any) -> list[Candidate]:
     ]
 
 
-async def has_suspended(db: Any, vm_id: str) -> bool:
-    rows = await _rows(db, "SELECT 1 FROM runner.session WHERE vm_id = %s AND state = 'suspended' LIMIT 1", (vm_id,))
-    return bool(rows)
-
-
 async def ready_golden(db: Any) -> GoldenRef | None:
     """The golden new clones start from: the newest `ready` row (VM-01)."""
     rows = await _rows(
@@ -255,6 +253,72 @@ async def ready_golden(db: Any) -> GoldenRef | None:
 
 async def touch(db: Any, vm_id: str, at: datetime) -> None:
     await _execute(db, "UPDATE runner.vm SET last_session_at = %s WHERE id = %s", (at, vm_id))
+
+
+@dataclass(frozen=True)
+class SessionOnVm:
+    id: str
+    depth: int
+    state: str
+
+
+async def sessions_on(db: Any, vm_id: str) -> list[SessionOnVm]:
+    """The sessions on the VM that are not `stopped` or `failed`, in ID order."""
+    rows = await _rows(
+        db,
+        "SELECT id::text AS id, depth, state FROM runner.session WHERE vm_id = %s"
+        " AND state NOT IN ('stopped', 'failed') ORDER BY id",
+        (vm_id,),
+    )
+    return [SessionOnVm(**row) for row in rows]
+
+
+async def golden_built_at(db: Any, version: str) -> datetime | None:
+    rows = await _rows(db, "SELECT built_at FROM runner.golden WHERE version = %s", (version,))
+    return rows[0]["built_at"] if rows else None
+
+
+async def record_switch(db: Any, old_vm_id: str, new_vm_id: str, golden_version: str, at: datetime) -> None:
+    await _execute(
+        db,
+        "INSERT INTO runner.golden_switch (old_vm_id, new_vm_id, golden_version, switched_at) VALUES (%s, %s, %s, %s)"
+        " ON CONFLICT (old_vm_id) DO NOTHING",
+        (old_vm_id, new_vm_id, golden_version, at),
+    )
+
+
+async def hold_times(
+    db: Any, vm_id: str, keys: Sequence[tuple[str, str]], at: datetime
+) -> dict[tuple[str, str], datetime]:
+    """Since when each cause `(reason, session_key)` holds the VM (`at` for a new one); the rows of causes that are
+    no longer named are deleted (`runner.golden_switch_hold`)."""
+    async with db.connection() as conn, conn.transaction():
+        await conn.execute(
+            "DELETE FROM runner.golden_switch_hold WHERE vm_id = %s AND NOT ((reason, session_key) IN"
+            " (SELECT * FROM unnest(%s::text[], %s::text[])))",
+            (vm_id, [key[0] for key in keys], [key[1] for key in keys]),
+        )
+        for reason, session_key in keys:
+            await conn.execute(
+                "INSERT INTO runner.golden_switch_hold (vm_id, reason, session_key, since) VALUES (%s, %s, %s, %s)"
+                " ON CONFLICT DO NOTHING",
+                (vm_id, reason, session_key, at),
+            )
+        cursor = conn.cursor(row_factory=dict_row)
+        await cursor.execute(
+            "SELECT reason, session_key, since FROM runner.golden_switch_hold WHERE vm_id = %s", (vm_id,)
+        )
+        return {(row["reason"], row["session_key"]): row["since"] for row in await cursor.fetchall()}
+
+
+async def forget_holds(db: Any, vm_id: str) -> None:
+    await _execute(db, "DELETE FROM runner.golden_switch_hold WHERE vm_id = %s", (vm_id,))
+
+
+async def switched_to(db: Any, old_vm_id: str) -> str | None:
+    """The VM that replaced `old_vm_id` at a switch to a newer golden, None when it was not switched."""
+    rows = await _rows(db, "SELECT new_vm_id FROM runner.golden_switch WHERE old_vm_id = %s", (old_vm_id,))
+    return str(rows[0]["new_vm_id"]) if rows else None
 
 
 class TokenStore:

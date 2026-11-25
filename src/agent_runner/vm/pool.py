@@ -51,7 +51,7 @@ import re
 import secrets
 import threading
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -198,8 +198,9 @@ class VmEnv:
 
     # -- helpers shared by pool and lifecycle ------------------------------------------------------------------
 
-    async def emit(self, row: VmRow) -> None:
-        """Report the row's state to the `vm_state` sink (outbox item, 03-api.md section 6.1)."""
+    async def emit(self, row: VmRow, **extra: Any) -> None:
+        """Report the row's state to the `vm_state` sink (outbox item, 03-api.md section 6.1); `extra` adds the
+        optional `upgrade` or `replaced_by` (ADR-093 section 3)."""
         await self.sink(
             {
                 "vm_id": row.id,
@@ -210,11 +211,21 @@ class VmEnv:
                 "memory_mib": row.memory_mib,
                 "disk_gib": self.settings.disk_gib,
                 "at": format_time(self.now()),
+                **extra,
             }
         )
 
-    async def set_state(self, row: VmRow, state: str, *, expect: Sequence[str] = (), **fields: Any) -> VmRow:
-        """Set the state (and columns) and report it; with `expect`, only from those states (`vm_state_changed`)."""
+    async def set_state(
+        self,
+        row: VmRow,
+        state: str,
+        *,
+        expect: Sequence[str] = (),
+        report: Mapping[str, Any] | None = None,
+        **fields: Any,
+    ) -> VmRow:
+        """Set the state (and columns) and report it (with the extra fields `report`); with `expect`, only from those
+        states (`vm_state_changed`)."""
         if expect:
             changed = await records.transition(self.db, row.id, expect, state=state, **fields)
             if changed is None:
@@ -222,7 +233,7 @@ class VmEnv:
             updated = changed
         else:
             updated = await records.update(self.db, row.id, state=state, **fields)
-        await self.emit(updated)
+        await self.emit(updated, **(report or {}))
         return updated
 
     async def instance_dir(self, name: str) -> str:
@@ -263,8 +274,9 @@ class VmEnv:
         self.dirs.pop(name, None)
         await self.blocking(delete)
 
-    async def delete(self, row: VmRow, *, expect: Sequence[str] = ()) -> VmRow | None:
-        """Delete the instance, mark the row `deleted`, remove token file and journal cursor.
+    async def delete(self, row: VmRow, *, expect: Sequence[str] = (), replaced_by: str | None = None) -> VmRow | None:
+        """Delete the instance, mark the row `deleted`, remove token file and journal cursor; `replaced_by` names the
+        VM that took over (reported with the `deleted` state, ADR-093 section 3).
 
         With `expect` the row is claimed first (only from those states; None when another task moved it), so a pool
         VM that was just taken for a workgroup is never deleted under it.
@@ -278,7 +290,9 @@ class VmEnv:
             deleted = claimed
         else:
             await self.destroy(row.lima_name)
-            deleted = await self.set_state(row, "deleted")
+            deleted = await self.set_state(
+                row, "deleted", report=None if replaced_by is None else {"replaced_by": replaced_by}
+            )
         self.tokens.remove(row.id)
         await cursor.delete_cursor(self.db, row.id)
         self.log("vm.deleted", {"vm_id": row.id, "lima_name": row.lima_name})

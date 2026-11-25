@@ -41,19 +41,20 @@ decisions/KOR-33.md, review KOR-33 nos. 1, 3, 6, 10, 16-18, 20 and 22). Replaces
    (`store.restore_failed`) is not used again (`restore_failed`).
 4. `compatible`: `agent_kind` must be Claude Code and the target VM's Claude Code at least the highest `version` of
    the transcript lines (spike KOR-33).
-5. `POST /v1/contexts/{session}/stage` to the session's VM (its own timeout: the guest does the heavy rewriting
-   there, not in the create, review no. 9), then the request gets `restore {claude_session_id, object_id, note}`:
-   `note` is the one sentence about what changed (`restored_line`: same VM, another VM of this device or a VM of
-   another device - review no. 22 -, the checkpoint time, the workspace state and what was left out, `stale`, the
-   work VM; after a device failure the failover sentence: the device it ran on failed (or, on the same device, it
-   was restarted following a failure), work after the checkpoint may be lost and the interrupted instruction is
-   repeated, how many test runs were cancelled there). It is not put into the harness context: Claude Code keeps
-   the system prompt of a conversation in its transcript and ignores `--append-system-prompt-file` on `--resume`, so
-   a resumed model never reads the harness file. The guest attaches the note with the current session facts once to
-   the first hook answer of the resumed conversation (`agent_guest.hook_addons.notice`). The audit
-   `session.context_restored {object_id, workspace, stale}` (`workspace` = `full`, `partial`, `omitted` or `empty`)
-   is only recorded here and sent by the state observer once the guest reports `agent_starting` (review no. 16). A
-   fetched checkpoint stays in the cache (`fetched`).
+5. `POST /v1/contexts/{session}/stage` to the session's VM (its own timeout: the guest does the heavy rewriting there,
+   not in the create, review no. 9), then the request gets `restore {claude_session_id, object_id, note}`: `note` is the
+   one sentence about what changed (`restored_line`: same VM, another VM of this device, the new version of a VM
+   switched to a newer golden (ADR-093) or a VM of another device - review no. 22 -, the checkpoint time, the workspace
+   state and what was left out, `stale`, the work VM; after a device failure the failover sentence: the device it ran on
+   failed (or, on the same device, it was restarted following a failure), work after the checkpoint may be lost and the
+   interrupted instruction is repeated, how many test runs were cancelled there). It is not put into the harness
+   context: Claude Code keeps the system prompt of a conversation in its transcript and ignores
+   `--append-system-prompt-file` on `--resume`, so a resumed model never reads the harness file. The guest attaches the
+   note with the current session facts once to the first hook answer of the resumed conversation
+   (`agent_guest.hook_addons.notice`). The audit `session.context_restored {object_id, workspace, stale, moved?}`
+   (`workspace` = `full`, `partial`, `omitted` or `empty`; `moved: "golden"` after a switch of the session's VM to a
+   newer golden, ADR-093 section 4) is only recorded here and sent by the state observer once the guest reports
+   `agent_starting` (review no. 16). A fetched checkpoint stays in the cache (`fetched`).
 
 Any failure takes the emergency path (`fallback`): the earlier `RESTART_LINE` (read the task's messages) and the audit
 row `session.context_fallback {reason}` - `context_missing`, `context_invalid`, `context_unavailable` (hub or cache
@@ -219,9 +220,10 @@ def cancelled_text(count: int) -> str:
 
 
 def restored_line(restored: Restored, *, where: str, stale: bool, failover: Failover | None = None) -> str:
-    """The one sentence about what changed (`restore.note` of the create request); `where` is `same_vm`, `other_vm`
-    or `other_device`; `failover` gives the variant after a device failure (ADR-087 sections 3.5 and 3.7: another
-    device, or this one after its restart; nothing was waited for, so it is never `stale`)."""
+    """The one sentence about what changed (`restore.note` of the create request); `where` is `same_vm`, `other_vm`,
+    `golden` (the session's VM was switched to a newer golden, ADR-093) or `other_device`; `failover` gives the
+    variant after a device failure (ADR-087 sections 3.5 and 3.7: another device, or this one after its restart;
+    nothing was waited for, so it is never `stale`)."""
     if failover is not None:
         moved = (
             "on a VM of another device because the device it ran on failed"
@@ -233,6 +235,14 @@ def restored_line(restored: Restored, *, where: str, stale: bool, failover: Fail
             f" {restored.manifest['ts']};"
             f" {workspace_text(restored.context)}. Work after that checkpoint may be lost: the interrupted instruction"
             f" is repeated next.{cancelled_text(failover.cancelled_runs)}{WORK_VM_TEXT}"
+        )
+    if where == "golden":
+        # the VM was replaced by one of the newest golden while the session was paused (ADR-093 section 4); its work
+        # VMs are separate and still there
+        return (
+            "This is your own earlier conversation of this task, continued from its checkpoint of"
+            f" {restored.manifest['ts']} on the new version of the workgroup VM (it was updated while the session was"
+            f" paused); your files were carried over: {workspace_text(restored.context)}.{STALE_TEXT if stale else ''}"
         )
     place = {
         "same_vm": "in a new sandbox on the same VM",
@@ -288,7 +298,9 @@ class Restorer:
             "object_id": object_id,
             "note": restored_line(restored, where=where, stale=stale, failover=failover),
         }
-        detail = {"object_id": object_id, "workspace": restored.context.workspace_state, "stale": stale}
+        detail: dict[str, Any] = {"object_id": object_id, "workspace": restored.context.workspace_state, "stale": stale}
+        if where == "golden" and failover is None and "vm_switch" in (env.sessions.desired or {}):
+            detail["moved"] = "golden"  # only to a hub that knows the field (it names `vm_switch`, ADR-093 section 4)
         async with env.sessions.transaction() as conn:
             await store.set_restored(
                 conn,
@@ -310,7 +322,11 @@ class Restorer:
             return "other_device"
         async with self.env.sessions.transaction() as conn:
             origin = await records.get(conn, str(restored.manifest["session"]))
-        return "same_vm" if origin is not None and origin.vm_id == session.vm_id else "other_vm"
+        if origin is not None and origin.vm_id == session.vm_id:
+            return "same_vm"
+        if origin is not None and origin.vm_id is not None and await vm_records.switched_to(self.env.db, origin.vm_id):
+            return "golden"
+        return "other_vm"
 
     @staticmethod
     def _add_line(request: dict[str, Any], line: str) -> None:

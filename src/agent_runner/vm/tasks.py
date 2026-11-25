@@ -2,7 +2,7 @@
 
 | Task | Loop |
 |---|---|
-| `vm-pool` | startup reconciliation (once, before other VM work), then refill after every assignment and every 60 s |
+| `vm-pool` | startup reconciliation (once), then refill and golden switch (ADR-093) after every assignment and 60 s |
 | `vm-idle` | health probe of the running VMs every 5 s, idle stop every 60 s (after the reconciliation) |
 
 Both tasks share one `VmManager` per daemon context: `manager_for(context)` builds it on first use from the
@@ -114,6 +114,7 @@ async def run_pool(context: Any) -> None:
         await manager.reconcile()
     while not context.stopping.is_set():
         await manager.refill()
+        await manager.golden_switch.run_pass()
         await manager.wait_refill(POOL_INTERVAL_S)
 
 
