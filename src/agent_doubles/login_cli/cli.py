@@ -23,6 +23,18 @@ Exit 2 for invalid arguments. The state and verifier derive from ``--seed``, so 
 ``CLAUDE_CONFIG_DIR`` is set, the double writes a small ``.claude.json`` there at start (as the real CLI creates its
 configuration), so callers can check that a temporary configuration directory is cleaned up.
 
+``auth login [--claudeai] [--email ADDRESS]`` (KOR-71) behaves like the full login of the real program (2.1.330,
+probed up to the code input): ``$BROWSER`` gets an authorize URL whose redirect is ``http://localhost:<port>/callback``;
+the screen shows "Opening browser to sign in…", "If the browser didn't open, visit:", the code page's authorize URL
+(scopes `codes.FULL_SCOPE`, ``login_hint`` with ``--email``) and "Paste code here if prompted >". After the code
+exchange it asks the keychain whether it can be used - ``security find-generic-password -s "Claude
+Code-credentials-double"`` through ``PATH``, a read only - and, when ``security`` answers 0 or 44 (the real tool:
+found or not found, i.e. a usable keychain), stores nothing (the real program would write the keychain); only when the
+keychain is refused does it write ``$CLAUDE_CONFIG_DIR/.credentials.json`` (``claudeAiOauth`` with ``accessToken``,
+``refreshToken``, ``expiresAt`` in ms, ``scopes``, ``subscriptionType`` ``max``, ``rateLimitTier``) and
+``oauthAccount.emailAddress`` into ``.claude.json``, shows "Login successful." and exits 0. Variant ``no-profile``
+asks for the scopes without ``user:profile``.
+
 Variants (``--variant``): ``ok`` (default); ``no-url`` never opens a browser nor shows a URL and gives up after
 ``--code-timeout`` seconds; ``timeout`` shows the URL and the input field but ignores every input and fails after
 ``--code-timeout``. The layout follows the terminal's width (``--columns`` overrides it): longer rows, the URL and the
@@ -66,26 +78,35 @@ DEFAULT_COLUMNS = 1000
 PROMPT = "Paste code here if prompted"
 ERROR_HINT = "Press Enter to retry"
 TOKEN_MARKER = "Your OAuth token (valid for 1 year):"
-VARIANTS = ("ok", "no-url", "timeout")
+VARIANTS = ("ok", "no-url", "timeout", "no-profile")
+VISIT = "If the browser didn't open, visit:"
+KEYCHAIN_PROBE = ("find-generic-password", "-s", "Claude Code-credentials-double")
+KEYCHAIN_USABLE = (0, 44)
+"""Exit codes of the real `security find-generic-password`: found, not found - both mean a usable keychain."""
+NO_PROFILE_SCOPE = "user:inference user:sessions:claude_code"
 
 
 class LoginError(Exception):
     """Ends the run with ``OAuth error: <message>``."""
 
 
-def authorize_url(auth_url: str, seed: str) -> str:
+def authorize_url(
+    auth_url: str, seed: str, *, scope: str = codes.SCOPE, redirect_uri: str | None = None, email: str | None = None
+) -> str:
     """The authorize URL of a run with `seed` against the auth-page double at `auth_url`."""
     _, challenge = codes.pkce(seed)
     query = {
         "code": "true",
         "client_id": codes.CLIENT_ID,
         "response_type": "code",
-        "redirect_uri": auth_url + codes.CALLBACK_PATH,
-        "scope": codes.SCOPE,
+        "redirect_uri": redirect_uri or auth_url + codes.CALLBACK_PATH,
+        "scope": scope,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
         "state": codes.oauth_state(seed),
     }
+    if email is not None:
+        query["login_hint"] = email
     return f"{auth_url}{codes.AUTHORIZE_PATH}?{urlencode(query)}"
 
 
@@ -139,6 +160,17 @@ def exchange(
     urlopen: Callable[..., Any],
 ) -> str:
     """The token for the pasted ``CODE#STATE``; LoginError otherwise."""
+    return str(exchange_answer(auth_url, seed, pasted, context, urlopen)["access_token"])
+
+
+def exchange_answer(
+    auth_url: str,
+    seed: str,
+    pasted: str,
+    context: ssl.SSLContext | None,
+    urlopen: Callable[..., Any],
+) -> dict[str, Any]:
+    """The token endpoint's answer for the pasted ``CODE#STATE``; LoginError otherwise."""
     code, separator, state = pasted.partition("#")
     if not code or not separator:
         raise LoginError("Invalid code")
@@ -174,14 +206,16 @@ def exchange(
     token = answer.get("access_token") if isinstance(answer, dict) else None
     if not isinstance(token, str) or not codes.TOKEN_PATTERN.fullmatch(token):
         raise LoginError("the token response holds no valid token")
-    return token
+    return dict(answer)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m agent_doubles.login_cli", description="Login-CLI double (mimics claude setup-token)"
     )
-    parser.add_argument("command", nargs="?", default="setup-token", choices=["setup-token"])
+    parser.add_argument("command", nargs="*", default=["setup-token"], help="setup-token | auth login")
+    parser.add_argument("--claudeai", action="store_true", help="auth login: the Claude subscription (the default)")
+    parser.add_argument("--email", help="auth login: the address filled in on the login page")
     parser.add_argument("--auth-url", required=True, help="base URL of the auth-page double")
     parser.add_argument("--ca-file", type=Path, help="CA certificate that signed the auth-page double")
     parser.add_argument("--seed", default=codes.DEFAULT_SEED, help="seed of the state and the PKCE verifier")
@@ -325,6 +359,8 @@ def main(
     env = os.environ if environ is None else environ
     try:
         args = build_parser().parse_args(argv)
+        if args.command not in (["setup-token"], ["auth", "login"]):
+            raise ValueError("command must be setup-token or auth login")
         auth_url = _valid_auth_url(args.auth_url)
         context = ssl.create_default_context(cafile=str(args.ca_file)) if args.ca_file is not None else None
     except SystemExit as exc:
@@ -341,6 +377,8 @@ def main(
     painter.emit("\x1b[?25l\x1b[?2004h\x1b]0;Claude Code (login double)\x07")
     painter.static(["Welcome to Claude Code (login double)", "", HEADER, ""])
     flow = Flow(args, auth_url, context, painter, env, run, urlopen, clock, sleep, wait)
+    if args.command == ["auth", "login"]:
+        return flow.full_login(Path(config_dir) if config_dir else None)
     with raw_input(stdin_fd):
         try:
             token = flow.login()
@@ -414,3 +452,69 @@ class Flow:
             raise LoginError("timed out waiting for the authorization code")
         self.spin("Finishing sign-in…", SPIN)
         return exchange(self.auth_url, args.seed, pasted, self.context, self.urlopen)
+
+    def full_login(self, config_dir: Path | None) -> int:
+        """``auth login`` (module docstring); the exit code."""
+        args = self.args
+        scope = NO_PROFILE_SCOPE if args.variant == "no-profile" else codes.FULL_SCOPE
+        local = authorize_url(
+            self.auth_url, args.seed, scope=scope, redirect_uri="http://localhost:45454/callback", email=args.email
+        )
+        url = authorize_url(self.auth_url, args.seed, scope=scope, email=args.email)
+        with raw_input(args.stdin_fd):
+            self.painter.static(["Opening browser to sign in…"])
+            open_browser(self.env, local, self.run)
+            self.sleep(args.prompt_delay)
+            drop_input(args.stdin_fd, self.wait)
+            self.painter.static([VISIT, *wrap(url, self.painter.columns), f"{PROMPT} >"])
+            try:
+                pasted = read_line(args.stdin_fd, args.code_timeout, clock=self.clock, wait=self.wait)
+                if pasted is None:
+                    raise LoginError("timed out waiting for the authorization code")
+                answer = exchange_answer(self.auth_url, args.seed, pasted, self.context, self.urlopen)
+            except (LoginError, EOFError) as exc:
+                self.painter.static([f"OAuth error: {exc}"])
+                linger(args.stdin_fd, args.code_timeout, clock=self.clock, wait=self.wait)
+                return EXIT_FAILED
+        if not self.keychain_refused() and config_dir is not None:
+            self.painter.static(["Login successful."])  # the real program would have written the keychain
+            return EXIT_OK
+        if config_dir is not None:
+            self.store(config_dir, answer)
+        self.painter.static(["Login successful."])
+        return EXIT_OK
+
+    def keychain_refused(self) -> bool:
+        """Ask ``security`` in ``PATH`` (a read only) whether the keychain can be used."""
+        try:
+            done = self.run(
+                ["security", *KEYCHAIN_PROBE],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=BROWSER_TIMEOUT,
+                check=False,
+                env={"PATH": self.env.get("PATH", "")},
+            )
+        except (OSError, subprocess.SubprocessError):
+            return True
+        return done.returncode not in KEYCHAIN_USABLE
+
+    def store(self, config_dir: Path, answer: Mapping[str, Any]) -> None:
+        """The plaintext store of the real program and the account's address."""
+        expires = int((time.time() + int(answer["expires_in"])) * 1000)
+        oauth = {
+            "accessToken": answer["access_token"],
+            "refreshToken": answer.get("refresh_token"),
+            "expiresAt": expires,
+            "scopes": str(answer.get("scope", "")).split(),
+            "subscriptionType": "max",
+            "rateLimitTier": "default_claude_max_20x",
+        }
+        target = config_dir / ".credentials.json"
+        target.write_text(json.dumps({"claudeAiOauth": oauth}), encoding="utf-8")
+        target.chmod(0o600)
+        account = answer.get("account")
+        email = account.get("email_address") if isinstance(account, Mapping) else None
+        settings = {"double": "login_cli", "oauthAccount": {"emailAddress": email}}
+        (config_dir / ".claude.json").write_text(json.dumps(settings) + "\n", encoding="utf-8")

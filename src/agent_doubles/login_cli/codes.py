@@ -15,6 +15,10 @@ import re
 
 CLIENT_ID = "6f1c2a0e-5b3d-4e8a-9c7f-0d2b4e6a8c1f"
 SCOPE = "user:inference"
+FULL_SCOPE = "user:profile user:inference user:sessions:claude_code"
+"""The scopes of `claude auth login` (KOR-71); a login without `user:profile` is the `no-profile` variant."""
+FULL_LIFETIME = 8 * 3_600
+"""The lifetime of the access token of a full login (the real one lives for hours)."""
 CALLBACK_PATH = "/oauth/code/callback"
 AUTHORIZE_PATH = "/oauth/authorize"
 TOKEN_PATH = "/v1/oauth/token"
@@ -22,6 +26,7 @@ TOKEN_LIFETIME = 365 * 86_400
 # Assembled, so no source file spells a complete token-shaped literal.
 TOKEN_PREFIX = "sk-" + "ant-oat01-"
 TOKEN_BODY = 93
+REFRESH_PREFIX = "sk-" + "ant-ort01-"
 TOKEN_PATTERN = re.compile(re.escape(TOKEN_PREFIX) + r"[A-Za-z0-9_-]{" + str(TOKEN_BODY) + r"}AA")
 DEFAULT_SEED = "double"
 
@@ -71,6 +76,11 @@ def auth_code(seed: str, n: int) -> str:
 def access_token(seed: str, n: int) -> str:
     """The n-th long-lived token (matches `TOKEN_PATTERN`)."""
     return TOKEN_PREFIX + derive(seed, "token", n, TOKEN_BODY) + "AA"
+
+
+def refresh_token(seed: str, n: int) -> str:
+    """The n-th refresh token of a full login."""
+    return REFRESH_PREFIX + derive(seed, "refresh", n, TOKEN_BODY) + "AA"
 
 
 def account_uuid(seed: str, email: str) -> str:

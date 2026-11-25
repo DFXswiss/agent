@@ -241,7 +241,9 @@ def test_the_measuring_device_renews_a_further_subscription(desk: Desk) -> None:
     assert response.json() == {"version": 2}, response.text
     assert _changed(client) == [writer.id]
     # a stale renewal loses against a newer version; the primary record is never renewed
-    assert _device_put(client, writer, renewed, 1, None).json()["error"] == "version_conflict"
+    assert _device_put(client, writer, renewed, 1, None).json() == {"version": 2}  # a repeated write: idempotent
+    stale = desk.record(writer, KIND, record_id=record_id, version=2, author=device)
+    assert _device_put(client, writer, stale, 1, None).json()["error"] == "version_conflict"
     legacy = desk.record(writer, KIND)
     assert desk.put(writer, legacy, 0).status_code == 200
     primary = desk.record(writer, KIND, record_id=legacy["header"]["id"], version=2, author=device)

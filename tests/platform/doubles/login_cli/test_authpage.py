@@ -200,7 +200,7 @@ def test_bad_session_cookies_are_no_session(login: Login) -> None:
         ({"grant_type": "authorization_code"}, "missing code"),
         (
             {
-                "grant_type": "refresh_token",
+                "grant_type": "password",
                 "code": "c",
                 "state": "s",
                 "client_id": "x",

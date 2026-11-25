@@ -15,7 +15,11 @@ Flow (each page has ``<body data-page="…">`` so a browser driver can tell wher
    the callback with ``code`` and ``state`` (or ``error=access_denied``).
 5. ``GET /oauth/code/callback``: the code page (``code``: ``<code id="authorization-code">CODE#STATE</code>``).
 6. ``POST /v1/oauth/token`` (JSON, from the login-CLI double): exchanges code, verifier, state and redirect URI for
-   the long-lived token (`agent_doubles.login_cli.codes.access_token`).
+   the long-lived token (`agent_doubles.login_cli.codes.access_token`). A code issued for other scopes than the
+   setup token's (``claude auth login``, KOR-71) is a full login: the answer adds a refresh token
+   (`codes.refresh_token`) and lives `codes.FULL_LIFETIME`. ``grant_type: refresh_token`` (``refresh_token``,
+   ``client_id``) renews such a login like the provider: a new access token and a **new** refresh token; the used one
+   is dead from then on (``400 invalid_grant``, as is an unknown one).
 
 Error pages (``data-page="error"``, the reason in ``#error-code``) answer unexpected states: invalid parameters, an
 unknown or used link, a missing session, a decline. Requests that the clients under test never send correctly
@@ -84,7 +88,7 @@ MILESTONES = (
 )
 # Values that grant access (magic-link tokens, codes, PKCE verifiers, states, issued tokens) never reach the journal.
 # ``next`` is the stored authorize URL, which holds the state.
-SECRET_FIELDS = frozenset({"token", "code", "code_verifier", "state", "access_token", "next"})
+SECRET_FIELDS = frozenset({"token", "code", "code_verifier", "state", "access_token", "refresh_token", "next"})
 # RFC 7636: 43 to 128 unreserved characters.
 VERIFIER = re.compile(r"[A-Za-z0-9._~-]{43,128}")
 IDLE_TIMEOUT = 300.0
@@ -148,6 +152,7 @@ class Grant:
     redirect_uri: str
     issued: float
     used: bool = False
+    scope: str = codes.SCOPE
 
 
 @dataclass
@@ -199,6 +204,8 @@ class _Run:
     magic: dict[str, Magic] = field(default_factory=dict)
     sessions: dict[str, str] = field(default_factory=dict)
     grants: dict[str, Grant] = field(default_factory=dict)
+    refresh: dict[str, str] = field(default_factory=dict)
+    """Live refresh token -> its scope."""
     counters: dict[str, int] = field(default_factory=dict)
     milestones: list[str] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
@@ -415,7 +422,12 @@ class AuthPageDouble:
             run = self.run
             code = codes.auth_code(run.scenario.seed, run.next("code"))
             run.grants[code] = Grant(
-                email, params["state"], params["code_challenge"], params["redirect_uri"], self.clock()
+                email,
+                params["state"],
+                params["code_challenge"],
+                params["redirect_uri"],
+                self.clock(),
+                scope=params["scope"],
             )
         self.reached("authorized")
         return code
@@ -438,34 +450,69 @@ class AuthPageDouble:
             grant.used = True
             token = codes.access_token(run.scenario.seed, run.next("token"))
             seed = run.scenario.seed
+            full = grant.scope != codes.SCOPE
+            refresh = codes.refresh_token(seed, run.next("refresh")) if full else None
+            if refresh is not None:
+                run.refresh[refresh] = grant.scope
+        self.reached("token")
+        answer: dict[str, Any] = {
+            "token_type": "Bearer",
+            "access_token": token,
+            "expires_in": codes.FULL_LIFETIME if full else codes.TOKEN_LIFETIME,
+            "scope": grant.scope,
+            "account": {"uuid": codes.account_uuid(seed, grant.email), "email_address": grant.email},
+            "organization": {"uuid": codes.account_uuid(seed, "organization"), "name": "Double Organization"},
+        }
+        if refresh is not None:
+            answer["refresh_token"] = refresh
+        return 200, answer
+
+    def renew(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """The answer to a refresh request: rotation, the used refresh token dies (module docstring)."""
+        with self.lock:
+            run = self.run
+            scope = run.refresh.pop(body["refresh_token"], None)
+            if scope is None:
+                return 400, {"error": "invalid_grant", "error_description": "Invalid refresh token"}
+            token = codes.access_token(run.scenario.seed, run.next("token"))
+            refresh = codes.refresh_token(run.scenario.seed, run.next("refresh"))
+            run.refresh[refresh] = scope
         self.reached("token")
         return 200, {
             "token_type": "Bearer",
             "access_token": token,
-            "expires_in": codes.TOKEN_LIFETIME,
-            "scope": codes.SCOPE,
-            "account": {"uuid": codes.account_uuid(seed, grant.email), "email_address": grant.email},
-            "organization": {"uuid": codes.account_uuid(seed, "organization"), "name": "Double Organization"},
+            "refresh_token": refresh,
+            "expires_in": codes.FULL_LIFETIME,
+            "scope": scope,
         }
 
 
 TOKEN_FIELDS = ("grant_type", "code", "state", "client_id", "redirect_uri", "code_verifier")
+REFRESH_FIELDS = ("grant_type", "refresh_token", "client_id")
+
+
+def _refresh_problem(body: dict[str, Any]) -> str | None:
+    for name in REFRESH_FIELDS:
+        if not isinstance(body.get(name), str) or not body[name]:
+            return f"missing {name}"
+    return None if body["client_id"] == codes.CLIENT_ID else "unknown client_id"
 
 
 def token_request_problem(body: Any) -> str | None:
     """Why `body` is no well-formed token request, or None."""
     if not isinstance(body, dict):
         return "body is not a JSON object"
+    if body.get("grant_type") == "refresh_token":
+        return _refresh_problem(body)
     for name in TOKEN_FIELDS:
         if not isinstance(body.get(name), str) or not body[name]:
             return f"missing {name}"
-    if body["grant_type"] != "authorization_code":
-        return "unsupported grant_type"
-    if body["client_id"] != codes.CLIENT_ID:
-        return "unknown client_id"
-    if not VERIFIER.fullmatch(body["code_verifier"]):
-        return "invalid code_verifier"
-    return None
+    checks = (
+        (body["grant_type"] == "authorization_code", "unsupported grant_type"),
+        (body["client_id"] == codes.CLIENT_ID, "unknown client_id"),
+        (bool(VERIFIER.fullmatch(body["code_verifier"])), "invalid code_verifier"),
+    )
+    return next((problem for passed, problem in checks if not passed), None)
 
 
 def _page_handler_for(double: AuthPageDouble) -> type[BaseHTTPRequestHandler]:
@@ -680,7 +727,7 @@ class _PageHandler(DoubleHandler):
         if double.run.scenario.fault == "token":
             self._json(entry, 500, {"error": "server_error", "error_description": "injected fault"})
             return
-        status, payload = double.exchange(body)
+        status, payload = double.renew(body) if body["grant_type"] == "refresh_token" else double.exchange(body)
         self._json(entry, status, payload)
 
     def _json(self, entry: Entry, status: int, payload: Any) -> None:

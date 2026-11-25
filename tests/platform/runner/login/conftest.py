@@ -153,6 +153,23 @@ def cli_argv(login: Login, *extra: str) -> tuple[str, ...]:
     )
 
 
+def full_argv(login: Login, *extra: str) -> tuple[str, ...]:
+    """The login-CLI double as the full login (`auth login`, KOR-71)."""
+    return (
+        sys.executable,
+        "-m",
+        "agent_doubles.login_cli",
+        "auth",
+        "login",
+        "--claudeai",
+        "--auth-url",
+        login.auth.page_url,
+        "--ca-file",
+        str(login.ca.ca_file),
+        *extra,
+    )
+
+
 def script_argv(source: str, *args: str) -> tuple[str, ...]:
     """A Python one-off as the login command (stands for a misbehaving CLI)."""
     return (sys.executable, "-c", source, *args)
