@@ -38,3 +38,11 @@ Design: [ADR-090](../adr/090-every-subscription-logged-in-centrally.md); rules [
     (E-25).
 11. **The web view waits for KOR-68** (instruction of the orchestrator): no change of the settings page; the served
     copy of the agent guide (`web/public/agents.md`) is the only file under `web/`.
+12. **Findings of the independent code review**, all fixed: shared subscriptions are listed and re-read on every
+    `credentials_changed` and every `credentials` hint (`sync_owner`), so a narrowed use or a new login is not missed
+    (high); a further subscription's body served through the legacy endpoint does not serve the owner's own sessions
+    (`provision.owner_secret` refuses a body with `name`, `note` or `use`); shared entries are read for their quota
+    and exhaustion like the files (`exhaustion.token_of`, `quota.operator`); a failed re-seal waits `POLL_S`; a token
+    file named `sub-...` is no part of the pool; 04-crypto section 7 names the use mirror; ADR-090 section 4 no longer
+    promises the mirror in the list.
+
