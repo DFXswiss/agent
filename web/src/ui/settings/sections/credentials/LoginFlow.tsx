@@ -74,7 +74,9 @@ function Authorize({
   );
 }
 
-function Request({
+/** The relay of one `claude.login` request: progress, the authorization link and the code, the outcome (also used by
+ * the login of a further subscription, KOR-69). */
+export function LoginRequest({
   prepared,
   onDone,
   onRetry,
@@ -223,7 +225,7 @@ export function LoginFlow({
           </button>
         </>
       )}
-      {phase.kind === 'request' && <Request prepared={phase.prepared} onDone={onDone} onRetry={retry} />}
+      {phase.kind === 'request' && <LoginRequest prepared={phase.prepared} onDone={onDone} onRetry={retry} />}
       <button type="button" className={BUTTON} onClick={onClose} data-testid="claude.close">
         {t('credentials.close')}
       </button>
