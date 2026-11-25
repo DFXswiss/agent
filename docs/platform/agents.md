@@ -65,12 +65,17 @@ only works on the page of this one pairing and the return code only for this age
 
 ## 0. Install the tool
 
+This needs no administrator rights and not the Python of this computer (the one of macOS is too old): `uv` brings its
+own Python 3.12, and everything stays below your home directory. It takes about ten seconds on macOS and Linux;
+without network it fails within seconds with a message. Run the lines as they are:
+
 ```sh
-python3 -m venv ~/.agent-platform-venv
-~/.agent-platform-venv/bin/pip install "dfx-agent[platform] @ git+https://github.com/DFXswiss/agent@ad5f2026-live"
+curl -LsSf https://astral.sh/uv/0.13.10/install.sh | env UV_UNMANAGED_INSTALL="$HOME/.agent-platform-uv" sh
+~/.agent-platform-uv/uv venv --clear --python 3.12 ~/.agent-platform-venv
+~/.agent-platform-uv/uv pip install --python ~/.agent-platform-venv --refresh-package dfx-agent "dfx-agent[platform] @ https://github.com/DFXswiss/agent/archive/refs/heads/ad5f2026-live.tar.gz"
 mkdir -p ~/.local/bin
 [ -e ~/.local/bin/agent-platform ] || ln -s ~/.agent-platform-venv/bin/agent-platform ~/.local/bin/agent-platform
-agent-platform guide   # the short start, as shipped with the tool
+~/.local/bin/agent-platform guide   # the short start, as shipped with the tool
 ```
 
 Look things up instead of reading everything:
@@ -88,11 +93,13 @@ the last event it returned (a cut page of `audit`, `notifications list` or `task
 page on without `--limit`). A mistyped command answers with its `usage` and `did_you_mean`; `search` with an error
 code (`search no_device`) also gives that error's next step.
 
-Use a virtual environment of its own as above and link only `agent-platform`: the package also contains other
+The tool has a virtual environment of its own and only `agent-platform` is linked: the package also contains other
 programs (for example `agent`), and `uv tool install` or `pipx install` of it would replace an `agent` tool that is
-already installed on this computer. If `~/.local/bin` is not on the `PATH`, call
-`~/.agent-platform-venv/bin/agent-platform` directly. To update, run the `pip install` line again with `--upgrade`.
-Do not use `sudo`.
+already installed on this computer; `uv` itself stays in `~/.agent-platform-uv` and replaces no `uv` you have. Do not
+install with `pip` of the system `python3`: on macOS (Python 3.9) it searches for many minutes without an end. Without
+`curl` (some minimal Linux systems), write `wget -qO-` instead of `curl -LsSf` in the first line. If `~/.local/bin` is
+not on the `PATH`, call `~/.local/bin/agent-platform` with its path. To update, run the same lines again. Do not use
+`sudo`.
 
 ## 1. Connect to your user's account
 

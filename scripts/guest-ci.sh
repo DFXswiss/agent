@@ -106,7 +106,7 @@ copy_repo() {
   tarball=$(mktemp -t guest-ci.XXXXXX)
   COPYFILE_DISABLE=1 tar -C "$repo" --exclude '__pycache__' --exclude '.coverage' --exclude '.coverage.*' \
     -czf "$tarball" \
-    pyproject.toml .coveragerc-platform contracts src/agent_guest src/agent_doubles tests/platform
+    pyproject.toml README.md LICENSE .coveragerc-platform contracts src docs/platform/agents.md tests/platform
   limactl copy "$tarball" "$vm:/tmp/guest-ci-src.tgz"
   rm -f "$tarball"
   in_vm sudo bash -euo pipefail -c "rm -rf $guest_repo && mkdir -p $guest_repo && \
@@ -120,7 +120,7 @@ run_tests() {
     rm -f .coverage.linux* && \
     $guest_venv/bin/coverage run --rcfile=.coveragerc-platform -m pytest -c tests/platform/pytest.ini \
       --confcutdir=tests/platform --import-mode=importlib -p no:cacheprovider -m linux \
-      ${GUEST_CI_PYTEST_ARGS:-} tests/platform/guest_linux" || rc=$?
+      ${GUEST_CI_PYTEST_ARGS:-} tests/platform/guest_linux tests/platform/test_install_block.py" || rc=$?
   in_vm sudo bash -euo pipefail -c "cd $guest_repo && rm -f /tmp/guest-ci-cov.tar && \
     if ls .coverage.linux.* >/dev/null 2>&1; then tar -cf /tmp/guest-ci-cov.tar .coverage.linux.*; \
     else tar -cf /tmp/guest-ci-cov.tar --files-from /dev/null; fi && chmod 0644 /tmp/guest-ci-cov.tar"

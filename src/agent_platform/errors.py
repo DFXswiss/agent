@@ -91,8 +91,9 @@ NEXT: dict[str, str] = {
         "open: tell the user in one sentence what to do there, then run the command again."
     ),
     "release_unavailable": (
-        "The hub offers no runner package this tool trusts (see `reason`); update this tool (`pip install --upgrade`) "
-        "and run the command again, or ask the operator of the platform to publish a release."
+        "The hub offers no runner package this tool trusts (see `reason`); update this tool (run the lines of "
+        "`agent-platform guide --topic install` again) and run the command again, or ask the operator of the "
+        "platform to publish a release."
     ),
     "admin_cancelled": (
         "The macOS dialog was cancelled. Tell the user in one sentence that it installs the DFX execution service on "
