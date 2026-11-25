@@ -865,6 +865,14 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   `quota {owner_id,unavailable:true,fetched_at}` and the hub drops the owner's windows, KOR-05) and the UI shows
   "not available"; the M0 LIVE check (`07-testing.md`) verifies the
   gateway path with the read-only current access token.
+- Further subscriptions (KOR-69, ADR-090 §4; `quota/further.py`): towards a hub whose state carries
+  `subscriptions.api`, the polling device lists the owner's `claude_subscription` records (`GET
+  /v1/device/subscriptions`, at most every 900 s) and polls every non-primary one that holds a token with the rules
+  above (900 s, `429`, 24 h after `401`/`403` unless a new login); items `quota {owner_id, subscription_id, windows |
+  unavailable, fetched_at}` without `limited` (these subscriptions serve no session of the owner). A record under an
+  older `CK` epoch than the newest one the device holds is first re-sealed under it (`PUT
+  /v1/device/subscriptions/{id}` without a request), so a rotation by a client that does not know further
+  subscriptions leaves none unreadable. A record without a token (not logged in) is skipped.
 - Platform key: `GET <openrouter>/api/v1/key` every 900 s → `spend_snapshot` → device metrics
   (`agent_runner_device_model_spend_*`), operators only.
 - Tokens are never logged, never written to disk outside the encrypted credential record.
@@ -980,6 +988,14 @@ platform budget counts the pending cost (§10.2), every pending item besides the
    credential record (CK), `PUT /v1/device/credentials/{owner}/claude_subscription`, response 2
    `{step:"done", email?}` (`email` only when the CLI reports it; optional); responses carry `final:true` on the last
    message; wipe the temp dir. Timeouts → `{step:"failed", code}`.
+
+**Further subscriptions (KOR-69, ADR-090 §2).** The root body may add `subscription_id` (the further subscription to
+fill; a new ID creates it), `name`, `note` and, for `automatic`, `email` (the address to sign in with instead of the
+mailbox's). With `subscription_id` step 5 reads the current record (`GET /v1/device/subscriptions/{id}`), keeps its
+`name`, `note` and `use` unless the request names them, and stores `{token, email, kind:"setup_token", …}` with `PUT
+/v1/device/subscriptions/{id}` (`credentials/subscriptions.py`); the primary record is never written this way
+(`upstream_error`). A malformed field ends `upstream_error` before the program starts. The runner announces the
+feature `subscriptions`, so clients send these fields only to such a device.
 
 **Screen, not raw text (ADR-051, KOR-21).** `claude setup-token` draws a terminal UI: it places words with cursor
 positioning instead of spaces, erases lines and overwrites single cells. The runner therefore replays the PTY output
