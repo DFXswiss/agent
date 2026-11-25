@@ -624,3 +624,49 @@ def test_the_reconcile_step_hands_requests_to_the_switch() -> None:
     assert manager.golden_switch.requested == ["vm-0000000a"]
     assert manager.woken == 1
     assert [(step.order, step.name) for step in vm_reconcile.STEPS] == [(85, "vm_switch")]
+
+
+def test_a_failed_delete_reuses_a_running_successor(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    harness.session(old.id, WG_A, "suspended")
+    harness.fake.fail["delete"] = (1, "", "delete failed\n")
+
+    async def body(manager: VmManager) -> list[str]:
+        manager.retire = Checkpoints(harness).retire()
+        await manager.golden_switch.run_pass()
+        manager.golden_switch.request([old.id])
+        return await manager.golden_switch.run_pass()
+
+    assert harness.run(body) == [old.id]
+    assert harness.fake.ops().count("clone") == 2
+
+
+def test_a_vm_gone_meanwhile_is_forgotten_and_a_failure_on_a_deleted_vm_is_not_reported(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    harness.session(old.id, WG_A, "working")
+    hook = Checkpoints(harness)
+
+    async def body(manager: VmManager) -> None:
+        manager.retire = hook.retire()
+        switch = manager.golden_switch
+        switch.hub_reads_status = True
+        await switch.run_pass()  # reported: held
+        harness.sql("UPDATE runner.vm SET state = 'deleted' WHERE id = %s", (old.id,))
+        await switch.run_pass()  # no longer live: forgotten
+        assert old.id not in switch._reported
+        harness.sql("UPDATE runner.vm SET state = 'stopped' WHERE id = %s", (old.id,))
+        harness.sql("UPDATE runner.session SET state = 'suspended'")
+
+        async def gone(*_args: Any, **_kwargs: Any) -> VmRow:
+            harness.sql("UPDATE runner.vm SET state = 'deleted' WHERE id = %s", (old.id,))
+            raise RunnerError("vm_start_failed")
+
+        manager.replacement = gone  # type: ignore[method-assign]
+        sent = len(upgrades(harness, old.id))
+        await switch.run_pass()
+        # the failure is logged, but nothing is reported for a VM that is gone
+        assert [s["state"] for s in upgrades(harness, old.id)[sent:]] == ["switching"]
+
+    harness.run(body)
+    assert harness.sql("SELECT * FROM runner.golden_switch_hold WHERE vm_id = %s", (old.id,)) == []
+    assert [line[1]["code"] for line in harness.logs if line[0] == "vm.golden_switch_failed"] == ["vm_start_failed"]
