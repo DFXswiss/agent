@@ -75,3 +75,11 @@ def test_clone_and_register_failures(ctx: Context) -> None:  # noqa: F811
     status, answer = call(ctx, "POST", "/runners/workvm", {"slots": 1})
     assert status == 500
     assert "register failed: no store" in answer["detail"]
+
+
+def test_browser_idle_seconds(ctx: Context) -> None:  # noqa: F811
+    prepared(ctx)
+    assert call(ctx, "POST", "/runners/workvm", {"slots": 1, "browser_idle_seconds": 59})[0] == 400
+    status, _answer = call(ctx, "POST", "/runners/workvm", {"slots": 1, "browser_idle_seconds": 60})
+    assert status == 200
+    assert ctx.runners["runner-1"].env["AGENT_RUNNER_BROWSER_IDLE_SECONDS"] == "60"

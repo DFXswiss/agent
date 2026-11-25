@@ -27,6 +27,7 @@ PORT_OFFSETS = {
     "model-relay": 10,
     "github": 13,
     "github-relay": 14,
+    "site": 18,
 }
 LAST_OFFSET = 19
 DEFAULT_PORT_BASE = 20000

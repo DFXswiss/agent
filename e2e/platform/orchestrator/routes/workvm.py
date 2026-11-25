@@ -1,10 +1,11 @@
-"""`POST /runners/workvm` (`{"slots": n, "max_per_task": m, "pool_size": p}`): work VMs on every runner for the work
-VM scenario (docs/platform/spec/13-work-vm.md, ADR-059). Self mode in TEST_MODE (`AGENT_RUNNER_WORKVM_SLOTS_SELF`:
-the runner's own account and Lima home, no host filter). For each runner the run's work image cache
-(`Context.workvm_image`, ensured before the run) is cloned once to `<runner prefix>wimg-e2e` (a run instance: deleted
-with the run's other VMs) and registered `ready` in the runner's store; the settings are environment variables the
-runner reads at start, so a runner whose settings change is restarted (same home: identity and store stay).
-`{"slots": 0}` takes the settings away again. Answers `{runner: {"image": name | null, "restarted": bool}}`."""
+"""`POST /runners/workvm` (`{"slots": n, "max_per_task": m, "pool_size": p, "browser_idle_seconds": s}`): work VMs on
+every runner for the work VM scenario (docs/platform/spec/13-work-vm.md, ADR-059). Self mode in TEST_MODE
+(`AGENT_RUNNER_WORKVM_SLOTS_SELF`: the runner's own account and Lima home, no host filter). For each runner the run's
+work image cache (`Context.workvm_image`, ensured before the run) is cloned once to `<runner prefix>wimg-e2e` (a run
+instance: deleted with the run's other VMs) and registered `ready` in the runner's store; the settings are
+environment variables the runner reads at start, so a runner whose settings change is restarted (same home: identity
+and store stay). `{"slots": 0}` takes the settings away again. `browser_idle_seconds` (60-3600) sets the idle teardown
+of platform browser sessions (KOR-44). Answers `{runner: {"image": name | null, "restarted": bool}}`."""
 
 from __future__ import annotations
 
@@ -19,9 +20,10 @@ VARIABLES = {
     "slots": "AGENT_RUNNER_WORKVM_SLOTS",
     "max_per_task": "AGENT_RUNNER_WORKVM_MAX_PER_TASK",
     "pool_size": "AGENT_RUNNER_WORKVM_POOL_SIZE",
+    "browser_idle_seconds": "AGENT_RUNNER_BROWSER_IDLE_SECONDS",
 }
 SELF = "AGENT_RUNNER_WORKVM_SLOTS_SELF"
-LIMITS = {"slots": (0, 4), "max_per_task": (1, 100), "pool_size": (0, 4)}
+LIMITS = {"slots": (0, 4), "max_per_task": (1, 100), "pool_size": (0, 4), "browser_idle_seconds": (60, 3600)}
 STEP_TIMEOUT_S = 300.0
 REGISTER = """import sys
 from datetime import UTC, datetime
@@ -39,7 +41,9 @@ with psycopg.connect(f"host=127.0.0.1 port={port} user=agent dbname=agent_runner
 
 def _settings(body: Any) -> dict[str, int]:
     if not isinstance(body, dict) or not set(body) <= set(VARIABLES) or "slots" not in body:
-        raise RouteError(400, "invalid", 'body must be {"slots": n, "max_per_task"?: n, "pool_size"?: n}')
+        raise RouteError(
+            400, "invalid", 'body must be {"slots": n, "max_per_task"?: n, "pool_size"?: n, "browser_idle_seconds"?: n}'
+        )
     out = {}
     for key, value in body.items():
         low, high = LIMITS[key]
