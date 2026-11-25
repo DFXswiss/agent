@@ -30,6 +30,8 @@ import { useAppEnv } from '../../shell/context';
 import { errorCode } from '../../shell/errors';
 import { useDirectory, useOrgView } from '../tasks/hooks';
 import { GithubDefault } from './GithubDefault';
+import { MergeFields } from './MergeFields';
+import { ProfilesSection } from './ProfilesSection';
 
 interface Draft {
   readonly input: SettingsInput;
@@ -168,6 +170,7 @@ function Form({ org, wg }: { readonly org: string; readonly wg: string }) {
           {t('wg-settings.draft.label')}
         </label>
       </div>
+      <MergeFields input={input} edit={edit} />
       {status.kind === 'invalid' && (
         <ul role="alert" className="text-red-800" data-testid="wg-settings.errors">
           {status.errors.map((item) => (
@@ -305,6 +308,7 @@ export function WgSettingsScreen() {
         orgName={directory.orgName}
         editable={state.isAdmin(userId) || state.canWriteWg(userId, wg)}
       />
+      <ProfilesSection org={org} wg={wg} writer={state.canWriteWg(userId, wg)} admin={state.isAdmin(userId)} />
     </main>
   );
 }

@@ -26,5 +26,14 @@
   "conflict": "Jemand hat während deiner Bearbeitung neuere Einstellungen gespeichert.",
   "conflict.reload": "Neuere Einstellungen anzeigen",
   "conflict.overwrite": "Meine trotzdem speichern",
-  "failed": "Speichern fehlgeschlagen: {reason}"
+  "failed": "Speichern fehlgeschlagen: {reason}",
+  "merge.legend": "Regeln für das Mergen (freiwillig)",
+  "merge.hint": "Standardmäßig aus: dann entscheiden nur die Regeln von GitHub. Ein von einem Agenten beantragter Merge muss jede hier gesetzte Regel erfüllen.",
+  "merge.verdicts": "Nötige bestandene Prüfurteile von Review-Sessions",
+  "merge.profile": "Profil dieser Sessions",
+  "merge.approvals": "Nötige zustimmende GitHub-Reviews",
+  "merge.green": "Jeder Check des Kopfs muss erfolgreich sein",
+  "merge.separate": "Aufgaben trennen: eine Session, die an einem Pull Request geschrieben hat, darf ihn weder prüfen noch mergen",
+  "error.profile_invalid": "„{value}“ ist kein Profilname.",
+  "error.count_invalid": "„{value}“ ist keine Zahl ab 0."
 }

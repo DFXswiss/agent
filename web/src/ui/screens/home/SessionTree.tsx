@@ -8,6 +8,7 @@ import { loadTask, sendErrorCode } from '../../../core/tasks/send';
 import { formatNumber } from '../../../core/i18n';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
+import { RoleBadge } from '../../profiles/RoleBadge';
 import { useAppEnv } from '../../shell/context';
 
 /** Indentation by `indentLevel` (static classes, `INDENT_LEVELS` + 1 entries). */
@@ -69,6 +70,7 @@ export function SessionTree({ task, subagents }: { readonly task: string; readon
               >
                 {t(`task.state.${node.entry.row.state}`)}
               </span>
+              <RoleBadge session={node.entry.row.session_id} task={task} />
             </li>
           ))}
         </ul>

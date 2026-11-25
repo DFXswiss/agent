@@ -220,3 +220,62 @@ describe('saveSettings', () => {
     }
   });
 });
+
+describe('merge criteria and separate duties (ADR-090)', () => {
+  const BASE = { repositories: '', protectedBranches: '', prDraftDefault: true };
+
+  it('writes nothing new while every field is off', () => {
+    expect(parseSettings(BASE)).toEqual({ ok: true, settings: DEFAULTS });
+    expect(parseSettings(toInput(DEFAULTS))).toEqual({ ok: true, settings: DEFAULTS });
+  });
+
+  it('writes the criteria and the separation when set and reads them back', () => {
+    const parsed = parseSettings({
+      ...BASE,
+      mergeVerdicts: 1,
+      mergeVerdictProfile: ' ',
+      mergeChecksGreen: true,
+      mergeApprovals: 0,
+      separateDuties: true,
+    });
+    const settings = {
+      ...DEFAULTS,
+      merge_criteria: { passed_verdicts: 1, verdict_profile: 'review', checks_green: true, github_approvals: 0 },
+      separate_duties: true,
+    };
+    expect(parsed).toEqual({ ok: true, settings });
+    expect(checkBody(settings)).toEqual(settings);
+    expect(parseSettings(toInput(settings))).toEqual({ ok: true, settings });
+    expect(parseSettings({ ...BASE, mergeVerdictProfile: 'qa' })).toMatchObject({
+      settings: { merge_criteria: { verdict_profile: 'qa' } },
+    });
+  });
+
+  it('refuses invalid counts and profile names', () => {
+    const parsed = parseSettings({ ...BASE, mergeVerdicts: -1, mergeApprovals: 1.5, mergeVerdictProfile: 'Bad' });
+    expect(parsed.ok).toBe(false);
+    expect(parsed.ok ? [] : parsed.errors.map((item) => item.code)).toEqual([
+      'count_invalid',
+      'count_invalid',
+      'profile_invalid',
+    ]);
+  });
+
+  it('accepts the optional keys of the contract only', () => {
+    const base = { repositories: [], protected_branches: [], pr_draft_default: true };
+    expect(checkBody({ ...base, merge_criteria: {} })).toEqual({ ...base, merge_criteria: {} });
+    expect(checkBody({ ...base, separate_duties: false })).toEqual({ ...base, separate_duties: false });
+    for (const bad of [
+      { merge_criteria: [] },
+      { merge_criteria: { other: 1 } },
+      { merge_criteria: { passed_verdicts: -1 } },
+      { merge_criteria: { github_approvals: 'x' } },
+      { merge_criteria: { verdict_profile: 'Bad' } },
+      { merge_criteria: { verdict_profile: 1 } },
+      { merge_criteria: { checks_green: 1 } },
+      { separate_duties: 'yes' },
+    ]) {
+      expect(checkBody({ ...base, ...bad })).toBeNull();
+    }
+  });
+});

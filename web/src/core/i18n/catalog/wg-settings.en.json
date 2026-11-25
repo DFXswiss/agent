@@ -26,5 +26,14 @@
   "conflict": "Someone saved newer settings while you were editing.",
   "conflict.reload": "Show the newer settings",
   "conflict.overwrite": "Save mine anyway",
-  "failed": "Saving failed: {reason}"
+  "failed": "Saving failed: {reason}",
+  "merge.legend": "Merge rules (optional)",
+  "merge.hint": "Off by default: then only GitHub's own rules decide. A merge requested by an agent must meet every rule set here.",
+  "merge.verdicts": "Passed verdicts of review sessions needed",
+  "merge.profile": "Profile of those sessions",
+  "merge.approvals": "Approving GitHub reviews needed",
+  "merge.green": "Every check of the head must have succeeded",
+  "merge.separate": "Separate duties: a session that wrote a pull request may neither review nor merge it",
+  "error.profile_invalid": "“{value}” is not a profile name.",
+  "error.count_invalid": "“{value}” is not a number of 0 or more."
 }

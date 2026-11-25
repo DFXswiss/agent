@@ -29,6 +29,7 @@ import { DeviceFailureNotice } from './DeviceFailureNotice';
 import { ModelSwitchLine } from './ModelSwitchLine';
 import { activeTab, Tabs } from './Tabs';
 import { TaskIdentity } from './TaskIdentity';
+import { TaskProfile } from './TaskProfile';
 import { Unlocking } from '../../unlock/Unlocking';
 import { sessionVm } from '../../../core/tasks/placement';
 import { useDeviceNames } from '../devices/labels';
@@ -159,6 +160,7 @@ function TaskView({ row }: { readonly row: TaskRow }) {
           <TaskRuntime start={row.created_at} end={row.closed_at} />
           <TaskPlacement row={row} />
           <TaskIdentity row={row} writer={writer && row.state !== 'closed'} orgName={directory.orgName} />
+          <TaskProfile row={row} writer={writer && row.state !== 'closed'} />
         </div>
         {writer && <TaskMenu task={row} />}
       </header>

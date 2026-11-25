@@ -4,6 +4,9 @@
 // applies) and the PR draft default (true). They are a `settings.workgroup` event of
 // the workgroup scope, written by users with `wg:write`; the newest verified one wins (by `scope_seq`).
 //
+// - merge criteria and separate duties (KOR-51, ADR-090 sections 5 and 6): optional, off by default; the body carries
+//   `merge_criteria` only when one criterion is set and `separate_duties` only when it is on, so a workgroup that sets
+//   nothing writes the same body as before.
 // - `parseSettings`: the form input (one repository and one pattern per line) → the event body, or the errors per
 //   line. Repositories must match the section 9 regex (`repo_invalid`), patterns the contract's character set
 //   (`pattern_invalid`); duplicates (after lower-casing repositories) are dropped; at most 500 repositories and 100
@@ -37,11 +40,23 @@ export const REPO_RE = /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/;
 /** Branch names or glob patterns with `*` (`contracts/events/objects.json` `body_settings_workgroup`). */
 export const PATTERN_RE = /^[A-Za-z0-9._/*+-]{1,200}$/;
 
+export interface MergeCriteria {
+  readonly passed_verdicts?: number;
+  readonly verdict_profile?: string;
+  readonly checks_green?: boolean;
+  readonly github_approvals?: number;
+}
+
 export interface WorkgroupSettings {
   readonly repositories: readonly string[];
   readonly protected_branches: readonly string[];
   readonly pr_draft_default: boolean;
+  readonly merge_criteria?: MergeCriteria;
+  readonly separate_duties?: boolean;
 }
+
+const PROFILE_RE = /^[a-z][a-z0-9_-]{0,39}$/;
+const CRITERIA_KEYS = ['passed_verdicts', 'verdict_profile', 'checks_green', 'github_approvals'];
 
 export const DEFAULTS: WorkgroupSettings = {
   repositories: [],
@@ -53,13 +68,19 @@ export interface SettingsInput {
   readonly repositories: string;
   readonly protectedBranches: string;
   readonly prDraftDefault: boolean;
+  /** Merge criteria and separation (ADR-090); absent: unchanged defaults. */
+  readonly mergeVerdicts?: number;
+  readonly mergeVerdictProfile?: string;
+  readonly mergeChecksGreen?: boolean;
+  readonly mergeApprovals?: number;
+  readonly separateDuties?: boolean;
 }
 
 export interface FieldError {
-  readonly field: 'repositories' | 'protected_branches';
+  readonly field: 'repositories' | 'protected_branches' | 'merge_criteria';
   /** 1-based line of the input, 0 for the whole field. */
   readonly line: number;
-  readonly code: 'repo_invalid' | 'pattern_invalid' | 'too_many';
+  readonly code: 'repo_invalid' | 'pattern_invalid' | 'too_many' | 'profile_invalid' | 'count_invalid';
   readonly value: string;
 }
 
@@ -114,8 +135,35 @@ export function parseSettings(input: SettingsInput): Parsed {
     (value) => value,
     errors,
   );
+  const criteria = mergeCriteria(input, errors);
   if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, settings: { repositories, protected_branches: patterns, pr_draft_default: input.prDraftDefault } };
+  return {
+    ok: true,
+    settings: {
+      repositories,
+      protected_branches: patterns,
+      pr_draft_default: input.prDraftDefault,
+      ...(criteria === null ? {} : { merge_criteria: criteria }),
+      ...(input.separateDuties === true ? { separate_duties: true } : {}),
+    },
+  };
+}
+
+/** The merge criteria of the input, null when none is set (module comment). */
+function mergeCriteria(input: SettingsInput, errors: FieldError[]): MergeCriteria | null {
+  const verdicts = input.mergeVerdicts ?? 0;
+  const approvals = input.mergeApprovals ?? 0;
+  const profile = (input.mergeVerdictProfile ?? 'review').trim() || 'review';
+  for (const value of [verdicts, approvals]) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      errors.push({ field: 'merge_criteria', line: 0, code: 'count_invalid', value: String(value) });
+    }
+  }
+  if (!PROFILE_RE.test(profile))
+    errors.push({ field: 'merge_criteria', line: 0, code: 'profile_invalid', value: profile });
+  const green = input.mergeChecksGreen === true;
+  if (verdicts === 0 && approvals === 0 && !green && profile === 'review') return null;
+  return { passed_verdicts: verdicts, verdict_profile: profile, checks_green: green, github_approvals: approvals };
 }
 
 /** The form input for stored settings. */
@@ -124,6 +172,11 @@ export function toInput(settings: WorkgroupSettings): SettingsInput {
     repositories: settings.repositories.join('\n'),
     protectedBranches: settings.protected_branches.join('\n'),
     prDraftDefault: settings.pr_draft_default,
+    mergeVerdicts: settings.merge_criteria?.passed_verdicts ?? 0,
+    mergeVerdictProfile: settings.merge_criteria?.verdict_profile ?? 'review',
+    mergeChecksGreen: settings.merge_criteria?.checks_green ?? false,
+    mergeApprovals: settings.merge_criteria?.github_approvals ?? 0,
+    separateDuties: settings.separate_duties ?? false,
   };
 }
 
@@ -132,14 +185,44 @@ const LOWER_REPO_RE = /^[a-z0-9-]{1,39}\/[a-z0-9._-]{1,100}$/;
 /** A body exactly as `contracts/events/settings.workgroup.json` allows it, else null. */
 export function checkBody(body: unknown): WorkgroupSettings | null {
   if (!isRecord(body)) return null;
-  const keys = Object.keys(body).sort();
+  const keys = Object.keys(body)
+    .filter((key) => key !== 'merge_criteria' && key !== 'separate_duties')
+    .sort();
   if (keys.join(',') !== 'pr_draft_default,protected_branches,repositories') return null;
   const { repositories, protected_branches: patterns, pr_draft_default: draft } = body;
+  const criteria = 'merge_criteria' in body ? checkCriteria(body.merge_criteria) : undefined;
+  if (criteria === null) return null;
+  const separate = body.separate_duties;
+  if (separate !== undefined && typeof separate !== 'boolean') return null;
   const list = (value: unknown, re: RegExp, max: number): value is string[] =>
     Array.isArray(value) && value.length <= max && value.every((item) => typeof item === 'string' && re.test(item));
   if (!list(repositories, LOWER_REPO_RE, MAX_REPOSITORIES) || !list(patterns, PATTERN_RE, MAX_PATTERNS)) return null;
   if (typeof draft !== 'boolean') return null;
-  return { repositories, protected_branches: patterns, pr_draft_default: draft };
+  return {
+    repositories,
+    protected_branches: patterns,
+    pr_draft_default: draft,
+    ...(criteria === undefined ? {} : { merge_criteria: criteria }),
+    ...(separate === undefined ? {} : { separate_duties: separate }),
+  };
+}
+
+const isCount = (value: unknown): boolean => Number.isSafeInteger(value) && (value as number) >= 0;
+
+/** `merge_criteria` as the contract allows it, else null. */
+function checkCriteria(value: unknown): MergeCriteria | null {
+  if (!isRecord(value) || !Object.keys(value).every((key) => CRITERIA_KEYS.includes(key))) return null;
+  const {
+    passed_verdicts: verdicts,
+    verdict_profile: profile,
+    checks_green: green,
+    github_approvals: approvals,
+  } = value;
+  if (verdicts !== undefined && !isCount(verdicts)) return null;
+  if (approvals !== undefined && !isCount(approvals)) return null;
+  if (profile !== undefined && (typeof profile !== 'string' || !PROFILE_RE.test(profile))) return null;
+  if (green !== undefined && typeof green !== 'boolean') return null;
+  return value as MergeCriteria;
 }
 
 export type Current =

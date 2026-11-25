@@ -31,6 +31,7 @@ import { useAppEnv } from '../../shell/context';
 import type { TaskTabProps } from '../../registries/task-tabs';
 import '../../../core/i18n/lazy/model';
 import { TriggeredBy } from '../people';
+import { RoleBadge } from '../../profiles/RoleBadge';
 
 /** Rows rendered at first, rows added by a move, the cap. */
 export const WINDOW = 100;
@@ -198,6 +199,7 @@ function Node({ item }: { readonly item: Item }) {
         {node.depth === 0 ? t('task.sessions.main') : t('task.chat.subagent', { path: node.path.join('.') })}
       </span>
       <SessionState state={node.entry.row.state} />
+      <RoleBadge session={id} task={node.entry.row.task_id} />
       {node.entry.row.state === 'stopped' && node.entry.row.state_reason === 'device_failed' && (
         <span className="text-xs text-gray-600" data-testid="sessions.device-failed">
           {t('task.sessions.device_failed')}
