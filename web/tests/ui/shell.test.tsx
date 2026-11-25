@@ -171,6 +171,16 @@ describe('layout', () => {
     );
   });
 
+  it('makes the landing org the active one on a page outside an org opened directly (KOR-68)', async () => {
+    let org = '';
+    const harness = await renderApp('/settings', {}, async (made) => {
+      org = (await onboard(made)).org!;
+    });
+    await screen.findByTestId('settings.page');
+    await waitFor(() => expect(harness.app.store.getState().session.activeOrg).toBe(org));
+    await waitFor(() => expect(harness.live).toHaveBeenCalledOnce());
+  });
+
   it('asks to reload instead of showing evidence for an org written by a newer version (ADR-060)', async () => {
     let org = '';
     const harness = await renderApp('/settings', {}, async (made) => {

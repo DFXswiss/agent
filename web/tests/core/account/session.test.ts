@@ -9,6 +9,7 @@ import { Identity } from '../../../src/core/crypto/keys';
 import type { LiveConnection, LiveWiring } from '../../../src/core/net/live';
 import { Persist } from '../../../src/core/persist';
 import { createStore } from '../../../src/core/store';
+import { setProfile } from '../../../src/core/store/slices/me';
 import { setActiveOrg, setLocale, setPhase, setPrfMissing } from '../../../src/core/store/slices/session';
 import { FakeAuthenticator, giveRecoveryCode } from './authenticator';
 import { CONFIG, ORIGIN, SimHub, T0 } from './hub';
@@ -286,6 +287,16 @@ describe('AppSession', () => {
     await app.begin(await signIn({ anon: app.anon, credentials: auth, origin: ORIGIN }));
     expect(store.getState().me.identity).toBe(second.identity);
     expect(store.getState().session.phase).toBe('unlocked');
+  });
+
+  it('lands in the last org used, else the first one that is not private, else the first', async () => {
+    const { app, store } = await setup();
+    const own = { org_id: 'p', role: 'admin', private: true, default_wg: 'w' };
+    const team = { org_id: 't', role: 'member', private: false, default_wg: 'w' };
+    setProfile(store, { orgs: [own, team] });
+    expect(app.landingOrg()).toBe('t');
+    setProfile(store, { orgs: [own] });
+    expect(app.landingOrg()).toBe('p');
   });
 
   it('installs an org only with an unlocked identity', async () => {

@@ -4,7 +4,8 @@
 // Responsive layout of 06-web.md section 12.1: below `md` a bottom navigation (hidden while the on-screen keyboard is
 // open; the page is then padded by the keyboard's height so a composer can stay above it), from `md` a navigation row,
 // from `lg` a left sidebar. Routes that need an unlocked identity send a locked or anonymous browser to
-// `/login?next=…`; inside `/o/:org` the org becomes the active one (its live channel runs), the user's own name is
+// `/login?next=…`; inside `/o/:org` the org becomes the active one (its live channel runs), outside an org path the
+// landing org does when none is active yet (`AppSession.landingOrg`, KOR-68); the user's own name is
 // written into it once its log is verified if the user has none there yet (ADR-073, `ensureOwnNameOnce`), and an org
 // in the blocking error state shows that state instead of the screen.
 import { useEffect } from 'react';
@@ -41,9 +42,18 @@ export function Layout() {
       org !== null && state.me.userId !== null && orgEntry(state.orgs, org).log?.state.member(state.me.userId) != null,
     app.store,
   );
+  const profile = useStore((state) => state.me.profile, app.store);
   useEffect(() => {
-    if (org !== null && unlocked) app.activate(org);
-  }, [app, org, unlocked]);
+    if (!unlocked) return;
+    if (org !== null) {
+      app.activate(org);
+      return;
+    }
+    // a page outside an org (settings, community, …) opened directly: the landing org becomes the active one, so
+    // the sections of the active org have one without a further step (KOR-68)
+    const landing = app.store.getState().session.activeOrg === null ? app.landingOrg() : null;
+    if (landing !== null) app.activate(landing);
+  }, [app, org, unlocked, profile]);
   useEffect(() => {
     if (org === null || !unlocked || !member) return;
     const orgs = meOrgs(app.store.getState().me.profile).map((item) => item.org_id);

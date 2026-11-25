@@ -6,5 +6,7 @@
   "language.de": "Deutsch",
   "language.en": "English",
   "language.saved": "Saved",
-  "no-org": "You are not a member of any organization yet."
+  "no-org": "You are not a member of any organization yet.",
+  "org.label": "Organization",
+  "org.choose": "Choose an organization"
 }

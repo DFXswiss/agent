@@ -112,7 +112,7 @@ Volume bounds (ADR-086 §1, `decisions/KOR-35.md` §4):
 
 | Route | Screen | Right |
 |---|---|---|
-| `/` | redirect: unauthenticated → `/login`; else last org → `/o/:org` | – |
+| `/` | redirect: unauthenticated → `/login`; else the landing org (last used, else first not private) → `/o/:org` | – |
 | `/invite` (code in fragment `#…`) | invitation (§3.1), with the inviter's personal message of the package; with agent pairing parameters after the code: new account through the user's agent (`11-agent-access.md` §5.2), with the agent's request message (`t`) in the agent block | anon |
 | `/connect` (pairing in fragment `#…`) | confirm the pairing of the user's AI agent with one passkey gesture (`11-agent-access.md` §5.1); shows the agent's request message (`t`) as a quote | anon → user |
 | `/login` | login and unlock (§3.4) | anon |
@@ -836,8 +836,9 @@ newest `CK` after a rotation.
   up" (`fallback.own_to_dfx`, default off; charged) and "Use DFX access over OpenRouter when the operator's
   subscriptions are used up" (`fallback.operator_to_platform`, default on). Not shown for a hub whose settings carry
   no `fallback` (an older release).
-- **Model access and quotas** (organization, section `model-quotas`, ADR-081 §6): `GET /v1/orgs/{org}/quotas` of the
-  active organization – the summary ("Subscriptions: n available · m used up – next release 14:05"), the user's own
+- **Model access of the organization** (section `model-quotas`, ADR-081 §6; titled "Model access and quotas" before
+  KOR-68): `GET /v1/orgs/{org}/quotas` of the
+  active organization, named and chosen in place (below) – the summary ("Subscriptions: n available · m used up – next release 14:05"), the user's own
   subscription (its windows, or "Not readable" honestly, with the last observed limit time), the operator's
   subscriptions when the organization may use them (label, state, used share or "quota not readable", release or
   "used up until", last observed limit) and whether DFX access over OpenRouter is available.
@@ -849,7 +850,13 @@ newest `CK` after a rotation.
 - **Mailbox automation:** form for IMAP host/port/user/password/e-mail stored as `mailbox` credential; then
   `claude.login` with "automatic" mode; progress responses are displayed; fallback to the manual relay on
   `login_automation_failed`.
-- **Quotas:** `GET /v1/me/quotas` – bars for 5-hour and weekly windows with reset times; OpenRouter/API-key spend in
+- **Active organization of the settings** (KOR-68): a page outside `/o/:org` opened directly (no active org yet) makes
+  the landing org active – the last one used on this browser, else the first that is not private, else the first
+  (`AppSession.landingOrg`; also the target of `/`). The sections of the active org ("Model access of the
+  organization", "Credit and usage") name it and let the user choose another in place (it becomes the active and the
+  last used one); without any org they say so instead of loading. No section waits for an org that never comes.
+- **My own subscription** (section `quotas`, titled "Quotas" before KOR-68: the user's own subscription, the same in
+  every organization, apart from the organization's model access): `GET /v1/me/quotas` – bars for 5-hour and weekly windows with reset times; OpenRouter/API-key spend in
   monitoring (§9).
 - Credentials list with version and "Delete". A `claude_subscription` record shows its origin ("long-lived token" for
   `setup_token`, "from the Claude Code login" for `login_token`, ADR-056) and, for a login token, its expiry

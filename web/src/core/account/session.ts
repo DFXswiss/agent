@@ -301,12 +301,16 @@ export class AppSession {
     await this.loadMe();
   }
 
-  /** The org a signed-in user lands in: the last one used on this browser if still a member, else the first. */
+  /**
+   * The org a signed-in user lands in: the last one used on this browser if still a member, else the first that is
+   * not private, else the first.
+   */
   landingOrg(): string | null {
     const orgs = meOrgs(this.store.getState().me.profile);
     const userId = this.userId;
     const last = userId === null ? null : this.prefs.lastOrg(userId);
-    return orgs.find((org) => org.org_id === last)?.org_id ?? orgs[0]?.org_id ?? null;
+    const found = orgs.find((org) => org.org_id === last) ?? orgs.find((org) => !org.private) ?? orgs[0];
+    return found?.org_id ?? null;
   }
 
   rememberOrg(org: string): void {

@@ -2,7 +2,8 @@
 // /v1/orgs/{org}/quotas`): the summary ("Subscriptions: n available · m used up – next release 14:05"), the user's own
 // subscription (its windows, or honestly "not readable"), the operator's subscriptions when the organization may use
 // them (state, used share or "quota not readable", release), the last observed limit time of each, and whether DFX
-// access over OpenRouter is available. Read when the organization changes and on "Reload".
+// access over OpenRouter is available. Read when the organization changes and on "Reload". The organization is named
+// and can be chosen in place (`ActiveOrg`, KOR-68).
 import { useCallback, useEffect, useState } from 'react';
 import {
   type Limited,
@@ -18,6 +19,7 @@ import type { SettingsSection } from '../../../registries/settings-sections';
 import { useStore } from '../../../hooks/useStore';
 import { useI18n } from '../../../i18n';
 import { useAppEnv } from '../../../shell/context';
+import { ActiveOrg } from '../../ActiveOrg';
 import { useReason } from '../github/reason';
 import { SummaryText, useClock } from './summary';
 import '../../../../core/i18n/lazy/model';
@@ -148,11 +150,16 @@ export function ModelQuotasSection() {
   const { t } = useI18n();
   const reason = useReason();
   const org = useStore((state) => state.session.activeOrg, app.store);
-  const [quotas, setQuotas] = useState<OrgQuotas | null>(null);
+  // the answer belongs to its org: after a change of the org the earlier one is not shown
+  const [answer, setQuotas] = useState<{ org: string; value: OrgQuotas } | null>(null);
+  const quotas = answer !== null && answer.org === org ? answer.value : null;
   const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(() => {
     if (org === null) return;
-    loadOrgQuotas(app.tasks, org).then(setQuotas, (error: unknown) => setLoadError(requestErrorCode(error)));
+    loadOrgQuotas(app.tasks, org).then(
+      (value) => setQuotas({ org, value }),
+      (error: unknown) => setLoadError(requestErrorCode(error)),
+    );
   }, [app, org]);
   useEffect(load, [load]);
   const reload = () => {
@@ -162,7 +169,7 @@ export function ModelQuotasSection() {
   return (
     <div className="flex flex-col gap-3" data-testid="model-quotas.section">
       <p className="text-sm text-gray-600">{t('model.org.intro')}</p>
-      {org === null && <p data-testid="model-quotas.no-org">{t('model.org.none')}</p>}
+      <ActiveOrg testId="model-quotas.org" />
       {loadError !== null && (
         <p role="alert" data-testid="model-quotas.load-failed" data-code={loadError}>
           {t('model.org.load-failed', { reason: reason(loadError) })}

@@ -42,6 +42,23 @@ test('the fallback settings are saved for the account and the model access of th
   await expect(page.getByTestId('model.fallback.own')).toBeChecked();
 });
 
+test('settings opened directly show the quotas of an organization without a further step', async ({
+  page,
+  baseURL,
+}) => {
+  await addAuthenticator(page);
+  await onboard(page, { origin: baseURL! });
+  // a direct load of the address (as in a fresh tab): the page starts without an active organization
+  await page.goto('/settings');
+  await page.getByTestId('login.submit').click();
+  await expect(page.getByTestId('settings.page')).toBeVisible();
+  // the landing org is active and named in place; nothing waits for a choice
+  await expect(page.getByTestId('model-quotas.summary')).toHaveText('Subscriptions: 0 available · 0 used up');
+  await expect(page.getByTestId('model-quotas.org.select')).not.toHaveValue('');
+  await expect(page.getByTestId('billing.loading')).toHaveCount(0);
+  await expect(page.getByTestId('quotas.intro')).toBeVisible();
+});
+
 test('a refused save is reported', async ({ page, baseURL }) => {
   await addAuthenticator(page);
   await onboard(page, { origin: baseURL! });

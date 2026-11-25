@@ -28,9 +28,11 @@ describe('credit and usage', () => {
     const t = await credWorld();
     let answer: () => unknown = () => BILLING;
     t.client.on(`GET /v1/orgs/${t.org}/billing`, () => answer());
-    // without an active org nothing is read
+    // without an active org nothing is read and nothing waits: the org is chosen in place (KOR-68)
     mount(t, [{ path: '/settings', element: <BillingSection /> }], '/settings');
-    expect(screen.getByTestId('billing.loading')).toBeVisible();
+    expect(screen.queryByTestId('billing.loading')).toBeNull();
+    expect(screen.getByTestId('billing.org.select')).toHaveValue('');
+    expect(t.client.of(`GET /v1/orgs/${t.org}/billing`)).toHaveLength(0);
     act(() => setActiveOrg(t.store, t.org));
     expect(await screen.findByTestId('billing.balance')).toHaveTextContent('Balance: $4.55');
     expect(screen.getByTestId('billing.prices')).toHaveTextContent('deepseek/flash: $0.60 per million input tokens');

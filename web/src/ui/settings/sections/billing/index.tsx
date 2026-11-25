@@ -17,6 +17,7 @@ import type { SettingsSection } from '../../../registries/settings-sections';
 import { useStore } from '../../../hooks/useStore';
 import { useI18n } from '../../../i18n';
 import { useAppEnv } from '../../../shell/context';
+import { ActiveOrg } from '../../ActiveOrg';
 import { PeopleUsage } from '../../../task-tabs/people';
 import { useReason } from '../github/reason';
 
@@ -132,11 +133,16 @@ export function BillingSection() {
   const { t } = useI18n();
   const reason = useReason();
   const org = useStore((state) => state.session.activeOrg, app.store);
-  const [billing, setBilling] = useState<OrgBilling | null>(null);
+  // the answer belongs to its org: after a change of the org the earlier one is not shown
+  const [answer, setBilling] = useState<{ org: string; value: OrgBilling } | null>(null);
+  const billing = answer !== null && answer.org === org ? answer.value : null;
   const [loadError, setLoadError] = useState<string | null>(null);
   const load = useCallback(() => {
     if (org === null) return;
-    loadOrgBilling(app.tasks, org).then(setBilling, (error: unknown) => setLoadError(requestErrorCode(error)));
+    loadOrgBilling(app.tasks, org).then(
+      (value) => setBilling({ org, value }),
+      (error: unknown) => setLoadError(requestErrorCode(error)),
+    );
   }, [app, org]);
   useEffect(load, [load]);
   const reload = () => {
@@ -145,12 +151,15 @@ export function BillingSection() {
   };
   return (
     <div className="flex flex-col gap-3" data-testid="billing.section">
+      <ActiveOrg testId="billing.org" />
       {loadError !== null && (
         <p role="alert" data-testid="billing.load-failed" data-code={loadError}>
           {t('billing.load-failed', { reason: reason(loadError) })}
         </p>
       )}
-      {loadError === null && billing === null && <p data-testid="billing.loading">{t('billing.loading')}</p>}
+      {org !== null && loadError === null && billing === null && (
+        <p data-testid="billing.loading">{t('billing.loading')}</p>
+      )}
       {billing !== null && <Details billing={billing} org={org!} />}
       <button
         type="button"

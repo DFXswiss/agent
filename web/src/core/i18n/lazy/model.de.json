@@ -22,10 +22,10 @@
   "save": "Speichern",
   "saved": "Gespeichert. Neue Sessions verwenden diese Einstellung.",
   "failed": "Speichern fehlgeschlagen: {reason}",
-  "quotas.title": "Kontingente",
+  "quotas.title": "Mein eigenes Abo",
   "quotas.loading": "Kontingente werden geladen…",
   "quotas.load-failed": "Die Kontingente konnten nicht geladen werden: {reason}",
-  "quotas.unavailable": "Kontingente sind nicht verfügbar (kein Abo verbunden, oder das Abo meldet keine).",
+  "quotas.unavailable": "Kein eigenes Abo gemessen (keines hinterlegt, oder es meldet keine Kontingente).",
   "quotas.window.five_hour": "5 Stunden",
   "quotas.window.seven_day": "Woche",
   "quotas.window.model": "Woche, {model}",
@@ -44,9 +44,8 @@
   "usage.context": "Kontext:",
   "usage.context.unknown": "unbekannt",
   "quotas.unreadable": "Kontingente sind nicht lesbar: Der verbundene Zugang (zum Beispiel ein Jahres-Token aus „claude setup-token“) erlaubt das Auslesen nicht. Die Sessions laufen trotzdem.",
-  "org.title": "Modellzugang und Kontingente",
+  "org.title": "Modellzugang der Organisation",
   "org.intro": "Die Modellzugänge, die Sessions dieser Organization nutzen können, mit ihren Kontingenten, soweit sie lesbar sind.",
-  "org.none": "Wähle zuerst eine Organization.",
   "org.loading": "Modellzugang wird geladen…",
   "org.load-failed": "Der Modellzugang konnte nicht geladen werden: {reason}",
   "org.reload": "Neu laden",
@@ -86,5 +85,6 @@
   "consent.always": "Immer so",
   "consent.hint": "Der DFX-Zugang wird nach Verbrauch vom Guthaben der Organization abgerechnet. Ohne Antwort geht die Aufgabe von selbst mit deinem Abo weiter, sobald es wieder frei ist.",
   "consent.always.hint": "„Immer so“ gilt für alle deine Aufgaben; du kannst es in den Einstellungen unter „Modellzugang“ wieder ausschalten.",
-  "consent.always.saved": "Gespeichert: Ist dein eigenes Abo erschöpft, arbeiten deine Aufgaben mit dem DFX-Zugang weiter."
+  "consent.always.saved": "Gespeichert: Ist dein eigenes Abo erschöpft, arbeiten deine Aufgaben mit dem DFX-Zugang weiter.",
+  "quotas.intro": "Das Claude-Abo, das du selbst hinterlegt hast, gemessen vom Gerät, das es nutzt – in jeder Organisation dasselbe."
 }

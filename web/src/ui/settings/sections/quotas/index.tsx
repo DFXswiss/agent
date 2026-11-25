@@ -1,4 +1,5 @@
-// Settings section "Quotas" (06-web.md section 8.2, ADR-010): the subscription windows the execution device last read
+// Settings section "My own subscription" (06-web.md section 8.2, ADR-010; titled apart from the organization's "Model
+// access" since KOR-68): the user's own subscription windows the execution device last read
 // (`GET /v1/me/quotas`): 5 hours, week and per model, each as a bar with the used share and the reset time. Without
 // rows the quota is "not readable" when the subscription refused the read (KOR-40), else "not available" (no
 // subscription, or the usage endpoint did not answer). Spend of API keys and the
@@ -67,6 +68,9 @@ export function QuotasSection() {
   };
   return (
     <div className="flex flex-col gap-3" data-testid="quotas.section">
+      <p className="text-sm text-gray-600" data-testid="quotas.intro">
+        {t('model.quotas.intro')}
+      </p>
       {loadError !== null && (
         <p role="alert" data-testid="quotas.load-failed" data-code={loadError}>
           {t('model.quotas.load-failed', { reason: reason(loadError) })}

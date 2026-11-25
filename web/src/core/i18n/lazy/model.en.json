@@ -22,10 +22,10 @@
   "save": "Save",
   "saved": "Saved. New sessions use this setting.",
   "failed": "Saving failed: {reason}",
-  "quotas.title": "Quotas",
+  "quotas.title": "My own subscription",
   "quotas.loading": "Loading the quotas…",
   "quotas.load-failed": "The quotas could not be loaded: {reason}",
-  "quotas.unavailable": "Quotas are not available (no subscription connected, or the subscription does not report them).",
+  "quotas.unavailable": "No own subscription measured (none stored, or it reports no quotas).",
   "quotas.window.five_hour": "5 hours",
   "quotas.window.seven_day": "Week",
   "quotas.window.model": "Week, {model}",
@@ -44,9 +44,8 @@
   "usage.context": "Context:",
   "usage.context.unknown": "unknown",
   "quotas.unreadable": "Quotas cannot be read: the connected access (for example a long-lived token from “claude setup-token”) does not allow reading them. Sessions still run.",
-  "org.title": "Model access and quotas",
+  "org.title": "Model access of the organization",
   "org.intro": "The model accesses the sessions of this organization can use, with their quotas as far as they can be read.",
-  "org.none": "Choose an organization first.",
   "org.loading": "Loading the model access…",
   "org.load-failed": "The model access could not be loaded: {reason}",
   "org.reload": "Reload",
@@ -86,5 +85,6 @@
   "consent.always": "Always",
   "consent.hint": "DFX access is charged by use to the organization's credit. Without an answer the task continues by itself on your subscription once it is free again.",
   "consent.always.hint": "“Always” holds for all your tasks; you can switch it off in the settings under “Model access”.",
-  "consent.always.saved": "Saved: when your own subscription is used up, your tasks continue with DFX access."
+  "consent.always.saved": "Saved: when your own subscription is used up, your tasks continue with DFX access.",
+  "quotas.intro": "The Claude subscription you stored yourself, measured by the device that uses it – the same in every organization."
 }

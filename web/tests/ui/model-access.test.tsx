@@ -131,7 +131,7 @@ describe('model access and quotas', () => {
     t.client.on(`GET /v1/orgs/${t.org}/quotas`, () => answer());
     // without an active organization nothing is read
     mount(t, [{ path: '/settings', element: <ModelQuotasSection /> }], '/settings');
-    expect(screen.getByTestId('model-quotas.no-org')).toBeVisible();
+    expect(screen.queryByTestId('model-quotas.loading')).toBeNull();
     expect(t.client.of(`GET /v1/orgs/${t.org}/quotas`)).toHaveLength(0);
     act(() => setActiveOrg(t.store, t.org));
     expect(await screen.findByTestId('model-quotas.summary')).toHaveTextContent(

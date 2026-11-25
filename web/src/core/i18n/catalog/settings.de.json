@@ -6,5 +6,7 @@
   "language.de": "Deutsch",
   "language.en": "English",
   "language.saved": "Gespeichert",
-  "no-org": "Sie sind noch in keiner Organisation Mitglied."
+  "no-org": "Sie sind noch in keiner Organisation Mitglied.",
+  "org.label": "Organisation",
+  "org.choose": "Organisation wählen"
 }
