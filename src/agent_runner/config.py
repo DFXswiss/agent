@@ -28,10 +28,10 @@ DEFAULT_HOME_RELATIVE = ".local/share/agent-runner"
 DEFAULT_HOME = "~/" + DEFAULT_HOME_RELATIVE
 DEFAULT_LOGIN_ARGV = ("claude", "setup-token")
 DEFAULT_SUBSCRIPTION_LOGIN_ARGV = ("claude", "auth", "login", "--claudeai")
-"""The full login of a further subscription (ADR-091 section 1); `--email <address>` is appended when known."""
+"""The full login of a further subscription (ADR-092 section 1); `--email <address>` is appended when known."""
 DEFAULT_CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 DEFAULT_CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-"""Token endpoint and client ID the pinned Claude Code renews its login with (ADR-091 section 2)."""
+"""Token endpoint and client ID the pinned Claude Code renews its login with (ADR-092 section 2)."""
 OPERATOR_GITHUB_ONE_USER = "OPERATOR_GITHUB_USERS:one_user_only"
 """The error name of an `OPERATOR_GITHUB_USERS` with more than one user (`doctor` and the daemon refuse it)."""
 DeviceKind = Literal["org", "platform"]
@@ -267,9 +267,9 @@ class Config:
     """Cap of the live picture's bandwidth in kbit/s (ADR-085 section 6)."""
     browser_search_url: str = ""
     subscription_login_argv: tuple[str, ...] = DEFAULT_SUBSCRIPTION_LOGIN_ARGV
-    """The full login of a further subscription (ADR-091 section 1)."""
+    """The full login of a further subscription (ADR-092 section 1)."""
     claude_token_url: str = DEFAULT_CLAUDE_TOKEN_URL
-    """The token endpoint the measuring device renews further subscriptions at (ADR-091 section 2)."""
+    """The token endpoint the measuring device renews further subscriptions at (ADR-092 section 2)."""
     claude_oauth_client_id: str = DEFAULT_CLAUDE_OAUTH_CLIENT_ID
     """URL template with `{q}` that `browser_navigate {query}` opens; empty = automated search is off (F9)."""
 

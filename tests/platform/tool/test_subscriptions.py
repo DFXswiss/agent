@@ -250,11 +250,11 @@ def test_malformed_and_refused_records_end_with_their_code(
     record = state_of(hub).records[foreign]["record"]
     state_of(hub).records[foreign]["record"] = {**record, "header": {**record["header"], "kind": "github"}}
     entries = {item["id"]: item for item in tool.run("subscriptions", "list")[1]["subscriptions"]}
-    assert {key: entries[key]["code"] for key in (extra, bad_use, foreign)} == {
-        extra: "params_invalid",
+    assert {key: entries[key]["code"] for key in (bad_use, foreign)} == {
         bad_use: "params_invalid",
         foreign: "header_invalid",
     }
+    assert entries[extra]["status"] == "logged_in"  # a field of a later version is kept, not refused (KOR-71)
     # a refusal other than a concurrent write is not tried again
     kept = add(hub, account.id, sealed(hub, account, body(name="Kept")))
     state_of(hub).refuse_put = True
@@ -276,7 +276,7 @@ FULL: dict[str, Any] = {
 
 
 def test_full_logins_show_expiry_plan_and_log_in_again(tool: Tool, hub: HubFake, account: User) -> None:
-    """KOR-71, ADR-091: a full login lists its expiry and plan; a login the device could not renew is `relogin`
+    """KOR-71, ADR-092: a full login lists its expiry and plan; a login the device could not renew is `relogin`
     with the command that logs it in; a field this version does not know is kept when the record is changed;
     `logout` drops both tokens."""
     _org, _wg, device = assign_device(tool, hub, account)

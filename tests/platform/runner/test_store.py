@@ -358,7 +358,7 @@ TABLES = {
     ],
     # 0032 (KOR-69, ADR-090): subscription records fetched by ID
     "subscription_cache": ["id", "owner_id", "is_primary", "version", "record"],
-    # 0033 (KOR-71, ADR-091): renewals not yet confirmed by the hub (ciphertext only)
+    # 0033 (KOR-71, ADR-092): renewals not yet confirmed by the hub (ciphertext only)
     "subscription_renewal": ["id", "owner_id", "base_version", "base_record", "record", "created_at"],
     "schema_version": ["version", "name", "checksum", "applied_at"],
 }

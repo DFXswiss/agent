@@ -78,8 +78,8 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `MODEL_UPSTREAM_ANTHROPIC` / `MODEL_UPSTREAM_OPENROUTER` | `https://api.anthropic.com` / `https://openrouter.ai/api` | doubles in tests |
 | `ANTHROPIC_USAGE_URL` | `https://api.anthropic.com/api/oauth/usage` | quota polling |
 | `LOGIN_ARGV` | `["claude","setup-token"]` (JSON array) | login-CLI double in tests; the default needs Claude Code on the host at the golden's pin (doctor `login_cli`) |
-| `SUBSCRIPTION_LOGIN_ARGV` | `["claude","auth","login","--claudeai"]` (JSON array) | the full login of a further subscription (§11.6, ADR-091); `--email <address>` is appended when known |
-| `CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | token endpoint of the renewal of further subscriptions (§10.6, ADR-091); loopback `http` only in test mode |
+| `SUBSCRIPTION_LOGIN_ARGV` | `["claude","auth","login","--claudeai"]` (JSON array) | the full login of a further subscription (§11.6, ADR-092); `--email <address>` is appended when known |
+| `CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | token endpoint of the renewal of further subscriptions (§10.6, ADR-092); loopback `http` only in test mode |
 | `CLAUDE_OAUTH_CLIENT_ID` | `9d1c250a-e61b-44d9-88ed-5944d1962f5e` | client ID of that renewal (the pinned Claude Code's) |
 | `LOGIN_AUTOMATION` | `on` for platform devices (platform install profile), `off` for org devices | `on` enables §11.3 (needs the `login` extra; the platform install profile includes it) |
 | `GOLDEN_TEMPLATE` | `images/golden.yaml` of the checkout | the build also reads `images/`, `src/agent_guest/` and `contracts/` next to the template; missing → `golden_source_missing` (KOR-03) |
@@ -884,7 +884,7 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   older `CK` epoch than the newest one the device holds is first re-sealed under it (`PUT
   /v1/device/subscriptions/{id}` without a request), so a rotation by a client that does not know further
   subscriptions leaves none unreadable. A record without a token (not logged in) is skipped.
-- Renewal of further subscriptions (KOR-71, ADR-091 §2; `quota/renewal.py`): the same polling device renews a full
+- Renewal of further subscriptions (KOR-71, ADR-092 §2; `quota/renewal.py`): the same polling device renews a full
   login (`kind: "oauth_login"` with `token` and `refresh_token`) `1800 s` before its `expires_at` and at once after a
   `401` of the usage endpoint (then it measures again at the next tick instead of reporting "not readable"): `POST
   CLAUDE_TOKEN_URL` (JSON `{grant_type: "refresh_token", refresh_token, client_id: CLAUDE_OAUTH_CLIENT_ID, scope}`,
@@ -1139,7 +1139,7 @@ else → `upstream_error` for that pull request. One final response `{step:"done
 repository or a number. The GitHub double computes `mergeable` asynchronously like GitHub (first read after head or
 base moved `null`) and offers `POST /_double/commits` to move a base in tests.
 
-### 11.6 `claude.login` of a further subscription – full login (KOR-71, ADR-091 §1)
+### 11.6 `claude.login` of a further subscription – full login (KOR-71, ADR-092 §1)
 
 With `subscription_id` the login runs `SUBSCRIPTION_LOGIN_ARGV` (default `claude auth login --claudeai`) instead of
 `LOGIN_ARGV`, with `--email <address>` appended when an address is known (the automatic login's, else the one the

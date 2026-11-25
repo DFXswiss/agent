@@ -1,4 +1,4 @@
-"""What the full login of a further subscription reads (05-runner.md section 11.6, ADR-091 section 1, KOR-71).
+"""What the full login of a further subscription reads (05-runner.md section 11.6, ADR-092 section 1, KOR-71).
 
 `SUBSCRIPTION_LOGIN_ARGV` (default `claude auth login --claudeai`) runs like the setup-token relay (`relay.py`), with
 three differences, all checked against Claude Code `setup_token.CHECKED_VERSION` (the golden's pin) on the test

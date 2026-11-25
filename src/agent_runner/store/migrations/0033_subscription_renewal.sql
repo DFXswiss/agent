@@ -1,4 +1,4 @@
--- Renewals of further Claude subscriptions not yet confirmed by the hub (KOR-71, ADR-091 section 2; 02-data-model.md
+-- Renewals of further Claude subscriptions not yet confirmed by the hub (KOR-71, ADR-092 section 2; 02-data-model.md
 -- section 4). The provider's answer to a renewal is sealed as the next record version (ciphertext under the owner's
 -- `CK`, signed by this device) and stored here before it is written to the hub; the row goes once the hub confirmed
 -- the write, a newer login won or the record is gone. `base_record` is the sealed record the renewal replaces (to

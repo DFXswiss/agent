@@ -452,7 +452,7 @@ def test_login_argv(base: dict[str, str]) -> None:
 
 
 def test_subscription_login_and_renewal_settings(base: dict[str, str]) -> None:
-    """KOR-71, ADR-091: the full login and the token endpoint of the renewal, with the pinned program's defaults."""
+    """KOR-71, ADR-092: the full login and the token endpoint of the renewal, with the pinned program's defaults."""
     cfg = load(base)
     assert cfg.subscription_login_argv == ("claude", "auth", "login", "--claudeai")
     assert cfg.claude_token_url == "https://platform.claude.com/v1/oauth/token"

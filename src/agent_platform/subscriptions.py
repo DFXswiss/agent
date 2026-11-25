@@ -104,7 +104,7 @@ def valid_use(value: object) -> bool:
 
 
 def _valid_login(body: dict[str, Any]) -> bool:
-    """The fields of a full login (KOR-71, ADR-091), each optional."""
+    """The fields of a full login (KOR-71, ADR-092), each optional."""
     scopes = body.get("scopes", [])
     return (
         all(
@@ -400,7 +400,7 @@ def note(account: Account, args: Any, _context: Context) -> dict[str, Any]:
 
 def logout(account: Account, args: Any, _context: Context) -> dict[str, Any]:
     def edit(body: dict[str, Any]) -> None:
-        for name in ("token", "refresh_token", "relogin"):  # nothing left to renew (ADR-091 section 2)
+        for name in ("token", "refresh_token", "relogin"):  # nothing left to renew (ADR-092 section 2)
             body.pop(name, None)
 
     result = change(account, uuid_argument(args.id), edit)

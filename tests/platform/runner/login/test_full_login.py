@@ -1,4 +1,4 @@
-"""U-RUN-login (KOR-71, ADR-091 section 1): what the full login reads - the code page's link on the screen, the store
+"""U-RUN-login (KOR-71, ADR-092 section 1): what the full login reads - the code page's link on the screen, the store
 of the program (`.credentials.json`, the address in `.claude.json`) with its checks - and the refusing `security`
 that keeps every login out of the keychain."""
 

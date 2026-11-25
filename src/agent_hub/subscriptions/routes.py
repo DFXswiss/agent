@@ -19,7 +19,7 @@ deletes of a record that is not the caller's are `404 not_found`.
 
 A device writes a user's further subscription while answering an active `claude.login` of that user
 (`request_id`, `agent_hub.requests.store.authorizes_write`), or - without `request_id` - **re-seals** or **renews**
-one (ADR-090 section 1, ADR-091 section 2): the stored record is a non-primary subscription of the owner and either
+one (ADR-090 section 1, ADR-092 section 2): the stored record is a non-primary subscription of the owner and either
 lies under an older epoch than the owner's current `CK` epoch, or the device is the one that measures the owner now
 (`agent_hub.usage.polling.polls_for`, the rule of the `quota` items), or the device wrote the stored version itself
 (it finishes a renewal it started before the measuring duty moved); the new version is under the current epoch

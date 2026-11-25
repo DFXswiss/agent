@@ -17,7 +17,7 @@ device state carries `subscriptions.api >= 1` (an older hub would refuse the ite
 - **result**: `quota {owner_id, subscription_id, windows, fetched_at}` for a valid document with windows,
   `quota {owner_id, subscription_id, unavailable: true, fetched_at}` for `401`/`403`; nothing else is sent. The
   readings mark no limit: further subscriptions serve no session of the owner.
-- **renewal** (KOR-71, ADR-091 section 2; `renewal.Renewer`): on every tick, first every renewal this device stored
+- **renewal** (KOR-71, ADR-092 section 2; `renewal.Renewer`): on every tick, first every renewal this device stored
   but the hub has not confirmed is written again (`renewal.flush`, also for owners this device no longer measures);
   then a full login (`kind: "oauth_login"` with both tokens) of a measured owner is renewed `RENEW_BEFORE_S` before
   its `expires_at`, and a `401` of the usage endpoint for such a record renews it at once instead of marking it not

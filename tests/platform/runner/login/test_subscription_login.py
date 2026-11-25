@@ -1,4 +1,4 @@
-"""U-RUN-login (subscriptions, KOR-69, ADR-090 section 2; KOR-71, ADR-091 section 1): `claude.login` with
+"""U-RUN-login (subscriptions, KOR-69, ADR-090 section 2; KOR-71, ADR-092 section 1): `claude.login` with
 `subscription_id` runs the full login (`SUBSCRIPTION_LOGIN_ARGV`, the double's `auth login`) and fills that further
 subscription with the access and refresh token, expiry, scopes and plan the program stored in its file (name and note
 from the request, the record's own kept otherwise), never the primary record; the keychain is refused through the

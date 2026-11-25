@@ -1,4 +1,4 @@
-# ADR-091: Further Claude subscriptions sign in with the full login – renewal by the measuring device
+# ADR-092: Further Claude subscriptions sign in with the full login – renewal by the measuring device
 
 Status: Accepted (2026-11-25)
 
@@ -48,12 +48,15 @@ Status: Accepted (2026-11-25)
   `token` (access token), `refresh_token`, `expires_at`, `scopes`, `subscription_type`, `rate_limit_tier`, besides
   `email` and the kept `name`, `note`, `use`. All of it is sealed under the owner's `CK` like every record (the owner's
   clients may open it, as for every credential; they keep fields they do not know when they write).
-  Records with a setup token stay valid ("not readable", with "log in again").
+  Records with a setup token stay valid ("not readable", with "log in again"). The agent tool keeps every body field
+  it does not know when it writes a record (a later version may add fields); the web client must do the same before it
+  writes records (KOR-69 dialogs).
 
 ### 2. Renewal by the measuring device
 - Only the device that measures the owner (`quota_poll_owners`, the elected device of 05-runner §10.6) renews, in
-  the `quota` task: a record of kind `oauth_login` with a refresh token is renewed `RENEW_BEFORE_S` (1800 s) before
-  `expires_at`, and at once when the usage endpoint answers `401`. Request: `POST CLAUDE_TOKEN_URL` (setting, default
+  the `quota` task (every 30 s): a record of kind `oauth_login` with **both** tokens is renewed `RENEW_BEFORE_S`
+  (1800 s) before `expires_at`, and at once when the usage endpoint answers `401`. The record is fetched anew first
+  and renewed only when that fresh version is still due (a newer login is left alone). Request: `POST CLAUDE_TOKEN_URL` (setting, default
   `https://platform.claude.com/v1/oauth/token`), JSON `{grant_type, refresh_token, client_id: CLAUDE_OAUTH_CLIENT_ID
   (setting), scope}` (the record's scopes), 30 s, no redirects.
 - **Crash-safe order:** the answer's new access and refresh token are first sealed as the next record version (under
@@ -64,16 +67,23 @@ Status: Accepted (2026-11-25)
   provider's answer and the store loses the new refresh token (the next renewal gets `invalid_grant` → "log in
   again"); there is no earlier moment at which it could be stored.
 - **Concurrent writes:** a `version_conflict` (the owner renamed it, changed its use or logged in again
-  meanwhile) opens the current record: if it still holds the refresh token the renewal used, the new tokens are
-  merged into it (its name, note, use win) and written as its next version; otherwise a newer login won and the row is
-  dropped. `404` drops the row. Transport errors and `forbidden` (the device is no longer the measuring one) keep it.
+  meanwhile) opens the current record: if it still holds the refresh token the renewal used, or another device marked
+  it `relogin` after the provider refused that token (the race of a moved measuring duty), the new tokens are merged
+  into it (its name, note, use win) and written as its next version; otherwise a newer login won and the row is
+  dropped. `404` drops the row. Transport errors and `forbidden` keep it. The row is sealed anew under the newest
+  epoch on every try (a key rotation meanwhile does not strand it).
 - **Answers:** `invalid_grant` (400) → the device writes the next version without `token` and `refresh_token`,
-  with `relogin: "renewal_refused"`; the record is then "not logged in" and the overview and `subscriptions list`
-  show "log in again". Other 4xx/5xx, a malformed answer or a network error → retry after `RENEW_RETRY_S` (60 s),
+  with `relogin: "renewal_refused"` – only while the current record still holds the refused refresh token (after a
+  `version_conflict` it reads the record again; a newer login or renewal is never marked); the record is then "not
+  logged in" and the overview and `subscriptions list` show "log in again". Other 4xx/5xx, a malformed answer or a network error → retry after `RENEW_RETRY_S` (60 s),
   until a valid answer or `invalid_grant`.
 - **Hub:** `PUT /v1/device/subscriptions/{id}` without `request_id` is also allowed when the record is a non-primary
   subscription of the owner and the device is the one that polls the owner now (`polls_for`, the rule of the
-  `quota` items); the new version is under the current epoch (`put_identity`). Nothing else changes for devices.
+  `quota` items) **or wrote the stored version itself** (it finishes a renewal it began before the measuring duty
+  moved – the duty moves back to the smallest online device as soon as it returns); the new version is under the
+  current epoch (`put_identity`). The runner writes such rows on every tick, also for owners it no longer measures.
+- **Log out** (`subscriptions logout`) drops `token` **and** `refresh_token` (and `relogin`), so no device renews a
+  logged-out subscription.
 - **Never** is a login of another computer read, copied or renewed: the runner renews only records created by a
   login on a platform device (kind `oauth_login`).
 
@@ -91,11 +101,22 @@ also names `next`. The web overview (KOR-68) shows a record without token as "no
 
 ## Consequences
 - The refresh token lies, sealed, in the record at the hub (like every credential, readable only with the owner's
-  `CK`: the owner's clients and eligible devices). It never reaches a guest, a log, a metric or the hub in plaintext.
-  Keeping it only in one device's store would lose the subscription with that device.
-- Two devices could renew the same record only when the hub's choice changed between a renewal and its write (the
-  first device was offline longer than the online window); the conflict rule keeps the newest refresh token, and a
-  token the provider no longer accepts leads to "log in again".
+  `CK`: the owner's clients and eligible devices). It never reaches a guest, a log, a metric or the hub in plaintext;
+  the owner's agent tool and browser open it in memory when they change the record (as they open every credential –
+  the year-long setup token before), never store or show it. Keeping it only in one device's store would lose the
+  subscription with that device.
+- Two devices could renew the same record only when the measuring duty moved between a renewal and its write; the
+  device that renewed may still write it (it wrote the stored version), the conflict rule keeps the newest refresh
+  token, and only a token the provider no longer accepts leads to "log in again". A duty that moved twice before the
+  write (A renews, B measures and is refused, the duty moves to C) can still cost a new login; on the platform there
+  is one measuring device in practice.
+- Sessions on other devices get the renewed token through the `credentials` hint of the new version; the 1800 s
+  margin covers a lost hint (the reconcile step re-reads every owner's records) and the provisioning. A measuring
+  device that is an older runner does not renew: roll the runners out before the first full login.
+- A crash while a login runs leaves `tmp/login-<id>/config/.credentials.json` until the daemon removes stale login
+  directories at its next start (as for every login, 05-runner §11.2).
+- The keychain stays untouched only while the pinned program reaches it through `security` in `PATH`; a new pin is
+  checked for this by the upgrade gate (`runbooks/claude-code-upgrade-gate.md`) like the screen labels.
 - Roll-out: hub first (accepts the renewal write), then runners (new settings have defaults), then the agent tool.
 
 ## Alternatives considered

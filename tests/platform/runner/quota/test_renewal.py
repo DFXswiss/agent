@@ -1,4 +1,4 @@
-"""U-RUN-quota (renewal, KOR-71, ADR-091 section 2): the device that measures an owner renews the full login of a
+"""U-RUN-quota (renewal, KOR-71, ADR-092 section 2): the device that measures an owner renews the full login of a
 further subscription before its access token expires and after a `401` of the usage endpoint, against the token
 endpoint of the auth-page double (rotation: the used refresh token dies). The new tokens are stored sealed before
 they are written to the hub; a crash or a refused write keeps them for the next tick (the token endpoint is not called

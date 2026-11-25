@@ -2,7 +2,7 @@
 user. Further subscriptions are written through `/v1/subscriptions/{id}` (never primary, never the primary record),
 read and deleted there like the primary record; a device reads them when it is eligible for the owner's `CK` and
 writes them while answering the owner's `claude.login`, to re-seal one under the owner's current epoch or to renew one
-(ADR-091 section 2: the device that measures the owner, or the one that wrote the stored version)."""
+(ADR-092 section 2: the device that measures the owner, or the one that wrote the stored version)."""
 
 from __future__ import annotations
 
@@ -204,7 +204,7 @@ def test_a_device_reseals_a_record_under_an_older_epoch_only(desk: Desk) -> None
     current = desk.record(writer, KIND, record_id=record["header"]["id"], version=2, epoch=2, author=device)
     assert _device_put(client, writer, current, 1, None).json() == {"version": 2}
     # now it is under the current epoch and written by the device itself, which may write it again (it finishes its
-    # renewal, ADR-091 section 2); an unknown or primary record is never re-sealed
+    # renewal, ADR-092 section 2); an unknown or primary record is never re-sealed
     later = desk.record(writer, KIND, record_id=record["header"]["id"], version=3, epoch=2, author=device)
     assert _device_put(client, writer, later, 2, None).json() == {"version": 3}
     assert _device_put(client, writer, desk.record(writer, KIND, epoch=2, author=device), 0, None).status_code == 403

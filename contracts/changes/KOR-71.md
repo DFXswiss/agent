@@ -1,6 +1,6 @@
 # KOR-71 – contract changes
 
-ADR-027 section 3 (additive). Decision: ADR-091 (full login of further subscriptions, renewal by the measuring device).
+ADR-027 section 3 (additive). Decision: ADR-092 (full login of further subscriptions, renewal by the measuring device).
 
 ## Credential body (`credentials/claude_subscription.json`)
 - New kind `oauth_login`; new optional `refresh_token`, `scopes`, `subscription_type`, `rate_limit_tier` and

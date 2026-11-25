@@ -22,6 +22,13 @@ automatically: the auto-updater is off in the golden (`DISABLE_AUTOUPDATER`, man
    within seconds, the program still running), record a fresh raw PTY recording if the drawing changed, adapt the
    labels, the screen and the login-CLI double in the same change, then set `CHECKED_VERSION`. Never sign in with a
    real account for this.
+   The full login of further subscriptions (ADR-092, `src/agent_runner/login/full_login.py`) is checked the same way
+   up to the code input: `claude auth login --claudeai --email <address>` with the login's private `PATH` - the link
+   of the code page still under "If the browser didn't open, visit:", the input field, every keychain access through
+   `security` in `PATH` (a refusing script there sees the calls), the plaintext store `.credentials.json` with
+   `claudeAiOauth` named in the program, and the renewal request (token endpoint, client ID, JSON
+   `grant_type: refresh_token`) unchanged; else adapt `SUBSCRIPTION_LOGIN_ARGV`, `CLAUDE_TOKEN_URL`,
+   `CLAUDE_OAUTH_CLIENT_ID`, the labels and the double.
 
 ## 2. Gate (all on the runner device, all must pass)
 

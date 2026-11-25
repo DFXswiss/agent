@@ -1,4 +1,4 @@
-"""Renewal of further Claude subscriptions by the device that measures their owner (KOR-71, ADR-091 section 2;
+"""Renewal of further Claude subscriptions by the device that measures their owner (KOR-71, ADR-092 section 2;
 05-runner.md section 10.6).
 
 A further subscription logged in with the full login (`kind: "oauth_login"`, `login/full_login.py`) holds a

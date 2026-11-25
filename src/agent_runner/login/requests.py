@@ -10,7 +10,7 @@ may add `subscription_id` - the further subscription the login fills, a new ID c
 for the record; an existing one keeps its own unless given) and, for `automatic`, `email` - the address to sign in with
 instead of the mailbox's own; a malformed one of them is `upstream_error`):
 
-With `subscription_id` the login is the full login (`SUBSCRIPTION_LOGIN_ARGV`, section 11.6, ADR-091, KOR-71): the
+With `subscription_id` the login is the full login (`SUBSCRIPTION_LOGIN_ARGV`, section 11.6, ADR-092, KOR-71): the
 command gets `--email <address>` when an address is known (the automatic login's, else the one the record holds), the
 record stores `{token, refresh_token, expires_at, scopes, subscription_type?, rate_limit_tier?, email,
 kind:"oauth_login"}`, and a login without `user:profile` and `user:inference` ends `scope_missing`.

@@ -253,7 +253,7 @@ def test_a_token_file_may_not_use_the_shared_prefix_and_shared_tokens_are_read_f
 def test_a_full_login_serves_its_access_token_and_a_renewal_replaces_it(
     store_dsn: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """KOR-71, ADR-091 section 3: a session gets only the access token of a full login, never its refresh token; a
+    """KOR-71, ADR-092 section 3: a session gets only the access token of a full login, never its refresh token; a
     renewal is a new record version, which the pool reads anew (the bound sessions are provisioned again)."""
 
     async def body(env: Env, hub: SubscriptionHub) -> None:

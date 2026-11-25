@@ -11,7 +11,7 @@
    after the URL and drops what is typed before), types the authorization code and watches the screen: the error
    message ends the login at once with `code_invalid` (the program stays open with "Press Enter to retry"); otherwise
    the command must end within `token_wait`, and the token is read from its last screen (`setup_token.parse_token`).
-   With `full` (`SUBSCRIPTION_LOGIN_ARGV`, a further subscription; ADR-091, `full_login.py`) the URL is the code
+   With `full` (`SUBSCRIPTION_LOGIN_ARGV`, a further subscription; ADR-092, `full_login.py`) the URL is the code
    page's link on the screen, a refusing `security` comes first in `PATH`, and `finish_full` reads the login the
    program stored (`scope_missing` without `user:profile` and `user:inference`).
 3. `close` kills the command's process group and removes the temporary directory; it is idempotent and runs on every
@@ -118,7 +118,7 @@ class LoginSession:
         self, tmp_dir: Path, request_id: str, argv: tuple[str, ...], search_path: str, *, full: bool = False
     ) -> None:
         self.full = full
-        """The full login of a further subscription (`full_login`, ADR-091) instead of `claude setup-token`."""
+        """The full login of a further subscription (`full_login`, ADR-092) instead of `claude setup-token`."""
         self.tmp_dir = tmp_dir
         self.workdir = tmp_dir / f"login-{request_id}"
         self.argv = argv
