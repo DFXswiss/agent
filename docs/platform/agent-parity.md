@@ -49,7 +49,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | credential-delete | settings/credentials | `credentials delete --kind` | done |
 | credential-rotate | jobs (CK re-wrap) | `credentials rotate` | done |
 | quotas | settings/quotas | `quotas` | done |
-| subscriptions-list | Claude subscriptions (every own subscription with status, use and the remaining quota; the web view follows KOR-68, rule E-31) | `subscriptions list` | done |
+| subscriptions-list | screens/subscriptions and the card "My subscriptions" of screens/home (every own subscription with status, use and the remaining quota per window, for the operator also the token-file subscriptions; ADR-091, rules E-30, E-31) | `subscriptions list` (token files: `quotas --org`) | done |
 | subscriptions-add | Claude subscriptions (a new subscription logged in on a platform device, ADR-090) | `subscriptions add --name --note --automatic --email` | done |
 | subscriptions-login | Claude subscriptions (log a subscription in again) | `subscriptions login --id` | done |
 | subscriptions-edit | Claude subscriptions (label and note) | `subscriptions rename --id --name`, `subscriptions note --id --note\|--clear` | done |

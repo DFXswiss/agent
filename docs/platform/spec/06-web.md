@@ -133,6 +133,7 @@ Volume bounds (ADR-086 §1, `decisions/KOR-35.md` §4):
 | `/o/:org/github` | company GitHub accounts of the organization (§8.1, KOR-47) | org:admin |
 | `/notifications` | notification center (§6.2) | user |
 | `/settings` | account: passkeys, recovery code, language, model access, credentials, GitHub, quotas, connected agents (§3.6, §8, §8.3) | user |
+| `/subscriptions` | every subscription of the user with its readings (§4.0 "My subscriptions", ADR-091) | user |
 | `/platform/invites` | platform invitations (§7.4) | platform:inviter |
 | `/security` | security page (§10.5) | anon |
 | `*` | not found | – |
@@ -273,6 +274,19 @@ The home of an organization shows where people are needed, across all workgroups
   subscriptions ("Subscriptions: n available · m used up – next release 14:05", `GET /v1/orgs/{org}/quotas`, refreshed
   every minute, a link to the section of §8.2; hidden without any subscription to list or when the hub cannot answer;
   KOR-50, [ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md) §6).
+- **My subscriptions** (KOR-68, [ADR-091](../adr/091-subscriptions-at-a-glance.md), rule E-30): below the counters a
+  card with every subscription of the user, measured centrally – per provider a collapsible line with the time to
+  the reset, a bar and the used share of the week of its most-used account; opened, the 5-hour window, the week and
+  the week per model at the highest use of the accounts, every account with its own bar and the age of its reading,
+  and the age of the provider's newest read; amber from 70 % used, red from 90 %, a reading older than 60 minutes
+  marked old. Data: `GET /v1/me/subscriptions` and every record opened in the browser (name, note, address, logged in
+  or not, use; ADR-090), for the platform role `operator` also the token-file subscriptions of `GET
+  /v1/orgs/{org}/quotas` of the granted organizations; refreshed every minute. Without any subscription the card leads
+  to "Add subscription". The card links the page `/subscriptions`: the same provider lines with "detailed" (opens
+  all; the user's own choices come back when it is switched off) and "sort by used", and a table with provider,
+  account, name, status (logged in, not logged in with "Log in now", not readable, cannot be opened), note, use,
+  listed (record or token file), plan, used and reset per window, measuring device, checked (time of the reading) and
+  changed (time of the record). The card, the page and their texts load lazily. The settings link the page.
 - **Groups** in this order: "Needs your decision" (`needs_decision`, longest waiting first), "Stuck" (`blocked`),
   "Running" (`working`), "Recently finished" (`done`, last 7 days, with the link to the default workgroup's task
   list); the last three newest first. Each group is a windowed list paged by the hub (50 per page; at most 50 entries

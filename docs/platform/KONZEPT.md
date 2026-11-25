@@ -755,13 +755,19 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 
 ### E-30 – Eigene Abos auf einen Blick
 
-- **Datum:** 2026-11-25 15:58
-- **Regel:** Ein Nutzer sieht auf agent.dfx.swiss das verbleibende Kontingent aller seiner Modell-Abos, auch solcher,
-  die nicht über die Plattform laufen, mit dem Zeitpunkt der Messung.
+- **Datum:** 2026-11-25 15:58 (Ort 16:05, Form und zentrale Messung am Nachmittag)
+- **Regel:** Ein Nutzer sieht auf der Startseite von agent.dfx.swiss, ohne zuerst eine Organisation zu wählen, das
+  verbleibende Kontingent aller seiner Modell-Abos auf einen Blick – je Anbieter eine aufklappbare Zeile mit Zeit bis
+  zum Reset, Balken und Anteil, je Abo die Quelle und der Zeitpunkt der Messung, kein Abo doppelt – und auf einer
+  eigenen Seite alle Abos mit ihren Fenstern und einer Tabelle. Gemessen wird zentral durch die Plattform; auf dem
+  Rechner des Nutzers läuft dafür nichts. Sichtbar ist das nur für den Inhaber.
 - **Wortlaut:** „ich will das auf agent.dfx.swiss sehen können“ (zu einer Tabelle mit dem verbleibenden
-  Wochenkontingent aller seiner Claude-Abos)
-- **Bezug:** ergänzt [§4 Punkt 4](#k-4-b4) und [§7](#k-7).
-- **Umsetzung:** offen – KOR-68; die Messung zentral angemeldeter Abos [ADR-090](adr/090-every-subscription-logged-in-centrally.md) (KOR-69).
+  Wochenkontingent aller seiner Claude-Abos) · „nein, ich will es im agent dashboard“ · „wir haben im agent repo
+  einmal ein schönes dashboard gebaut extra dafür, das will ich! und zwar zentral, und zwar für alle meine abos! ich
+  will nichts local laufen lassen, soll alles zentral“
+- **Bezug:** ergänzt [§4 Punkt 4](#k-4-b4) und [§7](#k-7); die zentrale Anmeldung und Messung regelt [E-31](#e-31).
+- **Umsetzung:** gebaut – [ADR-091](adr/091-subscriptions-at-a-glance.md) (KOR-68: Karte auf der Startseite, Seite
+  „Meine Abos“) auf den Messungen von [ADR-090](adr/090-every-subscription-logged-in-centrally.md) (KOR-69).
 
 <a id="e-31"></a>
 
