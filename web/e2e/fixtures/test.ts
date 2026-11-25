@@ -10,7 +10,7 @@ import { e2eCoverage } from './coverage-options.ts';
 import { withSourceMaps } from './coverage.ts';
 import { existsSync, readFileSync } from 'node:fs';
 import { laneError } from '../volume/completeness.ts';
-import { directorOrigin, LANE_VARIABLE, laneOf, WEB_DIR } from './env.ts';
+import { directorOrigin, LANE_VARIABLE, laneOf, laneOrigin, WEB_DIR } from './env.ts';
 
 export interface CspViolation {
   readonly page: string;
@@ -59,13 +59,16 @@ export async function laneReady(
   options: { timeoutMs?: number; intervalMs?: number; fetchHealth?: () => Promise<boolean> } = {},
 ): Promise<void> {
   const failure = laneError(WEB_DIR, lane);
+  // Both the device double and the lane's hub: a volume lane restores its data set before its hub starts, so the double
+  // can answer while the hub still refuses connections (a test without a signed-in user went there first).
+  const answers = (url: string) =>
+    fetch(url).then(
+      (response) => response.ok,
+      () => false,
+    );
   const health =
     options.fetchHealth ??
-    (() =>
-      fetch(`${directorOrigin()}/health`).then(
-        (response) => response.ok,
-        () => false,
-      ));
+    (async () => (await answers(`${directorOrigin()}/health`)) && (await answers(`${laneOrigin(lane)}/v1/health`)));
   const deadline = Date.now() + (options.timeoutMs ?? 25 * 60_000);
   for (;;) {
     if (existsSync(failure)) throw new Error(`lane ${lane} did not start: ${readFileSync(failure, 'utf8')}`);
