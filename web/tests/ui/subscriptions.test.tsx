@@ -504,7 +504,7 @@ describe('the settings link and the guard', () => {
     expect(section).toMatchObject({ id: 'subscriptions', titleKey: 'subscriptions.title' });
     const t = await world();
     const { router } = mount(t, [{ path: '/settings', element: <SubscriptionsLink /> }], '/settings');
-    const link = screen.getByTestId('settings.subscriptions');
+    const link = screen.getByTestId('settings.subscriptions.link');
     expect(link).toHaveTextContent('Open “My subscriptions”');
     fireEvent.click(link);
     expect(router.state.location.pathname).toBe('/subscriptions');

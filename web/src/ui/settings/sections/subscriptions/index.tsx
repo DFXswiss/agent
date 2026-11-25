@@ -11,7 +11,7 @@ export function SubscriptionsLink() {
     <Link
       to="/subscriptions"
       className="flex min-h-11 items-center self-start underline"
-      data-testid="settings.subscriptions"
+      data-testid="settings.subscriptions.link"
     >
       {t('subscriptions.settings.link')}
     </Link>

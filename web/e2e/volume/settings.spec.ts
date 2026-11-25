@@ -16,6 +16,7 @@ const SECTIONS: Readonly<Record<string, (page: Page) => Locator>> = {
   model: (page) => page.getByTestId('model.save'),
   'model-quotas': (page) => page.getByTestId('settings.model-quotas'),
   quotas: (page) => page.getByTestId('quotas.section'),
+  subscriptions: (page) => page.getByTestId('settings.subscriptions.link'),
 };
 
 export const COVERS = [
@@ -30,6 +31,7 @@ export const COVERS = [
   'settings:model-quotas',
   'settings:passkeys',
   'settings:quotas',
+  'settings:subscriptions',
   'list:settings.agents.activity',
 ];
 
