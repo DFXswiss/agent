@@ -65,6 +65,8 @@ def test_an_operation_outside_the_profile_is_recorded_rejected(
     assert bodies[0]["local_check"] == "passed"
     assert bodies[1]["pending_id"] == pending
     assert (bodies[1]["local_check"], bodies[1]["local_error"]["code"]) == ("rejected", "rights_denied")
+    answer = api_client.pending_wait(pending, SESSION_ID, 0)  # type: ignore[attr-defined]
+    assert (answer["result"]["status"], answer["result"]["error"]["code"]) == ("rejected", "rights_denied")
     assert bodies[2]["local_check"] == "passed"
     assert context is not None
 

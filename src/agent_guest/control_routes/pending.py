@@ -11,7 +11,8 @@ answers with ``POST /v1/pending/{id}/answer``; the API process waits for the ans
   journal body without ``pending_id``; it is validated with the ID added (``request_invalid`` with pointers); the
   kind ``relay`` is the orchestrator tool's alone (``orch.sock``, ``control_routes/orchestrator.py``) and refused here;
   an operation the session's rights profile does not allow is recorded ``local_check: "rejected"`` with
-  ``rights_denied`` (``profiles.refusal``, ADR-090 section 3), so the runner never executes it
+  ``rights_denied`` (``profiles.refusal``, ADR-090 section 3), so the runner never executes it; the call is answered at once with that
+  rejection (the runner answers no locally rejected request)
 * op ``pending.wait {pending_id, session_id, timeout <= 33} -> {state: "answered", answer} | {state: "waiting"}``;
   33 s is the longest MCP wait (``get_operation``/``get_subagent_result``: ``wait_seconds`` ≤ 30 plus the read margin,
   GST-07; the work VM tools: ``wait_seconds`` ≤ 30 plus 5 s, KOR-29), below the 35 s limit of the ``/mcp`` route
@@ -49,6 +50,7 @@ def create(context: ControlContext, args: dict[str, Any]) -> dict[str, Any]:
         or "pending_id" in body
     ):
         raise StateError("request_invalid")
+    refused = None
     if kind == "operation" and body.get("local_check") == "passed":
         refused = profiles.refusal(sessions.manager(context).profile(session_id), body.get("type"))
         if refused is not None:
@@ -59,6 +61,10 @@ def create(context: ControlContext, args: dict[str, Any]) -> dict[str, Any]:
         if error.code == "unavailable":
             raise
         raise JournalError("request_invalid", error.detail) from None
+    if refused is not None:
+        # the runner never answers a locally rejected request: the call is answered here at once
+        result = {"operation_id": body["operation_id"], "status": "rejected", "error": refused}
+        context.pending.answer(pending_id, {"status": "ok", "result": result})
     return {"pending_id": pending_id}
 
 
