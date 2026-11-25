@@ -45,6 +45,7 @@ from agent_runner.model.selection import Catalog
 from agent_runner.operations import rules
 from agent_runner.operations.extensions import CheckFailed
 from agent_runner.operations.settings import WorkgroupSettings
+from agent_runner.profiles.model import NAME_RE as PROFILE_NAME_RE
 from agent_runner.sessions.records import LocalSession
 
 MAX_POINTERS = 32
@@ -133,6 +134,7 @@ SHA: Rule = lambda value: isinstance(value, str) and rules.FULL_SHA_RE.fullmatch
 BOOL: Rule = lambda value: isinstance(value, bool)  # noqa: E731
 QUESTION: Rule = _text(1, rules.QUESTION_LIMITS["question_max_length"])
 MODEL: Rule = lambda value: isinstance(value, str) and _MODEL_ID_RE.fullmatch(value) is not None  # noqa: E731
+PROFILE: Rule = lambda value: isinstance(value, str) and PROFILE_NAME_RE.fullmatch(value) is not None  # noqa: E731
 DIRECTION: Rule = _one_of("desc", "asc")
 UUID: Rule = lambda value: isinstance(value, str) and _UUID_RE.fullmatch(value) is not None  # noqa: E731
 _CWD_RE = re.compile(r"/[^\x00]{0,4095}", re.DOTALL)
@@ -264,6 +266,7 @@ TYPES: Mapping[str, TypeRules] = {
             "prompt": _text(1, rules.SUBAGENT_LIMITS["prompt_max_length"]),
             "model_id": MODEL,
             "github_identity": UUID,
+            "profile": PROFILE,
         },
         ("purpose", "prompt"),
     ),

@@ -12,8 +12,8 @@
   the session's workgroup) after `ReadScope.readable`; a workgroup this device does not serve is refused with its
   name (`NotServed`).
 - `known_task(context, scope, task_id)`: the task with its readable workgroup, as the hub says (`device_api.task`;
-  `not_found` otherwise); a task ID named only by events is not enough (the hub projects task whiteboards of existing
-  tasks only).
+  `not_found` otherwise), within the reach of the session's rights profile (`ReadScope.outside_reach`, ADR-090); a
+  task ID named only by events is not enough (the hub projects task whiteboards of existing tasks only).
 - `answered` audits the workgroup of a refusal (`ReadRefused.wg_id`) and `ok(..., read_wg_id=)` the workgroup read.
 """
 
@@ -48,7 +48,7 @@ async def answered(read: Callable[[], Awaitable[QueryOutcome]]) -> QueryOutcome:
 
 
 def scope_of(call: QueryCall) -> ReadScope:
-    return read_scope(call.context, call.session, call.actor_id)
+    return read_scope(call.context, call.session, call.actor_id, call.reach)
 
 
 async def workgroup(call: QueryCall, scope: ReadScope, found: Mapping[str, Any]) -> str:
@@ -102,6 +102,7 @@ async def known_task(context: Any, scope: ReadScope, task_id: str) -> device_api
     found = await device_api.task(context, scope, task_id)
     if found is None:
         raise device_api.TASK_NOT_FOUND
+    scope.outside_reach(found.task.wg_id, task_id)
     return found
 
 

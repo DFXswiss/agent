@@ -10,6 +10,10 @@ answers the call in the background with the result of `WorkVms.call` (`Browsers.
 tool error. A pending call is taken once even when its page is read again. Nothing of the call is recorded as a read:
 the call is visible as the `session.tool` event of the transcript.
 
+A session whose rights profile does not allow the type a tool stands for (`workvm.request` for the work VM tools,
+`browser.open` for the browser tools; ADR-090 section 3) gets the tool error `forbidden` with the profile's sentence
+before anything starts.
+
 A body that is not `{pending_id, tool, arguments}` with a UUID, a known tool and valid arguments (`RULES`, and the
 combinations of `COMBINED`) is refused
 (`JournalRecordInvalid`); the journal moves on and the guest's call times out.
@@ -28,6 +32,7 @@ from agent_runner.errors import RunnerError
 from agent_runner.guestlink.client import JournalRecord
 from agent_runner.guestlink.errors import GuestError
 from agent_runner.operations.journal import storable
+from agent_runner.profiles import check as profile_check
 from agent_runner.sessions.journal import JournalRecordInvalid
 from agent_runner.sessions.records import LocalSession
 from agent_runner.vm.records import VmRow
@@ -264,7 +269,15 @@ class Calls:
         self.tasks: set[asyncio.Task[None]] = set()
 
     def spawn(
-        self, env: Any, vm: VmRow, session: LocalSession, *, pending_id: str, tool: str, arguments: Mapping[str, Any]
+        self,
+        env: Any,
+        vm: VmRow,
+        session: LocalSession,
+        *,
+        pending_id: str,
+        tool: str,
+        arguments: Mapping[str, Any],
+        refused: str | None = None,
     ) -> asyncio.Task[None] | None:
         if pending_id in self.answered:
             return None
@@ -272,18 +285,28 @@ class Calls:
         while len(self.answered) > PENDING_MEMORY:
             del self.answered[next(iter(self.answered))]
         task = asyncio.ensure_future(
-            self._answer(env, vm, session, pending_id=pending_id, tool=tool, arguments=arguments)
+            self._answer(env, vm, session, pending_id=pending_id, tool=tool, arguments=arguments, refused=refused)
         )
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
         return task
 
     async def _answer(
-        self, env: Any, vm: VmRow, session: LocalSession, *, pending_id: str, tool: str, arguments: Mapping[str, Any]
+        self,
+        env: Any,
+        vm: VmRow,
+        session: LocalSession,
+        *,
+        pending_id: str,
+        tool: str,
+        arguments: Mapping[str, Any],
+        refused: str | None = None,
     ) -> None:
         self.running[session.id] = self.running.get(session.id, 0) + 1
         try:
-            if self.running[session.id] > MAX_CALLS_PER_SESSION:
+            if refused is not None:
+                answer = _error("forbidden", refused)
+            elif self.running[session.id] > MAX_CALLS_PER_SESSION:
                 answer = _error("unavailable", "Too many work VM calls of this session run at once. Try again.")
             else:
                 answer = await self._outcome(env, session, tool, arguments)
@@ -338,8 +361,9 @@ async def workvm_call(journal: Any, conn: AsyncConnection[Any], record: JournalR
     if session is None:
         return
     pending_id, tool, arguments = parse(record.body)
+    refused = await profile_check.tool(conn, session, tool)
     calls_for(journal.env.context).spawn(
-        journal.env, journal.vm, session, pending_id=pending_id, tool=tool, arguments=arguments
+        journal.env, journal.vm, session, pending_id=pending_id, tool=tool, arguments=arguments, refused=refused
     )
 
 

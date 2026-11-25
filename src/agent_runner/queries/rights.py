@@ -74,6 +74,9 @@ UNKNOWN_HUMAN = ReadRefused(
     " give the instruction.",
 )
 NO_WORKGROUP = ReadRefused("not_found", "There is no such workgroup you can read.")
+REACH_SENTENCE = (
+    "This session's rights profile reads only its own {reach}; ask the session that started you or a person."
+)
 
 
 def decide(state: OrgState, *, device_id: str, own_wg: str, owner_id: str, actor_id: str | None, wg_id: str) -> str:
@@ -108,13 +111,25 @@ class ReadScope:
     device_id: str
     actor_id: str | None
     """The instructing human of the read's turn (None: unknown)."""
+    task_id: str = ""
+    reach: str = "all"
+    """The reach of the session's rights profile (ADR-090 section 3): `workgroup` and `task` read no other workgroup,
+    `task` no other task (`outside_reach`)."""
+
+    def outside_reach(self, wg_id: str, task_id: str | None = None) -> None:
+        """`ReadRefused` forbidden for a workgroup or task beyond the profile's reach."""
+        if self.reach != "all" and wg_id != self.wg_id:
+            raise ReadRefused("forbidden", REACH_SENTENCE.format(reach="workgroup")).at(wg_id)
+        if self.reach == "task" and task_id is not None and task_id != self.task_id:
+            raise ReadRefused("forbidden", REACH_SENTENCE.format(reach="task")).at(wg_id)
 
     def require_workgroup(self) -> str:
         """The owner's access to the session's workgroup (`ReadRefused` forbidden without)."""
         return self.readable(self.wg_id)
 
     def readable(self, wg_id: str) -> str:
-        """The session's access to workgroup `wg_id` (`decide`)."""
+        """The session's access to workgroup `wg_id` (`decide`), within the profile's reach."""
+        self.outside_reach(wg_id)
         return decide(
             self.state,
             device_id=self.device_id,
@@ -125,7 +140,7 @@ class ReadScope:
         )
 
 
-def read_scope(context: Any, session: LocalSession, actor_id: str | None) -> ReadScope:
+def read_scope(context: Any, session: LocalSession, actor_id: str | None, reach: str = "all") -> ReadScope:
     """The read scope of `session` now for a read instructed by `actor_id` (module docstring); `ReadRefused` when the
     session may read nothing."""
     book = book_for(context)
@@ -147,4 +162,6 @@ def read_scope(context: Any, session: LocalSession, actor_id: str | None) -> Rea
         access=state.explicit_access(owner.id, session.wg_id),
         device_id=book.device_id,
         actor_id=actor_id,
+        task_id=session.task_id,
+        reach=reach,
     )

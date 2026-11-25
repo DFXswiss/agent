@@ -41,6 +41,8 @@ class QueryCall:
     tool: str
     arguments: Mapping[str, Any]
     actor_id: str | None = None
+    reach: str = "all"
+    """The reach of the session's reads by its rights profile (`all`, `workgroup`, `task`; ADR-090 section 3)."""
 
 
 @dataclass(frozen=True)

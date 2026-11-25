@@ -114,6 +114,8 @@ from agent_runner.operations.extensions import (
 )
 from agent_runner.operations.records import Operation
 from agent_runner.orgs.db import session as store_session
+from agent_runner.profiles import check as profile_check
+from agent_runner.profiles import state as profile_state
 from agent_runner.sessions import records as session_records
 from agent_runner.sessions.env import SessionEnv
 from agent_runner.sessions.events import session_event
@@ -367,6 +369,7 @@ class Pipeline:
             task_commits=frozenset(commits),
         )
         params = checks.check(request)
+        profiled = await profile_check.operation(env.db, op, session)
         if not self.enabled(op.type):
             raise CheckFailed("unknown_type", message="The operation type is not enabled on this device.")
         precheck = self.prechecks.get(op.type)
@@ -382,7 +385,7 @@ class Pipeline:
         if any(name not in found.dedupe for name in NEEDS_PRECHECK.get(op.type, ())):
             raise CheckFailed("unknown_type", message="The operation type is not enabled on this device.")
         noted = await register.attribution(env.context, session, op, params)
-        return {"params": params, "dedupe": dict(found.dedupe), "data": {**noted, **found.data}}
+        return {"params": params, "dedupe": dict(found.dedupe), "data": {**profiled, **noted, **found.data}}
 
     async def _checks(self, op: Operation) -> tuple[Operation, dict[str, Any] | None, dict[str, Any]] | None:
         """The (reloaded) operation, the local error and the checked parameters; None while the operation is held."""
@@ -695,6 +698,8 @@ class Pipeline:
         if decision.state == "accepted":
             async with self.env.transaction() as conn:
                 await records.update(conn, op.id, state="accepted", child_session_id=decision.child_session_id)
+                if decision.child_session_id is not None and decision.child_profile_named:
+                    await profile_state.remember_child(conn, decision.child_session_id, decision.child_profile)
             return await self._reload(op.id)
         if decision.state == "duplicate":
             async with self.env.transaction() as conn:

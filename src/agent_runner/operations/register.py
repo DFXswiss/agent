@@ -17,7 +17,10 @@ steps 4-5; 04-crypto.md sections 4.10 and 5.12; ADR-012).
 - `triggered_by` (KOR-47, ADR-078 sections 2 and 6): the acting user stamped at the receipt (`operation.actor_id`,
   `credentials.acting`, HOT-14); left out without one;
 - `github_identity`: for `github.*` types the identity the pre-check resolved, for `subagent.request` the child
-  session's identity of its parameter (`attribution`); left out without one.
+  session's identity of its parameter (`attribution`); left out without one;
+- `child_profile` (KOR-51, ADR-090 section 3): for `subagent.request` the profile its parameter `profile` names, as
+  `profiles.check` checked it; left out without one. The hub's answer then carries the child's effective profile
+  (`child_profile`, `Decision.child_profile`).
 
 `attribution(context, session, operation, params)` runs after the pre-checks of every operation: for
 `subagent.request` with `github_identity`, the check that the acting user may use that identity
@@ -52,6 +55,8 @@ from agent_runner.operations.dedupe import WINDOWS, dedupe_slot
 from agent_runner.operations.extensions import OPERATION_ERROR_CODES, CheckFailed
 from agent_runner.operations.records import Operation
 from agent_runner.orgs.keys import load_scope_key
+from agent_runner.profiles.model import Profile
+from agent_runner.profiles.model import parse as parse_profile
 from agent_runner.sync.backoff import Backoff
 from agent_runner.sync.http import HubClient, HubRefusal, HubTransportError
 from agent_runner.sync.outbox import event_draft
@@ -94,6 +99,9 @@ class Decision:
     original_state: str | None = None
     original_result_event_id: str | None = None
     child_session_id: str | None = None
+    child_profile: Profile | None = None
+    child_profile_named: bool = False
+    """The answer carried `child_profile` (the registration named one); `child_profile` None then means every right."""
     status: int | None = None
     """HTTP status of a `refused` request."""
 
@@ -192,6 +200,9 @@ async def build(
     chosen = noted.get("github_identity")
     if isinstance(chosen, str) and (op.type.startswith("github.") or op.type == "subagent.request"):
         body["github_identity"] = chosen
+    child_profile = noted.get("child_profile")
+    if isinstance(child_profile, str) and op.type == "subagent.request":
+        body["child_profile"] = child_profile
     if error_code is not None:
         body.update({"local_check": "rejected", "error_code": error_code, "dedupe": None})
     else:
@@ -228,17 +239,28 @@ def _uuid(value: object) -> str:
     return value
 
 
+DECISION_FIELDS = frozenset(
+    {"state", "replayed", "error_code", "duplicate_of", "original", "child_session_id", "child_profile"}
+)
+
+
 def parse_decision(data: Mapping[str, object]) -> Decision:
     """The hub's decision (`api/device-operations.response.json`); ValueError for anything else."""
     state = data.get("state")
-    extra = set(data) - {"state", "replayed", "error_code", "duplicate_of", "original", "child_session_id"}
+    extra = set(data) - DECISION_FIELDS
     if state not in STATES or extra or ("replayed" in data and not isinstance(data["replayed"], bool)):
         raise ValueError("decision")
     if state == "accepted":
-        if set(data) - {"state", "replayed", "child_session_id"}:
+        if set(data) - {"state", "replayed", "child_session_id", "child_profile"}:
             raise ValueError("decision")
         child = data.get("child_session_id")
-        return Decision("accepted", child_session_id=None if child is None else _uuid(child))
+        named = "child_profile" in data
+        return Decision(
+            "accepted",
+            child_session_id=None if child is None else _uuid(child),
+            child_profile=parse_profile(data.get("child_profile")) if named else None,
+            child_profile_named=named,
+        )
     if state == "duplicate":
         original = data.get("original")
         if set(data) - {"state", "replayed", "duplicate_of", "original"} or not isinstance(original, Mapping):

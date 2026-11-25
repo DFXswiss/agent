@@ -74,6 +74,7 @@ from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.operations.extensions import OperationContext, OperationFailed
 from agent_runner.orgs.db import session as store_session
 from agent_runner.pings.send import stable_ping_id
+from agent_runner.profiles import check as profile_check
 from agent_runner.prompts import speaker
 from agent_runner.sessions import records
 from agent_runner.sessions.desired import Desired
@@ -532,8 +533,10 @@ class Subagents:
             else:
                 checked: Mapping[str, Any] | None = None
                 try:
-                    call = QueryCall(self.env.context, session, tool_name, arguments, actor_id)
-                    outcome = await self.tools[tool_name](call)
+                    reach = await profile_check.reach(self.env.db, session.id, session.parent_id)
+                    call = QueryCall(self.env.context, session, tool_name, arguments, actor_id, reach)
+                    refused = profile_check.read_refusal(reach, tool_name, arguments)
+                    outcome = refused if refused is not None else await self.tools[tool_name](call)
                 except Exception as exc:
                     self.line(f"query_failed tool={tool_name} error={type(exc).__name__}")
                     outcome = failure("unavailable", "The platform could not answer the read.")

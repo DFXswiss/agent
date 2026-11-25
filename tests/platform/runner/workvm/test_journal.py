@@ -40,7 +40,7 @@ def pending(n: int) -> str:
 
 
 def session(session_id: str = SESSION_A) -> LocalSession:
-    return cast(LocalSession, SimpleNamespace(id=session_id))
+    return cast(LocalSession, SimpleNamespace(id=session_id, parent_id=None, depth=0))
 
 
 VM = cast(VmRow, SimpleNamespace(id="vm-0a1b2c3d"))
@@ -631,9 +631,14 @@ def record(record_body: Json) -> JournalRecord:
     )
 
 
+async def _no_profile(_conn: object, _session: object, _tool: str) -> None:
+    return None
+
+
 def test_handler_answers_the_call_of_an_own_session(monkeypatch: pytest.MonkeyPatch) -> None:
     workvms = FakeWorkVms()
     monkeypatch.setattr(journal, "workvms_for", lambda context: workvms)
+    monkeypatch.setattr(journal, "profile_check", SimpleNamespace(tool=_no_profile))  # the profile check: tests/platform/runner/profiles
     env = FakeEnv()
     target = FakeJournal(env, session())
     entry = record(body("workvm_output", {"job_id": JOB}))
