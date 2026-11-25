@@ -11,6 +11,7 @@ from uuid import UUID
 import psycopg
 import pytest
 
+from agent_hub.config import DEFAULT_SUBAGENT_LIMITS, SubagentLimits
 from agent_hub.crypto.encoding import format_time
 from agent_hub.operations import register as register_module
 from agent_hub.stream.publish import MemoryPublisher
@@ -256,6 +257,8 @@ def test_h6_after_the_window_takes_the_slot_over(ops: Ops) -> None:
         ("github.comment", 86400),
         ("github.create_issue", 86400),
         ("subagent.request", 600),
+        ("subagent.instruct", 86400),
+        ("subagent.stop", 86400),
         ("github.list_repositories", 86400),
         ("github.list_issues", 86400),
         ("github.update_issue", 86400),
@@ -467,21 +470,27 @@ def test_requested_at_at_most_120_seconds_ahead(ops: Ops) -> None:
 # --- concurrency ------------------------------------------------------------------------------------------------------
 
 
-def _parallel(ops: Ops, first: dict[str, Any], second: dict[str, Any]) -> list[dict[str, Any]]:
+def _parallel(
+    ops: Ops, first: dict[str, Any], second: dict[str, Any], *, limits: SubagentLimits = DEFAULT_SUBAGENT_LIMITS
+) -> list[dict[str, Any]]:
     """Register `first` in an open transaction, start `second` in another thread (it must wait for the first one's
     locks), then commit the first; both answers."""
     device, now, root = UUID(ops.device.id), ops.hub.clock(), ops.hub.config.platform_root_key
     answers: dict[str, dict[str, Any]] = {}
 
-    def run(name: str, body: dict[str, Any]) -> None:
+    def register(connection: Any, body: dict[str, Any]) -> dict[str, Any]:
         request = register_module.RegistrationRequest.model_validate(body)
+        return register_module.register(
+            connection, device, request, now=now, root_key=root, subagent_limits=limits
+        ).body
+
+    def run(name: str, body: dict[str, Any]) -> None:
         with ops.hub.pool.connection() as connection, connection.transaction():
-            answers[name] = register_module.register(connection, device, request, now=now, root_key=root).body
+            answers[name] = register(connection, body)
 
     with ops.hub.pool.connection() as connection:
         with connection.transaction():
-            request = register_module.RegistrationRequest.model_validate(first)
-            answers["first"] = register_module.register(connection, device, request, now=now, root_key=root).body
+            answers["first"] = register(connection, first)
             thread = threading.Thread(target=run, args=("second", second))
             thread.start()
             thread.join(0.5)
@@ -511,7 +520,9 @@ def test_parallel_subagent_requests_take_the_last_place_once(ops: Ops) -> None:
         new_id(),
         session,
     )
-    answers = _parallel(ops, ops.request(session, "subagent.request"), ops.request(session, "subagent.request"))
+    requests = ops.request(session, "subagent.request"), ops.request(session, "subagent.request")
+    # the hub's settings (ADR-088 section 2): 3 running children
+    answers = _parallel(ops, *requests, limits=SubagentLimits(max_depth=2, max_running=3, max_total=10))
     assert answers[0]["state"] == "accepted"
     assert answers[1] == {"state": "denied", "error_code": "limit_exceeded"}
     assert ops.desk.rows("SELECT count(*) FROM hub.session WHERE task_id = %s AND depth = 1", task) == [(3,)]

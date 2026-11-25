@@ -23,7 +23,8 @@
         "model_access_missing",
         "no_capacity",
         "operation_refused",
-        "device_failed"
+        "device_failed",
+        "limit_reached"
       ]
     },
     {

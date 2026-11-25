@@ -123,7 +123,7 @@ def test_desired_sessions_are_parsed() -> None:
 @pytest.mark.parametrize(
     "change",
     [
-        {"depth": 3},
+        {"depth": -1},
         {"depth": True},
         {"state": "bogus"},
         {"model_access_pref": "free"},

@@ -20,14 +20,14 @@ All ADRs are accepted as of 2026-11-21 and binding together with `docs/spec/`.
 | [014](014-pull-request-model-deferred.md) | Pull-request data model deferred | §11, §14.7 | no |
 | [015](015-github-app-device-flow-rest-only.md) | GitHub App, device flow, REST only | §9 | yes (§19.1, github-accounts) |
 | [016](016-stored-read-only-terminal.md) | Stored, read-only terminal view | §6, §13 | yes (§17, §19.4, §23, §25.9, §25.10) |
-| [017](017-subagent-limits.md) | Limits for controlled subagents | §13 | no |
+| [017](017-subagent-limits.md) | Limits for controlled subagents (superseded by ADR-088) | §13 | no |
 | [018](018-monitoring-reuse.md) | Monitoring reuses the existing stack | §7 | no |
 | [019](019-web-stack-and-csp.md) | Web stack, CSP and reproducible build | §5, §6 | no |
 | [020](020-notifications-in-app-and-session-pings.md) | In-app notifications and content-free session pings | §12 | no |
 | [021](021-single-agent-software-v1.md) | Claude Code as the only agent software in v1 | §4 | no |
 | [022](022-runner-local-stores.md) | Runner and guest local stores | §6 | no |
 | [023](023-platform-root-key.md) | Offline platform root key | §1, §3 | no (beyond 004) |
-| [024](024-session-read-scope.md) | Read scope of sessions | §8 | no |
+| [024](024-session-read-scope.md) | Read scope of sessions (superseded by ADR-087) | §8 | no |
 | [025](025-interactive-tui-with-gateway-metrics.md) | Interactive TUI with gateway-based metrics | §6 | no |
 | [026](026-platform-device-entitlement.md) | Entitlement to platform devices | §1, §3, §4 | no (beyond 002/004) |
 | [027](027-work-package-conventions.md) | Work-package conventions (parallel implementation) | – (PROJECT.md) | no (beyond 001) |
@@ -41,7 +41,7 @@ All ADRs are accepted as of 2026-11-21 and binding together with `docs/spec/`.
 | [035](035-credential-notices-and-device-request-chains.md) | Credential-change notices and device-request chains | §4, §5, §9 | no |
 | [036](036-test-mode-goldens-for-e2e.md) | E2E runs use TEST_MODE goldens with root for the test hooks | 07 §5.2, §9 | no |
 | [037](037-usage-area-outbox-bases-and-daily-spend.md) | Outbox base handlers claimed by other areas; daily platform spend per device | §6, §11 | no |
-| [038](038-runner-subagent-control.md) | Runner control of subagent sessions (start, one-shot end, final text, forwarded reads) | §13 | no |
+| [038](038-runner-subagent-control.md) | Runner control of subagent sessions (start, one-shot end, final text, forwarded reads; one-shot end, runtime and single ping superseded by ADR-088) | §13 | no |
 | [039](039-runner-inbox-consumers.md) | Runner inbox consumers (verified events to other areas) | §6 | no |
 | [040](040-platform-device-founder-pinning.md) | Platform devices pin org founders on first use | §5 | no |
 | [041](041-runner-operation-pipeline.md) | Runner operation pipeline and its extension points | §10, §11 | no |
@@ -91,5 +91,7 @@ All ADRs are accepted as of 2026-11-21 and binding together with `docs/spec/`.
 | [085](085-browser-as-platform-operation.md) | Browser as a platform operation: `browser.open`/`browser.close` with a temporary browser VM (scope `browser`, pool, boundary, billing, teardown on every path, a failed VM replaced on the next action), eleven browser tools for the session, every action an encrypted record entry (`browser.action`, a watched kind) with the picture after it, the live picture end to end encrypted under its own label and sent only while someone watches; web search of the model provider for Anthropic access | Ideen 28, 44, §3 Punkt 7, §6 Punkt 3, §10 Punkt 3, A6, E-04, E-09 | no |
 | [086](086-volume-resilience.md) | Volume resilience: every list of the web client is windowed, every list read of the hub is paged or bounded, sources bundle display events, a volume gate with a completeness check | [E-19](../KONZEPT.md#e-19), [E-02](../KONZEPT.md#e-02), [A5](../KONZEPT.md#a-5); 03 §1, §12; 06 §5, §12; 07 §3 | no |
 | [087](087-device-failure.md) | Device failure: active sessions of a device away beyond a deadline are interrupted, the task moves deterministically to another suitable device (own hardware only to the organization's own) with the pinned checkpoint and the interrupted instruction repeated, the lost session is fenced by its session ID, test runs are cancelled and repeated by the session; with one device a restart continues instead of failing | Idee 44, §16 points 5 and 7, Idee 38, E-02, E-04, E-05, E-19 | no |
+| [087](087-sessions-read-like-their-human.md) | Sessions read like their human: owner ∩ the person whose instruction the session works on, across the workgroups the device serves (keys by assignment only), the instructing person captured when a read arrives, cross-workgroup reads audited with the workgroup and the person | [§8 Punkt 5](../KONZEPT.md#k-8-b5), [§8 Punkt 6](../KONZEPT.md#k-8-b6), [Idee 43](../KONZEPT.md#k-idee-43), [E-11](../KONZEPT.md#e-11), [A11](../KONZEPT.md#a-11) | no |
+| [088](088-full-subagents-and-limits-as-settings.md) | Full subagents and limits as settings: children keep running across `subagent.instruct` until `subagent.stop` or their parent ends, one instruction per turn, a ping per turn; every subagent limit one hub setting with generous defaults and a clear message; reporting never cuts; a completeness check of fixed limits | [Idee 26](../KONZEPT.md#k-idee-26), [A1](../KONZEPT.md#a-1), [A5](../KONZEPT.md#a-5), [A10](../KONZEPT.md#a-10), [A14](../KONZEPT.md#a-14), [E-02](../KONZEPT.md#e-02), [E-19](../KONZEPT.md#e-19) | no |
 
 New decisions get the next free number; a superseded ADR keeps its file and is marked `Superseded by ADR-NNN`.

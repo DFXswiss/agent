@@ -146,7 +146,8 @@ def test_guest_nested_objects(contracts: Contracts, location: tuple[str, str], e
 
 def test_guest_limits(contracts: Contracts) -> None:
     base = load_json(CONTRACTS / "fixtures/guest/sessions-create.request/valid/basic.json")
-    for depth, ok in ((0, True), (2, True), (3, False), (True, False)):
+    # the depth is a setting of the hub (ADR-088 section 2), not a contract bound
+    for depth, ok in ((0, True), (2, True), (3, True), (1000, True), (-1, False), (True, False)):
         sample = copy.deepcopy(base)
         sample["depth"] = depth
         assert (contracts.errors("guest/sessions-create.request.json", sample) == []) is ok
@@ -238,16 +239,19 @@ BROWSER_ANSWER = "browser_id seq ok error notice url title tab tabs snapshot res
 SPEC_TOOLS = {
     "get_context": ("", "org workgroup task session rights limits api_version"),
     "list_workgroups": ("", "workgroups=id,name,is_default,my_access"),
-    "list_members": ("scope", "members=id,kind,display_name,role,access"),
-    "list_tasks": ("state limit before", "tasks=id,title,state,owner_id,created_at,last_activity_at next_before"),
+    "list_members": ("scope workgroup_id", "members=id,kind,display_name,role,access"),
+    "list_tasks": (
+        "state limit before workgroup_id",
+        "tasks=id,title,state,owner_id,created_at,last_activity_at next_before",
+    ),
     "get_task": ("task_id", "id title state owner_id created_at sessions operations"),
     "get_task_messages": ("task_id after limit", "messages=seq,kind,author_id,ts,text next_after"),
-    "get_whiteboard": ("level task_id", "entries=entry_id,author_id,created_at,updated_at,text"),
+    "get_whiteboard": ("level task_id workgroup_id", "entries=entry_id,author_id,created_at,updated_at,text"),
     "get_notifications": ("", "notifications=ping_id,kind,level,ref,at"),
     "request_operation": ("type params idempotency_key", "operation_id status result error duplicate_of"),
     "get_operation": ("operation_id wait_seconds", "operation_id status result error duplicate_of"),
     "list_operations": ("limit", "operations=operation_id,type,state,error_code,created_at"),
-    "get_subagent_result": ("session_id wait_seconds", "session_id state final_text finished_at"),
+    "get_subagent_result": ("session_id wait_seconds", "session_id state final_text finished_at instruction_id"),
     # 13-work-vm.md section 3 (contracts/changes/KOR-29.md): the work VM tools, answered through workvm.call
     "workvm_exec": (
         "command cwd env stdin timeout_seconds wait_seconds sync",
@@ -367,7 +371,7 @@ SPEC_NESTED = {
     ("mcp/objects.json", "/$defs/output_get_context/properties/session"): "id parent_session_id depth model_id",
     ("mcp/objects.json", "/$defs/output_get_context/properties/rights"): "workgroup",
     ("mcp/objects.json", "/$defs/output_get_context/properties/limits"): "subagent_max_depth subagent_max_parallel"
-    " subagent_max_total",
+    " subagent_max_total subagent_max_runtime_seconds",
     ("mcp/objects.json", "/$defs/output_get_task/properties/sessions/items"): "id state depth parent_session_id",
     ("mcp/objects.json", "/$defs/output_get_task/properties/operations/items"): "id type state",
     # 13-work-vm.md section 13.4 (KOR-44): the answer of every browser tool
@@ -457,12 +461,14 @@ def test_browser_tools_take_the_snapshot_switch_and_leave_their_choices_to_the_r
 
 
 def test_whiteboard_task_id_rule_is_left_to_the_implementations(contracts: Contracts) -> None:
-    """03-api.md section 8.1 `get_whiteboard {level, task_id?}`: the schema accepts every level with an optional task
-    ID; `task_id` exactly for level task is checked by the guest and the runner."""
+    """03-api.md section 8.1 `get_whiteboard {level, task_id?, workgroup_id?}`: the schema accepts every level with an
+    optional task and workgroup ID; `task_id` exactly for level task and `workgroup_id` only for level workgroup are
+    checked by the guest and the runner (ADR-087)."""
     rel = "mcp/tools/get_whiteboard.input.json"
     for level in ("org", "workgroup", "task"):
         contracts.validate(rel, {"level": level})
         contracts.validate(rel, {"level": level, "task_id": TASK})
+        contracts.validate(rel, {"level": level, "workgroup_id": TASK})
     assert contracts.errors(rel, {"level": "device"})
     assert contracts.errors(rel, {"task_id": TASK})
 
@@ -669,6 +675,9 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
     ),
     "github.request_connection": ("", "login", "", None),
     "subagent.request": ("purpose prompt model_id github_identity", "session_id", "session prompt", 600),
+    # ADR-088 section 1: duplicate protection through the idempotency key only
+    "subagent.instruct": ("session_id prompt", "session_id instruction_id", "", None),
+    "subagent.stop": ("session_id", "session_id state", "", None),
     "task.set_title": ("title", "", "", None),
     # 13-work-vm.md section 2 (contracts/changes/KOR-29.md)
     "workvm.request": (
@@ -714,6 +723,7 @@ SPEC_TEXT_LIMITS = [
     ("github.comment", "body", 65536),
     ("subagent.request", "purpose", 200),
     ("subagent.request", "prompt", 32768),
+    ("subagent.instruct", "prompt", 32768),
     ("task.set_title", "title", 120),
     ("human.question", "question", 4000),
     ("human.approval", "question", 4000),
@@ -863,9 +873,8 @@ def test_limits_in_rules_match_the_schemas(contracts: Contracts, rules: dict[str
         "message_max_length": 4096,
     }
     assert rules["checkout_limits"] == {"archive_bytes": 512 * 2**20}
-    assert rules["subagent_limits"]["max_depth"] == 2
-    assert rules["subagent_limits"]["max_running_per_task"] == 3
-    assert rules["subagent_limits"]["max_total_per_task"] == 10
+    # the counts of subagents are settings of the hub (ADR-088 section 2), never constants of the contract
+    assert rules["subagent_limits"] == {"purpose_max_length": 200, "prompt_max_length": 32768}
     paths = contracts.schemas["ops/objects.json"]["$defs"]["params_github_commit"]["properties"]["paths"]
     assert paths["maxItems"] == rules["commit_limits"]["files"]
 

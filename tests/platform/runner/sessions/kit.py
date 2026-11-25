@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from types import TracebackType
 from typing import Any
 
+import agent_guest
 from agent_runner.crypto.encoding import parse_json
 from agent_runner.crypto.event import open_event
 from agent_runner.encoding import b64u_decode
@@ -47,6 +48,8 @@ PLATFORM_ONLY = object()
 """`kit(key=...)` default: the platform key on a platform device, none on an org device."""
 GOLDEN = "g1"
 CLAUDE = "2.1.330"
+GUEST_VERSION = agent_guest.__version__
+"""The guest of the test golden is the current one (ADR-088: `subagents.guest_features`)."""
 NOW = datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
 ORG = pid("a/org")
 WG = pid("a/wg/default")
@@ -222,12 +225,12 @@ class FakeVms:
         return None
 
 
-async def add_golden(env: Env, version: str = GOLDEN, claude: str = CLAUDE) -> None:
+async def add_golden(env: Env, version: str = GOLDEN, claude: str = CLAUDE, guest: str = GUEST_VERSION) -> None:
     async with env.pool.connection() as conn:
         await conn.execute(
             "INSERT INTO runner.golden (version, lima_name, claude_version, guest_version, image_digest, built_at,"
-            " state) VALUES (%s, %s, %s, '0.1.0', 'sha256:x', %s, 'ready') ON CONFLICT DO NOTHING",
-            (version, f"wp-test-golden-{version}", claude, NOW),
+            " state) VALUES (%s, %s, %s, %s, 'sha256:x', %s, 'ready') ON CONFLICT DO NOTHING",
+            (version, f"wp-test-golden-{version}", claude, guest, NOW),
         )
 
 

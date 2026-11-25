@@ -1,6 +1,6 @@
 # ADR-024: Read scope of sessions (KONZEPT §8)
 
-Status: Accepted (2026-11-21)
+Status: Superseded by ADR-087 (2026-11-25; accepted 2026-11-21)
 
 ## Context
 KONZEPT §8: AI sessions may read and discover via platform APIs everything they are authorised for in the context of their assigned rights: members, workgroups, tasks, status and whiteboards; no blanket insight into foreign workgroups; read access is logged. Devices hold keys only for assigned workgroups (+ org key, ADR-007); a VM serves exactly one workgroup.

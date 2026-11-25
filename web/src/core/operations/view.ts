@@ -16,7 +16,9 @@
 // A `test.run` (ADR-080) has its kind and the start of its command as subject, run ID and exit code as facts, and
 // its checked result (`testRun`: state, summary, log) for the card's "Tests: 3 failed – open log".
 // `browser.open` (ADR-085) has the requested URL as subject and the browser ID, the opened URL and the VM's ready time
-// as facts; `browser.close` the browser ID, the number of actions and the reason.
+// as facts; `browser.close` the browser ID, the number of actions and the reason. `subagent.instruct` (ADR-088) has
+// the start of its prompt as subject and the subagent session as fact; `subagent.stop` the subagent session as subject
+// and fact with its state after the stop.
 import { safeUrl } from '../chat/links';
 import { parseTestRunResult, TEST_RUN_TYPE, type TestRunResult } from '../chat/testrun';
 import { isRecord } from '../registry';
@@ -114,6 +116,17 @@ export const ISSUE_VALUES: ReadonlySet<string> = new Set([
 ]);
 const known = (value: unknown): string | null => (typeof value === 'string' && ISSUE_VALUES.has(value) ? value : null);
 
+/** The states of a subagent after `subagent.stop` (`operations.value.<value>`, label `stop_state`). */
+export const STOP_VALUES: ReadonlySet<string> = new Set(['stopping', 'stopped', 'failed']);
+const stopState = (value: unknown): string | null =>
+  typeof value === 'string' && STOP_VALUES.has(value) ? value : null;
+
+/** The subagent session a `subagent.*` result names. */
+const sessionLink = (result: Readonly<Record<string, unknown>>): Fact[] =>
+  typeof result.session_id === 'string'
+    ? [{ label: 'session', text: result.session_id, session: result.session_id }]
+    : [];
+
 /** The URL if it is an absolute `https:` URL that `safeUrl` keeps, else null. */
 export function httpsUrl(value: unknown): string | null {
   const url = typeof value === 'string' ? safeUrl(value) : null;
@@ -123,17 +136,26 @@ export function httpsUrl(value: unknown): string | null {
 /** At most this many characters of a test command are the subject. */
 export const SUBJECT_CHARS = 200;
 
+/** The start of a long text: at most `SUBJECT_CHARS` characters. */
+function shortened(value: string): string {
+  return [...value].length > SUBJECT_CHARS ? `${[...value].slice(0, SUBJECT_CHARS).join('')}…` : value;
+}
+
 /** `unit: npm test` of a `test.run`: kind and the start of the command. */
 function testSubject(params: Readonly<Record<string, unknown>>): string | null {
   const command = text(params.command);
   if (command === null) return null;
-  const short = [...command].length > SUBJECT_CHARS ? `${[...command].slice(0, SUBJECT_CHARS).join('')}…` : command;
-  return `${text(params.kind) ?? 'custom'}: ${short}`;
+  return `${text(params.kind) ?? 'custom'}: ${shortened(command)}`;
 }
 
 /** A short description of the parameters (module comment). */
 export function subjectOf(type: string, params: Readonly<Record<string, unknown>>): string | null {
   if (type === 'subagent.request') return text(params.purpose);
+  if (type === 'subagent.instruct') {
+    const prompt = text(params.prompt);
+    return prompt === null ? null : shortened(prompt);
+  }
+  if (type === 'subagent.stop') return text(params.session_id);
   if (type === 'task.set_title') return text(params.title);
   if (type === 'workvm.request') return text(params.size) ?? 'standard';
   if (type === 'workvm.release') return text(params.scope) ?? 'task';
@@ -252,9 +274,10 @@ export function factsOf(type: string, result: Readonly<Record<string, unknown>>,
     case 'github.request_connection':
       return link('login', result.login, null);
     case 'subagent.request':
-      return typeof result.session_id === 'string'
-        ? [{ label: 'session', text: result.session_id, session: result.session_id }]
-        : [];
+    case 'subagent.instruct':
+      return sessionLink(result);
+    case 'subagent.stop':
+      return [...sessionLink(result), ...link('stop_state', stopState(result.state), null)];
     case 'task.set_title':
       return params.status === 'verified' ? link('title', params.value.params.title, null) : [];
     case 'workvm.request':

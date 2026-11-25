@@ -144,12 +144,14 @@ async def setup(
     notify: bool = True,
     tools: Mapping[str, QueryTool] | None = None,
     executors: Mapping[str, Any] | None = None,
+    guest: OpGuest | None = None,
 ) -> SKit:
     ops = await ops_setup(
         env,
         executors={**EXECUTORS, **(executors or {})},
         prechecks=PRECHECKS,
         notify=False,
+        guest=guest,
     )
     session_env = ops.kit.session_env
     session_env.amenders = [RequestAmender("subagents.child", session_request.amend)]
@@ -172,6 +174,17 @@ async def setup(
     return SKit(env=env, ops=ops, service=service, controller=controller, pinged=pinged, now=now)
 
 
+async def older_guest(found: SKit) -> None:
+    """The workgroup VM runs a golden whose guest is older than ADR-088 (one-shot children of ADR-038)."""
+    vm = await found.ops.vm()
+    async with found.env.pool.connection() as conn:
+        await conn.execute(
+            "INSERT INTO runner.golden (version, lima_name, claude_version, guest_version, image_digest, state)"
+            " VALUES ('older', 'golden-older', '2.1.330', '0.2.0', 'sha256:0', 'ready') ON CONFLICT DO NOTHING"
+        )
+        await conn.execute("UPDATE runner.vm SET golden_version = 'older' WHERE id = %s", (vm.id,))
+
+
 def run(rig: Any, body: Callable[[Env], Awaitable[None]]) -> None:
     async def main() -> None:
         async with rig.env(standard_world()) as env:
@@ -190,4 +203,17 @@ class Book:
         return list(self.assigned)
 
 
-__all__ = ["ORG", "OWNER", "PROMPT", "PURPOSE", "TASK", "WG", "Book", "SKit", "run", "session_id", "setup"]
+__all__ = [
+    "ORG",
+    "OWNER",
+    "PROMPT",
+    "PURPOSE",
+    "TASK",
+    "WG",
+    "Book",
+    "SKit",
+    "older_guest",
+    "run",
+    "session_id",
+    "setup",
+]

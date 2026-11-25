@@ -1,9 +1,10 @@
-"""U-RUN-queries rights: the task owner's rights at call time from the verified log (ADR-024, 03-api.md section 8.1).
+"""U-RUN-queries rights: the task owner's rights at call time from the verified log (ADR-087, 03-api.md section 8.1).
 
 An owner who loses the workgroup access keeps the organization level and is `forbidden` on the workgroup level; a
 removed owner reads nothing; a device that is no longer assigned to the session's workgroup or cannot act for the org
-answers `unavailable`. The change takes effect at the next call, with no cache in between. An admin's inherited read
-(ADR-058) gives a session nothing: sessions use the explicit access only."""
+answers `unavailable`. The change takes effect at the next call, with no cache in between. On the session's own
+workgroup an admin's inherited read gives a session nothing (the owner's explicit access decides); other workgroups
+are covered by `test_cross_workgroup.py`."""
 
 from __future__ import annotations
 
@@ -121,10 +122,14 @@ def test_an_admin_reading_only_by_inheritance_gives_a_session_nothing_more(rig: 
         for tool, arguments in WORKGROUP_READS:
             assert await k.error(mine, tool, arguments) == "forbidden", tool
         listed = (await k.ok(mine, "list_workgroups"))["workgroups"]
-        assert {w["id"]: w["my_access"] for w in listed} == {WG: "write", WG_ONE: None, WG_TWO: "write"}
+        assert {w["id"]: w["my_access"] for w in listed} == {WG: None, WG_ONE: None, WG_TWO: None}
         theirs = await k.session(2, wg=WG_ONE, owner=CAROL, task=TASK_ONE)
         listed = (await k.ok(theirs, "list_workgroups"))["workgroups"]
-        assert {w["id"]: w["my_access"] for w in listed} == {WG: "write", WG_ONE: "write", WG_TWO: None}
+        assert {w["id"]: w["my_access"] for w in listed} == {WG: None, WG_ONE: "write", WG_TWO: None}
+        # instructed by alice: the default workgroup is readable, workgroup two is not served by this device
+        await k.instruct(theirs, ALICE)
+        listed = (await k.ok(theirs, "list_workgroups"))["workgroups"]
+        assert {w["id"]: w["my_access"] for w in listed} == {WG: "read", WG_ONE: "write", WG_TWO: None}
         found = await k.ok(theirs, "list_members", {"scope": "workgroup"})
         users = {m["id"]: m["access"] for m in found["members"] if m["kind"] == "user"}
         assert users == {BOB: "read", CAROL: "write"}

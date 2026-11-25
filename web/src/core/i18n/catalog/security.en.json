@@ -22,7 +22,7 @@
   "sees.operations": "operation type, state, decision, error code, duplicate tag and timestamps",
   "sees.metrics": "resource metrics, token counters, cost, context-window share and subscription quota percentages",
   "sees.notifications": "notification records (recipient, kind, target IDs) and your settings (model preference, language)",
-  "sees.audit": "audit and read-log rows (who did what to which ID, with the result) and credential metadata (owner, kind, version)",
+  "sees.audit": "audit and read-log rows (who did what to which ID, with the result; for a session's read also the workgroup it read and the person whose instruction it followed) and credential metadata (owner, kind, version)",
   "hidden.title": "What the server cannot see",
   "hidden.body": "Everything else stays encrypted end to end; the server never has the keys to open it:",
   "hidden.content": "prompts, answers, tool calls, file changes, terminal output and whiteboard entries",
@@ -33,7 +33,7 @@
   "javascript.title": "Trust in the delivered code",
   "javascript.body": "Encryption in a web browser depends on the JavaScript the server delivers. A strict content security policy, integrity hashes on the scripts of the start page and a reproducible build limit this risk, but a compromised server could still deliver changed code, also for parts that load later (terminal, charts, formatted text). This page cannot detect that by itself; only an independent comparison of the build hash with the published one can.",
   "devices.title": "Execution devices",
-  "devices.body": "The devices that run your tasks decrypt the content of the workgroups assigned to them: they process prompts, files and answers in plaintext. Assign only devices you trust; removing a device from a workgroup rotates the workgroup's keys.",
+  "devices.body": "The devices that run your tasks decrypt the content of the workgroups assigned to them: they process prompts, files and answers in plaintext. Assign only devices you trust; removing a device from a workgroup rotates the workgroup's keys. A session may also read other workgroups of these devices that both the task owner and the person instructing it may read; what it writes from them into its own workgroup becomes readable for everybody who reads that workgroup.",
   "community.title": "Community",
   "community.body": "Community messages are readable by every user of the platform; they are not confidential like tasks, whiteboards and credentials. Encryption keeps their text and the sender names out of the server's database and backups, but a manipulated server could read messages and even write messages in another user's name. Do not share anything confidential there."
 }

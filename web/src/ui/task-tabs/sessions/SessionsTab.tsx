@@ -16,7 +16,7 @@ import { Link } from 'react-router-dom';
 import { formatMoney, formatNumber } from '../../../core/i18n';
 import { formatDuration } from '../../../core/monitoring/units';
 import { runtimeSeconds } from '../../../core/sessions/runtime';
-import { flatten, sessionMeta, type SessionNode, sessionTree } from '../../../core/sessions/tree';
+import { flatten, indentLevel, sessionMeta, type SessionNode, sessionTree } from '../../../core/sessions/tree';
 import type { SessionEntry, TasksState } from '../../../core/store/slices/tasks';
 import type { SessionUsage } from '../../../core/store/slices/usage';
 import type { StoreState } from '../../../core/store/store';
@@ -220,11 +220,17 @@ export const sameItem = (a: Item, b: Item): boolean =>
 
 const key = (item: Item): string => item.node.entry.row.session_id;
 
-/** Indentation of a subagent row by its depth (static classes; the depth is at most `MAX_DEPTH`). */
-const INDENT: readonly string[] = ['', 'ml-4 border-l-2 border-gray-200 pl-3', 'ml-8 border-l-2 border-gray-200 pl-3'];
+/** Indentation of a subagent row by its depth (static classes, `indentLevel`: deeper rows keep the last one). */
+const INDENT: readonly string[] = [
+  '',
+  'ml-4 border-l-2 border-gray-200 pl-3',
+  'ml-8 border-l-2 border-gray-200 pl-3',
+  'ml-12 border-l-2 border-gray-200 pl-3',
+  'ml-16 border-l-2 border-gray-200 pl-3',
+];
 
 const attributes = (item: Item): RowAttributes => ({
-  className: INDENT[item.node.depth]!,
+  className: INDENT[indentLevel(item.node.depth)]!,
   'data-testid': 'sessions.node',
   'data-session': key(item),
   'data-depth': item.node.depth,

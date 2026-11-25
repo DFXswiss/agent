@@ -3,11 +3,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
 from psycopg.types.json import Jsonb
 
+from agent_hub.config import SubagentLimits
 from agent_hub.device import state
 from agent_hub.device.access import device_view
 from agent_hub.device.state import Section, StateRequest
@@ -30,7 +32,34 @@ EMPTY_SECTIONS: dict[str, Any] = {
     "prompt_queue": {"via_agent": [], "withdrawn": []},
     "failover_seconds": 300,  # ADR-087
     "failovers": [],
+    "limits": {
+        "api": 1,
+        "subagent_max_depth": 5,
+        "subagent_max_running": 50,
+        "subagent_max_total": 0,
+        "subagent_max_runtime_seconds": 0,
+    },
 }
+
+
+def test_the_limits_section_carries_the_subagent_settings(fleet: Fleet) -> None:
+    """ADR-088 section 2: the one source of the runner's subagent limits."""
+    device, _ = fleet.platform_device()
+    app_state = fleet.hub.app.state
+    original = app_state.hub
+    settings = SubagentLimits(max_depth=0, max_running=7, max_total=100, max_runtime_seconds=3600)
+    app_state.hub = replace(original, config=replace(original.config, subagent_limits=settings))
+    try:
+        answer = fleet.client(device).get("/v1/device/state").json()
+    finally:
+        app_state.hub = original
+    assert answer["limits"] == {
+        "api": 1,
+        "subagent_max_depth": 0,
+        "subagent_max_running": 7,
+        "subagent_max_total": 100,
+        "subagent_max_runtime_seconds": 3600,
+    }
 
 
 def test_unassigned_platform_device(fleet: Fleet) -> None:

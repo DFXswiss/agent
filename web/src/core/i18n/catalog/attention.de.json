@@ -28,6 +28,7 @@
   "reason.no_capacity": "Alle Rechner sind belegt",
   "reason.operation_refused": "Eine Aktion wurde abgelehnt",
   "reason.device_failed": "Unterbrochen – der Rechner ist ausgefallen",
+  "reason.limit_reached": "Eine Grenze der Plattform ist erreicht",
   "reason.queued": "Wartet auf einen Rechner",
   "reason.starting": "Startet",
   "reason.working": "Arbeitet",

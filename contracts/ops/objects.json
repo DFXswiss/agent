@@ -369,6 +369,40 @@
       ],
       "additionalProperties": false
     },
+    "params_subagent_instruct": {
+      "type": "object",
+      "description": "a follow-up instruction for a running child session of the requesting session (ADR-088 section 1)",
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the child session"
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32768
+        }
+      },
+      "required": [
+        "session_id",
+        "prompt"
+      ],
+      "additionalProperties": false
+    },
+    "params_subagent_stop": {
+      "type": "object",
+      "description": "ends a running child session of the requesting session (ADR-088 section 1)",
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the child session"
+        }
+      },
+      "required": [
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
     "params_task_set_title": {
       "type": "object",
       "properties": {
@@ -741,6 +775,45 @@
       },
       "required": [
         "session_id"
+      ],
+      "additionalProperties": false
+    },
+    "result_subagent_instruct": {
+      "type": "object",
+      "description": "the child's guest registered the instruction; instruction_id = the operation ID (get_subagent_result)",
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "instruction_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        }
+      },
+      "required": [
+        "session_id",
+        "instruction_id"
+      ],
+      "additionalProperties": false
+    },
+    "result_subagent_stop": {
+      "type": "object",
+      "description": "the child's state after the stop (stopping while its guest cannot be reached)",
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "stopping",
+            "stopped",
+            "failed"
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "state"
       ],
       "additionalProperties": false
     },
@@ -1241,6 +1314,12 @@
         },
         {
           "$ref": "#/$defs/result_subagent_request"
+        },
+        {
+          "$ref": "#/$defs/result_subagent_instruct"
+        },
+        {
+          "$ref": "#/$defs/result_subagent_stop"
         },
         {
           "$ref": "#/$defs/result_task_set_title"

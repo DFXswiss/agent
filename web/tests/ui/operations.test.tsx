@@ -240,6 +240,42 @@ describe('issue and pull request operations', () => {
     event(t, 'operation.result', { operation_id: id, status: 'succeeded', result }, id),
   ];
 
+  it('shows follow-up instructions and stops of subagents with the session and its state (ADR-088)', async () => {
+    const { t } = await page();
+    const child = '0190f000-0000-7000-8000-0000000000c1';
+    act(() => {
+      putOperations(t.store, [
+        row(t, { operation_id: 'op-1', type: 'subagent.instruct', state: 'succeeded' }),
+        row(t, { operation_id: 'op-2', type: 'subagent.stop', state: 'succeeded' }),
+      ]);
+      putEvents(t.store, t.wg, [
+        ...op(
+          t,
+          'op-1',
+          'subagent.instruct',
+          { session_id: child, prompt: 'Check the tests.' },
+          {
+            session_id: child,
+            instruction_id: 'op-1',
+          },
+        ),
+        ...op(t, 'op-2', 'subagent.stop', { session_id: child }, { session_id: child, state: 'stopped' }),
+      ]);
+    });
+    const cards = await screen.findAllByTestId('operation.card');
+    const by = (id: string) => cards.find((card) => card.getAttribute('data-operation') === id)!;
+    expect(within(by('op-1')).getByTestId('operation.type')).toHaveTextContent('Instruct subagent');
+    expect(within(by('op-1')).getByTestId('operation.subject')).toHaveTextContent('Check the tests.');
+    expect(within(by('op-1')).getByTestId('operation.fact').querySelector('a')).toHaveAttribute(
+      'href',
+      `/o/${t.org}/s/${child}`,
+    );
+    expect(within(by('op-2')).getByTestId('operation.type')).toHaveTextContent('Stop subagent');
+    const facts = within(by('op-2')).getAllByTestId('operation.fact');
+    expect(facts.map((fact) => fact.getAttribute('data-label'))).toEqual(['session', 'stop_state']);
+    expect(facts[1]).toHaveTextContent('State: ended');
+  });
+
   it('lists issues and pull requests with number, title, state and labels, as text only', async () => {
     const { t } = await page();
     act(() => {
@@ -866,6 +902,31 @@ describe('Children tab', () => {
     );
     expect(within(children[1]!).getByTestId('session.child.link')).toHaveAttribute('href', `/o/${t.org}/s/${GRAND}`);
     expect(t.client.calls.some((call) => call.target.includes('kinds=operation.params%2Coperation.result'))).toBe(true);
+  });
+
+  it('shows subagents at any depth, indented up to the last indentation level (ADR-088)', async () => {
+    const t = await taskWorld();
+    putTasks(t.store, [taskRow(t) as TaskRow]);
+    putSession(t.store, sessionRow(t, { state: 'working' }) as never, [], 0);
+    const chain = [1, 2, 3, 4, 5, 6].map((depth) => `0190f000-0000-7000-8000-0000000000e${depth}`);
+    chain.forEach((id, index) =>
+      putSession(
+        t.store,
+        sessionRow(t, {
+          session_id: id,
+          parent_session_id: index === 0 ? MAIN : chain[index - 1],
+          depth: index + 1,
+        }) as never,
+        [],
+        0,
+      ),
+    );
+    await sessionPage(t, MAIN);
+    const children = await screen.findAllByTestId('session.child');
+    expect(children.map((child) => child.getAttribute('data-depth'))).toEqual(['1', '2', '3', '4', '5', '6']);
+    expect(children[5]).toHaveTextContent('Subagent 1.1.1.1.1.1');
+    const lists = screen.getAllByTestId('session.children.list');
+    expect(lists.map((list) => list.classList.contains('ml-4'))).toEqual([true, true, true, false, false]);
   });
 
   it('refuses a purpose whose verified result names another session', async () => {

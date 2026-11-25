@@ -1,6 +1,7 @@
 # ADR-038: Runner control of subagent sessions (start, one-shot end, final text, forwarded reads)
 
-Status: Accepted (2026-11-22)
+Status: Accepted (2026-11-22); partly superseded by ADR-088 (2026-11-25): the one-shot end, the runtime and the single
+ping are superseded by ADR-088
 
 ## Context
 05-runner.md §13 and ADR-017 define controlled subagents: the platform starts a child session after the hub accepted

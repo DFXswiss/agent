@@ -1,14 +1,13 @@
-"""`get_task_messages {task_id, after?, limit? <= 200}` (03-api.md section 8.1, ADR-024): the chat of a task of the
-session's workgroup - prompts and outputs in the hub's scope order (`seq`), decrypted from the kept verified events
-(`projection.messages`), from `after` (exclusive), with `next_after` while more follow. Prompts this device withdrew
-are left out (ADR-083 section 3). Workgroup level; a task that
-is neither known from a kept event nor from the hub in this workgroup is `not_found`.
+"""`get_task_messages {task_id, after?, limit? <= 200}` (03-api.md section 8.1, ADR-087): the chat of a task of a
+workgroup the session may read (the hub's task row names it) - prompts and outputs in the hub's scope order (`seq`),
+decrypted from the kept verified events sealed in that workgroup's scope (`projection.messages`), from `after`
+(exclusive), with `next_after` while more follow. Prompts this device withdrew are left out (ADR-083 section 3).
+Workgroup level; a task the hub does not name in a readable workgroup is `not_found`.
 """
 
 from __future__ import annotations
 
 from agent_runner.queries import common, projection
-from agent_runner.queries.rights import read_scope
 from agent_runner.subagents.extensions import QueryCall, QueryOutcome
 
 DEFAULT_LIMIT, MAX_LIMIT = 100, 200
@@ -21,15 +20,15 @@ async def get_task_messages(call: QueryCall) -> QueryOutcome:
         task_id = common.uuid_argument(found_args, "task_id")
         after = common.integer(found_args, "after", 0, MAX_SEQ, 0)
         limit = common.integer(found_args, "limit", 1, MAX_LIMIT, DEFAULT_LIMIT)
-        scope = read_scope(call.context, call.session)
+        scope = common.scope_of(call)
         scope.require_workgroup()
-        await common.known_task(call.context, scope, task_id)
+        wg_id = (await common.known_task(call.context, scope, task_id)).task.wg_id
         async with common.store(call.context) as (conn, key):
             items, following = await projection.messages(
-                conn, key, wg_id=scope.wg_id, task_id=task_id, after=after, limit=limit
+                conn, key, wg_id=wg_id, task_id=task_id, after=after, limit=limit
             )
         result = {"messages": items, "next_after": following}
-        return common.ok(result, len(items), target_kind="task", target_id=task_id)
+        return common.ok(result, len(items), target_kind="task", target_id=task_id, read_wg_id=wg_id)
 
     return await common.answered(read)
 

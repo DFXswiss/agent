@@ -227,8 +227,9 @@ Further runner tables added by later migrations (`profile_event`, `prompt_event`
 to, file name only, ADR-052; KOR-50 / ADR-081: `access_limit` – used-up or blocked subscription accesses kept across
 restarts, `model_pause` – sessions paused for model quota, `dfx_key` – the sealed envelope of an org device's DFX key
 per organization, `dfx_key_issued` – the requests an issuing platform device answered; KOR-35: `usage_pending` – the
-usage deltas of a session merged over 10 s before they become one outbox item `usage`, counts only, ADR-086) and added
-columns are listed in
+usage deltas of a session merged over 10 s before they become one outbox item `usage`, counts only, ADR-086; KOR-45:
+`subagent_instruction` – the instructions of a child session in their order of creation with their acting user and
+when each was handed over, accepted and its turn ended, no text, ADR-088 §1) and added columns are listed in
 [`../spec-deviations.md`](../spec-deviations.md#02-data-model).
 
 ## 5. Guest journal (SQLite, `/var/lib/agent-guest/journal.db`, owner root (the `agent-guest-control` process), 0600; the unprivileged `agent-guest-api` process writes only through `api.sock`)

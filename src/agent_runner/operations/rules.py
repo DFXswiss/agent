@@ -49,13 +49,8 @@ COMMIT_LIMITS = {"file_bytes": 10485760, "files": 500, "total_bytes": 52428800, 
 CHECKOUT_LIMITS = {"archive_bytes": 536870912}
 PULL_REQUEST_LIMITS = {"title_max_length": 256, "body_max_length": 65536, "patch_total_bytes": 1048576}
 COMMENT_LIMITS = {"body_max_length": 65536}
-SUBAGENT_LIMITS = {
-    "purpose_max_length": 200,
-    "prompt_max_length": 32768,
-    "max_depth": 2,
-    "max_running_per_task": 3,
-    "max_total_per_task": 10,
-}
+SUBAGENT_LIMITS = {"purpose_max_length": 200, "prompt_max_length": 32768}
+"""The sizes of a `subagent.request`; the counts are settings of the hub (`subagents.limits`, ADR-088 section 2)."""
 TITLE_LIMITS = {"max_length": 120, "single_line": True}
 QUESTION_LIMITS = {"question_max_length": 4000}
 SECRET_PATTERNS = (

@@ -3,7 +3,9 @@
 
 The guest journals every read of a forwarded platform tool as `platform.query {pending_id, tool, arguments}` and waits
 for `POST /v1/pending/{id}/answer`. The handler runs inside the journal page's transaction (`sessions.consume`): for a
-session that runs on this VM it hands the read to the controller (`controller.Subagents.spawn_query`), which answers it
+session that runs on this VM it captures the instructing human of the read's turn (`credentials.acting.stamp`, in
+the guest's journal order, ADR-087 section 1) and hands both to the controller (`controller.Subagents.spawn_query`),
+which answers it
 outside the transaction with the tool registered at `<area>/query_tools.py:TOOLS` (`get_subagent_result` here, the
 other read tools from RUN-08), after recording the `platform.read` event and the `read.session.<tool>` audit. A read
 of a tool without a registered provider is not answered (the guest's timeout, as before), and a pending call is taken
@@ -21,6 +23,7 @@ from typing import Any
 
 from psycopg import AsyncConnection
 
+from agent_runner.credentials import acting
 from agent_runner.guestlink.client import JournalRecord
 from agent_runner.operations.journal import storable
 from agent_runner.sessions.journal import JournalRecordInvalid
@@ -71,7 +74,9 @@ async def platform_query(journal: Any, conn: AsyncConnection[Any], record: Journ
     if controller is None:
         journal.env.log(f"runner.subagents query_unrouted tool={tool} session_id={session.id}")
         return
-    controller.spawn_query(journal.vm, session, pending_id, tool, arguments)
+    # the instructing human at this point of the journal, before a later prompt of the guest's order (ADR-087)
+    actor_id = await acting.stamp(conn, session)
+    controller.spawn_query(journal.vm, session, pending_id, tool, arguments, actor_id=actor_id)
 
 
 HANDLERS: dict[str, Callable[..., Any]] = {KIND: platform_query}

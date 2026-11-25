@@ -360,7 +360,12 @@ class Rig:
             pool=pool,
             log=io.StringIO(),
             sync_options=options,
-            config=SimpleNamespace(platform_root_key=root, operator_github_org=None, operator_github_token_file=None),
+            config=SimpleNamespace(
+                platform_root_key=root,
+                operator_github_org=None,
+                operator_github_token_file=None,
+                sessions_per_vm=16,
+            ),
         )
         context.stopping = asyncio.Event()
         try:

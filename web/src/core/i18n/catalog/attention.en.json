@@ -28,6 +28,7 @@
   "reason.no_capacity": "All computers are busy",
   "reason.operation_refused": "An action was refused",
   "reason.device_failed": "Interrupted – the computer failed",
+  "reason.limit_reached": "A limit of the platform was reached",
   "reason.queued": "Waiting for a computer",
   "reason.starting": "Starting",
   "reason.working": "Working",

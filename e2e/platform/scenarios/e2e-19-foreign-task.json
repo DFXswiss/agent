@@ -1,6 +1,6 @@
 {
   "name": "e2e-19-foreign-task",
-  "description": "E2E-19 (first part): the task in the second workgroup that the reading session must not see.",
+  "description": "E2E-19 (first part): the task in the second workgroup that the reading session reads by its ID (ADR-087: its owner may read that workgroup).",
   "steps": [
     {
       "id": "foreign",

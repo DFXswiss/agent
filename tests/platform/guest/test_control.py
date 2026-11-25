@@ -90,7 +90,7 @@ def test_health_unassigned(control_client: ControlClient, schemas: SchemaSet) ->
     assert reply.status == 200
     body = reply.json()
     assert body == {
-        "guest_version": "0.2.0",
+        "guest_version": "0.3.0",
         "claude_version": "2.1.330",
         "state": "unassigned",
         "sessions": [],
@@ -204,14 +204,18 @@ def test_broken_vm_is_never_assigned(
     assert (reply.status, reply.json()) == (409, {"error": "state_conflict"})
 
 
-def test_health_lists_sessions_sorted_and_bounded(control_client: ControlClient, context: ControlContext) -> None:
-    for index in range(70):
+def test_health_lists_every_session_sorted(
+    control_client: ControlClient, context: ControlContext, schemas: SchemaSet
+) -> None:
+    for index in reversed(range(200)):
         session_id = f"01a1ee56-5e00-7003-8f1b-{index:012x}"
         context.state.save_session(make_session(session_id, f"token-{index}", "idle"))
-    sessions = control_client.request("GET", "/v1/health").json()["sessions"]
-    assert len(sessions) == 64
+    health = control_client.request("GET", "/v1/health").json()
+    sessions = health["sessions"]
+    assert len(sessions) == 200  # no cap (ADR-088 section 3)
     assert sessions[0] == {"session_id": "01a1ee56-5e00-7003-8f1b-000000000000", "state": "idle"}
     assert sessions == sorted(sessions, key=lambda row: row["session_id"])
+    assert schemas.errors("guest/health.response.json", health) == []
 
 
 @pytest.mark.parametrize(
@@ -352,7 +356,7 @@ def test_concurrent_appends_through_api_sock(
 
 
 def test_hello_and_resolve(api_client: ApiClient, context: ControlContext, session: Session) -> None:
-    assert api_client.hello() == {"guest_version": "0.2.0"}
+    assert api_client.hello() == {"guest_version": "0.3.0"}
     assert api_client.resolve_session(SESSION_TOKEN) == {
         "id": SESSION_ID,
         "uid": 20000,

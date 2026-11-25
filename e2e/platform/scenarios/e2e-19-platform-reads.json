@@ -1,6 +1,6 @@
 {
   "name": "e2e-19-platform-reads",
-  "description": "E2E-19: the session calls every MCP read tool (context, workgroups, members of org and workgroup, tasks, its task and messages, the three whiteboard levels, notifications, operations and one operation it requested itself), then asks for a task, its messages and its whiteboard in another workgroup of the org by the task's ID (not_found). ${foreign_task} is set by the spec.",
+  "description": "E2E-19: the session calls every MCP read tool (context, workgroups, members of org and workgroup, tasks, its task and messages, the three whiteboard levels, notifications, operations and one operation it requested itself), then asks for a task, its messages and its whiteboard in another workgroup of the org by the task's ID: the owner (the only person of the org, an admin) may read that workgroup and the device serves it, so the reads are answered (ADR-087). ${foreign_task} is set by the spec.",
   "variables": {
     "foreign_task": "00000000-0000-7000-8000-000000000000"
   },
@@ -181,7 +181,8 @@
     {
       "id": "done",
       "expect": {
-        "tool_result_contains": "\"not_found\""
+        "tool_result_is_error": false,
+        "tool_result_contains": "E2E19-FOREIGN"
       },
       "reply": {
         "content": [

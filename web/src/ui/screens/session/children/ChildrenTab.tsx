@@ -1,5 +1,6 @@
-// Tab "Children" of the session detail (06-web.md sections 5.3 and 5.5, ADR-017): the subagent sessions below this
-// session as a tree (depth ≤ 2 of the task's session tree), each with its label ("Subagent 1.2"), state, device, model
+// Tab "Children" of the session detail (06-web.md sections 5.3 and 5.5, ADR-088): the subagent sessions below this
+// session as a tree (any depth of the task's session tree; a level is indented up to `INDENT_LEVELS` levels below
+// this session, deeper ones keep that indentation), each with its label ("Subagent 1.2"), state, device, model
 // and the purpose the parent requested (`subagent.request` parameters of the child's `origin_operation_id`,
 // decrypted in the browser; unverifiable ones are shown with their code). Every node opens the child's own detail
 // with its terminal and chat.
@@ -7,7 +8,7 @@ import { useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { OPERATION_KINDS } from '../../../../core/operations/load';
 import { purposeOf, selectOperation } from '../../../../core/operations/view';
-import { type SessionNode, selectSessionIndex } from '../../../../core/sessions/tree';
+import { INDENT_LEVELS, type SessionNode, selectSessionIndex } from '../../../../core/sessions/tree';
 import type { SessionEntry } from '../../../../core/store/slices/tasks';
 import { pullOnce } from '../../../../core/tasks/pull';
 import { useStore } from '../../../hooks/useStore';
@@ -51,7 +52,11 @@ function Purpose({
   );
 }
 
-function Child({ org, node }: { readonly org: string; readonly node: SessionNode }) {
+/** The list of a node's children: indented while `level` (levels below the tab's session) is below `INDENT_LEVELS`. */
+const childList = (level: number): string =>
+  level < INDENT_LEVELS ? 'ml-4 flex flex-col gap-2 border-l-2 border-gray-200 pl-3' : 'flex flex-col gap-2';
+
+function Child({ org, node, level }: { readonly org: string; readonly node: SessionNode; readonly level: number }) {
   const { t } = useI18n();
   const row = node.entry.row;
   const origin = originOf(node.entry);
@@ -77,9 +82,9 @@ function Child({ org, node }: { readonly org: string; readonly node: SessionNode
         </div>
       )}
       {node.children.length > 0 && (
-        <ul className="ml-4 flex flex-col gap-2 border-l-2 border-gray-200 pl-3">
+        <ul className={childList(level)} data-testid="session.children.list">
           {node.children.map((child) => (
-            <Child key={child.entry.row.session_id} org={org} node={child} />
+            <Child key={child.entry.row.session_id} org={org} node={child} level={level + 1} />
           ))}
         </ul>
       )}
@@ -106,7 +111,7 @@ export function ChildrenTab({ entry }: { readonly entry: SessionEntry }) {
   return (
     <ul className="flex flex-col gap-2" aria-label={t('children.label')} data-testid="session.children">
       {children.map((child) => (
-        <Child key={child.entry.row.session_id} org={org} node={child} />
+        <Child key={child.entry.row.session_id} org={org} node={child} level={1} />
       ))}
     </ul>
   );

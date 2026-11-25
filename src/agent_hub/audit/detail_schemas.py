@@ -1381,48 +1381,158 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.platform.ui_health": {"properties": {}, "required": []},
     "read.scope.events": {"properties": {}, "required": []},
     "read.session.get_context": {
-        "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
         "required": ["result_count"],
     },
     "read.session.get_notifications": {
-        "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
         "required": ["result_count"],
     },
     "read.session.get_operation": {
-        "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
         "required": ["result_count"],
     },
     "read.session.get_subagent_result": {
-        "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
         "required": ["result_count"],
     },
     "read.session.get_task": {
-        "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
         "required": ["result_count"],
     },
     "read.session.get_task_messages": {
-        "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
         "required": ["result_count"],
     },
     "read.session.get_whiteboard": {
-        "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
         "required": ["result_count"],
     },
     "read.session": {"properties": {}, "required": []},
     "read.session.list_members": {
-        "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
         "required": ["result_count"],
     },
     "read.session.list_operations": {
-        "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
         "required": ["result_count"],
     },
     "read.session.list_tasks": {
-        "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
         "required": ["result_count"],
     },
     "read.session.list_workgroups": {
-        "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
         "required": ["result_count"],
     },
     "read.stream.browser": {"properties": {}, "required": []},

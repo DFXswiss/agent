@@ -108,7 +108,7 @@ def test_context_markdown_of_the_runner() -> None:
         task=("t-id", "Fix it"),
         owner="Ada",
         rights="write",
-        limits=(2, 3, 10),
+        limits=(5, 50, 0, 0),
     )
     assert text.splitlines() == [
         "- Organization: Org (`o-id`)",
@@ -116,7 +116,8 @@ def test_context_markdown_of_the_runner() -> None:
         "- Task: Fix it (`t-id`)",
         "- Task owner: Ada",
         "- Rights of the task owner in the workgroup: write",
-        "- Subagent limits: depth 2, 3 running at a time, 10 per task",
+        "- Subagent limits (settings of the platform): depth 5, 50 running at a time, no limit per task, no runtime"
+        " limit",
         "- GitHub of the task owner: not connected. If the task needs GitHub, request the GitHub operation anyway; the"
         " platform asks the task owner to connect and then continues it. Do not explain what is missing and do not"
         " offer workarounds.",
@@ -127,14 +128,24 @@ def test_context_markdown_of_the_runner() -> None:
         task=("t", "T"),
         owner="B",
         rights="read",
-        limits=(1, 1, 1),
+        limits=(0, 0, 7, 60),
         github="octo-user",
     )
     assert connected.splitlines()[-1] == "- GitHub of the task owner: connected as octo-user"
+    assert connected.splitlines()[5] == (
+        "- Subagent limits (settings of the platform): no depth limit, no limit of running subagents, 7 per task,"
+        " runtime at most 60 s"
+    )
     other = harness.context_markdown(
-        org=("o", "O"), workgroup=("w", "Research", False), task=("t", "T"), owner="B", rights="read", limits=(1, 1, 1)
+        org=("o", "O"),
+        workgroup=("w", "Research", False),
+        task=("t", "T"),
+        owner="B",
+        rights="read",
+        limits=(None, None, None, None),
     )
     assert "- Workgroup: Research (`w`)" in other
+    assert "- Subagent limits (settings of the platform): unknown" in other.splitlines()
 
 
 def test_write_is_atomic_with_fixed_modes(tmp_path: Path) -> None:
@@ -164,7 +175,7 @@ def test_names_cannot_break_out_of_their_line() -> None:
         task=("t", "Title `x`\t\ttail"),
         owner="Eve\n## Owner",
         rights="write",
-        limits=(1, 1, 1),
+        limits=(1, 1, 1, 1),
         github="octo\n# Rules",
     )
     lines = text.splitlines()

@@ -1,6 +1,6 @@
 # ADR-017: Limits for controlled subagents (KONZEPT §13)
 
-Status: Accepted (2026-11-21)
+Status: Superseded by ADR-088 (2026-11-25; accepted 2026-11-21)
 
 ## Context
 KONZEPT §13: sessions may request subagents via the platform; only the platform starts them; each subagent is a full session with its own sandbox, harness, hooks, sync, audit and monitoring, assigned to the parent task and requesting session; subagents may request further subagents; a possible limit on parallel or nested subagents is left open. Spike B: models tried `request_subagent` as an execution side channel.

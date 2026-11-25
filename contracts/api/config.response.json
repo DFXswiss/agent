@@ -74,13 +74,20 @@
           "$ref": "../common.json#/$defs/positive"
         },
         "subagent_max_depth": {
-          "$ref": "../common.json#/$defs/positive"
+          "$ref": "../common.json#/$defs/count",
+          "description": "subagent limit of the hub's settings (ADR-088 section 2); 0 = no limit"
         },
         "subagent_max_running": {
-          "$ref": "../common.json#/$defs/positive"
+          "$ref": "../common.json#/$defs/count",
+          "description": "subagent limit of the hub's settings (ADR-088 section 2); 0 = no limit"
         },
         "subagent_max_total": {
-          "$ref": "../common.json#/$defs/positive"
+          "$ref": "../common.json#/$defs/count",
+          "description": "subagent limit of the hub's settings (ADR-088 section 2); 0 = no limit"
+        },
+        "subagent_max_runtime_seconds": {
+          "$ref": "../common.json#/$defs/count",
+          "description": "seconds after a child's creation at which it is failed runtime_exceeded (ADR-088 section 2); 0 = no limit"
         }
       },
       "required": [
@@ -97,7 +104,8 @@
         "device_request_seconds",
         "subagent_max_depth",
         "subagent_max_running",
-        "subagent_max_total"
+        "subagent_max_total",
+        "subagent_max_runtime_seconds"
       ],
       "additionalProperties": false
     },

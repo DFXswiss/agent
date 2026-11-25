@@ -33,18 +33,21 @@ DENIED = frozenset({"not_found", "forbidden"})
 
 @dataclass(frozen=True)
 class QueryCall:
-    """A read of `session` (the session of the bearer token) with the tool's checked `arguments`."""
+    """A read of `session` (the session of the bearer token) with the tool's checked `arguments` and the instructing
+    human of the read's turn, captured when the read arrived (`actor_id`, ADR-087 section 1; None: unknown)."""
 
     context: Any
     session: LocalSession
     tool: str
     arguments: Mapping[str, Any]
+    actor_id: str | None = None
 
 
 @dataclass(frozen=True)
 class QueryOutcome:
     """The tool's result (`mcp/tools/<tool>.output.json`) or error code and English sentence, the number of objects
-    returned (`result_count`) and the audited target."""
+    returned (`result_count`), the audited target and the workgroup read (`read_wg_id`, None on the organization
+    level, ADR-087 section 4)."""
 
     result: Any = None
     error: str | None = None
@@ -52,6 +55,7 @@ class QueryOutcome:
     result_count: int = 0
     target_kind: str = "session"
     target_id: str | None = None
+    read_wg_id: str | None = None
 
     def answer(self) -> dict[str, Any]:
         """The body of `POST /v1/pending/{id}/answer`."""
@@ -66,10 +70,10 @@ class QueryOutcome:
         return "denied" if self.error in DENIED else "failed"
 
 
-def failure(error: str, message: str, *, target_id: str | None = None) -> QueryOutcome:
+def failure(error: str, message: str, *, target_id: str | None = None, read_wg_id: str | None = None) -> QueryOutcome:
     if error not in TOOL_ERRORS:
         raise ValueError(error)
-    return QueryOutcome(error=error, message=message, target_id=target_id)
+    return QueryOutcome(error=error, message=message, target_id=target_id, read_wg_id=read_wg_id)
 
 
 @dataclass(frozen=True)

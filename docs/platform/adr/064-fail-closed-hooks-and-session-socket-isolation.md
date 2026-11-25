@@ -93,6 +93,8 @@ it, and the situation view can count it as a blocking sign. Records without a se
 log and the metric `agent_runner_guest_errors_total{code}`.
 
 ### 6. Subagents stay one-shot (checked, unchanged)
+**Superseded by [ADR-088](088-full-subagents-and-limits-as-settings.md) (KOR-45):** a child now keeps running across
+follow-up instructions of its main agent ([A10](../KONZEPT.md#a-10)).
 A child session ends at its first `Stop` (ADR-017, ADR-038). This is intended: a subagent is a delegated job that
 reports to its parent ([Idee 26](../KONZEPT.md#k-idee-26)); inside its one turn it may take as many steps as it needs,
 and the parent starts another child (or resumes, KOR-33) for further work. No restriction of

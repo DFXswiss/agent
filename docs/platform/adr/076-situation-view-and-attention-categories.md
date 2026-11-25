@@ -33,7 +33,7 @@ Status: Accepted (2026-11-24)
 | Category | Group in the view | Reasons (plain words in the view) |
 |---|---|---|
 | `needs_decision` | "Needs your decision" (longest waiting first) | `question` "The agent has a question", `approval` "The agent asks for your approval", `connection_missing` "GitHub is not connected", `credit_empty` "The balance is used up", `device_missing` "No computer is assigned to this workgroup" |
-| `blocked` | "Stuck" (newest first) | `session_failed` "The agent stopped with an error", `guest_error` "The agent's computer had a problem", `device_unreachable` "The computer is not reachable", `model_access_missing` "No access to an AI model", `no_capacity` "All computers are busy", `operation_refused` "An action was refused" |
+| `blocked` | "Stuck" (newest first) | `session_failed` "The agent stopped with an error", `guest_error` "The agent's computer had a problem", `device_unreachable` "The computer is not reachable", `model_access_missing` "No access to an AI model", `no_capacity` "All computers are busy", `operation_refused` "An action was refused", `limit_reached` "A limit of the platform was reached" (ADR-088) |
 | `working` | "Running" (newest first) | the phase: `queued` "Waiting for a computer", `starting` "Starting", `working` "Working", `operation` "Running an action", `subagents` "Helpers are working" |
 | `done` | "Recently finished" (newest first) | `idle` "Finished – waiting for you to close or continue", `closed` "Closed" |
 
@@ -57,7 +57,7 @@ session created after the end of its previous turn and decided after the last hu
    b. an operation that ended `rejected`, `denied`, `failed` or `expired` with a blocking error code, and no later
       operation of the same type of the task `succeeded`: `github_not_connected` → `needs_decision/connection_missing`;
       `budget_exceeded`, `credit_exhausted` → `needs_decision/credit_empty`; `rights_denied`, `repo_not_accessible`, `repo_not_allowed`,
-      `branch_protected`, `secret_detected`, `limit_exceeded`, `model_not_allowed` → `blocked/operation_refused` (ref:
+      `branch_protected`, `secret_detected`, `model_not_allowed` → `blocked/operation_refused`, `limit_exceeded` → `blocked/limit_reached` (ADR-088) (ref:
       the operation). Other error codes (`params_invalid`, `no_changes`, `non_fast_forward`, `timeout`, …) are the
       agent's own business and do not matter.
    The newest of a. and b. decides. An agent that carries on after asking (a subagent's finish wakes it) starts a new

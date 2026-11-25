@@ -40,7 +40,9 @@ async def post_operation(context: Context, principal: ActiveDevice, body: Regist
 
     def attempt() -> Outcome:
         with context.pool.connection() as connection, connection.transaction():
-            return register(connection, device, body, now=now, root_key=root)
+            return register(
+                connection, device, body, now=now, root_key=root, subagent_limits=context.config.subagent_limits
+            )
 
     def run() -> Outcome:
         try:

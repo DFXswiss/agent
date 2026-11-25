@@ -7,8 +7,11 @@ through a signed HTTP fetch by the hint handlers.
 - After every (re)connect: the `reconcile` connect hooks, then an outbox push (`Pusher.drain`), then the `pull`
   connect hooks (`sync.extensions`), then hints are dispatched in arrival order (`sync.hints`).
 - Heartbeat every 15 s: `{"type":"heartbeat","capacity":...,"sessions":[...],"vms":[...]}` from the registered
-  providers. `beat_soon()` sends the next one at once (the VM area calls it on every VM state change, so the hub's
-  start estimate, which depends on `pool_ready`, is not up to 15 s old). An early frame waits `EARLY_BEAT_S` (the
+  providers, with every open session and every VM (ADR-088 section 3): when they do not fit into one frame of
+  `MAX_FRAME_BYTES` (or a list would have more than `MAX_LIST_ITEMS`), several complete heartbeat frames follow each
+  other, each with the same capacity and its share of `sessions` and `vms` (`split_heartbeat`; the hub uses every
+  frame on its own). `beat_soon()` sends the next one at once (the VM area calls it on every VM state change, so the
+  hub's start estimate, which depends on `pool_ready`, is not up to 15 s old). An early frame waits `EARLY_BEAT_S` (the
   outbox push spacing) first, so a burst of VM changes (pool refill) coalesces into one frame.
 - A normal close by the hub (also when a heartbeat send meets it first) is `ws_closed`, everything else `ws_failed`.
 - The upgrade request announces the runner's capabilities in the header `Agent-Features` (`features`; ADR-060: the
@@ -93,6 +96,37 @@ EMPTY_CAPACITY = {
 }
 
 
+MAX_LIST_ITEMS = 1000
+"""Items per list of one heartbeat frame (`contracts/ws/device/heartbeat.json`, the hub's `stream.ws`)."""
+SPLIT_LISTS = ("sessions", "vms")
+
+
+def split_heartbeat(frame: Mapping[str, object]) -> list[str]:
+    """The heartbeat as one or more complete frames (module docstring): each carries the same capacity and its share of
+    `sessions` and `vms`, in order, at most `MAX_FRAME_BYTES` bytes and `MAX_LIST_ITEMS` items per list."""
+    base = {**frame, **{name: [] for name in SPLIT_LISTS}}
+    base_size = len(_dumps(base))
+    frames: list[dict[str, list[object]]] = []
+    current: dict[str, list[object]] = {name: [] for name in SPLIT_LISTS}
+    size = base_size
+    for name in SPLIT_LISTS:
+        items = frame.get(name)
+        for item in items if isinstance(items, list) else []:
+            added = len(_dumps(item)) + (1 if current[name] else 0)
+            if (size + added > MAX_FRAME_BYTES or len(current[name]) >= MAX_LIST_ITEMS) and size > base_size:
+                frames.append(current)
+                current, size = {key: [] for key in SPLIT_LISTS}, base_size
+                added = len(_dumps(item))
+            current[name].append(item)
+            size += added
+    frames.append(current)
+    return [_dumps({**base, **share}) for share in frames]
+
+
+def _dumps(value: object) -> str:
+    return json.dumps(value, separators=(",", ":"))
+
+
 class Socket(Protocol):
     def __aiter__(self) -> AsyncIterator[str | bytes]: ...
 
@@ -175,7 +209,8 @@ class WsClient:
     async def _heartbeats(self, socket: Socket) -> None:
         while True:
             self._beat.clear()
-            await socket.send(json.dumps(await self.heartbeat_frame(), separators=(",", ":")))
+            for frame in split_heartbeat(await self.heartbeat_frame()):
+                await socket.send(frame)
             await self._next_beat()
 
     async def _next_beat(self) -> None:

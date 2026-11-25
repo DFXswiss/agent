@@ -155,6 +155,14 @@ def test_guest_metrics_with_and_without_the_optional_counters() -> None:
     assert (parsed.sessions[0].values["mem_max_bytes"], parsed.load1) == (4096, 2.0)
 
 
+def test_guest_metrics_of_200_sessions_are_read_whole() -> None:
+    data = guest_answer()
+    (item,) = data["sessions"]
+    data["sessions"] = [{**item, "session_id": f"01a1ee56-5e00-7003-8f1b-{n:012x}"} for n in range(200)]
+    parsed = parsers.parse_guest_metrics(data)
+    assert len(parsed.sessions) == 200  # no cap (ADR-088 section 3)
+
+
 def _set(path: str, value: Any) -> Callable[[dict[str, Any]], None]:
     def change(data: dict[str, Any]) -> None:
         target: Any = data
@@ -173,7 +181,6 @@ def _drop_uptime(data: dict[str, Any]) -> None:
 CHANGES: dict[str, Callable[[dict[str, Any]], None]] = {
     "vm": _set("vm", []),
     "sessions": _set("sessions", {}),
-    "too-many": lambda data: data.update(sessions=data["sessions"] * 65),
     "duplicate": lambda data: data.update(sessions=data["sessions"] * 2),
     "load-bool": _set("vm.load1", True),
     "load-negative": _set("vm.load1", -0.5),

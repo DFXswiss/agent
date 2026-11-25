@@ -30,6 +30,7 @@ export const REASONS: Readonly<Record<Category, readonly string[]>> = {
     'no_capacity',
     'operation_refused',
     'device_failed',
+    'limit_reached',
   ],
   working: ['queued', 'starting', 'working', 'operation', 'subagents', 'quota_wait'],
   done: ['idle', 'closed'],

@@ -472,13 +472,14 @@ def test_route_without_nft_leaves_egress_out(context: ControlContext, tmp_path: 
     assert "egress_denied" not in listed[0]
 
 
-def test_at_most_64_sessions_sorted_by_id(context: ControlContext, tmp_path: Path) -> None:
+def test_every_session_sorted_by_id(context: ControlContext, tmp_path: Path, schemas: SchemaSet) -> None:
     collector = metrics.install(context, metrics.Collector(sources(tmp_path)))
-    ids = [f"01a1ee56-5e00-7003-8f1b-3406910{index:05x}" for index in range(70)]
-    for index in reversed(range(70)):
+    ids = [f"01a1ee56-5e00-7003-8f1b-3406910{index:05x}" for index in range(200)]
+    for index in reversed(range(200)):
         context.state.save_session(replace(make_session(ids[index], token=f"token-{index}", state="idle"), uid=-1))
-    listed = collector.collect(context)["sessions"]
-    assert [item["session_id"] for item in listed] == ids[:64]
+    collected = collector.collect(context)
+    assert [item["session_id"] for item in collected["sessions"]] == ids  # no cap (ADR-088 section 3)
+    assert schemas.errors("guest/metrics.response.json", collected) == []
 
 
 def test_unreadable_vm_sources_answer_unavailable(

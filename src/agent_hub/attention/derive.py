@@ -54,6 +54,7 @@ CATEGORIES: Mapping[str, tuple[str, tuple[str, ...]]] = MappingProxyType(
                 "no_capacity",
                 "operation_refused",
                 "device_failed",
+                "limit_reached",
             ),
         ),
         WORKING: (DESCENDING, ("queued", "starting", "working", "operation", "subagents", "quota_wait")),
@@ -97,11 +98,12 @@ BLOCKING_CODES: Mapping[str, Outcome] = MappingProxyType(
                 "repo_not_allowed",
                 "branch_protected",
                 "secret_detected",
-                "limit_exceeded",
                 "model_not_allowed",
             ),
             (BLOCKED, "operation_refused"),
         ),
+        # a subagent limit of the hub's settings (ADR-088 section 2): the operator can raise it
+        "limit_exceeded": (BLOCKED, "limit_reached"),
     }
 )
 SCHEDULING_REASONS: Mapping[str, Outcome] = MappingProxyType(

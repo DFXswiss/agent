@@ -62,6 +62,7 @@ from agent_hub.attention import store as attention
 from agent_hub.audit.chain import AUDIT_LOCK
 from agent_hub.audit.recorder import unchanged
 from agent_hub.auth.fields import B64u32, Strict, Uuid7
+from agent_hub.config import DEFAULT_SUBAGENT_LIMITS, SubagentLimits
 from agent_hub.errors import HubError
 from agent_hub.events.store import StoredEvent, append_events
 from agent_hub.github import identities
@@ -272,14 +273,20 @@ def _replay(connection: Connection, request: RegistrationRequest, params_event_i
 
 
 def _limits(
-    connection: Connection, request: RegistrationRequest, task: TaskRow, parent: Parent, now: datetime
+    connection: Connection,
+    request: RegistrationRequest,
+    task: TaskRow,
+    parent: Parent,
+    *,
+    now: datetime,
+    subagent_limits: SubagentLimits,
 ) -> str | None:
     """H4: the error code of an exceeded limit of the type, None within the limits."""
     if request.type in HUMAN_TYPES:
         return "rights_denied" if parent.depth > 0 else None
     if request.type != SUBAGENT_REQUEST:
         return None
-    exceeded = limits.subagent_limit(connection, task.id, parent.depth)
+    exceeded = limits.subagent_limit(connection, task.id, parent.depth, subagent_limits)
     if exceeded is not None:
         return exceeded
     budget = limits.BudgetRequest(connection=connection, org_id=task.org_id, session_id=parent.id, now=now)
@@ -317,6 +324,7 @@ def _refusal(
     session_state: str,
     parent: Parent,
     now: datetime,
+    subagent_limits: SubagentLimits,
 ) -> tuple[str, str | None] | None:
     """The refusal of checks H1-H4 (module docstring, step 4), None when they pass."""
     if session_state in FINAL or task.state == CLOSED:
@@ -329,7 +337,7 @@ def _refusal(
         return "denied", "rights_denied"
     if request.type not in OPERATION_TYPES:
         return "rejected", "unknown_type"
-    exceeded = _limits(connection, request, task, parent, now)
+    exceeded = _limits(connection, request, task, parent, now=now, subagent_limits=subagent_limits)
     return None if exceeded is None else ("denied", exceeded)
 
 
@@ -341,9 +349,18 @@ def _decide(
     session_state: str,
     parent: Parent,
     now: datetime,
+    subagent_limits: SubagentLimits,
 ) -> tuple[str, str | None, dedupe.Held | None]:
     """The decision of checks H1-H6 (module docstring, step 4)."""
-    refused = _refusal(connection, request, task, session_state=session_state, parent=parent, now=now)
+    refused = _refusal(
+        connection,
+        request,
+        task,
+        session_state=session_state,
+        parent=parent,
+        now=now,
+        subagent_limits=subagent_limits,
+    )
     if refused is not None:
         return refused[0], refused[1], None
     if request.dedupe is None:
@@ -354,7 +371,13 @@ def _decide(
 
 
 def register(
-    connection: Connection, device: UUID, request: RegistrationRequest, *, now: datetime, root_key: bytes
+    connection: Connection,
+    device: UUID,
+    request: RegistrationRequest,
+    *,
+    now: datetime,
+    root_key: bytes,
+    subagent_limits: SubagentLimits = DEFAULT_SUBAGENT_LIMITS,
 ) -> Outcome:
     """Register and decide one operation in the caller's transaction (module docstring)."""
     request.check_form()
@@ -395,7 +418,15 @@ def register(
         connection.execute("SELECT state FROM hub.session WHERE id = %s", (request.session_id,)).fetchone(),
     )
     parent = Parent(id=UUID(request.session_id), device_id=device, vm_id=session.vm_id, depth=session.depth)
-    state, error_code, held = _decide(connection, request, task, session_state=state_row[0], parent=parent, now=now)
+    state, error_code, held = _decide(
+        connection,
+        request,
+        task,
+        session_state=state_row[0],
+        parent=parent,
+        now=now,
+        subagent_limits=subagent_limits,
+    )
     duplicate_of = None if held is None else held.operation_id
     connection.execute(
         "UPDATE hub.operation SET state = %s, error_code = %s, duplicate_of = %s, decided_at = %s WHERE id = %s",

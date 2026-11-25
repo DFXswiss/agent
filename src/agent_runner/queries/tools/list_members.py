@@ -1,10 +1,11 @@
-"""`list_members {scope: "org" | "workgroup"}` (03-api.md section 8.1, ADR-024).
+"""`list_members {scope: "org" | "workgroup", workgroup_id?}` (03-api.md section 8.1, ADR-087).
 
 - `org` (organization level): every active user (`role` admin/member) and device (`role` device) of the org;
-- `workgroup` (workgroup level, the owner needs access): the users with explicit access to the session's workgroup
-  (`access` read/write; default workgroup: every user writes; an admin's inherited read is not listed, sessions do
-  not inherit, ADR-058 section 1) and the devices assigned to it (`access` write: they author the session events of
-  the workgroup).
+- `workgroup` (workgroup level): the users with explicit access to the session's workgroup or to another workgroup
+  the session may read (`workgroup_id`, allowed only for this scope; `ReadScope.readable`) (`access` read/write;
+  default workgroup: every user writes; an admin's inherited read is not listed, it is no membership of the
+  workgroup, ADR-058 section 1) and the devices assigned to it (`access` write: they author the session events of the
+  workgroup).
 
 Platform devices whose certification has ended are left out (no readers, no authors), and so are agents (ADR-082: an
 agent acts as its user and is no member of its own). Names come from the verified
@@ -18,7 +19,6 @@ from typing import Any
 
 from agent_runner.crypto.log.state import AGENT, USER
 from agent_runner.queries import common, projection
-from agent_runner.queries.rights import read_scope
 from agent_runner.sessions import profiles
 from agent_runner.subagents.extensions import QueryCall, QueryOutcome
 
@@ -39,13 +39,20 @@ WRITE = "write"
 
 async def list_members(call: QueryCall) -> QueryOutcome:
     async def read() -> QueryOutcome:
-        found_args = common.arguments(call, frozenset({"scope"}), frozenset({"scope"}))
+        found_args = common.arguments(call, frozenset({"scope", common.WORKGROUP_ID}), frozenset({"scope"}))
         level = found_args["scope"]
-        if not isinstance(level, str) or level not in SCOPES:
+        if (
+            not isinstance(level, str)
+            or level not in SCOPES
+            or (common.WORKGROUP_ID in found_args and level != "workgroup")
+        ):
             raise common.PARAMS_INVALID
-        scope = read_scope(call.context, call.session)
+        scope = common.scope_of(call)
+        wg_id: str | None = None
         if level == "workgroup":
             scope.require_workgroup()
+            wg_id = await common.workgroup(call, scope, found_args)
+        target = wg_id or scope.org_id
         state = scope.state
         members: list[dict[str, Any]] = []
         async with common.store(call.context) as (conn, key):
@@ -56,11 +63,11 @@ async def list_members(call: QueryCall) -> QueryOutcome:
                 if level == "org":
                     extra = {"role": principal.role}
                 elif user:
-                    access = state.explicit_access(principal.id, scope.wg_id)
+                    access = state.explicit_access(principal.id, target)
                     if access is None:
                         continue
                     extra = {"access": access}
-                elif state.assigned(principal.id, scope.wg_id):
+                elif state.assigned(principal.id, target):
                     extra = {"access": WRITE}
                 else:
                     continue
@@ -74,8 +81,7 @@ async def list_members(call: QueryCall) -> QueryOutcome:
                 )
         members.sort(key=lambda item: (item["kind"] != USER, item["display_name"], item["id"]))
         members = within_budget(members)
-        target = scope.org_id if level == "org" else scope.wg_id
-        return common.ok({"members": members}, len(members), target_kind=level, target_id=target)
+        return common.ok({"members": members}, len(members), target_kind=level, target_id=target, read_wg_id=wg_id)
 
     return await common.answered(read)
 

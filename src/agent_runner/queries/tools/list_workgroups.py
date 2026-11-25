@@ -1,23 +1,34 @@
-"""`list_workgroups {}` (03-api.md section 8.1, ADR-024): the names of all workgroups of the organization - also of
-workgroups the session cannot read otherwise - with `my_access` of the task owner (null without access). `my_access`
-is the explicit access: the inherited read of an admin does not count, sessions do not inherit (ADR-058 section 1).
+"""`list_workgroups {}` (03-api.md section 8.1, ADR-087): the names of all workgroups of the organization - also of
+workgroups the session cannot read (names are organization metadata every member sees) - with `my_access`, the
+**session's** access: the task owner's explicit `read`/`write` for the session's own workgroup, `read` for another
+workgroup the session may read (`ReadScope.readable`: owner and instructing human, served by this device), null
+otherwise (no new field, so older guests keep validating the result).
 
-Organization level: the owner must be an active member. Archived workgroups are left out (they take no tasks). The
-default workgroup comes first, the others by name. Names come from the verified `wg.profile` events.
+Organization level: the owner must be an active member. Archived workgroups are left out (they take no tasks; one is
+still readable by its ID). The default workgroup comes first, the others by name. Names come from the verified
+`wg.profile` events.
 """
 
 from __future__ import annotations
 
 from agent_runner.queries import common
-from agent_runner.queries.rights import read_scope
+from agent_runner.queries.rights import ReadRefused, ReadScope
 from agent_runner.sessions import profiles
 from agent_runner.subagents.extensions import QueryCall, QueryOutcome
+
+
+def my_access(scope: ReadScope, wg_id: str) -> str | None:
+    """The session's access to the workgroup, None when it may not read it."""
+    try:
+        return scope.readable(wg_id)
+    except ReadRefused:
+        return None
 
 
 async def list_workgroups(call: QueryCall) -> QueryOutcome:
     async def read() -> QueryOutcome:
         common.arguments(call, frozenset())
-        scope = read_scope(call.context, call.session)
+        scope = common.scope_of(call)
         state = scope.state
         found = []
         async with common.store(call.context) as (conn, key):
@@ -30,7 +41,7 @@ async def list_workgroups(call: QueryCall) -> QueryOutcome:
                         "id": wg.id,
                         "name": common.display(name, wg.id),
                         "is_default": wg.id == state.default_wg,
-                        "my_access": state.explicit_access(scope.owner_id, wg.id),
+                        "my_access": my_access(scope, wg.id),
                     }
                 )
         found.sort(key=lambda item: (not item["is_default"], item["name"], item["id"]))

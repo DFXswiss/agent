@@ -17,10 +17,17 @@ keeps it so).
   user's, ADR-082) becomes the acting user of the main session when no turn is open; a second prompt in the same
   open turn (no `idle` since) by another or an unknown author makes it unknown (NULL) until the next turn. `idle`
   closes the turn; the last acting user stays for what the turn still journals.
-- `stamp(conn, session)`: the acting user at the receipt of an operation request (journal handler): the turn's
-  acting user of a main session; for a child session (`depth` > 0) the acting user of the `subagent.request` that
-  started it - children inherit the person who instructed their parent's turn. The stamp is stored with the operation
-  and never changes: a held operation keeps it, whoever writes later.
+- **Turn of a child session** (`instruction_accepted`, ADR-088 section 1): a child's prompts are the instructions of
+  its parent (`runner.subagent_instruction`, prompt ID = operation ID), one per turn. When the child accepts one, the
+  acting user of that instruction's operation (`subagent.request` or `subagent.instruct`, the person who instructed
+  the parent's turn) becomes the acting user of the child's turn; a prompt ID that names no delivered instruction of
+  this child makes it unknown. An instruction still waiting for its turn changes nothing, and neither does a
+  repeated acceptance of an instruction older than one the child already accepted.
+- `stamp(conn, session)`: the acting user at the receipt of an operation request (journal handler) and of a forwarded
+  read (ADR-087): the turn's acting user of a main session; of a child session (`depth` > 0) the acting user of its
+  turn once it accepted an instruction, before that (and for a child older than the instructions) the acting user of
+  the `subagent.request` that started it - children inherit the person who instructed their parent's turn. The stamp
+  is stored with the operation and never changes: a held operation keeps it, whoever writes later.
 - `cached_version(conn, operation, kind)`: the version of the acting user's cached credential (None without an acting
   user or record); `opened(context, operation, kind)`: its decrypted body for one use - `CredentialUnavailable
   ("no_actor")` without an acting user, so nothing is ever opened for an operation whose acting user is unknown, and
@@ -114,6 +121,23 @@ async def prompt_accepted(conn: AsyncConnection[Any], session_id: str, prompt_id
     )
 
 
+async def instruction_accepted(conn: AsyncConnection[Any], session_id: str, prompt_id: str) -> None:
+    """A child session accepted the prompt of one of its instructions (module docstring, "Turn of a child session")."""
+    known = prompt_id if _UUID_RE.fullmatch(prompt_id) else None
+    cursor = await conn.execute(
+        "SELECT i.actor_id::text, EXISTS (SELECT 1 FROM runner.subagent_instruction j WHERE j.child_session_id ="
+        " i.child_session_id AND j.accepted_at IS NOT NULL AND (j.created_at, j.operation_id) > (i.created_at,"
+        " i.operation_id)) FROM runner.subagent_instruction i WHERE i.operation_id = %s AND i.child_session_id = %s"
+        " AND i.delivered_at IS NOT NULL",
+        (known, session_id),
+    )
+    found = await cursor.fetchone()
+    if found is not None and found[1]:
+        return  # a replayed acceptance of an earlier instruction never brings back that person's rights
+    actor = None if found is None else found[0]
+    await conn.execute("UPDATE runner.session SET turn_actor = %s, turn_open = true WHERE id = %s", (actor, session_id))
+
+
 async def turn_ended(conn: AsyncConnection[Any], session_id: str) -> None:
     await conn.execute("UPDATE runner.session SET turn_open = false WHERE id = %s", (session_id,))
 
@@ -122,8 +146,11 @@ async def stamp(conn: AsyncConnection[Any], session: Session) -> str | None:
     """The acting user of an operation the session requests now (module docstring)."""
     if session.depth > 0:
         cur = await conn.execute(
-            "SELECT actor_id::text FROM runner.operation WHERE child_session_id = %s AND type = 'subagent.request'"
-            " AND actor_id IS NOT NULL ORDER BY created_at, id LIMIT 1",
+            "SELECT CASE WHEN s.turn_open OR EXISTS (SELECT 1 FROM runner.subagent_instruction i"
+            " WHERE i.child_session_id = s.id AND i.accepted_at IS NOT NULL) THEN s.turn_actor::text"
+            " ELSE (SELECT o.actor_id::text FROM runner.operation o WHERE o.child_session_id = s.id"
+            " AND o.type = 'subagent.request' AND o.actor_id IS NOT NULL ORDER BY o.created_at, o.id LIMIT 1) END"
+            " FROM runner.session s WHERE s.id = %s",
             (session.id,),
         )
     else:

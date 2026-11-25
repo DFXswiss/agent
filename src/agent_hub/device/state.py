@@ -17,7 +17,8 @@ credentials, `pings` from notifications, `quota_poll_owners`/`platform_budget` f
 github). A field may be provided by one area only. A field no area provides is sent empty: `[]`, `{}` for
 `delivered_prompt_event_ids`, `null` for `platform_budget`, empty lists in `prompt_queue`. The optional fields of KOR-50
 (`model_fallback`, `dfx_keys`, `dfx_key_held`, from the models area) are left out while their value is `OMIT`:
-`dfx_keys` goes to the elected issuer only, `dfx_key_held` to org devices only. Every provider reads in the same
+`dfx_keys` goes to the elected issuer only, `dfx_key_held` to org devices only; so is `limits` (the subagent settings
+of ADR-088, from the operations area) while no area provides it. Every provider reads in the same
 transaction as the base fields.
 """
 
@@ -57,6 +58,7 @@ SECTION_FIELDS: Mapping[str, Callable[[], Any]] = {
     "prompt_queue": lambda: {"via_agent": [], "withdrawn": []},
     "failover_seconds": lambda: OMIT,
     "failovers": list,
+    "limits": lambda: OMIT,
 }
 """The fields sections provide, with the value of a field no area provides."""
 

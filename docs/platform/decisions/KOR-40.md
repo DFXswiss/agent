@@ -42,7 +42,7 @@ the audit side is ADR-063 (second part of this note). Concept references: [§3](
    expects `EPERM` (the filter answers before Landlock). ATK-29/ATK-30 list the new self-test checks. A per-session
    network namespace was rejected again (ADR-045).
 10. **`session.error` only for sessions on this VM and codes of the closed list**; VM-level records stay in the log.
-11. **Subagents stay one-shot** (L17, checked): intended (ADR-017, ADR-038; idea 26 "berichtet an seinen
+11. **Subagents stay one-shot** (L17, checked) – superseded by ADR-088 (KOR-45, interpretation A10): intended (ADR-017, ADR-038; idea 26 "berichtet an seinen
     übergeordneten Agenten"); no step limit inside the turn, the parent starts another child or resumes.
 12. **"GitHub trennen" revokes only what the platform minted** (L17): GitHub's unauthenticated
     `POST /credentials/revoke` with the token of a purged `github` record, only for a GitHub App user token (`ghu_`)

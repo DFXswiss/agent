@@ -1,0 +1,1691 @@
+{
+ "reasons": {
+  "size": "size or length of one message, field, file, name or text (bytes, characters, lines)",
+  "time": "a time: timeout, wait, window, age, backoff or interval",
+  "page": "page size or bound of one answer of a paged, windowed or summarised read; the caller reads on or the answer says it was cut (KOR-35, ADR-086)",
+  "answer": "bound of the items inside one request, answer, record or audit detail, not of the things themselves: a larger set is split, paged or summarised by its producer, or the bound comes from the message size",
+  "integer": "an integer, amount, identifier, protocol or format bound",
+  "retry": "attempts and retries of one action",
+  "rate": "rate, bandwidth or concurrency protection of one process, connection or session",
+  "structure": "nesting depth of a structure",
+  "setting": "a default or the bounds of a setting (A5; ADR-075, ADR-088)",
+  "compat": "the contract range of older peers, used only to answer them in their own format (ADR-088 section 1)",
+  "external": "a bound of an external system or standard (GitHub, Linux, WebAuthn, Lima)",
+  "resource": "resources of one session process: memory, CPU share, processes (05-runner.md section 4.3)",
+  "open": "a count of things people or sessions create that is still a fixed value: to become a setting (KONZEPT A14; listed in the report of KOR-45)"
+ },
+ "constants": {
+  "src/agent_guest/api_routes/mcp.py": {
+   "MAX_BODY": "size",
+   "ROUTE_MAX_BODY": "size"
+  },
+  "src/agent_guest/api_routes/model.py": {
+   "MAX_BODY": "size"
+  },
+  "src/agent_guest/apisock.py": {
+   "MAX_LINE": "size"
+  },
+  "src/agent_guest/authguard.py": {
+   "LIMIT": "page",
+   "MAX_KEYS": "answer"
+  },
+  "src/agent_guest/config.py": {
+   "MAX_TOOLS_SECONDS": "time"
+  },
+  "src/agent_guest/contexts.py": {
+   "MAX_CONTEXT_JSON": "size",
+   "MAX_LINK": "size",
+   "MAX_STAGE_BYTES": "size",
+   "SETTLE_MAX_SECONDS": "time"
+  },
+  "src/agent_guest/control_routes/capture.py": {
+   "MAX_PATH": "size"
+  },
+  "src/agent_guest/control_routes/hooks.py": {
+   "MAX_HINTS": "answer",
+   "MAX_JOURNAL_PATH": "size"
+  },
+  "src/agent_guest/control_routes/journal.py": {
+   "DEFAULT_LIMIT": "page"
+  },
+  "src/agent_guest/control_routes/pending.py": {
+   "MAX_WAIT_SECONDS": "time"
+  },
+  "src/agent_guest/control_routes/tools.py": {
+   "MAX_TOOLS": "answer"
+  },
+  "src/agent_guest/delivery.py": {
+   "TYPED_MAX": "size"
+  },
+  "src/agent_guest/files.py": {
+   "MAX_DEPTH": "structure",
+   "MAX_ENTRIES": "open",
+   "MAX_EXPORT_BYTES": "size",
+   "MAX_HEADER": "size",
+   "MAX_IMPORT_BYTES": "size",
+   "MAX_PATH": "size",
+   "limit": "page"
+  },
+  "src/agent_guest/gateway.py": {
+   "COUNT_MAX": "integer",
+   "MAX_MODEL_REQUESTS": "rate",
+   "MAX_SSE_EVENT": "size",
+   "MAX_USAGE_JSON": "time"
+  },
+  "src/agent_guest/gateway_credentials.py": {
+   "MAX_CHARGES": "rate"
+  },
+  "src/agent_guest/harness.py": {
+   "MAX_CONTEXT_CHARS": "size",
+   "memory_max": "resource",
+   "runtime_max_sec": "time",
+   "tasks_max": "resource"
+  },
+  "src/agent_guest/hook_addons/file_changes.py": {
+   "MAX_PATH": "size"
+  },
+  "src/agent_guest/hook_summary.py": {
+   "MAX_TOOLS": "answer"
+  },
+  "src/agent_guest/hooks.py": {
+   "DRAIN_MAX_BODY": "size",
+   "HOOK_MAX_BODY": "size",
+   "MAX_COUNT": "integer",
+   "MAX_POLICY_INPUT": "size",
+   "MAX_SUMMARY": "size",
+   "MAX_TOOL_TEXT": "size",
+   "ROUTE_MAX_BODY": "size"
+  },
+  "src/agent_guest/journal.py": {
+   "MAX_LIMIT": "page",
+   "MAX_WAIT_SECONDS": "time"
+  },
+  "src/agent_guest/limits.py": {
+   "max_age_ms": "rate"
+  },
+  "src/agent_guest/mcp.py": {
+   "MAX_BUCKETS": "rate",
+   "MAX_DEREF_DEPTH": "structure"
+  },
+  "src/agent_guest/mcp_tools/_forward/__init__.py": {
+   "MAX_DEPTH": "structure",
+   "MAX_WAIT_SECONDS": "time"
+  },
+  "src/agent_guest/mcp_tools/request_operation.py": {
+   "MAX_POINTER_LENGTH": "size"
+  },
+  "src/agent_guest/metrics.py": {
+   "MAX_COUNT": "integer"
+  },
+  "src/agent_guest/pings.py": {
+   "MAX_LIST": "page"
+  },
+  "src/agent_guest/policy.py": {
+   "MAX_SYMLINKS": "integer",
+   "QUESTION_MAX": "size"
+  },
+  "src/agent_guest/recorder.py": {
+   "MAX_BODY_JSON": "size",
+   "MAX_DRAIN": "size",
+   "MAX_FINAL_DRAINS": "answer",
+   "MAX_FRAMES": "size",
+   "MAX_PIECE": "size",
+   "MAX_PIECE_JSON": "size"
+  },
+  "src/agent_guest/routing.py": {
+   "MAX_JSON_BODY": "size",
+   "max_body": "size"
+  },
+  "src/agent_guest/sandbox/landlock.py": {
+   "_MAX_INTERP": "integer"
+  },
+  "src/agent_guest/sandbox/unit.py": {
+   "RUNTIME_MAX": "time"
+  },
+  "src/agent_guest/scanner.py": {
+   "DEFAULT_LIMITS": "page",
+   "HASH_LIMIT": "page",
+   "Limits": "size",
+   "MAX_DEPTH": "structure",
+   "MAX_ENTRIES": "open",
+   "MAX_REL_PATH": "size",
+   "PATCH_LIMIT": "page"
+  },
+  "src/agent_guest/schema.py": {
+   "MAX_DEPTH": "structure"
+  },
+  "src/agent_guest/server.py": {
+   "MAX_CONNECTIONS": "rate",
+   "MAX_HANDLERS": "rate"
+  },
+  "src/agent_guest/sessions.py": {
+   "limits": "resource"
+  },
+  "src/agent_guest/transcript.py": {
+   "MAX_COUNT": "integer",
+   "MAX_LINE": "size",
+   "MAX_READ": "size",
+   "MAX_SUMMARY": "size",
+   "MAX_TEXT": "size"
+  },
+  "src/agent_hub/agents/identity.py": {
+   "MAX_DETAIL_ORGS": "answer"
+  },
+  "src/agent_hub/agents/store.py": {
+   "MAX_CLAIM_MISSES": "answer",
+   "MAX_OPEN_PAIRINGS": "open",
+   "MAX_OPEN_PER_SOURCE": "open",
+   "NETWORK_LIMITS": "rate"
+  },
+  "src/agent_hub/attention/read.py": {
+   "LIST_MAX": "page"
+  },
+  "src/agent_hub/audit/chain.py": {
+   "MAX_DETAIL_KEYS": "answer",
+   "MAX_DETAIL_TEXT": "size"
+  },
+  "src/agent_hub/audit/eventbatch.py": {
+   "MAX_SCOPES": "answer"
+  },
+  "src/agent_hub/audit/query.py": {
+   "LIST_MAX": "page",
+   "MAX_ACTION": "size"
+  },
+  "src/agent_hub/auth/ceremonies.py": {
+   "MAX_AUDIT_REFERENCE": "size"
+  },
+  "src/agent_hub/auth/recovery.py": {
+   "MAX_SOURCES": "answer"
+  },
+  "src/agent_hub/backup/tables.py": {
+   "MAX_BIGINT": "integer"
+  },
+  "src/agent_hub/billing/cli.py": {
+   "MAX_FILE_BYTES": "size"
+  },
+  "src/agent_hub/billing/credit.py": {
+   "MAX_MICRO": "integer",
+   "MAX_REASON": "size"
+  },
+  "src/agent_hub/billing/fx.py": {
+   "MAX_RATE": "rate"
+  },
+  "src/agent_hub/billing/prices.py": {
+   "MAX_FACTOR": "integer",
+   "MAX_MODELS": "answer",
+   "MAX_NOTE": "size",
+   "MAX_PRICE": "integer"
+  },
+  "src/agent_hub/community/crypto.py": {
+   "MAX_CT_BYTES": "size",
+   "MAX_NAME_CHARS": "size",
+   "MAX_TEXT_CHARS": "size"
+  },
+  "src/agent_hub/community/limits.py": {
+   "MAX_USERS": "open"
+  },
+  "src/agent_hub/community/routes.py": {
+   "MAX_PAGE": "time",
+   "MAX_WRAPS": "answer"
+  },
+  "src/agent_hub/community/store.py": {
+   "LIMITS": "page",
+   "MAX_CT_CHARS": "size"
+  },
+  "src/agent_hub/config.py": {
+   "DEFAULT_CONTEXT_MAX_OBJECT_BYTES": "size",
+   "DEFAULT_SUBAGENT_LIMITS": "time",
+   "DEFAULT_SUBAGENT_MAX_DEPTH": "time",
+   "DEFAULT_SUBAGENT_MAX_RUNNING": "time",
+   "DEFAULT_SUBAGENT_MAX_RUNTIME_SECONDS": "time",
+   "DEFAULT_SUBAGENT_MAX_TOTAL": "time",
+   "LIMITS": "page",
+   "MAX_CAPACITY_REFUSALS": "retry",
+   "MAX_CATALOG_BYTES": "size",
+   "MAX_CONTEXT_BYTES": "size",
+   "MAX_CONTEXT_KEEP": "size",
+   "MAX_DEVICE_ONLINE_SECONDS": "size",
+   "MAX_HOST_NAME": "size",
+   "MAX_LIST": "page",
+   "MAX_LOG_KEEP": "setting",
+   "MAX_REFUSAL_HOLD_SECONDS": "time",
+   "MAX_SUBAGENT_RUNTIME_SECONDS": "time",
+   "MAX_SUBAGENT_SETTING": "time",
+   "MAX_TOKENS": "size",
+   "MAX_VMS_PER_WG": "setting",
+   "context_max_object_bytes": "size",
+   "max_depth": "setting",
+   "max_running": "setting",
+   "max_runtime_seconds": "setting",
+   "max_total": "setting",
+   "subagent_limits": "setting"
+  },
+  "src/agent_hub/contexts/routes.py": {
+   "LIST_MAX": "page",
+   "MAX_EPOCH": "integer"
+  },
+  "src/agent_hub/contexts/store.py": {
+   "LIST_MAX": "page",
+   "max_object_bytes": "size"
+  },
+  "src/agent_hub/credentials/records.py": {
+   "MAX_CT_CHARS": "size",
+   "MAX_GITHUB_RECORDS": "open"
+  },
+  "src/agent_hub/credentials/routes.py": {
+   "MAX_SAFE_INTEGER": "integer"
+  },
+  "src/agent_hub/crypto/agent.py": {
+   "LABEL_TEXT_MAX": "size",
+   "MAX_GEN": "integer",
+   "MESSAGE_TEXT_MAX": "size"
+  },
+  "src/agent_hub/crypto/browserframe.py": {
+   "FRAME_CT_MAX": "size",
+   "MAX_EPOCH": "integer",
+   "MAX_SEQ": "integer"
+  },
+  "src/agent_hub/crypto/context.py": {
+   "MAX_CHUNKS": "page",
+   "MAX_EPOCH": "integer"
+  },
+  "src/agent_hub/crypto/credential.py": {
+   "MAX_CT_BYTES": "size"
+  },
+  "src/agent_hub/crypto/encoding.py": {
+   "MAX_SAFE_INTEGER": "integer"
+  },
+  "src/agent_hub/crypto/event.py": {
+   "MAX_CT_BYTES": "size",
+   "MAX_TERMINAL_CT_BYTES": "size"
+  },
+  "src/agent_hub/crypto/fields.py": {
+   "KIND_MAX": "size"
+  },
+  "src/agent_hub/crypto/ids.py": {
+   "_MAX_MS": "time"
+  },
+  "src/agent_hub/crypto/request.py": {
+   "MAX_CT_BYTES": "size"
+  },
+  "src/agent_hub/crypto/runlog.py": {
+   "MAX_BYTES": "size",
+   "MAX_CHUNKS": "page",
+   "MAX_EPOCH": "integer"
+  },
+  "src/agent_hub/crypto/signed.py": {
+   "max_ct": "size"
+  },
+  "src/agent_hub/device/enroll.py": {
+   "MAX_COUNT": "integer"
+  },
+  "src/agent_hub/device/features.py": {
+   "MAX_FEATURES": "answer"
+  },
+  "src/agent_hub/device/logs.py": {
+   "PAGE_MAX": "time"
+  },
+  "src/agent_hub/device/pull.py": {
+   "PAGE_MAX": "time"
+  },
+  "src/agent_hub/device/routes.py": {
+   "LIST_LIMIT_RE": "page",
+   "LOG_LIMIT_RE": "page",
+   "MAX_CURSORS": "open",
+   "MAX_EPOCH": "integer"
+  },
+  "src/agent_hub/device/tasks.py": {
+   "LIST_MAX": "page"
+  },
+  "src/agent_hub/events/paging.py": {
+   "LIST_MAX": "page",
+   "limit": "page"
+  },
+  "src/agent_hub/events/read.py": {
+   "PAGE_MAX": "time"
+  },
+  "src/agent_hub/events/routes.py": {
+   "MAX_EVENTS": "page",
+   "MAX_SEQ": "integer"
+  },
+  "src/agent_hub/github/identities.py": {
+   "MAX_DETAIL_DEVICES": "answer"
+  },
+  "src/agent_hub/github/routes.py": {
+   "MAX_SAFE_INTEGER": "integer"
+  },
+  "src/agent_hub/http/context.py": {
+   "limiter": "rate"
+  },
+  "src/agent_hub/http/handlers.py": {
+   "MAX_POINTERS": "answer",
+   "MAX_POINTER_LENGTH": "size"
+  },
+  "src/agent_hub/http/limits.py": {
+   "MAX_BUCKETS": "rate"
+  },
+  "src/agent_hub/http/readlog.py": {
+   "MAX_KEYS": "answer"
+  },
+  "src/agent_hub/http/routing.py": {
+   "max_body": "size"
+  },
+  "src/agent_hub/invites/orgs.py": {
+   "MAX_LISTED": "page"
+  },
+  "src/agent_hub/log/entries.py": {
+   "MAX_EPOCH": "integer",
+   "MAX_GEN": "integer"
+  },
+  "src/agent_hub/log/events.py": {
+   "SIZE_LIMITS": "size"
+  },
+  "src/agent_hub/me/routes.py": {
+   "MAX_HOLDERS": "time"
+  },
+  "src/agent_hub/monitoring/read.py": {
+   "MAX_POINTS": "page",
+   "SESSIONS_MAX": "page"
+  },
+  "src/agent_hub/notifications/pings.py": {
+   "STATE_LIMIT": "page"
+  },
+  "src/agent_hub/notifications/routes.py": {
+   "LIST_MAX": "page"
+  },
+  "src/agent_hub/operations/jobs.py": {
+   "ACCEPTED_LIMIT": "page",
+   "RECEIVED_LIMIT": "page"
+  },
+  "src/agent_hub/operations/read.py": {
+   "LIST_MAX": "page",
+   "TRANSITIONS_MAX": "page"
+  },
+  "src/agent_hub/orgs/admit.py": {
+   "MAX_DETAIL_DEVICES": "answer"
+  },
+  "src/agent_hub/orgs/routes.py": {
+   "LOG_PAGE_MAX": "time"
+  },
+  "src/agent_hub/outbox/bodies.py": {
+   "MAX_INT4": "integer",
+   "MAX_ITEMS": "page",
+   "disk_limit_bytes": "size",
+   "limited": "page",
+   "limited_at": "time",
+   "mem_limit_bytes": "size"
+  },
+  "src/agent_hub/outbox/pacing.py": {
+   "MAX_DEVICES": "answer"
+  },
+  "src/agent_hub/platform/cli.py": {
+   "MAX_ATTEMPTS": "retry"
+  },
+  "src/agent_hub/platform/enrollments.py": {
+   "MAX_ENROLLMENTS": "open"
+  },
+  "src/agent_hub/platform/invites.py": {
+   "MAX_LISTED": "page"
+  },
+  "src/agent_hub/platform/log.py": {
+   "MAX_DETAIL_DEVICES": "answer"
+  },
+  "src/agent_hub/platform/routes.py": {
+   "DEFAULT_LOG_LIMIT": "page",
+   "MAX_LOG_ENTRIES": "page"
+  },
+  "src/agent_hub/requests/store.py": {
+   "MAX_ENVELOPE_CT_CHARS": "size",
+   "MAX_RESPONSES": "answer"
+  },
+  "src/agent_hub/scheduler/core.py": {
+   "MAX_COUNT": "integer"
+  },
+  "src/agent_hub/scheduler/waiting.py": {
+   "WAITING_MAX": "time"
+  },
+  "src/agent_hub/stream/browser.py": {
+   "LIMITER": "page",
+   "limit": "page"
+  },
+  "src/agent_hub/stream/bus.py": {
+   "NOTIFY_LIMIT": "page",
+   "RECONNECT_MAX_SECONDS": "time"
+  },
+  "src/agent_hub/stream/sse.py": {
+   "KBPS_MAX": "rate",
+   "MAX_BROWSERS": "open",
+   "MAX_CURSORS": "open",
+   "MAX_TERMINALS": "open",
+   "REPLAY_LIMIT": "page",
+   "byte_limit": "size"
+  },
+  "src/agent_hub/stream/ws.py": {
+   "MAX_FRAME_BYTES": "size",
+   "MAX_LIST_ITEMS": "page",
+   "MAX_SAFE_INTEGER": "integer"
+  },
+  "src/agent_hub/tasks/queue.py": {
+   "QUEUE_MAX": "open",
+   "WITHDRAWALS_MAX": "open"
+  },
+  "src/agent_hub/tasks/read.py": {
+   "CHILDREN_MAX": "page",
+   "LIST_MAX": "page",
+   "SESSIONS_MAX": "open"
+  },
+  "src/agent_hub/telemetry/cli.py": {
+   "MAX_DAYS": "time"
+  },
+  "src/agent_hub/telemetry/routes.py": {
+   "MAX_SAFE": "integer",
+   "max_bucket": "page"
+  },
+  "src/agent_hub/telemetry/store.py": {
+   "ROWS_MAX": "page",
+   "max_bucket": "page"
+  },
+  "src/agent_hub/telemetry/views.py": {
+   "LIMITS": "page"
+  },
+  "src/agent_hub/users/identity.py": {
+   "MAX_INVITEES": "open"
+  },
+  "src/agent_hub/whiteboards/read.py": {
+   "HISTORY_MAX": "page",
+   "LIST_MAX": "page",
+   "MAX_SEQ": "integer"
+  },
+  "src/agent_hub/workgroups/read.py": {
+   "DEVICES_MAX": "page"
+  },
+  "src/agent_hub/wraps/routes.py": {
+   "MAX_EPOCH": "integer"
+  },
+  "src/agent_runner/billing/meter.py": {
+   "MAX_ITEM_MS": "time"
+  },
+  "src/agent_runner/catchup/plan.py": {
+   "MAX_WRAPS": "answer"
+  },
+  "src/agent_runner/config.py": {
+   "DEFAULT_DFX_KEY_MAX_HEADROOM_MICRO_USD": "integer",
+   "_MAX_DFX_KEY_HEADROOM_MICRO_USD": "integer",
+   "browser_live_max_kbps": "rate",
+   "dfx_key_max_headroom_micro_usd": "integer",
+   "dfx_key_max_per_org": "setting",
+   "log_max_mib": "size",
+   "max_vms": "setting",
+   "workvm_max_per_org": "setting",
+   "workvm_max_per_owner": "setting",
+   "workvm_max_per_task": "setting",
+   "workvm_max_size": "setting"
+  },
+  "src/agent_runner/contexts/archive.py": {
+   "CONTEXT_JSON_MAX": "size",
+   "MAX_ENTRIES": "answer",
+   "max_version": "integer"
+  },
+  "src/agent_runner/contexts/checkpoint.py": {
+   "MAX_ATTEMPTS": "retry"
+  },
+  "src/agent_runner/credentials/acting.py": {
+   "MAX_ACCOUNT_ID": "integer"
+  },
+  "src/agent_runner/crypto/agent.py": {
+   "LABEL_TEXT_MAX": "size",
+   "MAX_GEN": "integer",
+   "MESSAGE_TEXT_MAX": "size"
+  },
+  "src/agent_runner/crypto/browserframe.py": {
+   "FRAME_CT_MAX": "size",
+   "MAX_EPOCH": "integer",
+   "MAX_SEQ": "integer"
+  },
+  "src/agent_runner/crypto/context.py": {
+   "MAX_CHUNKS": "page",
+   "MAX_EPOCH": "integer"
+  },
+  "src/agent_runner/crypto/credential.py": {
+   "MAX_CT_BYTES": "size"
+  },
+  "src/agent_runner/crypto/encoding.py": {
+   "MAX_SAFE_INTEGER": "integer"
+  },
+  "src/agent_runner/crypto/event.py": {
+   "MAX_CT_BYTES": "size",
+   "MAX_TERMINAL_CT_BYTES": "size"
+  },
+  "src/agent_runner/crypto/fields.py": {
+   "KIND_MAX": "size"
+  },
+  "src/agent_runner/crypto/ids.py": {
+   "_MAX_MS": "time"
+  },
+  "src/agent_runner/crypto/log/entries.py": {
+   "MAX_EPOCH": "integer",
+   "MAX_GEN": "integer"
+  },
+  "src/agent_runner/crypto/log/events.py": {
+   "SIZE_LIMITS": "size"
+  },
+  "src/agent_runner/crypto/request.py": {
+   "MAX_CT_BYTES": "size"
+  },
+  "src/agent_runner/crypto/runlog.py": {
+   "MAX_BYTES": "size",
+   "MAX_CHUNKS": "page",
+   "MAX_EPOCH": "integer"
+  },
+  "src/agent_runner/crypto/signed.py": {
+   "max_ct": "size"
+  },
+  "src/agent_runner/crypto/storage.py": {
+   "MAX_BIGINT": "integer",
+   "MAX_CONTEXT": "size"
+  },
+  "src/agent_runner/dfxkeys/issuer.py": {
+   "DEFAULT_MAX_PER_ORG": "setting",
+   "MAX_LOGGED": "page",
+   "max_per_org": "setting"
+  },
+  "src/agent_runner/dfxkeys/openrouter.py": {
+   "MAX_PAGES": "time",
+   "limit_micro": "integer"
+  },
+  "src/agent_runner/doctor/checks.py": {
+   "MAX_SKEW_S": "time"
+  },
+  "src/agent_runner/enroll/cli.py": {
+   "CODE_FILE_MAX": "size"
+  },
+  "src/agent_runner/enroll/org.py": {
+   "MAX_LOOKUP_BYTES": "size",
+   "MAX_PAGES": "time",
+   "PAGE_LIMIT": "time"
+  },
+  "src/agent_runner/enroll/platform.py": {
+   "MAX_CONFIG_BYTES": "size"
+  },
+  "src/agent_runner/github/checkout.py": {
+   "ARCHIVE_LIMIT": "page",
+   "CONTENT_LIMITS": "size"
+  },
+  "src/agent_runner/github/client.py": {
+   "MAX_BODY_BYTES": "size",
+   "RATE_WAIT_MAX_S": "time",
+   "RETRY_AFTER_MAX_S": "time"
+  },
+  "src/agent_runner/github/commit.py": {
+   "MAX_CHANGES": "answer",
+   "MAX_FILE": "size",
+   "MAX_TOTAL": "answer"
+  },
+  "src/agent_runner/github/device_flow.py": {
+   "MAX_EXPIRES": "integer",
+   "MAX_INTERVAL": "time",
+   "MAX_SCOPES": "answer",
+   "UNREACHABLE_LIMIT": "page"
+  },
+  "src/agent_runner/github/issues.py": {
+   "MAX_ASSIGNEES": "answer",
+   "MAX_COUNT": "integer",
+   "MAX_LABELS": "answer"
+  },
+  "src/agent_runner/github/listing.py": {
+   "MAX_ENTRIES": "page"
+  },
+  "src/agent_runner/github/merge3.py": {
+   "TEXT_LIMIT": "size"
+  },
+  "src/agent_runner/github/merge_base.py": {
+   "MAX_BLOB_READS": "answer",
+   "MAX_CONFLICTS_LISTED": "page",
+   "MAX_PATHS_NAMED": "size"
+  },
+  "src/agent_runner/github/merge_commit.py": {
+   "MAX_NAMED": "answer"
+  },
+  "src/agent_runner/github/operator.py": {
+   "MAX_BYTES": "size"
+  },
+  "src/agent_runner/github/ops.py": {
+   "MAX_GITHUB_ID": "integer",
+   "MAX_NUMBER": "integer"
+  },
+  "src/agent_runner/github/pages.py": {
+   "MAX_PAGE": "time"
+  },
+  "src/agent_runner/github/pull_list.py": {
+   "MAX_PULLS": "page"
+  },
+  "src/agent_runner/github/pull_status.py": {
+   "MAX_PULLS": "page",
+   "TITLE_MAX": "size"
+  },
+  "src/agent_runner/github/pulls.py": {
+   "MAX_COMMENTS": "page",
+   "MAX_FILES": "page",
+   "MAX_TEXT": "size",
+   "MAX_TITLE": "size",
+   "PATCH_LIMIT": "page"
+  },
+  "src/agent_runner/github/repos.py": {
+   "MAX_REPOSITORIES": "page"
+  },
+  "src/agent_runner/github/snapshot.py": {
+   "MAX_EXPORT_BYTES": "size",
+   "MAX_FILES": "answer",
+   "MAX_FILE_BYTES": "size",
+   "MAX_MANIFEST_BYTES": "size",
+   "SCRATCH_MAX_AGE_S": "time"
+  },
+  "src/agent_runner/github/tarsafe.py": {
+   "MAX_HEADER": "size",
+   "max_bytes": "size",
+   "max_entries": "answer"
+  },
+  "src/agent_runner/guestlink/client.py": {
+   "DEFAULT_JOURNAL_LIMIT": "page",
+   "JOURNAL_WAIT_MAX_S": "time"
+  },
+  "src/agent_runner/inbox/pull.py": {
+   "MAX_ROUNDS": "answer",
+   "MAX_SEEN": "answer",
+   "PAGE_LIMIT": "time"
+  },
+  "src/agent_runner/install/build.py": {
+   "MAX_INPUT": "size"
+  },
+  "src/agent_runner/install/hosttools.py": {
+   "MAX_TARBALL": "size"
+  },
+  "src/agent_runner/install/release.py": {
+   "FEED_MAX_DAYS": "time",
+   "MAX_DOCUMENT": "size"
+  },
+  "src/agent_runner/install/root.py": {
+   "MAX_REQUEST": "size"
+  },
+  "src/agent_runner/install/update.py": {
+   "MAX_ATTEMPTS": "retry",
+   "MAX_FEED": "size",
+   "MAX_PACKAGE": "time"
+  },
+  "src/agent_runner/login/automation.py": {
+   "MAX_EMAIL": "size"
+  },
+  "src/agent_runner/login/capture.py": {
+   "MAX_URL": "size"
+  },
+  "src/agent_runner/login/pty.py": {
+   "MAX_OUTPUT": "size"
+  },
+  "src/agent_runner/login/screen.py": {
+   "MAX_PARAM": "size",
+   "MAX_PARAMS_TEXT": "size"
+  },
+  "src/agent_runner/metrics/outbox.py": {
+   "BACKLOG_LIMIT": "page",
+   "MAX_AGE_S": "time",
+   "MAX_SAMPLES": "page"
+  },
+  "src/agent_runner/metrics/parsers.py": {
+   "MAX_COUNT": "integer"
+  },
+  "src/agent_runner/metrics/snapshot.py": {
+   "disk_limit_bytes": "size",
+   "memory_limit_bytes": "size"
+  },
+  "src/agent_runner/metrics/workvm.py": {
+   "disk_limit_bytes": "size",
+   "memory_limit_bytes": "size"
+  },
+  "src/agent_runner/model/catalog.py": {
+   "MAX_PRICE": "integer",
+   "max_output": "size"
+  },
+  "src/agent_runner/model/dfxkey.py": {
+   "MAX_ENVELOPE": "size",
+   "MAX_KEY_BYTES": "size"
+  },
+  "src/agent_runner/model/exhaustion.py": {
+   "LIMITED": "page"
+  },
+  "src/agent_runner/model/limits.py": {
+   "limited_at": "time"
+  },
+  "src/agent_runner/model/operator.py": {
+   "LIMITED": "page",
+   "LIMIT_S": "time",
+   "MAX_BYTES": "size"
+  },
+  "src/agent_runner/model/provision.py": {
+   "MAX_KEY_BYTES": "size"
+  },
+  "src/agent_runner/model/uncounted.py": {
+   "MAX_ITEMS": "page"
+  },
+  "src/agent_runner/operations/checks.py": {
+   "ISSUE_TITLE_MAX": "size",
+   "MAX_CO_AUTHORS": "answer",
+   "MAX_DECISIONS": "answer",
+   "MAX_LABELS": "answer",
+   "MAX_NUMBER": "integer",
+   "MAX_PAGE": "time",
+   "MAX_PER_PAGE": "time",
+   "MAX_POINTERS": "answer"
+  },
+  "src/agent_runner/operations/journal.py": {
+   "MAX_DEPTH": "structure"
+  },
+  "src/agent_runner/operations/pipeline.py": {
+   "HOLD_MAX": "time",
+   "RETRY_AFTER_MAX_S": "time"
+  },
+  "src/agent_runner/operations/register.py": {
+   "TYPE_MAX": "size"
+  },
+  "src/agent_runner/operations/rules.py": {
+   "BRANCH_MAX": "size",
+   "CHECKOUT_LIMITS": "size",
+   "COMMENT_LIMITS": "size",
+   "COMMIT_LIMITS": "size",
+   "PATH_MAX": "size",
+   "PULL_REQUEST_LIMITS": "size",
+   "QUESTION_LIMITS": "size",
+   "SUBAGENT_LIMITS": "time",
+   "TITLE_LIMITS": "size"
+  },
+  "src/agent_runner/operations/settings.py": {
+   "MAX_PATTERNS": "open",
+   "MAX_REPOSITORIES": "open"
+  },
+  "src/agent_runner/orgs/book.py": {
+   "MAX_REFUSED": "answer"
+  },
+  "src/agent_runner/prompts/deliver.py": {
+   "BACKOFF_MAX_S": "time"
+  },
+  "src/agent_runner/prompts/resume.py": {
+   "MAX_ATTEMPTS": "retry"
+  },
+  "src/agent_runner/prompts/speaker.py": {
+   "MAX_LENGTH": "size",
+   "NAME_MAX": "size"
+  },
+  "src/agent_runner/queries/common.py": {
+   "NAME_MAX": "size"
+  },
+  "src/agent_runner/queries/projection.py": {
+   "MAX_ENTRIES": "page"
+  },
+  "src/agent_runner/queries/tools/get_operation.py": {
+   "MAX_WAIT_S": "time"
+  },
+  "src/agent_runner/queries/tools/get_task_messages.py": {
+   "MAX_SEQ": "integer"
+  },
+  "src/agent_runner/queries/tools/list_tasks.py": {
+   "TITLE_MAX": "size"
+  },
+  "src/agent_runner/quota/operator.py": {
+   "MAX_FILES": "answer",
+   "MAX_WINDOWS": "page"
+  },
+  "src/agent_runner/quota/parsers.py": {
+   "MAX_PERCENT": "integer",
+   "MAX_WINDOWS": "page"
+  },
+  "src/agent_runner/quota/subscription.py": {
+   "MAX_RETRY_AFTER_S": "time",
+   "RATE_LIMIT_MIN_S": "time"
+  },
+  "src/agent_runner/reconcile/logs.py": {
+   "MAX_PAGES": "time",
+   "PAGE_LIMIT": "time"
+  },
+  "src/agent_runner/reconcile/wire.py": {
+   "MAX_SEQ": "integer"
+  },
+  "src/agent_runner/requests/service.py": {
+   "MAX_WAITING": "time",
+   "MISSING_LIMIT": "page"
+  },
+  "src/agent_runner/session_api/journal.py": {
+   "MAX_COUNT": "integer"
+  },
+  "src/agent_runner/sessions/clip.py": {
+   "MAX_BODY": "size"
+  },
+  "src/agent_runner/sessions/consume.py": {
+   "MAX_SEQ": "integer"
+  },
+  "src/agent_runner/sessions/harness.py": {
+   "MAIN_LIMITS": "size",
+   "memory_max": "resource",
+   "runtime_max_sec": "time",
+   "tasks_max": "resource"
+  },
+  "src/agent_runner/sessions/journal.py": {
+   "MAX_COUNT": "integer"
+  },
+  "src/agent_runner/sessions/service.py": {
+   "BACKOFF_MAX_S": "time"
+  },
+  "src/agent_runner/store/pool.py": {
+   "MAX_SIZE": "size"
+  },
+  "src/agent_runner/subagents/controller.py": {
+   "MAX_READS_PER_SESSION": "rate",
+   "MAX_WAIT_S": "time",
+   "SETTLE_MAX_S": "time"
+  },
+  "src/agent_runner/subagents/limits.py": {
+   "OLD_GUEST_MAX_DEPTH": "compat",
+   "OLD_GUEST_MAX_PARALLEL": "compat",
+   "OLD_GUEST_MAX_TOTAL": "compat",
+   "max_depth": "setting",
+   "max_running": "setting",
+   "max_runtime_seconds": "setting",
+   "max_total": "setting"
+  },
+  "src/agent_runner/subagents/rules.py": {
+   "FINAL_TEXT_MAX_BYTES": "size"
+  },
+  "src/agent_runner/supervisor.py": {
+   "RESTART_LIMIT": "page",
+   "restart_limit": "rate"
+  },
+  "src/agent_runner/sync/backoff.py": {
+   "MAX_DOUBLINGS": "rate"
+  },
+  "src/agent_runner/sync/hints.py": {
+   "MAX_SKEW_S": "time"
+  },
+  "src/agent_runner/sync/http.py": {
+   "MAX_CONNECTIONS": "rate",
+   "MAX_IDLE_CONNECTIONS": "rate",
+   "MAX_RESPONSE_BYTES": "size",
+   "RETRY_AFTER_MAX_S": "time"
+  },
+  "src/agent_runner/sync/push.py": {
+   "HEDGE_MAX_BYTES": "size",
+   "MAX_BATCH_BYTES": "size",
+   "MAX_ITEMS": "page"
+  },
+  "src/agent_runner/sync/seal.py": {
+   "MAX_COUNT": "integer",
+   "MAX_TERMINAL_BODY": "size",
+   "MAX_TERMINAL_DATA": "size",
+   "MAX_TERMINAL_FRAMES": "size"
+  },
+  "src/agent_runner/sync/ws.py": {
+   "MAX_FRAME_BYTES": "size",
+   "MAX_LIST_ITEMS": "page"
+  },
+  "src/agent_runner/vm/cli.py": {
+   "MAX_PORT": "integer"
+  },
+  "src/agent_runner/vm/golden.py": {
+   "MAX_SUFFIX": "size"
+  },
+  "src/agent_runner/vm/lifecycle.py": {
+   "UNHEALTHY_LIMIT": "page"
+  },
+  "src/agent_runner/vm/lima.py": {
+   "DETAIL_LIMIT": "page",
+   "_MAX_NAME": "size"
+  },
+  "src/agent_runner/vm/pool.py": {
+   "MAX_PARALLEL_FILLS": "rate",
+   "max_vms": "setting"
+  },
+  "src/agent_runner/workvm/accounts.py": {
+   "MAX_SLOTS": "open",
+   "_MAX_ID": "integer",
+   "_MAX_PORT": "integer"
+  },
+  "src/agent_runner/workvm/browser.py": {
+   "ACTION_LIMIT": "page",
+   "EVENT_TEXT_LIMIT": "size"
+  },
+  "src/agent_runner/workvm/browser_helper.py": {
+   "ANSWER_LIMIT": "page",
+   "ERROR_LIMIT": "page",
+   "FRAME_LIMIT": "size",
+   "HEADER_LIMIT": "page",
+   "MAX_SAFE": "integer",
+   "MAX_TABS": "open",
+   "NOTICE_LIMIT": "page",
+   "RESULT_LIMIT": "page",
+   "SNAPSHOT_LIMIT": "page",
+   "TITLE_LIMIT": "page",
+   "URL_LIMIT": "page"
+  },
+  "src/agent_runner/workvm/browser_live.py": {
+   "MAX_FPS": "rate"
+  },
+  "src/agent_runner/workvm/firewall.py": {
+   "MAX_SLOTS": "open",
+   "_MAX_MBIT": "integer",
+   "_MAX_PORT": "integer",
+   "_MAX_UID": "integer"
+  },
+  "src/agent_runner/workvm/jobs.py": {
+   "HEADER_LIMIT": "page",
+   "LIST_LIMIT": "page",
+   "MAX_SAFE": "integer",
+   "OUTPUT_LIMIT": "size"
+  },
+  "src/agent_runner/workvm/journal.py": {
+   "MAX_CALLS_PER_SESSION": "rate",
+   "MAX_SAFE": "integer"
+  },
+  "src/agent_runner/workvm/manager.py": {
+   "GUEST_MAX": "compat",
+   "LIMA_REASON_LIMIT": "page",
+   "RUN_COMMAND_LIMIT": "page",
+   "RUN_OUTPUT_LIMIT": "size",
+   "SYNC_LIMIT": "page",
+   "max_per_org": "setting",
+   "max_per_owner": "setting",
+   "max_per_task": "setting",
+   "max_size": "setting"
+  },
+  "src/agent_runner/workvm/sync.py": {
+   "MAX_BYTES": "size",
+   "MAX_ENTRIES": "answer",
+   "MAX_MANIFEST_BYTES": "size",
+   "MAX_PATH": "size"
+  }
+ },
+ "slices": {
+  "src/agent_guest/apisock.py": {
+   "list(detail)[:32]": "answer"
+  },
+  "src/agent_guest/routing.py": {
+   "error.detail[:32]": "answer"
+  },
+  "src/agent_guest/transcript.py": {
+   "_UNSAFE_RE.sub('_', raw)[:120]": "size"
+  },
+  "src/agent_hub/agents/store.py": {
+   "address[:64]": "size"
+  },
+  "src/agent_hub/agents/vectors.py": {
+   "sealed[:40]": "size"
+  },
+  "src/agent_hub/audit/placement.py": {
+   "(id_kind if name == 'id' else name).replace('.', '_')[:32]": "size"
+  },
+  "src/agent_hub/auth/ceremonies.py": {
+   "hashlib.sha256(credential_id).hexdigest()[:32]": "size"
+  },
+  "src/agent_hub/crypto/keys.py": {
+   "public_key[:31]": "size"
+  },
+  "src/agent_hub/crypto/vectors.py": {
+   "_b(bob['wrap'])[:47]": "size",
+   "ed_sig[:32]": "size",
+   "ed_sig[:63]": "size",
+   "prf[:31]": "size",
+   "salt[:31]": "size",
+   "sealed[:20]": "size",
+   "sealed[:32]": "size"
+  },
+  "src/agent_hub/http/readlog.py": {
+   "hashlib.sha256(urlencode(pairs).encode('latin-1')).hexdigest()[:32]": "size"
+  },
+  "src/agent_hub/http/writelog.py": {
+   "route[:256]": "size"
+  },
+  "src/agent_hub/log/vectors.py": {
+   "main.entries[:20]": "integer"
+  },
+  "src/agent_runner/crypto/agents/vectors.py": {
+   "sealed[:40]": "size"
+  },
+  "src/agent_runner/crypto/keys.py": {
+   "public_key[:31]": "size"
+  },
+  "src/agent_runner/crypto/log/vectors.py": {
+   "main.entries[:20]": "integer"
+  },
+  "src/agent_runner/crypto/vectors.py": {
+   "_b(bob['wrap'])[:47]": "size",
+   "ed_sig[:32]": "size",
+   "ed_sig[:63]": "size",
+   "prf[:31]": "size",
+   "salt[:31]": "size",
+   "sealed[:20]": "size",
+   "sealed[:32]": "size"
+  },
+  "src/agent_runner/github/reach.py": {
+   "f'{TOKEN_NAME} {owner}'[:40]": "size",
+   "text[:1024]": "size"
+  },
+  "src/agent_runner/operations/extensions.py": {
+   "self.pointers[:32]": "answer"
+  },
+  "src/agent_runner/operations/journal.py": {
+   "pointers[:32]": "answer"
+  },
+  "src/agent_runner/operations/pipeline.py": {
+   "f\"{text} {error['message']}\"[:1024]": "size",
+   "pointers[:32]": "answer"
+  },
+  "src/agent_runner/quota/parsers.py": {
+   "_MODEL_CHAR_RE.sub('_', value.strip())[:64]": "size"
+  },
+  "src/agent_runner/workvm/browser.py": {
+   "said.strip()[:160]": "size"
+  },
+  "src/agent_runner/workvm/jobs.py": {
+   "text(command.encode('utf-8', errors='replace'))[:256]": "size"
+  },
+  "src/agent_runner/workvm/manager.py": {
+   "str(answer.get('final_url', ''))[:8192]": "size",
+   "str(answer.get('title', ''))[:1024]": "size"
+  }
+ },
+ "sql": {},
+ "contracts": {
+  "contracts/api/agent-claim.response.json": {
+   "/properties/gen/maximum": "integer",
+   "/properties/migrate_gen/maximum": "integer"
+  },
+  "contracts/api/agent-identity.request.json": {
+   "/properties/batches/items/properties/entries/maxItems": "answer",
+   "/properties/batches/items/properties/wraps/maxItems": "answer",
+   "/properties/batches/maxItems": "answer",
+   "/properties/cred_wraps/maxItems": "answer",
+   "/properties/gen/maximum": "integer"
+  },
+  "contracts/api/agent-identity.response.json": {
+   "/properties/gen/maximum": "integer"
+  },
+  "contracts/api/agent-me.response.json": {
+   "/properties/gen/maximum": "integer",
+   "/properties/migrate_gen/maximum": "integer"
+  },
+  "contracts/api/agent-pairings-get.response.json": {
+   "/properties/gen/maximum": "integer"
+  },
+  "contracts/api/community-messages-list.response.json": {
+   "/properties/authors/additionalProperties/properties/agent/properties/gen/maximum": "integer",
+   "/properties/messages/maxItems": "answer"
+  },
+  "contracts/api/community-requests-list.response.json": {
+   "/properties/requests/maxItems": "answer"
+  },
+  "contracts/api/community-requests-wraps.request.json": {
+   "/properties/wraps/maxItems": "answer"
+  },
+  "contracts/api/config.response.json": {
+   "/properties/models/properties/api_key/maxItems": "answer",
+   "/properties/models/properties/platform/maxItems": "answer",
+   "/properties/models/properties/subscription/maxItems": "answer"
+  },
+  "contracts/api/device-browser-live.response.json": {
+   "/properties/kbps/maximum": "size"
+  },
+  "contracts/api/device-github-identities-list.response.json": {
+   "/properties/identities/maxItems": "open"
+  },
+  "contracts/api/device-logs.response.json": {
+   "/properties/entries/maxItems": "answer"
+  },
+  "contracts/api/device-outbox.request.json": {
+   "/properties/items/maxItems": "answer"
+  },
+  "contracts/api/device-outbox.response.json": {
+   "/properties/results/maxItems": "answer"
+  },
+  "contracts/api/device-platform-log.response.json": {
+   "/properties/entries/maxItems": "answer"
+  },
+  "contracts/api/device-pull.request.json": {
+   "/properties/cursor/maxItems": "answer"
+  },
+  "contracts/api/device-pull.response.json": {
+   "/properties/events/maxItems": "answer"
+  },
+  "contracts/api/device-state.response.json": {
+   "/oneOf/1/properties/assigned/maxItems": "answer",
+   "/oneOf/1/properties/credentials_changed/maxItems": "answer",
+   "/oneOf/1/properties/delivered_prompt_event_ids/additionalProperties/maxItems": "answer",
+   "/oneOf/1/properties/dfx_key_held/maxItems": "answer",
+   "/oneOf/1/properties/dfx_keys/properties/keys/maxItems": "answer",
+   "/oneOf/1/properties/dfx_keys/properties/requests/maxItems": "answer",
+   "/oneOf/1/properties/github_defaults/maxItems": "answer",
+   "/oneOf/1/properties/orgs/maxItems": "answer",
+   "/oneOf/1/properties/pending_prompts/maxItems": "answer",
+   "/oneOf/1/properties/pings/maxItems": "answer",
+   "/oneOf/1/properties/prompt_queue/properties/via_agent/maxItems": "answer",
+   "/oneOf/1/properties/prompt_queue/properties/withdrawn/maxItems": "answer",
+   "/oneOf/1/properties/quota_poll_owners/maxItems": "answer",
+   "/oneOf/1/properties/requests/maxItems": "answer",
+   "/oneOf/1/properties/rotation_pending/maxItems": "answer",
+   "/oneOf/1/properties/sessions/maxItems": "answer"
+  },
+  "contracts/api/device-task-get.response.json": {
+   "/properties/operations/maxItems": "answer",
+   "/properties/sessions/maxItems": "answer"
+  },
+  "contracts/api/device-workgroup-tasks.response.json": {
+   "/properties/tasks/maxItems": "answer"
+  },
+  "contracts/api/device-wraps-get.response.json": {
+   "/properties/wraps/maxItems": "answer"
+  },
+  "contracts/api/device-wraps-post.request.json": {
+   "/properties/wraps/maxItems": "answer"
+  },
+  "contracts/api/events-post.request.json": {
+   "/properties/events/maxItems": "answer"
+  },
+  "contracts/api/events-post.response.json": {
+   "/properties/results/maxItems": "answer"
+  },
+  "contracts/api/github-identities-list.response.json": {
+   "/properties/defaults/maxItems": "answer",
+   "/properties/identities/maxItems": "open"
+  },
+  "contracts/api/github-identity-put.request.json": {
+   "/properties/key/properties/wraps/maxItems": "answer"
+  },
+  "contracts/api/invites-lookup.response.json": {
+   "/properties/log/maxItems": "answer"
+  },
+  "contracts/api/me-agents-confirm.request.json": {
+   "/properties/batches/items/properties/entries/maxItems": "answer",
+   "/properties/batches/items/properties/wraps/maxItems": "answer",
+   "/properties/batches/maxItems": "answer",
+   "/properties/cred_wraps/maxItems": "answer",
+   "/properties/gen/maximum": "integer"
+  },
+  "contracts/api/me-agents-list.response.json": {
+   "/properties/agents/items/properties/gen/anyOf/0/maximum": "integer",
+   "/properties/agents/maxItems": "answer"
+  },
+  "contracts/api/me-audit.response.json": {
+   "/properties/rows/maxItems": "answer"
+  },
+  "contracts/api/me-credentials-list.response.json": {
+   "/properties/credentials/maxItems": "answer"
+  },
+  "contracts/api/me-credentials-rotate.request.json": {
+   "/properties/records/maxItems": "answer",
+   "/properties/wraps/maxItems": "answer"
+  },
+  "contracts/api/me-devices.response.json": {
+   "/properties/devices/items/properties/features/maxItems": "answer",
+   "/properties/devices/items/properties/wg_ids/maxItems": "answer",
+   "/properties/devices/maxItems": "answer"
+  },
+  "contracts/api/me-invitees.response.json": {
+   "/properties/invitees/maxItems": "answer"
+  },
+  "contracts/api/me-quotas.response.json": {
+   "/properties/quotas/maxItems": "answer"
+  },
+  "contracts/api/me-recovery-begin.response.json": {
+   "/properties/options/properties/allowCredentials/maxItems": "answer"
+  },
+  "contracts/api/me.response.json": {
+   "/properties/cred_holders/properties/devices/maxItems": "answer",
+   "/properties/orgs/maxItems": "answer",
+   "/properties/passkeys/maxItems": "answer",
+   "/properties/platform_roles/maxItems": "answer"
+  },
+  "contracts/api/monitoring-overview.response.json": {
+   "/properties/devices/maxItems": "answer",
+   "/properties/sessions/maxItems": "answer",
+   "/properties/vms/maxItems": "answer",
+   "/properties/workvms/maxItems": "answer"
+  },
+  "contracts/api/monitoring-series.response.json": {
+   "/properties/points/items/maxItems": "answer",
+   "/properties/points/maxItems": "answer"
+  },
+  "contracts/api/notifications-list.response.json": {
+   "/properties/notifications/maxItems": "answer"
+  },
+  "contracts/api/notifications-read.request.json": {
+   "/oneOf/0/properties/ids/maxItems": "answer"
+  },
+  "contracts/api/objects.json": {
+   "/$defs/attestation_credential/properties/transports/maxItems": "answer",
+   "/$defs/creation_options/properties/excludeCredentials/items/properties/transports/maxItems": "answer",
+   "/$defs/creation_options/properties/excludeCredentials/maxItems": "answer",
+   "/$defs/creation_options/properties/pubKeyCredParams/maxItems": "answer",
+   "/$defs/device_ref/properties/vms/maxItems": "answer",
+   "/$defs/price_list_body/properties/runtime/properties/per_hour/properties/default/anyOf/0/maximum": "integer",
+   "/$defs/price_list_body/properties/runtime/properties/per_hour/properties/large/anyOf/0/maximum": "integer",
+   "/$defs/price_list_body/properties/runtime/properties/per_hour/properties/session/anyOf/0/maximum": "integer",
+   "/$defs/price_list_body/properties/runtime/properties/per_hour/properties/standard/anyOf/0/maximum": "integer",
+   "/$defs/price_list_body/properties/runtime/properties/per_hour/properties/xlarge/anyOf/0/maximum": "integer",
+   "/$defs/price_list_body/properties/tokens/properties/factors/properties/operator/anyOf/0/maximum": "integer",
+   "/$defs/price_list_body/properties/tokens/properties/factors/properties/platform/anyOf/0/maximum": "integer",
+   "/$defs/price_list_token_amount/anyOf/0/maximum": "integer"
+  },
+  "contracts/api/operation-get.response.json": {
+   "/properties/transitions/maxItems": "answer"
+  },
+  "contracts/api/org-audit.response.json": {
+   "/properties/rows/maxItems": "answer"
+  },
+  "contracts/api/org-billing.response.json": {
+   "/properties/balance_micro_usd/maximum": "integer",
+   "/properties/credits/items/properties/amount_micro_usd/maximum": "integer",
+   "/properties/credits/items/properties/balance_micro_usd/maximum": "integer",
+   "/properties/credits/maxItems": "answer",
+   "/properties/days/maxItems": "answer",
+   "/properties/people/maxItems": "answer",
+   "/properties/workgroups/maxItems": "answer"
+  },
+  "contracts/api/org-catch-up.response.json": {
+   "/properties/missing/maxItems": "answer"
+  },
+  "contracts/api/org-devices.response.json": {
+   "/properties/devices/items/properties/assigned_wgs/maxItems": "answer",
+   "/properties/devices/items/properties/vms/maxItems": "answer",
+   "/properties/devices/maxItems": "answer"
+  },
+  "contracts/api/org-get.response.json": {
+   "/properties/members/maxItems": "answer",
+   "/properties/rotation_pending/maxItems": "answer",
+   "/properties/workgroups/items/properties/devices/maxItems": "answer",
+   "/properties/workgroups/maxItems": "answer"
+  },
+  "contracts/api/org-invites-list.response.json": {
+   "/properties/invites/maxItems": "answer"
+  },
+  "contracts/api/org-log-append.request.json": {
+   "/properties/entries/maxItems": "answer",
+   "/properties/events/maxItems": "answer",
+   "/properties/wraps/maxItems": "answer"
+  },
+  "contracts/api/org-log-get.response.json": {
+   "/properties/entries/maxItems": "answer"
+  },
+  "contracts/api/org-quotas.response.json": {
+   "/properties/operator/properties/subscriptions/maxItems": "answer",
+   "/properties/own/properties/windows/maxItems": "answer"
+  },
+  "contracts/api/orgs-attention.response.json": {
+   "/properties/items/maxItems": "answer"
+  },
+  "contracts/api/orgs-create.request.json": {
+   "/properties/events/maxItems": "answer",
+   "/properties/wraps/maxItems": "answer"
+  },
+  "contracts/api/passkeys-login-begin.response.json": {
+   "/properties/options/properties/allowCredentials/maxItems": "answer"
+  },
+  "contracts/api/platform-enrollments.response.json": {
+   "/properties/enrollments/maxItems": "answer",
+   "/properties/log/maxItems": "answer"
+  },
+  "contracts/api/platform-invites-list.response.json": {
+   "/properties/invites/maxItems": "answer"
+  },
+  "contracts/api/platform-log-append.request.json": {
+   "/properties/entries/maxItems": "answer"
+  },
+  "contracts/api/platform-log-get.response.json": {
+   "/properties/entries/maxItems": "answer"
+  },
+  "contracts/api/platform-ui-health.response.json": {
+   "/properties/rows/items/properties/max_bucket/maximum": "integer",
+   "/properties/rows/items/properties/reports/maximum": "integer",
+   "/properties/rows/maxItems": "answer"
+  },
+  "contracts/api/platform-waiting.response.json": {
+   "/properties/waiting/maxItems": "answer"
+  },
+  "contracts/api/requests-get.response.json": {
+   "/properties/responses/maxItems": "answer"
+  },
+  "contracts/api/scope-events-get.response.json": {
+   "/properties/events/maxItems": "answer"
+  },
+  "contracts/api/session-get.response.json": {
+   "/properties/children/maxItems": "page",
+   "/properties/transitions/maxItems": "answer"
+  },
+  "contracts/api/task-charges.response.json": {
+   "/properties/people/maxItems": "answer",
+   "/properties/sessions/maxItems": "answer"
+  },
+  "contracts/api/task-contexts.response.json": {
+   "/properties/contexts/items/properties/chunks/maximum": "integer",
+   "/properties/contexts/maxItems": "answer"
+  },
+  "contracts/api/task-get.response.json": {
+   "/properties/sessions/items/properties/transitions/maxItems": "answer",
+   "/properties/sessions/maxItems": "open",
+   "/properties/transitions/maxItems": "answer"
+  },
+  "contracts/api/task-operations.response.json": {
+   "/properties/operations/maxItems": "answer"
+  },
+  "contracts/api/task-queue.response.json": {
+   "/properties/prompts/maxItems": "answer",
+   "/properties/withdrawals/maxItems": "answer"
+  },
+  "contracts/api/tasks-create.request.json": {
+   "/properties/events/maxItems": "answer"
+  },
+  "contracts/api/tasks-create.response.json": {
+   "/properties/events/maxItems": "answer"
+  },
+  "contracts/api/telemetry-ui.request.json": {
+   "/$defs/view_counts/properties/blocked_ms/maximum": "integer",
+   "/$defs/view_counts/properties/count/maximum": "integer",
+   "/$defs/view_counts/properties/max_bucket/maximum": "integer"
+  },
+  "contracts/api/whiteboard-history.response.json": {
+   "/oneOf/0/properties/events/maxItems": "answer",
+   "/oneOf/1/properties/events/maxItems": "answer"
+  },
+  "contracts/api/whiteboards-list.response.json": {
+   "/properties/entries/maxItems": "answer"
+  },
+  "contracts/api/workgroup-charges.response.json": {
+   "/properties/tasks/maxItems": "answer"
+  },
+  "contracts/api/workgroup-device-candidates.response.json": {
+   "/properties/candidates/maxItems": "answer"
+  },
+  "contracts/api/workgroup-get.response.json": {
+   "/properties/devices/maxItems": "answer",
+   "/properties/members/maxItems": "answer"
+  },
+  "contracts/api/workgroup-pr-links.response.json": {
+   "/properties/items/maxItems": "answer"
+  },
+  "contracts/api/workgroup-tasks.response.json": {
+   "/properties/tasks/maxItems": "answer"
+  },
+  "contracts/api/wraps-get.response.json": {
+   "/properties/wraps/maxItems": "answer"
+  },
+  "contracts/api/wraps-post.request.json": {
+   "/properties/wraps/maxItems": "answer"
+  },
+  "contracts/audit/agent.identity.json": {
+   "/properties/gen/maximum": "integer"
+  },
+  "contracts/audit/billing.export.json": {
+   "/properties/rows/maximum": "integer"
+  },
+  "contracts/audit/billing.fx_set.json": {
+   "/properties/chf_per_usd_e8/maximum": "integer"
+  },
+  "contracts/audit/community.delete.json": {
+   "/properties/seq/maximum": "integer"
+  },
+  "contracts/audit/community.key_create.json": {
+   "/properties/epoch/maximum": "integer"
+  },
+  "contracts/audit/community.key_wrap.json": {
+   "/properties/epoch/maximum": "integer"
+  },
+  "contracts/audit/community.post.json": {
+   "/properties/ct_bytes/maximum": "size",
+   "/properties/seq/maximum": "integer"
+  },
+  "contracts/audit/credit.changed.json": {
+   "/properties/amount_micro_usd/maximum": "integer",
+   "/properties/balance_micro_usd/maximum": "integer"
+  },
+  "contracts/audit/hook.denied.json": {
+   "/properties/rule/maximum": "integer"
+  },
+  "contracts/audit/request.refused.json": {
+   "/properties/status/maximum": "integer"
+  },
+  "contracts/audit/request.write.json": {
+   "/properties/status/maximum": "integer"
+  },
+  "contracts/audit/runner.alert.json": {
+   "/properties/value/anyOf/0/maximum": "integer"
+  },
+  "contracts/audit/session.context_refused.json": {
+   "/properties/limit/maximum": "integer",
+   "/properties/requested/maximum": "integer",
+   "/properties/used/maximum": "integer"
+  },
+  "contracts/audit/session.context_saved.json": {
+   "/properties/chunks/maximum": "integer",
+   "/properties/pruned/maximum": "integer",
+   "/properties/size/maximum": "integer"
+  },
+  "contracts/audit/session.pr_linked.json": {
+   "/properties/epoch/maximum": "integer"
+  },
+  "contracts/common.json": {
+   "/$defs/agent_gen/maximum": "integer",
+   "/$defs/context_manifest/properties/chunks/maximum": "integer",
+   "/$defs/context_manifest/properties/size/maximum": "integer",
+   "/$defs/count/maximum": "integer",
+   "/$defs/epoch/maximum": "integer",
+   "/$defs/error/properties/detail/properties/devices/maxItems": "answer",
+   "/$defs/error/properties/detail/properties/orgs/maxItems": "answer",
+   "/$defs/error/properties/detail/properties/pointers/maxItems": "answer",
+   "/$defs/log_manifest/properties/bytes/maximum": "integer",
+   "/$defs/log_manifest/properties/chunks/maximum": "integer",
+   "/$defs/log_manifest/properties/size/maximum": "integer",
+   "/$defs/log_manifest/properties/stored/maximum": "integer",
+   "/$defs/positive/maximum": "integer",
+   "/$defs/seq/maximum": "integer"
+  },
+  "contracts/credentials/github.json": {
+   "/properties/scopes/maxItems": "answer"
+  },
+  "contracts/credentials/mailbox.json": {
+   "/properties/imap_port/maximum": "integer"
+  },
+  "contracts/events/objects.json": {
+   "/$defs/body_browser_action/properties/image/anyOf/0/properties/height/maximum": "size",
+   "/$defs/body_browser_action/properties/image/anyOf/0/properties/width/maximum": "size",
+   "/$defs/body_browser_action/properties/tab/maximum": "integer",
+   "/$defs/body_browser_state/properties/idle_seconds/maximum": "time",
+   "/$defs/body_prompt/properties/attachments/maxItems": "answer",
+   "/$defs/body_settings_workgroup/properties/protected_branches/maxItems": "open",
+   "/$defs/body_settings_workgroup/properties/repositories/maxItems": "open",
+   "/$defs/body_test_run/properties/exit_code/anyOf/0/maximum": "integer",
+   "/$defs/body_workvm_run/properties/exit_code/anyOf/0/maximum": "integer",
+   "/$defs/body_workvm_state/properties/cpus/maximum": "integer",
+   "/$defs/body_workvm_state/properties/disk_gib/maximum": "integer",
+   "/$defs/body_workvm_state/properties/memory_mib/maximum": "size"
+  },
+  "contracts/guest/error.response.json": {
+   "/properties/detail/properties/pointers/maxItems": "answer"
+  },
+  "contracts/guest/health.response.json": {
+   "/oneOf/0/properties/landlock_abi/maximum": "integer",
+   "/oneOf/1/properties/landlock_abi/maximum": "integer",
+   "/oneOf/2/properties/landlock_abi/maximum": "integer"
+  },
+  "contracts/guest/journal.response.json": {
+   "/properties/records/maxItems": "answer"
+  },
+  "contracts/guest/journal/record.json": {
+   "/$defs/body_session_file/oneOf/2/properties/paths/maxItems": "answer",
+   "/$defs/body_session_hook/properties/rule/maximum": "integer",
+   "/$defs/body_session_terminal/properties/cols/maximum": "integer",
+   "/$defs/body_session_terminal/properties/frames/items/items/anyOf/0/maximum": "integer",
+   "/$defs/body_session_terminal/properties/frames/items/maxItems": "answer",
+   "/$defs/body_session_terminal/properties/frames/maxItems": "answer",
+   "/$defs/body_session_terminal/properties/rows/maximum": "integer",
+   "/$defs/body_usage/properties/status/maximum": "integer"
+  },
+  "contracts/guest/session-context-export.response.json": {
+   "/properties/transcript_files/maxItems": "answer",
+   "/properties/v/maximum": "integer"
+  },
+  "contracts/guest/session-credential.request.json": {
+   "/properties/budget/properties/journal_through/maximum": "integer",
+   "/properties/extra_headers/maxItems": "answer",
+   "/properties/models_allowed/items/properties/context_window/maximum": "integer",
+   "/properties/models_allowed/maxItems": "answer",
+   "/properties/provider_allowlist/maxItems": "answer"
+  },
+  "contracts/guest/session-files-export.request.json": {
+   "/properties/paths/maxItems": "answer"
+  },
+  "contracts/guest/session-files-export.response.json": {
+   "/properties/files/maxItems": "answer",
+   "/properties/skipped/maxItems": "answer"
+  },
+  "contracts/guest/sessions-create.request.json": {
+   "/properties/limits/properties/cpu_quota/maximum": "integer",
+   "/properties/limits/properties/memory_max/maximum": "integer",
+   "/properties/limits/properties/runtime_max_sec/maximum": "integer",
+   "/properties/limits/properties/tasks_max/maximum": "integer"
+  },
+  "contracts/log/invitation-package.json": {
+   "/properties/keys/maxItems": "answer"
+  },
+  "contracts/mcp/objects.json": {
+   "/$defs/input_browser_click/properties/x/maximum": "integer",
+   "/$defs/input_browser_click/properties/y/maximum": "integer",
+   "/$defs/input_browser_scroll/properties/dy/maximum": "integer",
+   "/$defs/input_browser_select/properties/values/maxItems": "answer",
+   "/$defs/input_browser_tabs/properties/index/maximum": "integer",
+   "/$defs/input_browser_upload/properties/paths/maxItems": "answer",
+   "/$defs/input_browser_wait/properties/ms/maximum": "integer",
+   "/$defs/input_browser_wait/properties/timeout_ms/maximum": "time",
+   "/$defs/input_get_operation/properties/wait_seconds/maximum": "time",
+   "/$defs/input_get_subagent_result/properties/wait_seconds/maximum": "time",
+   "/$defs/input_get_task_messages/properties/limit/maximum": "page",
+   "/$defs/input_list_operations/properties/limit/maximum": "page",
+   "/$defs/input_list_tasks/properties/limit/maximum": "page",
+   "/$defs/input_workvm_browse/properties/wait_ms/maximum": "time",
+   "/$defs/input_workvm_exec/properties/env/maxItems": "answer",
+   "/$defs/input_workvm_exec/properties/timeout_seconds/maximum": "time",
+   "/$defs/input_workvm_exec/properties/wait_seconds/maximum": "time",
+   "/$defs/input_workvm_output/properties/limit/maximum": "page",
+   "/$defs/input_workvm_output/properties/offset/maximum": "integer",
+   "/$defs/input_workvm_output/properties/wait_seconds/maximum": "time",
+   "/$defs/output_browser/properties/tab/maximum": "integer",
+   "/$defs/output_browser/properties/tabs/items/properties/index/maximum": "integer",
+   "/$defs/output_browser/properties/tabs/maxItems": "answer",
+   "/$defs/output_get_notifications/properties/notifications/maxItems": "answer",
+   "/$defs/output_get_task/properties/operations/maxItems": "answer",
+   "/$defs/output_get_task/properties/sessions/maxItems": "answer",
+   "/$defs/output_get_task_messages/properties/messages/maxItems": "answer",
+   "/$defs/output_get_whiteboard/properties/entries/maxItems": "answer",
+   "/$defs/output_list_members/properties/members/maxItems": "answer",
+   "/$defs/output_list_operations/properties/operations/maxItems": "answer",
+   "/$defs/output_list_tasks/properties/tasks/maxItems": "answer",
+   "/$defs/output_list_workgroups/properties/workgroups/maxItems": "answer",
+   "/$defs/output_workvm_browse/properties/status/anyOf/0/maximum": "integer",
+   "/$defs/output_workvm_exec/properties/exit_code/anyOf/0/maximum": "integer",
+   "/$defs/output_workvm_kill/properties/exit_code/anyOf/0/maximum": "integer",
+   "/$defs/output_workvm_output/properties/exit_code/anyOf/0/maximum": "integer",
+   "/$defs/output_workvm_status/properties/jobs/items/properties/exit_code/anyOf/0/maximum": "integer",
+   "/$defs/output_workvm_status/properties/jobs/maxItems": "answer",
+   "/$defs/output_workvm_status/properties/workvm/anyOf/0/properties/cpus/maximum": "integer",
+   "/$defs/output_workvm_status/properties/workvm/anyOf/0/properties/disk_gib/maximum": "integer",
+   "/$defs/output_workvm_status/properties/workvm/anyOf/0/properties/memory_mib/maximum": "size",
+   "/$defs/rpc_id/anyOf/1/maximum": "integer"
+  },
+  "contracts/mcp/tools-call.result.json": {
+   "/properties/content/maxItems": "answer"
+  },
+  "contracts/mcp/tools-list.result.json": {
+   "/properties/tools/maxItems": "answer"
+  },
+  "contracts/model-catalog.json": {
+   "/properties/access/properties/api_key/properties/allowed/maxItems": "answer",
+   "/properties/access/properties/platform/properties/allowed/maxItems": "answer",
+   "/properties/access/properties/platform/properties/providers_allowed/maxItems": "answer",
+   "/properties/access/properties/subscription/properties/allowed/maxItems": "answer",
+   "/properties/models/additionalProperties/properties/context_window/maximum": "integer",
+   "/properties/models/additionalProperties/properties/max_output/maximum": "integer"
+  },
+  "contracts/ops/objects.json": {
+   "/$defs/error/properties/pointers/maxItems": "answer",
+   "/$defs/github_id/maximum": "integer",
+   "/$defs/number/maximum": "integer",
+   "/$defs/params_browser_open/properties/idle_seconds/maximum": "time",
+   "/$defs/params_github_commit/properties/co_authors/maxItems": "answer",
+   "/$defs/params_github_commit/properties/decisions/maxItems": "answer",
+   "/$defs/params_github_commit/properties/paths/maxItems": "answer",
+   "/$defs/params_github_create_issue/properties/labels/maxItems": "answer",
+   "/$defs/params_github_get_issue/properties/comments_page/maximum": "time",
+   "/$defs/params_github_get_issue/properties/comments_per_page/maximum": "time",
+   "/$defs/params_github_list_issues/properties/labels/maxItems": "answer",
+   "/$defs/params_github_list_issues/properties/page/maximum": "time",
+   "/$defs/params_github_list_issues/properties/per_page/maximum": "time",
+   "/$defs/params_github_list_pull_requests/properties/page/maximum": "time",
+   "/$defs/params_github_list_pull_requests/properties/per_page/maximum": "time",
+   "/$defs/params_github_update_issue/properties/labels/maxItems": "answer",
+   "/$defs/params_test_run/properties/timeout_seconds/maximum": "time",
+   "/$defs/result_browser_open/properties/idle_seconds/maximum": "time",
+   "/$defs/result_github_get_issue/properties/assignees/maxItems": "answer",
+   "/$defs/result_github_get_issue/properties/comments/maxItems": "answer",
+   "/$defs/result_github_get_issue/properties/comments_next_page/anyOf/0/maximum": "time",
+   "/$defs/result_github_get_issue/properties/labels/maxItems": "answer",
+   "/$defs/result_github_get_pull_request/properties/comments/maxItems": "answer",
+   "/$defs/result_github_get_pull_request/properties/files/maxItems": "answer",
+   "/$defs/result_github_list_identities/properties/co_authors/maxItems": "answer",
+   "/$defs/result_github_list_identities/properties/identities/maxItems": "open",
+   "/$defs/result_github_list_issues/properties/issues/items/properties/assignees/maxItems": "answer",
+   "/$defs/result_github_list_issues/properties/issues/items/properties/labels/maxItems": "answer",
+   "/$defs/result_github_list_issues/properties/issues/maxItems": "answer",
+   "/$defs/result_github_list_issues/properties/next_page/anyOf/0/maximum": "time",
+   "/$defs/result_github_list_pull_requests/properties/next_page/anyOf/0/maximum": "time",
+   "/$defs/result_github_list_pull_requests/properties/pull_requests/maxItems": "answer",
+   "/$defs/result_github_list_repositories/properties/repositories/maxItems": "answer",
+   "/$defs/result_github_merge_base/properties/conflicts/maxItems": "answer",
+   "/$defs/result_github_update_issue/properties/labels/maxItems": "answer",
+   "/$defs/result_test_run/properties/exit_code/anyOf/0/maximum": "integer",
+   "/$defs/result_workvm_request/properties/cpus/maximum": "integer",
+   "/$defs/result_workvm_request/properties/disk_gib/maximum": "integer",
+   "/$defs/result_workvm_request/properties/memory_mib/maximum": "size"
+  },
+  "contracts/outbox/objects.json": {
+   "/$defs/body_audit/oneOf/0/properties/detail/properties/rule/maximum": "integer",
+   "/$defs/body_audit/oneOf/19/properties/detail/properties/value/anyOf/0/maximum": "integer",
+   "/$defs/body_metrics/properties/samples/maxItems": "answer",
+   "/$defs/body_operator_quota/properties/subscriptions/maxItems": "answer",
+   "/$defs/body_quota/anyOf/0/properties/windows/maxItems": "answer",
+   "/$defs/body_runtime/properties/runtime_ms/maximum": "time",
+   "/$defs/body_vm_state/properties/cpus/maximum": "integer",
+   "/$defs/operator_subscription/properties/windows/maxItems": "answer",
+   "/$defs/quota_window/properties/used_percent/maximum": "integer"
+  },
+  "contracts/requests/github.connect.response.json": {
+   "/oneOf/0/properties/expires_in/maximum": "integer",
+   "/oneOf/1/properties/scopes/maxItems": "answer"
+  },
+  "contracts/requests/github.pull_status.request.json": {
+   "/properties/pulls/maxItems": "answer"
+  },
+  "contracts/requests/github.pull_status.response.json": {
+   "/oneOf/0/properties/pulls/maxItems": "answer"
+  },
+  "contracts/requests/objects.json": {
+   "/$defs/github_body/properties/scopes/maxItems": "answer",
+   "/$defs/pull_address/properties/number/maximum": "integer",
+   "/$defs/pull_state/oneOf/0/properties/number/maximum": "integer",
+   "/$defs/pull_state/oneOf/1/properties/number/maximum": "integer"
+  },
+  "contracts/ws/device/objects.json": {
+   "/$defs/heartbeat/properties/sessions/maxItems": "answer",
+   "/$defs/heartbeat/properties/vms/maxItems": "answer"
+  },
+  "contracts/ws/sse/objects.json": {
+   "/$defs/data_metrics/properties/samples/maxItems": "answer"
+  },
+  "contracts/ws/sse/query.json": {
+   "/properties/browser/maxItems": "open",
+   "/properties/terminal/maxItems": "open"
+  }
+ }
+}

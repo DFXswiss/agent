@@ -34,6 +34,9 @@ from agent_runner.subagents import (
     session_state,
     tasks,
 )
+from agent_runner.subagents import (
+    limits as subagent_limits,
+)
 from agent_runner.subagents.controller import Subagents, controller_for
 from agent_runner.subagents.extensions import finished_notifier
 from agent_runner.subagents.extensions import query_tools as discover_tools
@@ -185,7 +188,11 @@ def test_the_executor_refuses_what_it_cannot_start(rig: Rig) -> None:
             ended = dataclasses.replace(ctx, session=dataclasses.replace(ctx.session, state=state))
             assert await refused(found, ended) == "not_found"
         deep = dataclasses.replace(ctx, session=dataclasses.replace(ctx.session, depth=2))
+        # the depth setting of the hub (ADR-088 section 2); without it the hub decides
+        settings = {**dict.fromkeys(subagent_limits.FIELDS, 0), "subagent_max_depth": 2}
+        found.service.env.desired = {"limits": {"api": 1, **settings}}
         assert await refused(found, deep) == "limit_exceeded"
+        found.service.env.desired = None
         # a start already scheduled for the child ID
         blocker = asyncio.Event()
         waiting = asyncio.ensure_future(blocker.wait())
@@ -237,6 +244,9 @@ def test_the_amender_refuses_a_child_the_platform_did_not_request(rig: Rig) -> N
         with pytest.raises(RunnerError):
             await session_request.amend(env.context, child, request)
         found.controller.specs[child.id] = spec
+        await session_request.amend(env.context, child, request)
+        assert request["limits"]["runtime_max_sec"] == 8 * 3600  # no runtime setting: a main session's
+        found.service.env.desired = {"limits": {"api": 1, **dict.fromkeys(subagent_limits.FIELDS, 1800)}}
         await session_request.amend(env.context, child, request)
         assert request["limits"]["runtime_max_sec"] == 1800
         with pytest.raises(RunnerError):

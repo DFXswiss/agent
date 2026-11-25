@@ -39,8 +39,7 @@
             ],
             "additionalProperties": false
           },
-          "minItems": 0,
-          "maxItems": 64
+          "minItems": 0
         },
         "landlock_abi": {
           "type": "integer",
@@ -99,8 +98,7 @@
             ],
             "additionalProperties": false
           },
-          "minItems": 0,
-          "maxItems": 64
+          "minItems": 0
         },
         "landlock_abi": {
           "type": "integer",
@@ -161,8 +159,7 @@
             ],
             "additionalProperties": false
           },
-          "minItems": 0,
-          "maxItems": 64
+          "minItems": 0
         },
         "landlock_abi": {
           "type": "integer",

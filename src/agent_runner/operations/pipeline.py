@@ -51,7 +51,8 @@
    `failed`, `retryable:true`; the hub never knew the operation, so no event or transition is written). A final
    refusal of the request (`4xx` other than `429`) ends `failed` (`rights_denied` for `403`, else `upstream_error`).
 3. **Decision**: `accepted` -> execute; `duplicate` -> the original's result (below); `denied`/`rejected` -> the
-   answer (with the local error and its pointers when the runner or guest rejected it).
+   answer (with the local error and its pointers when the runner or guest rejected it; a `subagent.request` denied
+   with `limit_exceeded` gets a sentence with the current subagent limits, `subagents.limits.denied_message`).
 4. **Execution** (`_execute`): outbox `operation_transition executing`, then the executor of `EXECUTORS` with
    retries for retryable failures - at most 3 more attempts after 2 s, 8 s, 30 s (at least `retry_after`; a
    `retry_after` above 60 s ends the retries) - then `failed` with `retryable:true`. Non-retryable failures end at
@@ -117,6 +118,8 @@ from agent_runner.sessions import records as session_records
 from agent_runner.sessions.env import SessionEnv
 from agent_runner.sessions.events import session_event
 from agent_runner.sessions.records import LocalSession
+from agent_runner.subagents import limits as subagent_limits
+from agent_runner.subagents import store as subagent_store
 from agent_runner.sync.http import HubClient
 from agent_runner.sync.outbox import event_draft
 from agent_runner.sync.seal import Sealer, check_draft
@@ -706,6 +709,8 @@ class Pipeline:
         error = {"code": decision.error_code}
         if decision.state == "rejected" and local is not None:
             error = clean_error(local)
+        elif decision.error_code == "limit_exceeded" and op.type == subagent_store.OP_TYPE:
+            error["message"] = subagent_limits.denied_message(subagent_limits.of(self.env.desired))
         answer = {"operation_id": op.id, "status": decision.state, "error": error}
         return await self._final(op, decision.state, answer, error_code=decision.error_code, retryable=None)
 

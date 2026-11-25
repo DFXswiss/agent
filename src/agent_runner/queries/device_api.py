@@ -4,9 +4,13 @@
 The answers are verified against the pinned hub key by the hub client. The hub sees task metadata in plaintext (state,
 owner, times; 04-crypto.md section 7) but titles only as `task.meta` events, so the reads take the titles from the
 verified events (`sessions.profiles`). A hub answer is still only metadata of a party that must not widen the read
-scope: every task row must belong to the session's org and workgroup, and rows or fields that do not have the form
-of the contract are dropped (lists) or make the read `unavailable` (a single task). A refusal `403`/`404` is "no such
-task in this workgroup" (`None`); an unreachable hub or any other refusal is `unavailable`.
+scope: every row of a task list must belong to the session's org and the listed workgroup, a single task must belong
+to the session's org and to a workgroup the session may read (`ReadScope.readable`, ADR-087; any other is `not_found`
+"There is no such task you can read.", whatever the reason), and rows or fields that do not have the form of the
+contract are dropped (lists) or make the read `unavailable` (a single task). A refusal `403`/`404` is "no such task"
+(`None`); an unreachable hub or any other refusal is `unavailable`. The hub names the workgroup of a task, but the
+reads take content only from events sealed in that workgroup's scope, so a hub that names a wrong workgroup yields no
+content of another one.
 """
 
 from __future__ import annotations
@@ -52,11 +56,13 @@ MAX_SESSIONS, MAX_OPERATIONS = 100, 1000
 """The maxima of `api/device-task-get.response.json` (a hub answering more is cut to them)."""
 HUB_UNAVAILABLE = ReadRefused("unavailable", "The platform is not reachable right now. Try again later.")
 HUB_INVALID = ReadRefused("unavailable", "The platform answered with invalid task data.")
+TASK_NOT_FOUND = ReadRefused("not_found", "There is no such task you can read.")
 
 
 @dataclass(frozen=True)
 class TaskRow:
     task_id: str
+    wg_id: str
     owner_id: str
     state: str
     created_at: str
@@ -71,14 +77,14 @@ def _time(value: object) -> bool:
     return isinstance(value, str) and TIME_RE.fullmatch(value) is not None
 
 
-def task_row(scope: ReadScope, value: object) -> TaskRow | None:
-    """A task row of the session's org and workgroup with the fields the reads return, else None."""
+def task_row(scope: ReadScope, value: object, wg_id: str) -> TaskRow | None:
+    """A task row of the session's org and workgroup `wg_id` with the fields the reads return, else None."""
     if not isinstance(value, Mapping):
         return None
     valid = (
         _uuid(value.get("task_id"))
         and value.get("org_id") == scope.org_id
-        and value.get("wg_id") == scope.wg_id
+        and value.get("wg_id") == wg_id
         and _uuid(value.get("owner_id"))
         and value.get("state") in TASK_STATES
         and _time(value.get("created_at"))
@@ -88,6 +94,7 @@ def task_row(scope: ReadScope, value: object) -> TaskRow | None:
         return None
     return TaskRow(
         task_id=value["task_id"],
+        wg_id=wg_id,
         owner_id=value["owner_id"],
         state=value["state"],
         created_at=value["created_at"],
@@ -110,17 +117,19 @@ async def _get(context: Any, target: str) -> dict[str, object] | None:
 
 
 async def tasks(
-    context: Any, scope: ReadScope, *, state: str | None, before: str | None, limit: int | None
+    context: Any, scope: ReadScope, wg_id: str, *, state: str | None, before: str | None, limit: int | None
 ) -> tuple[list[TaskRow], str | None]:
-    """One page of the workgroup's tasks, newest first, and the hub's `next_before`."""
+    """One page of the tasks of workgroup `wg_id` (the caller checked that the session may read it), newest first,
+    and the hub's `next_before`."""
     pairs = (("state", state), ("before", before), ("limit", limit))
     query = {name: str(value) for name, value in pairs if value is not None}
-    target = f"/v1/device/workgroups/{quote(scope.wg_id)}/tasks"
+    target = f"/v1/device/workgroups/{quote(wg_id)}/tasks"
     answer = await _get(context, target + (f"?{urlencode(query)}" if query else ""))
     if answer is None:
         return [], None
     listed = answer.get("tasks")
-    rows = [row for row in (task_row(scope, item) for item in (listed if isinstance(listed, list) else [])) if row]
+    found = (task_row(scope, item, wg_id) for item in (listed if isinstance(listed, list) else []))
+    rows = [row for row in found if row]
     following = answer.get("next_before")
     if limit is not None and len(rows) > limit:
         # a hub answering more rows than asked: the rest is not reachable through its cursor, so none is given
@@ -143,7 +152,7 @@ def _session(value: object) -> dict[str, Any] | None:
         _uuid(value.get("session_id"))
         and value.get("state") in SESSION_STATES
         and type(depth) is int
-        and 0 <= depth <= 2
+        and depth >= 0
         and (parent is None or _uuid(parent))
     )
     if not valid:
@@ -165,15 +174,21 @@ def _operation(value: object) -> dict[str, Any] | None:
 
 
 async def task(context: Any, scope: ReadScope, task_id: str) -> TaskDetail | None:
-    """The task with its sessions and operations; None when the hub knows no such task in the session's workgroup."""
+    """The task with its sessions and operations; None when the hub knows no such task (module docstring)."""
     answer = await _get(context, f"/v1/device/tasks/{quote(task_id)}")
     if answer is None:
         return None
     raw = answer.get("task")
-    if isinstance(raw, Mapping) and raw.get("wg_id") != scope.wg_id:
-        # a task of another workgroup this device is assigned to: outside the session's read scope
-        return None
-    found = task_row(scope, raw)
+    wg_id = raw.get("wg_id") if isinstance(raw, Mapping) else None
+    if not isinstance(wg_id, str):
+        raise HUB_INVALID
+    if wg_id != scope.wg_id:
+        try:
+            scope.readable(wg_id)
+        except ReadRefused:
+            # a task of a workgroup the session may not read (or this device cannot): the same answer as no task
+            raise TASK_NOT_FOUND.at(wg_id) if wg_id in scope.state.workgroups else TASK_NOT_FOUND from None
+    found = task_row(scope, raw, wg_id)
     if found is None or found.task_id != task_id:
         raise HUB_INVALID
     sessions, operations = answer.get("sessions"), answer.get("operations")

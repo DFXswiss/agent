@@ -24,7 +24,7 @@ def client_config(context: HubContext) -> dict[str, Any]:
         "platform_root_key": b64url_encode(config.platform_root_key),
         "hub_key": {"id": context.signer.key_id, "public_key": context.signer.public_key_text},
         "version": __version__,
-        "limits": dict(LIMITS),
+        "limits": {**LIMITS, **config.subagent_limits.published()},
         "models": {kind: list(catalog.allowed[kind]) for kind in ACCESS_KINDS},
         "defaults": {"platform": catalog.platform_default},
     }

@@ -1,6 +1,6 @@
 {
   "name": "e2e-24-subagents",
-  "description": "E2E-24: controlled subagents. The parent requests a reviewer through subagent.request and waits with get_subagent_result; the child requests a grandchild the same way; the grandchild's own request exceeds the depth limit (limit_exceeded). Then the parent requests four children at once: three run, the fourth exceeds the limit of running children per task. The parallel children answer through a side step (their order is not fixed). The parallel children answer after 8 s, so all three are still running when the fourth request is checked. The child's final answer comes 40 s late (KOR-60): meanwhile the child is running and the spec watches it live - its terminal grows, its chat shows its first answer and the monitoring has its own samples - before it ends; the parent waits up to 5 x 30 s for it.",
+  "description": "E2E-24 (ADR-088): controlled subagents under the limits the spec sets (depth 2, 3 running; POST /hub/subagent-limits). The parent requests a reviewer through subagent.request and waits with get_subagent_result; the child requests a grandchild the same way; the grandchild's own request exceeds the depth limit (limit_exceeded). Children keep running after a turn (idle), so the child stops the grandchild with subagent.stop before it answers, and the parent stops the child before the parallel phase. Then the parent requests four children at once: three run, the fourth exceeds the limit of running children per task. The parallel children answer through a side step (their order is not fixed) after 8 s, so all three are still running when the fourth request is checked; they stay idle afterwards. The child's final answer comes 40 s late (KOR-60): meanwhile the child is running and the spec watches it live - its terminal grows, its chat shows its first answer and the monitoring has its own samples - before its turn ends; the parent waits up to 5 x 30 s for it.",
   "steps": [
     {
       "id": "parent-request",
@@ -36,7 +36,7 @@
       },
       "capture": {
         "child": {
-          "regex": "\"result\":\\{\"session_id\":\"([0-9a-f-]{36})\"\\}",
+          "regex": "\"result\":\\{[^{}]*\"session_id\":\"([0-9a-f-]{36})\"",
           "source": "messages"
         }
       },
@@ -119,7 +119,7 @@
       },
       "capture": {
         "grandchild": {
-          "regex": "\"result\":\\{\"session_id\":\"([0-9a-f-]{36})\"\\}",
+          "regex": "\"result\":\\{[^{}]*\"session_id\":\"([0-9a-f-]{36})\"",
           "source": "messages"
         }
       },
@@ -189,9 +189,29 @@
       }
     },
     {
-      "id": "child-done",
+      "id": "child-stop-grandchild",
       "expect": {
         "tool_result_contains": "Wording checked kz24-grandchild-w5e8r2."
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.stop",
+              "params": {
+                "session_id": "${grandchild}"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "child-done",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
       },
       "delay_ms": 40000,
       "reply": {
@@ -204,9 +224,29 @@
       }
     },
     {
-      "id": "parent-parallel",
+      "id": "parent-stop-child",
       "expect": {
         "tool_result_contains": "Review done kz24-child-t9y3u6."
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.stop",
+              "params": {
+                "session_id": "${child}"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "parent-parallel",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
       },
       "reply": {
         "content": [

@@ -42,8 +42,8 @@ The control process (root) reads everything itself; nothing here runs inside a s
   session start never waits for ``nft``) and on every call, and removed once the session is no longer active.
   Without ``nft`` (or on any failure) the field is left out.
 
-Sessions are the cached active ones (state not ``stopped``/``failed``), at most 64, sorted by ID; the runner keeps the
-last values of an ended session itself.
+Sessions are all cached active ones (state not ``stopped``/``failed``; no cap, ADR-088 section 3), sorted by ID; the
+runner keeps the last values of an ended session itself.
 """
 
 from __future__ import annotations
@@ -69,7 +69,6 @@ PROC_ROOT = "/proc"
 CGROUP_ROOT = "/sys/fs/cgroup"
 UNIT_SLICE = "system.slice"
 ROOT_FS = "/"
-MAX_SESSIONS = 64
 WORKSPACE_TTL = 60.0
 NFT_TABLE = "agent_metrics"
 NFT_PRIORITY = -10
@@ -478,7 +477,7 @@ class EgressCounters:
 
 def active_sessions(context: ControlContext) -> list[Session]:
     found = [session for session in context.state.sessions() if session.state not in INACTIVE_STATES]
-    return sorted(found, key=lambda session: session.id)[:MAX_SESSIONS]
+    return sorted(found, key=lambda session: session.id)
 
 
 class Collector:

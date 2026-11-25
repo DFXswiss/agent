@@ -1210,18 +1210,43 @@ that an organisation requires SSO authorisation of the token (the URL of the hea
 Every GitHub request carries `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, timeout
 30 s, no redirects except for tarball downloads (to the codeload host of the configured web URL).
 
-## 13. Subagents (ADR-017)
+## 13. Subagents (ADR-088, ADR-038)
 
-- Created only after hub acceptance of `subagent.request` (limits depth ≤ 2, ≤ 3 running children per task,
-  ≤ 10 per task are enforced by the hub; the runner pre-checks the same numbers).
+- Created only after hub acceptance of `subagent.request` (the limits depth, running and total are settings of the
+  hub, ADR-088 §2, enforced in check H4; the runner pre-checks them with the values of the device state's `limits`
+  and the room of the parent's VM).
 - Same VM, new sandbox, `depth = parent.depth + 1`, `parent_session_id` set, same task, same model access as the
-  parent unless `model_id` given and allowed. Initial prompt = `"Purpose: <purpose>\n\n<prompt>"`; harness adds
-  "You are a subagent session of session <parent> for task <task>; finish by answering; you may request further
-  subagents only via subagent.request".
-- One-shot: the first `Stop` ends it: final text = last assistant message (≤ 64 KiB), state `stopped`;
-  `RuntimeMaxSec=30min` → `failed` `runtime_exceeded`. Parent gets ping `subagent.finished`; result via
+  parent unless `model_id` given and allowed. Initial prompt = `"Purpose: <purpose>\n\n<prompt>"` (prompt ID = the
+  operation ID: the child's first instruction); harness adds "You are a subagent session of session <parent> for task
+  <task>; answer each instruction of your main agent with your last message of that turn; you keep running and
+  receive further instructions until your main agent stops you; you may request further subagents only via
+  `subagent.request`".
+- **Turns.** A child keeps running after a turn: when a turn ends (`idle`), the last assistant message (≤ 64 KiB)
+  is the result of that instruction and the parent gets the ping `subagent.finished` (per turn, ping ID stable per
+  child and instruction, `ref` = the child; only for a parent that has not ended). A turn that ends with
+  `StopFailure` fails the child `agent_exited`. An idle child is suspended after `AGENT_RUNNER_SESSION_IDLE_SECONDS`
+  like a main session (never while an instruction waits) and resumed with its conversation by the next instruction.
+- **Instructions.** `subagent.instruct {session_id, prompt}` gives a child of the requesting session its next
+  instruction (runner pre-check: a child of this session in the same task that has not ended, else `not_found`; a
+  suspended child is resumed, so `subagent_max_running` and the VM's room are checked, `limit_exceeded`).
+  Instructions of one child (`runner.subagent_instruction`, the request first) are handed over one at a time in the
+  order of their creation, one per turn: the next waits until the child accepted the previous one and that turn
+  ended. The executor resumes a suspended child, registers the prompt at the guest with the child's sender line
+  (prompt ID = operation ID) and succeeds with `{session_id, instruction_id}`. The acting user of a child's turn is
+  the acting user of the instruction it accepted (`credentials.acting.stamp`; before its first acceptance the one of
+  the `subagent.request`): it decides the child's reads, its operations' `triggered_by` and its personal connections.
+- **End.** `subagent.stop {session_id}` (same pre-check) stops the child; it also ends when its parent ended
+  (stopped by the runner), when the task is closed, and when `subagent_max_runtime_seconds` (> 0) is reached since its
+  creation (`failed` `runtime_exceeded`). The end pings the parent with the ID of the newest instruction.
+- **Result.** `get_subagent_result {session_id, wait_seconds?}` answers the newest instruction: `working` (or a start
+  state) with `instruction_id` while it waits or its turn runs; `idle`/`suspended` with `final_text`, `finished_at`
+  and `instruction_id` once that turn ended; `stopped` with the last turn's `final_text`; `failed`. `wait_seconds`
+  (≤ 30) waits for the end of that turn or of the child. The text is read from the outbox (ADR-038).
+- **Older guests.** A child whose VM runs a guest before ADR-088 (golden guest version < 0.3.0) keeps the one-shot
+  end of ADR-038 (stopped after its first turn, one ping per child), its former harness line and the former answers of
   `get_subagent_result`.
-- Full session in every respect: own events, terminal, hooks, audit, metrics; visible in the web as a child.
+- Full session in every respect: own events, terminal, hooks, audit, metrics; visible in the web as a child (at any
+  depth).
 
 ## 14. Metrics
 

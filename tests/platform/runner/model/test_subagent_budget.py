@@ -27,7 +27,7 @@ def context_with(desired: dict[str, Any] | None) -> SimpleNamespace:
 
 
 def request(access: str | None, desired: dict[str, Any] | None) -> SimpleNamespace:
-    session = SimpleNamespace(depth=0, model_access=access, org_id=ORG)
+    session = SimpleNamespace(depth=0, model_access=access, org_id=ORG, vm_id=None)
     return SimpleNamespace(session=session, context=context_with(desired))
 
 

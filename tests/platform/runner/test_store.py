@@ -343,6 +343,17 @@ TABLES = {
     "prompt_withdrawal": ["event_id", "withdrawn_at"],
     # 0029 (KOR-35, ADR-086): usage deltas of a session merged over 10 s
     "usage_pending": ["session_id", "item", "first_wall"],
+    # 0030 (KOR-45, ADR-088 section 1): the instructions of a child session
+    "subagent_instruction": [
+        "operation_id",
+        "child_session_id",
+        "parent_session_id",
+        "actor_id",
+        "created_at",
+        "delivered_at",
+        "accepted_at",
+        "ended_at",
+    ],
     "schema_version": ["version", "name", "checksum", "applied_at"],
 }
 OUTBOX_KINDS = [

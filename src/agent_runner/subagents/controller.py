@@ -1,4 +1,4 @@
-"""Controlled subagents of one daemon (05-runner.md section 13, 03-api.md sections 8.1, 8.3 and 9, ADR-017, ADR-038).
+"""Controlled subagents of one daemon (05-runner.md section 13, 03-api.md sections 8.1, 8.3 and 9, ADR-038, ADR-088).
 
 `Subagents` (one per daemon, `controller_for(context)`) is the platform side of a child session's life:
 
@@ -9,26 +9,38 @@
   `session_request.py`) gives it the initial prompt `"Purpose: <purpose>\\n\\n<prompt>"` (prompt ID = operation ID)
   with the child's sender line (ADR-083 section 1, `prompts.speaker.for_child`: written by the parent session, which
   works on an instruction of the acting user of the `subagent.request`, `operation.actor_id`),
-  the subagent limits (`RuntimeMaxSec` 30 min) and the harness line of 05 section 13; a session with `depth` > 0 that
-  this controller did not ask for is never started (the amender refuses it, the start fails). The operation's result
-  is `{session_id}` once the start ran; a child whose start failed is `failed` like any session.
-- **One shot** (`tick`, task `subagents`, woken by the state observer of `session_state.py`): a child that became
-  `idle` - its first turn ended - is ended after `GRACE_S` (the guest writes the last assistant message of the
-  transcript after one quiet second): `stopping`, the guest's `stop`, `stopped` (`sessions.stop.stop_session`). When
-  that turn ended with `StopFailure` (the guest's hook record), the child is `failed` with `agent_exited` instead.
-- **Runtime** (`tick`): a child running `RUNTIME_MAX_S` since its creation is `failed` with `runtime_exceeded` and its
+  the resource limits (`rules.child_limits`: `RuntimeMaxSec` = the runtime setting when set) and the harness line of
+  05 section 13; a session with `depth` > 0 that this controller did not ask for is never started (the amender
+  refuses it, the start fails). The operation's result is `{session_id}` once the start ran; a child whose start
+  failed is `failed` like any session. The request is the child's first instruction (`turns.Turns.record_request`).
+- **Full child** (ADR-088 section 1, `turns.py`): a child whose VM runs a guest that knows ADR-088
+  (`guest_features.current_guest`) keeps running after a turn: the parent is pinged per turn, follow-up instructions
+  (`subagent.instruct`) are handed over one per turn, an idle child is suspended after the device's idle time
+  (`idle_seconds`) and resumed by its next instruction, and it ends with `subagent.stop`, its parent's end, the task's
+  close or the runtime setting. The rest of this docstring describes what both kinds share and the older guest.
+- **One shot** (`tick`, task `subagents`, woken by the state observer of `session_state.py`): a child on an older
+  guest that became `idle` - its first turn ended - is ended after `GRACE_S` (the guest writes the last assistant
+  message of the transcript after one quiet second): `stopping`, the guest's `stop`, `stopped`
+  (`sessions.stop.stop_session`). When that turn ended with `StopFailure` (the guest's hook record), the child is
+  `failed` with `agent_exited` instead.
+- **Runtime** (`tick`): when the hub sets a runtime (`limits`, setting `subagent_max_runtime_seconds` > 0, ADR-088
+  section 2), a child running that long since its creation is `failed` with `runtime_exceeded` and its
   guest session is stopped; the unit's own `RuntimeMaxSec` (started later) is the second line.
 - **Result** (`view`, `get_subagent_result`, `query_tools.py`): only for a child of the calling session (same task):
   its state; once `stopped` and settled the final text (`results.final_text`) and the end time; `failed` with the end
   time. Settled = `SETTLE_S` after the end was first seen (transcript records that follow the end) and the VM's journal
   handled up to the guest's journal head of that moment, at the latest after `SETTLE_MAX_S`. Waits up to
-  `wait_seconds` for a final answer.
+  `wait_seconds` for an answer with `finished_at`. A full child answers about its newest instruction
+  (`turns.Turns.view`); this is the answer of a child on an older guest.
 - **Ping** (`tick`): when a child's end has settled, once per daemon, the `subagent.finished` notifier
   (`extensions.finished_notifier`, RUN-14) is called for a parent that has not ended, with a stable ping ID (a restart
-  pings recently ended children again; the guest recognises the ID); without one the end is logged.
+  pings recently ended children again; the guest recognises the ID; of a full child the ID of its newest
+  instruction, `turns.ping_id`); without one the end is logged.
 - **Reads** (`spawn_query`, the `platform.query` journal handler): every forwarded read of a tool with a provider is
-  answered by the registered `QueryTool`, recorded as `read.session.<tool>` audit and - when the tool checked the
-  arguments - as `platform.read` event, then answered to the guest - once per pending call, at most
+  answered by the registered `QueryTool` with the instructing human the journal handler captured when the read arrived
+  (ADR-087 section 1), recorded as `read.session.<tool>` audit (naming the workgroup read and that human,
+  `read_wg_id`/`triggered_by`) and - when the tool checked the arguments - as `platform.read` event, then answered to
+  the guest - once per pending call, at most
   `MAX_READS_PER_SESSION` at a time per session. The event body must match `events/platform.read.json`, whose
   `arguments` are the tool's input schema, so arguments no tool vouched for are never sealed (decisions KOR-03, AUD-01
   A-18): a call the tool refused as `params_invalid` or that failed inside the tool gets only the audit (`failed`) and
@@ -70,6 +82,7 @@ from agent_runner.sessions.events import fail, session_event
 from agent_runner.sessions.extensions import InitialPrompt
 from agent_runner.sessions.records import FINAL, LocalSession, time_text
 from agent_runner.sessions.stop import stop_guest, stop_session
+from agent_runner.subagents import limits as subagent_limits
 from agent_runner.subagents import results, store
 from agent_runner.subagents.extensions import (
     FinishedPing,
@@ -81,7 +94,9 @@ from agent_runner.subagents.extensions import (
     finished_notifier,
     query_tools,
 )
-from agent_runner.subagents.rules import CHILD_LIMITS, MAX_DEPTH, RUNTIME_MAX_S, harness_line, initial_prompt
+from agent_runner.subagents.instructions import Instruction
+from agent_runner.subagents.rules import child_limits, harness_line, initial_prompt
+from agent_runner.subagents.turns import Turns
 from agent_runner.vm import records as vm_records
 from agent_runner.vm.records import VmRow
 
@@ -97,6 +112,8 @@ WAIT_POLL_S = 0.5
 MAX_WAIT_S = 30
 ANSWER_ATTEMPTS = 3
 ANSWER_BACKOFF_S = 1.0
+IDLE_S = 1800.0
+"""The default of `AGENT_RUNNER_SESSION_IDLE_SECONDS` (`config.py`); the daemon passes its setting."""
 INTERRUPTED = frozenset({"requested", "vm_assigning", "vm_ready", "sandbox_ready"})
 ORPHAN_REASON = "agent_start_failed"
 NO_LOCAL = frozenset({"requested", "stopped", "failed"})
@@ -135,9 +152,12 @@ class Subagents:
         tools: Mapping[str, QueryTool] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         wall: Callable[[], float] | None = None,
+        idle_seconds: float = IDLE_S,
     ) -> None:
         self.env = env
         self.service = service
+        self.idle_seconds = idle_seconds
+        """An idle full child is suspended after this time (`AGENT_RUNNER_SESSION_IDLE_SECONDS`, as a main session)."""
         self.notify = notify
         self.tools = dict(tools or {})
         self.sleep = sleep
@@ -153,12 +173,14 @@ class Subagents:
         self.reading: Counter[str] = Counter()
         self.queries: set[asyncio.Task[None]] = set()
         self.trigger = asyncio.Event()
+        self.turns = Turns(self)
 
     def line(self, text: str) -> None:
         self.env.log(f"runner.subagents {text}")
 
     def wake(self) -> None:
         self.trigger.set()
+        self.turns.wake()
 
     # -- start ---------------------------------------------------------------------------------------------------
 
@@ -169,8 +191,9 @@ class Subagents:
             raise OperationFailed("upstream_error", message="The hub named no valid child session.")
         if parent.state in FINAL or parent.state == "stopping":
             raise OperationFailed("not_found", message="The requesting session has ended.")
-        if parent.depth + 1 > MAX_DEPTH:
-            raise OperationFailed("limit_exceeded", message="Subagents may be nested at most two levels deep.")
+        too_deep = subagent_limits.depth_refusal(subagent_limits.of(self.env.desired), parent.depth)
+        if too_deep is not None:
+            raise OperationFailed("limit_exceeded", message=too_deep)
         async with store_session(self.env.db) as conn:
             known = await records.get(conn, child)
         if known is not None:
@@ -198,6 +221,7 @@ class Subagents:
             prompt=str(ctx.params["prompt"]),
             actor_id=op.actor_id,
         )
+        await self.turns.record_request(op, child, parent.id)
         try:
             if not self.service.schedule_start(desired):
                 raise OperationFailed("upstream_error", message="The child session is already being handled.")
@@ -225,9 +249,17 @@ class Subagents:
                 text=text,
             )
         request["initial_prompt"] = InitialPrompt(prompt_id=spec.operation_id, text=text, speaker=line).body()
-        request["limits"] = CHILD_LIMITS.body()
+        request["limits"] = child_limits(subagent_limits.of(self.env.desired)).body()
         harness = request["harness"]
-        line = harness_line(spec.parent_id, spec.task_id)
+        line = harness_line(spec.parent_id, spec.task_id, current=await self.turns.current(session))
+        harness["context_markdown"] = str(harness["context_markdown"]).rstrip("\n") + "\n" + line
+
+    async def resume_request(self, session: LocalSession, request: dict[str, Any]) -> None:
+        """The `POST /v1/sessions` request of a resumed full child (`turns.py`): its limits and harness line."""
+        request["limits"] = child_limits(subagent_limits.of(self.env.desired)).body()
+        harness = request["harness"]
+        assert session.parent_id is not None
+        line = harness_line(session.parent_id, session.task_id, current=True)
         harness["context_markdown"] = str(harness["context_markdown"]).rstrip("\n") + "\n" + line
 
     # -- life of the children ------------------------------------------------------------------------------------
@@ -244,16 +276,23 @@ class Subagents:
         the latest `SETTLE_MAX_S` after the end."""
         if child.state == "failed":
             return True
+        return await self.settled_since(child.id, child.vm_id, self.final_seen, self.heads)
+
+    async def settled_since(
+        self, key: str, vm_id: str | None, seen_at: dict[str, float], heads: dict[str, int]
+    ) -> bool:
+        """The end named `key` (a child's, or a turn's, `turns.py`) settled: `seen_at` and `heads` keep when it was
+        first seen and the guest's journal head of that moment."""
         now = self.env.clock()
-        seen = self.final_seen.setdefault(child.id, now)
+        seen = seen_at.setdefault(key, now)
         if now - seen < SETTLE_S:
             return False
-        if now - seen >= SETTLE_MAX_S or child.vm_id is None:
+        if now - seen >= SETTLE_MAX_S or vm_id is None:
             return True
-        head = self.heads.get(child.id)
+        head = heads.get(key)
         if head is None:
-            head = self.heads[child.id] = await self._journal_head(child.vm_id)
-        return await cursor.load_cursor(self.env.db, child.vm_id) >= head
+            head = heads[key] = await self._journal_head(vm_id)
+        return await cursor.load_cursor(self.env.db, vm_id) >= head
 
     async def _journal_head(self, vm_id: str) -> int:
         """The guest journal's head of the VM, 0 when the VM does not run or cannot be reached (nothing to wait for)."""
@@ -283,6 +322,9 @@ class Subagents:
             found = await store.children(conn)
         now = self.env.clock()
         self._prune({child.id for child in found})
+        settings = subagent_limits.of(self.env.desired)
+        runtime = 0 if settings is None else settings.max_runtime_seconds
+        survey = self.turns.surveyor([child for child in found if child.state not in FINAL])
         for child in found:
             if child.state != "idle":
                 self.idle_since.pop(child.id, None)
@@ -290,10 +332,23 @@ class Subagents:
                 await self._ended(child)
             elif child.id in self.ending or child.state == "stopping":
                 continue
-            elif self.wall() - child.created_at.timestamp() >= RUNTIME_MAX_S:
+            elif runtime and self.wall() - child.created_at.timestamp() >= runtime:
                 self._spawn_end(child.id, self._runtime_exceeded(child))
+            elif await self.turns.current(child):
+                self._full(child, now, await survey())
             elif child.state == "idle" and now - self.idle_since.setdefault(child.id, now) >= GRACE_S:
                 self._spawn_end(child.id, self._finish(child))
+
+    def _full(self, child: LocalSession, now: float, survey: tuple[dict[str, Instruction], set[str]]) -> None:
+        """A full child that has not ended (`turns.py`): stopped when its parent ended, else the work of an idle one;
+        `survey`: the newest instructions and the children whose parent ended (`turns.Turns.survey`)."""
+        newest, orphaned = survey
+        if child.id in orphaned:
+            self._spawn_end(child.id, self.turns.parent_ended(child))
+        elif child.state == "idle":
+            idle_for = now - self.idle_since.setdefault(child.id, now)
+            if idle_for >= GRACE_S and self.turns.due(child, newest.get(child.id), idle_for):
+                self._spawn_end(child.id, self.turns.work(child, newest.get(child.id)))
 
     def _prune(self, watched: set[str]) -> None:
         """Forget children that are no longer watched (ended more than `store.RECENT_S` ago)."""
@@ -301,6 +356,7 @@ class Subagents:
             for child_id in [key for key in kept if key not in watched]:
                 del kept[child_id]
         self.notified &= watched
+        self.turns.prune(watched)
 
     async def _runtime_exceeded(self, child: LocalSession) -> None:
         async with self.env.transaction() as conn:
@@ -332,8 +388,14 @@ class Subagents:
         await self._notify(child)
 
     async def _notify(self, child: LocalSession) -> None:
+        self.line(f"finished child_session_id={child.id} parent_session_id={child.parent_id} state={child.state}")
+        found = await self.turns.final_ping_id(child) if await self.turns.current(child) else None
+        await self.notify_parent(child, found)
+
+    async def notify_parent(self, child: LocalSession, found_id: str | None) -> None:
+        """The `subagent.finished` ping for a parent that has not ended, with the ping ID `found_id` (None: the ID per
+        child, `ping_id`)."""
         parent_id = child.parent_id
-        self.line(f"finished child_session_id={child.id} parent_session_id={parent_id} state={child.state}")
         if self.notify is None or parent_id is None:
             return
         async with store_session(self.env.db) as conn:
@@ -341,7 +403,7 @@ class Subagents:
         if parent is None or parent.state in FINAL:
             return
         try:
-            await self.notify(self.env.context, FinishedPing(parent_id, child.id, ping_id(child.id)))
+            await self.notify(self.env.context, FinishedPing(parent_id, child.id, found_id or ping_id(child.id)))
         except Exception as exc:
             self.line(f"notify_failed child_session_id={child.id} error={type(exc).__name__}")
 
@@ -384,6 +446,12 @@ class Subagents:
                 return {"session_id": child_id, "state": "requested"} if requested else None
             if row.parent_id != caller.id or row.task_id != caller.task_id:
                 return None
+        full = await self.turns.view(row) if await self.turns.current(row) else None
+        return full if full is not None else await self._former_view(row)
+
+    async def _former_view(self, row: LocalSession) -> dict[str, Any]:
+        """The answer about a child on an older guest (or without instructions): its state, at its end the result."""
+        child_id = row.id
         if row.state not in FINAL:
             return {"session_id": child_id, "state": row.state}
         if not await self.settled(row):
@@ -418,10 +486,18 @@ class Subagents:
     # -- forwarded reads -----------------------------------------------------------------------------------------
 
     def spawn_query(
-        self, vm: VmRow, session: LocalSession, pending_id: str, tool: str, arguments: Mapping[str, Any]
+        self,
+        vm: VmRow,
+        session: LocalSession,
+        pending_id: str,
+        tool: str,
+        arguments: Mapping[str, Any],
+        *,
+        actor_id: str | None = None,
     ) -> asyncio.Task[None] | None:
-        """Answer a forwarded read in the background; None for a pending call already taken (a journal page read
-        again) or a tool without provider (left to the guest's timeout, as before any provider existed)."""
+        """Answer a forwarded read instructed by `actor_id` in the background; None for a pending call already taken (a
+        journal page read again) or a tool without provider (left to the guest's timeout, as before any provider
+        existed)."""
         if pending_id in self.answered:
             return None
         if tool not in self.tools:
@@ -430,13 +506,20 @@ class Subagents:
         self.answered[pending_id] = None
         while len(self.answered) > PENDING_MEMORY:
             del self.answered[next(iter(self.answered))]
-        task = asyncio.ensure_future(self._query(vm, session, pending_id, tool, arguments))
+        task = asyncio.ensure_future(self._query(vm, session, pending_id, tool, arguments, actor_id=actor_id))
         self.queries.add(task)
         task.add_done_callback(self.queries.discard)
         return task
 
     async def _query(
-        self, vm: VmRow, session: LocalSession, pending_id: str, tool_name: str, arguments: Mapping[str, Any]
+        self,
+        vm: VmRow,
+        session: LocalSession,
+        pending_id: str,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        *,
+        actor_id: str | None,
     ) -> None:
         self.reading[session.id] += 1
         try:
@@ -446,7 +529,8 @@ class Subagents:
             else:
                 checked: Mapping[str, Any] | None = None
                 try:
-                    outcome = await self.tools[tool_name](QueryCall(self.env.context, session, tool_name, arguments))
+                    call = QueryCall(self.env.context, session, tool_name, arguments, actor_id)
+                    outcome = await self.tools[tool_name](call)
                 except Exception as exc:
                     self.line(f"query_failed tool={tool_name} error={type(exc).__name__}")
                     outcome = failure("unavailable", "The platform could not answer the read.")
@@ -455,7 +539,7 @@ class Subagents:
                         self.line(f"query_arguments_refused tool={tool_name} session_id={session.id}")
                     else:
                         checked = arguments
-                await self._record(session, tool_name, checked, outcome)
+                await self._record(session, tool_name, checked, outcome, actor_id)
             await self._answer(vm, pending_id, outcome.answer())
         except Exception as exc:
             self.line(f"query_unanswered tool={tool_name} error={type(exc).__name__}")
@@ -465,13 +549,20 @@ class Subagents:
                 del self.reading[session.id]
 
     async def _record(
-        self, session: LocalSession, tool: str, arguments: Mapping[str, Any] | None, outcome: QueryOutcome
+        self,
+        session: LocalSession,
+        tool: str,
+        arguments: Mapping[str, Any] | None,
+        outcome: QueryOutcome,
+        actor_id: str | None,
     ) -> None:
         """`read.session.<tool>` audit and - for `arguments` the tool checked, else none - `platform.read` event of an
         answered read (local storage first).
 
         The event's `ref` is the read target (04-crypto.md section 4.3: the hub refuses an empty one), the audited
         target ID - a UUID, as the header contract requires: the tools name checked IDs or scope IDs, else the session.
+        The audit detail also names the workgroup read (`read_wg_id`, null on the organization level) and the
+        instructing human (`triggered_by`, null when unknown; ADR-087 section 4).
         """
         at = self.env.at()
         target = outcome.target_id or session.id
@@ -482,7 +573,11 @@ class Subagents:
             "session_id": session.id,
             "target_kind": outcome.target_kind,
             "target_id": target,
-            "detail": {"result_count": outcome.result_count},
+            "detail": {
+                "result_count": outcome.result_count,
+                "read_wg_id": outcome.read_wg_id,
+                "triggered_by": actor_id,
+            },
         }
         async with self.env.transaction() as conn:
             if arguments is not None:
@@ -601,5 +696,6 @@ def controller_for(context: Any) -> Subagents | None:
         notify=finished_notifier(package),
         tools=query_tools(package),
         sleep=context.host.sleep,
+        idle_seconds=float(context.config.session_idle_seconds),
     )
     return install(context, built)

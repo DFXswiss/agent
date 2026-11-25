@@ -24,6 +24,8 @@ OPERATION_TYPES = frozenset(
         "github.create_pull_request",
         "github.comment",
         "subagent.request",
+        "subagent.instruct",
+        "subagent.stop",
         "task.set_title",
         "workvm.request",
         "workvm.release",

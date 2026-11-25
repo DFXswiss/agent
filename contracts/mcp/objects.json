@@ -19,6 +19,10 @@
             "org",
             "workgroup"
           ]
+        },
+        "workgroup_id": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "another workgroup the session may read (ADR-087); only for scope workgroup, default: the session's workgroup"
         }
       },
       "required": [
@@ -42,6 +46,10 @@
           "pattern": "^[A-Za-z0-9_-]+$",
           "minLength": 1,
           "maxLength": 256
+        },
+        "workgroup_id": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "another workgroup the session may read (ADR-087); default: the session's workgroup"
         }
       },
       "required": [],
@@ -81,7 +89,7 @@
     },
     "input_get_whiteboard": {
       "type": "object",
-      "description": "task_id is required for level task and refused for the levels org and workgroup; the guest and the runner check this rule (a tool input schema is a plain object: the model API refuses oneOf, anyOf and allOf at its top level)",
+      "description": "task_id is required for level task and refused for the levels org and workgroup; workgroup_id is allowed only for level workgroup; the guest and the runner check these rules (a tool input schema is a plain object: the model API refuses oneOf, anyOf and allOf at its top level)",
       "properties": {
         "level": {
           "type": "string",
@@ -93,6 +101,10 @@
         },
         "task_id": {
           "$ref": "../common.json#/$defs/uuid"
+        },
+        "workgroup_id": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "another workgroup the session may read (ADR-087); only for level workgroup, default: the session's workgroup"
         }
       },
       "required": [
@@ -167,7 +179,7 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 30,
-          "description": "seconds to wait for a final state (at most 30)"
+          "description": "seconds to wait for the end of the newest instruction's turn or of the child (at most 30)"
         }
       },
       "required": [
@@ -280,9 +292,7 @@
               ]
             },
             "depth": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 2
+              "$ref": "../common.json#/$defs/count"
             },
             "model_id": {
               "anyOf": [
@@ -319,19 +329,48 @@
           "type": "object",
           "properties": {
             "subagent_max_depth": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 2
+              "description": "a subagent limit of the platform's settings (ADR-088 section 2): 0 = no limit, null = not known (an older hub)",
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "subagent_max_parallel": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 3
+              "description": "a subagent limit of the platform's settings (ADR-088 section 2): 0 = no limit, null = not known (an older hub)",
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "subagent_max_total": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 10
+              "description": "a subagent limit of the platform's settings (ADR-088 section 2): 0 = no limit, null = not known (an older hub)",
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "subagent_max_runtime_seconds": {
+              "description": "a subagent limit of the platform's settings (ADR-088 section 2): 0 = no limit, null = not known (an older hub)",
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "required": [
@@ -566,9 +605,7 @@
                 "$ref": "../common.json#/$defs/session_state"
               },
               "depth": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 2
+                "$ref": "../common.json#/$defs/count"
               },
               "parent_session_id": {
                 "anyOf": [
@@ -856,7 +893,7 @@
       "oneOf": [
         {
           "type": "object",
-          "description": "finished child",
+          "description": "finished child: the final text of its last turn; instruction_id names its newest instruction (ADR-088)",
           "properties": {
             "session_id": {
               "$ref": "../common.json#/$defs/uuid"
@@ -873,6 +910,9 @@
             },
             "finished_at": {
               "$ref": "../common.json#/$defs/time"
+            },
+            "instruction_id": {
+              "$ref": "../common.json#/$defs/uuid"
             }
           },
           "required": [
@@ -906,7 +946,7 @@
         },
         {
           "type": "object",
-          "description": "still running",
+          "description": "still running; instruction_id names the newest instruction, whose turn waits or runs (ADR-088)",
           "properties": {
             "session_id": {
               "$ref": "../common.json#/$defs/uuid"
@@ -926,11 +966,48 @@
                 "resuming",
                 "stopping"
               ]
+            },
+            "instruction_id": {
+              "$ref": "../common.json#/$defs/uuid"
             }
           },
           "required": [
             "session_id",
             "state"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "the turn of the newest instruction ended; the child keeps running and waits for the next instruction (ADR-088)",
+          "properties": {
+            "session_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "idle",
+                "suspended"
+              ]
+            },
+            "final_text": {
+              "type": "string",
+              "maxLength": 65536
+            },
+            "finished_at": {
+              "$ref": "../common.json#/$defs/time"
+            },
+            "instruction_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            }
+          },
+          "required": [
+            "session_id",
+            "state",
+            "final_text",
+            "finished_at",
+            "instruction_id"
           ],
           "additionalProperties": false
         }

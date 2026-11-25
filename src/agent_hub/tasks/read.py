@@ -8,7 +8,8 @@
   the lists of several workgroups by activity and pages each with its own cursor).
 - `get_task(task)`: the task row, its sessions as a tree order (depth, creation), each with its usage and its newest
   100 transitions, and the newest 100 task transitions.
-- `get_session(session)`: the session row, its newest 1000 transitions, usage, VM and the IDs of its children.
+- `get_session(session)`: the session row, its newest 1000 transitions, usage, VM and the IDs of its first 1000
+  children (oldest first).
 
 Rows hold metadata only; the title and every content stay in events.
 """
@@ -29,7 +30,8 @@ LIST_MAX = 200
 TASK_TRANSITIONS = 100
 SESSIONS_MAX = 100
 SESSION_TRANSITIONS = 1000
-CHILDREN_MAX = 10
+CHILDREN_MAX = 1000
+"""The IDs of a session's children in one answer; the number of children is a hub setting (ADR-088 section 2)."""
 
 
 ORDERS = {"created": ("t.created_at", 6), "activity": ("t.last_activity_at", 8)}

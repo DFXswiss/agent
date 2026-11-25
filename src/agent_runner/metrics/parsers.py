@@ -85,7 +85,6 @@ SESSION_OPTIONAL = (
     "model_request_bytes",
     "model_response_bytes",
 )
-MAX_GUEST_SESSIONS = 64
 
 
 class ProbeError(ValueError):
@@ -270,7 +269,7 @@ def _session(item: object) -> GuestSession:
 def parse_guest_metrics(data: Mapping[str, Any]) -> GuestMetrics:
     """The checked answer of `GET /v1/metrics`; any value outside the contract refuses the whole answer."""
     vm, sessions = data.get("vm"), data.get("sessions")
-    if not isinstance(vm, dict) or not isinstance(sessions, list) or len(sessions) > MAX_GUEST_SESSIONS:
+    if not isinstance(vm, dict) or not isinstance(sessions, list):
         raise ProbeError("guest")
     load = vm.get("load1")
     if not isinstance(load, int | float) or isinstance(load, bool) or not 0 <= load < math.inf:

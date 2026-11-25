@@ -115,7 +115,7 @@ def test_start_runs_steps_one_to_five_with_transitions_and_contract_requests(rig
             task=(TASK, "Fix 'it'"),
             owner="Alice A.",
             rights="write",
-            limits=(2, 3, 10),
+            limits=(None, None, None, None),  # the kit's hub sends no limits: unknown
         )
         assert request["harness"]["context_markdown"] == expected
         sid_cred, credential = call(found, "put_credential")
@@ -412,13 +412,44 @@ def test_context_markdown_equals_the_guest_format() -> None:
         "task": ("t", "Title"),
         "owner": "Bob",
         "rights": "read",
-        "limits": (2, 3, 10),
+        "limits": (5, 50, 0, 0),
     }
     assert harness.context_markdown(**arguments) == guest_harness.context_markdown(**arguments)
     for login in (None, "octo-user"):
         same = {**arguments, "github": login}
         assert harness.context_markdown(**same) == guest_harness.context_markdown(**same)
+    for limits in ((0, 0, 7, 60), (5, 50, 0, None), (None, None, None, None)):
+        assert harness.subagent_limits(limits) == guest_harness.subagent_limits(limits)
     assert harness.inline("a\n\tb `c`") == guest_harness.inline("a\n\tb `c`")
+
+
+def test_the_context_names_the_subagent_settings_of_the_platform() -> None:
+    def line(limits: harness.SubagentValues) -> str:
+        text = harness.context_markdown(
+            org=("o", "O"), workgroup=("w", "W", True), task=("t", "T"), owner="B", rights="write", limits=limits
+        )
+        return text.splitlines()[5]
+
+    prefix = "- Subagent limits (settings of the platform): "
+    assert line((5, 50, 0, 0)) == prefix + "depth 5, 50 running at a time, no limit per task, no runtime limit"
+    assert line((0, 0, 7, 60)) == (
+        prefix + "no depth limit, no limit of running subagents, 7 per task, runtime at most 60 s"
+    )
+    assert line((5, None, 0, 0)) == prefix + "unknown"
+    assert line((None, None, None, None)) == prefix + "unknown"
+
+
+def test_the_session_context_takes_the_settings_of_the_desired_state(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        found = await kit(env)
+        limits = {"subagent_max_depth": 3, "subagent_max_running": 4, "subagent_max_total": 5}
+        found.session_env.desired = {"limits": {"api": 1, **limits, "subagent_max_runtime_seconds": 0}}
+        assert (await Starter(found.session_env).start(desired())).started
+        context = call(found, "create_session")["harness"]["context_markdown"]
+        line = "depth 3, 4 running at a time, 5 per task, no runtime limit"
+        assert f"- Subagent limits (settings of the platform): {line}" in context.splitlines()
+
+    run(rig, body)
 
 
 def test_the_context_names_the_owners_github_connection(rig: Rig) -> None:
@@ -448,7 +479,7 @@ def test_the_context_names_the_owners_github_connection(rig: Rig) -> None:
 
 def test_without_github_the_context_tells_the_session_to_request_the_operation_anyway() -> None:
     text = harness.context_markdown(
-        org=("o", "O"), workgroup=("w", "W", True), task=("t", "T"), owner="B", rights="write", limits=(2, 3, 10)
+        org=("o", "O"), workgroup=("w", "W", True), task=("t", "T"), owner="B", rights="write", limits=(5, 50, 0, 0)
     )
     line = text.splitlines()[-1]
     assert line.startswith("- GitHub of the task owner: not connected. If the task needs GitHub, request")
@@ -459,7 +490,7 @@ def test_without_github_the_context_tells_the_session_to_request_the_operation_a
         task=("t", "T"),
         owner="B",
         rights="write",
-        limits=(2, 3, 10),
+        limits=(5, 50, 0, 0),
         github="x`\ny",
     )
     assert named.splitlines()[-1] == "- GitHub of the task owner: connected as x' y"

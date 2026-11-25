@@ -62,6 +62,7 @@ from agent_runner.sessions.env import SessionEnv
 from agent_runner.sessions.events import fail
 from agent_runner.sessions.extensions import InitialPrompt
 from agent_runner.sessions.stop import stop_guest
+from agent_runner.subagents import limits as subagent_limits
 from agent_runner.vm import records as vm_records
 from agent_runner.vm.records import VmRow
 
@@ -343,6 +344,7 @@ class Starter:
             wg_id=desired.wg_id,
             task_id=desired.task_id,
             owner_id=desired.owner_id,
+            limits=subagent_limits.values(subagent_limits.of(env.desired)),
             github=await harness.github_login(env.context, desired.owner_id),
         )
 

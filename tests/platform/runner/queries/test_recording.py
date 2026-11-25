@@ -1,7 +1,8 @@
-"""U-RUN-queries read log: every call of a read tool becomes one outbox audit `read.session.<tool>` and - when the tool
-checked its arguments - one `platform.read` event `{tool, arguments, result_count}` of the session's workgroup
-(03-api.md sections 6.1, 8 and 10, 02-data-model.md section 2.9), also for reads refused on rights; arguments a tool
-refused are audited but never sealed (KOR-03, AUD-01 A-18); event bodies and audits match `contracts/`."""
+"""U-RUN-queries read log: every call of a read tool becomes one outbox audit `read.session.<tool>` (detail
+`{result_count, read_wg_id, triggered_by}`, ADR-087 section 4) and - when the tool checked its arguments - one
+`platform.read` event `{tool, arguments, result_count}` of the session's workgroup (03-api.md sections 6.1, 8 and 10,
+02-data-model.md section 2.9), also for reads refused on rights; arguments a tool refused are audited but never sealed
+(KOR-03, AUD-01 A-18); event bodies and audits match `contracts/`."""
 
 from __future__ import annotations
 
@@ -25,6 +26,9 @@ CALLS: tuple[tuple[str, dict[str, Any], str, int], ...] = (
     ("get_operation", {"operation_id": "01930007-0000-7000-8000-000000000001"}, "denied", 0),
     ("list_members", {"scope": "nobody"}, "failed", 0),
 )
+READ_WGS = (WG, None, None, WG, WG, WG, WG, None, WG, WG_ONE, None, None)
+"""The audited `read_wg_id` of each call (ADR-087 section 4): null on the organization level and before a workgroup
+was chosen; the refused task of workgroup one names that workgroup."""
 TARGETS = {
     "get_context": "session",
     "list_workgroups": "org",
@@ -55,7 +59,8 @@ def test_every_call_is_one_read_event_and_one_audit(rig: Rig) -> None:
             assert SCHEMAS.errors("events/platform.read.json", read) == []
         audits = await k.read_audits()
         assert [(a["action"], a["result"], a["detail"]) for a in audits] == [
-            (f"read.session.{tool}", result, {"result_count": count}) for tool, _a, result, count in CALLS
+            (f"read.session.{tool}", result, {"result_count": count, "read_wg_id": read_wg, "triggered_by": None})
+            for (tool, _a, result, count), read_wg in zip(CALLS, READ_WGS, strict=True)
         ]
         # every event names its read target in `ref` (the audited target; the hub refuses an empty ref)
         assert [header["ref"] for header, _b in events] == [

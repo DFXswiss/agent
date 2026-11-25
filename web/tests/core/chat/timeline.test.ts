@@ -5,7 +5,15 @@ import { describe, expect, it } from 'vitest';
 import { chatList } from '../../../src/core/chat/actions';
 import { buildTimeline, selectTimeline } from '../../../src/core/chat/timeline';
 import { imageLabel, LINK_REL, safeUrl } from '../../../src/core/chat/links';
-import { childrenOf, flatten, selectSessionIndex, sessionMeta, sessionTree } from '../../../src/core/sessions/tree';
+import {
+  childrenOf,
+  flatten,
+  INDENT_LEVELS,
+  indentLevel,
+  selectSessionIndex,
+  sessionMeta,
+  sessionTree,
+} from '../../../src/core/sessions/tree';
 import { createStore } from '../../../src/core/store';
 import { type EventEntry, putEvents } from '../../../src/core/store/slices/events';
 import { setPage } from '../../../src/core/store/slices/pages';
@@ -334,7 +342,7 @@ describe('timeline boundary', () => {
 });
 
 describe('session tree', () => {
-  it('builds main sessions with children by parent, depth at most 2, in creation order', () => {
+  it('builds main sessions with children by parent at any depth, in creation order', () => {
     const rows = sessions(
       { row: session(MAIN) },
       { row: session('c2', { parent_session_id: MAIN, depth: 1, created_at: '2026-11-21T12:00:03.000Z' }) },
@@ -353,8 +361,11 @@ describe('session tree', () => {
       [MAIN, 0, ''],
       ['c1', 1, '1'],
       ['c1a', 2, '1.1'],
+      ['broken', 3, '1.1.1'],
+      ['c1a1', 3, '1.1.2'],
       ['c2', 1, '2'],
     ]);
+    expect([0, 1, 4, 7, -1].map(indentLevel)).toEqual([0, 1, INDENT_LEVELS, INDENT_LEVELS, 0]);
     expect(childrenOf(rows, MAIN).map((entry) => entry.row.session_id)).toEqual(['c1', 'c2']);
     const store = createStore();
     for (const entry of Object.values(rows)) putSession(store, entry.row, [], 0);

@@ -1,12 +1,17 @@
-"""U-HUB-operations: `subagent.request` - limits of check H4 (depth, running, total, budget; ADR-017, R-13.8) and the
-child session of an accepted request (R-10.6, R-13.2, R-13.5, R-13.7)."""
+"""U-HUB-operations: `subagent.request` - limits of check H4 (depth, running, total as settings, budget; ADR-088
+section 2, R-13.8) and the child session of an accepted request (R-10.6, R-13.2, R-13.5, R-13.7).
+
+The limit tests run with the settings depth 2, 3 running, 10 per task (`settings`); 0 is no limit."""
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
+from agent_hub.config import SubagentLimits
 from agent_hub.operations import limits
 from agent_hub.stream.publish import MemoryPublisher
 from tests.platform.hub.conftest import contracts_registry
@@ -15,6 +20,22 @@ from tests.platform.hub.orgs.support import new_id
 from tests.platform.hub.tasks.support import frames, hints
 
 SUBAGENT = "subagent.request"
+Settings = Callable[..., None]
+
+
+@pytest.fixture(autouse=True)
+def settings(ops: Ops) -> Iterator[Settings]:
+    """The hub's subagent settings for the test: depth 2, 3 running, 10 per task unless changed."""
+    state = ops.hub.app.state
+    original = state.hub
+
+    def change(**values: int) -> None:
+        chosen = {"max_depth": 2, "max_running": 3, "max_total": 10, **values}
+        state.hub = replace(original, config=replace(original.config, subagent_limits=SubagentLimits(**chosen)))
+
+    change()
+    yield change
+    state.hub = original
 
 
 def _children(ops: Ops, task: str, session: str, states: list[str], depth: int = 1) -> list[str]:
@@ -119,6 +140,36 @@ def test_running_limit(ops: Ops) -> None:
     assert ops.decide(session, SUBAGENT)[1]["state"] == "accepted"
 
 
+def test_suspended_children_do_not_run(ops: Ops) -> None:
+    task, session = ops.session()
+    _children(ops, task, session, ["working", "working", "suspended", "suspended"])
+    assert ops.decide(session, SUBAGENT)[1]["state"] == "accepted"
+    assert ops.decide(session, SUBAGENT)[1] == {"state": "denied", "error_code": "limit_exceeded"}
+
+
+def test_0_is_no_limit(ops: Ops, settings: Settings) -> None:
+    task, session = ops.session()
+    _children(ops, task, session, ["working"] * 3 + ["stopped"] * 7)
+    deep = _children(ops, task, session, ["working"], depth=2)[0]
+    assert ops.decide(deep, SUBAGENT)[1] == {"state": "denied", "error_code": "limit_exceeded"}
+    settings(max_depth=0, max_running=0, max_total=0)
+    grandchild = ops.decide(deep, SUBAGENT)[1]["child_session_id"]
+    assert ops.desk.rows("SELECT depth FROM hub.session WHERE id = %s", grandchild) == [(3,)]
+    settings(max_running=0)
+    assert ops.decide(session, SUBAGENT)[1] == {"state": "denied", "error_code": "limit_exceeded"}  # total 10
+    settings(max_total=0, max_running=20)
+    assert ops.decide(session, SUBAGENT)[1]["state"] == "accepted"
+
+
+def test_the_default_settings_are_generous(ops: Ops, settings: Settings) -> None:
+    task, session = ops.session()
+    settings(**{name: value for name, value in vars(SubagentLimits()).items() if name != "max_runtime_seconds"})
+    _children(ops, task, session, ["working"] * 48 + ["stopped"] * 100)
+    deep = _children(ops, task, session, ["working"], depth=4)[0]
+    assert ops.decide(deep, SUBAGENT)[1]["state"] == "accepted"  # depth 5, the 50th running child
+    assert ops.decide(session, SUBAGENT)[1] == {"state": "denied", "error_code": "limit_exceeded"}
+
+
 def test_total_limit(ops: Ops) -> None:
     task, session = ops.session()
     _children(ops, task, session, ["stopped"] * 8 + ["failed"])
@@ -186,3 +237,15 @@ def test_ended_child_cannot_request(ops: Ops, state: str) -> None:
     task, session = ops.session()
     (child,) = _children(ops, task, session, [state])
     assert ops.decide(child, SUBAGENT)[1] == {"state": "denied", "error_code": "rights_denied"}
+
+
+@pytest.mark.parametrize("op_type", ["subagent.instruct", "subagent.stop"])
+def test_follow_up_and_stop_have_no_check_of_their_own(ops: Ops, op_type: str) -> None:
+    # ADR-088 section 1: the hub cannot read the target; it checks nothing beyond H1/H2 and creates no child, also
+    # when every subagent limit is reached and from a child session
+    task, session = ops.session()
+    (child,) = _children(ops, task, session, ["working"] * 3)[:1]
+    operation, answer = ops.decide(session, op_type, dedupe="k")
+    assert answer == {"state": "accepted"}
+    assert ops.desk.rows("SELECT count(*) FROM hub.session WHERE origin_operation_id = %s", operation) == [(0,)]
+    assert ops.decide(child, op_type)[1] == {"state": "accepted"}

@@ -42,7 +42,14 @@ def test_config(hub: HubHarness) -> None:
     assert body["platform_root_key"] == b64url_encode(raw_public(root_private_key()))
     assert body["hub_key"] == {"id": TEST_HUB_KEY_ID, "public_key": signer.public_key_text}
     assert body["version"] == __version__
-    assert body["limits"] == dict(LIMITS)
+    # the fixed limits and the subagent settings with their defaults (ADR-088 section 2; 0 = no limit)
+    assert body["limits"] == {
+        **LIMITS,
+        "subagent_max_depth": 5,
+        "subagent_max_running": 50,
+        "subagent_max_total": 0,
+        "subagent_max_runtime_seconds": 0,
+    }
     assert body["defaults"] == {"platform": "deepseek/deepseek-v4.1-flash-1017"}
     assert body["models"]["platform"] == ["deepseek/deepseek-v4.1-flash-1017", "deepseek/deepseek-v4-pro"]
     assert "claude-opus-5-5" in body["models"]["api_key"]

@@ -1,9 +1,10 @@
 """Check H4 of the registration: the type-specific limits (03-api.md sections 8.3, 9, 12; ADR-017).
 
-`subagent.request` is limited per task: the child would have `depth = parent depth + 1` at most `MAX_DEPTH` (main
-session 0, children 1, grandchildren 2), at most `MAX_RUNNING` children of the task may run (every session of depth
-> 0 that has not ended in `stopped`/`failed`), and at most `MAX_TOTAL` children may exist in the task. Exceeding one
-is `denied` with `limit_exceeded`. Then the platform budget of the org is asked; a refusal is `denied` with
+`subagent.request` is limited per task by the hub's settings (`config.SubagentLimits`, ADR-088 section 2; 0 = no
+limit): the child would have `depth = parent depth + 1` at most `max_depth` (main session 0), at most `max_running`
+children of the task may run (every session of depth > 0 that has not ended in `stopped`/`failed` and is not
+`suspended`), and at most `max_total` children may exist in the task. Exceeding one is `denied` with
+`limit_exceeded`. Then the platform budget of the org is asked; a refusal is `denied` with
 `budget_exceeded`. The caller holds the task row, so two requests of the same task never both see the last free
 place. Other types have no limits in v1.
 
@@ -24,12 +25,10 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.config import SubagentLimits
 from agent_hub.registry import ExtensionPoint, RegistryError, discover
 
 Connection = psycopg.Connection[Any]
-MAX_DEPTH = 2
-MAX_RUNNING = 3
-MAX_TOTAL = 10
 BUDGET_CHECK = ExtensionPoint("budget", "CHECK")
 
 
@@ -83,19 +82,23 @@ def budget_check(request: BudgetRequest) -> bool | str:
     return (current if current is not None else configure())(request)
 
 
-def subagent_limit(connection: Connection, task_id: UUID, parent_depth: int) -> str | None:
+def subagent_limit(connection: Connection, task_id: UUID, parent_depth: int, settings: SubagentLimits) -> str | None:
     """`limit_exceeded` when a child of a session of `parent_depth` would break a limit of the task, else None."""
-    if parent_depth + 1 > MAX_DEPTH:
+    if settings.max_depth and parent_depth + 1 > settings.max_depth:
         return "limit_exceeded"
+    if not settings.max_running and not settings.max_total:
+        return None
     row = cast(
         tuple[int, int],
         connection.execute(
-            "SELECT count(*) FILTER (WHERE state NOT IN ('stopped', 'failed')), count(*) FROM hub.session"
+            "SELECT count(*) FILTER (WHERE state NOT IN ('stopped', 'failed', 'suspended')), count(*) FROM hub.session"
             " WHERE task_id = %s AND depth > 0",
             (task_id,),
         ).fetchone(),
     )
     running, total = row
-    if running >= MAX_RUNNING or total >= MAX_TOTAL:
+    if (settings.max_running and running >= settings.max_running) or (
+        settings.max_total and total >= settings.max_total
+    ):
         return "limit_exceeded"
     return None

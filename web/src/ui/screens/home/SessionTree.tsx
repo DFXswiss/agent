@@ -3,14 +3,15 @@
 // the agent they report to, each with its state; at most `TREE_MAX` are shown, the rest are counted ("N more").
 import { useEffect, useMemo, useState } from 'react';
 import { TREE_MAX } from '../../../core/attention/view';
-import { flatten, sessionTree } from '../../../core/sessions/tree';
+import { flatten, indentLevel, sessionTree } from '../../../core/sessions/tree';
 import { loadTask, sendErrorCode } from '../../../core/tasks/send';
 import { formatNumber } from '../../../core/i18n';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 
-const INDENT = ['', 'ml-4 sm:ml-6', 'ml-8 sm:ml-12'];
+/** Indentation by `indentLevel` (static classes, `INDENT_LEVELS` + 1 entries). */
+const INDENT = ['', 'ml-4 sm:ml-6', 'ml-8 sm:ml-12', 'ml-12 sm:ml-20', 'ml-16 sm:ml-24'];
 
 export function SessionTree({ task, subagents }: { readonly task: string; readonly subagents: number }) {
   const { app } = useAppEnv();
@@ -51,7 +52,7 @@ export function SessionTree({ task, subagents }: { readonly task: string; readon
           {shown.map((node) => (
             <li
               key={node.entry.row.session_id}
-              className={`flex flex-wrap items-center gap-2 text-sm ${INDENT[node.depth]}`}
+              className={`flex flex-wrap items-center gap-2 text-sm ${INDENT[indentLevel(node.depth)]}`}
               data-testid="attention.tree.node"
               data-depth={node.depth}
               data-session={node.entry.row.session_id}

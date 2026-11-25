@@ -1,15 +1,20 @@
 // The sessions of a task as a tree (06-web.md section 5.3): main sessions (depth 0, a follow-up after `stopped` or
-// `failed` starts a new one, 03-api.md section 4.6.3) with their subagent children by `parent_session_id`, depth ≤ 2
-// (ADR-017). Rows come from the `tasks` slice (the countdown keeps sessions there; there is no second session state).
-// Children are labelled "Subagent 1", "Subagent 1.2", … by creation order under their parent (the label the chat uses
-// to mark subagent output).
+// `failed` starts a new one, 03-api.md section 4.6.3) with their subagent children by `parent_session_id`, at any
+// depth (the depth is a setting of the platform, ADR-088 section 2). Rows come from the `tasks` slice (the countdown
+// keeps sessions there; there is no second session state). Children are labelled "Subagent 1", "Subagent 1.2", … by
+// creation order under their parent (the label the chat uses to mark subagent output). Views indent a row by its depth
+// up to `INDENT_LEVELS` (`indentLevel`); deeper rows keep that indentation and their label names the depth.
 import { parseTime } from '../encoding/time';
 import { isRecord } from '../registry';
 import { memoize } from '../store/selectors';
 import type { SessionEntry, TasksState } from '../store/slices/tasks';
 import type { StoreState } from '../store/store';
 
-export const MAX_DEPTH = 2;
+/** Rows are indented by at most this many levels (module comment). */
+export const INDENT_LEVELS = 4;
+
+/** The indentation level of a row of `depth`: the depth, at most `INDENT_LEVELS`. */
+export const indentLevel = (depth: number): number => Math.min(Math.max(depth, 0), INDENT_LEVELS);
 
 export interface SessionNode {
   readonly entry: SessionEntry;
@@ -48,7 +53,8 @@ function created(entry: SessionEntry): number {
 const byCreation = (a: SessionEntry, b: SessionEntry): number =>
   created(a) - created(b) || Number(a.row.session_id > b.row.session_id) - Number(a.row.session_id < b.row.session_id);
 
-/** The tree of the task's sessions; children of unknown parents and anything deeper than `MAX_DEPTH` are left out. */
+/** The tree of the task's sessions at any depth; children of unknown parents are left out (every node is reached from
+ * a main session through its one parent, so the tree has no cycle). */
 export function sessionTree(sessions: TasksState['sessions'], task: string): SessionNode[] {
   const own = Object.values(sessions)
     .filter((entry) => entry.row.task_id === task)
@@ -62,12 +68,9 @@ export function sessionTree(sessions: TasksState['sessions'], task: string): Ses
     entry,
     depth,
     path,
-    children:
-      depth >= MAX_DEPTH
-        ? []
-        : (children.get(entry.row.session_id) ?? []).map((child, index) =>
-            build(child, depth + 1, [...path, index + 1]),
-          ),
+    children: (children.get(entry.row.session_id) ?? []).map((child, index) =>
+      build(child, depth + 1, [...path, index + 1]),
+    ),
   });
   return own.filter((entry) => sessionMeta(entry).parent === null).map((entry) => build(entry, 0, []));
 }

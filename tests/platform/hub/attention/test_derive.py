@@ -140,9 +140,16 @@ def test_every_outcome_of_every_table_is_a_listed_reason_of_its_category() -> No
                 ("rejected", "repo_not_allowed"),
                 ("failed", "branch_protected"),
                 ("rejected", "secret_detected"),
-                ("denied", "limit_exceeded"),
                 ("expired", "model_not_allowed"),
             )
+        ],
+        # a subagent limit of the hub's settings (ADR-088 section 2), refused by the runner or the hub
+        *[
+            (
+                _inputs("idle", main_state="idle", last_turn=[_op("subagent.request", state, "limit_exceeded")]),
+                Attention("blocked", "limit_reached", "operation", OP),
+            )
+            for state in ("rejected", "denied")
         ],
         # other codes, a missing code, a non-final state and a superseded refusal do not matter
         (

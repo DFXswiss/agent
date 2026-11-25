@@ -28,7 +28,12 @@ CONTEXT_RESULT = {
     },
     "session": {"id": SESSION_ID, "parent_session_id": None, "depth": 0, "model_id": None},
     "rights": {"workgroup": "write"},
-    "limits": {"subagent_max_depth": 2, "subagent_max_parallel": 3, "subagent_max_total": 10},
+    "limits": {
+        "subagent_max_depth": 5,
+        "subagent_max_parallel": 50,
+        "subagent_max_total": 0,
+        "subagent_max_runtime_seconds": None,
+    },
     "api_version": 1,
 }
 

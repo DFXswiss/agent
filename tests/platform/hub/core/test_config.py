@@ -16,6 +16,7 @@ from agent_hub.config import (
     DEFAULT_STATIC_DIR,
     CatalogInvalid,
     ConfigError,
+    SubagentLimits,
     load_config,
     parse_model_catalog,
     parse_public_url,
@@ -98,6 +99,30 @@ def test_the_failover_deadline() -> None:
     assert (config.device_online_seconds, config.device_failover_seconds) == (5, 10)
 
 
+def test_subagent_settings() -> None:
+    """ADR-088 section 2: every subagent limit is a setting with a generous default; 0 means no limit."""
+    assert load_config(hub_environ()).subagent_limits == SubagentLimits(
+        max_depth=5, max_running=50, max_total=0, max_runtime_seconds=0
+    )
+    config = load_config(
+        hub_environ(
+            AGENT_HUB_SUBAGENT_MAX_DEPTH="0",
+            AGENT_HUB_SUBAGENT_MAX_RUNNING="0",
+            AGENT_HUB_SUBAGENT_MAX_TOTAL="1000000",
+            AGENT_HUB_SUBAGENT_MAX_RUNTIME_SECONDS="31536000",
+        )
+    )
+    assert config.subagent_limits == SubagentLimits(
+        max_depth=0, max_running=0, max_total=1_000_000, max_runtime_seconds=31_536_000
+    )
+    assert config.subagent_limits.published() == {
+        "subagent_max_depth": 0,
+        "subagent_max_running": 0,
+        "subagent_max_total": 1_000_000,
+        "subagent_max_runtime_seconds": 31_536_000,
+    }
+
+
 def test_the_headroom_of_a_dfx_key() -> None:
     """ADR-081 section 7 (KOR-50): at most 5 USD beyond a per-device key's booked spend unless configured."""
     assert load_config(hub_environ()).dfx_key_headroom_usd == Decimal(5)
@@ -173,6 +198,10 @@ def test_owner_database_is_forbidden_in_the_hub_process(value: str) -> None:
         ("AGENT_HUB_REFUSAL_HOLD_SECONDS", "86401", "from 0 to 86400"),
         ("AGENT_HUB_DEVICE_FAILOVER_SECONDS", "86401", "from 1 to 86400"),
         ("AGENT_HUB_DEVICE_FAILOVER_SECONDS", "59", "at least twice AGENT_HUB_DEVICE_ONLINE_SECONDS (60)"),
+        ("AGENT_HUB_SUBAGENT_MAX_DEPTH", "1000001", "from 0 to 1000000"),
+        ("AGENT_HUB_SUBAGENT_MAX_RUNNING", "-1", "from 0 to 1000000"),
+        ("AGENT_HUB_SUBAGENT_MAX_TOTAL", "ten", "from 0 to 1000000"),
+        ("AGENT_HUB_SUBAGENT_MAX_RUNTIME_SECONDS", "31536001", "from 0 to 31536000"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "-1", "non-negative amount"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "1.1234567", "non-negative amount"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "01", "non-negative amount"),

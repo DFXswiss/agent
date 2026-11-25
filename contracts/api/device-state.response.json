@@ -106,9 +106,7 @@
                 ]
               },
               "depth": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 2
+                "$ref": "../common.json#/$defs/count"
               },
               "owner_id": {
                 "$ref": "../common.json#/$defs/uuid"
@@ -693,6 +691,37 @@
           },
           "minItems": 0,
           "maxItems": 10000
+        },
+        "limits": {
+          "type": "object",
+          "description": "subagent limits of the hub's settings (ADR-088 section 2; KOR-45), 0 = no limit: the one source of the runner's pre-check, the runtime end of children, get_context.limits and the harness context; always sent by a hub of this release, optional in the schema for older hubs",
+          "properties": {
+            "api": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "limits interface version"
+            },
+            "subagent_max_depth": {
+              "$ref": "../common.json#/$defs/count"
+            },
+            "subagent_max_running": {
+              "$ref": "../common.json#/$defs/count"
+            },
+            "subagent_max_total": {
+              "$ref": "../common.json#/$defs/count"
+            },
+            "subagent_max_runtime_seconds": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "api",
+            "subagent_max_depth",
+            "subagent_max_running",
+            "subagent_max_total",
+            "subagent_max_runtime_seconds"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

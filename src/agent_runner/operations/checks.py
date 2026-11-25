@@ -25,7 +25,8 @@ booleans; the guest's `local_check:"passed"` is only a hint) and adds the rules 
    pre-check decides, KOR-47);
 6. `github.push`: the commit was created by an earlier `github.commit` of this task (`not_found`);
 7. `subagent.request`: `model_id` is allowed for the parent session's access kind by the model catalog
-   (`model_not_allowed`).
+   (`model_not_allowed`). Whether the `session_id` of `subagent.instruct` / `subagent.stop` names a running child of
+   the session is the subagent area's pre-check (`subagents/target_checks.py`).
 
 The result is the **effective** parameter set: branch names without `refs/heads/`, and `draft` of a pull request
 taken from the settings' `pr_draft_default` when the session left it out. Checks that need GitHub or the workspace
@@ -266,6 +267,11 @@ TYPES: Mapping[str, TypeRules] = {
         },
         ("purpose", "prompt"),
     ),
+    # ADR-088 section 1: whether `session_id` names a running child of the session is the area's pre-check
+    "subagent.instruct": TypeRules(
+        {"session_id": UUID, "prompt": _text(1, rules.SUBAGENT_LIMITS["prompt_max_length"])}, ("session_id", "prompt")
+    ),
+    "subagent.stop": TypeRules({"session_id": UUID}, ("session_id",)),
     "task.set_title": TypeRules({"title": rules.title_valid}, ("title",)),
     # docs/platform/spec/13-work-vm.md section 2 (ADR-059)
     "workvm.request": TypeRules(

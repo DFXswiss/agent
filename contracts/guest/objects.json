@@ -238,8 +238,7 @@
           "items": {
             "$ref": "#/$defs/session_metrics"
           },
-          "minItems": 0,
-          "maxItems": 64
+          "minItems": 0
         }
       },
       "required": [

@@ -71,8 +71,12 @@ TOOLS: tuple[tuple[str, str, dict[str, Any]], ...] = (
     ("get_context", "organization, workgroup, task, session, your rights and limits", {}),
     ("list_workgroups", "the workgroups of the organization", {}),
     ("list_members", "the members of the organization or of the workgroup", {"scope": "workgroup"}),
-    ("list_tasks", "the tasks of the workgroup", {"state": "working", "limit": 20}),
-    ("get_task", "one task of the workgroup with its sessions and operations", {"task_id": "<task id>"}),
+    (
+        "list_tasks",
+        "the tasks of the workgroup (or of another workgroup you may read, with `workgroup_id`)",
+        {"state": "working", "limit": 20},
+    ),
+    ("get_task", "one task with its sessions and operations", {"task_id": "<task id>"}),
     ("get_task_messages", "the chat of a task (prompts and answers)", {"task_id": "<task id>", "limit": 50}),
     ("get_whiteboard", "the whiteboard of the organization, workgroup or task", {"level": "workgroup"}),
     ("get_notifications", "the pending platform notices (marks them delivered)", {}),
@@ -224,15 +228,15 @@ def context_markdown(
     task: tuple[str, str],
     owner: str,
     rights: str,
-    limits: tuple[int, int, int],
+    limits: tuple[int | None, int | None, int | None, int | None],
     github: str | None = None,
 ) -> str:
     """Block 2 as RUN-04 sends it: ``org=(id, name)``, ``workgroup=(id, name, is_default)``, ``task=(id, title)``,
-    ``owner`` display name, ``rights`` (``read``/``write``), ``limits`` = subagent depth, parallel, total, ``github``
-    = the task owner's GitHub login (None: not connected, with the rule to request GitHub operations anyway)."""
+    ``owner`` display name, ``rights`` (``read``/``write``), ``limits`` = the subagent settings of the platform
+    (depth, running, total, runtime in seconds; 0 = no limit, None = unknown, ADR-088 section 2), ``github`` = the
+    task owner's GitHub login (None: not connected, with the rule to request GitHub operations anyway)."""
     wg_id, wg_name, is_default = workgroup
     default = " (default workgroup)" if is_default else ""
-    depth, parallel, total = limits
     return "\n".join(
         [
             f"- Organization: {inline(org[1])} (`{inline(org[0])}`)",
@@ -240,8 +244,23 @@ def context_markdown(
             f"- Task: {inline(task[1])} (`{inline(task[0])}`)",
             f"- Task owner: {inline(owner)}",
             f"- Rights of the task owner in the workgroup: {inline(rights)}",
-            f"- Subagent limits: depth {depth}, {parallel} running at a time, {total} per task",
+            f"- Subagent limits (settings of the platform): {subagent_limits(limits)}",
             GITHUB_NOT_CONNECTED if github is None else GITHUB_CONNECTED.format(login=inline(github)),
+        ]
+    )
+
+
+def subagent_limits(limits: tuple[int | None, int | None, int | None, int | None]) -> str:
+    """The subagent limits in words: ``unknown`` when any is unknown, 0 is no limit."""
+    depth, running, total, runtime = limits
+    if depth is None or running is None or total is None or runtime is None:
+        return "unknown"
+    return ", ".join(
+        [
+            f"depth {depth}" if depth else "no depth limit",
+            f"{running} running at a time" if running else "no limit of running subagents",
+            f"{total} per task" if total else "no limit per task",
+            f"runtime at most {runtime} s" if runtime else "no runtime limit",
         ]
     )
 

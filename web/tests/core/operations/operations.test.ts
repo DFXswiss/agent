@@ -446,6 +446,12 @@ describe('purposeOf', () => {
 describe('subjectOf and factsOf', () => {
   it('describes the parameters of each type', () => {
     expect(subjectOf('subagent.request', { purpose: 'Review', prompt: 'p' })).toBe('Review');
+    expect(subjectOf('subagent.instruct', { session_id: 's1', prompt: 'Check the tests.' })).toBe('Check the tests.');
+    expect(subjectOf('subagent.instruct', { session_id: 's1', prompt: `${'ä'.repeat(SUBJECT_CHARS)}tail` })).toBe(
+      `${'ä'.repeat(SUBJECT_CHARS)}…`,
+    );
+    expect(subjectOf('subagent.instruct', { session_id: 's1' })).toBeNull();
+    expect(subjectOf('subagent.stop', { session_id: 's1' })).toBe('s1');
     expect(subjectOf('task.set_title', { title: 'T' })).toBe('T');
     expect(subjectOf('human.question', { question: 'Which branch?' })).toBe('Which branch?');
     expect(subjectOf('human.approval', { question: 'Deploy?' })).toBe('Deploy?');
@@ -498,6 +504,16 @@ describe('subjectOf and factsOf', () => {
       { label: 'session', text: 's1', session: 's1' },
     ]);
     expect(factsOf('subagent.request', {}, none)).toEqual([]);
+    expect(factsOf('subagent.instruct', { session_id: 's1', instruction_id: 'i1' }, none)).toEqual([
+      { label: 'session', text: 's1', session: 's1' },
+    ]);
+    expect(factsOf('subagent.stop', { session_id: 's1', state: 'stopped' }, none)).toEqual([
+      { label: 'session', text: 's1', session: 's1' },
+      { label: 'stop_state', text: 'stopped' },
+    ]);
+    expect(factsOf('subagent.stop', { session_id: 's1', state: 'idle' }, none)).toEqual([
+      { label: 'session', text: 's1', session: 's1' },
+    ]);
     expect(factsOf('task.set_title', {}, none)).toEqual([]);
     const titled = { status: 'verified', at: '', value: { type: 'task.set_title', params: { title: 'New' } } } as const;
     expect(factsOf('task.set_title', {}, titled)).toEqual([{ label: 'title', text: 'New' }]);

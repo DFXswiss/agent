@@ -164,7 +164,9 @@ The exhaustive list is [04 §7](spec/04-crypto.md#7-what-the-hub-sees-in-plainte
 hub stores public keys, the two logs, wraps and signatures, the sealed bundle slots and the agent's sealed handover;
 it never holds or derives a scope key, a private key, a PRF output, a code or a credential value (enforced by the
 zero-knowledge canary scan, KM-36). It sees the metadata of rights and key distribution (who is entitled to which
-epoch, who wrapped for whom, when a rotation happened) and the counters of [A4](KONZEPT.md#a-4).
+epoch, who wrapped for whom, when a rotation happened) and the counters of [A4](KONZEPT.md#a-4). The read log of
+sessions is metadata too (IDs only): which session read which workgroup or task when and on whose instruction
+([ADR-087](adr/087-sessions-read-like-their-human.md) §4).
 
 An **active** hub can do more, and the model does not hide it ([04 §9](spec/04-crypto.md#9-threat-model)):
 withhold data and serve an old log (detected per client, KM-08); **serve malicious JavaScript**, which receives every
@@ -175,10 +177,11 @@ present an invented organization to a platform device ([gap KOR-55](#kor-55--tru
 
 ## 8. Reading across workgroups
 
-Today ([ADR-024](adr/024-session-read-scope.md)) a session reads with the rights of its task owner **intersected
-with its own workgroup**; other workgroups are visible by name only. The device holds exactly the keys of its assigned
-workgroups (KM-14), so this is also what it *can* read. KOR-45 lifts the intersection with the workgroup. The key model
-requires of it:
+Until KOR-45 ([ADR-024](adr/024-session-read-scope.md)) a session read with the rights of its task owner
+**intersected with its own workgroup**; other workgroups were visible by name only. The device holds exactly the keys
+of its assigned workgroups (KM-14), so this is also what it *can* read. KOR-45 lifted the intersection with the
+workgroup ([ADR-087](adr/087-sessions-read-like-their-human.md): points 1, 2 and 4-6 below are built, way B of point 3
+is not). The key model requires of it:
 
 1. **Rights:** a session reads what both the task owner **and** the human whose instruction it is working on may read
    (owner ∩ instructing human; without another human's instruction the owner alone), evaluated at call time on the
@@ -254,7 +257,7 @@ test of a rule that only one component enforces, as `path::test name`. `gap KOR-
 | KM-31 | A platform device trusts an org (founder, platform access) only on evidence it verifies itself against the root key. | runner | gap KOR-55 |
 | KM-32 | Write access to the default workgroup can be reduced to read by an admin (R stays empty: the member still reads; E5 refuses its writes); new members still start with write. | – | gap KOR-55 |
 | KM-33 | A support person reads or writes a workgroup only through an explicit, revocable release of that workgroup to support in the log plus a valid root-signed support role; revocation rotates. | – | gap KOR-56 |
-| KM-34 | A session reads across workgroups only within owner ∩ instructing human and only with keys its device already holds by assignment ([§8](#8-reading-across-workgroups)). | – | gap KOR-45 |
+| KM-34 | A session reads across workgroups only within owner ∩ instructing human and only with keys its device already holds by assignment ([§8](#8-reading-across-workgroups)). | runner | test:`tests/platform/runner/queries/test_cross_workgroup.py::test_the_decision_table`; test:`tests/platform/runner/queries/test_cross_workgroup.py::test_member_b_cannot_read_through_a_session_of_a_what_only_a_reads`; test:`tests/platform/runner/queries/test_cross_workgroup.py::test_the_human_captured_when_the_read_arrived_is_used` |
 | KM-35 | Credentials owned by an organization (a company identity) are readable by the devices that run its tasks, never by every member: the organization's `cred` scope has its assigned member devices as its only readers; an admin wraps each epoch without being a reader ([ADR-078](adr/078-github-identities.md)). | all | `log-wraps.json#cred_org_admin_for_device`; `log-wraps.json#cred_org_device_for_device`; `log-wraps.json#cred_org_admin_is_no_recipient`; `log-wraps.json#cred_org_member_is_no_wrapper`; `log-wraps.json#cred_org_removed_admin_is_no_wrapper` |
 | KM-36 | The hub never holds a scope key, private key, PRF output, code or credential value; a full flow leaves no canary in its database or logs. | hub | test:`e2e/platform/specs/e2e-09-zero-knowledge.spec.ts::the hub sees no confidential content over the full flows`; test:`tests/platform/hub/requests/test_devices_and_zero_knowledge.py::test_canaries_never_reach_hub_storage` |
 | KM-37 | VMs hold no scope key and no platform credential at rest: the guest has no cryptography library at all, and a work VM holds none of the platform's credentials. | runner, guest | test:`tests/platform/test_import_boundaries.py::test_guest_and_doubles_use_the_standard_library_only`; test:`tests/platform/images/test_workvm_attack_probes.py::test_credential_search_reports_counts_and_paths_never_the_secret` |
@@ -293,7 +296,7 @@ bearing on keys).
 | [§8 point 2](KONZEPT.md#k-8-b2) | Member = read (org scope), admin = write. | carried | [§3](#3-scopes) |
 | [§8 point 3](KONZEPT.md#k-8-b3) | Default workgroup write "by default": today not reducible. | gap → KOR-55 | KM-32 |
 | [§8 point 4](KONZEPT.md#k-8-b4) | Rights enforced in the backend and by every reader. | carried | KM-07, KM-12 |
-| [§8 point 5](KONZEPT.md#k-8-b5) | Sessions read within their rights, no blanket view of other workgroups. | gap → KOR-45 | [§8](#8-reading-across-workgroups), KM-34 |
+| [§8 point 5](KONZEPT.md#k-8-b5) | Sessions read within their rights, no blanket view of other workgroups. | carried | [§8](#8-reading-across-workgroups), KM-34 |
 | [§8 point 6](KONZEPT.md#k-8-b6) | Reads logged; reads of plaintext happen on the device and are logged there. | carried | [§8](#8-reading-across-workgroups) |
 | [§9](KONZEPT.md#k-9) | GitHub token under `CK`, used only on the device. | carried | KM-13, KM-24 |
 | [§10](KONZEPT.md#k-10) | Sessions execute nothing and hold no keys. | carried | KM-23, KM-37 |
@@ -322,7 +325,7 @@ bearing on keys).
 | [Idea 40](KONZEPT.md#k-idee-40) | Resume on another VM: context checkpoints under a key from `WK`. | carried (pending KOR-33) | [§3](#3-scopes) |
 | [Idea 41](KONZEPT.md#k-idee-41) | PR conflict fix by resume; PR → task tag from `WK`. | carried (pending KOR-33) | [§3](#3-scopes) |
 | [Idea 42](KONZEPT.md#k-idee-42) | Roles restrict operations, not keys. | none | – |
-| [Idea 43](KONZEPT.md#k-idee-43) | Fresh context per task; "authorised platform data can still be retrieved" across workgroups. | gap → KOR-45 | [§8](#8-reading-across-workgroups), KM-34 |
+| [Idea 43](KONZEPT.md#k-idee-43) | Fresh context per task; "authorised platform data can still be retrieved" across workgroups. | carried | [§8](#8-reading-across-workgroups), KM-34 |
 | [Idea 44](KONZEPT.md#k-idee-44) | Resume after device failure needs a second device that holds the workgroup's key. | gap → KOR-58 | [§11](#kor-58--resume-after-a-device-failure) |
 | [Idea 45](KONZEPT.md#k-idee-45) | Free with own resources. | none | – |
 | [Idea 46](KONZEPT.md#k-idee-46) | Usage counters in clear ([A4](KONZEPT.md#a-4)). | none | – |
@@ -366,7 +369,7 @@ bearing on keys).
 | [A8](KONZEPT.md#a-8) | A test run's log is encrypted workgroup content of the operation; the VM holds no key. | carried | KM-37 |
 | [A9](KONZEPT.md#a-9) | One throw-away VM per test run. | none | – |
 | [A10](KONZEPT.md#a-10) | Subagents continue: still platform sessions without keys. | carried | KM-23 |
-| [A11](KONZEPT.md#a-11) | Reading across workgroups within owner ∩ instructing human. | gap → KOR-45 | [§8](#8-reading-across-workgroups), KM-34 |
+| [A11](KONZEPT.md#a-11) | Reading across workgroups within owner ∩ instructing human. | carried | [§8](#8-reading-across-workgroups), KM-34 |
 | [A12](KONZEPT.md#a-12) | Support is its own principal with a platform role; the device is not support. | gap → KOR-56 | KM-33 |
 | [A13](KONZEPT.md#a-13) | Default-workgroup write is a default an admin can lower to read (no rotation: the member still reads). | gap → KOR-55 | KM-32 |
 | [A14](KONZEPT.md#a-14) | No fixed limits. | none | – |
@@ -461,7 +464,9 @@ decision of the owner ([E-25](KONZEPT.md#e-25)); point 6 built with the orchestr
 ### KOR-45 – Reading across workgroups
 
 The requirements of [§8](#8-reading-across-workgroups) points 1, 2 and 4–6 (KM-34); point 3 only after
-[decision D3](#decisions-for-the-orchestrator).
+[decision D3](#decisions-for-the-orchestrator). Built by KOR-45 with way A ([ADR-087](adr/087-sessions-read-like-their-human.md));
+the intersection is evaluated only by the runner (the hub never evaluates a session read), so its cases are a runner
+test, not a shared vector.
 
 ### KOR-47 – Credentials of the organization
 

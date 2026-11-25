@@ -331,9 +331,7 @@
           ]
         },
         "depth": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 2
+          "$ref": "../common.json#/$defs/count"
         },
         "state": {
           "$ref": "../common.json#/$defs/session_state"

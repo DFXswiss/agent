@@ -1,5 +1,6 @@
-"""U-RUN-subagents: one-shot end, final text, runtime limit and the `subagent.finished` ping of child sessions
-(05-runner.md section 13, ADR-017, ADR-020), driven by guest journal records through the real handlers."""
+"""U-RUN-subagents: one-shot end, final text, runtime limit and the `subagent.finished` ping of child sessions on a VM
+whose guest is older than ADR-088 (05-runner.md section 13, ADR-038, ADR-020), driven by guest journal records through
+the real handlers. The full children of a current guest: `test_turns.py`."""
 
 from __future__ import annotations
 
@@ -13,7 +14,15 @@ from agent_runner.subagents import controller as controller_module
 from agent_runner.subagents.controller import GRACE_S, SETTLE_MAX_S, SETTLE_S, Subagents, ping_id
 
 from ..reconcile.rig import Rig
-from .kit import SKit, run, setup
+from .kit import SKit, older_guest, run
+from .kit import setup as kit_setup
+
+
+async def setup(env: Any, **options: Any) -> SKit:
+    """The kit on a VM with a guest before ADR-088: its children keep the one-shot end."""
+    found = await kit_setup(env, **options)
+    await older_guest(found)
+    return found
 
 
 async def working_child(found: SKit, parent: str | None = None) -> tuple[str, str]:
@@ -154,6 +163,15 @@ def test_the_runtime_limit_fails_the_child(rig: Rig) -> None:
     async def body(env: Any) -> None:
         found = await setup(env)
         _parent, child = await working_child(found)
+        # without a runtime setting (older hub, or 0 = no limit) a child runs on
+        found.advance(365 * 86400)
+        await found.tick()
+        settings = {"subagent_max_depth": 5, "subagent_max_running": 50, "subagent_max_total": 0}
+        found.service.env.desired = {"limits": {"api": 1, **settings, "subagent_max_runtime_seconds": 0}}
+        await found.tick()
+        assert (await found.stored(child)).state == "working"
+        found.now[0] -= 365 * 86400
+        found.service.env.desired = {"limits": {"api": 1, **settings, "subagent_max_runtime_seconds": 1800}}
         found.advance(30 * 60 - 1)
         await found.tick()
         assert (await found.stored(child)).state == "working"

@@ -1,4 +1,4 @@
-"""U-RUN-queries: every read tool against the fixture org (03-api.md section 8.1, ADR-024, 05-runner.md section 2.2):
+"""U-RUN-queries: every read tool against the fixture org (03-api.md section 8.1, ADR-087, 05-runner.md section 2.2):
 two readable workgroups of the device and one it does not serve, several members, profiles, prompts, outputs and
 whiteboards from verified pulled events, task metadata from the device endpoints. Every answer is checked against
 `contracts/mcp/tools/<tool>.output.json` (or `mcp/tool-error.json`) by the kit."""
@@ -38,21 +38,28 @@ E1, E2, E3, E4, E5 = (f"01930006-0000-7000-8000-00000000000{n}" for n in range(1
 # -- list_workgroups -------------------------------------------------------------------------------------------------
 
 
-def test_list_workgroups_names_every_workgroup_with_the_owner_access(rig: Rig) -> None:
+def test_list_workgroups_names_every_workgroup_with_the_session_access(rig: Rig) -> None:
     async def body(k: RKit) -> None:
         await k.pull()
         alice = await k.session(1)
         bob = await k.session(2, wg=WG_ONE, owner=BOB, task=TASK_ONE)
+        await k.instruct(alice, ALICE)
+        # alice writes everywhere; the device does not serve workgroup two, so the session cannot read it
         assert await k.ok(alice, "list_workgroups") == {
             "workgroups": [
                 {"id": WG, "name": "General", "is_default": True, "my_access": "write"},
-                {"id": WG_ONE, "name": "Research", "is_default": False, "my_access": "write"},
-                {"id": WG_TWO, "name": "Secret Lab", "is_default": False, "my_access": "write"},
+                {"id": WG_ONE, "name": "Research", "is_default": False, "my_access": "read"},
+                {"id": WG_TWO, "name": "Secret Lab", "is_default": False, "my_access": None},
             ]
         }
-        # bob: write in the default workgroup, read on one, no access to two (its name only)
+        # bob's session: bob's explicit read on its own workgroup one, read on the default one, none on two
+        await k.instruct(bob, BOB)
         found = (await k.ok(bob, "list_workgroups"))["workgroups"]
-        assert [(w["id"], w["my_access"]) for w in found] == [(WG, "write"), (WG_ONE, "read"), (WG_TWO, None)]
+        assert [(w["id"], w["my_access"]) for w in found] == [(WG, "read"), (WG_ONE, "read"), (WG_TWO, None)]
+        # an unknown instructing human: only the own workgroup
+        await k.instruct(bob, None)
+        found = (await k.ok(bob, "list_workgroups"))["workgroups"]
+        assert [(w["id"], w["my_access"]) for w in found] == [(WG, None), (WG_ONE, "read"), (WG_TWO, None)]
         assert await k.error(alice, "list_workgroups", {"x": 1}) == "params_invalid"
 
     run(rig, body)
@@ -259,7 +266,7 @@ def test_get_task_refuses_invalid_hub_answers(rig: Rig) -> None:
     async def body(k: RKit) -> None:
         sid = await k.session(1)
         path = f"/v1/device/tasks/{TASK}"
-        bad_session = {**session_row(sid, TASK), "depth": 7}
+        bad_session = {**session_row(sid, TASK), "depth": -1}  # any depth >= 0 is valid (ADR-088 section 2)
         bad_op = {"id": "x", "type": "t", "state": "succeeded"}
         k.hub.raw[path] = (200, {"task": task_row(TASK), "sessions": [bad_session, "x"], "operations": [bad_op, 1]})
         found = await k.ok(sid, "get_task", {"task_id": TASK})
@@ -499,12 +506,53 @@ def test_get_context_of_a_session(rig: Rig) -> None:
             },
             "session": {"id": child, "parent_session_id": sid, "depth": 1, "model_id": "deepseek/x-1"},
             "rights": {"workgroup": "write"},
-            "limits": {"subagent_max_depth": 2, "subagent_max_parallel": 3, "subagent_max_total": 10},
+            # an older hub sends no limits: unknown
+            "limits": {
+                "subagent_max_depth": None,
+                "subagent_max_parallel": None,
+                "subagent_max_total": None,
+                "subagent_max_runtime_seconds": None,
+            },
             "api_version": 1,
         }
         assert await k.error(sid, "get_context", {"x": 1}) == "params_invalid"
         k.hub.tasks = []
         assert await k.error(sid, "get_context") == "unavailable"
+
+    run(rig, body)
+
+
+def test_get_context_shows_the_settings_and_clamps_them_for_an_older_guest(rig: Rig) -> None:
+    async def body(k: RKit) -> None:
+        sid = await k.session(1)
+        k.hub.tasks = [task_row(TASK, state="idle")]
+        k.env.context.session_service = k.skit.service
+        settings = {"subagent_max_depth": 5, "subagent_max_running": 50, "subagent_max_total": 0}
+        k.skit.service.env.desired = {"limits": {"api": 1, **settings, "subagent_max_runtime_seconds": 0}}
+        assert (await k.ok(sid, "get_context"))["limits"] == {
+            "subagent_max_depth": 5,
+            "subagent_max_parallel": 50,
+            "subagent_max_total": 0,
+            "subagent_max_runtime_seconds": 0,
+        }
+        # a guest before ADR-088 validates against its former contract: within its range, 0 is its maximum
+        vm = (await k.skit.stored(sid)).vm_id
+        async with k.env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.golden SET guest_version = '0.2.0'")
+        assert vm is not None
+        assert (await k.ok(sid, "get_context"))["limits"] == {
+            "subagent_max_depth": 2,
+            "subagent_max_parallel": 3,
+            "subagent_max_total": 10,
+        }
+        k.skit.service.env.desired = {
+            "limits": {"api": 1, **settings, "subagent_max_depth": 1, "subagent_max_runtime_seconds": 60}
+        }
+        assert (await k.ok(sid, "get_context"))["limits"] == {
+            "subagent_max_depth": 1,
+            "subagent_max_parallel": 3,
+            "subagent_max_total": 10,
+        }
 
     run(rig, body)
 

@@ -22,7 +22,7 @@
   "sees.operations": "Art, Zustand, Entscheidung, Fehlercode, Duplikatmerkmal und Zeitpunkte von Operationen",
   "sees.metrics": "Ressourcenmesswerte, Token-Zähler, Kosten, Anteil des Kontextfensters und Kontingente von Abonnements in Prozent",
   "sees.notifications": "Benachrichtigungen (Empfänger, Art, Ziel-IDs) und Ihre Einstellungen (Modellwahl, Sprache)",
-  "sees.audit": "Audit- und Lesezeilen (wer was mit welcher ID getan hat, mit Ergebnis) und Metadaten von Zugangsdaten (Besitzer, Art, Version)",
+  "sees.audit": "Audit- und Lesezeilen (wer was mit welcher ID getan hat, mit Ergebnis; beim Lesen einer Session auch die gelesene Workgroup und die anweisende Person) und Metadaten von Zugangsdaten (Besitzer, Art, Version)",
   "hidden.title": "Was der Server nicht sieht",
   "hidden.body": "Alles andere bleibt Ende-zu-Ende verschlüsselt; der Server hat nie die Schlüssel dazu:",
   "hidden.content": "Prompts, Antworten, Werkzeugaufrufe, Dateiänderungen, Terminalausgaben und Whiteboard-Einträge",
@@ -33,7 +33,7 @@
   "javascript.title": "Vertrauen in den ausgelieferten Code",
   "javascript.body": "Verschlüsselung im Webbrowser hängt vom JavaScript ab, das der Server ausliefert. Eine strikte Content Security Policy, Integritäts-Hashes für die Skripte der Startseite und ein reproduzierbarer Build begrenzen dieses Risiko, aber ein kompromittierter Server könnte trotzdem veränderten Code ausliefern, auch für später geladene Teile (Terminal, Diagramme, formatierter Text). Diese Seite kann das nicht selbst erkennen; nur ein unabhängiger Vergleich des Build-Hashes mit dem veröffentlichten kann es.",
   "devices.title": "Ausführungsgeräte",
-  "devices.body": "Die Geräte, die Ihre Tasks ausführen, entschlüsseln die Inhalte der ihnen zugewiesenen Workgroups: Sie verarbeiten Prompts, Dateien und Antworten im Klartext. Weisen Sie nur Geräte zu, denen Sie vertrauen; das Entfernen eines Geräts aus einer Workgroup wechselt deren Schlüssel.",
+  "devices.body": "Die Geräte, die Ihre Aufgaben ausführen, entschlüsseln die Inhalte der ihnen zugewiesenen Workgroups: Sie verarbeiten Prompts, Dateien und Antworten im Klartext. Weisen Sie nur Geräte zu, denen Sie vertrauen; das Entfernen eines Geräts aus einer Workgroup wechselt deren Schlüssel. Eine Session darf auch andere Workgroups dieser Geräte lesen, die sowohl der Besitzer der Aufgabe als auch die anweisende Person lesen dürfen; was sie daraus in ihre eigene Workgroup schreibt, wird für alle lesbar, die diese Workgroup lesen.",
   "community.title": "Community",
   "community.body": "Community-Nachrichten kann jeder Nutzer der Plattform lesen; sie sind nicht vertraulich wie Aufgaben, Whiteboards und Zugangsdaten. Die Verschlüsselung hält Text und Absendernamen aus der Datenbank des Servers und seinen Backups heraus, aber ein manipulierter Server könnte Nachrichten lesen und sogar im Namen eines anderen Nutzers schreiben. Teile dort nichts Vertrauliches."
 }

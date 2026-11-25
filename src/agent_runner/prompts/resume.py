@@ -25,6 +25,11 @@ with the start's reason (`events.fail`) and stops its guest session. A session t
 began (`resuming` could not be set) is left alone (`ended`).
 A repeated resume of a session the guest already resumed is answered by the guest without a second start.
 
+A **child session** (`depth` > 0, ADR-088 section 1) is resumed the same way by the subagent area with its parent and
+depth (the guest's identity of the session) and the caller's `amend(session, request)`, which adds what a child's
+start had (resource limits, harness line). A child lives in its parent's VM, so it is never moved: when its VM cannot
+be made ready again, the resume fails `vm_start_failed`.
+
 The steps reuse the start's building blocks (`sessions.start.Starter`: VM and guest checks, model choice, harness
 context, guest calls), so a resumed session gets exactly what a started one gets.
 
@@ -38,7 +43,7 @@ emergency path when no checkpoint can be restored.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from typing import Any
 
@@ -54,6 +59,8 @@ from agent_runner.sessions.start import Starter, StartFailed
 from agent_runner.sessions.stop import stop_guest
 from agent_runner.vm import records as vm_records
 
+Amend = Callable[[LocalSession, dict[str, Any]], Awaitable[None]]
+"""Completes the `POST /v1/sessions` request of a resumed child session (module docstring)."""
 RESUMED = "resumed"
 RETRY = "retry"
 ENDED = "ended"
@@ -94,8 +101,8 @@ def desired_of(env: SessionEnv, session: LocalSession) -> Desired:
         org_id=session.org_id,
         wg_id=session.wg_id,
         state=session.state,
-        parent_session_id=None,
-        depth=0,
+        parent_session_id=session.parent_id,
+        depth=session.depth,
         owner_id=session.owner_id or "",
         model_access_pref=session.model_access or "auto",
         model_id_pref=session.model_id,
@@ -108,8 +115,9 @@ class Resumer:
         self.starter = Starter(env)
         self.attempts: dict[str, int] = {}
 
-    async def resume(self, session: LocalSession) -> str:
-        """`resumed`, `retry` (guest or VM not reachable now) or the failure reason the session ended with."""
+    async def resume(self, session: LocalSession, amend: Amend | None = None) -> str:
+        """`resumed`, `retry` (guest or VM not reachable now) or the failure reason the session ended with; `amend`
+        completes the request of a child session (module docstring)."""
         env = self.env
         sid = session.id
         async with env.transaction() as conn:
@@ -121,7 +129,7 @@ class Resumer:
             return ENDED
         desired = desired_of(env, session)
         try:
-            await self._resume(session, desired)
+            await self._resume(session, desired, amend)
         except StartFailed as exc:
             attempts = self.attempts.get(sid, 0) + 1
             self.attempts[sid] = attempts
@@ -137,7 +145,7 @@ class Resumer:
         env.line(f"resumed session_id={sid}")
         return RESUMED
 
-    async def _resume(self, session: LocalSession, desired: Desired) -> None:
+    async def _resume(self, session: LocalSession, desired: Desired, amend: Amend | None = None) -> None:
         env = self.env
         prefer = [vm for vm in (session.vm_id, desired.vm_id_pref) if vm is not None]
         try:
@@ -147,6 +155,8 @@ class Resumer:
         except RunnerError as exc:
             raise StartFailed(exc.code if exc.code in VM_REASONS else "vm_start_failed") from None
         moved = row.id != session.vm_id
+        if moved and session.depth > 0:
+            raise StartFailed("vm_start_failed")  # a child lives in its parent's VM
         if moved:
             # another VM: the session's directories and transcript are not there; it is restored there (KOR-33). The
             # row keeps the old VM until the guest took the request (a retry restores again).
@@ -163,12 +173,14 @@ class Resumer:
             request: dict[str, Any] = {
                 "session_id": session.id,
                 "task_id": session.task_id,
-                "parent_session_id": None,
-                "depth": 0,
+                "parent_session_id": session.parent_id,
+                "depth": session.depth,
                 "harness": {"context_markdown": await self.starter._context(desired)},
                 "model": {"access": choice.access, "model_id": choice.model_id, "env": dict(choice.env)},
                 "limits": harness.MAIN_LIMITS.body(),
             }
+            if amend is not None:
+                await amend(session, request)
             if moved:
                 # nothing to resume there: the amenders restore the conversation (or take the emergency path)
                 for amender in env.amenders:

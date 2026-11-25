@@ -180,10 +180,7 @@
   },
   "subagent_limits": {
     "purpose_max_length": 200,
-    "prompt_max_length": 32768,
-    "max_depth": 2,
-    "max_running_per_task": 3,
-    "max_total_per_task": 10
+    "prompt_max_length": 32768
   },
   "title_limits": {
     "max_length": 120,

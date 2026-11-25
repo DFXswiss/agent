@@ -61,6 +61,8 @@ VALID: dict[str, dict[str, Any]] = {
     "github.request_connection": {},
     "github.list_identities": {},
     "subagent.request": {"purpose": "Review", "prompt": "Review PR 7.", "model_id": "deepseek/deepseek-v4-pro"},
+    "subagent.instruct": {"session_id": "0193000c-0000-7000-8000-00000000000c", "prompt": "p" * 32768},
+    "subagent.stop": {"session_id": "0193000c-0000-7000-8000-00000000000c"},
     "task.set_title": {"title": "Fix the login"},
     "human.question": {"question": "Which database should the service use?\n- PostgreSQL\n- SQLite"},
     "human.approval": {"question": "May I delete the old branch?"},
@@ -149,6 +151,12 @@ def test_unknown_types_are_refused() -> None:
         ("subagent.request", with_("subagent.request", prompt=""), ["/params/prompt"]),
         ("subagent.request", with_("subagent.request", prompt="p" * 32769), ["/params/prompt"]),
         ("subagent.request", with_("subagent.request", model_id="-bad"), ["/params/model_id"]),
+        ("subagent.instruct", with_("subagent.instruct", prompt=""), ["/params/prompt"]),
+        ("subagent.instruct", with_("subagent.instruct", prompt="p" * 32769), ["/params/prompt"]),
+        ("subagent.instruct", with_("subagent.instruct", session_id="not-a-uuid"), ["/params/session_id"]),
+        ("subagent.instruct", {"prompt": "p"}, ["/params/session_id"]),
+        ("subagent.stop", {}, ["/params/session_id"]),
+        ("subagent.stop", {"session_id": "0193000c-0000-7000-8000-00000000000c", "x": 1}, ["/params/x"]),
         ("task.set_title", {"title": ""}, ["/params/title"]),
         ("task.set_title", {"title": "t" * 121}, ["/params/title"]),
         ("task.set_title", {"title": "two\nlines"}, ["/params/title"]),
@@ -323,7 +331,16 @@ def test_github_types_need_the_owners_connection(op_type: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "op_type", ["subagent.request", "task.set_title", "human.question", "human.approval", "github.list_identities"]
+    "op_type",
+    [
+        "subagent.request",
+        "subagent.instruct",
+        "subagent.stop",
+        "task.set_title",
+        "human.question",
+        "human.approval",
+        "github.list_identities",
+    ],
 )
 def test_other_types_need_no_github_connection(op_type: str) -> None:
     checks.check(request(op_type, VALID[op_type], connected=False))

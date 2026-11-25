@@ -2,7 +2,8 @@
 
 The guest renders the harness file from its static rules and the `harness.context_markdown` of `POST /v1/sessions`:
 the confidential part only the runner knows (org, workgroup and task names and IDs, task owner display name, the
-owner's rights in the workgroup, subagent limits). `context_markdown` produces exactly the block that
+owner's rights in the workgroup, the subagent limits of the platform's settings - `unknown` while the hub sends none,
+ADR-088 section 2). `context_markdown` produces exactly the block that
 `agent_guest.harness.context_markdown` documents (the guest package runs in the VM, so the format is copied here; a
 test keeps both equal). Names come from the decrypted profile events (`profiles.names`); a name the device has not
 received yet is shown as `unknown` - the start never waits for it.
@@ -28,8 +29,9 @@ from agent_runner.orgs.db import session
 from agent_runner.sessions.profiles import Names
 
 UNKNOWN = "unknown"
-SUBAGENT_LIMITS = (2, 3, 10)
-"""Subagent depth, running children per task, children per task (05-runner.md section 13, ADR-017)."""
+SubagentValues = tuple[int | None, int | None, int | None, int | None]
+"""Subagent depth, running children per task, children per task, runtime of a child in seconds: the settings of the
+platform (`subagents.limits.values`, ADR-088 section 2; 0 = no limit, None = unknown: an older hub)."""
 GIB = 1024**3
 LOGIN_RE = re.compile(r"^[A-Za-z0-9-]{1,39}$")
 
@@ -73,13 +75,12 @@ def context_markdown(
     task: tuple[str, str],
     owner: str,
     rights: str,
-    limits: tuple[int, int, int],
+    limits: SubagentValues,
     github: str | None = None,
 ) -> str:
     """The context block (copy of `agent_guest.harness.context_markdown`)."""
     wg_id, wg_name, is_default = workgroup
     default = " (default workgroup)" if is_default else ""
-    depth, parallel, total = limits
     return "\n".join(
         [
             f"- Organization: {inline(org[1])} (`{inline(org[0])}`)",
@@ -87,8 +88,23 @@ def context_markdown(
             f"- Task: {inline(task[1])} (`{inline(task[0])}`)",
             f"- Task owner: {inline(owner)}",
             f"- Rights of the task owner in the workgroup: {inline(rights)}",
-            f"- Subagent limits: depth {depth}, {parallel} running at a time, {total} per task",
+            f"- Subagent limits (settings of the platform): {subagent_limits(limits)}",
             GITHUB_NOT_CONNECTED if github is None else GITHUB_CONNECTED.format(login=inline(github)),
+        ]
+    )
+
+
+def subagent_limits(limits: SubagentValues) -> str:
+    """The subagent limits in words (copy of `agent_guest.harness.subagent_limits`)."""
+    depth, running, total, runtime = limits
+    if depth is None or running is None or total is None or runtime is None:
+        return UNKNOWN
+    return ", ".join(
+        [
+            f"depth {depth}" if depth else "no depth limit",
+            f"{running} running at a time" if running else "no limit of running subagents",
+            f"{total} per task" if total else "no limit per task",
+            f"runtime at most {runtime} s" if runtime else "no runtime limit",
         ]
     )
 
@@ -124,6 +140,7 @@ def session_context(
     wg_id: str,
     task_id: str,
     owner_id: str,
+    limits: SubagentValues,
     github: str | None = None,
 ) -> str:
     return context_markdown(
@@ -132,6 +149,6 @@ def session_context(
         task=(task_id, names.task or UNKNOWN),
         owner=names.owner or UNKNOWN,
         rights=rights(state, owner_id, wg_id),
-        limits=SUBAGENT_LIMITS,
+        limits=limits,
         github=github,
     )

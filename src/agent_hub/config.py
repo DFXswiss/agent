@@ -54,6 +54,10 @@ VMS_PER_WG = "AGENT_HUB_VMS_PER_WG"
 CAPACITY_REFUSALS = "AGENT_HUB_CAPACITY_REFUSALS"
 REFUSAL_HOLD_SECONDS = "AGENT_HUB_REFUSAL_HOLD_SECONDS"
 DEVICE_FAILOVER_SECONDS = "AGENT_HUB_DEVICE_FAILOVER_SECONDS"
+SUBAGENT_MAX_DEPTH = "AGENT_HUB_SUBAGENT_MAX_DEPTH"
+SUBAGENT_MAX_RUNNING = "AGENT_HUB_SUBAGENT_MAX_RUNNING"
+SUBAGENT_MAX_TOTAL = "AGENT_HUB_SUBAGENT_MAX_TOTAL"
+SUBAGENT_MAX_RUNTIME_SECONDS = "AGENT_HUB_SUBAGENT_MAX_RUNTIME_SECONDS"
 
 TEST_PREFIX = "AGENT_HUB_TEST_"
 KNOWN_VARIABLES = frozenset(
@@ -83,6 +87,10 @@ KNOWN_VARIABLES = frozenset(
         CAPACITY_REFUSALS,
         REFUSAL_HOLD_SECONDS,
         DEVICE_FAILOVER_SECONDS,
+        SUBAGENT_MAX_DEPTH,
+        SUBAGENT_MAX_RUNNING,
+        SUBAGENT_MAX_TOTAL,
+        SUBAGENT_MAX_RUNTIME_SECONDS,
     }
 )
 
@@ -113,6 +121,16 @@ DEFAULT_LOG_KEEP = 500
 MAX_LOG_KEEP = 999_999
 DEFAULT_LOG_ORG_BYTES = 100 * GIB
 MAX_CONTEXT_BYTES = 2**53 - 1
+DEFAULT_SUBAGENT_MAX_DEPTH = 5
+"""Nesting depth of subagents (ADR-088 section 2; main session 0; 0 = no limit)."""
+DEFAULT_SUBAGENT_MAX_RUNNING = 50
+"""Children of one task that have not ended and are not suspended (ADR-088 section 2; 0 = no limit)."""
+DEFAULT_SUBAGENT_MAX_TOTAL = 0
+"""Children of one task in total (ADR-088 section 2; 0 = no limit)."""
+DEFAULT_SUBAGENT_MAX_RUNTIME_SECONDS = 0
+"""Seconds since a child's creation after which it is failed `runtime_exceeded` (ADR-088 section 2; 0 = no limit)."""
+MAX_SUBAGENT_SETTING = 1_000_000
+MAX_SUBAGENT_RUNTIME_SECONDS = 31_536_000
 
 # Limits of 03-api.md section 12 and section 1 that the hub enforces and `/v1/config` publishes.
 LIMITS: Mapping[str, int] = MappingProxyType(
@@ -128,11 +146,30 @@ LIMITS: Mapping[str, int] = MappingProxyType(
         "invite_device_seconds": 24 * 3600,
         "invite_max_seconds": 30 * 24 * 3600,
         "device_request_seconds": 15 * 60,
-        "subagent_max_depth": 2,
-        "subagent_max_running": 3,
-        "subagent_max_total": 10,
     }
 )
+"""The fixed limits; the subagent limits are settings (`SubagentLimits`, ADR-088 section 2) published beside them."""
+
+
+@dataclass(frozen=True)
+class SubagentLimits:
+    """The subagent limits of this hub (ADR-088 section 2): one setting each, 0 = no limit. The hub enforces depth,
+    running and total (check H4) and publishes all four in `GET /v1/config` and the device state section `limits`, the
+    one source of every runner."""
+
+    max_depth: int = DEFAULT_SUBAGENT_MAX_DEPTH
+    max_running: int = DEFAULT_SUBAGENT_MAX_RUNNING
+    max_total: int = DEFAULT_SUBAGENT_MAX_TOTAL
+    max_runtime_seconds: int = DEFAULT_SUBAGENT_MAX_RUNTIME_SECONDS
+
+    def published(self) -> dict[str, int]:
+        return {
+            "subagent_max_depth": self.max_depth,
+            "subagent_max_running": self.max_running,
+            "subagent_max_total": self.max_total,
+            "subagent_max_runtime_seconds": self.max_runtime_seconds,
+        }
+
 
 _HUB_KEY_ID_RE = re.compile(r"[a-z0-9-]{1,64}")
 _LABEL = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -182,6 +219,10 @@ class ModelCatalog:
     document: Mapping[str, Any] = field(repr=False)
 
 
+DEFAULT_SUBAGENT_LIMITS = SubagentLimits()
+"""The subagent limits without settings (ADR-088 section 2)."""
+
+
 @dataclass(frozen=True)
 class HubConfig:
     """The validated configuration of one hub process."""
@@ -222,6 +263,8 @@ class HubConfig:
     device_failover_seconds: int = DEFAULT_DEVICE_FAILOVER_SECONDS
     """`AGENT_HUB_DEVICE_FAILOVER_SECONDS`: a device offline this long has failed (ADR-087 section 1; default 300, at
     least twice `device_online_seconds`)."""
+    subagent_limits: SubagentLimits = DEFAULT_SUBAGENT_LIMITS
+    """`AGENT_HUB_SUBAGENT_MAX_DEPTH`, `…_RUNNING`, `…_TOTAL`, `…_RUNTIME_SECONDS` (ADR-088 section 2)."""
 
     def signer(self) -> HubSigner:
         """The hub's response and checkpoint signer (reused `agent_core.signing.HubSigner`)."""
@@ -310,7 +353,7 @@ def _setting(environ: Mapping[str, str], name: str, default: int, maximum: int) 
     value = _value(environ, name)
     if value is None:
         return default
-    if _SECONDS_RE.fullmatch(value) is None or int(value) > maximum:
+    if _BYTES_RE.fullmatch(value) is None or int(value) > maximum:
         raise ConfigError(f"{name} must be an integer from 0 to {maximum}")
     return int(value)
 
@@ -564,4 +607,15 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
             environ, REFUSAL_HOLD_SECONDS, DEFAULT_REFUSAL_HOLD_SECONDS, MAX_REFUSAL_HOLD_SECONDS
         ),
         device_failover_seconds=_failover_seconds(environ),
+        subagent_limits=SubagentLimits(
+            max_depth=_setting(environ, SUBAGENT_MAX_DEPTH, DEFAULT_SUBAGENT_MAX_DEPTH, MAX_SUBAGENT_SETTING),
+            max_running=_setting(environ, SUBAGENT_MAX_RUNNING, DEFAULT_SUBAGENT_MAX_RUNNING, MAX_SUBAGENT_SETTING),
+            max_total=_setting(environ, SUBAGENT_MAX_TOTAL, DEFAULT_SUBAGENT_MAX_TOTAL, MAX_SUBAGENT_SETTING),
+            max_runtime_seconds=_setting(
+                environ,
+                SUBAGENT_MAX_RUNTIME_SECONDS,
+                DEFAULT_SUBAGENT_MAX_RUNTIME_SECONDS,
+                MAX_SUBAGENT_RUNTIME_SECONDS,
+            ),
+        ),
     )

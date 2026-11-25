@@ -826,6 +826,28 @@
               "properties": {
                 "result_count": {
                   "$ref": "../common.json#/$defs/count"
+                },
+                "read_wg_id": {
+                  "description": "the workgroup read (ADR-087 section 4); null on the organization level or when the read stopped before a workgroup was chosen",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "triggered_by": {
+                  "description": "the instructing human of the read's turn (ADR-087 section 1); null when unknown",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -881,6 +903,28 @@
               "properties": {
                 "result_count": {
                   "$ref": "../common.json#/$defs/count"
+                },
+                "read_wg_id": {
+                  "description": "the workgroup read (ADR-087 section 4); null on the organization level or when the read stopped before a workgroup was chosen",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "triggered_by": {
+                  "description": "the instructing human of the read's turn (ADR-087 section 1); null when unknown",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -936,6 +980,28 @@
               "properties": {
                 "result_count": {
                   "$ref": "../common.json#/$defs/count"
+                },
+                "read_wg_id": {
+                  "description": "the workgroup read (ADR-087 section 4); null on the organization level or when the read stopped before a workgroup was chosen",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "triggered_by": {
+                  "description": "the instructing human of the read's turn (ADR-087 section 1); null when unknown",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -991,6 +1057,28 @@
               "properties": {
                 "result_count": {
                   "$ref": "../common.json#/$defs/count"
+                },
+                "read_wg_id": {
+                  "description": "the workgroup read (ADR-087 section 4); null on the organization level or when the read stopped before a workgroup was chosen",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "triggered_by": {
+                  "description": "the instructing human of the read's turn (ADR-087 section 1); null when unknown",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -1046,6 +1134,28 @@
               "properties": {
                 "result_count": {
                   "$ref": "../common.json#/$defs/count"
+                },
+                "read_wg_id": {
+                  "description": "the workgroup read (ADR-087 section 4); null on the organization level or when the read stopped before a workgroup was chosen",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "triggered_by": {
+                  "description": "the instructing human of the read's turn (ADR-087 section 1); null when unknown",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -1101,6 +1211,28 @@
               "properties": {
                 "result_count": {
                   "$ref": "../common.json#/$defs/count"
+                },
+                "read_wg_id": {
+                  "description": "the workgroup read (ADR-087 section 4); null on the organization level or when the read stopped before a workgroup was chosen",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "triggered_by": {
+                  "description": "the instructing human of the read's turn (ADR-087 section 1); null when unknown",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -1156,6 +1288,28 @@
               "properties": {
                 "result_count": {
                   "$ref": "../common.json#/$defs/count"
+                },
+                "read_wg_id": {
+                  "description": "the workgroup read (ADR-087 section 4); null on the organization level or when the read stopped before a workgroup was chosen",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "triggered_by": {
+                  "description": "the instructing human of the read's turn (ADR-087 section 1); null when unknown",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -1211,6 +1365,28 @@
               "properties": {
                 "result_count": {
                   "$ref": "../common.json#/$defs/count"
+                },
+                "read_wg_id": {
+                  "description": "the workgroup read (ADR-087 section 4); null on the organization level or when the read stopped before a workgroup was chosen",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "triggered_by": {
+                  "description": "the instructing human of the read's turn (ADR-087 section 1); null when unknown",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -1266,6 +1442,28 @@
               "properties": {
                 "result_count": {
                   "$ref": "../common.json#/$defs/count"
+                },
+                "read_wg_id": {
+                  "description": "the workgroup read (ADR-087 section 4); null on the organization level or when the read stopped before a workgroup was chosen",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "triggered_by": {
+                  "description": "the instructing human of the read's turn (ADR-087 section 1); null when unknown",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -1321,6 +1519,28 @@
               "properties": {
                 "result_count": {
                   "$ref": "../common.json#/$defs/count"
+                },
+                "read_wg_id": {
+                  "description": "the workgroup read (ADR-087 section 4); null on the organization level or when the read stopped before a workgroup was chosen",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "triggered_by": {
+                  "description": "the instructing human of the read's turn (ADR-087 section 1); null when unknown",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -1376,6 +1596,28 @@
               "properties": {
                 "result_count": {
                   "$ref": "../common.json#/$defs/count"
+                },
+                "read_wg_id": {
+                  "description": "the workgroup read (ADR-087 section 4); null on the organization level or when the read stopped before a workgroup was chosen",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "triggered_by": {
+                  "description": "the instructing human of the read's turn (ADR-087 section 1); null when unknown",
+                  "anyOf": [
+                    {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [

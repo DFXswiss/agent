@@ -1,7 +1,8 @@
 """Store queries of the subagent area over `runner.session` and `runner.operation` (02-data-model.md section 4).
 
-The subagent area owns no table: children are ordinary session rows (`depth` > 0, `parent_id` set) and their requests
-are `subagent.request` rows of the operation pipeline (`child_session_id` from the hub's decision).
+Children are ordinary session rows (`depth` > 0, `parent_id` set) and their requests are `subagent.request` rows of the
+operation pipeline (`child_session_id` from the hub's decision); the only table of the area is the one of the
+children's instructions (`instructions.py`, ADR-088 section 1).
 """
 
 from __future__ import annotations
@@ -44,11 +45,12 @@ async def in_flight(conn: AsyncConnection[Any], task_id: str) -> int:
 
 
 async def counts(conn: AsyncConnection[Any], task_id: str) -> tuple[int, int]:
-    """`(running, total)` children of the task known on this device, the accepted ones not started yet included."""
+    """`(running, total)` children of the task known on this device, the accepted ones not started yet included;
+    running = not ended and not `suspended` (ADR-088 section 2)."""
     cur = await conn.execute(
         "SELECT count(*) FILTER (WHERE state <> ALL(%s)), count(*) FROM runner.session"
         " WHERE task_id = %s AND depth > 0",
-        (sorted(FINAL), task_id),
+        (sorted(FINAL | {"suspended"}), task_id),
     )
     row = await cur.fetchone()
     assert row is not None
@@ -73,3 +75,13 @@ async def requested_child(conn: AsyncConnection[Any], parent_id: str, child_id: 
         (OP_TYPE, parent_id, child_id, [*IN_FLIGHT, "succeeded"]),
     )
     return await cur.fetchone() is not None
+
+
+async def parents_ended(conn: AsyncConnection[Any], children: list[str]) -> set[str]:
+    """Those of `children` whose parent session ended (`stopped`/`failed`, ADR-088 section 1: they end with it)."""
+    cur = await conn.execute(
+        "SELECT c.id::text FROM runner.session c JOIN runner.session p ON p.id = c.parent_id"
+        " WHERE c.id = ANY(%s::uuid[]) AND p.state = ANY(%s)",
+        (children, sorted(FINAL)),
+    )
+    return {str(row[0]) for row in await cur.fetchall()}

@@ -1,0 +1,36 @@
+{
+  "org": {
+    "id": "01a1ee56-5e00-7001-8f1b-340691d99f01",
+    "name": "Example"
+  },
+  "workgroup": {
+    "id": "01a1ee56-5e00-7002-8f1b-340691d99f02",
+    "name": "Default",
+    "is_default": true
+  },
+  "task": {
+    "id": "01a1ee56-5e00-7004-8f1b-340691d99f04",
+    "title": "Review",
+    "state": "working",
+    "owner": {
+      "id": "01a1ee56-5e00-7014-8f1b-340691d99f14",
+      "display_name": "Ada"
+    }
+  },
+  "session": {
+    "id": "01a1ee56-5e00-7003-8f1b-340691d99f03",
+    "parent_session_id": "01a1ee56-5e00-7005-8f1b-340691d99f05",
+    "depth": 4,
+    "model_id": null
+  },
+  "rights": {
+    "workgroup": "write"
+  },
+  "limits": {
+    "subagent_max_depth": null,
+    "subagent_max_parallel": null,
+    "subagent_max_total": null,
+    "subagent_max_runtime_seconds": null
+  },
+  "api_version": 1
+}

@@ -510,7 +510,7 @@ after a reconnect; without a switch, or when the audit cannot be read, nothing i
 
 ### 5.3 Sessions tab
 
-Tree of sessions (main session, subagent children by `parent_session_id`, depth ≤ 2) with state, device, model,
+Tree of sessions (main session, subagent children by `parent_session_id`, any depth, ADR-088) with state, device, model,
 usage; each node links to `/o/:org/s/:session`. The tree is flattened depth first (the depth indents a row) into a
 windowed list `task.sessions` (100 rows at first, 50 per move, at most 200 rendered); one selector delivers the task's
 sessions and their usage, rows are memoized. The reachability of the sessions' devices is read once for the list

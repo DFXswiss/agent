@@ -22,9 +22,7 @@
       ]
     },
     "depth": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 2
+      "$ref": "../common.json#/$defs/count"
     },
     "harness": {
       "type": "object",

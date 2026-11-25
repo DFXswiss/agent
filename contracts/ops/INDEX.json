@@ -93,6 +93,18 @@
       "dedupe": true
     },
     {
+      "type": "subagent.instruct",
+      "params": "ops/subagent.instruct.params.json",
+      "result": "ops/subagent.instruct.result.json",
+      "dedupe": false
+    },
+    {
+      "type": "subagent.stop",
+      "params": "ops/subagent.stop.params.json",
+      "result": "ops/subagent.stop.result.json",
+      "dedupe": false
+    },
+    {
       "type": "task.set_title",
       "params": "ops/task.set_title.params.json",
       "result": "ops/task.set_title.result.json",

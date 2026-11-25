@@ -1,0 +1,431 @@
+{
+  "name": "e2e-67-read-like-their-human",
+  "description": "E2E-67 (KOR-45, ADR-087, ADR-088). (1) A task in workgroup B answers once. (2) Ada's session in workgroup A reads B on Ada's instruction: list_workgroups (B is `read`; its ID is captured by the name kz67-wg-b), list_tasks and get_whiteboard with workgroup_id B, then get_task and get_task_messages of B's task (its ID captured from list_tasks by its title). (3) Bob (write in A, no access to B) instructs the same session to read B: list_workgroups, list_tasks with workgroup_id B and get_task of B's task, every read of B `not_found`. (4) On Ada's next instruction the session requests a child (instruction 0), reads each turn's answer with get_subagent_result, fetches its notifications and gives it three follow-ups with subagent.instruct (instructions 1-3); the child answers each in its own turn (side steps: the child's requests may come at any time; turns 1-3 carry the earlier turns). With the running limit of 1 a second child request is refused `limit_exceeded` and the turn ends there. (5) On Ada's last instruction the session stops the child with subagent.stop and reads its final state `stopped`.",
+  "steps": [
+    {
+      "id": "wg-b-task",
+      "expect": {
+        "user_text_contains": "E2E67-WGB",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [{ "type": "text", "text": "Budget figures noted kz67-answer-b-v3c8." }]
+      }
+    },
+    {
+      "id": "ada-workgroups",
+      "expect": {
+        "user_text_contains": "E2E67-READ",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Looking at the other workgroups." },
+          { "type": "tool_use", "name": "mcp__platform__list_workgroups", "input": {} }
+        ]
+      }
+    },
+    {
+      "id": "ada-read-b",
+      "expect": {
+        "tool_result_contains": "\"my_access\":\"read\""
+      },
+      "capture": {
+        "wg_b": {
+          "regex": "\\{(?=[^{}]*kz67-wg-b-q7m2)[^{}]*\"id\":\"([0-9a-f-]{36})\"",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__list_tasks",
+            "input": { "workgroup_id": "${wg_b}" }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_whiteboard",
+            "input": { "level": "workgroup", "workgroup_id": "${wg_b}" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "ada-read-b-task",
+      "expect": {
+        "tool_result_contains": "kz67-board-b-x5n1"
+      },
+      "capture": {
+        "b_task": {
+          "regex": "\\{(?=[^{}]*kz67-prompt-b-k2d9)[^{}]*\"id\":\"([0-9a-f-]{36})\"",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_task",
+            "input": { "task_id": "${b_task}" }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_task_messages",
+            "input": { "task_id": "${b_task}" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "ada-read-done",
+      "expect": {
+        "tool_result_contains": "kz67-prompt-b-k2d9"
+      },
+      "reply": {
+        "content": [{ "type": "text", "text": "Workgroup B read for Ada kz67-answer-read-h4j6." }]
+      }
+    },
+    {
+      "id": "bob-read-b",
+      "expect": {
+        "user_text_contains": "E2E67-BOB",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          { "type": "tool_use", "name": "mcp__platform__list_workgroups", "input": {} },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__list_tasks",
+            "input": { "workgroup_id": "${wg_b}" }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_task",
+            "input": { "task_id": "${b_task}" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "bob-done",
+      "expect": {
+        "tool_result_contains": "\"error\":\"not_found\""
+      },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Workgroup B is not readable for this instruction kz67-answer-bob-r8w2." }
+        ]
+      }
+    },
+    {
+      "id": "sub-request",
+      "expect": {
+        "user_text_contains": "E2E67-SUB",
+        "has_tool_result": false,
+        "tools_exclude": ["Agent", "Task"]
+      },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Asking the platform for a helper." },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.request",
+              "params": {
+                "purpose": "Keep a running sum kz67-purpose-s3f7",
+                "prompt": "E2E67-CHILD-0 start a running sum with 2 kz67-instr-0-a1z4"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "result-0",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "capture": {
+        "child": {
+          "regex": "\"result\":\\{[^{}]*\"session_id\":\"([0-9a-f-]{36})\"",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": { "session_id": "${child}", "wait_seconds": 30 }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": { "session_id": "${child}", "wait_seconds": 30 }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": { "session_id": "${child}", "wait_seconds": 30 }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": { "session_id": "${child}", "wait_seconds": 30 }
+          }
+        ]
+      }
+    },
+    {
+      "id": "instruct-1",
+      "expect": {
+        "tool_result_contains": "kz67-child-answer-0"
+      },
+      "reply": {
+        "content": [
+          { "type": "tool_use", "name": "mcp__platform__get_notifications", "input": {} },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.instruct",
+              "params": {
+                "session_id": "${child}",
+                "prompt": "E2E67-CHILD-1 add 3 to the sum kz67-instr-1-b2y5"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "result-1",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": { "session_id": "${child}", "wait_seconds": 30 }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": { "session_id": "${child}", "wait_seconds": 30 }
+          }
+        ]
+      }
+    },
+    {
+      "id": "instruct-2",
+      "expect": {
+        "tool_result_contains": "kz67-child-answer-1"
+      },
+      "reply": {
+        "content": [
+          { "type": "tool_use", "name": "mcp__platform__get_notifications", "input": {} },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.instruct",
+              "params": {
+                "session_id": "${child}",
+                "prompt": "E2E67-CHILD-2 add 4 to the sum kz67-instr-2-c3x6"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "result-2",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": { "session_id": "${child}", "wait_seconds": 30 }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": { "session_id": "${child}", "wait_seconds": 30 }
+          }
+        ]
+      }
+    },
+    {
+      "id": "instruct-3",
+      "expect": {
+        "tool_result_contains": "kz67-child-answer-2"
+      },
+      "reply": {
+        "content": [
+          { "type": "tool_use", "name": "mcp__platform__get_notifications", "input": {} },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.instruct",
+              "params": {
+                "session_id": "${child}",
+                "prompt": "E2E67-CHILD-3 tell me the sum kz67-instr-3-d4w7"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "result-3",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": { "session_id": "${child}", "wait_seconds": 30 }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": { "session_id": "${child}", "wait_seconds": 30 }
+          }
+        ]
+      }
+    },
+    {
+      "id": "second-child",
+      "expect": {
+        "tool_result_contains": "kz67-child-answer-3"
+      },
+      "reply": {
+        "content": [
+          { "type": "tool_use", "name": "mcp__platform__get_notifications", "input": {} },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.request",
+              "params": {
+                "purpose": "A second helper",
+                "prompt": "E2E67-SECOND this helper never starts"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "sub-done",
+      "expect": {
+        "tool_result_contains": "\"limit_exceeded\""
+      },
+      "reply": {
+        "content": [{ "type": "text", "text": "The limit of running helpers is reached kz67-answer-limit-p9e3." }]
+      }
+    },
+    {
+      "id": "stop",
+      "expect": {
+        "user_text_contains": "E2E67-STOP",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": { "type": "subagent.stop", "params": { "session_id": "${child}" } }
+          }
+        ]
+      }
+    },
+    {
+      "id": "stop-result",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": { "session_id": "${child}", "wait_seconds": 30 }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_subagent_result",
+            "input": { "session_id": "${child}", "wait_seconds": 30 }
+          },
+          { "type": "tool_use", "name": "mcp__platform__get_notifications", "input": {} }
+        ]
+      }
+    },
+    {
+      "id": "stop-done",
+      "expect": {
+        "tool_result_contains": "\"state\":\"stopped\""
+      },
+      "reply": {
+        "content": [{ "type": "text", "text": "The helper is stopped kz67-answer-stop-g6t2." }]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Read like their human" }] }
+    },
+    {
+      "id": "child-0",
+      "expect": {
+        "user_text_contains": "E2E67-CHILD-0",
+        "has_tool_result": false,
+        "tools_exclude": ["Agent", "Task"]
+      },
+      "reply": { "content": [{ "type": "text", "text": "Sum is 2 kz67-child-answer-0." }] }
+    },
+    {
+      "id": "child-1",
+      "expect": {
+        "user_text_contains": "E2E67-CHILD-1",
+        "has_tool_result": false,
+        "min_messages": 3,
+        "text_absent": ["E2E67-CHILD-2", "E2E67-CHILD-3"]
+      },
+      "reply": { "content": [{ "type": "text", "text": "Sum is 5 kz67-child-answer-1." }] }
+    },
+    {
+      "id": "child-2",
+      "expect": {
+        "user_text_contains": "E2E67-CHILD-2",
+        "has_tool_result": false,
+        "min_messages": 5,
+        "text_absent": ["E2E67-CHILD-3"]
+      },
+      "reply": { "content": [{ "type": "text", "text": "Sum is 9 kz67-child-answer-2." }] }
+    },
+    {
+      "id": "child-3",
+      "expect": {
+        "user_text_contains": "E2E67-CHILD-3",
+        "has_tool_result": false,
+        "min_messages": 7
+      },
+      "reply": { "content": [{ "type": "text", "text": "The sum is 9 kz67-child-answer-3." }] }
+    }
+  ]
+}

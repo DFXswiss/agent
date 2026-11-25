@@ -176,6 +176,9 @@ def test_a_child_session_acts_for_the_person_who_instructed_its_parent(rig: Rig)
         kit = await setup(env)
         parent = await kit.session(actor=BOB)
         child = await kit.session(3, depth=1, actor=None)
+        async with env.pool.connection() as conn:
+            # a child's turn opens with its first accepted prompt (ADR-088 section 1)
+            await conn.execute("UPDATE runner.session SET turn_open = false WHERE id = %s", (child,))
         turns = Turns(kit, parent)
         assert await turns.request(sid=child) is None  # no subagent request names it yet
         async with env.pool.connection() as conn:
@@ -185,11 +188,11 @@ def test_a_child_session_acts_for_the_person_who_instructed_its_parent(rig: Rig)
                 "UPDATE runner.operation SET child_session_id = %s WHERE type = 'subagent.request'", (child,)
             )
         assert await turns.request(sid=child) == BOB
-        # the child's own prompt (its purpose, the operation ID) never changes it
+        # a prompt that names no instruction of the child (ADR-088 section 1, `subagents/test_turns.py`): nobody's
         await turns.journal(
             "session.state", {"state": "prompt_accepted", "prompt_id": uuid7(), "at": REQUESTED_AT}, child
         )
-        assert await turns.request(sid=child) == BOB
+        assert await turns.request(sid=child) is None
 
     run(rig, body)
 

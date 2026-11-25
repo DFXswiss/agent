@@ -590,17 +590,17 @@ All argument objects have `additionalProperties:false`. Integers reject booleans
 | Tool | Arguments | Result |
 |---|---|---|
 | `get_context` | `{}` | `{org:{id,name},workgroup:{id,name,is_default},task:{id,title,state,owner:{id,display_name}},session:{id,parent_session_id,depth,model_id},rights:{workgroup:"read"|"write"},limits:{subagent_max_depth,subagent_max_parallel,subagent_max_total},api_version:1}` |
-| `list_workgroups` | `{}` | `[{id,name,is_default,my_access}]` – names of all org workgroups; `my_access` from the task owner's rights |
-| `list_members` | `{scope:"org"|"workgroup"}` | `[{id,kind,display_name,role|access}]` |
-| `list_tasks` | `{state?,limit?≤100,before?}` | tasks of the own workgroup `[{id,title,state,owner_id,created_at,last_activity_at}]` |
-| `get_task` | `{task_id}` | `{id,title,state,owner_id,created_at,sessions:[{id,state,depth,parent_session_id}],operations:[{id,type,state}]}` (own workgroup only) |
-| `get_task_messages` | `{task_id,after?,limit?≤200}` | chat items `[{seq,kind:"prompt"|"output",author_id,ts,text}]` |
-| `get_whiteboard` | `{level:"org"|"workgroup"|"task",task_id?}` | `[{entry_id,author_id,created_at,updated_at,text}]` |
+| `list_workgroups` | `{}` | `[{id,name,is_default,my_access}]` – names of all org workgroups (archived ones left out); `my_access` = the session's access: the task owner's explicit access for the own workgroup, `read` for another readable workgroup, else null |
+| `list_members` | `{scope:"org"|"workgroup",workgroup_id?}` | `[{id,kind,display_name,role|access}]`; `workgroup_id` (only for scope `workgroup`, default own workgroup) selects another readable workgroup |
+| `list_tasks` | `{state?,limit?≤100,before?,workgroup_id?}` | tasks of the own workgroup or of the readable workgroup `workgroup_id` `[{id,title,state,owner_id,created_at,last_activity_at}]` |
+| `get_task` | `{task_id}` | `{id,title,state,owner_id,created_at,sessions:[{id,state,depth,parent_session_id}],operations:[{id,type,state}]}` – a task of a readable workgroup (the hub's task row names it), any other is `not_found` |
+| `get_task_messages` | `{task_id,after?,limit?≤200}` | chat items `[{seq,kind:"prompt"|"output",author_id,ts,text}]` of a task of a readable workgroup |
+| `get_whiteboard` | `{level:"org"|"workgroup"|"task",task_id?,workgroup_id?}` | `[{entry_id,author_id,created_at,updated_at,text}]`; `task_id` exactly for level `task` (a task of a readable workgroup), `workgroup_id` only for level `workgroup` |
 | `get_notifications` | `{}` | content-free pending pings `[{ping_id,kind,level?,ref,at}]`; marks them delivered |
 | `request_operation` | `{type,params,idempotency_key?:string≤128}` | `{operation_id,status:"succeeded"|"failed"|"rejected"|"duplicate"|"denied"|"pending",result?,error?,duplicate_of?}`; waits up to 20 s for a final state, else `pending` |
 | `get_operation` | `{operation_id,wait_seconds?≤30}` | as above |
-| `list_operations` | `{limit?≤100}` | operations of the own task |
-| `get_subagent_result` | `{session_id,wait_seconds?≤30}` | `{session_id,state,final_text?,finished_at?}` – only for child sessions of the calling session; `final_text` = last assistant message of the child (≤ 64 KiB) once the child is `stopped`; empty when read an hour or more after the child ended (watch window and outbox retention, `05-runner.md` §2.3) |
+| `list_operations` | `{limit?≤100}` | operations of the own task (no `task_id` yet: the hub's task detail has no `created_at`, so another readable task's operations are read with `get_task`) |
+| `get_subagent_result` | `{session_id,wait_seconds?≤30}` | `{session_id,state,final_text?,finished_at?,instruction_id?}` – only for child sessions of the calling session; answers the child's newest instruction (ADR-088 §1): `working` (or a start state) with `instruction_id` while it waits or its turn runs; `idle`/`suspended` with `final_text`, `finished_at` (end of that turn) and `instruction_id` once that turn ended; `stopped` with `final_text` of the last turn, `finished_at` and `instruction_id`; `failed` with `finished_at`. `final_text` = last assistant message of the turn (≤ 64 KiB); empty when read an hour or more after the turn ended (watch window and outbox retention, `05-runner.md` §2.3). `wait_seconds` waits for the end of the newest instruction's turn or of the child. A child on a guest before ADR-088 answers the former shapes (no `instruction_id`, `final_text` only once `stopped`) |
 
 The work VM tools (`workvm_*`, `13-work-vm.md` §3) and the platform browser tools (`browser_navigate`,
 `browser_snapshot`, `browser_click`, `browser_hover`, `browser_type`, `browser_select`, `browser_press`,
@@ -608,9 +608,23 @@ The work VM tools (`workvm_*`, `13-work-vm.md` §3) and the platform browser too
 `browser_download`, `browser_screenshot`; KOR-44, `13-work-vm.md` §13.4) are forwarded
 as `workvm.call` and are not reads (no `platform.read`, no read audit).
 
-Read scope (ADR-024): own org (workgroup names, members, org whiteboard) and own workgroup (tasks, messages,
-whiteboards, operations). Other workgroups: names only. Rights are evaluated against the task owner at call
-time; a task owner who lost write access turns `request_operation` into `denied`.
+Read scope (ADR-087): a session reads what both the task owner and the instructing human of the read's turn may
+read, evaluated on the verified membership log at call time (`agent_runner.queries.rights`). The instructing human
+(the turn's acting user; for a child the acting user of the instruction it accepted last) is captured when the
+`platform.query` record is journaled and handed to the tool with the call. Own org (workgroup names, members, org
+whiteboard) and own workgroup (tasks, messages, whiteboards, operations; the owner's explicit access). Another
+workgroup W is readable when the instructing human is known, the owner and that human both have effective access to
+W (explicit, or an admin's inherited read; archived W included) and this device is assigned to W (directly or
+through the organization); otherwise `forbidden` "This turn has instructions of several people (or none), so only
+this workgroup can be read. Ask one person to give the instruction." (human unknown, every other W alike),
+`not_found` "There is no such workgroup you can read." (the people may not read W, or W does not exist) or
+`unavailable` naming W and that an admin can assign the device to it or to the organization. An instructing human
+who is no longer an active member with access to the own workgroup makes every read `forbidden`. Content is taken
+only from events sealed in the checked workgroup's scope, so a hub naming a wrong workgroup for a task cannot widen a
+read. `get_operation` and `list_operations` stay with the own task; credentials stay out of reach. Writes stay in
+the own workgroup and task; a task owner who lost write access turns `request_operation` into `denied`. The audit
+detail of every `read.session.<tool>` has `read_wg_id` (the workgroup read, null on the organization level) and
+`triggered_by` (the instructing human, null when unknown).
 
 ### 8.2 Hooks contract (guest side; behaviour in `05-runner.md` §5)
 
@@ -696,9 +710,11 @@ original released its slot (`failed`, `expired`), or with other content (e.g. an
 | `github.update_issue` | `{repo,number,state?,state_reason?,title?,body?,labels?}` | allow-list (when set); number ≥ 1; at least one of `state`, `title`, `body`, `labels` (`params_invalid`); `state` `open`/`closed`; `state_reason` only together with a fitting `state` (`reopened` with `open`, `completed`/`not_planned` with `closed`); title 1–256; body ≤ 65536; `labels` replaces every label of the issue (`[]` removes all) | – (setting values is idempotent) | – | `{number,url,state,state_reason,title,labels}` |
 | `github.list_pull_requests` | `{repo,state?,base?,sort?,direction?,per_page?,page?}` | allow-list (when set); `state` `open`(default)/`closed`/`all`; `base` branch syntax; `sort` `created`(default)/`updated`; `direction`, `per_page`, `page` as for `github.list_issues` | – | – | `{pull_requests:[{number,title,state,draft,author,head,base,created_at,updated_at,url}],next_page,truncated}` |
 | `github.request_connection` | `{}` | none; the acting user's GitHub connection is the subject (held while missing, below) | – | – | `{login}` of the connected account |
-| `subagent.request` | `{purpose,prompt,model_id?}` | purpose 1–200, prompt 1–32768 chars; `model_id` from the allowed list of the parent session's access kind (checked by the runner against the model catalog ⇒ `model_not_allowed`) | parent session, sha256(purpose‖prompt) | 10 min | `{session_id}` (hub creates the child session, H4 limits: depth ≤ 2, ≤ 3 running children per task, ≤ 10 children per task) |
+| `subagent.request` | `{purpose,prompt,model_id?}` | purpose 1–200, prompt 1–32768 chars; `model_id` from the allowed list of the parent session's access kind (checked by the runner against the model catalog ⇒ `model_not_allowed`) | parent session, sha256(purpose‖prompt) | 10 min | `{session_id}` (hub creates the child session; H4 limits are the hub's settings depth, running children per task and children per task, ADR-088 §2, `limit_exceeded`; the request is the child's first instruction, `instruction_id` = its operation ID) |
 | `github.request_connection` | `{}` | none; the task owner's GitHub connection is the subject (held while missing, below) | – | – | `{login}` of the connected account |
-| `subagent.request` | `{purpose,prompt,model_id?,github_identity?}` (`github_identity`: the child session's identity, usable by the acting human, else `identity_forbidden`; KOR-47) | purpose 1–200, prompt 1–32768 chars; `model_id` from the allowed list of the parent session's access kind (checked by the runner against the model catalog ⇒ `model_not_allowed`) | parent session, sha256(purpose‖prompt) | 10 min | `{session_id}` (hub creates the child session, H4 limits: depth ≤ 2, ≤ 3 running children per task, ≤ 10 children per task) |
+| `subagent.request` | `{purpose,prompt,model_id?,github_identity?}` (`github_identity`: the child session's identity, usable by the acting human, else `identity_forbidden`; KOR-47) | purpose 1–200, prompt 1–32768 chars; `model_id` from the allowed list of the parent session's access kind (checked by the runner against the model catalog ⇒ `model_not_allowed`) | parent session, sha256(purpose‖prompt) | 10 min | `{session_id}` (hub creates the child session; H4 limits are the hub's settings depth, running children per task and children per task, ADR-088 §2, `limit_exceeded`; the request is the child's first instruction, `instruction_id` = its operation ID) |
+| `subagent.instruct` | `{session_id,prompt}` | prompt 1–32768 chars; runner pre-check: `session_id` is a child of the requesting session in the same task that has not ended (else `rejected` `not_found`; the hub cannot read the parameters); a suspended child is resumed, so `subagent_max_running` and the room of its VM are checked (`limit_exceeded`) (ADR-088 §1) | – (idempotency key only) | – | `{session_id,instruction_id}` once the child's guest registered the prompt (`prompt_id` = operation ID, the child's sender line); instructions of one child are handed over one at a time in the order of their creation, one per turn (the next waits until the previous one was accepted and its turn ended); a suspended child is resumed first; a child that ended meanwhile ⇒ `not_found` |
+| `subagent.stop` | `{session_id}` | runner pre-check as `subagent.instruct` (without the limits) (ADR-088 §1) | – (idempotency key only) | – | `{session_id,state:"stopping"|"stopped"|"failed"}`: the child is stopped; `stopping` while its guest cannot be reached |
 | `github.list_identities` | `{}` | none (KOR-47) | – | – | `{acting_user,current,identities:[{id,login,owner_kind,owner_id,primary,signing,source}],co_authors:[{user_id,login}]}`: the identities the acting human may use in this task that the device can open (`source` `own`, `task_org`, `operator`), the one the resolution picks now (`current`, null when none) and the humans that may be named as co-authors |
 | `github.merge_base` | `{repo,number,discard?,github_identity?}` | allow-list (when set); number ≥ 1; the head branch not protected (`branch_protected`, pre-check) (KOR-48) | – | – | `{repo,number,branch,base,head_sha,base_sha,merge_base_sha,up_to_date,conflicts:[{path,kind}],conflicts_total,dir,files,bytes}`: pre-check: write access; the pull request open with its head in the same repository (else `merge_unsupported`); the base **tip** from its ref, the merge base from compare; `up_to_date` when the merge base is the tip (nothing else happens); the workspace directory must equal the head's tree or what the runner last put into or read from it, else `workspace_dirty` (`discard: true` replaces it on purpose). Executor: the three-way merge of the trees (merge base, head, base tip; Trees API, contents from the tarballs checked against their blob SHAs, single blobs otherwise) imported into `repos/<owner>/<name>` like `github.checkout`; text conflicts in the diff3 style with the common ancestor (`content`), conflicts without markers `binary`, `modify_delete`, `type`, `mode`, `protected`; the preparation is stored on the device for the merge commit (ADR-084 §4); conflicts listed up to 1000 |
 | `task.set_title` | `{title}` | 1–120 chars, single line | – | – | `{}` (runner writes a device-authored `task.meta` event) |
@@ -806,7 +822,7 @@ ADR-078); `conflict_markers`, `conflicts_unresolved`, `merge_outdated`, `merge_p
 | Guest journal long poll | ≤ 25 s |
 | Session idle → suspend | 30 min (config `AGENT_RUNNER_SESSION_IDLE_SECONDS`) |
 | VM idle → stop | 30 min (config `AGENT_RUNNER_VM_IDLE_SECONDS`) |
-| Subagents | depth ≤ 2, running per task ≤ 3, total per task ≤ 10 (ADR-017) |
+| Subagents | settings of the hub, 0 = no limit (ADR-088 §2): `AGENT_HUB_SUBAGENT_MAX_DEPTH` (default 5), `…_MAX_RUNNING` per task (50; children not ended and not suspended), `…_MAX_TOTAL` per task (0), `…_MAX_RUNTIME_SECONDS` per child (0); published in `/v1/config` `limits` and the device state section `limits` |
 | Context checkpoints (ADR-072 §6) | chunk ≤ 2 MiB of compressed plaintext (sealed + 28 B); per checkpoint 8 GiB, kept 3 per task, 200 GiB per organisation (config `AGENT_HUB_CONTEXT_*`); an upload without a new chunk for 6 h is removed (job `contexts.expire`, every 10 min) |
 | List reads (ADR-086 §2) | pages: events and logs ≤ 1000 (default 200), lists ≤ 200 (default 50); hard caps without paging: whiteboard history 10 000 events, invitations 1 000, device lists 10 000, the log of `GET /v1/platform/enrollments` 10 000 entries, monitoring overview 2 000 sessions; UI health read 10 000 rows |
 | UI health report | body ≤ 8 KiB, ≤ 64 views; per view `count` ≤ 100 000, `blocked_ms` ≤ 3 600 000, `max_bucket` ≤ 6; versions other than the hub's own count as `other`; kept 90 days; anonymous rate limit |

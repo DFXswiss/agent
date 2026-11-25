@@ -19,6 +19,7 @@ import {
   type ListEntry,
   type Listing,
   type OperationView,
+  STOP_VALUES,
   selectOperation,
 } from '../../../core/operations/view';
 import { useStore } from '../../hooks/useStore';
@@ -44,6 +45,8 @@ export const KNOWN_TYPES: ReadonlySet<string> = new Set([
   'github.list_pull_requests',
   'github.request_connection',
   'subagent.request',
+  'subagent.instruct',
+  'subagent.stop',
   'task.set_title',
   'human.question',
   'human.approval',
@@ -108,6 +111,8 @@ function FactItem({ fact, org }: { readonly fact: Fact; readonly org: string }) 
       </Link>
     );
   else if ((fact.label === 'state' || fact.label === 'state_reason') && ISSUE_VALUES.has(fact.text))
+    value = <span>{t(`operations.value.${fact.text}`)}</span>;
+  else if (fact.label === 'stop_state' && STOP_VALUES.has(fact.text))
     value = <span>{t(`operations.value.${fact.text}`)}</span>;
   else value = <span className={fact.label === 'commit' ? 'font-mono' : ''}>{short}</span>;
   return (

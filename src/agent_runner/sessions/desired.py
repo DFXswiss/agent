@@ -65,7 +65,7 @@ def parse(item: object) -> Desired:
     parent = data.get("parent_session_id")
     model = data.get("model_id_pref")
     depth = data.get("depth")
-    if isinstance(depth, bool) or not isinstance(depth, int) or not 0 <= depth <= 2:
+    if isinstance(depth, bool) or not isinstance(depth, int) or depth < 0:
         raise wire.ResponseInvalid("sessions")
     resume = data.get("resume_from")
     vm = data.get("vm_id_pref")

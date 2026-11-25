@@ -21,8 +21,8 @@ from agent_runner.subagents.extensions import QueryCall, QueryOutcome, failure
 from agent_runner.subagents.journal import READ_TOOLS, parse
 
 from ..reconcile.rig import Rig
-from .kit import TASK, run, setup
-from .test_completion import first_turn_ends, settle, working_child
+from .kit import TASK, run
+from .test_completion import first_turn_ends, settle, setup, working_child
 
 ROOT = Path(__file__).resolve().parents[4]
 NOT_CHILD = {
@@ -73,7 +73,14 @@ def test_only_the_parent_reads_its_child_and_every_read_is_recorded(rig: Rig) ->
             (child, "denied", parent),
             (parent, "denied", audits[3]["target_id"]),
         ]
-        assert audits[0]["detail"] == {"result_count": 1}
+        # the instructing human of the parent's turn (ADR-087 section 4); a subagent read is of no workgroup
+        async with env.pool.connection() as conn:
+            row = await (
+                await conn.execute("SELECT turn_actor::text FROM runner.session WHERE id = %s", (parent,))
+            ).fetchone()
+        assert row is not None
+        assert row[0] is not None
+        assert audits[0]["detail"] == {"result_count": 1, "read_wg_id": None, "triggered_by": row[0]}
         assert audits[0]["target_kind"] == "session"
 
     run(rig, body)

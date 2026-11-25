@@ -18,7 +18,8 @@ outputs, whiteboards) to the world's scopes with the next scope sequence number;
 dispatcher, ADR-038) with every registered read tool, so a read goes the real way: guest journal record
 `platform.query` -> journal handler -> dispatcher -> tool of this area -> `platform.read` event, audit, answer.
 `RKit.read(sid, tool, arguments)` returns the answer the guest received; `RKit.session(...)` inserts a working session
-of any task, workgroup and owner on the workgroup's VM.
+of any task, workgroup and owner on the workgroup's VM; `RKit.instruct(sid, actor)` sets the acting user of its turn
+(the instructing human of ADR-087; None, the default of a fresh session: unknown).
 
 `TaskHub` adds `GET /v1/device/workgroups/{wg}/tasks` and `GET /v1/device/tasks/{task}` to the rig's hub, answering
 from `tasks` (every answer checked against `contracts/`).
@@ -329,13 +330,18 @@ class RKit:
             )
         return sid
 
-    async def read(self, sid: str, tool: str, arguments: Json | None = None) -> Json:
-        """A forwarded read of `sid`; the answer the guest received (results checked against the contract)."""
+    async def instruct(self, sid: str, actor: str | None) -> None:
+        """Make `actor` the acting user of the session's current turn (`runner.session.turn_actor`, as an accepted
+        prompt of that person does; None: several people or none), read by the next forwarded read (ADR-087)."""
+        async with self.env.pool.connection() as conn, conn.transaction():
+            await conn.execute("UPDATE runner.session SET turn_actor = %s WHERE id = %s", (actor, sid))
+
+    async def journal_read(self, sid: str, tool: str, arguments: Json | None = None) -> str:
+        """Journal a forwarded read of `sid` without waiting for its answer; its pending ID."""
         async with self.env.pool.connection() as conn:
             found = await session_records.get(conn, sid)
         assert found is not None
         assert found.vm_id is not None
-
         row = await vm_records.get(self.env.pool, found.vm_id)
         assert row is not None
         pending = uuid7()
@@ -345,7 +351,10 @@ class RKit:
             seq=self.seq, ts="2026-11-21T12:00:02.000Z", session_id=sid, kind="platform.query", body=body
         )
         await self.skit.reader(row).handle([record])
-        await self.skit.settle_queries()
+        return pending
+
+    def answer(self, pending: str, tool: str) -> Json:
+        """The one answer the guest received for `pending` (results checked against the contract)."""
         answers = [answer for pid_, answer in self.skit.guest.answers() if pid_ == pending]
         assert len(answers) == 1, answers
         answer = answers[0]
@@ -354,6 +363,12 @@ class RKit:
         else:
             assert SCHEMAS.errors("mcp/tool-error.json", answer["error"]) == [], answer["error"]
         return answer
+
+    async def read(self, sid: str, tool: str, arguments: Json | None = None) -> Json:
+        """A forwarded read of `sid`; the answer the guest received (results checked against the contract)."""
+        pending = await self.journal_read(sid, tool, arguments)
+        await self.skit.settle_queries()
+        return self.answer(pending, tool)
 
     async def ok(self, sid: str, tool: str, arguments: Json | None = None) -> Any:
         answer = await self.read(sid, tool, arguments)

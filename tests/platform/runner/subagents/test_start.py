@@ -21,6 +21,20 @@ def creates(found: Any) -> list[dict[str, Any]]:
     return [value for name, value in found.guest.calls if name == "create_session"]
 
 
+def limited(found: Any, depth: int = 2, running: int = 3, total: int = 10, runtime: int = 0) -> None:
+    """The hub's subagent settings in the desired state the session area keeps (ADR-088 section 2)."""
+    found.env.context.session_service = found.service
+    found.service.env.desired = {
+        "limits": {
+            "api": 1,
+            "subagent_max_depth": depth,
+            "subagent_max_running": running,
+            "subagent_max_total": total,
+            "subagent_max_runtime_seconds": runtime,
+        }
+    }
+
+
 def test_an_accepted_request_starts_a_child_in_a_new_sandbox_of_the_same_vm(rig: Rig) -> None:
     async def body(env: Any) -> None:
         found = await setup(env)
@@ -50,14 +64,17 @@ def test_an_accepted_request_starts_a_child_in_a_new_sandbox_of_the_same_vm(rig:
             " person.",
         }
         assert SCHEMAS.errors("guest/sessions-create.request.json", request) == []
-        assert request["limits"]["runtime_max_sec"] == 1800
+        # no runtime setting (an older hub sends no limits): the resource limits of a main session
+        assert request["limits"]["runtime_max_sec"] == 8 * 3600
         assert request["limits"]["memory_max"] == 4 * 1024**3
         context = request["harness"]["context_markdown"]
+        # a current guest (ADR-088): the child answers each instruction and keeps running (`test_turns.py`: older)
         assert context.endswith(
-            f"- You are a subagent session of session `{parent}` for task `{TASK}`; finish by answering; you may"
-            " request further subagents only via `subagent.request`."
+            f"- You are a subagent session of session `{parent}` for task `{TASK}`; answer each instruction of your"
+            " main agent with your last message of that turn; you keep running and receive further instructions"
+            " until your main agent stops you; you may request further subagents only via `subagent.request`."
         )
-        assert "Subagent limits: depth 2, 3 running at a time, 10 per task" in context
+        assert "- Subagent limits (settings of the platform): unknown\n" in context
         transitions = await found.ops.kit.transitions(child)
         assert [state for state, _ in transitions] == [
             "vm_assigning",
@@ -66,6 +83,22 @@ def test_an_accepted_request_starts_a_child_in_a_new_sandbox_of_the_same_vm(rig:
             "agent_starting",
         ]
         assert any(f"started child_session_id={child}" in line for line in found.lines)
+
+    run(rig, body)
+
+
+def test_the_settings_of_the_hub_reach_the_child(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        found = await setup(env)
+        limited(found, depth=5, running=50, total=0, runtime=1800)
+        parent = await found.parent()
+        assert (await found.subagent(parent)).state == "succeeded"
+        (request,) = creates(found)
+        assert request["limits"]["runtime_max_sec"] == 1800
+        context = request["harness"]["context_markdown"]
+        line = "- Subagent limits (settings of the platform): depth 5, 50 running at a time, no limit per task, runtime"
+        assert f"{line} at most 1800 s\n" in context
+        assert SCHEMAS.errors("guest/sessions-create.request.json", request) == []
 
     run(rig, body)
 
@@ -116,9 +149,29 @@ def test_a_denied_request_starts_nothing(rig: Rig) -> None:
         parent = await found.parent()
         op = await found.subagent(parent, decision={"state": "denied", "error_code": "limit_exceeded"})
         assert (op.state, op.error_code) == ("denied", "limit_exceeded")
-        assert op.answer == {"operation_id": op.id, "status": "denied", "error": {"code": "limit_exceeded"}}
+        settings = "settings subagent_max_depth, subagent_max_running, subagent_max_total"
+        assert op.answer == {
+            "operation_id": op.id,
+            "status": "denied",
+            "error": {
+                "code": "limit_exceeded",
+                "message": f"A subagent limit of this platform is reached ({settings}; current limits: not known on"
+                " this device). Stop a subagent with subagent.stop or wait until one ends.",
+            },
+        }
         assert creates(found) == []
         assert await found.env.rows("SELECT id FROM runner.session WHERE depth > 0") == []
+        # with the settings the sentence names the current limits; another denial keeps the hub's code only
+        limited(found, depth=5, running=50, total=0)
+        again = await found.subagent(parent, decision={"state": "denied", "error_code": "limit_exceeded"})
+        assert again.answer is not None
+        assert again.answer["error"]["message"] == (
+            f"A subagent limit of this platform is reached ({settings}; current limits: depth 5, 50 running at a"
+            " time, no limit per task, no runtime limit). Stop a subagent with subagent.stop or wait until one ends."
+        )
+        budget = await found.subagent(parent, decision={"state": "denied", "error_code": "budget_exceeded"})
+        assert budget.answer is not None
+        assert budget.answer["error"] == {"code": "budget_exceeded"}
 
     run(rig, body)
 
@@ -126,6 +179,7 @@ def test_a_denied_request_starts_nothing(rig: Rig) -> None:
 def test_a_grandchild_is_started_through_the_platform_and_a_third_level_is_refused(rig: Rig) -> None:
     async def body(env: Any) -> None:
         found = await setup(env)
+        limited(found)
         parent = await found.parent()
         child, grandchild = uuid7(), uuid7()
         assert (await found.subagent(parent, child=child)).state == "succeeded"
@@ -138,10 +192,79 @@ def test_a_grandchild_is_started_through_the_platform_and_a_third_level_is_refus
         assert refused.answer is not None
         assert refused.answer["error"] == {
             "code": "limit_exceeded",
-            "message": "Subagents may be nested at most two levels deep.",
+            "message": "Subagents may be nested at most 2 levels deep, the limit of this platform (setting"
+            " subagent_max_depth). Do this work in this session or let a subagent of a lower level request it.",
         }
         assert found.ops.hub.requests[-1]["local_check"] == "rejected"
         assert len(creates(found)) == 2
+
+    run(rig, body)
+
+
+def test_without_settings_or_with_0_the_hub_decides_the_depth(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        found = await setup(env)
+        parent = await found.parent()
+        child, grandchild = uuid7(), uuid7()
+        assert (await found.subagent(parent, child=child)).state == "succeeded"
+        assert (await found.subagent(child, child=grandchild)).state == "succeeded"
+        # an older hub sends no limits: no local pre-check
+        third = await found.subagent(grandchild, decision={"state": "denied", "error_code": "limit_exceeded"})
+        assert (third.state, found.ops.hub.requests[-1]["local_check"]) == ("denied", "passed")
+        # 0 = no limit
+        limited(found, depth=0, running=0, total=0)
+        fourth = await found.subagent(grandchild, decision={"state": "denied", "error_code": "limit_exceeded"})
+        assert (fourth.state, found.ops.hub.requests[-1]["local_check"]) == ("denied", "passed")
+        limited(found, depth=1)
+        nested = await found.subagent(child, decision={"state": "rejected", "error_code": "limit_exceeded"})
+        assert nested.answer is not None
+        assert nested.answer["error"]["message"].startswith("Subagents may be nested at most 1 level deep,")
+
+    run(rig, body)
+
+
+def test_a_vm_with_an_older_guest_takes_no_child_deeper_than_2(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        found = await setup(env)
+        limited(found, depth=5)
+        parent = await found.parent()
+        child, grandchild = uuid7(), uuid7()
+        assert (await found.subagent(parent, child=child)).state == "succeeded"
+        assert (await found.subagent(child, child=grandchild)).state == "succeeded"
+        vm = await found.ops.vm()
+        async with found.env.pool.connection() as conn:
+            await conn.execute(
+                "INSERT INTO runner.golden (version, lima_name, claude_version, guest_version, image_digest, state)"
+                " VALUES ('old', 'golden-old', '2.1.330', '0.2.0', 'sha256:0', 'ready')"
+            )
+            await conn.execute("UPDATE runner.vm SET golden_version = 'old' WHERE id = %s", (vm.id,))
+        op = await found.subagent(grandchild, decision={"state": "rejected", "error_code": "limit_exceeded"})
+        assert op.answer is not None
+        assert op.answer["error"]["message"] == (
+            "Subagents may be nested at most 2 levels deep on the computer of this task until it runs the current"
+            " guest version. Do this work in this session."
+        )
+        # a child of depth 2 still fits that guest
+        assert (await found.subagent(child)).state == "succeeded"
+
+    run(rig, body)
+
+
+def test_a_full_vm_refuses_a_child_with_the_device_setting(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        found = await setup(env)
+        parent = await found.parent()
+        env.context.config.sessions_per_vm = 2
+        await add_child(found, parent, "suspended", 0)  # not occupying
+        assert (await found.subagent(parent)).state == "succeeded"
+        op = await found.subagent(parent, decision={"state": "rejected", "error_code": "limit_exceeded"})
+        assert op.answer is not None
+        assert op.answer["error"]["message"] == (
+            "The computer of this task is full: 2 sessions run in it, the limit of this device (setting"
+            " AGENT_RUNNER_SESSIONS_PER_VM). Stop a subagent with subagent.stop or wait until one ends."
+        )
+        env.context.config.sessions_per_vm = 0
+        assert (await found.subagent(parent)).state == "succeeded"
 
     run(rig, body)
 
@@ -168,9 +291,12 @@ async def add_child(found: Any, parent: str, state: str, n: int) -> str:
 def test_three_running_children_refuse_a_fourth_locally(rig: Rig) -> None:
     async def body(env: Any) -> None:
         found = await setup(env)
+        limited(found)
         parent = await found.parent()
         for n in range(2):
             await add_child(found, parent, "working", n)
+        # a suspended child does not run
+        await add_child(found, parent, "suspended", 5)
         # an accepted request whose child has not started yet counts as running
         pending = await found.ops.request(parent, "subagent.request", {"purpose": "p", "prompt": "q"})
         async with found.env.pool.connection() as conn:
@@ -178,7 +304,17 @@ def test_three_running_children_refuse_a_fourth_locally(rig: Rig) -> None:
         op = await found.subagent(parent, decision={"state": "rejected", "error_code": "limit_exceeded"})
         assert (op.state, op.error_code) == ("rejected", "limit_exceeded")
         assert op.answer is not None
-        assert op.answer["error"]["message"] == "At most three subagents of a task may run at a time."
+        assert op.answer["error"]["message"] == (
+            "This task already has 3 running subagents, the limit of this platform (setting subagent_max_running)."
+            " Stop one with subagent.stop or wait until one ends."
+        )
+        # 0 = no limit: the hub decides
+        limited(found, running=0)
+        assert (await found.subagent(parent)).state == "succeeded"
+        limited(found, running=1, total=0)
+        one = await found.subagent(parent, decision={"state": "rejected", "error_code": "limit_exceeded"})
+        assert one.answer is not None
+        assert one.answer["error"]["message"].startswith("This task already has 1 running subagent, the limit")
 
     run(rig, body)
 
@@ -186,13 +322,17 @@ def test_three_running_children_refuse_a_fourth_locally(rig: Rig) -> None:
 def test_ten_children_of_a_task_refuse_an_eleventh_locally(rig: Rig) -> None:
     async def body(env: Any) -> None:
         found = await setup(env)
+        limited(found)
         parent = await found.parent()
         for n in range(10):
             await add_child(found, parent, "stopped", n)
         op = await found.subagent(parent, decision={"state": "rejected", "error_code": "limit_exceeded"})
         assert (op.state, op.error_code) == ("rejected", "limit_exceeded")
         assert op.answer is not None
-        assert op.answer["error"]["message"] == "A task may start at most ten subagents."
+        assert op.answer["error"]["message"] == (
+            "This task already started 10 subagents, the limit of this platform (setting subagent_max_total). Give"
+            " further instructions to a subagent it has with subagent.instruct."
+        )
         # nine ended children leave room for one more
         async with found.env.pool.connection() as conn:
             await conn.execute("DELETE FROM runner.session WHERE id = %s", ("01930006-0000-7000-8000-000000000009",))
