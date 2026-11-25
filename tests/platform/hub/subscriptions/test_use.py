@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from agent_hub.crypto.ids import uuid7
+from agent_hub.subscriptions import store
 from tests.platform.hub.credentials.support import Desk, Json
 from tests.platform.hub.orgs.support import Actor
 
@@ -29,7 +31,7 @@ def _shared(desk: Desk, device: Actor) -> list[Json]:
 
 
 def _mirror(desk: Desk, record_id: str) -> list[tuple[Any, ...]]:
-    return desk.world.rows("SELECT pool, orgs::text[] FROM hub.subscription_use WHERE credential_id = %s", record_id)
+    return desk.world.rows("SELECT pool, orgs FROM hub.subscription_use WHERE credential_id = %s", record_id)
 
 
 def test_the_use_mirror_is_set_kept_and_removed(desk: Desk) -> None:
@@ -55,9 +57,8 @@ def test_a_device_is_told_about_subscriptions_for_its_organizations(desk: Desk) 
     _put(desk, writer)  # measure only
     assert _shared(desk, device) == [{"subscription_id": named, "owner_id": writer.id}]
     # the operator's pool reaches platform devices only
-    with desk.hub.pool.connection() as connection, connection.transaction():
-        connection.execute("UPDATE hub.device SET kind = 'platform' WHERE id = %s", (device.id,))
-    found = sorted(item["subscription_id"] for item in _shared(desk, device))
-    assert found == sorted([named, pooled])
+    with desk.hub.pool.connection() as connection:
+        found = store.shared_for(connection, UUID(device.id), [], platform=True)
+    assert found == [{"subscription_id": pooled, "owner_id": reader.id}]
     # a device that cannot open the owner's key is not told
     assert _shared(desk, desk.stranger_device()) == []

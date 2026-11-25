@@ -59,6 +59,7 @@ def test_a_shared_entry_serves_only_what_its_sealed_use_allows(tmp_path: Path) -
     pool.platform = lambda: cast(Any, platform(set(), {OTHER: True}))
     assert not pool.allowed("sub-p", OTHER)  # the owner is no operator
     assert not pool.allowed("nothing", ORG)
+    pool.platform = lambda: None
     assert pool.serves(ORG)
     assert not pool.serves(OTHER)
     assert pool.choose(org_id=ORG) == "sub-a"
@@ -201,7 +202,7 @@ def test_a_listed_record_that_cannot_serve_is_no_entry(store_dsn: str, monkeypat
         asked = hub.asked.count(missing)
         await operator.refresh_shared(context, pool)
         assert hub.asked.count(missing) == asked  # not asked again within FETCH_RETRY_S
-        pool.clock = lambda: 10_000.0
+        pool.failed[missing] -= operator.FETCH_RETRY_S
         await operator.refresh_shared(context, pool)
         assert hub.asked.count(missing) == asked + 1
 
@@ -227,7 +228,7 @@ def test_a_bound_session_moves_when_its_use_no_longer_allows_its_organization(
     monkeypatch.setattr(access, "upstream_anthropic", lambda _context: "https://upstream.invalid")
     monkeypatch.setattr(provision, "owner_credential", lambda **_kw: {"auth_value": "x"})
     context = SimpleNamespace(log=io.StringIO())
-    env = SimpleNamespace(context=context, catalog=None)
+    env = SimpleNamespace(context=context, catalog=None, log=lambda text: context.log.write(text + "\n"))
     session = SimpleNamespace(id="s1", org_id=ORG, owner_id=ALICE)
     target = asyncio.run(gateways.operator_target(cast(Any, env), cast(Any, session), "sub-a"))
     assert bound == [("s1", "sub-b")]

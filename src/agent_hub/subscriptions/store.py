@@ -177,17 +177,17 @@ def set_use(
         connection.execute("DELETE FROM hub.subscription_use WHERE credential_id = %s", (record_id,))
         return
     connection.execute(
-        "INSERT INTO hub.subscription_use (credential_id, owner_id, pool, orgs, set_at) VALUES (%s, %s, %s,"
-        " %s::uuid[], %s) ON CONFLICT (credential_id) DO UPDATE SET pool = EXCLUDED.pool, orgs = EXCLUDED.orgs,"
+        "INSERT INTO hub.subscription_use (credential_id, owner_id, pool, orgs, set_at) VALUES (%s, %s, %s, %s, %s)"
+        " ON CONFLICT (credential_id) DO UPDATE SET pool = EXCLUDED.pool, orgs = EXCLUDED.orgs,"
         " set_at = EXCLUDED.set_at",
-        (record_id, owner, pool, sorted(set(orgs)), now),
+        (record_id, owner, pool, Jsonb(sorted(set(orgs))), now),
     )
 
 
 SHARED = (
     "SELECT u.credential_id::text, u.owner_id::text FROM hub.subscription_use u"
     " JOIN hub.credential c ON c.id = u.credential_id AND NOT c.is_primary"
-    " WHERE (u.pool AND %(platform)s) OR u.orgs && %(orgs)s::uuid[] ORDER BY u.credential_id"
+    " WHERE (u.pool AND %(platform)s) OR u.orgs ?| %(orgs)s::text[] ORDER BY u.credential_id"
 )
 
 
