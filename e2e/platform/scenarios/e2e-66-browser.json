@@ -24,7 +24,7 @@
             "input": {
               "type": "browser.open",
               "params": {
-                "url": "${site}/login"
+                "url": "${site}/login?from=kz63-url-m2n6b4v8"
               }
             }
           }
