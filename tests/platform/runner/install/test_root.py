@@ -233,9 +233,10 @@ def test_the_runner_home_is_made_by_the_owner(kit: Kit) -> None:
         as_owner(MKDIR, "-p", "-m", "0700", str(home / "log")),
     ]
     assert not ctx.owner.home.exists()  # root itself created nothing below the owner's home
-    assert memory.created == [".local", ".local/share"]  # outermost first, the runner home itself not
+    # outermost first, the runner home itself not; Lima's directories it will make (KOR-67)
+    assert memory.created == [".local", ".local/share", ".lima", "Library/Caches/lima"]
     root.runner_dirs(ctx, memory)
-    assert memory.created == [".local", ".local/share"]  # recorded once
+    assert memory.created == [".local", ".local/share", ".lima", "Library/Caches/lima"]  # recorded once
     kit.run.answer([SUDO], rc=1)
     with refused("runner_home_failed"):
         root.runner_dirs(ctx, memory)
@@ -246,8 +247,10 @@ def test_only_parents_the_installation_had_to_create_are_recorded(kit: Kit, tmp_
     (ctx.owner.home / ".local").mkdir(parents=True)
     memory = Maintenance()
     root.runner_dirs(ctx, memory)
-    assert memory.created == [".local/share"]
+    assert memory.created == [".local/share", ".lima", "Library/Caches/lima"]
     (ctx.owner.home / ".local/share").symlink_to(tmp_path / "missing")  # the owner's own (dangling) link
+    (ctx.owner.home / ".lima").mkdir()  # the owner's own Lima
+    (ctx.owner.home / "Library/Caches/lima").mkdir(parents=True)
     memory = Maintenance()
     root.runner_dirs(ctx, memory)
     assert memory.created == []
@@ -506,7 +509,8 @@ def test_postinstall_installs_enrolls_and_publishes(kit: Kit, keys: Keys) -> Non
     assert runner["EnvironmentVariables"]["AGENT_RUNNER_MEMORY_RESERVE_MIB"] == "4096"
     assert plistlib.loads(layout.maintenance_plist.read_bytes()) == daemons.maintenance_plist(kit.system)
     assert mode(layout.maintenance_file) == 0o600
-    assert Maintenance.load(layout.maintenance_file) == Maintenance(owner="alice", created=[".local", ".local/share"])
+    created = [".local", ".local/share", ".lima", "Library/Caches/lima"]
+    assert Maintenance.load(layout.maintenance_file) == Maintenance(owner="alice", created=created)
     assert mode(layout.state_file) == 0o644
     assert state(kit) == {
         "v": 1,
@@ -545,7 +549,7 @@ def test_a_new_version_keeps_the_owner_and_the_previous_version_and_prunes_older
     assert seen == ["status", "status"]
     assert os.readlink(layout.current) == str(layout.version_dir(NEWER))
     assert sorted(item.name for item in layout.versions.iterdir()) == [VERSION, NEWER]
-    created = [".local", ".local/share"]
+    created = [".local", ".local/share", ".lima", "Library/Caches/lima"]
     assert Maintenance.load(layout.maintenance_file) == Maintenance(previous=VERSION, owner="alice", created=created)
     assert layout.runner_plist.is_file()
     # the same version again with someone else at the screen: the recorded owner and the way back stay
@@ -927,6 +931,41 @@ def test_a_created_parent_the_owner_still_uses_stays(kit: Kit, keys: Keys) -> No
     assert result["leftovers"] == []
 
 
+def test_lima_directories_the_installation_made_are_removed_and_reported(kit: Kit, keys: Keys) -> None:
+    """KOR-67: `~/.lima` and Lima's cache did not exist before the installation: Lima's configuration and the cache go,
+    `~/.lima` too when nothing else is in it; what cannot go is a leftover."""
+    installed_for_removal(kit, keys, created=(".lima", "Library/Caches/lima"))
+    home = owner_of(kit.layout).home
+    for item in (".lima/_config/networks.yaml", ".lima/_config/user", "Library/Caches/lima/download/x"):
+        (home / item).parent.mkdir(parents=True, exist_ok=True)
+        (home / item).write_text("x")
+    kit.run.on(as_owner(RM, "-rf"), lambda argv: shutil.rmtree(argv[-1]))
+    kit.run.on(as_owner(RMDIR), lambda argv: Path(argv[-1]).rmdir())
+    nothing_left(kit)
+    runner_commands(kit.run, {"uninstall": runner_doc()})
+    result = root.uninstall(kit.system, [keys.public])
+    assert "created:.lima" in result["removed"]
+    assert result["leftovers"] == []
+    assert not (home / ".lima").exists()
+    assert not (home / "Library/Caches/lima").exists()
+
+
+def test_an_own_lima_instance_keeps_lima_and_is_no_leftover_of_ours(kit: Kit, keys: Keys) -> None:
+    installed_for_removal(kit, keys, created=(".lima",))
+    home = owner_of(kit.layout).home
+    (home / ".lima/_config").mkdir(parents=True)
+    (home / ".lima/mine").mkdir()  # an instance the owner made with Lima
+    kit.run.on(as_owner(RM, "-rf"), lambda argv: shutil.rmtree(argv[-1]))
+    kit.run.answer(as_owner(RMDIR, str(home / ".lima")), rc=1, stderr="Directory not empty")
+    nothing_left(kit)
+    runner_commands(kit.run, {"uninstall": runner_doc()})
+    result = root.uninstall(kit.system, [keys.public])
+    assert "created:.lima" not in result["removed"]
+    assert (home / ".lima/mine").is_dir()
+    assert not (home / ".lima/_config").exists()
+    assert result["leftovers"] == [f"path:{home / '.lima'}"]
+
+
 def test_the_removal_waits_until_a_booted_out_service_has_ended(
     kit: Kit, keys: Keys, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1247,6 +1286,31 @@ def test_maintain_ensures_the_golden_checks_for_updates_and_publishes(kit: Kit, 
     # within the hour the feed is not read again
     assert maintain(kit, keys, recorder)["update"] == "not_due"
     assert kit.fetch.urls == [HUB + "/downloads/runner/latest.json"]
+
+
+def test_right_after_the_enrollment_maintain_waits_for_the_runner_and_builds_the_golden(kit: Kit, keys: Keys) -> None:
+    """KOR-67: the run `postinstall` starts finds the runner loaded but its store still starting; it asks again and
+    builds the golden now instead of reporting `not_enrolled` until the next run 15 minutes later."""
+    installed(kit, keys)
+    lima(kit, "dfx-golden")
+    kit.run.answer(RUNNER_PRINT, stdout=RUNNING)
+    seen = runner_commands(
+        kit.run,
+        {"status": ["", "", status_doc()], "image list": runner_doc(), "image build": runner_doc()},
+    )
+    recorder = Recorder()
+    assert maintain(kit, keys, recorder)["golden"] == "built"
+    assert seen[:4] == ["status", "status", "status", "image list"]
+    assert recorder.sleeps == [root.STATUS_POLL_S, root.STATUS_POLL_S]
+
+
+def test_a_runner_that_never_answers_is_asked_a_bounded_number_of_times(kit: Kit, keys: Keys) -> None:
+    installed(kit, keys)
+    kit.run.answer(RUNNER_PRINT, stdout=RUNNING)
+    runner_commands(kit.run, {})
+    recorder = Recorder()
+    assert maintain(kit, keys, recorder)["golden"] == "not_enrolled"
+    assert recorder.sleeps == [root.STATUS_POLL_S] * root.STATUS_POLLS
 
 
 def test_a_failed_golden_list_is_reported_as_the_golden_state(kit: Kit, keys: Keys) -> None:

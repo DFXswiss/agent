@@ -406,6 +406,18 @@ def test_admin_way(mac: Mac, euid: int, sudo: bool, way: str) -> None:
     assert mac.run.called(*SUDO_TRUE) == ([] if euid == 0 else [SUDO_TRUE])
 
 
+def test_over_ssh_without_sudo_there_is_no_dialog(mac: Mac) -> None:
+    """Rule E-27 (KOR-67): over ssh macOS shows no administrator dialog; `sudo` and root still work there."""
+    real_step(mac, sudo=False)
+    mac.machine.system.env = {"SSH_CONNECTION": "192.0.2.1 50000 192.0.2.2 22"}
+    with refused("install_failed", reason="admin_dialog_over_ssh"):
+        ownmac.admin_way(mac.machine)
+    real_step(mac, sudo=True)
+    assert ownmac.admin_way(mac.machine) == "sudo"
+    real_step(mac, euid=0, sudo=False)
+    assert ownmac.admin_way(mac.machine) == "root"
+
+
 def test_admin_way_of_the_seam_is_the_dialog_it_stands_in_for(mac: Mac) -> None:
     mac.machine.system.geteuid = lambda: 0
     assert ownmac.admin_way(mac.machine) == "dialog"
@@ -520,6 +532,8 @@ def test_device_add_to_the_default_workgroup(mac: Mac, hub: HubFake, account: Us
         "version": VERSION,
         "daemon": "running",
         "golden": "unknown",
+        "ready": False,
+        "next": ownmac.NEXT_PREPARING,
         "owner": "",
         "checks": result["checks"],
         "admin": "dialog",
@@ -677,6 +691,29 @@ def test_device_add_waits_while_the_enrollment_waits(mac: Mac, hub: HubFake, acc
     mac.machine.sleep = later
     result = ownmac.device_add(opened, mac.machine, None, [])
     assert (result["device_id"], result["golden"], mac.slept) == ("dev-3", "ready", [ownmac.POLL_S])
+    assert (result["ready"], "next" in result) == (True, False)
+
+
+@pytest.mark.parametrize("built", [True, False])
+def test_device_add_waits_for_the_golden_with_wait(
+    mac: Mac, hub: HubFake, account: User, opened: Account, built: bool
+) -> None:
+    """KOR-67: the golden of the new device is built right after the enrollment; `--wait` waits for it, and a device
+    that is not ready in time says so (`ready`, `next`) instead of failing."""
+    mac.fetch.files = feed_files(mac.keys, hub.origin)
+    installs(mac, enrolled=True, enrollment="enrolled", device_id="dev-4", golden="not_enrolled")
+    ticks = iter([0.0, 0.0, 0.0, ownmac.GOLDEN_WAIT_S + 1])
+
+    def later(seconds: float) -> None:
+        mac.slept.append(seconds)
+        mac.state(updated_at=STARTED, enrolled=True, enrollment="enrolled", device_id="dev-4",
+                  golden="built" if built else "not_enrolled")  # fmt: skip
+
+    mac.machine.sleep = later
+    mac.machine.clock = lambda: next(ticks)
+    result = ownmac.device_add(opened, mac.machine, None, [], wait=True)
+    assert (result["golden"], result["ready"]) == (("built", True) if built else ("not_enrolled", False))
+    assert ("next" in result) is not built
 
 
 def test_device_add_times_out(mac: Mac, hub: HubFake, account: User, opened: Account) -> None:

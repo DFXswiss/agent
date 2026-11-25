@@ -155,6 +155,15 @@ The maintenance daemon (root, payload code only) runs every 15 minutes:
    clears the count. A maintenance run that ended while it waited finishes the update in the next run (kept when the
    runner is connected, else the way back).
 
+**Amendment (KOR-67).** The run `postinstall` starts right after an enrollment waits until the runner answers (its
+store still starts; at most two minutes) and builds the golden at once – before, it found no readable status, reported
+`not_enrolled` and left the build to the next run 15 minutes later. Until a golden is ready the runner refuses a
+session with `capacity_exhausted` (`golden`), so the hub places the next attempt and the task waits instead of failing
+`vm_start_failed`; `device add` reports `ready` and with `--wait` waits for it. Over ssh without `sudo` rights `device
+add` stops before anything is downloaded (`install_failed`, `admin_dialog_over_ssh`): macOS shows no dialog there.
+`~/.lima` and `~/Library/Caches/lima` the installation found missing are recorded and removed again (`~/.lima` only
+when nothing but Lima's `_config` is in it); what stays is a leftover.
+
 ### 7. The download area of the hub
 `GET /downloads/runner/{latest.json | latest.json.sig | DFX-Agent-Runner-<version>.pkg}` serves files of an
 optional directory (`AGENT_HUB_DOWNLOADS_DIR`) anonymously, with strict names; without the setting the paths answer

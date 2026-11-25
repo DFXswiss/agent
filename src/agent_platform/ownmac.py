@@ -6,7 +6,8 @@
   a device invitation of the organization (`device invite`: the given workgroups, else the default workgroup), writes
   the code into a 0600 request file in a private directory and runs the one administrator step
   (`agent_runner.install.admin`): macOS shows one dialog. Then it waits for the installation's public state and reports
-  the device, its assignment, the golden image and the plaintext notice of A7.
+  the device, its assignment, the golden image (`ready`; until it is, `next` says that tasks wait for it and start by
+  themselves; with `--wait` it waits up to `GOLDEN_WAIT_S` for it, KOR-67) and the plaintext notice of A7.
 - `device remove --this-computer`: unpairs this Mac's device in its organization (`remove` with the rotations, as the
   device screen does), then runs the helper's removal in one dialog (cancelled: the maintenance daemon removes the
   installation itself after the verified `remove`); prints what was removed and what is left.
@@ -26,6 +27,7 @@ release keys of a test release. Nothing here runs as root itself.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import getpass
 import hashlib
 import inspect
@@ -44,6 +46,7 @@ from agent_platform.account import Account
 from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
 from agent_platform.orgs import find_org
+from agent_platform.state import over_ssh
 from agent_runner.errors import RunnerError
 from agent_runner.install import admin, owner, preflight, release, update
 from agent_runner.install.layout import Layout
@@ -55,6 +58,13 @@ ROOT_ENV = "AGENT_PLATFORM_DEVICE_ROOT"
 KEYS_ENV = "AGENT_PLATFORM_DEVICE_KEYS"
 INVITE_HOURS = 1
 WAIT_S = 900.0
+# The golden of a new device is built right after its enrollment (`maintain`, KOR-67): `device add --wait` waits for it.
+GOLDEN_WAIT_S = 1800.0
+READY_GOLDEN = ("ready", "built")
+NEXT_PREPARING = (
+    "This computer builds the image for its tasks now (a few minutes); tasks on it wait and then start by themselves. "
+    "`agent-platform device add --this-computer --wait` waits until it is ready."
+)
 POLL_S = 2.0
 MAX_PACKAGE = 2 * 1024**3
 OPEN = "/usr/bin/open"
@@ -140,12 +150,18 @@ def read_state(machine: Machine) -> dict[str, Any] | None:
 
 def admin_way(machine: Machine) -> str:
     """How the administrator step runs: `root` for a root caller, `sudo` when `sudo -n true` succeeds (the caller may
-    act as administrator without a password now), else `dialog` (also for the test seam, which stands in for it)."""
+    act as administrator without a password now), else `dialog` (also for the test seam, which stands in for it).
+    Over ssh macOS shows no dialog: there the step needs `sudo` (`install_failed`, `admin_dialog_over_ssh`, before
+    anything is downloaded or changed; KOR-67, rule E-27)."""
     if machine.admin is not None:
         return DIALOG
     if machine.system.geteuid() == machine.system.root_uid:
         return ROOT
-    return SUDO if machine.system.run([admin.SUDO, "-n", "true"]).returncode == 0 else DIALOG
+    if machine.system.run([admin.SUDO, "-n", "true"]).returncode == 0:
+        return SUDO
+    if over_ssh(machine.system.env):
+        raise PlatformError("install_failed", reason="admin_dialog_over_ssh")
+    return DIALOG
 
 
 def _admin_argv(machine: Machine, install: bool, arguments: tuple[str, str, str], way: str) -> list[str]:
@@ -170,9 +186,11 @@ def run_admin(machine: Machine, install: bool, arguments: tuple[str, str, str], 
     return done.stdout
 
 
-def wait_for(machine: Machine, done: Callable[[dict[str, Any]], bool], started: str) -> dict[str, Any]:
+def wait_for(
+    machine: Machine, done: Callable[[dict[str, Any]], bool], started: str, seconds: float = WAIT_S
+) -> dict[str, Any]:
     """The public state once it was written after `started` and `done` accepts it; `install_failed` on time-out."""
-    deadline = machine.clock() + WAIT_S
+    deadline = machine.clock() + seconds
     while True:
         state = read_state(machine)
         if state is not None and str(state.get("updated_at", "")) >= started and done(state):
@@ -210,8 +228,11 @@ def check_caller(machine: Machine) -> None:
         raise PlatformError("invalid_argument", reason="owner_not_regular")
 
 
-def device_add(account: Account, machine: Machine, org: str | None, wgs: list[str]) -> dict[str, Any]:
+def device_add(
+    account: Account, machine: Machine, org: str | None, wgs: list[str], *, wait: bool = False
+) -> dict[str, Any]:
     check_caller(machine)
+    admin_way(machine)  # over ssh without sudo: refused before the download (asked again right before the step)
     checks = check_mac(machine)
     state = read_state(machine)
     if state is not None and state.get("enrolled") is True:
@@ -247,6 +268,10 @@ def device_add(account: Account, machine: Machine, org: str | None, wgs: list[st
         raise PlatformError("install_failed", reason=str(final.get("enrollment_error", final.get("enrollment"))))
     if final.get("disabled_in_login_items") is True:
         machine.system.run([OPEN, LOGIN_ITEMS])
+    if wait and final.get("golden") not in READY_GOLDEN:
+        with contextlib.suppress(PlatformError):  # not ready in time: the result says so (`ready`, `next`)
+            final = wait_for(machine, lambda found: found.get("golden") in READY_GOLDEN, started, GOLDEN_WAIT_S)
+    ready = final.get("golden") in READY_GOLDEN
     return {
         "device_id": final.get("device_id", ""),
         "org_id": chosen_org,
@@ -254,6 +279,8 @@ def device_add(account: Account, machine: Machine, org: str | None, wgs: list[st
         "version": final.get("version", feed.version),
         "daemon": final.get("daemon", "unknown"),
         "golden": final.get("golden", "unknown"),
+        "ready": ready,
+        **({} if ready else {"next": NEXT_PREPARING}),
         "owner": final.get("owner", ""),
         "checks": checks,
         "admin": way,
@@ -300,7 +327,7 @@ def device_remove(account: Account, machine: Machine) -> dict[str, Any]:
 
 
 def _add(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    return device_add(account, machine_for(context.environ), args.org, list(args.wg))
+    return device_add(account, machine_for(context.environ), args.org, list(args.wg), wait=args.wait)
 
 
 def _remove(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -338,6 +365,7 @@ def register(tree: Tree) -> None:
     sub.add_argument("--org", help="the organization (default: the only one)")
     sub.add_argument("--wg", action="append", default=[], help="workgroup to assign, repeatable (default: default)")
     sub.add_argument("--this-computer", action="store_true", help="the computer this command runs on (the default)")
+    sub.add_argument("--wait", action="store_true", help="also wait until the device is ready for tasks (its image)")
     sub = tree.command(
         group,
         "remove",

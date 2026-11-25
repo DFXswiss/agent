@@ -47,8 +47,19 @@ SFLTOOL = "/usr/bin/sfltool"
 MAX_REQUEST = 4096
 # A booted-out runner still shows as loaded until its process (with its database) has ended: the check for what is
 # left waits for that, at most UNLOAD_POLLS times UNLOAD_POLL_S (measured in a macOS guest: a few seconds).
+# Lima's own directories below the owner's home, recorded in `created` when the installation found them missing
+# (KOR-67): its configuration (`~/.lima/_config`: network settings and the SSH key Lima makes for its instances) and
+# its download cache. A removal takes `_config` and then `~/.lima` itself only when nothing else is in it (an
+# instance the owner made with Lima stays), and the cache.
+LIMA_CONFIG = ".lima"
+LIMA_CACHE = "Library/Caches/lima"
 UNLOAD_POLLS = 30
 UNLOAD_POLL_S = 1.0
+# Right after an enrollment the runner is loaded but its store still starts, so its status cannot be read yet: the
+# maintenance run that `postinstall` starts at once asks again, at most STATUS_POLLS times STATUS_POLL_S, so the golden
+# of a new device is built at once and not by the next run 15 minutes later (KOR-67).
+STATUS_POLLS = 60
+STATUS_POLL_S = 2.0
 CODE_PROMPT = (
     "To connect this Mac to your organization, paste the device code shown on the devices page of agent.dfx.swiss."
 )
@@ -123,6 +134,10 @@ def runner_dirs(ctx: runnerctl.Context, memory: Maintenance) -> None:
         path = ctx.owner.home / parent
         if not path.exists() and not path.is_symlink() and str(parent) not in memory.created:
             memory.created.append(str(parent))
+    for lima in (LIMA_CONFIG, LIMA_CACHE):
+        path = ctx.owner.home / lima
+        if not path.exists() and not path.is_symlink() and lima not in memory.created:
+            memory.created.append(lima)
     system.must(ctx.as_owner([MKDIR, "-p", "-m", "0700", str(home)]), "runner_home_failed")
     system.must(ctx.as_owner([CHMOD, "0700", str(home)]), "runner_home_failed")
     system.must(ctx.as_owner([MKDIR, "-p", "-m", "0700", str(home / "log")]), "runner_home_failed")
@@ -184,6 +199,15 @@ def _safe_status(ctx: runnerctl.Context) -> runnerctl.RunnerStatus | None:
         return runnerctl.status(ctx)
     except RunnerError:
         return None
+
+
+def _started_status(ctx: runnerctl.Context, sleep: Callable[[float], None]) -> runnerctl.RunnerStatus | None:
+    """The runner's status, waiting while the runner is loaded but does not answer yet (`STATUS_POLLS`)."""
+    found, polls = _safe_status(ctx), 0
+    while found is None and polls < STATUS_POLLS and daemons.loaded(ctx.system, RUNNER_LABEL):
+        sleep(STATUS_POLL_S)
+        found, polls = _safe_status(ctx), polls + 1
+    return found
 
 
 def context(system: System, manifest: Manifest, recorded: str | None) -> runnerctl.Context:
@@ -321,6 +345,24 @@ def recorded_owner(system: System) -> owner.Owner | None:
     return owner.lookup(system, name) if name else None
 
 
+def _remove_owner_dirs(system: System, found: owner.Owner, removed: list[str]) -> list[Path]:
+    """Remove the runner's home and what the installation created below the owner's home (innermost first; Lima's
+    directories as `LIMA_CONFIG` says); returns Lima's directories it had created, for the leftovers."""
+    ctx = runnerctl.Context(system, found, {})
+    home = ctx.home
+    if home.exists() or home.is_symlink():
+        system.must(ctx.as_owner([RM, "-rf", str(home)]), "uninstall_failed", "runner_home")
+        removed.append("runner_home")
+    created = Maintenance.load(system.layout.maintenance_file).created
+    for parent in sorted(created, key=lambda item: item.count("/"), reverse=True):
+        if parent in (LIMA_CONFIG, LIMA_CACHE):
+            inside = found.home / parent / ("_config" if parent == LIMA_CONFIG else "")
+            system.run(ctx.as_owner([RM, "-rf", str(inside)]))
+        if system.run(ctx.as_owner([RMDIR, str(found.home / parent)])).returncode == 0:
+            removed.append(f"created:{parent}")
+    return [found.home / name for name in (LIMA_CONFIG, LIMA_CACHE) if name in created]
+
+
 def uninstall(system: System, keys: Sequence[str], *, self_removal: bool = False) -> dict[str, Any]:
     """Remove the installation completely; returns what was removed and what is left (must be empty)."""
     require_root(system)
@@ -340,16 +382,7 @@ def uninstall(system: System, keys: Sequence[str], *, self_removal: bool = False
             removed.append("runner_data")
         except RunnerError as error:
             notes.append(f"runner_uninstall:{error.code}")
-    if found is not None:
-        ctx = runnerctl.Context(system, found, {})
-        home = ctx.home
-        if home.exists() or home.is_symlink():
-            system.must(ctx.as_owner([RM, "-rf", str(home)]), "uninstall_failed", "runner_home")
-            removed.append("runner_home")
-        created = Maintenance.load(layout.maintenance_file).created
-        for parent in sorted(created, key=lambda item: item.count("/"), reverse=True):
-            if system.run(ctx.as_owner([RMDIR, str(found.home / parent)])).returncode == 0:
-                removed.append(f"created:{parent}")
+    lima = _remove_owner_dirs(system, found, removed) if found is not None else []
     if daemons.remove(system, MAINTENANCE_LABEL, layout.maintenance_plist, unload=not self_removal):
         removed.append("maintenance_daemon")
     if system.run([PKGUTIL, "--forget", PACKAGE_ID]).returncode == 0:
@@ -358,6 +391,7 @@ def uninstall(system: System, keys: Sequence[str], *, self_removal: bool = False
         shutil.rmtree(layout.payload)
         removed.append("payload")
     left = _left_after_unloading(system, found, self_removal=self_removal)
+    left += [f"path:{path}" for path in lima if path.exists() or path.is_symlink()]
     result = {"removed": removed, "leftovers": left, "notes": notes, "background_items": background_items(system)}
     if self_removal:
         system.run([LOGGER, "-t", "dfx-agent-runner", json.dumps(result, sort_keys=True)])
@@ -433,7 +467,7 @@ def maintain(
     manifest = _manifest(system, version, keys, verify_tree=False)
     memory = Maintenance.load(layout.maintenance_file)
     ctx = context(system, manifest, memory.owner)
-    found = _safe_status(ctx)
+    found = _started_status(ctx, sleep)
     if found is not None and found.removed != "no":
         result = uninstall(system, keys, self_removal=True)
         detach(MAINTENANCE_LABEL)

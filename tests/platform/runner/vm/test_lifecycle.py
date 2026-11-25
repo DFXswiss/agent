@@ -84,13 +84,15 @@ def test_clone_path_when_the_pool_is_empty(harness: Harness) -> None:
     assert all(argv == ["list", "--json", row.lima_name] for argv in listed)
 
 
-def test_no_golden_is_vm_start_failed(harness: Harness) -> None:
+def test_no_golden_yet_is_capacity_exhausted(harness: Harness) -> None:
+    """A device that still builds its golden refuses for now; the hub places the next attempt (KOR-67)."""
+
     async def body(manager: VmManager) -> Any:
         with pytest.raises(RunnerError) as caught:
             await manager.ensure_vm(ORG, WG_A)
         return caught.value.code, caught.value.name
 
-    assert harness.run(body) == ("vm_start_failed", "golden")
+    assert harness.run(body) == ("capacity_exhausted", "golden")
 
 
 def test_clone_path_failure_marks_the_row_deleted(harness: Harness) -> None:

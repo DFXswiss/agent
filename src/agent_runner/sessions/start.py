@@ -21,8 +21,8 @@ guest moves there only after the tools arrived and the TUI is up) and `working` 
 (`sessions/journal.py`). Every transition carries the
 device time. Failures end the session `failed` with the reason of `session-failure-reasons.json`:
 
-- VM could not be made ready (clone/start/restart, golden missing): `vm_start_failed`;
-- no slot free and no idle VM to stop: `capacity_exhausted`;
+- VM could not be made ready (clone/start/restart): `vm_start_failed`;
+- no slot free and no idle VM to stop, or no ready golden yet (a device still building it): `capacity_exhausted`;
 - guest not reachable, not healthy or not assigned to the workgroup: `guest_unreachable`;
 - no model access for the owner's preference on this device (no usable credential of the owner, no platform key or
   an org device for the platform access): `model_access_unavailable`;

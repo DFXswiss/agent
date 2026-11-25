@@ -14,7 +14,9 @@ workgroup for a session, in the deterministic order of ADR-075 section 4 (05-run
    it (`vm.extensions`: e.g. context checkpoints still due, KOR-33): then it is deleted and replaced by a new VM (a
    replacement, allowed even when the hub allows no new VM);
 4. a new VM when the hub allows one (`new_allowed`, the hub's `vm_new_allowed`): warm pool (`Pool.take`), else clone
-   + start on the hot path (`Provisioner.create`);
+   + start on the hot path (`Provisioner.create`); while the device has no ready golden yet (a device just added
+   builds it, KOR-67) this is `capacity_exhausted` (`golden`): the hub places the next attempt and the task waits
+   instead of failing;
 5. else `capacity_exhausted` (the hub places the next attempt).
 
 The choice runs under an
@@ -220,7 +222,7 @@ class VmManager:
             # the hub's workgroup limit (`AGENT_HUB_VMS_PER_WG`): no further VM for this session
             raise RunnerError("capacity_exhausted", "vm_new_allowed")
         if golden is None:
-            raise RunnerError("vm_start_failed", "golden")
+            raise RunnerError("capacity_exhausted", "golden")
         taken = await self.pool.take(golden, org_id, wg_id)
         if taken is not None:
             return taken
