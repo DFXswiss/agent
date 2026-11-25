@@ -19,7 +19,7 @@
 // - No canary reaches the hub in plaintext. Runs on T1.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures/test.ts';
-import { auditRows, expectNoPlaintext, sessionState } from '../fixtures/guest.ts';
+import { auditRows, expectNoPlaintext, runnerStore, sessionState } from '../fixtures/guest.ts';
 import { hubOperations } from '../fixtures/github.ts';
 import type { Orchestrator } from '../fixtures/orchestrator.ts';
 import {
@@ -336,12 +336,13 @@ test('@E2E-68 @R-8.7 @R-8.8 @R-8.9 @R-13.4 @R-13.8 @needs-vm a session reads wha
     const last = results.at(-1)!;
     expect(last.state).toBe('stopped');
     expect(last.final_text).toContain('kz67-child-answer-3');
-    // one subagent.finished ping per turn (get_notifications hands every ping once)
-    const pings = subagents
-      .filter((answer) => answer.name === 'get_notifications')
-      .flatMap((answer) => answer.value.notifications as { ping_id: string; kind: string; ref: string }[])
-      .filter((ping) => ping.kind === 'subagent.finished' && ping.ref === child);
-    expect(new Set(pings.map((ping) => ping.ping_id)).size).toBeGreaterThanOrEqual(TURNS);
+    // one subagent.finished ping per turn: the runner's ping records (a ping reaches the session through a hook
+    // notice or get_notifications, so the session's own calls do not show every one)
+    const pings = await runnerStore<{ id: string }>(
+      orchestrator,
+      `SELECT id::text AS id FROM runner.ping WHERE kind = 'subagent.finished' AND ref = '${uuid(child)}'`,
+    );
+    expect(new Set(pings.map((ping) => ping.id)).size).toBeGreaterThanOrEqual(TURNS);
 
     // 4. The clear message of the limit: its value and its setting.
     const second = subagents.filter((answer) => answer.name === 'request_operation').at(-2)!;
