@@ -118,11 +118,8 @@ export function AgentsSection() {
     setBusy(true);
     setFailure(null);
     try {
-      await import('../../../../core/agents/revoke').then((revoke) =>
-        target === 'all'
-          ? revoke.revokeAllAgents(app.tasks).then(() => undefined)
-          : revoke.revokeAgent(app.tasks, target!.agentId),
-      );
+      if (target === 'all') await import('../../../../core/agents/revoke').then((r) => r.revokeAllAgents(app.tasks));
+      else await import('../../../../core/agents/revoke').then((r) => r.revokeAgent(app.tasks, target!.agentId));
       setTarget(null);
     } catch (error) {
       setFailure(requestErrorCode(error));
