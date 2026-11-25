@@ -13,7 +13,7 @@ export const A = '0190f000-0000-7000-8000-0000000000c1';
 export const B = '0190f000-0000-7000-8000-0000000000c2';
 export const C = '0190f000-0000-7000-8000-0000000000c3';
 export const ORG = '0190f000-0000-7000-8000-0000000000d1';
-export const TOKEN = 'sk-ant-oat01-not-a-real-token';
+export const TOKEN = 'double-subscription-token-not-real';
 export const body = (extra: Record<string, unknown> = {}) => ({
   token: TOKEN,
   email: 'team@example.com',
