@@ -42,7 +42,9 @@ def request(port: int, method: str, path: str, body: str = "", cookie: str = "")
 
 
 def test_invalid_bodies_and_counters_before_start(ctx: Context) -> None:  # noqa: F811
-    for body in [None, [], {}, {"password": "x"}, {"password": "", "report": "r"}, {"password": 1, "report": "r"}]:
+    bodies: list[Any] = [None, [], {}, {"password": "x"}, {"password": "", "report": "r"}]
+    bodies.append({"password": 1, "report": "r"})
+    for body in bodies:
         assert call(ctx, "POST", "/site", body)[0] == 400
     status, answer = call(ctx, "GET", "/site")
     assert (status, answer["error"]) == (409, "not_started")
