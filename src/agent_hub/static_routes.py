@@ -53,6 +53,7 @@ SPA_ROUTES = (
     "/notifications",
     "/community",
     "/settings",
+    "/subscriptions",
     "/platform/invites",
     "/security",
 )
