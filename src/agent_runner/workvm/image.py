@@ -54,8 +54,11 @@ SMOKE_TIMEOUT_S = 300.0
 SMOKE_SCRIPT = (
     "python3 --version && node --version && /usr/local/sbin/workvm-job selftest"
     " && /usr/local/bin/workvm-browser selftest"
+    " && { systemctl stop workvm-browser.service || true; }"
+    " && rm -rf /var/lib/workvm-browser /run/workvm-browser.sock"
 )
-"""The smoke test of a new work image: the toolchains, the job helper and the platform browser (KOR-44)."""
+"""The smoke test of a new work image: the toolchains, the job helper and the platform browser (KOR-44); the browser
+the selftest started is stopped and its profile removed, so no clone starts with a used profile."""
 CHUNK = 1 << 20
 _NAME_RE = re.compile(r"^[0-9a-z]+(?:[.-][0-9a-z]+)*$")
 

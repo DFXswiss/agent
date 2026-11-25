@@ -367,4 +367,9 @@ def test_socket_dir_only_removed_when_a_real_directory(rig: Rig, sock: str) -> N
 
 def test_the_smoke_test_checks_the_job_helper_and_the_platform_browser() -> None:
     steps = image.SMOKE_SCRIPT.split(" && ")
-    assert steps[-2:] == ["/usr/local/sbin/workvm-job selftest", "/usr/local/bin/workvm-browser selftest"]
+    assert steps[-4:] == [
+        "/usr/local/sbin/workvm-job selftest",
+        "/usr/local/bin/workvm-browser selftest",
+        "{ systemctl stop workvm-browser.service || true; }",
+        "rm -rf /var/lib/workvm-browser /run/workvm-browser.sock",
+    ]

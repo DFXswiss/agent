@@ -570,7 +570,16 @@ class Browsers:
 
     async def _probe(self, vm: WorkVm, timeout: float) -> bool:
         shell = self.workvms.deps.shell_for(vm)
-        return selftest_ok(await shell(selftest_argv(), stdin=None, timeout=timeout, limit=4096))
+        begun = self.clock()
+        result = await shell(selftest_argv(), stdin=None, timeout=timeout, limit=4096)
+        ok = selftest_ok(result)
+        if not ok:  # the helper's own sentence (untrusted: printable, at most 160 characters) goes to the log only
+            said = "".join(char if char.isprintable() else " " for char in result.stdout.decode("utf-8", "replace"))
+            self.log(
+                f"probe_failed workvm_id={vm.id} rc={result.returncode} ms={int((self.clock() - begun) * 1000)}"
+                f" said={json.dumps(said.strip()[:160])}"
+            )
+        return ok
 
     async def _running(self, row: BrowserRow) -> WorkVm | None:
         vm = None if row.workvm_id is None else await vm_records.get(self.db, row.workvm_id)

@@ -262,7 +262,7 @@ def test_a_vm_that_does_not_start_fails_the_open_and_ends_the_countdown(world: W
 
 
 def test_a_browser_that_answers_its_second_selftest_opens(world: World) -> None:
-    world.browser.probes.append(ShellResult(1, b"", False))
+    world.browser.probes.append(ShellResult(1, b'{"ok":false,"error":"the browser daemon did not start\x07"}\n', False))
 
     async def body(vms: WorkVms) -> None:
         await make(vms).open(ctx({}))
@@ -272,6 +272,9 @@ def test_a_browser_that_answers_its_second_selftest_opens(world: World) -> None:
     assert vm["state"] == "running"
     assert [call for _vm, call in world.shell_calls].count("browser.selftest") == 2
     assert states(world) == [("starting", None), ("open", None)]
+    [line] = [line for line in world.logs if line.startswith("runner.browser probe_failed ")]
+    assert " rc=1 ms=" in line
+    assert line.endswith(' said="{\\"ok\\":false,\\"error\\":\\"the browser daemon did not start \\"}"')
 
 
 def test_a_browser_that_does_not_answer_its_selftest_fails_the_open_and_its_vm_goes(world: World) -> None:

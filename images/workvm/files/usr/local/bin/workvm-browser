@@ -1064,9 +1064,15 @@ async function streamClient(argv) {
 
 async function selftest() {
   // the first start of Chromium in a fresh VM may take longer under load; the runner's start probe allows 45 s
-  await ensureDaemon(SELFTEST_START_WAIT_MS);
-  const answer = JSON.parse(await request({ tool: 'browser_navigate', arguments: { url: 'about:blank' } }));
-  if (answer.ok !== true) throw new Error(answer.error || 'the browser did not open about:blank');
+  try {
+    await ensureDaemon(SELFTEST_START_WAIT_MS);
+    const answer = JSON.parse(await request({ tool: 'browser_navigate', arguments: { url: 'about:blank' } }));
+    if (answer.ok !== true) throw new Error(answer.error || 'the browser did not open about:blank');
+  } catch (error) {
+    // the reason for the runner's log (it is never trusted as anything but text)
+    process.stdout.write(JSON.stringify({ ok: false, error: message(error).slice(0, 200) }) + '\n');
+    process.exit(1);
+  }
   process.stdout.write('{"ok":true}\n');
 }
 
