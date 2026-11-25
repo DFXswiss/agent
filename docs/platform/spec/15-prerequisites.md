@@ -134,6 +134,7 @@ justification or a handling.
 | `non_fast_forward` | operation | `third_party` | a push that is no fast-forward would overwrite other people's commits (A2) | the agent merges the branch first (A2) | agent |
 | `nonce_replayed` | request authentication | `third_party` | the request was replayed; only the account's own keys may act for it | the client signs in again or re-signs the request; an agent uses its own key (E-27) | client |
 | `not_found` | operation, request | `input` | the object does not exist (or is not visible to the caller) | the caller uses an existing object | agent, client |
+| `not_watched` | device request | `technical` | nobody watches the session's platform browser any more (KOR-44, 13-work-vm.md §13.6); a live picture without a viewer would only cost bandwidth | the device stops the live picture; it starts again with the next viewer's hint | runner |
 | `oom` | session failure | `technical` | the VM ran out of memory | "Try again"; the operator sizes the VMs | user, operator |
 | `origin_mismatch` | passkey ceremony | `third_party` | the origin does not match; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
 | `origin_seq_conflict` | device outbox | `technical` | another item has this number | the runner resends from the hub's position | runner |

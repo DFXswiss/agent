@@ -49,13 +49,18 @@ test('@E2E-66 @needs-vm @needs-workvm the platform browser signs in, downloads, 
   test.skip(e2e.topology !== 't1', 'E2E-66 is a T1 test (browser VMs in self mode on the runner device)');
   test.setTimeout(1_500_000);
   const site = await orchestrator.call<{ url: string }>('POST', '/site', { password: PASSWORD, report: REPORT });
-  const scenario = JSON.parse(
-    readFileSync(new URL('../scenarios/e2e-66-browser.json', import.meta.url), 'utf8'),
-  ) as { variables: Record<string, string> };
+  const scenario = JSON.parse(readFileSync(new URL('../scenarios/e2e-66-browser.json', import.meta.url), 'utf8')) as {
+    variables: Record<string, string>;
+  };
   scenario.variables = { site: site.url, password: PASSWORD };
   await orchestrator.loadScenario('model', scenario);
   await platformDevice(orchestrator);
-  await orchestrator.call('POST', '/runners/workvm', { slots: 3, max_per_task: 2, pool_size: 2, browser_idle_seconds: 60 });
+  await orchestrator.call('POST', '/runners/workvm', {
+    slots: 3,
+    max_per_task: 2,
+    pool_size: 2,
+    browser_idle_seconds: 60,
+  });
   await poolReady(orchestrator);
   await expect
     .poll(
@@ -105,7 +110,9 @@ test('@E2E-66 @needs-vm @needs-workvm the platform browser signs in, downloads, 
   const actions = await taskBodies(page, orchestrator, onboarded, task, 'browser.action');
   const tools = actions.map((body) => body.tool);
   expect(tools).toEqual(expect.arrayContaining(['browser_type', 'browser_snapshot', 'browser_download']));
-  expect(actions.map((body) => body.seq)).toEqual([...actions.keys()].map((index) => (actions[0]!.seq as number) + index));
+  expect(actions.map((body) => body.seq)).toEqual(
+    [...actions.keys()].map((index) => (actions[0]!.seq as number) + index),
+  );
   const typed = actions.filter((body) => body.tool === 'browser_type');
   expect(typed.map((body) => body.text)).toEqual(['ada', '••••']);
   expect(JSON.stringify(actions)).not.toContain(PASSWORD);
@@ -142,7 +149,9 @@ test('@E2E-66 @needs-vm @needs-workvm the platform browser signs in, downloads, 
   // 2. Implicit open, a failed VM replaced on the next action, then the idle teardown.
   await home(page);
   const second = await sendPrompt(page, FAILOVER);
-  await expect.poll(async () => (await vmsOf(second)).map((row) => row.state), { timeout: 120_000 }).toEqual(['running']);
+  await expect
+    .poll(async () => (await vmsOf(second)).map((row) => row.state), { timeout: 120_000 })
+    .toEqual(['running']);
   const [first] = await vmsOf(second);
   await orchestrator.call('POST', '/runners/workvm/kill', { lima_name: first!.lima_name });
   await expectAnswerInChat(page, 'The browser came back kz63-answer-h7j1k5l9.');
@@ -172,7 +181,11 @@ test('@E2E-66 @needs-vm @needs-workvm the platform browser signs in, downloads, 
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, 'browser.json'),
-    JSON.stringify({ ready_ms: readyMs, actions: actions.length, live_seq_seen: seen, project: test.info().project.name }, null, 1),
+    JSON.stringify(
+      { ready_ms: readyMs, actions: actions.length, live_seq_seen: seen, project: test.info().project.name },
+      null,
+      1,
+    ),
   );
   await expectNoPlaintext(orchestrator, CANARIES);
 });

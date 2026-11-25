@@ -296,6 +296,7 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 |---|---|---|
 | action:connect-agent | `register --own-account` (an account of its own through an invitation), `recover --hub` (an account of its own on another computer) | built |
 | action:register | `register --own-account` | built |
+| action:platform-browser | `browser list`, `browser show`, `browser frames` (the platform browser of a session, KOR-44: the agent reads the record and the live picture with its own key; no person and no web browser of its own are needed) | built |
 | action:agents-pair | `agents confirm` (an account without a passkey: its main orchestrator confirms the new agent) | built |
 | action:recovery-new | `recovery new` (an account of an agent alone: its agent holds the account's identity and makes the code itself; only the agent of an account with a passkey opens the browser) | built |
 | action:passkey-add | `status` (an account of an agent alone needs no passkey: the agent signs with its key) | built |
