@@ -50,6 +50,7 @@ def reads(found: FKit) -> int:
 def test_every_file_is_polled_and_marked_or_released(store_dsn: str, tmp_path: Path) -> None:
     async def body(found: FKit) -> None:
         directory = found.pool.directory
+        assert directory is not None
         put(directory, "bad", token(9), mode=0o644)  # ignored: never read
         found.quotas.documents[token(1)] = usage_document(five=100.0)
         found.quotas.documents[token(2)] = Answer(500, b"{}")
