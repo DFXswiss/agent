@@ -53,12 +53,14 @@ FEATURES = (
     "github.ways",
     "github.identities",
     "prompt.withdraw",
+    "subscriptions",
 )
 """What this runner understands: `log.admit` - membership logs with `admit` entries and platform logs with
 `user_certify`/`user_decertify` (the copied verifier of `agent_runner.crypto.log`); `github.ways` - it announces the
 ways of "Connect GitHub" it can run (`features`, KOR-65), so a device without them offers only an existing token;
 `prompt.withdraw` - the withdrawal of waiting prompts through `prompt_queue.withdrawn` of the device state (ADR-083
-section 3)."""
+section 3); `subscriptions` - `claude.login` for further subscriptions (`subscription_id`, `name`, `note`, `email`;
+ADR-090 section 2), so clients send those fields only to such a device."""
 DEVICE_FLOW = "github.device_flow"
 OAUTH_APP = "github.oauth_app"
 OPERATOR_GITHUB = "github.operator"

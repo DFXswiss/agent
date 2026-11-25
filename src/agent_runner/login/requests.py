@@ -5,13 +5,17 @@ The request service (RUN-09) verifies, decrypts and routes the requests, keeps a
 (a newer request replaces the running one, which is cancelled), ends a flow after the request's 15 minutes and seals
 the responses. The handlers here never log or answer a secret: no token, code, URL, password or credential body.
 
-`claude.login` (root body `{mode: "manual"|"automatic"}`, follow-up `{code}`):
+`claude.login` (root body `{mode: "manual"|"automatic"}`, follow-up `{code}`; KOR-69, ADR-090 section 2: the root body
+may add `subscription_id` - the further subscription the login fills, a new ID creates it -, `name` and `note` (taken
+for the record; an existing one keeps its own unless given) and, for `automatic`, `email` - the address to sign in with
+instead of the mailbox's own; a malformed one of them is `upstream_error`):
 
 - `manual` (setup-token relay, section 11.2): start the login command (`relay.LoginSession`), response 1
   `{step:"authorize", url}`, wait for the follow-up with the code until shortly before the request expires, type it,
   read the token, store the `claude_subscription` credential `{token, email, kind:"setup_token"}` under the owner's
-  `CK` (`credentials.cache.put`; a read or write lost in transport is sent again after `RESPOND_DELAYS`, KOR-18, so
-  a completed login is not discarded for one lost request), final `{step:"done"}` to the follow-up.
+  `CK` (`credentials.cache.put`, the primary record; with `subscription_id` `credentials.subscriptions.store_login`,
+  which keeps the record's name, note and use; a read or write lost in transport is sent again after `RESPOND_DELAYS`,
+  KOR-18, so a completed login is not discarded for one lost request), final `{step:"done"}` to the follow-up.
 - `automatic` (section 11.3): needs `LOGIN_AUTOMATION=on` (config default per device kind) and the owner's `mailbox`
   credential (`credential_missing` without one). Progress responses, then the code is typed without a follow-up and
   the final `{step:"done", email}` names the mailbox address the subscription signed in with. When the automation is
@@ -39,6 +43,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import imaplib
+import re
 import ssl
 import time
 from collections.abc import Callable, Mapping
@@ -48,16 +53,20 @@ from typing import Any
 import httpx
 
 from agent_cli.account_login import Mailbox
+from agent_runner.credentials import subscriptions
 from agent_runner.credentials.cache import CredentialUnavailable, opened, put
 from agent_runner.errors import RunnerError
 from agent_runner.login import automation
-from agent_runner.login.automation import CODE_RE, AutomationFailed, mailbox_fields
+from agent_runner.login.automation import CODE_RE, EMAIL_RE, MAX_EMAIL, AutomationFailed, mailbox_fields
 from agent_runner.login.relay import LoginFailed, LoginOptions, LoginSession, options
 from agent_runner.model.selection import load_catalog
 from agent_runner.requests.service import RESPOND_DELAYS, Flow, FollowUp
 from agent_runner.sync.http import HubRefusal, HubTransportError
 
 MODES = ("manual", "automatic")
+LOGIN_FIELDS = frozenset({"mode", "subscription_id", "name", "note", "email"})
+LABEL_LIMITS = {"name": 64, "note": 500}
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 CHECK_KINDS = {"anthropic_api_key": ("api_key", "key"), "claude_subscription": ("subscription", "token")}
 CHECK_MODEL = "claude-haiku-4-5"
 """Model of the `count_tokens` probe when the catalog names no default for the access kind."""
@@ -122,6 +131,29 @@ async def _automate(flow: Flow, url: str, plan: tuple[Mailbox, str], opts: Login
         return None
 
 
+def _label(value: object, most: int) -> bool:
+    return isinstance(value, str) and 0 < len(value) <= most and all(ord(char) >= 0x20 for char in value)
+
+
+def _target(body: Mapping[str, object]) -> dict[str, object]:
+    """The subscription fields of a root body (`Failed("upstream_error")` when one is malformed): `subscription_id`,
+    `name`, `note` and `email` as given."""
+    if not set(body) <= LOGIN_FIELDS or body.get("mode") not in MODES:
+        raise Failed("upstream_error")
+    found = {name: body[name] for name in ("subscription_id", "name", "note", "email") if name in body}
+    record_id = found.get("subscription_id")
+    if record_id is not None and not (isinstance(record_id, str) and UUID_RE.fullmatch(record_id)):
+        raise Failed("upstream_error")
+    if any(name in found and not _label(found[name], most) for name, most in LABEL_LIMITS.items()):
+        raise Failed("upstream_error")
+    email = found.get("email")
+    if email is not None and not (
+        body["mode"] == "automatic" and isinstance(email, str) and len(email) <= MAX_EMAIL and EMAIL_RE.fullmatch(email)
+    ):
+        raise Failed("upstream_error")
+    return found
+
+
 async def _plan(flow: Flow, opts: LoginOptions) -> tuple[Mailbox, str] | None:
     """Mailbox and address for an `automatic` login, None when the automation is off or the extra is missing (the
     relay is used then); `Failed("credential_missing")` without a usable `mailbox` credential."""
@@ -136,12 +168,22 @@ async def _plan(flow: Flow, opts: LoginOptions) -> tuple[Mailbox, str] | None:
     return await _mailbox(flow)
 
 
-async def _store(flow: Flow, token: str, email: str | None) -> None:
+async def _store(flow: Flow, token: str, email: str | None, target: Mapping[str, object]) -> None:
     body: dict[str, object] = {"token": token, "email": email, "kind": "setup_token"}
+    record_id = target.get("subscription_id")
     try:
-        await put(
-            flow.context, flow.user, "claude_subscription", body, flow.id, delays=RESPOND_DELAYS, sleep=flow.sleep
-        )
+        if isinstance(record_id, str):
+            fields = {**body, **{name: target[name] for name in ("name", "note") if name in target}}
+            try:
+                await subscriptions.store_login(
+                    flow.context, flow.user, record_id, fields, flow.id, delays=RESPOND_DELAYS, sleep=flow.sleep
+                )
+            finally:
+                fields.clear()
+        else:
+            await put(
+                flow.context, flow.user, "claude_subscription", body, flow.id, delays=RESPOND_DELAYS, sleep=flow.sleep
+            )
     except CredentialUnavailable as unavailable:
         _line(flow, f"store_failed reason={unavailable.reason} code={unavailable.code}")
         raise Failed("credential_missing" if unavailable.reason == "key_missing" else "upstream_error") from None
@@ -156,10 +198,11 @@ async def _store(flow: Flow, token: str, email: str | None) -> None:
 
 
 async def _login(flow: Flow, session: LoginSession, opts: LoginOptions) -> None:
-    mode = flow.body.get("mode")
-    if set(flow.body) != {"mode"} or mode not in MODES:
-        raise Failed("upstream_error")
+    wanted = _target(flow.body)
+    mode = flow.body["mode"]
     plan = await _plan(flow, opts) if mode == "automatic" else None
+    if plan is not None and "email" in wanted:
+        plan = (plan[0], str(wanted["email"]))
     url = await session.start(opts)
     _line(flow, f"started mode={mode}")
     code = None if plan is None else await _automate(flow, url, plan, opts, session.workdir)
@@ -183,7 +226,7 @@ async def _login(flow: Flow, session: LoginSession, opts: LoginOptions) -> None:
         email = plan[1]
     try:
         token = await session.finish(code, opts)
-        await _store(flow, token, email)
+        await _store(flow, token, email, wanted)
     except LoginFailed as failed:
         await _fail(flow, failed.code, target, shape=failed.shape)
         return

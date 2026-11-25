@@ -356,6 +356,8 @@ TABLES = {
         "accepted_at",
         "ended_at",
     ],
+    # 0032 (KOR-69, ADR-090): subscription records fetched by ID
+    "subscription_cache": ["id", "owner_id", "is_primary", "version", "record"],
     "schema_version": ["version", "name", "checksum", "applied_at"],
 }
 OUTBOX_KINDS = [
