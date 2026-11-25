@@ -234,6 +234,9 @@ describe('changes', () => {
     expect(() => noteSubscription(t.context, A, 'n'.repeat(501))).toThrow();
     expect(() => setSubscriptionUse(t.context, A, { pool: false, orgs: ['x'] })).toThrow();
     await expect(renameSubscription(t.context, B, 'x')).rejects.toMatchObject({ code: 'invalid_argument' });
+    hub.rows.get(A)!.primary = undefined as never; // an answer without the mark is refused like the primary record
+    await expect(renameSubscription(t.context, A, 'x')).rejects.toMatchObject({ code: 'invalid_argument' });
+    hub.rows.get(A)!.primary = false;
     await expect(renameSubscription(t.context, C, 'x')).rejects.toMatchObject({ code: 'not_found' });
     hub.failPut = [new HubError('version_conflict', 409)];
     await renameSubscription(t.context, A, 'Again');

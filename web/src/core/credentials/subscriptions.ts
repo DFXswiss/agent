@@ -290,7 +290,7 @@ async function changeOnce(
   const answer = (await fetchSubscription(context, id)) ?? refuse('not_found');
   const keys = await ownKeys(context, userId, identity);
   const opened = await openSubscription(context, id, answer, keys);
-  if (opened.primary) refuse('invalid_argument');
+  if (opened.primary || (answer as Record<string, unknown>).primary !== false) refuse('invalid_argument');
   const body = { ...opened.body };
   edit(body);
   const latest = keys[0]!; // the key that opened the record is one of them

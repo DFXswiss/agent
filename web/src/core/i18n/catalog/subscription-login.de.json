@@ -35,5 +35,7 @@
   "use.pool": "Betreiber-Pool",
   "use.save": "Verwendung speichern",
   "title": "Claude-Abos",
-  "intro": "Jedes Abo wird auf einem Plattformgerät angemeldet und dort gemessen; auf Ihrem Rechner läuft nichts. Ein neues Abo wird nur gemessen, bis Sie wählen, wer es nutzen darf."
+  "intro": "Jedes Abo wird auf einem Plattformgerät angemeldet und dort gemessen; auf Ihrem Rechner läuft nichts. Ein neues Abo wird nur gemessen, bis Sie wählen, wer es nutzen darf.",
+  "automatic": "Über mein Postfach anmelden (kein Code einzufügen)",
+  "email": "Adresse für die Anmeldung (leer: die des Postfachs)"
 }

@@ -35,5 +35,7 @@
   "use.pool": "The operator pool",
   "use.save": "Save the use",
   "title": "Claude subscriptions",
-  "intro": "Each subscription is logged in on a platform device and measured there; nothing runs on your computer. A new subscription is only measured until you choose who may use it."
+  "intro": "Each subscription is logged in on a platform device and measured there; nothing runs on your computer. A new subscription is only measured until you choose who may use it.",
+  "automatic": "Sign in through my mailbox (no code to paste)",
+  "email": "Address to sign in with (empty: the mailbox's own)"
 }
