@@ -1,0 +1,178 @@
+{
+ "name": "e2e-69-golden-switch",
+ "description": "E2E-69 (KOR-70, ADR-093): two tasks of one workgroup each write a file and pause; their VM counts as cloned from an older golden and moves to the current one; a follow-up of each continues the SAME conversation on the new VM (min_messages: the earlier turn is in the request) and reads its file there. Canary texts for the plaintext scan.",
+ "steps": [
+  {
+   "id": "alpha-work",
+   "expect": {
+    "user_text_contains": "KZ69-ALPHA-WORK",
+    "has_tools": true,
+    "has_tool_result": false,
+    "stream": true
+   },
+   "reply": {
+    "content": [
+     {
+      "type": "text",
+      "text": "Writing alpha.md first."
+     },
+     {
+      "type": "tool_use",
+      "name": "Write",
+      "input": {
+       "file_path": "${cwd}/alpha.md",
+       "content": "# alpha.md\nkz69-file-alpha-r4t8\n"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "alpha-worked",
+   "expect": {
+    "tool_result_is_error": false,
+    "tool_result_contains": "alpha.md"
+   },
+   "reply": {
+    "content": [
+     {
+      "type": "text",
+      "text": "Alpha is written kz69-answer-alpha-p2m6."
+     }
+    ]
+   }
+  },
+  {
+   "id": "beta-work",
+   "expect": {
+    "user_text_contains": "KZ69-BETA-WORK",
+    "has_tools": true,
+    "has_tool_result": false,
+    "stream": true
+   },
+   "reply": {
+    "content": [
+     {
+      "type": "text",
+      "text": "Writing beta.md first."
+     },
+     {
+      "type": "tool_use",
+      "name": "Write",
+      "input": {
+       "file_path": "${cwd}/beta.md",
+       "content": "# beta.md\nkz69-file-beta-w3n9\n"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "beta-worked",
+   "expect": {
+    "tool_result_is_error": false,
+    "tool_result_contains": "beta.md"
+   },
+   "reply": {
+    "content": [
+     {
+      "type": "text",
+      "text": "Beta is written kz69-answer-beta-h5c1."
+     }
+    ]
+   }
+  },
+  {
+   "id": "alpha-read",
+   "expect": {
+    "user_text_contains": "KZ69-ALPHA-AGAIN",
+    "has_tool_result": false,
+    "min_messages": 5
+   },
+   "reply": {
+    "content": [
+     {
+      "type": "text",
+      "text": "Reading alpha.md again."
+     },
+     {
+      "type": "tool_use",
+      "name": "Read",
+      "input": {
+       "file_path": "${cwd}/alpha.md"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "alpha-answer",
+   "expect": {
+    "tool_result_is_error": false,
+    "tool_result_contains": "kz69-file-alpha-r4t8"
+   },
+   "reply": {
+    "content": [
+     {
+      "type": "text",
+      "text": "Continued: alpha still holds kz69-file-alpha-r4t8."
+     }
+    ]
+   }
+  },
+  {
+   "id": "beta-read",
+   "expect": {
+    "user_text_contains": "KZ69-BETA-AGAIN",
+    "has_tool_result": false,
+    "min_messages": 5
+   },
+   "reply": {
+    "content": [
+     {
+      "type": "text",
+      "text": "Reading beta.md again."
+     },
+     {
+      "type": "tool_use",
+      "name": "Read",
+      "input": {
+       "file_path": "${cwd}/beta.md"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "beta-answer",
+   "expect": {
+    "tool_result_is_error": false,
+    "tool_result_contains": "kz69-file-beta-w3n9"
+   },
+   "reply": {
+    "content": [
+     {
+      "type": "text",
+      "text": "Continued: beta still holds kz69-file-beta-w3n9."
+     }
+    ]
+   }
+  }
+ ],
+ "side": [
+  {
+   "id": "title",
+   "expect": {
+    "has_tools": false
+   },
+   "reply": {
+    "content": [
+     {
+      "type": "text",
+      "text": "Ledger"
+     }
+    ]
+   }
+  }
+ ]
+}
