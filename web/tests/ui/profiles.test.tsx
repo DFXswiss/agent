@@ -136,6 +136,12 @@ describe('the profile of a task and the role of a session', () => {
     expect(t.client.of(`PUT /v1/tasks/${TASK}/agent-profile`)[2]!.body).toEqual({ profile: null });
   });
 
+  it('lets a reader only look', async () => {
+    await task({ agent_profile: REVIEW }, false);
+    expect(screen.getByTestId('task.profile.name')).toHaveTextContent('review');
+    expect(screen.queryByTestId('task.profile.change')).toBeNull();
+  });
+
   it('names the profile and reports a failed list', async () => {
     const t = await task({ agent_profile: REVIEW });
     expect(screen.getByTestId('task.profile.name')).toHaveAttribute('data-profile', 'review');
