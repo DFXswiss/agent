@@ -1,4 +1,4 @@
--- 0032_agent_profiles: rights profiles of sessions and agent roles (KOR-51, ADR-090; 02-data-model.md section 2).
+-- 0033_agent_profiles: rights profiles of sessions and agent roles (KOR-51, ADR-090; 02-data-model.md section 2).
 --
 -- `agent_profile` holds the own profiles of an organization (`scope` 'org', `scope_id` = the org) or of a workgroup
 -- (`scope` 'wg', `scope_id` = the workgroup): a name, the operation types it allows and the reach of its reads. The
