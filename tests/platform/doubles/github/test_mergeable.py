@@ -1,7 +1,7 @@
 """U-DBL-github (KOR-48, ADR-084 sections 2 and 4): the GitHub double computes ``mergeable`` asynchronously like
 GitHub, detects conflicts between the base tip and the head, advances a branch through ``POST /_double/commits``, and
-serves merge commits (two parents) to compare, trees, blobs, tarballs and the fast-forward check of ref updates. No
-route merges a pull request.
+serves merge commits (two parents) to compare, trees, blobs, tarballs and the fast-forward check of ref updates. The
+merge of a pull request (KOR-51) is `test_reviews.py`.
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ def test_the_first_read_after_a_change_is_unknown_and_starts_the_computation(sta
     advance(gh, "feature", {"src/app.py": "x = 3\n"})
     assert mergeable(gh) == (None, "unknown")
     assert mergeable(gh) == (True, "clean")
-    # the list omits the fields; nothing here ever merged the pull request
+    # the list omits the fields; nothing here merged the pull request
     listed = gh.get(f"{REPO}/pulls")
     assert "mergeable" not in listed[0]
     pull = gh.get(f"{REPO}/pulls/1")

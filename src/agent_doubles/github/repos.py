@@ -322,6 +322,43 @@ class Pull:
     state_reason: str | None = None
     mergeable_for: tuple[str, str] | None = None
     """The head and base commits whose mergeability was computed (started by the first read after they changed)."""
+    merged_sha: str | None = None
+    """The merge commit once the pull request was merged (``PUT …/merge``, KOR-51)."""
+    merged_at: int | None = None
+
+
+@dataclass
+class Review:
+    """A review of a pull request (``POST …/pulls/{number}/reviews``, KOR-51)."""
+
+    id: int
+    number: int
+    user: str
+    state: str
+    commit_id: str
+    body: str
+    submitted: int
+
+
+@dataclass
+class CheckRun:
+    """A check run of a commit (``POST …/check-runs``, KOR-51)."""
+
+    id: int
+    name: str
+    head_sha: str
+    status: str
+    conclusion: str | None
+
+
+@dataclass
+class CommitStatus:
+    """A commit status (``POST …/statuses/{sha}``, KOR-51); the newest per context counts."""
+
+    id: int
+    sha: str
+    context: str
+    state: str
 
 
 @dataclass
@@ -375,6 +412,9 @@ class Repo:
     issues: dict[int, Issue] = field(default_factory=dict)
     comments: list[Comment] = field(default_factory=list)
     labels: dict[str, Label] = field(default_factory=dict)
+    reviews: list[Review] = field(default_factory=list)
+    check_runs: list[CheckRun] = field(default_factory=list)
+    statuses: list[CommitStatus] = field(default_factory=list)
     next_number: int = 1
     verifications: dict[str, Verification] = field(default_factory=dict)
     """The verification decided when a signed commit was created, by commit id (unsigned commits have none)."""
@@ -463,6 +503,20 @@ class Repo:
         return not (
             _blocked(ours, changed_ours, theirs, changed_theirs) or _blocked(theirs, changed_theirs, ours, changed_ours)
         )
+
+    def merged_tree(self, base: str, head: str) -> str:
+        """The tree of merging commit `base` into commit `head` (which `merges_cleanly`): the head's files with the
+        base's changes since their merge base."""
+        objects = self.objects
+        found = self.merge_base(base, head)
+        old = objects.files(self.tree_of(found)) if found is not None else {}
+        merged = objects.files(self.tree_of(head))
+        for path, entry in objects.files(self.tree_of(base)).items():
+            if old.get(path) != entry:
+                merged[path] = entry
+        for path in set(old) - set(objects.files(self.tree_of(base))):
+            merged.pop(path, None)
+        return objects.build({path: (entry.mode, entry.sha) for path, entry in merged.items()})
 
     def read_mergeability(self, pull: Pull) -> bool:
         """One read of `pull`'s mergeability: True when it is computed for the current head and base, else False and

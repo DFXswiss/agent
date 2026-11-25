@@ -15,11 +15,14 @@ from urllib.parse import quote, urlsplit
 
 from agent_doubles.github.objects import TREE_MODE, Commit, Signature, api_mode
 from agent_doubles.github.repos import (
+    CheckRun,
+    CommitStatus,
     FileChange,
     Installation,
     Issue,
     Pull,
     Repo,
+    Review,
     SigningKey,
     User,
     Verification,
@@ -521,8 +524,8 @@ def pull(
         "created_at": stamp,
         "updated_at": iso(item.updated),
         "closed_at": iso(item.closed) if item.closed is not None else None,
-        "merged_at": None,
-        "merge_commit_sha": None,
+        "merged_at": None if item.merged_at is None else iso(item.merged_at),
+        "merge_commit_sha": item.merged_sha,
         "assignee": login_user(urls, world, item.assignees[0]) if item.assignees else None,
         "assignees": [login_user(urls, world, login) for login in item.assignees],
         "requested_reviewers": [],
@@ -554,7 +557,7 @@ def pull(
         "author_association": _association(repo, item.user),
         "auto_merge": None,
         "draft": item.draft,
-        "merged": False,
+        "merged": item.merged_sha is not None,
         "mergeable": mergeable,
         "rebaseable": mergeable,
         "mergeable_state": mergeable_state,
@@ -681,6 +684,44 @@ def issue(urls: Urls, world: World, repo: Repo, item: Issue | Pull) -> dict[str,
             "html_url": f"{web}/pull/{number}",
             "diff_url": f"{web}/pull/{number}.diff",
             "patch_url": f"{web}/pull/{number}.patch",
-            "merged_at": None,
+            "merged_at": None if item.merged_at is None else iso(item.merged_at),
         }
     return data
+
+
+def review(urls: Urls, world: World, repo: Repo, item: Review) -> dict[str, Any]:
+    """A pull request review (``GET …/pulls/{number}/reviews``, KOR-51)."""
+    return {
+        "id": item.id,
+        "node_id": node_id("PullRequestReview", item.id),
+        "user": login_user(urls, world, item.user),
+        "body": item.body,
+        "state": item.state,
+        "html_url": f"{urls.web}/{repo.full_name}/pull/{item.number}#pullrequestreview-{item.id}",
+        "pull_request_url": f"{urls.api}/repos/{repo.full_name}/pulls/{item.number}",
+        "commit_id": item.commit_id,
+        "submitted_at": iso(item.submitted),
+        "author_association": _association(repo, item.user),
+    }
+
+
+def check_run(urls: Urls, repo: Repo, item: CheckRun) -> dict[str, Any]:
+    """A check run (``GET …/commits/{ref}/check-runs``, KOR-51)."""
+    return {
+        "id": item.id,
+        "name": item.name,
+        "head_sha": item.head_sha,
+        "status": item.status,
+        "conclusion": item.conclusion,
+        "url": f"{urls.api}/repos/{repo.full_name}/check-runs/{item.id}",
+    }
+
+
+def commit_status(urls: Urls, repo: Repo, item: CommitStatus) -> dict[str, Any]:
+    """A commit status (``GET …/commits/{ref}/status``, KOR-51)."""
+    return {
+        "id": item.id,
+        "state": item.state,
+        "context": item.context,
+        "url": f"{urls.api}/repos/{repo.full_name}/statuses/{item.sha}",
+    }

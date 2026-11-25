@@ -102,9 +102,12 @@ from agent_doubles.github.objects import (
 from agent_doubles.github.repos import (
     SHA_RE,
     STATE_REASONS,
+    CheckRun,
+    CommitStatus,
     Issue,
     Pull,
     Repo,
+    Review,
     SeedError,
     Token,
     User,
@@ -152,6 +155,11 @@ CLASSIC_FORBIDDEN_MESSAGE = (
 )
 ISSUE_SORTS = frozenset({"created", "updated", "comments"})
 PULL_SORTS = frozenset({"created", "updated", "popularity", "long-running"})
+REVIEW_EVENTS = {"APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED", "COMMENT": "COMMENTED"}
+MERGE_METHODS = frozenset({"merge", "squash", "rebase"})
+CHECK_STATUSES = frozenset({"queued", "in_progress", "completed"})
+CHECK_CONCLUSIONS = frozenset({"success", "failure", "neutral", "cancelled", "skipped", "timed_out", "action_required"})
+STATUS_STATES = frozenset({"error", "failure", "pending", "success"})
 DEVICE_PAGE = (
     b"<!doctype html><title>Device activation</title><h1>Device activation (GitHub double)</h1>"
     b"<p>The test decides through POST /_double/device.</p>"
@@ -202,6 +210,8 @@ ROUTES = (
     Route("GET", "/user/ssh_signing_keys/{key_id}", "api", "get_signing_key"),
     Route("DELETE", "/user/ssh_signing_keys/{key_id}", "api", "delete_signing_key"),
     Route("GET", "/repos/{owner}/{repo}", "api", "repository"),
+    Route("GET", "/repos/{owner}/{repo}/commits/{ref}/check-runs", "api", "list_check_runs"),
+    Route("GET", "/repos/{owner}/{repo}/commits/{ref}/status", "api", "combined_status"),
     Route("GET", "/repos/{owner}/{repo}/commits/{ref}", "api", "commit"),
     Route("GET", "/repos/{owner}/{repo}/tarball/{ref}", "api", "tarball"),
     Route("GET", "/codeload/{owner}/{repo}/legacy.tar.gz/{ref}", "codeload", "codeload"),
@@ -219,6 +229,12 @@ ROUTES = (
     Route("POST", "/repos/{owner}/{repo}/pulls", "api", "create_pull"),
     Route("GET", "/repos/{owner}/{repo}/pulls/{number}", "api", "get_pull"),
     Route("GET", "/repos/{owner}/{repo}/pulls/{number}/files", "api", "pull_files"),
+    Route("GET", "/repos/{owner}/{repo}/pulls/{number}/commits", "api", "pull_commits"),
+    Route("GET", "/repos/{owner}/{repo}/pulls/{number}/reviews", "api", "list_reviews"),
+    Route("POST", "/repos/{owner}/{repo}/pulls/{number}/reviews", "api", "create_review"),
+    Route("PUT", "/repos/{owner}/{repo}/pulls/{number}/merge", "api", "merge_pull"),
+    Route("POST", "/repos/{owner}/{repo}/check-runs", "api", "create_check_run"),
+    Route("POST", "/repos/{owner}/{repo}/statuses/{sha}", "api", "create_status"),
     Route("GET", "/repos/{owner}/{repo}/issues", "api", "list_issues"),
     Route("POST", "/repos/{owner}/{repo}/issues", "api", "create_issue"),
     Route("GET", "/repos/{owner}/{repo}/issues/{number}", "api", "get_issue"),
@@ -1309,6 +1325,106 @@ class _Handler(DoubleHandler):
         head, _, changes, _ = render.pull_changes(repo, self._pull(call))
         page, headers = self._paginate(call, changes)
         return 200, [render.file_change(self.double.urls, repo, change, head) for change in page], headers
+
+    # --- reviews, checks, statuses and the merge (KOR-51) ---------------------------------------------
+
+    def _r_pull_commits(self, call: Call) -> Result:
+        repo, pull = call.the_repo, self._pull(call)
+        head, base = repo.branch(pull.head) or "", repo.branch(pull.base) or ""
+        shas = repo.history(head, repo.ancestors(base)) if head and base else []
+        page, headers = self._paginate(call, shas)
+        return 200, [render.git_commit(self.double.urls, repo, sha) for sha in page], headers
+
+    def _r_list_reviews(self, call: Call) -> Result:
+        repo, pull = call.the_repo, self._pull(call)
+        found = [item for item in repo.reviews if item.number == pull.number]
+        page, headers = self._paginate(call, found)
+        return 200, [render.review(self.double.urls, self.double.world, repo, item) for item in page], headers
+
+    def _r_create_review(self, call: Call) -> Result:
+        body, repo, pull = call.json_body(), call.the_repo, self._pull(call)
+        event, text = body.get("event"), body.get("body", "")
+        if event not in REVIEW_EVENTS or not isinstance(text, str):
+            raise invalid("PullRequestReview", "event")
+        head = repo.branch(pull.head) or ""
+        commit = body.get("commit_id", head)
+        if not isinstance(commit, str) or repo.objects.kind(commit) != "commit":
+            raise unprocessable("Commit not found")
+        world = self.double.world
+        created = Review(
+            world.new_id(), pull.number, call.the_user.login, REVIEW_EVENTS[event], commit, text, world.stamp()
+        )
+        repo.reviews.append(created)
+        return 200, render.review(self.double.urls, world, repo, created), []
+
+    def _r_merge_pull(self, call: Call) -> Result:
+        body, repo, pull = call.json_body(), call.the_repo, self._pull(call)
+        method = body.get("merge_method", "merge")
+        if method not in MERGE_METHODS:
+            raise invalid("PullRequest", "merge_method")
+        head, base = repo.branch(pull.head), repo.branch(pull.base)
+        if pull.state != "open" or pull.draft or head is None or base is None or not repo.merges_cleanly(base, head):
+            raise Reply(405, render.error_body(405, "Pull Request is not mergeable"))
+        expected = body.get("sha")
+        if expected is not None and expected != head:
+            raise Reply(409, render.error_body(409, "Head branch was modified. Review and try the merge again."))
+        world = self.double.world
+        when = world.stamp()
+        signature = Signature(call.the_user.name or call.the_user.login, noreply_email(call.the_user), when)
+        message = f"Merge pull request #{pull.number} from {repo.owner}/{pull.head}"
+        commit = Commit(repo.merged_tree(base, head), (base, head), signature, signature, message, None)
+        sha = repo.objects.put_commit(commit)
+        repo.refs[f"refs/heads/{pull.base}"] = sha
+        pull.state, pull.merged_sha, pull.merged_at, pull.closed, pull.updated = "closed", sha, when, when, when
+        return 200, {"sha": sha, "merged": True, "message": "Pull Request successfully merged"}, []
+
+    def _commit_of(self, call: Call) -> str:
+        found = call.the_repo.resolve(call.params["ref"])
+        if found is None:
+            raise not_found()
+        return found
+
+    def _r_list_check_runs(self, call: Call) -> Result:
+        repo, sha = call.the_repo, self._commit_of(call)
+        found = [item for item in repo.check_runs if item.head_sha == sha]
+        runs = [render.check_run(self.double.urls, repo, item) for item in found]
+        return 200, {"total_count": len(runs), "check_runs": runs}, []
+
+    def _r_create_check_run(self, call: Call) -> Result:
+        body, repo = call.json_body(), call.the_repo
+        name, sha = body.get("name"), body.get("head_sha")
+        status, conclusion = body.get("status", "queued"), body.get("conclusion")
+        if not isinstance(name, str) or not name or not isinstance(sha, str) or repo.objects.kind(sha) != "commit":
+            raise invalid("CheckRun", "head_sha")
+        if status not in CHECK_STATUSES or (conclusion is not None and conclusion not in CHECK_CONCLUSIONS):
+            raise invalid("CheckRun", "status")
+        world = self.double.world
+        created = CheckRun(world.new_id(), name, sha, "completed" if conclusion is not None else status, conclusion)
+        repo.check_runs.append(created)
+        return 201, render.check_run(self.double.urls, repo, created), []
+
+    def _r_combined_status(self, call: Call) -> Result:
+        repo, sha = call.the_repo, self._commit_of(call)
+        newest: dict[str, CommitStatus] = {}
+        for item in repo.statuses:
+            if item.sha == sha:
+                newest[item.context] = item
+        found = list(newest.values())
+        states = {item.state for item in found}
+        state = (
+            "failure" if states & {"failure", "error"} else "pending" if "pending" in states or not found else "success"
+        )
+        statuses = [render.commit_status(self.double.urls, repo, item) for item in found]
+        return 200, {"state": state, "sha": sha, "total_count": len(statuses), "statuses": statuses}, []
+
+    def _r_create_status(self, call: Call) -> Result:
+        body, repo, sha = call.json_body(), call.the_repo, call.params["sha"]
+        state, context = body.get("state"), body.get("context", "default")
+        if state not in STATUS_STATES or not isinstance(context, str) or repo.objects.kind(sha) != "commit":
+            raise invalid("Status", "state")
+        created = CommitStatus(self.double.world.new_id(), sha, context, state)
+        repo.statuses.append(created)
+        return 201, render.commit_status(self.double.urls, repo, created), []
 
     def _issue_number(self, call: Call) -> int:
         """The number of an existing issue or pull request; issue comments of a repository without issues are
