@@ -5,11 +5,11 @@
 import { formatTime } from '../../src/core/encoding/time';
 import { buildBatch } from '../../src/core/log/rotation';
 import { epochKey } from '../../src/core/log/state';
-import { DIRECTOR_ORIGIN } from '../fixtures/env.ts';
+import { directorOrigin } from '../fixtures/env.ts';
 import type { PageUser } from './user.ts';
 
 async function post(path: string, body: unknown): Promise<unknown> {
-  const response = await fetch(`${DIRECTOR_ORIGIN}${path}`, {
+  const response = await fetch(`${directorOrigin()}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),

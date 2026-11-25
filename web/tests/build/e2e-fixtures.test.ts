@@ -6,7 +6,21 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isAppSource, isBrowserGated, sourcePath } from '../../e2e/fixtures/coverage-options.ts';
 import { appSources, withSourceMaps } from '../../e2e/fixtures/coverage.ts';
-import { e2ePort, hubPython } from '../../e2e/fixtures/env.ts';
+import {
+  directorOrigin,
+  e2ePort,
+  hubPython,
+  LANE_VARIABLE,
+  laneDirectorPort,
+  laneOf,
+  laneOrigin,
+  lanePort,
+  LANES,
+  lanesOf,
+  PORT,
+  VOLUME_LANES,
+  volumeCache,
+} from '../../e2e/fixtures/env.ts';
 import { CACHE_ASSETS, CACHE_INDEX, SECURITY_HEADERS } from '../../e2e/fixtures/headers.ts';
 import { spawn } from 'node:child_process';
 import { handler, startHub, testConfig, waitForHealth } from '../../e2e/fixtures/server.ts';
@@ -51,6 +65,40 @@ describe('e2e environment', () => {
     expect(e2ePort({ WP_PORT_BASE: '20260' })).toBe(20262);
     expect(e2ePort({ WEB_E2E_PORT: '9000' })).toBe(9000);
     expect(e2ePort({})).toBe(8790);
+  });
+
+  it('gives every lane its own hub and device double above the performance servers', () => {
+    expect(LANES[0]).toBe('main');
+    expect(lanePort('main', 100)).toBe(100);
+    expect(laneDirectorPort('main', 100)).toBe(102);
+    const ports = LANES.slice(1).flatMap((lane) => [lanePort(lane, 100), laneDirectorPort(lane, 100)]);
+    expect(ports[0]).toBe(106);
+    expect(new Set(ports).size).toBe(ports.length);
+    // the work package range ends at WP_PORT_BASE+19 = PORT+17
+    expect(Math.max(...ports)).toBeLessThanOrEqual(117);
+    expect(() => lanePort('nowhere')).toThrow(/unknown lane/);
+    expect(laneOrigin('volume')).toBe(`http://localhost:${lanePort('volume')}`);
+    expect(laneOf('volume-mobile')).toBe('volume-mobile');
+    expect(laneOf('desktop')).toBe('main');
+    expect(directorOrigin({})).toBe(`http://127.0.0.1:${PORT + 2}`);
+    expect(directorOrigin({ [LANE_VARIABLE]: 'volume' })).toBe(`http://127.0.0.1:${lanePort('volume') + 1}`);
+  });
+
+  it('keeps the volume data set in WEB_E2E_VOLUME_CACHE, else below node_modules', () => {
+    expect(volumeCache({ WEB_E2E_VOLUME_CACHE: '/cache' })).toBe('/cache');
+    expect(volumeCache({})).toBe(join(WEB_DIR, 'node_modules', '.cache', 'volume-data'));
+    expect(VOLUME_LANES.every((lane) => LANES.includes(lane))).toBe(true);
+  });
+
+  it('starts the lanes of the selected projects only', () => {
+    expect(lanesOf([])).toEqual(LANES);
+    expect(lanesOf(['test', '--project', 'desktop'])).toEqual(['main']);
+    expect(lanesOf(['--project', 'volume*'])).toEqual(LANES);
+    expect(lanesOf(['--project=volume', '--project', 'volume-mobile', '--project'])).toEqual([
+      'main',
+      'volume',
+      'volume-mobile',
+    ]);
   });
 
   it('picks the Python of the hub', () => {

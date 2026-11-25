@@ -1,12 +1,14 @@
 // Playwright fixtures for every web spec (and for SCN-00):
 // - V8 coverage of every page, added to the monocart cache with the build's source maps;
-// - a CSP listener: every `securitypolicyviolation` of any page fails the test (06-web.md section 10.2).
+// - a CSP listener: every `securitypolicyviolation` of any page fails the test (06-web.md section 10.2);
+// - the lane of the worker's project (`lane`): the helpers call that lane's device double.
 // Both apply to the default `context` and to every context created with the `newContext` fixture; specs that need
 // more contexts (other locales, several users) use `newContext` instead of `browser.newContext`.
 import { test as base, expect, type BrowserContext, type BrowserContextOptions, type Page } from '@playwright/test';
 import { CoverageReport } from 'monocart-coverage-reports';
 import { e2eCoverage } from './coverage-options.ts';
 import { withSourceMaps } from './coverage.ts';
+import { LANE_VARIABLE, laneOf } from './env.ts';
 
 export interface CspViolation {
   readonly page: string;
@@ -45,7 +47,21 @@ interface Fixtures {
   newContext: (options?: BrowserContextOptions) => Promise<BrowserContext>;
 }
 
-export const test = base.extend<Fixtures>({
+/** Enters the lane of the worker's project (`fixtures/env.ts`): read by `directorOrigin()` in every helper. */
+export function enterLane(project: string): string {
+  const lane = laneOf(project);
+  process.env[LANE_VARIABLE] = lane;
+  return lane;
+}
+
+export const test = base.extend<Fixtures, { lane: string }>({
+  // set before any test of the worker (`browserName` only gives the fixture its required destructuring pattern)
+  lane: [
+    async ({ browserName: _browserName }, use, info) => {
+      await use(enterLane(info.project.name));
+    },
+    { scope: 'worker', auto: true },
+  ],
   // Playwright needs a destructuring pattern; `baseURL` is an unused built-in fixture.
   cspViolations: async ({ baseURL: _baseURL }, use) => {
     const violations: CspViolation[] = [];

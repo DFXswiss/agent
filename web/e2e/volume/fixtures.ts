@@ -1,17 +1,18 @@
-// Fixtures of the volume specs: one browser user per volume project (worker), onboarded with its own passkey and
+// Fixtures of the volume specs: the data set of the project's lane (seeded by the first worker of the lane,
+// decisions/HOT-21.md), one browser user per volume project (worker), onboarded with its own passkey and
 // joined as admin to the volume org, kept for every view of the worker (the projects run one worker each). It signs
 // in once after the join (the slow first verification of the org's logs); each view is then opened with a page load
 // and the (then fast) passkey unlock. The phone
 // project runs with 4× CPU throttling (ADR-086 §4). No browser coverage here: the precise V8 counters would distort
 // the measurements (the gate measures the build as it is served); the CSP listener of the suite stays.
 import { type BrowserContext, type Page, test as base } from '@playwright/test';
-import { CSP_BINDING, type CspViolation } from '../fixtures/test.ts';
+import { CSP_BINDING, type CspViolation, enterLane } from '../fixtures/test.ts';
 import { addAuthenticator } from '../helpers/authenticator.ts';
 import { joinWithCode } from '../helpers/members.ts';
 import { onboard } from '../helpers/onboard.ts';
 import { PageUser } from '../helpers/user.ts';
 import { appliedThrottle, calibrate, frozenPages, instrumentation, useCdp } from './budget.ts';
-import { director, type VolumeData, volumeData } from './data.ts';
+import { director, seed, type VolumeData } from './data.ts';
 
 export interface VolumeUser {
   readonly page: Page;
@@ -35,7 +36,8 @@ export function contextOptions(use: Record<string, unknown>) {
 export const test = base.extend<{ volume: VolumeUser }, { volumeUser: VolumeUser }>({
   volumeUser: [
     async ({ browser }, use, info) => {
-      const data = volumeData();
+      enterLane(info.project.name);
+      const data = await seed(info.project.name);
       const use_ = info.project.use as Record<string, unknown>;
       const context: BrowserContext = await browser.newContext(contextOptions(use_));
       const violations: CspViolation[] = [];
@@ -123,7 +125,8 @@ export const test = base.extend<{ volume: VolumeUser }, { volumeUser: VolumeUser
       });
       await context.close();
     },
-    { scope: 'worker', timeout: 600_000 },
+    // the seed (about 3 minutes alone, longer beside the other lanes) and the first sign-in after the join
+    { scope: 'worker', timeout: 40 * 60_000 },
   ],
   volume: async ({ volumeUser }, use) => {
     const before = volumeUser.violations.length;

@@ -229,11 +229,16 @@ Rules:
 Every view of the web client must stay usable under a fixed data volume; the gate is part of `npm run test:e2e` and
 therefore of `make platform-web`/`make platform-ci` of every package.
 
-- **Projects** (`web/playwright.config.ts`): `volume-seed` (once per run), then `volume` (Desktop Chrome) and
-  `volume-mobile` (Pixel 7 with 4× CPU throttling over CDP `Emulation.setCPUThrottlingRate`), one worker each, specs
-  `web/e2e/volume/*.spec.ts`. In a full run `volume-seed` depends on the last projects of the other suites, so the
-  gate measures on a quiet machine; selected alone (`npx playwright test --project volume --project volume-mobile`)
-  it starts at once. Browser coverage is not collected in these projects (the precise V8 counters would distort the
+- **Projects** (`web/playwright.config.ts`): `volume` (Desktop Chrome) and `volume-mobile` (Pixel 7 with 4× CPU
+  throttling over CDP `Emulation.setCPUThrottlingRate`), one worker each, specs `web/e2e/volume/*.spec.ts`. Each runs
+  in a lane of its own (HOT-21: own hub test server, database, device double and port pair,
+  `web/e2e/fixtures/env.ts`) from the start of the run, beside the other projects; no project depends on another
+  (Playwright runs dependent projects in phases one after the other). The data set of a lane comes from a cache
+  (`scripts/hub_test_volume_cache.py`: rows, state and hub signing key per schema and generator state, 12 h,
+  directory `WEB_E2E_VOLUME_CACHE`, else `web/node_modules/.cache/volume-data`); without a usable entry the first
+  worker of the lane seeds it (`POST /volume/seed`) and the device double stores it. The volume org's founder holds
+  the community key and hands it to the lane's browser users. The time budgets are scaled by the calibrated slowdown
+  (below), so the gate does not need a quiet machine. Browser coverage is not collected in these projects (the precise V8 counters would distort the
   times); the CSP listener applies.
 - **Data set** (`scripts/hub_test_volume.py`, routes `/volume/*` of the device double): a non-private org with
   platform access, built as the clients build it (real identities, log batches through `append_batch`, every event
@@ -247,8 +252,8 @@ therefore of `make platform-web`/`make platform-ci` of every package.
   worker onboards its own user, who joins the org as admin (`POST /volume/invite`, `joinWithCode`) and gets the
   notifications and the platform role `inviter` (`POST /volume/joined`); it signs in once and opens every view by
   client-side navigation (the sign-in itself is the view `flow:unlock`). Ids the data set cannot contain because the
-  hub refuses them are listed with the reason in `seed.json` (`unseedable`) and printed by the teardown. `VOLUME_COUNTS` (JSON) shrinks the set
-  while a spec is developed. The ids go to `web/test-results/.volume/seed.json`.
+  hub refuses them are listed with the reason in the seed file (`unseedable`) and printed by the teardown. `VOLUME_COUNTS` (JSON) shrinks the set
+  while a spec is developed. The ids go to `web/test-results/.volume/seed-<project>.json`.
 - **Budget** (`web/e2e/volume/budget.ts`, reasons in `decisions/KOR-35.md`): the primary control visible and enabled
   within 10 s (desktop) / 20 s (phone) of the unlock gesture; fewer than 6 000 DOM elements; used JS heap after a
   garbage collection below 300 MB (CDP `Performance.getMetrics`, `JSHeapUsedSize`); at most 300 ms of long tasks in

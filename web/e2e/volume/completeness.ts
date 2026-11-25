@@ -118,8 +118,24 @@ export function unmeasured(webDir: string, measured: readonly Measured[]): strin
 
 /** Run files of the volume suite (below Playwright's output directory, which every run starts empty). */
 export const runDir = (webDir: string): string => join(webDir, 'test-results', '.volume');
-export const seedFile = (webDir: string): string => join(runDir(webDir), 'seed.json');
+/** The data set of one volume project (each seeds its own lane, decisions/HOT-21.md). */
+export const seedFile = (webDir: string, project: string): string => join(runDir(webDir), `seed-${project}.json`);
 export const measuredFile = (webDir: string): string => join(runDir(webDir), 'measured.jsonl');
+
+interface Seed {
+  readonly override?: Record<string, number>;
+  readonly unseedable?: Record<string, string>;
+}
+
+/** The data sets seeded in this run (one per volume project that ran). */
+function seeds(webDir: string): Seed[] {
+  const dir = runDir(webDir);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => /^seed-.+\.json$/.test(name))
+    .sort()
+    .map((name) => JSON.parse(readFileSync(join(dir, name), 'utf8')) as Seed);
+}
 
 /** The measurements of this run (one JSON object per line). */
 export function readMeasured(webDir: string): Measured[] {
@@ -132,13 +148,13 @@ export function readMeasured(webDir: string): Measured[] {
 }
 
 /**
- * The run-time check of the global teardown: when the volume data set was seeded in this run, every covered id must
+ * The run-time check of the global teardown: when a volume data set was seeded in this run, every covered id must
  * have been measured in both volume projects; returns the missing `<project> <id>` lines (empty without a seed). Ids
- * the seed reports as not seedable (a refusal of the hub, named in `seed.json`) are accepted only while `known` (the
+ * a seed reports as not seedable (a refusal of the hub, named in its seed file) are accepted only while `known` (the
  * `UNSEEDABLE` list of `gaps.ts`) names them, and a seed shrunk by `VOLUME_COUNTS` always fails.
  */
 export function runtimeGaps(webDir: string, known: Readonly<Record<string, string>> = {}): string[] {
-  if (!existsSync(seedFile(webDir))) return [];
+  if (!seeds(webDir).length) return [];
   const reported = unseedable(webDir);
   const problems = [
     ...Object.keys(reported)
@@ -157,16 +173,13 @@ export function runtimeGaps(webDir: string, known: Readonly<Record<string, strin
   ];
 }
 
-/** The `VOLUME_COUNTS` override of this run's seed (null without one). */
+/** The `VOLUME_COUNTS` override of this run's seeds (null without one). */
 export function seedOverride(webDir: string): Record<string, number> | null {
-  if (!existsSync(seedFile(webDir))) return null;
-  const seed = JSON.parse(readFileSync(seedFile(webDir), 'utf8')) as { override?: Record<string, number> };
-  return seed.override && Object.keys(seed.override).length ? seed.override : null;
+  const overridden = seeds(webDir).find((seed) => seed.override && Object.keys(seed.override).length);
+  return overridden?.override ?? null;
 }
 
-/** Covered ids the seed of this run could not produce data for, with the reason (the teardown prints them). */
+/** Covered ids the seeds of this run could not produce data for, with the reason (the teardown prints them). */
 export function unseedable(webDir: string): Record<string, string> {
-  if (!existsSync(seedFile(webDir))) return {};
-  const seed = JSON.parse(readFileSync(seedFile(webDir), 'utf8')) as { unseedable?: Record<string, string> };
-  return seed.unseedable ?? {};
+  return Object.assign({}, ...seeds(webDir).map((seed) => seed.unseedable ?? {})) as Record<string, string>;
 }

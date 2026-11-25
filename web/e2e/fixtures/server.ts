@@ -116,9 +116,12 @@ export async function startHub(options: {
   readonly rootKey: string;
   /** Also start the device double on this port (decision WEB-04). */
   readonly directorPort?: number;
+  /** A lane of the volume gate: the data set from this cache directory (`scripts/hub_test_volume_cache.py`). */
+  readonly volumeCache?: string;
 }): Promise<HubProcess> {
   const args = [options.script, '--port', String(options.port), '--root-key', options.rootKey];
   if (options.directorPort !== undefined) args.push('--director-port', String(options.directorPort));
+  if (options.volumeCache !== undefined) args.push('--volume-cache', options.volumeCache);
   const child = spawn(options.python, args, { stdio: ['ignore', 'inherit', 'inherit'] });
   const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
   const stop = async () => {

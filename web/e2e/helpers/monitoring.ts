@@ -1,9 +1,9 @@
 // Monitoring data of the device double (scripts/hub_test_metrics.py, WEB-12): VMs, samples and usage pushed through
 // the hub's outbox as the device, rollups written for ranges beyond the raw retention.
-import { DIRECTOR_ORIGIN } from '../fixtures/env.ts';
+import { directorOrigin } from '../fixtures/env.ts';
 
 async function post(path: string, body: unknown): Promise<unknown> {
-  const response = await fetch(`${DIRECTOR_ORIGIN}${path}`, {
+  const response = await fetch(`${directorOrigin()}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),

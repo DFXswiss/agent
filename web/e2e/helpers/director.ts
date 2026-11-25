@@ -2,11 +2,11 @@
 // scripted session transitions, as the runner would report them. Specs that use it run in the `devices` project, one
 // at a time: every new device takes the first place among the platform candidates.
 import { expect } from '@playwright/test';
-import { DIRECTOR_ORIGIN } from '../fixtures/env.ts';
+import { directorOrigin } from '../fixtures/env.ts';
 import type { TestAgent } from './agent.ts';
 
 async function call(method: string, path: string, body?: unknown): Promise<unknown> {
-  const response = await fetch(`${DIRECTOR_ORIGIN}${path}`, {
+  const response = await fetch(`${directorOrigin()}${path}`, {
     method,
     headers: { 'content-type': 'application/json' },
     ...(body !== undefined && { body: JSON.stringify(body) }),

@@ -12,6 +12,7 @@ import {
   readMeasured,
   routePatterns,
   runtimeGaps,
+  seedFile,
   seedOverride,
   uncovered,
   unmeasured,
@@ -104,7 +105,8 @@ describe('volume gate completeness', () => {
     expect(unseedable(dir)).toEqual({});
     expect(seedOverride(dir)).toBeNull();
     expect(readMeasured(dir)).toEqual([]);
-    write(dir, 'test-results/.volume/seed.json', '{}');
+    write(dir, 'test-results/.volume/seed-volume.json', '{}');
+    write(dir, 'test-results/.volume/other.json', 'not a seed');
     write(
       dir,
       'test-results/.volume/measured.jsonl',
@@ -118,15 +120,20 @@ describe('volume gate completeness', () => {
     );
     expect(runtimeGaps(dir)).toEqual(['volume chat:prompt', 'volume-mobile chat:prompt', 'volume-mobile tab:chat']);
     expect(unmeasured(dir, [])).toHaveLength(6);
-    write(dir, 'test-results/.volume/seed.json', JSON.stringify({ unseedable: { 'chat:prompt': 'refused' } }));
+    write(dir, 'test-results/.volume/seed-volume.json', JSON.stringify({ unseedable: { 'chat:prompt': 'refused' } }));
+    write(dir, 'test-results/.volume/seed-volume-mobile.json', JSON.stringify({ unseedable: { 'tab:x': 'refused' } }));
+    expect(unseedable(dir)).toEqual({ 'chat:prompt': 'refused', 'tab:x': 'refused' });
+    write(dir, 'test-results/.volume/seed-volume-mobile.json', '{}');
     expect(unseedable(dir)).toEqual({ 'chat:prompt': 'refused' });
     expect(runtimeGaps(dir, { 'chat:prompt': 'known' })).toEqual(['volume-mobile tab:chat']);
     expect(runtimeGaps(dir)[0]).toMatch(/^chat:prompt: not seedable \(refused\) but not listed/);
     expect(runtimeGaps(dir, { 'chat:prompt': 'known', 'tab:chat': 'stale' })[0]).toMatch(/^tab:chat: listed/);
-    write(dir, 'test-results/.volume/seed.json', JSON.stringify({ override: { tasks: 3 } }));
+    write(dir, 'test-results/.volume/seed-volume.json', '{}');
+    write(dir, 'test-results/.volume/seed-volume-mobile.json', JSON.stringify({ override: { tasks: 3 } }));
     expect(seedOverride(dir)).toEqual({ tasks: 3 });
     expect(runtimeGaps(dir)[0]).toMatch(/VOLUME_COUNTS shrank the data set/);
-    write(dir, 'test-results/.volume/seed.json', JSON.stringify({ override: {} }));
+    write(dir, 'test-results/.volume/seed-volume-mobile.json', JSON.stringify({ override: {} }));
     expect(seedOverride(dir)).toBeNull();
+    expect(seedFile(dir, 'volume')).toBe(join(dir, 'test-results', '.volume', 'seed-volume.json'));
   });
 });
