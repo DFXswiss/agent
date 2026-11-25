@@ -787,6 +787,48 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   Anmeldungen je Inhaber und Messung, Verwendung je Abo und Umzug von den Token-Dateien; die Ansicht in der
   Oberfläche: [ADR-091](adr/091-subscriptions-at-a-glance.md) (KOR-68); Anmeldung auf der Seite „Meine Abos“ („Abo
   hinzufügen“, „Jetzt anmelden“) und Verwaltung im Abschnitt „Claude-Abos“ der Einstellungen.
+### E-30 – Alle selbst gehosteten GitHub-Actions-Läufe über agent.dfx.swiss
+
+- **Datum:** 2026-11-25
+- **Regel:** Die selbst gehosteten GitHub-Actions-Läufe der DFX-Organisationen laufen über agent.dfx.swiss, jeder Job
+  in einer frischen, danach gelöschten VM; das Konzept dazu steht in [spec/16-ci-runners.md](spec/16-ci-runners.md).
+- **Hinweis:** Läufe, die das Gerät selbst ändern (Deploy-Jobs, mit denen sich ein Gerät selbst einrichtet), können
+  nicht in einer VM laufen: Eine VM ohne Freigaben sieht das Gerät nicht, und ein Rückweg aus der VM auf das Gerät
+  höbe die Trennung auf. Das Konzept führt sie als Ausnahme mit Begründung
+  ([spec/16-ci-runners.md §1](spec/16-ci-runners.md#1-purpose-and-scope)). Das ist eine Feststellung, keine
+  Einschränkung der Regel.
+- **Wortlaut:** „ich will alle self hostet runns über agent.dfx.swiss laufen lassen, repo dazu ist dfxswiss/agent“ –
+  als Auftrag zum Konzept: „was muss beachtet werden damit agent.dfx.swiss github runner dienstleistungen erbringen
+  kann? dann das gesamte Konzept vollständig dokumentieren inkl allem, auch die Lösung für MacOs RUnner inkl der
+  Abklärungen von Lizenzen und technischer Machbarkeit, anforderungen an Hardware und co. Das volle SetUp“
+- **Bezug:** ergänzt [Idee 27](#k-idee-27) (Wegwerf-VM je Testlauf, [A9](#a-9)). In Spannung, Auflösung offen
+  ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)): [Grundprinzip](#k-gp),
+  [§2 Punkt 5](#k-2-b5) und [§16 Punkt 2](#k-16-b2) (ein CI-Job ist keine Nutzeranfrage und gehört zu keiner
+  Workgroup); [§3 Punkt 5](#k-3-b5) (VM je Workgroup, hier je Job); [§5](#k-5) (der Hub sieht keine Inhalte);
+  [§9 Punkt 5](#k-9-b5), [§10 Punkt 3](#k-10-b3) und [§10 Punkt 6](#k-10-b6) (git und freie Shell sind
+  Claude-Sessions verboten, ein CI-Gast braucht sie); [§10 Punkt 8](#k-10-b8) und [§11](#k-11) (Audit je
+  Operation); [E-10](#e-10) (Ausgang), [E-11](#e-11) (Freigaben), [E-25](#e-25) (Härtung nur auf Bestellung);
+  [A16](#a-16) (Workflows); [Idee 46](#k-idee-46) und [Idee 47](#k-idee-47) (Abrechnung).
+- **Umsetzung:** offen – Konzept [spec/16-ci-runners.md](spec/16-ci-runners.md); Entscheide offen.
+
+<a id="e-31"></a>
+
+### E-31 – Eine gemeinsame Kapazität: alle Rechner gehören agent.dfx.swiss, Runner werden dort bezogen
+
+- **Datum:** 2026-11-25
+- **Regel:** Es gibt keine eigenen Rechner für selbst gehostete Runner neben der Plattform; die gesamte
+  Rechenkapazität des Betreibers gehört agent.dfx.swiss, und ein Runner wird bei Bedarf als VM über die Plattform
+  bezogen, aus demselben Pool wie die Arbeits-VMs.
+- **Wortlaut:** „heute haben wir server für agent und server für self hostet runner, das ist inneffizient, ich will
+  alle meine server kapazitäten an agent geben und wenn ich einen self hostet runner brauche dann diesen via agent
+  beziehen“
+- **Bezug:** ergänzt [E-30](#e-30) und [§3 Punkt 3](#k-3-b3) (DFX stellt eigene Ausführungsserver); ersetzt die
+  Aufteilung der Ausführungsserver in [§3 Punkt 8](#k-3-b8) (initiale Serverzuordnung: ein Server für die
+  DFX-Cloud-Sessions), soweit sie Kapazität ausserhalb der Plattform voraussetzt; der Hub-Teil bleibt. Betrifft
+  [Idee 38](#k-idee-38) (Gerätewahl nach freier Kapazität), [§7 Punkt 6](#k-7-b6) (kapazitätsbasierte Verteilung)
+  und [E-02](#e-02) (klare Meldung bei erreichter Kapazität). In Spannung zu [E-25](#e-25) (Härtung nur auf
+  Bestellung), Auflösung offen ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)).
+- **Umsetzung:** offen – [spec/16-ci-runners.md](spec/16-ci-runners.md).
 
 <a id="e-32"></a>
 
@@ -972,6 +1014,9 @@ Stand 2026-11-26. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber nennt, welche Schalter umgelegt werden (gebaut, [ADR-079](adr/079-no-approval-as-precondition.md); ein Startguthaben gibt es nicht, [E-14](#e-14), entschieden 2026-11-25); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
+| [E-30](#e-30) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Entscheide des Auftraggebers ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)), danach Bau |
+| [E-31](#e-31) Gemeinsame Kapazität | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | wie [E-30](#e-30) ([spec/16-ci-runners.md §6.6](spec/16-ci-runners.md#66-shared-capacity)) |
+| [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |
 | [A10](#a-10) Subagenten | Ein Subagent endet nach einem Turn und bekommt keine Folge-Anweisung | KOR-45 |
