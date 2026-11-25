@@ -26,6 +26,7 @@ const MOBILE_SPECS = [
   'errors.spec.ts',
   'performance.spec.ts',
   'community.spec.ts',
+  'subscriptions.spec.ts',
 ].map((name) => `**/e2e/${name}`);
 /** Device specs that also run on the phones (the waiting card of KOR-25 and the platform browser must work on a phone). */
 const MOBILE_DEVICE_SPECS = [

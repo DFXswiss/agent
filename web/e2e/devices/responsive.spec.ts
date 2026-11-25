@@ -86,6 +86,7 @@ test('every signed-in route passes the layout, touch-target and accessibility ch
     [`/o/${user.org}/audit`, 'audit.screen'],
     ['/notifications', 'notifications.screen'],
     ['/settings', 'settings.page'],
+    ['/subscriptions', 'subscriptions.page'],
     ['/platform/invites', 'platform-invites.forbidden'],
     ['/security', 'security.screen'],
     [`/o/${user.org}/no/such/screen`, 'notfound.page'],
