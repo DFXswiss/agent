@@ -48,8 +48,15 @@ function setup(initial: CursorMap = {}) {
 describe('live wiring', () => {
   it('connects with the stored cursors and routes events, frames and state', async () => {
     const t = setup({ [SCOPE]: 1 });
-    const { channel } = await connectLive({ ...t.wiring, terminals: ['s'], monitoring: true });
+    const { channel } = await connectLive({
+      ...t.wiring,
+      terminals: ['s'],
+      browsers: ['b'],
+      browserKbps: 3000,
+      monitoring: true,
+    });
     await settle();
+    expect(t.client.last.target).toContain('browser=b&browser_kbps=3000');
     expect(t.client.last.target).toContain(`cursors=${SCOPE}%3A1`);
     expect(t.client.last.target).toContain('terminal=s');
     expect(t.client.last.target).toContain('monitoring=1');

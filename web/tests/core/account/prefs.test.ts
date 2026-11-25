@@ -71,3 +71,14 @@ describe('community preferences', () => {
     expect(prefs.handledLosses('u2')).toEqual(['a']);
   });
 });
+
+describe('browser preferences', () => {
+  it('keeps the bandwidth choice of the live picture for this browser', () => {
+    const storage = new MemoryStorage();
+    const prefs = new Prefs(storage);
+    expect(prefs.browserBandwidth()).toBeNull();
+    prefs.setBrowserBandwidth('sharp');
+    expect(prefs.browserBandwidth()).toBe('sharp');
+    expect(storage.items.get('agent-platform.browser-bandwidth')).toBe('sharp');
+  });
+});

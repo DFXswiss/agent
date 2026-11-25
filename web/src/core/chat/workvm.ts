@@ -33,6 +33,7 @@ import {
   time,
 } from './shape';
 import { parseTestRun, TEST_RUN_KIND } from './testrun';
+import { parseBrowserState, STATE_KIND as BROWSER_STATE_KIND } from '../browser/shape';
 import { FINAL_STATES, type OperationRow } from '../store/slices/operations';
 import type { ScopeEvents } from '../store/slices/events';
 import type { StoreState } from '../store/store';
@@ -132,10 +133,14 @@ export const parseWorkvmState = (body: unknown): WorkvmState | null =>
 export const outputTruncated = (run: WorkvmRun): boolean =>
   new TextEncoder().encode(run.output).length < run.output_bytes;
 
-/** The ID a `workvm.run` (`job_id`) or `test.run` (`run_id`) item is replaced by, else undefined. */
+/**
+ * The ID a `workvm.run` (`job_id`), `test.run` (`run_id`) or `browser.state` (`browser_id`, one card per browser
+ * session, KOR-44) item is replaced by, else undefined.
+ */
 function runKey(kind: string, body: unknown): string | undefined {
   if (kind === RUN_KIND) return parseWorkvmRun(body)?.job_id;
   if (kind === TEST_RUN_KIND) return parseTestRun(body)?.run_id;
+  if (kind === BROWSER_STATE_KIND) return parseBrowserState(body)?.browser_id;
   return undefined;
 }
 

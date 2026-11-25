@@ -8,6 +8,9 @@
 //   verifies the logs and opens the wraps of every org (jobs `login`), then `unlocked`.
 // - `signOut()` ends the session at the hub (`POST /v1/session/end`), stops jobs and channel, deletes the IndexedDB
 //   session entries and clears memory (`store.reset()`).
+import { frameOpener } from '../browser/frame';
+import type { BrowserContext } from '../browser/watch';
+import { type BrowserListener, type BrowserWatchHandle, BrowserWatchList } from '../browser/watchlist';
 import { b64uDecode } from '../encoding/b64u';
 import type { PlatformConfig } from '../config/check';
 import { fail } from '../crypto/errors';
@@ -16,11 +19,13 @@ import { isLocale, type Locale } from '../i18n/locale';
 import { backgroundJobs, JobRunner, type JobRegistration } from '../jobs';
 import { INTERVAL_MS } from '../jobs/catch-up';
 import { applyFrame } from '../net/frames';
+import type { StoredEvent } from '../net/sse';
 import { connectLive, type LiveConnection, type LiveWiring } from '../net/live';
 import { hostOf, type Session, type SessionNotice, SignedClient } from '../net/signedFetch';
 import type { Persist } from '../persist';
 import { isRecord } from '../registry';
 import { EventReader } from '../store/reader';
+import type { EventEntry } from '../store/slices/events';
 import { noteSession, sessionRenewed } from '../store/slices/connection';
 import { setIdentity, setProfile, setSession } from '../store/slices/me';
 import { addKeys, ensureOrg, setLog } from '../store/slices/orgs';
@@ -112,6 +117,8 @@ export class AppSession {
   readonly #watched = new Map<string, { readonly org: string; count: number }>();
   /** Open monitoring views per org (06-web.md section 9.1: `metrics` frames only while one is open). */
   readonly #monitoring = new Map<string, number>();
+  /** Watched platform browsers (06-web.md section 5.4b): sessions, bandwidth wishes and the views of their frames. */
+  readonly #browsers = new BrowserWatchList(() => this.#syncBrowsers());
 
   constructor(deps: AppSessionDeps) {
     this.#deps = deps;
@@ -320,9 +327,12 @@ export class AppSession {
       persist: this.#deps.persist,
       org,
       terminals: this.#terminals(org),
+      browsers: this.#browsers.sessions(org),
+      browserKbps: this.#browsers.kbps(org),
       monitoring: this.#monitoring.has(org),
       onFrame: (type, data) => {
         if (type === 'terminals_refused') this.#refused(data);
+        if (this.#browsers.dispatch(type, data)) return;
         applyFrame(this.store, type, data, this.#now());
       },
     }).catch(() => null);
@@ -370,6 +380,22 @@ export class AppSession {
   }
 
   /**
+   * Watches the platform browser of `session` for one view (live `browser_action` and `browser_live` frames of the
+   * active org's channel, at most three sessions; the newest win) with its bandwidth wish.
+   */
+  watchBrowser(org: string, session: string, listener: BrowserListener, kbps: number): BrowserWatchHandle {
+    return this.#browsers.watch(org, session, listener, kbps);
+  }
+
+  #syncBrowsers(): void {
+    const live = this.#live;
+    if (live === null) return;
+    const sessions = this.#browsers.sessions(live.org);
+    const kbps = this.#browsers.kbps(live.org);
+    void live.connection.then((connection) => connection?.channel.setBrowsers(sessions, kbps));
+  }
+
+  /**
    * Opens a monitoring view of `org`: the live channel of the active org requests `metrics` frames while at least one
    * view of it is open. The returned function closes this view.
    */
@@ -400,29 +426,43 @@ export class AppSession {
       store: this.store,
       client: this.client,
       now: this.#now,
-      read: async (org, scopeId, items) => {
-        this.#jobs();
-        const reader = this.#reader!;
-        const entries = [];
-        for (const item of items) {
-          entries.push(
-            await reader.read({
-              org,
-              scopeId,
-              scopeSeq: item.scope_seq,
-              receivedAt: item.received_at,
-              event: item.event,
-              status: 'pending',
-              code: null,
-              header: null,
-              body: null,
-            }),
-          );
-        }
-        return entries;
-      },
+      read: (org, scopeId, items) => this.#readOnly(org, scopeId, items),
       watch: (org, session) => this.watchTerminal(org, session),
     };
+  }
+
+  /** What the Browser tab needs (`core/browser/watch.ts`): store, client, reader without storage, watch, frames. */
+  get browser(): BrowserContext {
+    return {
+      store: this.store,
+      client: this.client,
+      read: (org, scopeId, items) => this.#readOnly(org, scopeId, items),
+      watch: (org, session, listener, kbps) => this.watchBrowser(org, session, listener, kbps),
+      opener: (org, wg, session) => frameOpener(this.store, org, wg, session),
+    };
+  }
+
+  /** Reads pulled events of a scope with the event reader, without storing them. */
+  async #readOnly(org: string, scopeId: string, items: readonly StoredEvent[]): Promise<EventEntry[]> {
+    this.#jobs();
+    const reader = this.#reader!;
+    const entries: EventEntry[] = [];
+    for (const item of items) {
+      entries.push(
+        await reader.read({
+          org,
+          scopeId,
+          scopeSeq: item.scope_seq,
+          receivedAt: item.received_at,
+          event: item.event,
+          status: 'pending',
+          code: null,
+          header: null,
+          body: null,
+        }),
+      );
+    }
+    return entries;
   }
 
   #stopLive(): void {

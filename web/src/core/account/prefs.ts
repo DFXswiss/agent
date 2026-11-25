@@ -4,6 +4,10 @@
 // confirmed with their certificates (ADR-082: the job `agents` adds an agent from the hub's list only then), and the
 // credential-key losses this browser already rotated for (a rotation is owed once, not at every sign-in). Only IDs, public keys and the public community
 // name – no secret keys, no other names, no content (those stay in memory or in the IndexedDB entries of `persist/`).
+// section 2.4), for the community (14-community.md section 6) the display name the user chose there and the identity
+// keys of authors the user has seen (pinned on first sight), and the bandwidth choice of the live browser picture
+// (06-web.md section 5.4b). Only IDs, public keys, the public community name and the choice – no secret keys, no other
+// names, no content (those stay in memory or in the IndexedDB entries of `persist/`).
 // A storage that refuses access (private mode, quota) behaves as empty.
 export interface PrefStorage {
   getItem(key: string): string | null;
@@ -103,5 +107,18 @@ export class Prefs {
     } catch {
       return {};
     }
+  }
+
+  setCommunityKeys(userId: string, keys: Readonly<Record<string, string>>): void {
+    this.#set(`community-keys.${userId}`, JSON.stringify(keys));
+  }
+
+  /** The bandwidth choice of the live browser picture (`core/browser/bandwidth.ts`), the same for every user. */
+  browserBandwidth(): string | null {
+    return this.#get('browser-bandwidth');
+  }
+
+  setBrowserBandwidth(value: string): void {
+    this.#set('browser-bandwidth', value);
   }
 }

@@ -21,6 +21,8 @@ export interface LiveWiring {
   readonly persist: Pick<Persist, 'loadCursors' | 'saveCursors'>;
   readonly org: string;
   readonly terminals?: readonly string[];
+  readonly browsers?: readonly string[];
+  readonly browserKbps?: number;
   readonly monitoring?: boolean;
   readonly onFrame?: (type: string, data: unknown) => void;
   readonly timers?: Timers;
@@ -81,6 +83,8 @@ export async function connectLive(wiring: LiveWiring): Promise<LiveConnection> {
       },
     },
     ...(wiring.terminals !== undefined && { terminals: wiring.terminals }),
+    ...(wiring.browsers !== undefined && { browsers: wiring.browsers }),
+    ...(wiring.browserKbps !== undefined && { browserKbps: wiring.browserKbps }),
     ...(wiring.monitoring !== undefined && { monitoring: wiring.monitoring }),
     ...(wiring.random !== undefined && { random: wiring.random }),
     ...(wiring.now !== undefined && { now: wiring.now }),

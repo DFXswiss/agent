@@ -19,6 +19,7 @@ import {
   type WorkvmState,
 } from '../../../src/core/chat/workvm';
 import { createStore } from '../../../src/core/store';
+import { state as browserState } from '../browser/world';
 import { type EventEntry, putEvents } from '../../../src/core/store/slices/events';
 import { type OperationRow, putOperations } from '../../../src/core/store/slices/operations';
 
@@ -167,6 +168,17 @@ describe('latestRuns', () => {
       { kind: 'workvm.run', body: run(), id: 2 },
       { kind: 'test.run', body: { broken: true }, id: 3 },
       { kind: 'test.run', body: test('failed'), id: 4 },
+    ];
+    expect(latestRuns(items).map((item) => item.id)).toEqual([2, 3, 4]);
+  });
+
+  it('keeps the latest state of a browser session as its one card', () => {
+    const browser = (id: string, state: string) => ({ ...browserState({ browser_id: id, state }) });
+    const items = [
+      { kind: 'browser.state', body: browser('br-0123456789ab', 'starting'), id: 1 },
+      { kind: 'browser.state', body: browser('br-ba9876543210', 'open'), id: 2 },
+      { kind: 'browser.state', body: { broken: true }, id: 3 },
+      { kind: 'browser.state', body: browser('br-0123456789ab', 'open'), id: 4 },
     ];
     expect(latestRuns(items).map((item) => item.id)).toEqual([2, 3, 4]);
   });

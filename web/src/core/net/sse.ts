@@ -11,6 +11,10 @@
 // whole stream (`404 not_found`) when a watched session is not readable; the channel then drops the newest watched
 // session, reports it with the frame `terminals_refused {sessions}` and connects again at once (one by one, so a
 // refused new session does not end the others; with no terminal left the refusal is fatal as before).
+// Watched browsers (`browser=`, at most `MAX_BROWSERS`, with one `browser_kbps`; 06-web.md section 5.4b) change with
+// `setBrowsers` the same way; their frames `browser_action` and `browser_live` go to `handlers.frame` (a
+// `browser.action` is never put into the event cursors: it is read by the record view, not stored). A refused stream
+// drops the newest watched browser first and reports it with `browsers_refused {sessions}`.
 // The `monitoring=1` flag (`metrics` frames, only while a monitoring screen is open) changes with `setMonitoring` the
 // same way: a running connection is reopened.
 import { HubError, type SignedClient } from './signedFetch';
@@ -29,6 +33,11 @@ export const MAX_BACKFILL = 5000;
 export const REPAIR_DELAY_MS = 1000;
 /** Watched terminal sessions per stream (03-api.md section 5). */
 export const MAX_TERMINALS = 3;
+/** Watched browser sessions per stream (03-api.md section 5). */
+export const MAX_BROWSERS = 3;
+/** The range of `browser_kbps` (03-api.md section 5). */
+export const MIN_BROWSER_KBPS = 100;
+export const MAX_BROWSER_KBPS = 10_000;
 /** Errors after which reconnecting cannot help (the UI asks for a new sign-in or leaves the org). */
 export const FATAL_CODES: ReadonlySet<string> = new Set([
   'session_expired',
@@ -140,6 +149,8 @@ export interface LiveOptions {
   readonly cursors: Cursors;
   readonly handlers: LiveHandlers;
   readonly terminals?: readonly string[];
+  readonly browsers?: readonly string[];
+  readonly browserKbps?: number;
   readonly monitoring?: boolean;
   readonly timers?: Timers;
   readonly random?: () => number;
@@ -161,6 +172,7 @@ export function backoff(attempt: number, random: number): number {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const isSeq = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+const clampKbps = (kbps: number): number => Math.min(MAX_BROWSER_KBPS, Math.max(MIN_BROWSER_KBPS, Math.round(kbps)));
 
 function parseData(text: string): unknown {
   try {
@@ -212,12 +224,16 @@ export class LiveChannel {
   readonly #ahead = new Map<string, Set<number>>();
   readonly #repairs = new Map<string, unknown>();
   #terminals: readonly string[];
+  #browsers: readonly string[];
+  #browserKbps: number;
   #monitoring: boolean;
 
   constructor(options: LiveOptions) {
     this.#options = options;
     this.#monitoring = options.monitoring === true;
     this.#terminals = (options.terminals ?? []).slice(-MAX_TERMINALS);
+    this.#browsers = (options.browsers ?? []).slice(-MAX_BROWSERS);
+    this.#browserKbps = clampKbps(options.browserKbps ?? 1000);
     this.#timers = options.timers ?? SYSTEM_TIMERS;
     this.#random = options.random ?? Math.random;
     this.#now = options.now ?? Date.now;
@@ -249,6 +265,28 @@ export class LiveChannel {
 
   get terminals(): readonly string[] {
     return this.#terminals;
+  }
+
+  /**
+   * The watched browser sessions (the newest `MAX_BROWSERS`) and the bandwidth of their live pictures (clamped to
+   * 100…10000 kbit/s); a running connection is reopened when either changes.
+   */
+  setBrowsers(sessions: readonly string[], kbps: number): void {
+    const next = [...new Set(sessions)].slice(-MAX_BROWSERS);
+    const rate = clampKbps(kbps);
+    const same = next.length === this.#browsers.length && next.every((id, index) => id === this.#browsers[index]);
+    if (same && rate === this.#browserKbps) return;
+    this.#browsers = next;
+    this.#browserKbps = rate;
+    if (this.#abort !== null) this.#open();
+  }
+
+  get browsers(): readonly string[] {
+    return this.#browsers;
+  }
+
+  get browserKbps(): number {
+    return this.#browserKbps;
   }
 
   /** Whether `metrics` frames are requested; a running connection is reopened when this changes. */
@@ -302,6 +340,8 @@ export class LiveChannel {
   #target(): string {
     const query = new URLSearchParams({ org: this.#options.org });
     for (const session of this.#terminals) query.append('terminal', session);
+    for (const session of this.#browsers) query.append('browser', session);
+    if (this.#browsers.length > 0) query.set('browser_kbps', String(this.#browserKbps));
     const cursors = this.#options.cursors.query();
     if (cursors !== '') query.set('cursors', cursors);
     if (this.#monitoring) query.set('monitoring', '1');
@@ -331,6 +371,14 @@ export class LiveChannel {
   #failed(generation: number, error: unknown): void {
     if (generation !== this.#generation) return;
     const code = error instanceof HubError ? error.code : 'unavailable';
+    if (code === 'not_found' && this.#browsers.length > 0 && this.#state.status === 'connecting') {
+      // a watched browser is refused like a watched terminal (below), the browsers first: they are the newer watches
+      const refused = this.#browsers.at(-1)!;
+      this.#browsers = this.#browsers.slice(0, -1);
+      this.#open();
+      void this.#options.handlers.frame('browsers_refused', { sessions: [refused] });
+      return;
+    }
     if (code === 'not_found' && this.#terminals.length > 0 && this.#state.status === 'connecting') {
       // the newest watched session is the likely cause (the others were watched before): drop it and try again; if the
       // stream is refused for another reason, every terminal is dropped in turn and then the refusal is fatal

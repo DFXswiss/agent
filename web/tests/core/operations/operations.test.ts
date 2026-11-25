@@ -482,6 +482,9 @@ describe('subjectOf and factsOf', () => {
     expect(subjectOf('github.create_issue', { repo: 'a/b', title: 'Bug' })).toBe('a/b: Bug');
     expect(subjectOf('github.create_issue', { repo: 'a/b' })).toBe('a/b');
     expect(subjectOf('github.request_connection', {})).toBeNull();
+    expect(subjectOf('browser.open', { url: 'https://example.com/' })).toBe('https://example.com/');
+    expect(subjectOf('browser.open', {})).toBeNull();
+    expect(subjectOf('browser.close', {})).toBeNull();
   });
 
   it('lists the result links and values of each type', () => {
@@ -522,6 +525,27 @@ describe('subjectOf and factsOf', () => {
     ]);
     expect(factsOf('test.run', { run_id: 'tr-0123456789ab', exit_code: null }, none)).toHaveLength(1);
     expect(factsOf('custom.type', {}, none)).toEqual([]);
+    expect(
+      factsOf('browser.open', { browser_id: 'br-0123456789ab', url: 'https://example.com/', ready_ms: 400 }, none),
+    ).toEqual([
+      { label: 'browser', text: 'br-0123456789ab' },
+      { label: 'url', text: 'https://example.com/', href: 'https://example.com/' },
+      { label: 'ready_ms', text: '400' },
+    ]);
+    expect(
+      factsOf('browser.open', { browser_id: 'br-0123456789ab', url: 'http://intranet/', ready_ms: 0 }, none),
+    ).toContainEqual({ label: 'url', text: 'http://intranet/' });
+    expect(
+      factsOf(
+        'browser.close',
+        { closed: true, browser_id: 'br-0123456789ab', actions: 7, reason: 'browser_closed' },
+        none,
+      ),
+    ).toEqual([
+      { label: 'browser', text: 'br-0123456789ab' },
+      { label: 'actions', text: '7' },
+      { label: 'reason', text: 'browser_closed' },
+    ]);
   });
 
   it('lists the facts of the issue types and the connection request', () => {

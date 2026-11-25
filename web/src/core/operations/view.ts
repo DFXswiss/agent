@@ -15,6 +15,8 @@
 // untrusted and only ever rendered as text; URLs pass `httpsUrl` (`safeUrl` and https only, as the contracts allow).
 // A `test.run` (ADR-080) has its kind and the start of its command as subject, run ID and exit code as facts, and
 // its checked result (`testRun`: state, summary, log) for the card's "Tests: 3 failed – open log".
+// `browser.open` (ADR-085) has the requested URL as subject and the browser ID, the opened URL and the VM's ready time
+// as facts; `browser.close` the browser ID, the number of actions and the reason.
 import { safeUrl } from '../chat/links';
 import { parseTestRunResult, TEST_RUN_TYPE, type TestRunResult } from '../chat/testrun';
 import { isRecord } from '../registry';
@@ -208,6 +210,7 @@ export function subjectOf(type: string, params: Readonly<Record<string, unknown>
   if (type === 'workvm.request') return text(params.size) ?? 'standard';
   if (type === 'workvm.release') return text(params.scope) ?? 'task';
   if (type === TEST_RUN_TYPE) return testSubject(params);
+  if (type === 'browser.open') return text(params.url);
   if (type === 'human.question' || type === 'human.approval') return text(params.question);
   const repo = text(params.repo);
   if (repo === null) return null;
@@ -331,6 +334,18 @@ export function factsOf(type: string, result: Readonly<Record<string, unknown>>,
       return link('workvm', result.workvm_id, null);
     case TEST_RUN_TYPE:
       return [...link('run', result.run_id, null), ...link('exit_code', result.exit_code, null)];
+    case 'browser.open':
+      return [
+        ...link('browser', result.browser_id, null),
+        ...link('url', result.url, result.url),
+        ...link('ready_ms', result.ready_ms, null),
+      ];
+    case 'browser.close':
+      return [
+        ...link('browser', result.browser_id, null),
+        ...link('actions', result.actions, null),
+        ...link('reason', result.reason, null),
+      ];
     default:
       return [];
   }

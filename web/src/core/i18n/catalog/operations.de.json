@@ -84,5 +84,12 @@
   "detail.close": "Schließen",
   "type.test.run": "Tests ausführen",
   "fact.run": "Lauf",
-  "fact.exit_code": "Exit-Code"
+  "fact.exit_code": "Exit-Code",
+  "type.browser.open": "Browser öffnen",
+  "type.browser.close": "Browser schließen",
+  "fact.browser": "Browser",
+  "fact.url": "Seite",
+  "fact.ready_ms": "VM bereit nach (ms)",
+  "fact.actions": "Aktionen",
+  "fact.reason": "Grund"
 }
