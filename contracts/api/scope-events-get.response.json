@@ -18,6 +18,10 @@
     },
     "head": {
       "$ref": "../common.json#/$defs/seq"
+    },
+    "next_before": {
+      "$ref": "../common.json#/$defs/next_after",
+      "description": "only with before (KOR-44): the smallest returned scope_seq while older matching events exist, else null"
     }
   },
   "required": [

@@ -77,6 +77,29 @@ def test_read_paginates(scene: Scene) -> None:
     assert _seqs(scene.read(scene.reader, after="6")) == []
 
 
+def test_read_newest_first(scene: Scene) -> None:
+    filled = _fill(scene)
+    page = scene.read(scene.reader, limit="2", before="7")
+    assert _seqs(page) == [6, 5]
+    assert page.json() | {"events": []} == {"events": [], "next_after": None, "head": 6, "next_before": 5}
+    page = scene.read(scene.reader, limit="2", before="5")
+    assert (_seqs(page), page.json()["next_before"]) == ([3, 2], 2)
+    page = scene.read(scene.reader, limit="2", before="2")
+    assert (_seqs(page), page.json()["next_before"]) == ([1], None)
+    assert _seqs(scene.read(scene.reader, before="1")) == []
+    assert _seqs(scene.read(scene.reader, before="0")) == []
+    # the filters and the watched kinds apply as with `after`
+    assert _seqs(scene.read(scene.reader, before="7", kinds="session.terminal,prompt")) == [6, 4, 2]
+    assert _seqs(scene.read(scene.reader, before="7", task=filled["task"])) == [3, 2]
+    assert "next_before" not in scene.read(scene.reader).json()
+    both = scene.read(scene.reader, before="7", after="1")
+    assert (both.status_code, both.json()) == (400, {"error": "request_invalid"})
+    invalid = scene.world.hub.client(scene.reader.browser.key).get(
+        f"/v1/scopes/{scene.wg}/events", params={"before": "x"}, extensions={"contract": False}
+    )
+    assert (invalid.status_code, invalid.json()) == (400, {"error": "request_invalid"})
+
+
 def test_read_org_scope_and_empty_scopes(scene: Scene) -> None:
     org = scene.read(scene.writer, scene.org)
     assert [item["event"]["header"]["kind"] for item in org.json()["events"]] == [

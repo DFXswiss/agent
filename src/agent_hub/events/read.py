@@ -7,7 +7,10 @@ in ascending `scope_seq` after a cursor, with the optional filters `kinds`, `tas
 - a watched kind (`agent_hub.events.watched`: `session.terminal`, `browser.action`) is returned only when `kinds`
   lists it (ADR-016, ADR-085: terminal output and the browser record are read on demand);
 - `limit` events at most; `next_after` is the `scope_seq` of the last returned event when further matching events
-  exist, else None; `head` is the scope's current `scope_seq` (0 while it has no event).
+  exist, else None; `head` is the scope's current `scope_seq` (0 while it has no event);
+- newest first (`before`, KOR-44; instead of `after`): the `limit` matching events below `before` in descending
+  `scope_seq`, and `next_before` the smallest returned `scope_seq` when older matching events exist, else None (a
+  long record such as a browser's is read page by page from its end).
 
 Every event is returned exactly as stored: the canonical header text, `ct` and `sig` (b64u), with the hub's
 `scope_seq` and `received_at`. The hub never decrypts; readers verify (04-crypto.md section 5.12).
@@ -47,9 +50,14 @@ class EventPage:
     events: list[dict[str, Any]]
     next_after: int | None
     head: int
+    next_before: int | None = None
+    backwards: bool = False
 
     def to_json(self) -> dict[str, Any]:
-        return {"events": self.events, "next_after": self.next_after, "head": self.head}
+        body: dict[str, Any] = {"events": self.events, "next_after": self.next_after, "head": self.head}
+        if self.backwards:
+            body["next_before"] = self.next_before
+        return body
 
 
 def scope_of(connection: Connection, scope_id: UUID) -> Scope | None:
@@ -83,10 +91,12 @@ def read_events(
     task: UUID | None = None,
     session: UUID | None = None,
     ref: str | None = None,
+    before: int | None = None,
 ) -> EventPage:
-    """The events of the scope after `after` (module docstring)."""
-    clauses = ["scope_id = %s", "scope_seq > %s"]
-    params: list[Any] = [scope_id, after]
+    """The events of the scope after `after`, or newest first below `before` (module docstring)."""
+    backwards = before is not None
+    clauses = ["scope_id = %s", "scope_seq < %s" if backwards else "scope_seq > %s"]
+    params: list[Any] = [scope_id, before if backwards else after]
     if kinds is None:
         clauses.append("kind <> ALL(%s)")
         params.append(sorted(watched.KINDS))
@@ -101,9 +111,12 @@ def read_events(
     rows = connection.execute(
         "SELECT scope_seq, received_at, header_text, ct, sig FROM hub.event WHERE "
         + " AND ".join(clauses)
-        + " ORDER BY scope_seq LIMIT %s",
+        + (" ORDER BY scope_seq DESC LIMIT %s" if backwards else " ORDER BY scope_seq LIMIT %s"),
         params,
     ).fetchall()
     page = [stored_json(row) for row in rows[:limit]]
     more = len(rows) > limit
-    return EventPage(page, page[-1]["scope_seq"] if more else None, head(connection, scope_id))
+    last = page[-1]["scope_seq"] if more else None
+    if backwards:
+        return EventPage(page, None, head(connection, scope_id), next_before=last, backwards=True)
+    return EventPage(page, last, head(connection, scope_id))

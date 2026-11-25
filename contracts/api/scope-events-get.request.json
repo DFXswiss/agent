@@ -8,6 +8,10 @@
     "after": {
       "$ref": "../common.json#/$defs/q_seq"
     },
+    "before": {
+      "$ref": "../common.json#/$defs/q_seq",
+      "description": "newest first: the events below this scope_seq in descending order (KOR-44); not together with after (400 request_invalid)"
+    },
     "limit": {
       "$ref": "../common.json#/$defs/q_limit_log"
     },

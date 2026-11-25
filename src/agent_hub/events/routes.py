@@ -6,7 +6,8 @@
   (`agent_hub.events.notify.announce`: live frames, device hints, the signal `event.appended`).
 - `GET /v1/scopes/{scope_id}/events` (browser; `org:member` on an org scope, `wg:read` on a workgroup scope; an
   unknown or foreign scope is `404 not_found`): `?after=&limit=&kinds=a,b&task=&session=&ref=` through
-  `agent_hub.events.read.read_events`; read log `read.scope.events`.
+  `agent_hub.events.read.read_events`, or newest first with `before=` instead of `after=` (both: `400
+  request_invalid`; the answer adds `next_before`, KOR-44); read log `read.scope.events`.
 """
 
 from __future__ import annotations
@@ -109,6 +110,7 @@ def scope_page(
     scope_id: UUID,
     *,
     after: int,
+    before: int | None = None,
     limit: int,
     kinds: frozenset[str] | None,
     filters: dict[str, UUID | None],
@@ -135,6 +137,7 @@ def scope_page(
             task=filters["task"],
             session=filters["session"],
             ref=None if ref is None else str(ref),
+            before=before,
         )
     return page.to_json()
 
@@ -148,12 +151,15 @@ async def get_scope_events(
     scope_id: str,
     *,
     after: str | None = None,
+    before: str | None = None,
     limit: str | None = None,
     kinds: str | None = None,
     task: str | None = None,
     session: str | None = None,
     ref: str | None = None,
 ) -> dict[str, Any]:
+    if after is not None and before is not None:
+        raise HubError("request_invalid")
     try:
         scope = parse_uuid(scope_id)
     except ValueError:
@@ -168,6 +174,7 @@ async def get_scope_events(
         cast(UUID, principal.principal_id),
         cast(UUID, scope),
         after=parse_count(after, 0, 0, MAX_SEQ),
+        before=None if before is None else parse_count(before, 0, 0, MAX_SEQ),
         limit=parse_count(limit, read.PAGE_DEFAULT, 1, read.PAGE_MAX),
         kinds=parse_kinds(kinds),
         filters=filters,

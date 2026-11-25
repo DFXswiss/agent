@@ -29,6 +29,10 @@ ADR-027 section 3. Additive only (ADR-085, 13-work-vm.md section 13, 04-crypto.m
   `browser {session_id}` (`ws/device/browser.json`, `ws/device/objects.json`).
 - `audit/read.stream.browser.json`, `enums/audit-actions.json`: `read.stream.browser`, one row per watched session
   of an opened stream.
+- `api/scope-events-get.{request,response}.json`: newest-first paging of `GET /v1/scopes/{scope_id}/events` with
+  `before=<scope_seq>` (not together with `after`, `400 request_invalid`): the `limit` matching events below it in
+  descending order and `next_before` (the smallest returned `scope_seq` while older ones exist, else null), so a long
+  browser record is read page by page from its end. Without `before` the answer is unchanged.
 - `vectors/browserframe.json` (new section of `agent_hub.crypto.vectors`); `vectors/log-events.json` with the two
   kinds.
 

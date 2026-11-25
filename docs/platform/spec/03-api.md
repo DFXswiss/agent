@@ -135,7 +135,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | Endpoint | Right | Request → Response |
 |---|---|---|
 | `POST /v1/events` | per kind (`04-crypto.md` §4.3) | `{events:[{event,notify?:bool}]}` (≤ 100) → `{results:[{id,scope_id,scope_seq,replayed}]}`; all-or-nothing; `author` = the caller (an own-identity agent: the agent; stored with `author_kind` `agent`, audited as its user) |
-| `GET /v1/scopes/{scope_id}/events` | org:member (org scope) / wg:read (wg scope) | `?after=&limit=&kinds=a,b&task=&session=&ref=` → `{events:[{scope_seq,received_at,event}],next_after,head}`; the watched kinds `session.terminal` and `browser.action` only when listed in `kinds` |
+| `GET /v1/scopes/{scope_id}/events` | org:member (org scope) / wg:read (wg scope) | `?after=&limit=&kinds=a,b&task=&session=&ref=` → `{events:[{scope_seq,received_at,event}],next_after,head}`; newest first with `before=<scope_seq>` instead of `after` (both: `400 request_invalid`; KOR-44): the `limit` matching events below it in descending order plus `next_before` (the smallest returned `scope_seq` while older ones exist, else null); the watched kinds `session.terminal` and `browser.action` only when listed in `kinds` |
 
 ### 4.5 Workgroups and devices
 
