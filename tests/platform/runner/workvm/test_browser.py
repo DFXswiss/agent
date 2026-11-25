@@ -261,8 +261,21 @@ def test_a_vm_that_does_not_start_fails_the_open_and_ends_the_countdown(world: W
     assert browser_rows(world) == []
 
 
+def test_a_browser_that_answers_its_second_selftest_opens(world: World) -> None:
+    world.browser.probes.append(ShellResult(1, b"", False))
+
+    async def body(vms: WorkVms) -> None:
+        await make(vms).open(ctx({}))
+
+    world.run(body)
+    [vm] = vm_rows(world)
+    assert vm["state"] == "running"
+    assert [call for _vm, call in world.shell_calls].count("browser.selftest") == 2
+    assert states(world) == [("starting", None), ("open", None)]
+
+
 def test_a_browser_that_does_not_answer_its_selftest_fails_the_open_and_its_vm_goes(world: World) -> None:
-    world.browser.probes.append(ShellResult(0, b'{"ok": 1}', False))
+    world.browser.probes += [ShellResult(0, b'{"ok": 1}', False), ShellResult(0, b'{"ok": 1}', False)]
 
     async def body(vms: WorkVms) -> None:
         await make(vms).open(ctx({}))

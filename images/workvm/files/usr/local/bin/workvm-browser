@@ -34,6 +34,7 @@ const DIRECT_START = process.env.WORKVM_BROWSER_START === 'direct';
 const UNIT = 'workvm-browser';
 const VIEWPORT = { width: 1280, height: 800 };
 const START_WAIT_MS = 15000;
+const SELFTEST_START_WAIT_MS = 40000;
 const CALL_MS = 25000;
 const STATE_RESERVE_MS = 4000;
 const NAVIGATION_MS = 15000;
@@ -994,10 +995,10 @@ function startDaemon() {
   );
 }
 
-async function ensureDaemon() {
+async function ensureDaemon(waitMs = START_WAIT_MS) {
   if (await ping()) return;
   startDaemon();
-  const until = Date.now() + START_WAIT_MS;
+  const until = Date.now() + waitMs;
   while (Date.now() < until) {
     await sleep(200);
     if (await ping()) return;
@@ -1062,7 +1063,8 @@ async function streamClient(argv) {
 }
 
 async function selftest() {
-  await ensureDaemon();
+  // the first start of Chromium in a fresh VM may take longer under load; the runner's start probe allows 45 s
+  await ensureDaemon(SELFTEST_START_WAIT_MS);
   const answer = JSON.parse(await request({ tool: 'browser_navigate', arguments: { url: 'about:blank' } }));
   if (answer.ok !== true) throw new Error(answer.error || 'the browser did not open about:blank');
   process.stdout.write('{"ok":true}\n');

@@ -557,6 +557,9 @@ class Browsers:
         )
         try:
             ready = await self._probe(vm, START_PROBE_TIMEOUT)
+            if not ready:  # a first Chromium start under load can outlast the helper's own wait: once more
+                self.log(f"start_probe_failed workvm_id={vm.id} attempt=1")
+                ready = await self._probe(vm, START_PROBE_TIMEOUT)
         except BaseException:
             await self.workvms.delete(vm, reason="failed")
             raise
