@@ -1288,6 +1288,9 @@
         },
         {
           "$ref": "#/$defs/output_workvm_browse"
+        },
+        {
+          "$ref": "#/$defs/output_browser"
         }
       ],
       "description": "output of any platform tool"
@@ -2028,6 +2031,504 @@
       "minLength": 1,
       "maxLength": 135168,
       "pattern": "^agent\\.dfx\\.swiss instruction from: [^\\n\\r]+(\\n\\n(.|\\n)+)?$"
+    },
+    "browser_target": {
+      "type": "string",
+      "description": "a ref of the last snapshot (e12, f1e3) or a Playwright selector",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "input_browser_navigate": {
+      "type": "object",
+      "description": "exactly one of url, history and query (checked by the runner: params_invalid)",
+      "properties": {
+        "url": {
+          "$ref": "../ops/objects.json#/$defs/browser_url"
+        },
+        "history": {
+          "type": "string",
+          "enum": [
+            "back",
+            "forward",
+            "reload"
+          ]
+        },
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "wait_until": {
+          "type": "string",
+          "enum": [
+            "load",
+            "domcontentloaded",
+            "networkidle"
+          ]
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "input_browser_snapshot": {
+      "$ref": "../common.json#/$defs/empty"
+    },
+    "input_browser_click": {
+      "type": "object",
+      "description": "target, or both x and y (a point of the 1280x800 viewport); checked by the runner",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/browser_target"
+        },
+        "x": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1279
+        },
+        "y": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 799
+        },
+        "double": {
+          "type": "boolean"
+        },
+        "button": {
+          "type": "string",
+          "enum": [
+            "left",
+            "right",
+            "middle"
+          ]
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "input_browser_hover": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/browser_target"
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "input_browser_type": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/browser_target"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "submit": {
+          "type": "boolean"
+        },
+        "clear": {
+          "type": "boolean",
+          "description": "empty the field first (default true)"
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "required": [
+        "target",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "input_browser_select": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/browser_target"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "minItems": 1,
+          "maxItems": 64
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "required": [
+        "target",
+        "values"
+      ],
+      "additionalProperties": false
+    },
+    "input_browser_press": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "required": [
+        "key"
+      ],
+      "additionalProperties": false
+    },
+    "input_browser_scroll": {
+      "type": "object",
+      "description": "with target: scroll it into view; else by dy pixels (default 600)",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/browser_target"
+        },
+        "dy": {
+          "type": "integer",
+          "minimum": -100000,
+          "maximum": 100000
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "input_browser_wait": {
+      "type": "object",
+      "description": "at least one of text, gone, url and ms (checked by the runner: params_invalid); timeout_ms default 10000",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "gone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "description": "a substring of the page URL"
+        },
+        "ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20000
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20000
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "input_browser_evaluate": {
+      "type": "object",
+      "properties": {
+        "expression": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "required": [
+        "expression"
+      ],
+      "additionalProperties": false
+    },
+    "input_browser_upload": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/browser_target"
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "../guest/objects.json#/$defs/rel_path"
+          },
+          "minItems": 1,
+          "maxItems": 16
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "required": [
+        "target",
+        "paths"
+      ],
+      "additionalProperties": false
+    },
+    "input_browser_dialog": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "accept",
+            "dismiss"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "input_browser_tabs": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "list",
+            "new",
+            "select",
+            "close"
+          ]
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "url": {
+          "$ref": "../ops/objects.json#/$defs/browser_url"
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "input_browser_download": {
+      "type": "object",
+      "description": "exactly one of target and url (checked by the runner: params_invalid); default path .browser/downloads/<file name>",
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/browser_target"
+        },
+        "url": {
+          "$ref": "../ops/objects.json#/$defs/browser_url"
+        },
+        "path": {
+          "$ref": "../guest/objects.json#/$defs/rel_path"
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "input_browser_screenshot": {
+      "type": "object",
+      "description": "PNG; default path .browser/screenshots/<browser_id>-<seq>.png",
+      "properties": {
+        "path": {
+          "$ref": "../guest/objects.json#/$defs/rel_path"
+        },
+        "full_page": {
+          "type": "boolean"
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "false: leave snapshot empty in the answer (default true)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "output_browser": {
+      "type": "object",
+      "description": "answer of every platform browser tool (13-work-vm.md section 13.4); a failed action is ok false with error",
+      "properties": {
+        "browser_id": {
+          "$ref": "../ops/objects.json#/$defs/browser_id"
+        },
+        "seq": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 2048
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notice": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 1024
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "tab": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "tabs": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 63
+              },
+              "url": {
+                "type": "string",
+                "maxLength": 8192
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "active": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "index",
+              "url",
+              "title",
+              "active"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "snapshot": {
+          "type": "string",
+          "maxLength": 24100
+        },
+        "result": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 24000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "file": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "$ref": "../guest/objects.json#/$defs/rel_path"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 255
+                },
+                "bytes": {
+                  "$ref": "../common.json#/$defs/count"
+                }
+              },
+              "required": [
+                "path",
+                "name",
+                "bytes"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "browser_id",
+        "seq",
+        "ok",
+        "error",
+        "notice",
+        "url",
+        "title",
+        "tab",
+        "tabs",
+        "snapshot",
+        "result",
+        "file"
+      ],
+      "additionalProperties": false
     }
   }
 }

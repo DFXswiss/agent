@@ -1,5 +1,5 @@
 {
-  "description": "Every event kind of 03-api.md section 10 with its body schema, the scopes and author kinds of enums/event-kinds.json (04-crypto.md section 4.3) and the ciphertext limit (E8). device_pull: delivered by GET /v1/device/pull (every kind except session.terminal and member.name, 03-api.md section 6.1, ADR-073).",
+  "description": "Every event kind of 03-api.md section 10 with its body schema, the scopes and author kinds of enums/event-kinds.json (04-crypto.md section 4.3) and the ciphertext limit (E8). device_pull: delivered by GET /v1/device/pull (every kind except the watched kinds session.terminal and browser.action and member.name, 03-api.md section 6.1, ADR-073).",
   "kinds": [
     {
       "kind": "org.profile",
@@ -284,6 +284,30 @@
     {
       "kind": "test.run",
       "body": "events/test.run.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
+      "kind": "browser.action",
+      "body": "events/browser.action.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "device"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": false
+    },
+    {
+      "kind": "browser.state",
+      "body": "events/browser.state.json",
       "scopes": [
         "wg"
       ],

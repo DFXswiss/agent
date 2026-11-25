@@ -117,6 +117,18 @@
       "dedupe": false
     },
     {
+      "type": "browser.open",
+      "params": "ops/browser.open.params.json",
+      "result": "ops/browser.open.result.json",
+      "dedupe": false
+    },
+    {
+      "type": "browser.close",
+      "params": "ops/browser.close.params.json",
+      "result": "ops/browser.close.result.json",
+      "dedupe": false
+    },
+    {
       "type": "human.question",
       "params": "ops/human.question.params.json",
       "result": "ops/human.question.result.json",

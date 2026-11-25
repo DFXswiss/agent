@@ -1,0 +1,7 @@
+{
+  "target": "e4",
+  "paths": [
+    "docs/invoice.pdf"
+  ],
+  "snapshot": false
+}

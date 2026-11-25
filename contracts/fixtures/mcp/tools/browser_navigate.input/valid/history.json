@@ -1,0 +1,4 @@
+{
+  "history": "back",
+  "wait_until": "networkidle"
+}

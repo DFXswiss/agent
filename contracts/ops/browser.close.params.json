@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ops/browser.close.params.json",
+  "title": "operation browser.close params",
+  "description": "Parameters of the operation type browser.close (03-api.md section 9, 13-work-vm.md section 13.1, ADR-085); additionalProperties false.",
+  "$ref": "objects.json#/$defs/params_browser_close"
+}

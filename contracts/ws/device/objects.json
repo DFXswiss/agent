@@ -302,6 +302,24 @@
         }
       ]
     },
+    "hint_browser": {
+      "type": "object",
+      "description": "someone watches the session's platform browser: start or keep posting live frames (13-work-vm.md section 13.6)",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "browser"
+        },
+        "session_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        }
+      },
+      "required": [
+        "type",
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
     "hint": {
       "description": "any hint frame from the hub",
       "oneOf": [
@@ -340,6 +358,9 @@
         },
         {
           "$ref": "#/$defs/hint_decertified"
+        },
+        {
+          "$ref": "#/$defs/hint_browser"
         }
       ]
     },

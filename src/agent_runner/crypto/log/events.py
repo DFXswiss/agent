@@ -113,6 +113,9 @@ KIND_RULES: tuple[KindRule, ...] = (
     KindRule("workvm.run", "wg", (DEVICE,), DEVICE_ASSIGNED_WG_SESSION, _SESSION),
     KindRule("workvm.state", "wg", (DEVICE,), DEVICE_ASSIGNED_WG_SESSION, _SESSION),
     KindRule("test.run", "wg", (DEVICE,), DEVICE_ASSIGNED_WG_SESSION, _SESSION),
+    # Platform browser (ADR-085, 13-work-vm.md section 13.5): every action of a session's browser and its lifecycle
+    KindRule("browser.action", "wg", (DEVICE,), DEVICE_ASSIGNED_WG_SESSION, _SESSION),
+    KindRule("browser.state", "wg", (DEVICE,), DEVICE_ASSIGNED_WG_SESSION, _SESSION),
 )
 _BY_KEY = {(rule.kind, rule.scope, author): rule for rule in KIND_RULES for author in rule.authors}
 

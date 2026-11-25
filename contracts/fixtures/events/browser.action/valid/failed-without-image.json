@@ -1,0 +1,18 @@
+{
+  "browser_id": "br-0123456789ab",
+  "seq": 4,
+  "tool": "browser_click",
+  "action": "click",
+  "target": "e12",
+  "text": null,
+  "url": "https://example.com/login",
+  "title": "Sign in",
+  "tab": 0,
+  "ok": false,
+  "error": "No element matches e99.",
+  "notice": null,
+  "at": "2026-11-25T12:00:00.000Z",
+  "duration_ms": 310,
+  "image": null,
+  "image_omitted": "unavailable"
+}

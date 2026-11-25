@@ -1,0 +1,19 @@
+{
+  "description": "Endpoints added by KOR-44 (ADR-085 section 6): the device posts the live frame of a session's platform browser while someone watches it; 03-api.md section 6.1.",
+  "rights": [
+    "device:session"
+  ],
+  "auth": [
+    "device"
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/v1/device/sessions/{session}/browser/live",
+      "rights": [
+        "device:session"
+      ],
+      "section": "6.1"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-browser-live.response.json",
+  "title": "POST /v1/device/sessions/{session}/browser/live response",
+  "description": "Body of a successful response to POST /v1/device/sessions/{session}/browser/live: the latest valid watch lease of the session (until) and the largest wished bandwidth among the valid leases (kbps); without a valid lease the answer is 409 not_watched.",
+  "type": "object",
+  "properties": {
+    "until": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "kbps": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 10000
+    }
+  },
+  "required": [
+    "until",
+    "kbps"
+  ],
+  "additionalProperties": false
+}

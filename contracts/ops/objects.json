@@ -1084,6 +1084,135 @@
       ],
       "additionalProperties": false
     },
+    "browser_id": {
+      "type": "string",
+      "description": "ID of a platform browser session (13-work-vm.md section 13.1)",
+      "pattern": "^br-[0-9a-f]{12}$"
+    },
+    "browser_url": {
+      "type": "string",
+      "description": "http(s) address",
+      "pattern": "^https?://[^\u0000- ]+$",
+      "maxLength": 4096
+    },
+    "browser_close_reason": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "browser_closed",
+            "browser_idle",
+            "session_ended",
+            "task_closed",
+            "credit_exhausted",
+            "restart",
+            "failed",
+            "vm_lost"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "why a browser session ended or its VM was replaced (13-work-vm.md section 13.2); null while open"
+    },
+    "params_browser_open": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "$ref": "#/$defs/browser_url"
+        },
+        "idle_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 3600
+        }
+      },
+      "additionalProperties": false
+    },
+    "params_browser_close": {
+      "$ref": "../common.json#/$defs/empty"
+    },
+    "result_browser_open": {
+      "type": "object",
+      "properties": {
+        "browser_id": {
+          "$ref": "#/$defs/browser_id"
+        },
+        "created": {
+          "type": "boolean",
+          "description": "false: the open browser session of the session was returned"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "open"
+          ]
+        },
+        "workvm_id": {
+          "$ref": "#/$defs/workvm_id"
+        },
+        "ready_ms": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "idle_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 3600
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "browser_id",
+        "created",
+        "state",
+        "workvm_id",
+        "ready_ms",
+        "idle_seconds",
+        "url",
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "result_browser_close": {
+      "type": "object",
+      "properties": {
+        "closed": {
+          "type": "boolean",
+          "description": "false: nothing was open (reason: how the last one ended, or null)"
+        },
+        "browser_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/browser_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "actions": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "reason": {
+          "$ref": "#/$defs/browser_close_reason"
+        }
+      },
+      "required": [
+        "closed",
+        "browser_id",
+        "actions",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
     "result": {
       "anyOf": [
         {
@@ -1124,6 +1253,12 @@
         },
         {
           "$ref": "#/$defs/result_test_run"
+        },
+        {
+          "$ref": "#/$defs/result_browser_open"
+        },
+        {
+          "$ref": "#/$defs/result_browser_close"
         },
         {
           "$ref": "#/$defs/result_github_list_issues"

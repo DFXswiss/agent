@@ -234,6 +234,7 @@ def test_journal_failure_reasons_are_the_closed_list(contracts: Contracts) -> No
 # ---------------------------------------------------------------------------------------------- MCP (03 8, 8.1)
 # 03-api.md section 8.1: tool -> argument fields | result fields (list results are objects with a named array,
 # decisions CTR-02: the named array is given after "=").
+BROWSER_ANSWER = "browser_id seq ok error notice url title tab tabs snapshot result file"
 SPEC_TOOLS = {
     "get_context": ("", "org workgroup task session rights limits api_version"),
     "list_workgroups": ("", "workgroups=id,name,is_default,my_access"),
@@ -263,9 +264,28 @@ SPEC_TOOLS = {
     "workvm_status": ("", "workvm jobs=job_id,command,state,exit_code,started_at,duration_ms"),
     "workvm_sync": ("direction path", "direction path files bytes deleted skipped"),
     "workvm_browse": ("url action selector text wait_ms path", "url final_url status title text screenshot job_id"),
+    # 13-work-vm.md section 13.4 (contracts/changes/KOR-44.md): the platform browser tools, answered through
+    # workvm.call; every one answers output_browser (its nested rows: SPEC_NESTED)
+    "browser_navigate": ("url history query wait_until snapshot", BROWSER_ANSWER),
+    "browser_snapshot": ("", BROWSER_ANSWER),
+    "browser_click": ("target x y double button snapshot", BROWSER_ANSWER),
+    "browser_hover": ("target snapshot", BROWSER_ANSWER),
+    "browser_type": ("target text submit clear snapshot", BROWSER_ANSWER),
+    "browser_select": ("target values snapshot", BROWSER_ANSWER),
+    "browser_press": ("key snapshot", BROWSER_ANSWER),
+    "browser_scroll": ("target dy snapshot", BROWSER_ANSWER),
+    "browser_wait": ("text gone url ms timeout_ms snapshot", BROWSER_ANSWER),
+    "browser_evaluate": ("expression snapshot", BROWSER_ANSWER),
+    "browser_upload": ("target paths snapshot", BROWSER_ANSWER),
+    "browser_dialog": ("action text snapshot", BROWSER_ANSWER),
+    "browser_tabs": ("action index url snapshot", BROWSER_ANSWER),
+    "browser_download": ("target url path snapshot", BROWSER_ANSWER),
+    "browser_screenshot": ("path full_page snapshot", BROWSER_ANSWER),
 }
-WORKVM_TOOLS = frozenset(
-    {"workvm_exec", "workvm_output", "workvm_kill", "workvm_status", "workvm_sync", "workvm_browse"}
+BROWSER_TOOLS = frozenset(tool for tool in SPEC_TOOLS if tool.startswith("browser_"))
+WORKVM_TOOLS = (
+    frozenset({"workvm_exec", "workvm_output", "workvm_kill", "workvm_status", "workvm_sync", "workvm_browse"})
+    | BROWSER_TOOLS
 )
 SPEC_TOOL_STATUS = "succeeded failed rejected duplicate denied pending"
 # 03-api.md section 8.1 and 12: upper limits of integer arguments (and the idempotency key length).
@@ -280,6 +300,11 @@ SPEC_TOOL_LIMITS = [
     ("workvm_output", "wait_seconds", 30),
     ("workvm_output", "limit", 32768),
     ("workvm_browse", "wait_ms", 30000),
+    ("browser_click", "x", 1279),
+    ("browser_click", "y", 799),
+    ("browser_wait", "ms", 20000),
+    ("browser_wait", "timeout_ms", 20000),
+    ("browser_tabs", "index", 63),
 ]
 TASK = "01a1ee56-5e00-7004-8f1b-340691d99f04"
 REQUIRED_ARGS: dict[str, dict[str, object]] = {
@@ -289,6 +314,7 @@ REQUIRED_ARGS: dict[str, dict[str, object]] = {
     "workvm_exec": {"command": "true"},
     "workvm_output": {"job_id": "j-0123456789ab"},
     "workvm_browse": {"url": "https://example.com/"},
+    "browser_tabs": {"action": "select"},
 }
 
 
@@ -344,6 +370,9 @@ SPEC_NESTED = {
     " subagent_max_total",
     ("mcp/objects.json", "/$defs/output_get_task/properties/sessions/items"): "id state depth parent_session_id",
     ("mcp/objects.json", "/$defs/output_get_task/properties/operations/items"): "id type state",
+    # 13-work-vm.md section 13.4 (KOR-44): the answer of every browser tool
+    ("mcp/objects.json", "/$defs/output_browser/properties/tabs/items"): "index url title active",
+    ("mcp/objects.json", "/$defs/output_browser/properties/file/anyOf/0"): "path name bytes",
     ("ops/objects.json", "/$defs/result_github_list_repositories/properties/repositories/items"): "repo default_branch"
     " private allowed",
     ("ops/objects.json", "/$defs/result_github_get_pull_request/properties/head"): "ref sha",
@@ -404,6 +433,27 @@ def test_tool_inputs_are_plain_objects(contracts: Contracts) -> None:
         assert definition["type"] == "object", tool
         assert definition["additionalProperties"] is False, tool
         assert not {"oneOf", "anyOf", "allOf"} & set(definition), tool
+
+
+def test_browser_tools_take_the_snapshot_switch_and_leave_their_choices_to_the_runner(contracts: Contracts) -> None:
+    """13-work-vm.md section 13.4: every browser tool but browser_snapshot takes `snapshot`; "exactly one of" and "at
+    least one of" cannot be a top-level oneOf/anyOf of a tool input (model API), so the runner checks them
+    (`params_invalid`) and the schema accepts each field alone."""
+    for tool in BROWSER_TOOLS - {"browser_snapshot"}:
+        assert "snapshot" in fields(contracts, f"mcp/tools/{tool}.input.json"), tool
+    for tool, sample in (
+        ("browser_navigate", {}),
+        ("browser_navigate", {"url": "https://example.com/", "history": "back"}),
+        ("browser_click", {"x": 3}),
+        ("browser_wait", {}),
+        ("browser_download", {}),
+    ):
+        contracts.validate(f"mcp/tools/{tool}.input.json", sample)
+    for tool in BROWSER_TOOLS:
+        assert load_json(CONTRACTS / "mcp" / "INDEX.json")["tools"][list(SPEC_TOOLS).index(tool)]["output"] == (
+            f"mcp/tools/{tool}.output.json"
+        )
+        assert contracts.schemas[f"mcp/tools/{tool}.output.json"]["$ref"] == "../objects.json#/$defs/output_browser"
 
 
 def test_whiteboard_task_id_rule_is_left_to_the_implementations(contracts: Contracts) -> None:
@@ -635,6 +685,14 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
         "",
         None,
     ),
+    # KOR-44 (ADR-085; 13-work-vm.md section 13.1)
+    "browser.open": (
+        "url idle_seconds",
+        "browser_id created state workvm_id ready_ms idle_seconds url title",
+        "",
+        None,
+    ),
+    "browser.close": ("", "closed browser_id actions reason", "", None),
     # KOR-39 (ADR-076 section 3)
     "human.question": ("question", "", "", None),
     "human.approval": ("question", "", "", None),

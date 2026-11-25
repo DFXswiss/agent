@@ -1,0 +1,14 @@
+{
+  "browser_id": "br-0123456789ab",
+  "operation_id": "019300c2-0000-7000-8000-0000000000c2",
+  "implicit": false,
+  "state": "open",
+  "workvm_id": "wvm-0123abcd",
+  "reason": null,
+  "url": "https://example.com/",
+  "actions": 0,
+  "ready_ms": 2400,
+  "idle_seconds": 600,
+  "opened_at": "2026-11-25T12:00:00.000Z",
+  "closed_at": null
+}

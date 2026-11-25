@@ -859,7 +859,22 @@
                     "workvm_kill",
                     "workvm_status",
                     "workvm_sync",
-                    "workvm_browse"
+                    "workvm_browse",
+                    "browser_navigate",
+                    "browser_snapshot",
+                    "browser_click",
+                    "browser_hover",
+                    "browser_type",
+                    "browser_select",
+                    "browser_press",
+                    "browser_scroll",
+                    "browser_wait",
+                    "browser_evaluate",
+                    "browser_upload",
+                    "browser_dialog",
+                    "browser_tabs",
+                    "browser_download",
+                    "browser_screenshot"
                   ]
                 },
                 {
@@ -1618,6 +1633,321 @@
             },
             "arguments": {
               "$ref": "../../mcp/objects.json#/$defs/input_workvm_browse"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_navigate"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_navigate"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_snapshot"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_snapshot"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_click"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_click"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_hover"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_hover"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_type"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_type"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_select"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_select"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_press"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_press"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_scroll"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_scroll"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_wait"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_wait"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_evaluate"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_evaluate"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_upload"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_upload"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_dialog"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_dialog"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_tabs"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_tabs"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_download"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_download"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "browser_screenshot"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_browser_screenshot"
             }
           },
           "required": [

@@ -1719,6 +1719,25 @@
       "owner": "KOR-33"
     },
     {
+      "method": "POST",
+      "path": "/v1/device/sessions/{session}/browser/live",
+      "name": "device-browser-live",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:session"
+      ],
+      "path_params": {
+        "session": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/device-browser-live.request.json",
+      "response": "api/device-browser-live.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-44"
+    },
+    {
       "method": "GET",
       "path": "/v1/device/ws",
       "name": "device-ws",

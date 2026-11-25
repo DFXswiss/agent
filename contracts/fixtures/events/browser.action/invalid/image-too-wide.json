@@ -1,0 +1,23 @@
+{
+  "browser_id": "br-0123456789ab",
+  "seq": 3,
+  "tool": "browser_type",
+  "action": "type",
+  "target": "e12",
+  "text": "••••",
+  "url": "https://example.com/login",
+  "title": "Sign in",
+  "tab": 0,
+  "ok": true,
+  "error": null,
+  "notice": null,
+  "at": "2026-11-25T12:00:00.000Z",
+  "duration_ms": 310,
+  "image": {
+    "type": "image/jpeg",
+    "width": 1280,
+    "height": 600,
+    "data": "_9j_4AAQSkZJRgABAQ"
+  },
+  "image_omitted": null
+}

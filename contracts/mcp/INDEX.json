@@ -184,6 +184,126 @@
       "output": "mcp/tools/workvm_browse.output.json",
       "read_audit": null,
       "via": "workvm.call"
+    },
+    {
+      "tool": "browser_navigate",
+      "name": "mcp__platform__browser_navigate",
+      "input": "mcp/tools/browser_navigate.input.json",
+      "output": "mcp/tools/browser_navigate.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_snapshot",
+      "name": "mcp__platform__browser_snapshot",
+      "input": "mcp/tools/browser_snapshot.input.json",
+      "output": "mcp/tools/browser_snapshot.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_click",
+      "name": "mcp__platform__browser_click",
+      "input": "mcp/tools/browser_click.input.json",
+      "output": "mcp/tools/browser_click.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_hover",
+      "name": "mcp__platform__browser_hover",
+      "input": "mcp/tools/browser_hover.input.json",
+      "output": "mcp/tools/browser_hover.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_type",
+      "name": "mcp__platform__browser_type",
+      "input": "mcp/tools/browser_type.input.json",
+      "output": "mcp/tools/browser_type.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_select",
+      "name": "mcp__platform__browser_select",
+      "input": "mcp/tools/browser_select.input.json",
+      "output": "mcp/tools/browser_select.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_press",
+      "name": "mcp__platform__browser_press",
+      "input": "mcp/tools/browser_press.input.json",
+      "output": "mcp/tools/browser_press.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_scroll",
+      "name": "mcp__platform__browser_scroll",
+      "input": "mcp/tools/browser_scroll.input.json",
+      "output": "mcp/tools/browser_scroll.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_wait",
+      "name": "mcp__platform__browser_wait",
+      "input": "mcp/tools/browser_wait.input.json",
+      "output": "mcp/tools/browser_wait.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_evaluate",
+      "name": "mcp__platform__browser_evaluate",
+      "input": "mcp/tools/browser_evaluate.input.json",
+      "output": "mcp/tools/browser_evaluate.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_upload",
+      "name": "mcp__platform__browser_upload",
+      "input": "mcp/tools/browser_upload.input.json",
+      "output": "mcp/tools/browser_upload.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_dialog",
+      "name": "mcp__platform__browser_dialog",
+      "input": "mcp/tools/browser_dialog.input.json",
+      "output": "mcp/tools/browser_dialog.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_tabs",
+      "name": "mcp__platform__browser_tabs",
+      "input": "mcp/tools/browser_tabs.input.json",
+      "output": "mcp/tools/browser_tabs.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_download",
+      "name": "mcp__platform__browser_download",
+      "input": "mcp/tools/browser_download.input.json",
+      "output": "mcp/tools/browser_download.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
+    },
+    {
+      "tool": "browser_screenshot",
+      "name": "mcp__platform__browser_screenshot",
+      "input": "mcp/tools/browser_screenshot.input.json",
+      "output": "mcp/tools/browser_screenshot.output.json",
+      "read_audit": null,
+      "via": "workvm.call"
     }
   ],
   "hooks": [

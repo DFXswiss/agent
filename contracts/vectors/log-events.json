@@ -3580,6 +3580,32 @@
         "kind": "test.run",
         "right": "device_assigned_wg_session",
         "scope": "wg"
+      },
+      {
+        "authors": [
+          "device"
+        ],
+        "header": {
+          "session": "set",
+          "task": "set",
+          "wg": "scope_id"
+        },
+        "kind": "browser.action",
+        "right": "device_assigned_wg_session",
+        "scope": "wg"
+      },
+      {
+        "authors": [
+          "device"
+        ],
+        "header": {
+          "session": "set",
+          "task": "set",
+          "wg": "scope_id"
+        },
+        "kind": "browser.state",
+        "right": "device_assigned_wg_session",
+        "scope": "wg"
       }
     ],
     "notify_allowed": [

@@ -481,6 +481,12 @@
         },
         {
           "$ref": "#/$defs/frame_attention"
+        },
+        {
+          "$ref": "#/$defs/frame_browser_action"
+        },
+        {
+          "$ref": "#/$defs/frame_browser_live"
         }
       ]
     },
@@ -517,6 +523,76 @@
         },
         "data": {
           "$ref": "#/$defs/data_community"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "data_browser_action": {
+      "type": "object",
+      "properties": {
+        "scope_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "scope_seq": {
+          "$ref": "../../common.json#/$defs/positive"
+        },
+        "event": {
+          "$ref": "../../events/objects.json#/$defs/event_browser_action"
+        }
+      },
+      "required": [
+        "scope_id",
+        "scope_seq",
+        "event"
+      ],
+      "additionalProperties": false
+    },
+    "data_browser_live": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "frame": {
+          "$ref": "../../common.json#/$defs/browser_frame"
+        }
+      },
+      "required": [
+        "session_id",
+        "frame"
+      ],
+      "additionalProperties": false
+    },
+    "frame_browser_action": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "browser_action"
+        },
+        "data": {
+          "$ref": "#/$defs/data_browser_action"
+        }
+      },
+      "required": [
+        "event",
+        "data"
+      ],
+      "additionalProperties": false
+    },
+    "frame_browser_live": {
+      "type": "object",
+      "properties": {
+        "event": {
+          "type": "string",
+          "const": "browser_live"
+        },
+        "data": {
+          "$ref": "#/$defs/data_browser_live"
         }
       },
       "required": [

@@ -381,6 +381,321 @@
         "arguments"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_navigate"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_navigate"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_snapshot"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_snapshot"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_click"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_click"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_hover"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_hover"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_type"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_type"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_select"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_select"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_press"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_press"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_scroll"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_scroll"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_wait"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_wait"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_evaluate"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_evaluate"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_upload"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_upload"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_dialog"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_dialog"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_tabs"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_tabs"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_download"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_download"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "browser_screenshot"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_browser_screenshot"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
     }
   ]
 }

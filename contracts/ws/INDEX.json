@@ -61,6 +61,14 @@
         {
           "type": "attention",
           "data": "ws/sse/attention.json"
+        },
+        {
+          "type": "browser_action",
+          "data": "ws/sse/browser_action.json"
+        },
+        {
+          "type": "browser_live",
+          "data": "ws/sse/browser_live.json"
         }
       ],
       "from_client": []
@@ -117,6 +125,10 @@
         {
           "type": "decertified",
           "data": "ws/device/decertified.json"
+        },
+        {
+          "type": "browser",
+          "data": "ws/device/browser.json"
         }
       ],
       "from_client": [

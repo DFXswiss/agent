@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-browser-live.request.json",
+  "title": "POST /v1/device/sessions/{session}/browser/live request",
+  "description": "Body of POST /v1/device/sessions/{session}/browser/live (03-api.md section 6.1, 13-work-vm.md section 13.6): the latest live frame of the session's platform browser (04-crypto.md section 4.13); without frame the request only asks for the watch lease.",
+  "type": "object",
+  "properties": {
+    "frame": {
+      "$ref": "../common.json#/$defs/browser_frame"
+    }
+  },
+  "additionalProperties": false
+}

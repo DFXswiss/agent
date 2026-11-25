@@ -1,0 +1,10 @@
+{
+  "browser_id": "br-0123456789ab",
+  "created": true,
+  "state": "open",
+  "workvm_id": "wvm-0123abcd",
+  "ready_ms": 2400,
+  "idle_seconds": 600,
+  "url": "https://example.com/login",
+  "title": "Sign in"
+}

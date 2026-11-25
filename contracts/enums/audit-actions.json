@@ -798,6 +798,10 @@
       "group": "read"
     },
     {
+      "action": "read.stream.browser",
+      "group": "read"
+    },
+    {
       "action": "event.append_batch",
       "group": "event"
     },

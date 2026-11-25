@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ws/sse/browser_action.json",
+  "title": "stream frame browser_action",
+  "description": "Data of the stream frame browser_action of GET /v1/stream (03-api.md section 5): a browser.action event of a session watched with browser= (13-work-vm.md section 13.6).",
+  "$ref": "objects.json#/$defs/data_browser_action"
+}

@@ -1,0 +1,25 @@
+{
+  "browser_id": "br-0123456789ab",
+  "seq": 9,
+  "ok": true,
+  "error": null,
+  "notice": null,
+  "url": "https://example.com/login",
+  "title": "Sign in",
+  "tab": 0,
+  "tabs": [
+    {
+      "index": 0,
+      "url": "https://example.com/login",
+      "title": "Sign in",
+      "active": true
+    }
+  ],
+  "snapshot": "- heading \"Sign in\" [ref=e1]\n- textbox \"E-mail\" [ref=e7]",
+  "result": null,
+  "file": {
+    "path": ".browser/downloads/report.csv",
+    "name": "report.csv",
+    "bytes": 1832
+  }
+}

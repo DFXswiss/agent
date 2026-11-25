@@ -1,0 +1,6 @@
+{
+  "target": "e4",
+  "paths": [
+    "/etc/passwd"
+  ]
+}

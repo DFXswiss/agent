@@ -73,7 +73,9 @@
             "platform.read",
             "workvm.run",
             "workvm.state",
-            "test.run"
+            "test.run",
+            "browser.action",
+            "browser.state"
           ]
         },
         "ref": {
@@ -224,6 +226,108 @@
         },
         "ct": {
           "$ref": "#/$defs/ct_terminal"
+        },
+        "sig": {
+          "$ref": "../common.json#/$defs/b64u_64"
+        }
+      },
+      "required": [
+        "header",
+        "ct",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "header_browser_action": {
+      "type": "object",
+      "description": "event header of kind browser.action (a watched kind, 13-work-vm.md section 13.6)",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "alg": {
+          "type": "string",
+          "const": "A256GCM-HKDF"
+        },
+        "id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "org": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "scope": {
+          "type": "string",
+          "const": "wg"
+        },
+        "scope_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "epoch": {
+          "$ref": "../common.json#/$defs/epoch"
+        },
+        "wg": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "task": {
+          "$ref": "../common.json#/$defs/uuid_or_empty"
+        },
+        "session": {
+          "$ref": "../common.json#/$defs/uuid_or_empty"
+        },
+        "author": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "kind": {
+          "type": "string",
+          "const": "browser.action"
+        },
+        "ref": {
+          "$ref": "../common.json#/$defs/uuid_or_empty"
+        },
+        "ts": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "lh": {
+          "$ref": "../common.json#/$defs/seq"
+        },
+        "salt": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        },
+        "nonce": {
+          "$ref": "../common.json#/$defs/b64u_12"
+        }
+      },
+      "required": [
+        "v",
+        "alg",
+        "id",
+        "org",
+        "scope",
+        "scope_id",
+        "epoch",
+        "wg",
+        "task",
+        "session",
+        "author",
+        "kind",
+        "ref",
+        "ts",
+        "lh",
+        "salt",
+        "nonce"
+      ],
+      "additionalProperties": false
+    },
+    "event_browser_action": {
+      "type": "object",
+      "description": "event of kind browser.action (the stream frame browser_action)",
+      "properties": {
+        "header": {
+          "$ref": "#/$defs/header_browser_action"
+        },
+        "ct": {
+          "$ref": "#/$defs/ct"
         },
         "sig": {
           "$ref": "../common.json#/$defs/b64u_64"
@@ -1127,6 +1231,54 @@
             },
             "type": {
               "type": "string",
+              "const": "browser.open"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_browser_open"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "browser.close"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_browser_close"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
               "const": "human.question"
             },
             "params": {
@@ -1780,6 +1932,291 @@
         "log",
         "tail",
         "reason"
+      ],
+      "additionalProperties": false
+    },
+    "body_browser_action": {
+      "type": "object",
+      "description": "one tool call of a platform browser session with the picture after it (13-work-vm.md section 13.5, ADR-085); text of a password field is ••••",
+      "properties": {
+        "browser_id": {
+          "$ref": "../ops/objects.json#/$defs/browser_id"
+        },
+        "seq": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "tool": {
+          "type": "string",
+          "enum": [
+            "browser_navigate",
+            "browser_snapshot",
+            "browser_click",
+            "browser_hover",
+            "browser_type",
+            "browser_select",
+            "browser_press",
+            "browser_scroll",
+            "browser_wait",
+            "browser_evaluate",
+            "browser_upload",
+            "browser_dialog",
+            "browser_tabs",
+            "browser_download",
+            "browser_screenshot"
+          ]
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 1024
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 1024
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 8192
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "tab": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 2048
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notice": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 1024
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "duration_ms": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "type": "object",
+              "description": "the viewport after the action: JPEG, at most 960 px wide and 100 KiB decoded",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "image/jpeg"
+                },
+                "width": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 960
+                },
+                "height": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 16384
+                },
+                "data": {
+                  "type": "string",
+                  "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+                  "minLength": 1,
+                  "maxLength": 136534
+                }
+              },
+              "required": [
+                "type",
+                "width",
+                "height",
+                "data"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image_omitted": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "too_large",
+                "unavailable"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "browser_id",
+        "seq",
+        "tool",
+        "action",
+        "target",
+        "text",
+        "url",
+        "title",
+        "tab",
+        "ok",
+        "error",
+        "notice",
+        "at",
+        "duration_ms",
+        "image",
+        "image_omitted"
+      ],
+      "additionalProperties": false
+    },
+    "body_browser_state": {
+      "type": "object",
+      "description": "the lifecycle of a platform browser session: starting (before the VM), open, restarted (fresh VM after a failure, reason vm_lost or restart), closed with its reason (13-work-vm.md section 13.5, ADR-085)",
+      "properties": {
+        "browser_id": {
+          "$ref": "../ops/objects.json#/$defs/browser_id"
+        },
+        "operation_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "implicit": {
+          "type": "boolean",
+          "description": "opened by a browser tool call without browser.open (operation_id null)"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "starting",
+            "open",
+            "restarted",
+            "closed"
+          ]
+        },
+        "workvm_id": {
+          "anyOf": [
+            {
+              "$ref": "../ops/objects.json#/$defs/workvm_id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "$ref": "../ops/objects.json#/$defs/browser_close_reason"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 8192
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "actions": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "ready_ms": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/count"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "idle_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 3600
+        },
+        "opened_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "closed_at": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "browser_id",
+        "operation_id",
+        "implicit",
+        "state",
+        "workvm_id",
+        "reason",
+        "url",
+        "actions",
+        "ready_ms",
+        "idle_seconds",
+        "opened_at",
+        "closed_at"
       ],
       "additionalProperties": false
     },

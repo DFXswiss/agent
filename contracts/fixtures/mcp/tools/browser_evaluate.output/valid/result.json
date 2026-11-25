@@ -1,0 +1,21 @@
+{
+  "browser_id": "br-0123456789ab",
+  "seq": 4,
+  "ok": true,
+  "error": null,
+  "notice": null,
+  "url": "https://example.com/login",
+  "title": "Sign in",
+  "tab": 0,
+  "tabs": [
+    {
+      "index": 0,
+      "url": "https://example.com/login",
+      "title": "Sign in",
+      "active": true
+    }
+  ],
+  "snapshot": "",
+  "result": "\"Sign in\"",
+  "file": null
+}

@@ -21,6 +21,7 @@ from tests.platform.contracts.harness import CONTRACTS, ID_BASE, Contracts, Stri
 # 03-api.md section 6.2 (hints from hub to device, in the order of the specification).
 SPEC_HINTS = (
     "hello reconcile session.start session.control prompt events log wraps credentials request ping decertified"
+    " browser"  # 13-work-vm.md section 13.6 (KOR-44)
 )
 # 03-api.md section 5 (frames of GET /v1/stream).
 # 03-api.md section 5 plus `community` of 14-community.md section 5 (KOR-26) and `attention` of section 4.6.0
@@ -28,6 +29,7 @@ SPEC_HINTS = (
 SPEC_SSE_FRAMES = (
     "hello event terminal task session operation log wraps notification device_response metrics community resync"
     " attention"
+    " browser_action browser_live"  # 13-work-vm.md section 13.6 (KOR-44)
 )
 # 04-crypto.md section 4.7 (membership-log entry types) and section 4.8 (platform-log entry types).
 SPEC_MEMBERSHIP_TYPES = (
@@ -88,7 +90,7 @@ def schema_names(directory: str) -> set[str]:
 def test_device_rows_are_complete(index: dict[str, Any], contracts: Contracts) -> None:
     assert "CTR-03" not in index["pending_owners"]
     rows = [e for e in index["endpoints"] if e["owner"] == "CTR-03"]
-    later = {e["path"] for e in index["endpoints"] if e["owner"] == "KOR-33"}
+    later = {e["path"] for e in index["endpoints"] if e["owner"] in ("KOR-33", "KOR-44")}
     assert {e["path"] for e in rows} | later >= {
         e["path"] for e in index["endpoints"] if e["path"].startswith("/v1/device/")
     }
@@ -168,9 +170,9 @@ def test_event_kinds_table(contracts: Contracts) -> None:
         assert row["authors"] == sorted({a for m in rows for a in m["authors"]}), row
         limits = matrix["size_limits"]
         assert row["max_ct_bytes"] == limits.get(row["kind"], limits["default_ct_bytes"]), row
-        # devices pull every kind but the terminal and the admin-given names (ADR-073: the sessions name members from
-        # their own profiles)
-        assert row["device_pull"] is (row["kind"] not in {"session.terminal", "member.name"}), row
+        # devices pull every kind but the watched kinds and the admin-given names (ADR-073: the sessions name members
+        # from their own profiles; 13-work-vm.md section 13.6: the watched kinds)
+        assert row["device_pull"] is (row["kind"] not in {"session.terminal", "browser.action", "member.name"}), row
         assert row["body"] == f"events/{row['kind']}.json"
         assert row["body"] in contracts.schemas
     bodies = schema_names("events") - {"events/objects.json", "events/kinds.json"}
@@ -435,6 +437,22 @@ def test_dedupe_vectors(contracts: Contracts) -> None:
         dedupe = {"epoch": 1, "tag": item["tag"]}
         request = load_json(CONTRACTS / "fixtures" / "api" / "device-operations.request" / "valid" / "basic.json")
         contracts.validate("api/device-operations.request.json", {**request, "dedupe": dedupe, "type": item["type"]})
+
+
+def test_browser_frame_vector(contracts: Contracts) -> None:
+    """04-crypto.md section 4.13: the frame of the vectors is a valid body of the live route and of the stream frame;
+    the schema's ct limits are the b64u lengths of 29 bytes and 512 KiB + 28 bytes."""
+    document = vector("browserframe.json")
+    frame = document["frame"]
+    contracts.validate("api/device-browser-live.request.json", {"frame": frame})
+    contracts.validate("ws/sse/browser_live.json", {"session_id": frame["session"], "frame": frame})
+    ct = defs(contracts, "common.json")["browser_frame"]["properties"]["ct"]
+    limits = document["limits"]
+    assert ct["minLength"] == -(-4 * limits["frame_ct_min"] // 3)
+    assert ct["maxLength"] == -(-4 * limits["frame_ct_max"] // 3)
+    for case in document["invalid"]:
+        if case["op"] == "check_frame" and case["error"] != "non_ascii":
+            assert def_errors(contracts, "common.json#/$defs/browser_frame", case["args"]["frame"]), case["name"]
 
 
 def test_statement_of_the_reference_is_valid(contracts: Contracts) -> None:

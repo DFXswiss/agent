@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/mcp/tools-list.result.json",
   "title": "tools/list result",
-  "description": "Result of tools/list: exactly the tools of 03-api.md section 8.1 and 13-work-vm.md section 3; inputSchema is the dereferenced mcp/tools/<tool>.input.json.",
+  "description": "Result of tools/list: exactly the tools of 03-api.md section 8.1 and 13-work-vm.md sections 3 and 13.4; inputSchema is the dereferenced mcp/tools/<tool>.input.json.",
   "type": "object",
   "properties": {
     "tools": {
@@ -30,7 +30,22 @@
               "workvm_kill",
               "workvm_status",
               "workvm_sync",
-              "workvm_browse"
+              "workvm_browse",
+              "browser_navigate",
+              "browser_snapshot",
+              "browser_click",
+              "browser_hover",
+              "browser_type",
+              "browser_select",
+              "browser_press",
+              "browser_scroll",
+              "browser_wait",
+              "browser_evaluate",
+              "browser_upload",
+              "browser_dialog",
+              "browser_tabs",
+              "browser_download",
+              "browser_screenshot"
             ]
           },
           "description": {

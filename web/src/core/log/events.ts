@@ -102,6 +102,8 @@ export const KIND_RULES: readonly KindRule[] = [
   rule('workvm.run', 'wg', [DEVICE], DEVICE_ASSIGNED_WG_SESSION, SESSION),
   rule('workvm.state', 'wg', [DEVICE], DEVICE_ASSIGNED_WG_SESSION, SESSION),
   rule('test.run', 'wg', [DEVICE], DEVICE_ASSIGNED_WG_SESSION, SESSION),
+  rule('browser.action', 'wg', [DEVICE], DEVICE_ASSIGNED_WG_SESSION, SESSION),
+  rule('browser.state', 'wg', [DEVICE], DEVICE_ASSIGNED_WG_SESSION, SESSION),
 ];
 const BY_KEY = new Map(KIND_RULES.flatMap((r) => r.authors.map((author) => [`${r.kind} ${r.scope} ${author}`, r])));
 

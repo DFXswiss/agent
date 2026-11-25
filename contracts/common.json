@@ -239,7 +239,8 @@
         "agent_gen_mismatch",
         "placement_forbidden",
         "placement_invalid",
-        "identity_forbidden"
+        "identity_forbidden",
+        "not_watched"
       ],
       "description": "codes the hub sends (enums/error-codes.json)"
     },
@@ -520,7 +521,9 @@
         "platform.read",
         "workvm.run",
         "workvm.state",
-        "test.run"
+        "test.run",
+        "browser.action",
+        "browser.state"
       ]
     },
     "credential_kind": {
@@ -992,7 +995,9 @@
             "platform.read",
             "workvm.run",
             "workvm.state",
-            "test.run"
+            "test.run",
+            "browser.action",
+            "browser.state"
           ]
         },
         "ref": {
@@ -3749,6 +3754,57 @@
         "pub",
         "gen",
         "cert"
+      ],
+      "additionalProperties": false
+    },
+    "browser_frame": {
+      "type": "object",
+      "description": "live frame of a platform browser session (04-crypto.md section 4.13, ADR-085 section 6): clear except ct, no signature; seq is the frame counter of the browser session (not the action seq)",
+      "properties": {
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "browser": {
+          "type": "string",
+          "pattern": "^br-[0-9a-f]{12}$"
+        },
+        "session": {
+          "$ref": "#/$defs/uuid"
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid"
+        },
+        "epoch": {
+          "$ref": "#/$defs/epoch"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "salt": {
+          "$ref": "#/$defs/b64u_32"
+        },
+        "ct": {
+          "type": "string",
+          "description": "b64u(nonce12 || AES-256-GCM(k_frame, jpeg, AAD)), 29 bytes to 512 KiB + 28 bytes decoded",
+          "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+          "minLength": 39,
+          "maxLength": 699088
+        }
+      },
+      "required": [
+        "v",
+        "browser",
+        "session",
+        "wg",
+        "epoch",
+        "seq",
+        "ts",
+        "salt",
+        "ct"
       ],
       "additionalProperties": false
     }

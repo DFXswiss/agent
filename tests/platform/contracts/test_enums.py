@@ -51,7 +51,9 @@ SPEC_ERRORS: dict[int, str] = {
     # ADR-082 (KOR-57)
     " client_outdated agent_batches_incomplete agent_gen_mismatch"
     # 14-community.md section 4.1 (KOR-26)
-    " community_not_member community_epoch_exists community_no_key placement_invalid",
+    " community_not_member community_epoch_exists community_no_key placement_invalid"
+    # 13-work-vm.md section 13.6 (contracts/changes/KOR-44.md): no valid watch lease for live frames
+    " not_watched",
     410: "invite_expired",
     413: "quota_exceeded",  # KOR-33 (ADR-072 section 6): a context checkpoint over its quota
     429: "rate_limited",
@@ -151,6 +153,8 @@ DECIDED_AUDIT = (
     " agent.register"
     # ADR-075 section 6
     " task.placement wg.placement"
+    # 13-work-vm.md section 13.6 (contracts/changes/KOR-44.md): watching a platform browser
+    " read.stream.browser"
 )
 # 12-billing.md sections 8 and 10 (contracts/changes/KOR-31.md): credit changes, USD/CHF rates and the export.
 KOR31_AUDIT = "credit.changed billing.fx_set billing.export"
@@ -205,13 +209,16 @@ SPEC_EVENT_MATRIX = [
     ("workvm.state", "wg", "device", "device_assigned_wg_session"),
     # ADR-080 section 1 (contracts/changes/KOR-43.md)
     ("test.run", "wg", "device", "device_assigned_wg_session"),
+    # ADR-085, 13-work-vm.md section 13.5 (contracts/changes/KOR-44.md)
+    ("browser.action", "wg", "device", "device_assigned_wg_session"),
+    ("browser.state", "wg", "device", "device_assigned_wg_session"),
 ]
 # 03-api.md section 10 (event bodies): every kind.
 SPEC_EVENT_KINDS = (
     "org.profile wg.profile member.profile member.name device.profile task.meta prompt whiteboard.entry whiteboard.edit"
     " whiteboard.delete settings.workgroup session.output session.tool session.hook session.file session.terminal"
     " session.status session.error operation.params operation.result platform.read workvm.run workvm.state"
-    " test.run"
+    " test.run browser.action browser.state"
 )
 
 

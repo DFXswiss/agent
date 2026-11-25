@@ -373,6 +373,32 @@
         "task": "set",
         "session": "set"
       }
+    },
+    {
+      "kind": "browser.action",
+      "scope": "wg",
+      "authors": [
+        "device"
+      ],
+      "right": "device_assigned_wg_session",
+      "header": {
+        "wg": "scope_id",
+        "task": "set",
+        "session": "set"
+      }
+    },
+    {
+      "kind": "browser.state",
+      "scope": "wg",
+      "authors": [
+        "device"
+      ],
+      "right": "device_assigned_wg_session",
+      "header": {
+        "wg": "scope_id",
+        "task": "set",
+        "session": "set"
+      }
     }
   ]
 }
