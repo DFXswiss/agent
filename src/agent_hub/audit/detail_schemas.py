@@ -180,6 +180,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "placement_forbidden",
                         "placement_invalid",
                         "identity_forbidden",
+                        "not_watched",
                     ],
                 }
             ],
@@ -418,6 +419,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "workvm.run",
                         "workvm.state",
                         "test.run",
+                        "browser.action",
+                        "browser.state",
                     ],
                 }
             ],
@@ -1234,6 +1237,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "placement_forbidden",
                         "placement_invalid",
                         "identity_forbidden",
+                        "not_watched",
                     ],
                 }
             ],
@@ -1411,6 +1415,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["result_count"],
     },
+    "read.stream.browser": {"properties": {}, "required": []},
     "read.stream": {"properties": {}, "required": []},
     "read.stream.terminal": {"properties": {}, "required": []},
     "read.task.charges": {"properties": {}, "required": []},

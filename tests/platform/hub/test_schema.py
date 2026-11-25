@@ -721,7 +721,12 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("published_at", TS),
         ("signature", B),
     ],
+    # the platform browser's watch leases and latest live frame (KOR-44, 13-work-vm.md section 13.6, migration 0029)
+    "browser_watch": [("session_id", U), ("instance", T), ("until", TS), ("kbps", INT)],
+    "browser_live": [("session_id", U), ("browser_id", T), ("seq", BI), ("frame", J), ("received_at", TS)],
 }
+
+UNLOGGED = ("browser_watch", "browser_live")
 
 APPEND_ONLY = (
     "membership_entry",
@@ -771,6 +776,7 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "audit_checkpoint": ("hub_key_id", "seq"),
     "community_wrap": ("epoch", "user_id"),
     "community_reject": ("wrapper_id", "user_id"),
+    "browser_watch": ("session_id", "instance"),
 }
 
 # Words that would name confidential plaintext (00-overview.md section 3) in a column; 04-crypto.md section 7 lists
@@ -837,6 +843,14 @@ def test_only_the_hub_schema_and_the_trigger_function_exist(owner: psycopg.Conne
         "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'hub'"
     ).fetchall()
     assert functions == [("refuse_change",)]
+
+
+def test_only_the_live_state_of_the_browser_is_unlogged(owner: psycopg.Connection[Any]) -> None:
+    rows = owner.execute(
+        "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+        " WHERE n.nspname = 'hub' AND c.relkind = 'r' AND c.relpersistence = 'u' ORDER BY c.relname"
+    ).fetchall()
+    assert tuple(row[0] for row in rows) == tuple(sorted(UNLOGGED))
 
 
 @pytest.mark.parametrize(("table", "key"), sorted(PRIMARY_KEYS.items()))

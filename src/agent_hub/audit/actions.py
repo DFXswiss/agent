@@ -174,6 +174,7 @@ AUDIT_ACTIONS = frozenset(
         "read.session.list_tasks",
         "read.session.list_workgroups",
         "read.stream",
+        "read.stream.browser",
         "read.stream.terminal",
         "read.task",
         "read.task.charges",

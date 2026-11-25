@@ -58,6 +58,7 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "version_conflict": (409,),
     "origin_seq_gap": (409,),
     "origin_seq_conflict": (409,),
+    "not_watched": (409,),
     "no_device": (409,),
     "already_assigned": (409,),
     "rotation_required": (409,),

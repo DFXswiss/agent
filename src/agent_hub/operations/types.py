@@ -28,6 +28,8 @@ OPERATION_TYPES = frozenset(
         "workvm.request",
         "workvm.release",
         "test.run",
+        "browser.open",
+        "browser.close",
         "github.list_issues",
         "github.get_issue",
         "github.create_issue",
