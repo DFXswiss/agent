@@ -736,3 +736,50 @@ def test_workvm_settings_are_checked(base: dict[str, str]) -> None:
     refused({**base, "AGENT_RUNNER_WORKVM_MAX_SIZE": "huge"}, "WORKVM_MAX_SIZE")
     refused({**base, "AGENT_RUNNER_WORKVM_SLOTS": "101"}, "WORKVM_SLOTS")
     refused({**base, "AGENT_RUNNER_WORKVM_POOL_SIZE": "17"}, "WORKVM_POOL_SIZE")
+
+
+# -- platform browser (KOR-44, ADR-085) ----------------------------------------------------------------------------
+
+
+def test_browser_defaults(base: dict[str, str]) -> None:
+    cfg = load(base)
+    assert (cfg.browser_idle_seconds, cfg.browser_live_max_kbps, cfg.browser_search_url) == (600, 3000, "")
+    assert not any(name.startswith("AGENT_RUNNER_BROWSER_") for name in environment(cfg))
+
+
+def test_browser_settings_round_trip(base: dict[str, str]) -> None:
+    base.update(
+        {
+            "AGENT_RUNNER_BROWSER_IDLE_SECONDS": "60",
+            "AGENT_RUNNER_BROWSER_LIVE_MAX_KBPS": "100000",
+            "AGENT_RUNNER_BROWSER_SEARCH_URL": "https://search.example/?q={q}&lang=en",
+        }
+    )
+    cfg = load(base)
+    assert (cfg.browser_idle_seconds, cfg.browser_live_max_kbps) == (60, 100000)
+    assert cfg.browser_search_url == "https://search.example/?q={q}&lang=en"
+    env = environment(cfg)
+    assert env["AGENT_RUNNER_BROWSER_SEARCH_URL"] == "https://search.example/?q={q}&lang=en"
+    assert load(env) == cfg
+    assert load({**base, "AGENT_RUNNER_BROWSER_SEARCH_URL": "http://127.0.0.1:8/{q}"}).browser_search_url
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("BROWSER_IDLE_SECONDS", "59"),
+        ("BROWSER_IDLE_SECONDS", "3601"),
+        ("BROWSER_LIVE_MAX_KBPS", "99"),
+        ("BROWSER_LIVE_MAX_KBPS", "100001"),
+        ("BROWSER_SEARCH_URL", "https://search.example/?q=x"),
+        ("BROWSER_SEARCH_URL", "ftp://search.example/{q}"),
+        ("BROWSER_SEARCH_URL", "https:///{q}"),
+        ("BROWSER_SEARCH_URL", "https://user:pw@search.example/{q}"),
+        ("BROWSER_SEARCH_URL", "https://search.example:0/{q}"),
+        ("BROWSER_SEARCH_URL", "https://search.example:99999/{q}"),
+        ("BROWSER_SEARCH_URL", "https://search.example/ {q}"),
+        ("BROWSER_SEARCH_URL", "https://search.example/{q}" + "x" * 2048),
+    ],
+)
+def test_browser_settings_are_checked(base: dict[str, str], name: str, value: str) -> None:
+    refused({**base, "AGENT_RUNNER_" + name: value}, name)

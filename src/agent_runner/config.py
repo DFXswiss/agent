@@ -90,6 +90,10 @@ NAMES = (
     "OPENROUTER_MANAGEMENT_KEY_FILE",
     "DFX_KEY_MAX_HEADROOM_USD",
     "DFX_KEY_MAX_PER_ORG",
+    # The platform browser (KOR-44, ADR-085; docs/platform/spec/13-work-vm.md section 13)
+    "BROWSER_IDLE_SECONDS",
+    "BROWSER_LIVE_MAX_KBPS",
+    "BROWSER_SEARCH_URL",
 )
 # Required for the daemon (`run`, `service install`); commands that never talk to the hub load without them.
 HUB_NAMES = frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"})
@@ -125,6 +129,9 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     "CONTEXT_WAIT_SECONDS": (180, 0, 3600),
     # live DFX keys one issuer creates per organization (ADR-081 section 7): a compromised hub cannot ask for more
     "DFX_KEY_MAX_PER_ORG": (50, 1, 100_000),
+    # KOR-44 platform browser (ADR-085 sections 2 and 6): idle teardown and the cap of the live picture (kbit/s).
+    "BROWSER_IDLE_SECONDS": (600, 60, 3600),
+    "BROWSER_LIVE_MAX_KBPS": (3000, 100, 100_000),
 }
 WORKVM_SIZES = ("standard", "large", "xlarge")
 _URL_DEFAULTS = {
@@ -245,6 +252,13 @@ class Config:
     workvm_ssh_port_base: int = 47200
     workvm_template: Path | None = None
 
+    browser_idle_seconds: int = 600
+    """Idle teardown of a platform browser session without its own `idle_seconds` (KOR-44, ADR-085 section 2)."""
+    browser_live_max_kbps: int = 3000
+    """Cap of the live picture's bandwidth in kbit/s (ADR-085 section 6)."""
+    browser_search_url: str = ""
+    """URL template with `{q}` that `browser_navigate {query}` opens; empty = automated search is off (F9)."""
+
     @property
     def contexts_dir(self) -> Path:
         """The encrypted checkpoint cache (KOR-33)."""
@@ -351,6 +365,9 @@ def load_config(
         context_workspace_mib=integers["CONTEXT_WORKSPACE_MIB"],
         context_transcript_mib=integers["CONTEXT_TRANSCRIPT_MIB"],
         context_wait_seconds=integers["CONTEXT_WAIT_SECONDS"],
+        browser_idle_seconds=integers["BROWSER_IDLE_SECONDS"],
+        browser_live_max_kbps=integers["BROWSER_LIVE_MAX_KBPS"],
+        browser_search_url=_search_url(raw("BROWSER_SEARCH_URL")),
     )
 
 
@@ -431,6 +448,7 @@ def environment(config: Config) -> dict[str, str]:
         "OPERATOR_GITHUB_ORG": config.operator_github_org,
         "WORKVM_MAX_SIZE": None if config.workvm_max_size == "large" else config.workvm_max_size,
         "WORKVM_TEMPLATE": config.workvm_template,
+        "BROWSER_SEARCH_URL": config.browser_search_url or None,
     }
     for name, value in optional_text.items():
         if value is not None:
@@ -505,6 +523,30 @@ def _url(value: str, name: str, test_mode: bool) -> str:
     if parts.scheme == "http" and test_mode and _is_loopback(host):
         return value.rstrip("/")
     raise RunnerError("config_invalid", name)
+
+
+def _search_url(value: str) -> str:
+    """`BROWSER_SEARCH_URL`: empty (off) or an http(s) URL template with a host and the placeholder `{q}`."""
+    if value == "":
+        return value
+    try:
+        parts = urlsplit(value.replace("{q}", "q"))
+        host = parts.hostname
+        port = parts.port
+    except ValueError:
+        raise RunnerError("config_invalid", "BROWSER_SEARCH_URL") from None
+    if (
+        "{q}" not in value
+        or parts.scheme not in ("http", "https")
+        or not host
+        or port == 0
+        or parts.username is not None
+        or parts.password is not None
+        or len(value) > 2048
+        or any(ch.isspace() or not ch.isprintable() for ch in value)
+    ):
+        raise RunnerError("config_invalid", "BROWSER_SEARCH_URL")
+    return value
 
 
 def _root_key(value: str) -> str:
