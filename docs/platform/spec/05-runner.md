@@ -775,7 +775,15 @@ token file of the operator's pool (the file with the fewest bound sessions, then
 explicit preference `claude_subscription` takes it too when the owner has no own subscription on this device. It is
 reported as `claude_subscription` (`session_transition`, web); only the runner log and the textfile metrics show the
 pool. Token files: regular files of the runner account, mode 0600, one access token in the format of §11.2, opened
-with `O_NOFOLLOW` and checked before reading (anything else is ignored, logged once by name and never read). Other
+with `O_NOFOLLOW` and checked before reading (anything else is ignored, logged once by name and never read).
+**Shared subscriptions** (KOR-69, ADR-090 §3) join the pool as entries `sub-<record ID>`: the further subscriptions
+the desired state lists in `subscriptions.shared`, each fetched and verified like every record of its owner and used
+for a session only when the record's **sealed** `use` allows the session's organization (`orgs` names it, or `pool`
+while the owner holds the platform role `operator` and the verified platform log grants the organization the
+operator's subscriptions); a record without a token or a use is no entry. They follow the rules of the files
+(choice, binding, renewal at a new record version, blocks, deferrals, exhaustion; a session whose entry no longer
+allows its organization moves to another one at its renewal). Without `OPERATOR_SUBSCRIPTION_DIR` the pool holds them
+alone; metrics, `doctor` and `operator_quota` show the token files only. Other
 organizations see no difference; an empty pool changes nothing (`model_access_unavailable` or the next kind). An explicit preference that is unavailable → session `failed`
 reason `model_access_unavailable` (no silent fallback); the task's chat offers its owner the connection, and the
 hub continues the task by itself once the owner stored a model credential (ADR-079 §4). Model: owner's `model_id` if allowed for the access kind

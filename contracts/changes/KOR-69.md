@@ -15,7 +15,8 @@ ADR-027 section 3 (additive). Decision: ADR-090 (every Claude subscription logge
 | `GET/PUT /v1/device/subscriptions/{id}` | device read, and the write while answering `claude.login` or to re-seal |
 
 New objects `subscription_meta`, `subscription_reading`, `subscription_row`; `GET /v1/device/state` adds
-`subscriptions {api}`.
+`subscriptions {api, shared[]}`; `PUT /v1/subscriptions/{id}` takes `use {pool, orgs}` (the plaintext mirror of the
+sealed use, stage b).
 
 ## Device request `claude.login` (`requests/`)
 The root body adds `subscription_id`, `name`, `note` and `email`.
