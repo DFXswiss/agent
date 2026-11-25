@@ -20721,7 +20721,6 @@ def test_delegate_lane_execution_changes_the_execution_binding(
     }
 
 
-@pytest.mark.no_pg
 def test_check_execution_joins_the_binding_only_when_declared(
     tmp_path: Path,
 ) -> None:
@@ -22204,6 +22203,31 @@ def test_delegated_check_argv_removes_the_profile_when_the_check_raises(
 
 
 @pytest.mark.no_pg
+def test_delegated_check_argv_removes_the_profile_on_an_early_return(
+    tmp_path: Path,
+) -> None:
+    from agent_cli.coordinator_common import delegated_check_argv
+
+    worker = _delegate_check_worker(tmp_path, ["/operator/check"])
+    profile: str | None = None
+
+    def check() -> None:
+        nonlocal profile
+        with delegated_check_argv(
+            worker,
+            ["/operator/checks"],
+            workdir=str(tmp_path),
+            env={"AGENT_COORDINATOR_HEAD": "a" * 40},
+        ) as argv:
+            profile = _delegate_flag_values(argv, "--read")[0]
+            assert Path(profile).is_dir()
+            return
+
+    check()
+    assert profile is not None
+    assert not Path(profile).exists()
+
+
 @pytest.mark.parametrize("delegated", [False, True])
 def test_trusted_check_uses_the_configured_check_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delegated: bool
@@ -22322,7 +22346,6 @@ def test_readiness_uses_the_configured_check_execution(
     assert not Path(profile).exists()
 
 
-@pytest.mark.no_pg
 @pytest.mark.parametrize("delegated", [False, True])
 def test_a38_trusted_precheck_uses_the_configured_check_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delegated: bool
@@ -22426,7 +22449,6 @@ def test_a38_trusted_precheck_uses_the_configured_check_execution(
     assert "AGENT_COORDINATOR_BASE=" + base in argv
 
 
-@pytest.mark.no_pg
 def test_a38_suite_delegates_only_the_run_step(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -22542,30 +22564,29 @@ def test_a38_suite_delegates_only_the_run_step(
         raise AssertionError(parts)
 
     monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
-    run_calls: list[list[str]] = []
     policy = load_policy(_a38_policy_text())
+    seen: dict[str, list[str]] = {}
+
+    def _a38_step(argv: list[str]) -> str:
+        inner = argv[argv.index("--") + 1 :] if "--" in argv else argv
+        return inner[inner.index(sys.executable) + 4]
 
     def fake_bounded(argv, **_kwargs):  # noqa: ANN001
-        run_calls.append(argv)
-        inner = argv[argv.index("--") + 1 :]
-        _write_coordinator_a38_policy_report(
-            Path(inner[inner.index("--output") + 1]),
-            policy=policy,
-            head=head,
-            base=base,
-        )
+        # ``_run_cli`` stays real, so the real policy and verify steps reach
+        # this runner unprefixed; only the delegated run carries the prefix.
+        step = _a38_step(argv)
+        seen[step] = list(argv)
+        if step == "run":
+            inner = argv[argv.index("--") + 1 :]
+            _write_coordinator_a38_policy_report(
+                Path(inner[inner.index("--output") + 1]),
+                policy=policy,
+                head=head,
+                base=base,
+            )
         return Completed(0, "ok", "")
 
     monkeypatch.setattr(coordinator_a38, "run_bounded", fake_bounded)
-    cli_calls: list[str] = []
-
-    def fake_cli(argv, *, worker, cwd):  # noqa: ANN001
-        cli_calls.append(argv[0])
-        if argv[0] == "run":
-            raise AssertionError("the run step must be delegated")
-        return Completed(0, "ok", "")
-
-    monkeypatch.setattr(coordinator_a38, "_run_cli", fake_cli)
     monkeypatch.setattr(
         coordinator_a38,
         "_resume_post_suite_report",
@@ -22576,9 +22597,24 @@ def test_a38_suite_delegates_only_the_run_step(
         store, worker, store.row("task", tid), lambda argv: Completed(0, "", "")
     )
     assert lines == [f"A38 passed and report posted on {head[:7]}"]
-    assert cli_calls == ["policy", "verify"]
-    assert len(run_calls) == 1
-    argv = run_calls[0]
+    assert list(seen) == ["policy", "run", "verify"]
+    assert seen["policy"][:5] == [
+        sys.executable,
+        "-m",
+        "agent_cli.main",
+        "a38",
+        "policy",
+    ]
+    assert seen["verify"][:5] == [
+        sys.executable,
+        "-m",
+        "agent_cli.main",
+        "a38",
+        "verify",
+    ]
+    assert "--" not in seen["policy"]
+    assert "--" not in seen["verify"]
+    argv = seen["run"]
     assert argv[:2] == ["/operator/check", "--flag"]
     assert argv[2:4] == ["--workdir", str(run_dir.resolve())]
     reads = _delegate_flag_values(argv, "--read")
