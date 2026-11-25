@@ -62,6 +62,42 @@ For an A38 worker, `check_timeout` must be long enough for the complete A38
 suite. The same existing worker timeout bounds the optional trusted precheck
 and each bounded A38 command; there is no separate A38 timeout setting.
 
+A worker may declare `check_execution` to run its check commands through a
+local foreground operator command on another device, independently of
+`lane_execution` in `ai-accounts.json`:
+
+```json
+{
+  "check_execution": {
+    "mode": "delegate",
+    "argv": ["/absolute/operator/command", "--optional-flag"]
+  }
+}
+```
+
+The only accepted value is an object with exactly `mode` and `argv`, `mode`
+equal to `"delegate"`, and `argv` a nonempty list of nonempty single-line
+strings. Anything else, including JSON `null`, raises
+`check_execution requires exactly mode "delegate" and a nonempty argv of
+nonempty single-line strings`. Without the key every check runs locally exactly
+as before. With it, each delegated check uses the delegated-lane prefix form
+and the [operator contract](ai-accounts.md#operator-contract), with the GitHub
+scrub and the coordinator environment in the argv after `--`:
+
+```text
+<argv...> --workdir <abs> [--read <abs>]... [--write-back <abs>]... -- <sanitized check argv...>
+```
+
+The delegated sites are the repository `check_argv`, the A38 trusted precheck,
+`readiness_argv`, and only the `run` step of the A38 suite. The A38 suite's
+`policy` and `verify` steps stay local because they only read and write files
+in the run directory. Git, `gh`, `ps`, lane starts, and the conflict remedy's
+`check_argv` are never delegated. A failing operator command keeps the existing
+handling: an infrastructure exit code goes through `check_command_unavailable`,
+and a non-zero check stays a check failure. A worker's resolved
+`check_execution` is part of the execution binding; without the key the hashed
+dict is unchanged.
+
 `repository_owners` is a distinct, case-insensitive list of valid 1–39 character
 GitHub organization or user logins (no leading, trailing, or consecutive
 hyphens). Each owner is first resolved through `users/<owner>` to determine its
@@ -208,6 +244,7 @@ Example device configuration (illustrative values, **not installation defaults**
       "repository_owners": ["example"],
       "owner_check_argv": ["/absolute/operator/owner-checks"],
       "owner_readiness_argv": ["/absolute/operator/owner-readiness"],
+      "check_execution": {"mode": "delegate", "argv": ["/absolute/operator/check-runner"]},
       "require_hub_assignment": true,
       "reply_logins": ["AuthorizedHuman"],
       "poll_seconds": 30,
@@ -301,10 +338,11 @@ for worker in workers.values():
   launcher; expected one of: <drivers>`. `models.first` may name a
   command-capable driver when a separate implementer is configured, because
   slot `first` only runs read-only lanes. A required `models` block, the
-  `implementer` selection when it differs from `models.first`, and
-  `lane_execution` are part of the execution binding, so changing any of them
-  stops accepted tasks with "task execution configuration changed" until it is
-  restored. A task accepted under the
+  `implementer` selection when it differs from `models.first`,
+  `lane_execution`, and a worker's `check_execution` when declared are part of
+  the execution binding, so changing any of them stops accepted tasks with
+  "task execution configuration changed" until it is restored. A worker without
+  `check_execution` keeps the previous binding exactly. A task accepted under the
   preceding hash formula accepts that legacy hash once and is immediately
   repinned when its only formula differences are the newly added
   `lane_execution` field and the old omission of a `models` value equal to the

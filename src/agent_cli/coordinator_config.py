@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .ai_accounts import LaneExecution, _lane_execution_arg
 from .store import StoreError
 
 
@@ -17,6 +18,10 @@ DEFAULT_PARK_POLL_SECONDS = 120
 DEFAULT_LANE_RETRIES = 2
 DEFAULT_MAX_ROUNDS = 10
 DEFAULT_CONFLICT_ATTEMPTS = 2
+CHECK_EXECUTION_ERROR = (
+    'check_execution requires exactly mode "delegate" and a nonempty argv of '
+    'nonempty single-line strings'
+)
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,7 @@ class WorkerConfig:
     draft_on_accept: bool = False
     a38_second_review: str = "external"
     conflict_remedy: ConflictRemedyConfig | None = None
+    check_execution: LaneExecution | None = None
 
 
 def _text(value: object, label: str) -> str:
@@ -105,6 +111,23 @@ def _argv(value: object, label: str, *, allow_empty: bool = False) -> tuple[str,
     return tuple(_text(part, label) for part in value)
 
 
+def _check_execution(value: object) -> LaneExecution:
+    """The worker's delegated check target; absence is local check execution."""
+    if (
+        isinstance(value, dict)
+        and set(value) == {'mode', 'argv'}
+        and value.get('mode') == 'delegate'
+    ):
+        argv = value['argv']
+        if (
+            isinstance(argv, list)
+            and argv
+            and all(_lane_execution_arg(part) for part in argv)
+        ):
+            return LaneExecution(mode='delegate', argv=tuple(argv))
+    raise StoreError(CHECK_EXECUTION_ERROR)
+
+
 def _positive(value: object, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise StoreError(f'{label} requires an explicit positive integer')
@@ -145,7 +168,7 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                     'second_review_timeout_seconds', 'park_poll_seconds',
                     'lane_retries', 'orders', 'max_rounds',
                     'max_rounds_by_model', 'draft_on_accept',
-                    'a38_second_review', 'conflict_remedy'}
+                    'a38_second_review', 'conflict_remedy', 'check_execution'}
         if not isinstance(item, dict) or set(item) - required - optional or not required <= set(item):
             raise StoreError('each worker requires explicit workspace, replies and timing')
         a38 = item.get('a38', False)
@@ -281,6 +304,10 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
             )
             for key, value in raw.items()
         }
+        check_execution = (
+            _check_execution(item['check_execution'])
+            if 'check_execution' in item else None
+        )
         result[sid] = WorkerConfig(sid, review, root, repos, logins,
                                    _positive(item['poll_seconds'], 'poll_seconds'),
                                    _positive(item['lane_timeout'], 'lane_timeout'),
@@ -308,7 +335,8 @@ def load_coordinator_config(home: Path) -> dict[str, WorkerConfig]:
                                    max_rounds_by_model=by_model,
                                    draft_on_accept=draft_on_accept,
                                    a38_second_review=mode,
-                                   conflict_remedy=conflict_remedy)
+                                   conflict_remedy=conflict_remedy,
+                                   check_execution=check_execution)
     return result
 
 

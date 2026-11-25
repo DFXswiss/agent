@@ -6,7 +6,9 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -1572,6 +1574,43 @@ def coordinator_env(
         "AGENT_COORDINATOR_SESSION": worker.session_id,
         "AGENT_COORDINATOR_WORKTREE": str(coord_data.get("worktree") or ""),
     }
+
+
+@contextmanager
+def delegated_check_argv(
+    worker: WorkerConfig,
+    argv: Sequence[str],
+    *,
+    workdir: str,
+    env: Mapping[str, str],
+    reads: Sequence[str] = (),
+    write_backs: Sequence[str] = (),
+) -> Iterator[list[str]]:
+    """Yield a check argv prefixed by the worker's operator command, when declared.
+
+    A worker without ``check_execution`` yields its argv unchanged. With it, the
+    check runs elsewhere: the empty ``GH_CONFIG_DIR`` and the environment
+    assignments travel inside the argv after ``--`` because the operator only
+    execs that part. Those values are coordinator metadata, never secrets. The
+    empty profile directory lives through the yielded call and is removed after
+    it, also when the call raises.
+    """
+    execution = worker.check_execution
+    if execution is None:
+        yield list(argv)
+        return
+    from .lane import delegated_lane_argv, sanitized_lane_argv
+
+    assignments = [f'{key}={value}' for key, value in env.items()]
+    with tempfile.TemporaryDirectory(prefix='agent-check-empty-gh-') as profile:
+        with sanitized_lane_argv([*assignments, *argv], profile_dir=profile) as scrubbed:
+            yield delegated_lane_argv(
+                execution,
+                scrubbed,
+                workdir=workdir,
+                reads=(profile, *reads),
+                write_backs=write_backs,
+            )
 
 
 def evidence_base_sha(coord_data: dict[str, Any], *, a38: bool) -> str:

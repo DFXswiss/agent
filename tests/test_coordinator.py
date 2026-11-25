@@ -20721,6 +20721,47 @@ def test_delegate_lane_execution_changes_the_execution_binding(
     }
 
 
+@pytest.mark.no_pg
+def test_check_execution_joins_the_binding_only_when_declared(
+    tmp_path: Path,
+) -> None:
+    """A worker without check_execution keeps exactly the previous dict."""
+    from dataclasses import replace
+
+    from agent_cli.ai_accounts import LaneExecution
+    from agent_cli.coordinator_runtime import (
+        _execution_binding_fields,
+        execution_binding,
+    )
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    worker = make_worker(tmp_path)
+    repo = next(iter(worker.repositories))
+    ai = load_ai_accounts(store.home)
+    local = _execution_binding_fields(store, worker, repo, ai)
+    assert "check_execution" not in local
+
+    delegated = replace(
+        worker,
+        check_execution=LaneExecution("delegate", ("/operator/check",)),
+    )
+    selected = _execution_binding_fields(store, delegated, repo, ai)
+    assert selected["check_execution"] == {
+        "mode": "delegate",
+        "argv": ["/operator/check"],
+    }
+
+    local_binding = execution_binding(store, worker, repo)
+    delegated_binding = execution_binding(store, delegated, repo)
+    assert delegated_binding != local_binding
+    changed = replace(
+        delegated,
+        check_execution=LaneExecution("delegate", ("/operator/check", "--other")),
+    )
+    assert execution_binding(store, changed, repo) != delegated_binding
+
+
 def test_launch_lane_delegate_prefixes_the_lane_argv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -22040,3 +22081,523 @@ def test_run_prepared_store_error_propagates_and_forgets_the_lane(
             prepared, timeout=5, lane_runner=runner
         )
     assert forgotten == ["forgot"]
+
+
+def _delegate_check_worker(root: Path, argv: list[str]) -> Any:
+    from dataclasses import replace
+
+    from agent_cli.ai_accounts import LaneExecution
+
+    return replace(
+        make_worker(root), check_execution=LaneExecution("delegate", tuple(argv))
+    )
+
+
+def _check_phase_task(store: Store, worker: Any, worktree: Path, tid: str) -> None:
+    store.write(
+        "task",
+        "insert",
+        tid,
+        {
+            "id": tid,
+            "session_id": worker.session_id,
+            "workflow": "implement",
+            "state": "local-check",
+            "models": {"first": "driver-a", "second": "driver-b"},
+            "payload": {
+                "coordinator": {
+                    "phase": "tests",
+                    "worktree": str(worktree),
+                    "source": {"repo": "example/project", "number": 7},
+                }
+            },
+        },
+    )
+
+
+@pytest.mark.no_pg
+def test_delegated_check_argv_leaves_a_local_worker_unchanged(tmp_path: Path) -> None:
+    from agent_cli.coordinator_common import delegated_check_argv
+
+    worker = make_worker(tmp_path)
+    with delegated_check_argv(
+        worker,
+        ["/operator/checks", "--full"],
+        workdir=str(tmp_path),
+        env={"AGENT_COORDINATOR_HEAD": "a" * 40},
+    ) as argv:
+        assert argv == ["/operator/checks", "--full"]
+
+
+@pytest.mark.no_pg
+def test_delegated_check_argv_carries_the_scrub_environment_and_paths(
+    tmp_path: Path,
+) -> None:
+    from agent_cli.coordinator_common import delegated_check_argv
+
+    worker = _delegate_check_worker(tmp_path, ["/operator/check", "--flag"])
+    env = {
+        "AGENT_COORDINATOR_HEAD": "a" * 40,
+        "AGENT_COORDINATOR_BASE": "b" * 40,
+    }
+    read = tmp_path / "read"
+    write_back = tmp_path / "write-back"
+    with delegated_check_argv(
+        worker,
+        ["/operator/checks", "--full"],
+        workdir=str(tmp_path),
+        env=env,
+        reads=[str(read)],
+        write_backs=[str(write_back)],
+    ) as argv:
+        profile = _delegate_flag_values(argv, "--read")[0]
+        assert Path(profile).name.startswith("agent-check-empty-gh-")
+        assert Path(profile).is_dir()
+        assert argv[:2] == ["/operator/check", "--flag"]
+        assert argv[2:4] == ["--workdir", str(tmp_path.resolve())]
+        assert _delegate_flag_values(argv, "--read") == [
+            profile,
+            str(read.resolve()),
+        ]
+        assert _delegate_flag_values(argv, "--write-back") == [
+            str(write_back.resolve())
+        ]
+        separator = argv.index("--")
+        inner = argv[separator + 1 :]
+        assert inner[:2] == ["env", "-u"]
+        for key in (
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "GH_ENTERPRISE_TOKEN",
+            "GITHUB_ENTERPRISE_TOKEN",
+        ):
+            assert inner[inner.index(key) - 1] == "-u"
+        assert f"GH_CONFIG_DIR={profile}" in inner
+        assert inner[-2:] == ["/operator/checks", "--full"]
+        assert inner.index("AGENT_COORDINATOR_HEAD=" + "a" * 40) == (
+            inner.index(f"GH_CONFIG_DIR={profile}") + 1
+        )
+        assert "AGENT_COORDINATOR_BASE=" + "b" * 40 in inner
+    assert not Path(profile).exists()
+
+
+@pytest.mark.no_pg
+def test_delegated_check_argv_removes_the_profile_when_the_check_raises(
+    tmp_path: Path,
+) -> None:
+    from agent_cli.coordinator_common import delegated_check_argv
+
+    worker = _delegate_check_worker(tmp_path, ["/operator/check"])
+    profile: str | None = None
+    with pytest.raises(RuntimeError, match="check failed"):
+        with delegated_check_argv(
+            worker,
+            ["/operator/checks"],
+            workdir=str(tmp_path),
+            env={"AGENT_COORDINATOR_HEAD": "a" * 40},
+        ) as argv:
+            profile = _delegate_flag_values(argv, "--read")[0]
+            assert Path(profile).is_dir()
+            raise RuntimeError("check failed")
+    assert profile is not None
+    assert not Path(profile).exists()
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize("delegated", [False, True])
+def test_trusted_check_uses_the_configured_check_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delegated: bool
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    store = Store(tmp_path)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    worker = (
+        _delegate_check_worker(tmp_path, ["/operator/check", "--flag"])
+        if delegated
+        else make_worker(tmp_path)
+    )
+    tid = "44444444-4444-4444-8444-444444444444"
+    _check_phase_task(store, worker, worktree, tid)
+    head = "a" * 40
+    monkeypatch.setattr(
+        coordinator_runtime, "verify_signed_clean_head", lambda *a: head
+    )
+    seen: dict[str, Any] = {}
+
+    def fake_bounded(argv, **kwargs):  # noqa: ANN001
+        seen["argv"] = argv
+        seen["env"] = kwargs.get("env")
+        seen["cwd"] = kwargs.get("cwd")
+        seen["clear"] = kwargs.get("clear_ambient_github")
+        return Completed(1, "check failed", "")
+
+    monkeypatch.setattr(coordinator_runtime, "run_bounded", fake_bounded)
+    lines = coordinator_runtime.phase_tests(
+        store, worker, store.row("task", tid), lambda argv: Completed(0, "", "")
+    )
+    assert lines == [f"tests failed on {head[:7]}; routing to implementer"]
+    assert seen["cwd"] == str(worktree)
+    assert seen["clear"] is True
+    assert seen["env"]["AGENT_COORDINATOR_SESSION"] == worker.session_id
+    argv = seen["argv"]
+    if not delegated:
+        assert argv == ["/operator/checks", "--full"]
+        return
+    assert argv[:2] == ["/operator/check", "--flag"]
+    assert argv[2:4] == ["--workdir", str(worktree.resolve())]
+    assert _delegate_flag_values(argv, "--write-back") == []
+    profile = _delegate_flag_values(argv, "--read")[0]
+    assert Path(profile).name.startswith("agent-check-empty-gh-")
+    separator = argv.index("--")
+    assert argv[separator + 1 :][-2:] == ["/operator/checks", "--full"]
+    assert "AGENT_COORDINATOR_SESSION=" + worker.session_id in argv
+    assert not Path(profile).exists()
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize("delegated", [False, True])
+def test_readiness_uses_the_configured_check_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delegated: bool
+) -> None:
+    from agent_cli import coordinator_github
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    worker = (
+        _delegate_check_worker(tmp_path, ["/operator/check", "--flag"])
+        if delegated
+        else make_worker(tmp_path)
+    )
+    cfg = worker.repositories["example/project"]
+    head = "a" * 40
+    base = "b" * 40
+    task = {
+        "id": "55555555-5555-4555-8555-555555555555",
+        "session_id": worker.session_id,
+        "payload": {
+            "coordinator": {
+                "worktree": str(worktree),
+                "head_sha": head,
+                "source": {"repo": "example/project", "number": 7},
+            }
+        },
+    }
+    seen: dict[str, Any] = {}
+
+    def fake_bounded(argv, **kwargs):  # noqa: ANN001
+        seen["argv"] = argv
+        seen["env"] = kwargs.get("env")
+        seen["clear"] = kwargs.get("clear_ambient_github")
+        return Completed(
+            0,
+            json.dumps(
+                {
+                    "head": head,
+                    "base": base,
+                    "contributing_ok": True,
+                    "deviation": {"declared": False},
+                }
+            ),
+            "",
+        )
+
+    monkeypatch.setattr(coordinator_github, "run_bounded", fake_bounded)
+    result = coordinator_github._readiness_for_head(
+        worker, task, cfg, head=head, base_sha=base
+    )
+    assert result["head"] == head
+    assert seen["clear"] is True
+    assert seen["env"]["AGENT_COORDINATOR_HEAD"] == head
+    argv = seen["argv"]
+    if not delegated:
+        assert argv == ["/operator/readiness"]
+        return
+    assert argv[:2] == ["/operator/check", "--flag"]
+    assert argv[2:4] == ["--workdir", str(worktree.resolve())]
+    assert _delegate_flag_values(argv, "--write-back") == []
+    profile = _delegate_flag_values(argv, "--read")[0]
+    assert argv[argv.index("--") + 1 :][-1] == "/operator/readiness"
+    assert not Path(profile).exists()
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize("delegated", [False, True])
+def test_a38_trusted_precheck_uses_the_configured_check_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delegated: bool
+) -> None:
+    from dataclasses import replace
+
+    from agent_cli.ai_accounts import LaneExecution
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+        check_execution=(
+            LaneExecution("delegate", ("/operator/check", "--flag"))
+            if delegated
+            else None
+        ),
+    )
+    patch_execute_github(monkeypatch)
+    head = "a" * 40
+    base = "b" * 40
+    tid = "66666666-6666-4666-8666-666666666666"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "local-check",
+        "models": {"first": "driver-a", "second": None},
+        "payload": {
+            "coordinator": {
+                "phase": "tests",
+                "head_sha": head,
+                "worktree": str(worktree),
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7},
+                "a38": {"enabled": True, "base_sha": base, "policy_revision": base},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    store.write(
+        "checklist_item",
+        "insert",
+        "a38-check-local",
+        {"id": "a38-check-local", "task_id": tid, "key": "local_check_pass", "status": "pending"},
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._pull_a38_context",
+        lambda *a, **k: (base, ["src/app.py"], False, False),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.scoped",
+        lambda *a, **k: lambda argv: Completed(0, "false", ""),
+    )
+    monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
+    monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: [])
+    seen: dict[str, Any] = {}
+
+    def fake_precheck(argv, **kwargs):  # noqa: ANN001
+        seen["argv"] = argv
+        seen["env"] = kwargs["env"]
+        return Completed(1, "precheck output", "")
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.run_bounded", fake_precheck)
+
+    def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
+        if parts[0] == "fetch":
+            return Completed(0, "", "")
+        if parts[:2] == ("cat-file", "-e"):
+            return Completed(0, "", "")
+        if parts[0] == "rev-parse":
+            return Completed(0, base + "\n", "")
+        if parts[0] == "show":
+            return Completed(0, _a38_policy_text(), "")
+        raise AssertionError(parts)
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
+    lines = phase_a38_tests(
+        store, worker, store.row("task", tid), lambda argv: Completed(0, "", "")
+    )
+    assert lines == [f"trusted precheck failed on {head[:7]}; routing to implementer"]
+    argv = seen["argv"]
+    assert seen["env"]["AGENT_COORDINATOR_BASE"] == base
+    if not delegated:
+        assert argv == ["/operator/checks", "--full"]
+        return
+    assert argv[:2] == ["/operator/check", "--flag"]
+    assert argv[2:4] == ["--workdir", str(worktree.resolve())]
+    assert _delegate_flag_values(argv, "--write-back") == []
+    assert argv[argv.index("--") + 1 :][-2:] == ["/operator/checks", "--full"]
+    assert "AGENT_COORDINATOR_BASE=" + base in argv
+
+
+@pytest.mark.no_pg
+def test_a38_suite_delegates_only_the_run_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+    from dataclasses import replace
+
+    from agent_cli import coordinator_a38
+    from agent_cli.a38 import load_policy
+    from agent_cli.ai_accounts import LaneExecution
+    from agent_cli.coordinator_a38 import phase_tests as phase_a38_tests
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    worker = replace(
+        make_worker(tmp_path),
+        review_session=None,
+        a38=True,
+        second_reviewers=("outside-reviewer",),
+        check_execution=LaneExecution("delegate", ("/operator/check", "--flag")),
+    )
+    # An empty A38 check_argv keeps the trusted precheck out of this test.
+    worker = replace(
+        worker,
+        repositories={
+            "example/project": replace(
+                worker.repositories["example/project"], check_argv=()
+            )
+        },
+    )
+    head = "a" * 40
+    base = "b" * 40
+    tid = "77777777-7777-4777-8777-777777777777"
+    worktree = worker.workspace_root / tid
+    worktree.mkdir()
+    task = {
+        "id": tid,
+        "session_id": worker.session_id,
+        "workflow": "implement",
+        "state": "local-check",
+        "models": {"first": "driver-a", "second": None},
+        "payload": {
+            "coordinator": {
+                "phase": "tests",
+                "head_sha": head,
+                "worktree": str(worktree),
+                "pr_number": 42,
+                "source": {"repo": "example/project", "number": 7},
+                "a38": {"enabled": True},
+            }
+        },
+    }
+    store.write("task", "insert", tid, task)
+    for key, status in {
+        "session_registered": "ja",
+        "spec_written": "ja",
+        "implementer_done": "ja",
+        "reviewer_approved": "ja",
+        "local_check_pass": "pending",
+        "pushed": "pending",
+        "review_1_quality": "pending",
+        "review_1_logic": "pending",
+        "review_2_quality": "pending",
+        "review_2_logic": "pending",
+        "contributing_ok": "pending",
+        "deviation_declared": "pending",
+        "deviation_granted": "pending",
+    }.items():
+        check_id = f"a38-suite-check-{key}"
+        store.write(
+            "checklist_item",
+            "insert",
+            check_id,
+            {"id": check_id, "task_id": tid, "key": key, "status": status},
+        )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.verify_signed_clean_head", lambda *a: head
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._pull_a38_context",
+        lambda *a, **k: (base, ["src/app.py"], False, False),
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.scoped",
+        lambda *a, **k: lambda argv: Completed(0, "false", ""),
+    )
+    monkeypatch.setattr("agent_cli.coordinator_a38.gh_json", lambda *a, **k: False)
+    monkeypatch.setattr("agent_cli.coordinator_a38.ensure_draft", lambda *a, **k: [])
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38._stable_live_pr_context",
+        lambda *_a, **_k: {
+            "repo": "example/project",
+            "number": 42,
+            "head": head,
+            "base_sha": base,
+            "base_name": "develop",
+            "state": "OPEN",
+        },
+    )
+    monkeypatch.setattr(
+        "agent_cli.coordinator_a38.pr_state", lambda *a, **k: "OPEN"
+    )
+
+    def fake_git(_store, _worker, _runner, _worktree, *parts):  # noqa: ANN001
+        if parts[0] == "fetch":
+            return Completed(0, "", "")
+        if parts[:2] == ("cat-file", "-e"):
+            return Completed(0, "", "")
+        if parts[0] == "rev-parse":
+            return Completed(0, base + "\n", "")
+        if parts[0] == "show":
+            return Completed(0, _a38_policy_text(), "")
+        raise AssertionError(parts)
+
+    monkeypatch.setattr("agent_cli.coordinator_a38.git", fake_git)
+    run_calls: list[list[str]] = []
+    policy = load_policy(_a38_policy_text())
+
+    def fake_bounded(argv, **_kwargs):  # noqa: ANN001
+        run_calls.append(argv)
+        inner = argv[argv.index("--") + 1 :]
+        _write_coordinator_a38_policy_report(
+            Path(inner[inner.index("--output") + 1]),
+            policy=policy,
+            head=head,
+            base=base,
+        )
+        return Completed(0, "ok", "")
+
+    monkeypatch.setattr(coordinator_a38, "run_bounded", fake_bounded)
+    cli_calls: list[str] = []
+
+    def fake_cli(argv, *, worker, cwd):  # noqa: ANN001
+        cli_calls.append(argv[0])
+        if argv[0] == "run":
+            raise AssertionError("the run step must be delegated")
+        return Completed(0, "ok", "")
+
+    monkeypatch.setattr(coordinator_a38, "_run_cli", fake_cli)
+    monkeypatch.setattr(
+        coordinator_a38,
+        "_resume_post_suite_report",
+        lambda *_a, **_k: [f"A38 passed and report posted on {head[:7]}"],
+    )
+    run_dir = coordinator_a38.control_dir(worker, tid) / "a38" / head
+    lines = phase_a38_tests(
+        store, worker, store.row("task", tid), lambda argv: Completed(0, "", "")
+    )
+    assert lines == [f"A38 passed and report posted on {head[:7]}"]
+    assert cli_calls == ["policy", "verify"]
+    assert len(run_calls) == 1
+    argv = run_calls[0]
+    assert argv[:2] == ["/operator/check", "--flag"]
+    assert argv[2:4] == ["--workdir", str(run_dir.resolve())]
+    reads = _delegate_flag_values(argv, "--read")
+    assert reads[1:] == [
+        str(worktree.resolve()),
+        str((run_dir / "policy.json").resolve()),
+    ]
+    write_backs = _delegate_flag_values(argv, "--write-back")
+    assert write_backs == [
+        str((run_dir / "report.md").resolve()),
+        str((run_dir / "logs").resolve()),
+    ]
+    inner = argv[argv.index("--") + 1 :]
+    start = inner.index(sys.executable)
+    assert inner[start : start + 5] == [
+        sys.executable,
+        "-m",
+        "agent_cli.main",
+        "a38",
+        "run",
+    ]
+    assert "AGENT_COORDINATOR_SESSION=" + worker.session_id in inner

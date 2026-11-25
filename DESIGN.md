@@ -596,7 +596,7 @@ The rules below were already implied by §§1–17. They are now explicit so a l
 | Auth, Git, GitHub HTTP, CI status, mail, hub HTTP, tmux knock, retries | Script | Result columns on the intent row; `pr.merged` and other watch types; `LISTEN agent_work` |
 | Assignment acceptance and its confirmation in the GitHub issue, before starting the implementation lane | Static script on the execution device | Required ordering; see §19.7 |
 | Start implementation and review lanes, restart the implementer for improvements, and start any other agents | Static script on the execution device; a `delegate` operator command may run the process elsewhere | The model never orchestrates another model |
-| Execute tests, builds, and checks, including local tests | Static script on the execution device | Script-produced results supplied to the lanes |
+| Execute tests, builds, and checks, including local tests | Static script on the execution device; a worker's `check_execution` operator command may run its checks elsewhere | Script-produced results supplied to the lanes |
 | Monitor or wait for CI, reviews, merges, and other external events; notify a lane when there is useful work | Static script on the execution device | Script-observed facts, not a waiting or polling model |
 | Preconditions of every coordinator action | Static script on the execution device | Registry of checks; one resolver per check; facts in the checklist table (§19.10) |
 | Spine task state | Spine CLI + local constraints | `task` state, checklist keys, `close-step` / `run` |

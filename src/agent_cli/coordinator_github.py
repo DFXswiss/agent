@@ -44,6 +44,7 @@ from .coordinator_common import (
     completed_comment_timestamp,
     coord,
     coordinator_env,
+    delegated_check_argv,
     evidence_base_sha,
     gh_json,
     gh_list,
@@ -2065,13 +2066,18 @@ def _readiness_for_head(
             "deviation": {"declared": False},
             "owner_a38_default": True,
         }
-    completed = run_bounded(
-        list(cfg.readiness_argv),
-        timeout=worker.check_timeout,
-        cwd=str(c["worktree"]),
-        env=coordinator_env(c, worker, cfg),
-        clear_ambient_github=True,
-    )
+    env = coordinator_env(c, worker, cfg)
+    worktree = str(c["worktree"])
+    with delegated_check_argv(
+        worker, list(cfg.readiness_argv), workdir=worktree, env=env
+    ) as readiness_argv:
+        completed = run_bounded(
+            readiness_argv,
+            timeout=worker.check_timeout,
+            cwd=worktree,
+            env=env,
+            clear_ambient_github=True,
+        )
     if completed.returncode != 0:
         raise CoordinatorError(
             redact(

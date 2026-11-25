@@ -140,8 +140,9 @@ clears the four GitHub token environment variables and receives an empty
 The prefixed launches are the coordinator implementer and inner reviewer, the
 PR reviewers, judgment check lanes, and `agent lane run`, the runner worker and
 the conflict-mandate lane. An interactive start is never prefixed: a `delegate`
-declaration satisfies its check, and that session stays local. Checks
-(`check_argv`, `readiness_argv`, A38) are not prefixed. Local tmux holds only
+declaration satisfies its check, and that session stays local. `lane_execution`
+does not prefix checks (`check_argv`, `readiness_argv`, A38); a coordinator
+worker may delegate those separately through `check_execution`. Local tmux holds only
 `this-device-is-lane-host`; `delegate` always takes the non-tmux path, and
 `--no-tmux` still does not choose the execution device.
 
@@ -199,6 +200,14 @@ The harness implements this command; Agent does not.
    directory. Agent does not list that `config_dir` as a `--read`, so the
    target's own default profile of that driver is not replaced and the lane
    runs with it; that profile must already be logged in to the same account.
+
+A coordinator worker's `check_execution` in `coordinator.json` uses the same
+prefix form and this same operator contract, while its target is configured
+separately from the `lane_execution` target in `ai-accounts.json`; the two may
+name different commands. The A38 suite's `run` step delegates the Agent CLI
+argv (an absolute Python interpreter path with `-m agent_cli.main a38 run ...`),
+so the target needs that interpreter path with Agent at the same revision, or a
+mapped equivalent (contract item 2).
 
 Add as many named accounts, roles, and bindings as needed. No fixed account
 list, role list, or count is built in. Configurable role names are chosen by

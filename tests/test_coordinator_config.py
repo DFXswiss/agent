@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_cli.ai_accounts import LaneExecution
 from agent_cli.coordinator_config import (
     ConflictRemedyConfig,
     load_coordinator_config,
@@ -590,4 +591,50 @@ def test_non_a38_owner_scope_requires_nonempty_owner_check_argv(tmp_path, owner_
         worker['owner_check_argv'] = owner_check_argv
     (tmp_path / 'coordinator.json').write_text(json.dumps(data))
     with pytest.raises(StoreError, match='owner_check_argv'):
+        load_coordinator_config(tmp_path)
+
+
+def test_check_execution_is_absent_by_default(tmp_path):
+    data = config(tmp_path)
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].check_execution is None
+
+
+def test_check_execution_loads_a_delegate_operator(tmp_path):
+    data = config(tmp_path)
+    data['workers']['selected-session']['check_execution'] = {
+        'mode': 'delegate', 'argv': ['/operator/check', '--flag'],
+    }
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    assert load_coordinator_config(tmp_path)['selected-session'].check_execution == (
+        LaneExecution('delegate', ('/operator/check', '--flag'))
+    )
+
+
+@pytest.mark.parametrize(
+    'value',
+    [
+        None,
+        {},
+        {'mode': 'remote', 'argv': ['/operator/check']},
+        {'mode': 'delegate', 'argv': ['/operator/check'], 'extra': True},
+        {'mode': 'delegate'},
+        {'mode': 'delegate', 'argv': []},
+        {'mode': 'delegate', 'argv': '/operator/check'},
+        {'mode': 'delegate', 'argv': ['/operator/check', 1]},
+        {'mode': 'delegate', 'argv': ['/operator/check\nsecond']},
+        {'mode': 'delegate', 'argv': ['/operator/check\rsecond']},
+        {'mode': 'delegate', 'argv': ['/operator/check\x00second']},
+        {'mode': 'delegate', 'argv': ['/operator/check', '']},
+    ],
+)
+def test_check_execution_refuses_anything_but_a_delegate_operator(tmp_path, value):
+    data = config(tmp_path)
+    data['workers']['selected-session']['check_execution'] = value
+    (tmp_path / 'coordinator.json').write_text(json.dumps(data))
+    with pytest.raises(
+        StoreError,
+        match='check_execution requires exactly mode "delegate" and a nonempty '
+        'argv of nonempty single-line strings',
+    ):
         load_coordinator_config(tmp_path)

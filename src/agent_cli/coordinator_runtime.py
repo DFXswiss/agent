@@ -43,6 +43,7 @@ from .coordinator_common import (
     TASK_TEXT_RECORD_BOUND,
     check_label,
     clip_middle,
+    delegated_check_argv,
     REQUIRED_REVIEW_SKILLS,
     required_lane_slots,
     REQUIRED_WORKER_SKILLS,
@@ -343,6 +344,8 @@ def _execution_binding_fields(
         "lane_execution": ai.require_lane_execution().binding_object(),
         "lanes": lanes,
     }
+    if worker.check_execution is not None:
+        selected["check_execution"] = worker.check_execution.binding_object()
     if ai.implementer != ai.models.first:
         selected["implementer"] = ai.implementer
     if worker.a38:
@@ -2448,13 +2451,16 @@ def phase_tests(store: Store, worker: WorkerConfig, task: dict[str, Any], runner
         save_task(store, task)
         return [f"tests already green on {head[:7]}"]
     env = coordinator_env(c, worker, cfg)
-    completed = run_bounded(
-        list(cfg.check_argv),
-        timeout=worker.check_timeout,
-        cwd=worktree,
-        env=env,
-        clear_ambient_github=True,
-    )
+    with delegated_check_argv(
+        worker, list(cfg.check_argv), workdir=worktree, env=env
+    ) as check_argv:
+        completed = run_bounded(
+            check_argv,
+            timeout=worker.check_timeout,
+            cwd=worktree,
+            env=env,
+            clear_ambient_github=True,
+        )
     if infra_failure(completed.returncode):
         return check_command_unavailable(
             store,
