@@ -152,6 +152,9 @@ def test_list_shows_status_use_and_reading_never_a_token(tool: Tool, hub: HubFak
         "email": "team@example.com",
         "status": "logged_in",
         "use": use,
+        "login": "setup_token",
+        "expires_at": None,
+        "plan": None,
     }
     assert (entries[primary["header"]["id"]]["name"], entries[primary["header"]["id"]]["use"]) == (
         "own sessions",
@@ -162,6 +165,8 @@ def test_list_shows_status_use_and_reading_never_a_token(tool: Tool, hub: HubFak
     assert entries[out]["use"] == {"pool": False, "orgs": []}
     assert entries[out]["measured_at"] is None
     assert (entries[refused]["status"], entries[refused]["since"]) == ("not_readable", entries[refused]["measured_at"])
+    assert entries[refused]["next"] == f"agent-platform subscriptions login --id {refused}"  # a setup token: log in
+    assert "next" not in entries[primary["header"]["id"]]
     assert {key: entries[key]["code"] for key in (bad_use, wrong_key, stale, stranger)} == {
         bad_use: "params_invalid",
         wrong_key: "decrypt_failed",
@@ -258,3 +263,52 @@ def test_malformed_and_refused_records_end_with_their_code(
     # a device the verified logs give no keys for is skipped
     monkeypatch.setattr(subscriptions, "device_keys", lambda _account, _device: None)
     assert tool.run("subscriptions", "add", "--name", "x")[1]["reason"] == "device_outdated"
+
+
+FULL = {
+    "refresh_token": "refresh-token-of-the-test",
+    "expires_at": "2026-11-26T06:00:00.000Z",
+    "scopes": ["user:inference", "user:profile"],
+    "subscription_type": "max",
+    "rate_limit_tier": "default_claude_max_20x",
+    "kind": "oauth_login",
+}
+
+
+def test_full_logins_show_expiry_plan_and_log_in_again(tool: Tool, hub: HubFake, account: User) -> None:
+    """KOR-71, ADR-091: a full login lists its expiry and plan; a login the device could not renew is `relogin`
+    with the command that logs it in; a field this version does not know is kept when the record is changed;
+    `logout` drops both tokens."""
+    _org, _wg, device = assign_device(tool, hub, account)
+    full = add(hub, account.id, sealed(hub, account, body(name="Team", **FULL, later="kept")), reading(5.0))
+    marked = {k: v for k, v in FULL.items() if k != "refresh_token"}
+    refused = add(hub, account.id, sealed(hub, account, body(None, name="R", relogin="renewal_refused", **marked),
+                                          author=device))  # fmt: skip
+    odd = add(hub, account.id, sealed(hub, account, body(**{**FULL, "relogin": "other"})))
+    odd_plan = add(hub, account.id, sealed(hub, account, body(**{**FULL, "subscription_type": "a b"})))
+    odd_scopes = add(hub, account.id, sealed(hub, account, body(**{**FULL, "scopes": "user:profile"})))
+    odd_token = add(hub, account.id, sealed(hub, account, body(**{**FULL, "refresh_token": "with space"})))
+    entries = {item["id"]: item for item in tool.run("subscriptions", "list")[1]["subscriptions"]}
+    assert {key: entries[full][key] for key in ("status", "login", "expires_at", "plan")} == {
+        "status": "logged_in",
+        "login": "oauth_login",
+        "expires_at": "2026-11-26T06:00:00.000Z",
+        "plan": {"type": "max", "tier": "default_claude_max_20x"},
+    }
+    assert (entries[refused]["status"], entries[refused]["next"]) == (
+        "relogin",
+        f"agent-platform subscriptions login --id {refused}",
+    )
+    for broken in (odd, odd_plan, odd_scopes, odd_token):
+        assert entries[broken]["code"] == "params_invalid"
+    assert "refresh-token-of-the-test" not in str(entries)
+    assert tool.run("subscriptions", "rename", "--id", full, "--name", "New")[1]["version"] == 2
+    assert stored(hub, account, full)["later"] == "kept"
+    assert stored(hub, account, full)["refresh_token"] == "refresh-token-of-the-test"
+    tool.run("subscriptions", "logout", "--id", full)
+    after = stored(hub, account, full)
+    assert "token" not in after
+    assert "refresh_token" not in after
+    assert after["name"] == "New"
+    tool.run("subscriptions", "logout", "--id", refused)
+    assert "relogin" not in stored(hub, account, refused)

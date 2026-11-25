@@ -49,12 +49,12 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | credential-delete | settings/credentials | `credentials delete --kind` | done |
 | credential-rotate | jobs (CK re-wrap) | `credentials rotate` | done |
 | quotas | settings/quotas | `quotas` | done |
-| subscriptions-list | screens/subscriptions and the card "My subscriptions" of screens/home (every own subscription with status, use and the remaining quota per window, for the operator also the token-file subscriptions; ADR-091, rules E-30, E-31) | `subscriptions list` (token files: `quotas --org`) | done |
+| subscriptions-list | screens/subscriptions and the card "My subscriptions" of screens/home (every own subscription with status - also `relogin` when the device could not renew it -, use, expiry, plan and the remaining quota per window, for the operator also the token-file subscriptions; ADR-091, ADR-092, rules E-30, E-31) | `subscriptions list` (token files: `quotas --org`) | done |
 | settings-subscriptions | settings/subscriptions (the link to the page "My subscriptions", ADR-091) | `subscriptions list` | done |
 | subscriptions-add | Claude subscriptions (a new subscription logged in on a platform device, ADR-090) | `subscriptions add --name --note --automatic --email` | done |
 | subscriptions-login | Claude subscriptions (log a subscription in again) | `subscriptions login --id` | done |
 | subscriptions-edit | Claude subscriptions (label and note) | `subscriptions rename --id --name`, `subscriptions note --id --note\|--clear` | done |
-| subscriptions-logout | Claude subscriptions (drop the token, keep name, note and use) | `subscriptions logout --id` | done |
+| subscriptions-logout | Claude subscriptions (drop the access and refresh token, keep name, note and use) | `subscriptions logout --id` | done |
 | subscriptions-use | Claude subscriptions (use per subscription: only measured, organizations, the operator's pool; ADR-090 §3) | `subscriptions use --id --measure --pool --org` | done |
 | subscriptions-remove | Claude subscriptions (remove a subscription and its readings) | `subscriptions remove --id` | done |
 | model-quotas | settings/model-quotas (model access and quotas of the active organization: own subscription, operator subscriptions with state and release or "not readable" with the last observed limit, DFX access, summary; ADR-081) | `quotas --org` | done |

@@ -84,7 +84,7 @@ def test_default_home_expands_user(base: dict[str, str]) -> None:
 
 
 def test_every_name_is_listed_once() -> None:
-    assert len(NAMES) == len(set(NAMES)) == 57
+    assert len(NAMES) == len(set(NAMES)) == 60
     assert "VM_PREFIX" in NAMES
     assert "TEST_MODE" in NAMES
     assert frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"}) == HUB_NAMES
@@ -449,6 +449,31 @@ def test_the_oauth_app_and_the_app_slug(base: dict[str, str]) -> None:
 def test_login_argv(base: dict[str, str]) -> None:
     base["AGENT_RUNNER_LOGIN_ARGV"] = json.dumps(["/opt/double/login", "--fast"])
     assert load(base).login_argv == ("/opt/double/login", "--fast")
+
+
+def test_subscription_login_and_renewal_settings(base: dict[str, str]) -> None:
+    """KOR-71, ADR-091: the full login and the token endpoint of the renewal, with the pinned program's defaults."""
+    cfg = load(base)
+    assert cfg.subscription_login_argv == ("claude", "auth", "login", "--claudeai")
+    assert cfg.claude_token_url == "https://platform.claude.com/v1/oauth/token"
+    assert cfg.claude_oauth_client_id == "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+    base["AGENT_RUNNER_SUBSCRIPTION_LOGIN_ARGV"] = json.dumps(["/opt/double/login", "auth", "login"])
+    base["AGENT_RUNNER_CLAUDE_TOKEN_URL"] = "http://127.0.0.1:20055/v1/oauth/token"
+    base["AGENT_RUNNER_CLAUDE_OAUTH_CLIENT_ID"] = "double-client"
+    cfg = load(base)
+    assert cfg.subscription_login_argv == ("/opt/double/login", "auth", "login")
+    assert (cfg.claude_token_url, cfg.claude_oauth_client_id) == (
+        "http://127.0.0.1:20055/v1/oauth/token",
+        "double-client",
+    )
+    env = environment(cfg)
+    assert env["AGENT_RUNNER_SUBSCRIPTION_LOGIN_ARGV"] == '["/opt/double/login", "auth", "login"]'
+    assert env["AGENT_RUNNER_CLAUDE_OAUTH_CLIENT_ID"] == "double-client"
+    assert load(env) == cfg
+    refused({**base, "AGENT_RUNNER_SUBSCRIPTION_LOGIN_ARGV": "[]"}, "SUBSCRIPTION_LOGIN_ARGV")
+    refused({**base, "AGENT_RUNNER_SUBSCRIPTION_LOGIN_ARGV": "not json"}, "SUBSCRIPTION_LOGIN_ARGV")
+    refused({**base, "AGENT_RUNNER_CLAUDE_OAUTH_CLIENT_ID": "semi;colon"}, "CLAUDE_OAUTH_CLIENT_ID")
+    refused({**base, "AGENT_RUNNER_CLAUDE_TOKEN_URL": "ftp://x"}, "CLAUDE_TOKEN_URL")
 
 
 @pytest.mark.parametrize("value", ["[]", '"claude"', "[1]", '[""]', "not json", '["a\\u0000b"]', '{"a": 1}'])

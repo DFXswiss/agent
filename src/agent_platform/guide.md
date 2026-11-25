@@ -584,7 +584,9 @@ user opens it, approves and gives you the code, which you send with `claude logi
 measured until your user switches it on with `subscriptions use` (organizations by ID; `--pool` for the operator's
 pool); nobody else's session uses it otherwise. The primary one (`own sessions`, written by `claude login` and `claude
 connect`) serves your user's own sessions. `status` per subscription: `logged_in`, `not_logged_in` (then `next` names the login command),
-`not_readable` (the provider refuses to show its quota) or `unverifiable`.
+`relogin` (the device could not renew the login: log it in again, `next`), `not_readable` (the provider refuses to show
+its quota - an older login with a setup token: log it in again, `next`) or `unverifiable`. A login made since KOR-71
+lists `expires_at` (its access token, renewed by the device well before) and `plan` (`type`, `tier`).
 
 `recovery new` needs your user's own key: with your own key (`identity: "own"`) it opens the settings page in your
 user's browser instead (`opened`), as `passkey add` does; tell your user to choose "New recovery code" there. For the

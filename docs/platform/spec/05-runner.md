@@ -78,7 +78,7 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `MODEL_UPSTREAM_ANTHROPIC` / `MODEL_UPSTREAM_OPENROUTER` | `https://api.anthropic.com` / `https://openrouter.ai/api` | doubles in tests |
 | `ANTHROPIC_USAGE_URL` | `https://api.anthropic.com/api/oauth/usage` | quota polling |
 | `LOGIN_ARGV` | `["claude","setup-token"]` (JSON array) | login-CLI double in tests; the default needs Claude Code on the host at the golden's pin (doctor `login_cli`) |
-| `SUBSCRIPTION_LOGIN_ARGV` | `["claude","auth","login","--claudeai"]` (JSON array) | the full login of a further subscription (§11.5, ADR-091); `--email <address>` is appended when known |
+| `SUBSCRIPTION_LOGIN_ARGV` | `["claude","auth","login","--claudeai"]` (JSON array) | the full login of a further subscription (§11.6, ADR-091); `--email <address>` is appended when known |
 | `CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | token endpoint of the renewal of further subscriptions (§10.6, ADR-091); loopback `http` only in test mode |
 | `CLAUDE_OAUTH_CLIENT_ID` | `9d1c250a-e61b-44d9-88ed-5944d1962f5e` | client ID of that renewal (the pinned Claude Code's) |
 | `LOGIN_AUTOMATION` | `on` for platform devices (platform install profile), `off` for org devices | `on` enables §11.3 (needs the `login` extra; the platform install profile includes it) |
@@ -871,7 +871,7 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   with the smallest ID among those that can open the credential); a record not cached on that device is fetched
   from the hub after the desired state and the logs were refreshed (the owner may be ahead of the device's log copy;
   at most once per 900 s; `404` or a failed fetch skips the owner until then). For setup tokens the usage
-  endpoint may refuse access: quota polling is feature-detected (first 401/403 ⇒ `quota_unavailable` for that
+  endpoint refuses access (`403 permission_error`: a setup token has only `user:inference`, KOR-71): quota polling is feature-detected (first 401/403 ⇒ `quota_unavailable` for that
   credential version, retried after 24 h or after a new login; the runner sends one outbox
   `quota {owner_id,unavailable:true,fetched_at}` and the hub drops the owner's windows, KOR-05) and the UI shows
   "not available"; the M0 LIVE check (`07-testing.md`) verifies the
@@ -884,6 +884,19 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   older `CK` epoch than the newest one the device holds is first re-sealed under it (`PUT
   /v1/device/subscriptions/{id}` without a request), so a rotation by a client that does not know further
   subscriptions leaves none unreadable. A record without a token (not logged in) is skipped.
+- Renewal of further subscriptions (KOR-71, ADR-091 §2; `quota/renewal.py`): the same polling device renews a full
+  login (`kind: "oauth_login"` with `token` and `refresh_token`) `1800 s` before its `expires_at` and at once after a
+  `401` of the usage endpoint (then it measures again at the next tick instead of reporting "not readable"): `POST
+  CLAUDE_TOKEN_URL` (JSON `{grant_type: "refresh_token", refresh_token, client_id: CLAUDE_OAUTH_CLIENT_ID, scope}`,
+  30 s, no redirects). The answer is sealed as the next record version and stored in `runner.subscription_renewal`
+  (with the sealed record it replaces) **before** it is written with `PUT /v1/device/subscriptions/{id}` without a
+  request; the row is written again on every tick (the token endpoint is not asked again for the record meanwhile)
+  until the hub confirmed it, the record is gone (`404`) or a newer login replaced it (after a `version_conflict` the
+  current record decides: still the replaced refresh token, or marked `relogin` → merged into it; else dropped).
+  `invalid_grant` → the next version without `token` and `refresh_token`, with `relogin: "renewal_refused"` (only
+  while the record still holds the refused refresh token); any other failure → again after 60 s. Rows of owners the
+  device no longer measures are still written (the hub accepts the device that wrote the stored version). Setup-token
+  records are never renewed. Neither request nor answer is logged.
 - Platform key: `GET <openrouter>/api/v1/key` every 900 s → `spend_snapshot` → device metrics
   (`agent_runner_device_model_spend_*`), operators only.
 - Tokens are never logged, never written to disk outside the encrypted credential record.
@@ -1125,6 +1138,27 @@ head_sha, head_repo, base_ref, url, updated_at}`; `404` → `not_found`, another
 else → `upstream_error` for that pull request. One final response `{step:"done", pulls}`. Log lines never name a
 repository or a number. The GitHub double computes `mergeable` asynchronously like GitHub (first read after head or
 base moved `null`) and offers `POST /_double/commits` to move a base in tests.
+
+### 11.6 `claude.login` of a further subscription – full login (KOR-71, ADR-091 §1)
+
+With `subscription_id` the login runs `SUBSCRIPTION_LOGIN_ARGV` (default `claude auth login --claudeai`) instead of
+`LOGIN_ARGV`, with `--email <address>` appended when an address is known (the automatic login's, else the one the
+record holds); the primary record keeps the setup-token relay of §11.2. Same temporary directory, allow-list
+environment, `BROWSER` capture helper (so the device never opens a browser), PTY and cleanup as §11.2, and:
+
+- **Link.** The URL handed to `BROWSER` redirects to `http://localhost:<port>/callback`; the response
+  `{step:"authorize", url}` carries the link of the code page from the **screen** (`login/full_login.py`): the
+  non-empty rows after "If the browser didn't open, visit:" up to the input field "Paste code here if prompted",
+  joined and checked like every authorize URL (else `login_cli_failed`). The automation of §11.3 opens the same link.
+- **No keychain.** `PATH` begins with a private directory of the login holding `security`, a script that always
+  exits 1; the program reaches the keychain only through it and keeps the login in its plaintext store inside the
+  temporary directory.
+- **Login.** After the code the program must end with status 0 within `token_wait`. The runner reads
+  `$CLAUDE_CONFIG_DIR/.credentials.json` (`claudeAiOauth`; regular file of the runner account, not a link, ≤ 64 KiB)
+  and the address of `.claude.json` (`oauthAccount.emailAddress`, optional). Missing or malformed → `token_invalid`;
+  `scopes` without `user:profile` and `user:inference` → `scope_missing`. The record gets `{token, refresh_token,
+  expires_at, scopes, subscription_type?, rate_limit_tier?, email, kind:"oauth_login"}` plus the kept `name`, `note`,
+  `use` (no `relogin`). The tokens never reach a log, a response or a guest (sessions get `token` only, §10.1).
 
 ## 12. Operations (ADR-012)
 

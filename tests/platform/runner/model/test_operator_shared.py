@@ -14,6 +14,7 @@ from typing import Any, cast
 
 import pytest
 
+from agent_runner.credentials import subscriptions
 from agent_runner.metrics.sampler import Sampler
 from agent_runner.model import access, exhaustion, gateways, limits, operator, provision
 from agent_runner.model.operator import BLOCKED, USABLE, Entry, Pool, Use
@@ -247,3 +248,33 @@ def test_a_token_file_may_not_use_the_shared_prefix_and_shared_tokens_are_read_f
     context = SimpleNamespace(**{operator.ATTRIBUTE: pool})
     token_of = asyncio.run(exhaustion.token_of(context, limits.operator_key("sub-a")))
     assert token_of == VALID
+
+
+def test_a_full_login_serves_its_access_token_and_a_renewal_replaces_it(
+    store_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KOR-71, ADR-091 section 3: a session gets only the access token of a full login, never its refresh token; a
+    renewal is a new record version, which the pool reads anew (the bound sessions are provisioned again)."""
+
+    async def body(env: Env, hub: SubscriptionHub) -> None:
+        context = env.context
+        use = {"pool": False, "orgs": [ORG]}
+        refresh = "refresh-token-never-for-a-guest-0123456789"
+        full = {**subscription_body(token=VALID, use=use), "kind": "oauth_login", "refresh_token": refresh}
+        record = hub.add(full, owner=ALICE)
+        listing(monkeypatch, [(record, ALICE)])
+        pool = await operator.refreshed(context)
+        assert pool is not None
+        name = "sub-" + record
+        picked = await operator.pick(context, ORG)
+        assert picked is not None
+        assert picked[:2] == (name, VALID)
+        assert refresh not in repr(pool.shared) + repr(picked)
+        renewed = token(8)
+        hub.add({**full, "token": renewed, "refresh_token": "next-refresh-0123456789"}, owner=ALICE, version=2,
+                record_id=record)  # fmt: skip
+        await subscriptions.sync_owner(context, ALICE)  # the `credentials` hint of the new version
+        await operator.refresh_shared(context, pool)
+        assert pool.current(name) == (renewed, (0, 0, 2, 0))
+
+    run(store_dsn, body)

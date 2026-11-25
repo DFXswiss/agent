@@ -11,9 +11,12 @@ measure only). The token is created on the device and never printed here.
   user's agent or a device the verified logs entitle to the user's `CK`, signature, the user's `CK` of the record's
   epoch, a body of `contracts/credentials/claude_subscription.json`). Per subscription: `name` (the primary one is
   `own sessions`), `note`, the `email` it signed in with, `status` (`logged_in`, `not_logged_in`: no token;
-  `not_readable`: the usage endpoint refused the token, with `since`; `unverifiable` with its code), `use`, the last
-  reading (`week_percent`, `week_resets_at`, `window_percent`, `window_resets_at`, `measured_at`, `device_id`) and,
-  for a subscription that is not logged in, `next` with the command that logs it in.
+  `relogin`: the measuring device could not renew it, KOR-71; `not_readable`: the usage endpoint refused the token,
+  with `since`; `unverifiable` with its code), `use`, `login` (the kind: `oauth_login`, `setup_token`, `login_token`),
+  `expires_at` of the access token, `plan` (`type`, `tier`) when the login reported it, the last reading
+  (`week_percent`, `week_resets_at`, `window_percent`, `window_resets_at`, `measured_at`, `device_id`) and, for a
+  further subscription that is not logged in, must log in again or is not readable, `next` with the command that
+  logs it in.
 - `subscriptions add --name [--note] [--automatic [--email]]`: a new record ID and `claude.login` with
   `subscription_id`, `name`, `note` (and `email`) to a device that announced the feature `subscriptions` (online
   first; `no_device` with `reason: device_outdated` when only older devices are there); the answer is the
@@ -22,7 +25,8 @@ measure only). The token is created on the device and never printed here.
   credential and needs no browser.
 - `subscriptions login --id`: the same for an existing subscription (log in again; name, note and use stay).
 - `subscriptions rename --id --name`, `note --id (--note | --clear)`, `logout --id`: the record is opened in memory,
-  changed (`logout` drops the token) and sealed again under the user's newest `CK` (version + 1, author the actor),
+  changed (`logout` drops the access and the refresh token, so the device renews nothing) and sealed again under
+  the user's newest `CK` (version + 1, author the actor),
   `PUT /v1/subscriptions/{id}`; one retry after `version_conflict`/`epoch_stale`. The primary record is not changed
   here (`invalid_argument`, `reason: primary`). The provider offers no revocation of a setup token: `logout` answers
   `revoke_at` (where the user revokes it).
@@ -69,8 +73,10 @@ TOKEN_RE = re.compile(r"^[!-~]{1,4096}$")
 EMAIL_RE = re.compile(r"^[!-?A-~]{1,64}@[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63}){0,8}$")
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 LIMITS = {"name": 64, "note": 500}
-BODY_KEYS = frozenset({"token", "email", "kind", "expires_at", "name", "note", "use"})
-KINDS = ("setup_token", "login_token")
+KINDS = ("setup_token", "login_token", "oauth_login")
+LABEL_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+SCOPE_RE = re.compile(r"^[a-z_:]{1,64}$")
+RELOGIN = "renewal_refused"
 MAX_ORGS = 50
 
 
@@ -97,15 +103,34 @@ def valid_use(value: object) -> bool:
     )
 
 
+def _valid_login(body: dict[str, Any]) -> bool:
+    """The fields of a full login (KOR-71, ADR-091), each optional."""
+    scopes = body.get("scopes", [])
+    return (
+        all(
+            name not in body or (isinstance(body[name], str) and bool(TOKEN_RE.fullmatch(body[name])))
+            for name in ("token", "refresh_token")
+        )
+        and isinstance(scopes, list)
+        and all(isinstance(item, str) and SCOPE_RE.fullmatch(item) for item in scopes)
+        and all(
+            name not in body or (isinstance(body[name], str) and bool(LABEL_RE.fullmatch(body[name])))
+            for name in ("subscription_type", "rate_limit_tier")
+        )
+        and body.get("relogin", RELOGIN) == RELOGIN
+    )
+
+
 def valid_body(body: object) -> bool:
-    """A body of `contracts/credentials/claude_subscription.json`."""
-    if not isinstance(body, dict) or not set(body) <= BODY_KEYS or not {"email", "kind"} <= set(body):
+    """A body of `contracts/credentials/claude_subscription.json`. Fields this version does not know are kept as they
+    are (a later version may add some; they are sealed again unchanged)."""
+    if not isinstance(body, dict) or not {"email", "kind"} <= set(body):
         return False
     email = body["email"]
     return (
         body["kind"] in KINDS
         and (email is None or (isinstance(email, str) and len(email) <= 254 and bool(EMAIL_RE.fullmatch(email))))
-        and ("token" not in body or (isinstance(body["token"], str) and bool(TOKEN_RE.fullmatch(body["token"]))))
+        and _valid_login(body)
         and ("expires_at" not in body or isinstance(body["expires_at"], str))
         and all(name not in body or label(body[name], most) for name, most in LIMITS.items())
         and ("use" not in body or valid_use(body["use"]))
@@ -200,6 +225,13 @@ def _reading(meta: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _plan(body: dict[str, Any]) -> dict[str, Any] | None:
+    """The plan the full login reported (`subscription_type`, `rate_limit_tier`), None when unknown."""
+    if "subscription_type" not in body and "rate_limit_tier" not in body:
+        return None
+    return {"type": body.get("subscription_type"), "tier": body.get("rate_limit_tier")}
+
+
 def _entry(account: Account, meta: dict[str, Any], keys: dict[int, bytes]) -> dict[str, Any] | None:
     answer = fetch(account, meta["id"])
     if answer is None:
@@ -211,7 +243,7 @@ def _entry(account: Account, meta: dict[str, Any], keys: dict[int, bytes]) -> di
         return {**entry, "status": "unverifiable", "code": error.code}
     reading = meta.get("reading")
     if "token" not in body:
-        status = "not_logged_in"
+        status = "relogin" if body.get("relogin") == RELOGIN else "not_logged_in"
     elif isinstance(reading, dict) and reading.get("unreadable") is True:
         status = "not_readable"
     else:
@@ -222,10 +254,13 @@ def _entry(account: Account, meta: dict[str, Any], keys: dict[int, bytes]) -> di
         email=body["email"],
         status=status,
         use="own_sessions" if meta["primary"] else body.get("use", {"pool": False, "orgs": []}),
+        login=body["kind"],
+        expires_at=body.get("expires_at"),
+        plan=_plan(body),
     )
-    if status == "not_logged_in":
+    if status != "logged_in" and not meta["primary"]:
         entry["next"] = f"agent-platform subscriptions login --id {meta['id']}"
-    elif status == "not_readable":
+    if status == "not_readable":
         entry["since"] = reading["fetched_at"] if isinstance(reading, dict) else None
     return entry
 
@@ -364,7 +399,11 @@ def note(account: Account, args: Any, _context: Context) -> dict[str, Any]:
 
 
 def logout(account: Account, args: Any, _context: Context) -> dict[str, Any]:
-    result = change(account, uuid_argument(args.id), lambda body: body.pop("token", None))
+    def edit(body: dict[str, Any]) -> None:
+        for name in ("token", "refresh_token", "relogin"):  # nothing left to renew (ADR-091 section 2)
+            body.pop(name, None)
+
+    result = change(account, uuid_argument(args.id), edit)
     return {**result, "status": "not_logged_in", "revoke_at": REVOKE_AT}
 
 
