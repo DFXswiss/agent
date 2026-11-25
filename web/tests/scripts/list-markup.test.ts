@@ -133,6 +133,7 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     reason: 'workgroup chips of one row: the first 8, the rest (bounded by the org workgroups) on request',
   },
   'src/ui/screens/members/MembersScreen.tsx': { count: 1, reason: 'native <option>s of the org workgroups' },
+  'src/ui/settings/ActiveOrg.tsx': { count: 1, reason: 'native <option>s of the orgs of the account (GET /v1/me)' },
   'src/ui/screens/members/InviteSection.tsx': {
     count: 2,
     reason: 'the org workgroups with their access and the fixed expiry choices (not the invitations)',
