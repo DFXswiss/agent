@@ -147,20 +147,20 @@ def test_a_login_creates_a_record_or_keeps_name_note_and_use(store_dsn: str) -> 
         await env.add_ck()
         request = _login_request(env)
         new_id = "01930099-0000-7000-8000-0000000000a1"
-        fields = {"token": "sk-ant-oat01-new", "email": None, "kind": "setup_token", "name": "Spare"}
+        fields = {"token": "double-new-token", "email": None, "kind": "setup_token", "name": "Spare"}
         assert await subscriptions.store_login(env.context, ALICE, new_id, fields, request) == 1
         assert hub.opened(new_id) == fields
         assert hub.puts[-1]["request_id"] == request
         use = {"pool": True, "orgs": []}
         existing = hub.add(subscription_body(token=None, name="Team", note="for reviews", use=use), owner=ALICE)
-        login = {"token": "sk-ant-oat01-again", "email": "x@example.com", "kind": "setup_token", "note": "new"}
+        login = {"token": "double-again-token", "email": "x@example.com", "kind": "setup_token", "note": "new"}
         assert await subscriptions.store_login(env.context, ALICE, existing, login, request) == 2
         assert hub.opened(existing) == {**login, "name": "Team", "use": use}
         async with env.pool.connection() as conn:
             cached = await subscriptions.cached(conn, existing)
         assert cached is not None
         assert cached.version == 2
-        assert "sk-ant-oat01" not in env.log()
+        assert "double-again-token" not in env.log()
 
     run(store_dsn, body)
 

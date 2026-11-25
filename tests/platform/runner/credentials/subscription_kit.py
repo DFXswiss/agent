@@ -17,7 +17,7 @@ Json = dict[str, Any]
 KIND = "claude_subscription"
 
 
-def subscription_body(token: str | None = "sk-ant-oat01-double-subscription-token-1", **extra: Any) -> Json:
+def subscription_body(token: str | None = "double-subscription-token-1", **extra: Any) -> Json:
     body: Json = {"email": "team@example.com", "kind": "setup_token", **extra}
     if token is not None:
         body["token"] = token

@@ -139,7 +139,8 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
         status, answer = original_devices(request, body)
         if status == 200:
             for row in answer["devices"]:
-                row["features"] = [] if row["device_id"] in found.outdated else ["subscriptions"]
+                if isinstance(row, dict) and "features" not in row:
+                    row["features"] = [] if row.get("device_id") in found.outdated else ["subscriptions"]
         return status, answer
 
     hub.override("r_devices", devices)

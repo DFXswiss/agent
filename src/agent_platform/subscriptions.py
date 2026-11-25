@@ -400,7 +400,7 @@ def register(tree: Tree) -> None:
         add,
         "add a subscription: log it in on a platform device (link for the user's browser, or --automatic)",
         writes=True,
-        example='agent-platform subscriptions add --name "Team 2" --note "review sessions"',
+        example='agent-platform subscriptions add --name "Team"',
         words="abo hinzufügen anmelden zentral einloggen add subscription login central",
         then="agent-platform claude login --request <request_id> --code",
     )
@@ -425,7 +425,7 @@ def register(tree: Tree) -> None:
         rename,
         "change the label of a subscription",
         writes=True,
-        example='agent-platform subscriptions rename --id <subscription_id> --name "Team 3"',
+        example='agent-platform subscriptions rename --id <subscription_id> --name "Review"',
         words="umbenennen bezeichnung name label rename",
     )
     sub.add_argument("--id", required=True)
@@ -436,7 +436,7 @@ def register(tree: Tree) -> None:
         note,
         "set or clear the note of a subscription",
         writes=True,
-        example='agent-platform subscriptions note --id <subscription_id> --note "for the review org"',
+        example='agent-platform subscriptions note --id <subscription_id> --note "..."',
         words="notiz bemerkung wofür note remark",
     )
     sub.add_argument("--id", required=True)

@@ -58,6 +58,7 @@ AREAS: dict[ModuleType, list[str]] = {
         "scheduler",
         "sessions",
         "stream",
+        "subscriptions",
         "tasks",
         "telemetry",
         "usage",

@@ -19,7 +19,7 @@ from .fakes.subscriptions import KIND, add, state_of
 from .hubfake import HubFake, Json, User, now_ms_text
 from .seeding import assign_device
 
-TOKEN = "sk-ant-oat01-SUBSCRIPTIONCANARY-0123456789"
+TOKEN = "double-SUBSCRIPTIONCANARY-0123456789"
 AUTHORIZE = {"step": "authorize", "url": "https://claude.ai/oauth/authorize?x=1"}
 ORG = "01930001-0000-7000-8000-0000000000aa"
 

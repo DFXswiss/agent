@@ -282,7 +282,9 @@
   },
   "src/agent_hub/credentials/records.py": {
    "MAX_CT_CHARS": "size",
-   "MAX_GITHUB_RECORDS": "open"
+   "MAX_GITHUB_RECORDS": "open",
+   "MAX_RECORDS": "open",
+   "MAX_SUBSCRIPTIONS": "open"
   },
   "src/agent_hub/credentials/routes.py": {
    "MAX_SAFE_INTEGER": "integer"
@@ -475,6 +477,9 @@
   "src/agent_hub/stream/ws.py": {
    "MAX_FRAME_BYTES": "size",
    "MAX_LIST_ITEMS": "page",
+   "MAX_SAFE_INTEGER": "integer"
+  },
+  "src/agent_hub/subscriptions/routes.py": {
    "MAX_SAFE_INTEGER": "integer"
   },
   "src/agent_hub/tasks/queue.py": {
@@ -732,6 +737,9 @@
   },
   "src/agent_runner/login/pty.py": {
    "MAX_OUTPUT": "size"
+  },
+  "src/agent_runner/login/requests.py": {
+   "LABEL_LIMITS": "size"
   },
   "src/agent_runner/login/screen.py": {
    "MAX_PARAM": "size",
@@ -1209,6 +1217,9 @@
    "/oneOf/1/properties/rotation_pending/maxItems": "answer",
    "/oneOf/1/properties/sessions/maxItems": "answer"
   },
+  "contracts/api/device-subscriptions-list.response.json": {
+   "/properties/subscriptions/maxItems": "open"
+  },
   "contracts/api/device-task-get.response.json": {
    "/properties/operations/maxItems": "answer",
    "/properties/sessions/maxItems": "answer"
@@ -1308,7 +1319,8 @@
    "/$defs/price_list_body/properties/runtime/properties/per_hour/properties/xlarge/anyOf/0/maximum": "integer",
    "/$defs/price_list_body/properties/tokens/properties/factors/properties/operator/anyOf/0/maximum": "integer",
    "/$defs/price_list_body/properties/tokens/properties/factors/properties/platform/anyOf/0/maximum": "integer",
-   "/$defs/price_list_token_amount/anyOf/0/maximum": "integer"
+   "/$defs/price_list_token_amount/anyOf/0/maximum": "integer",
+   "/$defs/subscription_reading/properties/windows/maxItems": "answer"
   },
   "contracts/api/operation-get.response.json": {
    "/properties/transitions/maxItems": "answer"
@@ -1394,6 +1406,9 @@
   "contracts/api/session-get.response.json": {
    "/properties/children/maxItems": "page",
    "/properties/transitions/maxItems": "answer"
+  },
+  "contracts/api/subscriptions-list.response.json": {
+   "/properties/subscriptions/maxItems": "open"
   },
   "contracts/api/task-charges.response.json": {
    "/properties/people/maxItems": "answer",
@@ -1521,6 +1536,9 @@
    "/$defs/log_manifest/properties/stored/maximum": "integer",
    "/$defs/positive/maximum": "integer",
    "/$defs/seq/maximum": "integer"
+  },
+  "contracts/credentials/claude_subscription.json": {
+   "/properties/use/properties/orgs/maxItems": "open"
   },
   "contracts/credentials/github.json": {
    "/properties/scopes/maxItems": "answer"
