@@ -514,7 +514,7 @@ search is not switched on: open a search page with url, like a person."
 - `browser.action` (scope `wg`, author the device, right `device_assigned_wg_session`, header `session` and `task`
   set), one per tool call: `{browser_id, seq, tool, action (≤ 64), target (≤ 1024, or null), text (≤ 1024, or null;
   `"••••"` for a password field), url (≤ 8192), title (≤ 1024), tab, ok, error (≤ 2048 or null), notice (≤ 1024 or
-  null), at, duration_ms, image, image_omitted}`; `image` `{type: "image/jpeg", width, height, data (b64u, ≤ 160
+  null), at, duration_ms, image, image_omitted}`; `image` `{type: "image/jpeg", width, height, data (b64u, ≤ 100
   KiB decoded, at most 960 px wide)}` or null; `image_omitted` `"too_large"`, `"unavailable"` or null. A **watched kind** (§13.6).
 - `browser.state` (same scope, author, right): `{browser_id, operation_id (null when implicit), implicit, state:
   "starting"|"open"|"restarted"|"closed", workvm_id, reason, url, actions, ready_ms, idle_seconds, opened_at,
