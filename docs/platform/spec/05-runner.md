@@ -1344,6 +1344,28 @@ Every GitHub request carries `Accept: application/vnd.github+json`, `X-GitHub-Ap
 - Full session in every respect: own events, terminal, hooks, audit, metrics; visible in the web as a child (at any
   depth).
 
+### 13.1 Rights profiles (KOR-51, ADR-090 §3)
+
+A session may carry a rights profile `{name, operations, reads}`; without one it may do what its human may (A1,
+E-11). The runner keeps the section `agent_profiles` of the desired state (`profile_state`, reconcile step 46
+`agent_profiles`; a desired state without it clears it) and, for a child the hub accepted with a profile of its own,
+the answered `child_profile` (`session_profile`) until the next state lists the child; a child the state does not
+list yet has its parent's profile. It enforces the effective profile three times:
+
+- **Operations:** right after the formal checks of every request (`profiles.check.operation`): a type outside the
+  profile is rejected locally with `rights_denied` and a sentence that names the profile and who can change it (a
+  person for a main session, the parent for a child). `subagent.request` with `profile` needs a name known in the
+  workgroup that allows nothing beyond the session's own profile; the name is registered as `child_profile`.
+- **Work VM and browser tools** (`workvm.call`): a tool whose type (`workvm.request`, `browser.open`) the profile does
+  not allow is answered with the tool error `forbidden` before anything starts.
+- **Reads** (`platform.query`): reach `workgroup` reads no other workgroup, reach `task` no other task, no task list
+  and no workgroup or organization whiteboard (`forbidden`).
+
+Every session start carries the profile in `POST /v1/sessions` (`profile`, guests 0.4.0 and later: the guest does
+not offer the excluded tools and records an excluded operation as locally rejected) and one harness line naming the
+profile. Merges (`github.merge`), verdicts (`review.verdict`) and the workgroup's merge criteria and separation of
+duties are §12.1 and 03-api.md §9.
+
 ## 14. Metrics
 
 Sampling every 15 s by the `metrics` task (sources and sinks in `08-monitoring.md`): host values, `limactl list

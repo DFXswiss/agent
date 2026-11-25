@@ -532,7 +532,9 @@ usage; each node links to `/o/:org/s/:session`. The tree is flattened depth firs
 windowed list `task.sessions` (100 rows at first, 50 per move, at most 200 rendered); one selector delivers the task's
 sessions and their usage, rows are memoized. The reachability of the sessions' devices is read once for the list
 (`useDevicePresence`: pages of the device list until every shown device is found, the list ends or the hub's cap of
-10 000 is read), not per row.
+10 000 is read), not per row. Every row, and every node of the situation view's agent tree (§4.0), shows the role of
+the session: the name of the rights profile it works with (its own, else its parent's, else its task's; a built-in role
+in the catalog's words; nothing without a profile, KOR-51, ADR-090 §7).
 
 ### 5.4 Operations tab
 
@@ -803,6 +805,16 @@ every user; such an org cannot use platform devices until the operator grants pl
 screen says so. Private organizations are only created from a platform invitation.
 
 ## 8. Integrations and settings
+
+### 8.0 Rights profiles and merge rules (KOR-51, ADR-090)
+
+- The workgroup settings list the rights profiles usable in the workgroup (built-in roles, the organization's and
+  the workgroup's own, each with its types and read reach); writers add or delete a workgroup profile, admins an
+  organization profile (`GET/PUT/DELETE …/agent-profiles`, 03-api.md §4.13).
+- The settings form has the optional merge rules (passed verdicts of review sessions and their profile, approving
+  GitHub reviews, green checks) and "separate duties"; all off by default, saved in `settings.workgroup`.
+- The task page shows the task's rights profile ("Every right (no profile)" without one); writers change or clear it
+  (`PUT /v1/tasks/{task}/agent-profile`; `409 peer_outdated` names the devices to update first).
 
 ### 8.1 GitHub
 

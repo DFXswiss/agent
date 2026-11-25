@@ -795,7 +795,8 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
 <a id="a-1"></a>
 - **A1 – Hilfs-KIs:** Subagenten dürfen dasselbe wie ihr Hauptagent ([E-11](#e-11) ist jünger als
   [Idee 26](#k-idee-26) und [Idee 31](#k-idee-31)). Rechteprofile und Rollen ([Idee 42](#k-idee-42)) kommen als
-  freiwillig einstellbare Einschränkung, nicht als Voreinstellung.
+  freiwillig einstellbare Einschränkung, nicht als Voreinstellung. Umgesetzt mit
+  [ADR-090](adr/090-rights-profiles-and-agent-roles.md) (KOR-51).
 <a id="a-2"></a>
 - **A2 – „Konflikte beheben“:** Der PR-Branch wird per Merge-Commit aktualisiert, nichts wird überschrieben
   ([Idee 41](#k-idee-41)). Rebase mit `--force-with-lease` nur nach ausdrücklichem Entscheid.
@@ -907,7 +908,6 @@ Stand 2026-11-25. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber nennt, welche Schalter umgelegt werden (gebaut, [ADR-079](adr/079-no-approval-as-precondition.md); ein Startguthaben gibt es nicht, [E-14](#e-14), entschieden 2026-11-25); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
-| [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |
 | [A10](#a-10) Subagenten | Ein Subagent endet nach einem Turn und bekommt keine Folge-Anweisung | KOR-45 |

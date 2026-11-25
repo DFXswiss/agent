@@ -55,6 +55,8 @@ CATEGORIES: dict[str, str] = {
     "contexts": "Context checkpoints (ADR-072): IDs, epoch, chunk counts, sizes, digest and chunk hashes, the signed "
     "manifest, times; pull-request links: opaque tag, epoch, task and session or the user who linked it, the sealed "
     "body of fixed length (ADR-084); restore outcomes",
+    "profiles": "Rights profiles (ADR-090): names of own profiles, the operation types they allow, their read reach, "
+    "who changed them and when; the profile snapshot of a task or a child session",
 }
 
 # Content type → SQL types it may have.
@@ -119,6 +121,8 @@ event: events | scope_id:uuid scope_seq:number id:uuid scope:code org_id:uuid wg
   session_id:uuid author_id:uuid author_kind:code kind:code ref:code epoch:number ts:time lh:number header_text:json
   ct:bytes@ciphertext sig:bytes size:number origin_device_id:uuid origin_seq:number received_at:time
 event_audit_cover: audit | scope_id:uuid covered_seq:number
+agent_profile: profiles | scope:code scope_id:uuid org_id:uuid name:code operations:codes reads:code updated_by:uuid
+  updated_at:time
 github_default: credentials | scope:code scope_id:uuid identity_id:uuid set_by:uuid set_at:time
 identity_bundle: ciphertext | user_id:uuid@ids slot:code@auth ct:bytes updated_at:time@auth
 invite: logs | id:code scope:code kind:code org_id:uuid log_seq:number created_by:uuid created_at:time
@@ -183,13 +187,14 @@ session: tasks | id:uuid task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid devic
   github_identity:uuid wait_until:time dfx_choice:flag wait_at:time triggered_by:uuid@shared
   interrupted_at:time interruption_ended_at:time failover_of:uuid redeliver_event_id:uuid restore_object:uuid@contexts
   orchestrator_at:time
+  agent_profile:json@profiles
 session_ping: notifications | id:uuid session_id:uuid kind:code level:code ref:code created_at:time
   delivered_at:time
 session_transition: tasks | session_id:uuid seq:number state:code reason:code at:time received_at:time
   reported_by:uuid
 task: tasks | id:uuid org_id:uuid wg_id:uuid owner_id:uuid state:code state_reason:code created_at:time
   state_at:time last_activity_at:time closed_at:time placement_device_id:uuid placement_vm_id:code
-  github_identity:uuid model_consent:flag
+  github_identity:uuid model_consent:flag agent_profile:json@profiles
 task_attention: attention | task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid category:code reason:code
   ref_kind:code ref_id:uuid since:time seq:number subagents_total:number subagents_active:number updated_at:time
   wait_until:time
