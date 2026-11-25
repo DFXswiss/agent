@@ -49,6 +49,8 @@ from .coordinator_common import (
     Runner,
     as_int,
     coord,
+    coordinator_env,
+    delegated_check_argv,
     evidence_base_sha,
     gh_list,
     gh_json,
@@ -1732,18 +1734,20 @@ def phase_tests(
         return _resume_post_suite_report(store, worker, task, runner, api)
 
     if cfg.check_argv:
-        from .coordinator_common import coordinator_env
-
-        precheck = run_bounded(
-            list(cfg.check_argv),
-            timeout=worker.check_timeout,
-            cwd=worktree,
-            env={
-                **coordinator_env(c, worker, cfg),
-                "AGENT_COORDINATOR_BASE": base_sha,
-            },
-            clear_ambient_github=True,
-        )
+        env = {
+            **coordinator_env(c, worker, cfg),
+            "AGENT_COORDINATOR_BASE": base_sha,
+        }
+        with delegated_check_argv(
+            worker, list(cfg.check_argv), workdir=worktree, env=env
+        ) as check_argv:
+            precheck = run_bounded(
+                check_argv,
+                timeout=worker.check_timeout,
+                cwd=worktree,
+                env=env,
+                clear_ambient_github=True,
+            )
         pre_output = (precheck.stdout or "") + "\n" + (precheck.stderr or "")
         if infra_failure(precheck.returncode):
             return check_command_unavailable(
@@ -1841,7 +1845,28 @@ def phase_tests(
     for index, argv in enumerate(steps):
         if index == 2 and not report_path.is_file():
             break
-        results.append(_run_cli(argv, worker=worker, cwd=run_dir))
+        if index == 1 and worker.check_execution is not None:
+            # Only the run reads the worktree and writes the report and logs.
+            # policy and verify stay local: they touch only the run directory.
+            run_env = coordinator_env(c, worker, cfg)
+            with delegated_check_argv(
+                worker,
+                [sys.executable, "-m", "agent_cli.main", "a38", *argv],
+                workdir=str(run_dir),
+                env=run_env,
+                reads=(worktree, str(policy_path)),
+                write_backs=(str(report_path), str(logs_dir)),
+            ) as delegated:
+                results.append(
+                    run_bounded(
+                        delegated,
+                        timeout=worker.check_timeout,
+                        cwd=str(run_dir),
+                        clear_ambient_github=True,
+                    )
+                )
+        else:
+            results.append(_run_cli(argv, worker=worker, cwd=run_dir))
         if index == 0 and results[-1].returncode != 0:
             break
     unavailable = next(

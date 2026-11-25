@@ -1233,3 +1233,216 @@ def test_conflict_resolved_after_a_reply_continues(
         "checklist_item", registry_row_id(str(task["id"]), "pr_mergeable")
     )
     assert row["status"] == "ja"
+
+
+def _seed_implement_checklist(
+    store: Store, task_id: str, *, pushed: str = "pending"
+) -> None:
+    from agent_cli.chain import CHECKLIST_KEYS
+
+    statuses = {
+        "session_registered": "ja",
+        "spec_written": "ja",
+        "implementer_done": "ja",
+        "reviewer_approved": "ja",
+        "local_check_pass": "pending",
+        "pushed": pushed,
+    }
+    for key in CHECKLIST_KEYS["implement"]:
+        store.write(
+            "checklist_item",
+            "insert",
+            key,
+            {
+                "id": key,
+                "task_id": task_id,
+                "key": key,
+                "status": statuses.get(key, "pending"),
+            },
+        )
+
+
+def _runtime_tests_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    evidence: object | None = None,
+    pushed: str = "pending",
+    pr_number: int | None = 42,
+) -> tuple[Store, WorkerConfig, FakeGh, str]:
+    from agent_cli import coordinator_runtime
+
+    store = Store(tmp_path)
+    write_accounts(store.home)
+    make_session(store, "worker-session", ["spine", "review-loop", "pr-review"])
+    make_session(store, "review-session", ["pr-review"])
+    worker = replace(make_worker(tmp_path), lane_retries=0)
+    fake = FakeGh()
+    patch_account_runners(monkeypatch, fake)
+    patch_execute_github(monkeypatch)
+    worktree = worker.workspace_root / "check-task"
+    worktree.mkdir()
+    tid = "d1000001-0000-4000-8000-000000000011"
+    checkpoint: dict[str, Any] = {
+        "phase": "tests",
+        "source": {"repo": "example/project", "number": 7},
+        "worktree": str(worktree),
+    }
+    if pr_number is not None:
+        checkpoint["pr_number"] = pr_number
+    if evidence is not None:
+        checkpoint["evidence"] = evidence
+    seed_task(
+        store,
+        worker,
+        tid,
+        {
+            "id": tid,
+            "session_id": worker.session_id,
+            "workflow": "implement",
+            "state": "local-check",
+            "title": "Check task",
+            "repo": "example/project",
+            "ref": "42",
+            "models": {"first": "driver-a", "second": "driver-b"},
+            "payload": {"coordinator": checkpoint},
+            "current_round": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+        },
+    )
+    _seed_implement_checklist(store, tid, pushed=pushed)
+    monkeypatch.setattr(
+        coordinator_runtime, "verify_signed_clean_head", lambda *a, **k: fake.head
+    )
+    return store, worker, fake, tid
+
+
+def _checklist_status(store: Store, task_id: str) -> dict[str, str]:
+    return {
+        str(row["key"]): str(row["status"])
+        for row in store.rows("checklist_item")
+        if row.get("task_id") == task_id
+    }
+
+
+def test_tests_phase_replaces_non_dict_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    store, worker, fake, tid = _runtime_tests_env(
+        tmp_path, monkeypatch, evidence="stale"
+    )
+    monkeypatch.setattr(
+        coordinator_runtime,
+        "run_bounded",
+        lambda *a, **k: Completed(124, "out", ""),
+    )
+
+    lines = coordinator_runtime.phase_tests(
+        store, worker, store.row("task", tid), lambda argv: Completed(0, "", "")
+    )
+
+    blocker = (
+        f"Check command could not run on {fake.head[:7]} (exit 124); "
+        "not a code failure."
+    )
+    assert lines == [f"blocked: {blocker}", "blocker published on example/project#7"]
+    checkpoint = coord(store.row("task", tid))
+    assert checkpoint["phase"] == "blocked"
+    assert checkpoint["resume_phase"] == "tests"
+    assert checkpoint["evidence"] == {}
+
+
+def test_tests_phase_returns_early_when_tests_are_already_green(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    store, worker, fake, tid = _runtime_tests_env(tmp_path, monkeypatch)
+    task = store.row("task", tid)
+    task["payload"]["coordinator"]["evidence"] = {
+        "tests_pass": True,
+        "tests_head": fake.head,
+    }
+    store.write(
+        "task",
+        "update",
+        tid,
+        {key: value for key, value in task.items() if not key.startswith("_")},
+    )
+    calls: list[Any] = []
+
+    def fake_bounded(*args, **kwargs):  # noqa: ANN001, ANN002
+        calls.append(args)
+        return Completed(0, "", "")
+
+    monkeypatch.setattr(coordinator_runtime, "run_bounded", fake_bounded)
+
+    lines = coordinator_runtime.phase_tests(
+        store, worker, store.row("task", tid), lambda argv: Completed(0, "", "")
+    )
+
+    assert lines == [f"tests already green on {fake.head[:7]}"]
+    assert calls == []
+    saved = store.row("task", tid)
+    assert coord(saved)["phase"] == "pr_gates_first"
+    assert saved["state"] == "pr-review"
+
+
+@pytest.mark.parametrize("with_pr", [True, False])
+def test_tests_phase_passes_and_enters_pr_gates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_pr: bool
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    store, worker, fake, tid = _runtime_tests_env(
+        tmp_path, monkeypatch, pr_number=42 if with_pr else None
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "run_bounded", lambda *a, **k: Completed(0, "ok", "")
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "ensure_draft", lambda *a, **k: ["draft ready"]
+    )
+
+    lines = coordinator_runtime.phase_tests(
+        store, worker, store.row("task", tid), lambda argv: Completed(0, "", "")
+    )
+
+    assert lines == [f"tests passed on {fake.head[:7]}", "draft ready"]
+    saved = store.row("task", tid)
+    assert coord(saved)["phase"] == "pr_gates_first"
+    assert saved["state"] == "pr-review"
+    statuses = _checklist_status(store, tid)
+    assert statuses["local_check_pass"] == "ja"
+    assert statuses["pushed"] == ("ja" if with_pr else "pending")
+
+
+def test_tests_phase_keeps_going_when_pushed_is_not_closable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent_cli import coordinator_runtime
+
+    store, worker, fake, tid = _runtime_tests_env(
+        tmp_path, monkeypatch, pushed="n_a"
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "run_bounded", lambda *a, **k: Completed(0, "ok", "")
+    )
+    monkeypatch.setattr(
+        coordinator_runtime, "ensure_draft", lambda *a, **k: []
+    )
+
+    lines = coordinator_runtime.phase_tests(
+        store, worker, store.row("task", tid), lambda argv: Completed(0, "", "")
+    )
+
+    assert lines == [f"tests passed on {fake.head[:7]}"]
+    saved = store.row("task", tid)
+    assert coord(saved)["phase"] == "pr_gates_first"
+    assert saved["state"] == "pr-review"
+    statuses = _checklist_status(store, tid)
+    assert statuses["local_check_pass"] == "ja"
+    assert statuses["pushed"] == "n_a"
