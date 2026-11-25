@@ -116,6 +116,9 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("user_ct", B),
         ("session_id", U),
         ("revoked_reason", T),
+        ("device_id", U),  # KOR-57, migration 0032 (ADR-082 section 6)
+        ("device_sig", B),
+        ("handover_sig", B),
     ],
     "request_nonce": [("key_id", T), ("nonce", T), ("seen_at", TS)],
     "device": [
@@ -327,6 +330,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("failover_of", U),
         ("redeliver_event_id", U),
         ("restore_object", U),
+        ("orchestrator_at", TS),  # KOR-57, migration 0032 (ADR-082 section 6)
     ],
     # 2.4.2 context checkpoints and pull-request links (KOR-33, ADR-072)
     "context_object": [

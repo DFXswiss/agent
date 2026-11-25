@@ -37,7 +37,12 @@ from agent_guest.clock import iso_ms, uuid7
 from agent_guest.journal import Journal, canonical
 
 INACTIVE_STATES = frozenset({"stopped", "failed"})
-PENDING_KINDS = {"operation": "operation.request", "query": "platform.query", "workvm": "workvm.call"}
+PENDING_KINDS = {
+    "operation": "operation.request",
+    "query": "platform.query",
+    "workvm": "workvm.call",
+    "relay": "hub.relay",
+}
 
 
 class StateError(Exception):
@@ -160,7 +165,9 @@ class Pending:
         self._cond = threading.Condition()
         self._closed = False
 
-    def create(self, session_id: str, kind: Literal["operation", "query", "workvm"], body: dict[str, Any]) -> str:
+    def create(
+        self, session_id: str, kind: Literal["operation", "query", "workvm", "relay"], body: dict[str, Any]
+    ) -> str:
         session = self.state.session(session_id)
         if session is None or session.state in INACTIVE_STATES:
             raise StateError("not_found")

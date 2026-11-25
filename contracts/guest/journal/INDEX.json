@@ -57,6 +57,11 @@
       "vm_level": false
     },
     {
+      "kind": "hub.relay",
+      "body": "guest/journal/hub.relay.json",
+      "vm_level": false
+    },
+    {
       "kind": "ping.delivered",
       "body": "guest/journal/ping.delivered.json",
       "vm_level": false

@@ -91,6 +91,11 @@ SPEC_GUEST = {
     ("GET", "/v1/journal"): ("after limit wait", "records head"),
     ("POST", "/v1/journal/ack"): ("through", ""),
     ("POST", "/v1/pending/{id}/answer"): ("status result error", ""),
+    # the main orchestrator in a session: contracts/changes/KOR-57.md (05-runner.md section 17.3)
+    ("POST", "/v1/sessions/{id}/orchestrator/keys"): ("hub_url hub_key platform_root_key", "pairing_id pub pop fp"),
+    ("POST", "/v1/sessions/{id}/orchestrator/handover"): ("pairing_id ct user_id user_pub", ""),
+    ("POST", "/v1/sessions/{id}/orchestrator/end"): ("pairing_id", ""),
+    ("POST", "/v1/relay/{id}/answer"): ("status headers body error", ""),
     ("GET", "/v1/metrics"): ("", "vm sessions"),
 }
 # The export response schema describes the manifest member of the tar stream (decision), not a JSON body.
@@ -172,6 +177,8 @@ SPEC_JOURNAL = {
     "platform.query": "pending_id tool arguments",
     # contracts/changes/KOR-29.md (13-work-vm.md section 3): a call of a work VM tool, answered by the runner
     "workvm.call": "pending_id tool arguments",
+    # contracts/changes/KOR-57.md (05-runner.md section 17.2): a signed hub request of the orchestrator's agent tool
+    "hub.relay": "pending_id method target headers body",
     "ping.delivered": "ping_id via",
     # contracts/changes/KOR-07.md: a read answered by the guest itself and an MCP request refused before forwarding
     "platform.read": "tool result_count",

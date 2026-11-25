@@ -11,13 +11,15 @@
 -- the work VM tools, answered by the runner like a platform.query.
 -- prompt_registry.speaker (ADR-083 section 1, contracts/changes/KOR-46.md): the sender line the runner registered with
 -- the prompt; the hook decision returns it for exactly the row it accepted.
+-- journal kind hub.relay and pending kind relay (contracts/changes/KOR-57.md, 05-runner.md section 17.2): the signed hub
+-- requests of the orchestrator's agent tool, forwarded by the runner and answered with the hub's answer.
 
 CREATE TABLE journal (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
     session_id TEXT,
     kind TEXT NOT NULL CHECK (kind IN ('session.state', 'session.output', 'session.tool', 'session.hook',
-        'session.file', 'session.terminal', 'session.tools_ready', 'usage', 'operation.request', 'platform.query', 'workvm.call',
+        'session.file', 'session.terminal', 'session.tools_ready', 'usage', 'operation.request', 'platform.query', 'workvm.call', 'hub.relay',
         'ping.delivered', 'platform.read', 'platform.refused', 'metrics', 'guest.error')),
     body TEXT NOT NULL,
     acked_at REAL
@@ -48,7 +50,7 @@ CREATE INDEX prompt_registry_hash ON prompt_registry (session_id, sha256, used_a
 CREATE TABLE pending (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('operation', 'query', 'workvm')),
+    kind TEXT NOT NULL CHECK (kind IN ('operation', 'query', 'workvm', 'relay')),
     request TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('waiting', 'answered')),
     answer TEXT,

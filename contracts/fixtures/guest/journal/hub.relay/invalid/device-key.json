@@ -1,0 +1,13 @@
+{
+  "pending_id": "0193000a-0000-7000-8000-00000000000b",
+  "method": "POST",
+  "target": "/v1/agent/claim",
+  "headers": {
+    "Agent-Key": "device.0193000a00007000800000000000000b",
+    "Agent-Time": "2026-11-25T10:00:00Z",
+    "Agent-Nonce": "AAECAwQFBgcICQoLDA0ODw",
+    "Agent-Signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "Content-Type": "application/json"
+  },
+  "body": "e30"
+}

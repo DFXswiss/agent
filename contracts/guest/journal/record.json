@@ -1429,6 +1429,35 @@
             },
             "kind": {
               "type": "string",
+              "const": "hub.relay"
+            },
+            "body": {
+              "$ref": "#/$defs/body_hub_relay"
+            }
+          },
+          "required": [
+            "seq",
+            "ts",
+            "session_id",
+            "kind",
+            "body"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "seq": {
+              "$ref": "../../common.json#/$defs/positive"
+            },
+            "ts": {
+              "$ref": "../../common.json#/$defs/time"
+            },
+            "session_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "kind": {
+              "type": "string",
               "const": "ping.delivered"
             },
             "body": {
@@ -2037,6 +2066,44 @@
       "required": [
         "tools",
         "at"
+      ],
+      "additionalProperties": false
+    },
+    "body_hub_relay": {
+      "type": "object",
+      "description": "a signed hub request of the orchestrator's agent tool, forwarded unchanged by the runner (05-runner.md section 17.2)",
+      "properties": {
+        "pending_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^/v1/[!-~]*$",
+          "maxLength": 4096
+        },
+        "headers": {
+          "$ref": "../objects.json#/$defs/relay_request_headers"
+        },
+        "body": {
+          "$ref": "../../common.json#/$defs/b64u"
+        }
+      },
+      "required": [
+        "pending_id",
+        "method",
+        "target",
+        "headers",
+        "body"
       ],
       "additionalProperties": false
     }

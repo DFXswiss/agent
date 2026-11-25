@@ -165,6 +165,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | situation-view | – (not in the web client yet) | package KOR-39 delivers (situation view) | pending |
 | credit-balance | shell (header item "Credit": the balance, "Credit used up") | `billing --org` | done |
 | diagnose | – (agent only) | `diagnose` | done |
+| session-orchestrator | screens/session (the task owner makes a running main session on DFX hardware the main orchestrator: request, check of the device signature, passkey confirmation, signed handover; ADR-082 §6) | (none: only the person makes a session the main orchestrator, the hub refuses an agent, ADR-082 §6.4) | n/a |
 | error-pages | screens/errors, screens/notfound | (no action: every failure of the tool is one JSON object with error and next) | n/a |
 | ui-health-report | shell (the browser's automatic, anonymous UI health report, ADR-086 section 5) | (no action: a browser measures its own main-thread blocks; nothing a person does or reads) | n/a |
 
@@ -173,6 +174,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | Route | Actions |
 |---|---|
 | `GET /v1/agent-pairings/{pairing}` | agents-pair |
+| `POST /v1/agent-pairings/{pairing}/orchestrator-handover` | session-orchestrator |
 | `GET /v1/config` | connect-agent, settings-model |
 | `POST /v1/device-requests` | github-connect, github-token, github-accounts, github-company-accounts, credential-claude-relay, credential-check, pr-view, pr-fix-conflicts |
 | `GET /v1/device-requests/{request}` | github-connect, github-token, github-accounts, github-company-accounts, credential-claude-relay, credential-check, pr-view, pr-fix-conflicts |
@@ -253,6 +255,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/session/end` | sign-out |
 | `GET /v1/sessions/{session}` | session-view, monitoring, session-workvm, task-runtime, triggered-by |
 | `POST /v1/sessions/{session}/control` | session-control |
+| `GET /v1/sessions/{session}/orchestrator` | session-orchestrator |
+| `POST /v1/sessions/{session}/orchestrator` | session-orchestrator |
 | `GET /v1/stream` | session-follow, platform-browser |
 | `POST /v1/tasks` | task-create, task-github-identity |
 | `GET /v1/tasks/{task}` | task-view, task-runtime |

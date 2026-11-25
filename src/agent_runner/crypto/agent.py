@@ -56,6 +56,14 @@ The agent's own identity (ADR-082 sections 1, 2 and 9.1): the agent is a sub-pri
   identity (`k` from `r`, AES-GCM inner with AAD = info, HPKE outer), `info = P || "agent-user\0" ||
   canonical({"agent", "user"})`, plaintext exactly `canonical({"cert", "kem", "sig"})` (`header_invalid` otherwise).
 
+The main orchestrator on platform hardware (ADR-082 sections 6 and 9.8, 11-agent-access.md section 11):
+
+- `orchestrator_key_text`: `P || "orchestrator-key\0" || canonical({"fp", "pairing_id", "session"})`, signed by the
+  executing device (`device_sig`): the keys the session drew in its VM belong to that session on that device.
+- `orchestrator_handover_text`: `P || "orchestrator-handover\0" || canonical({"ct", "pairing", "session"})`, signed by
+  the task owner's identity over the sealed handover `ct` (b64u); the runner checks it under the owner's key from its
+  verified log before it passes the handover into the VM.
+
 The hub uses only `verify_pop`, `verify_text`, `verify_cert`, `claim_hash` and the format checks; sealing and opening
 belong to the browser and the agent tool (this module is the reference for the vectors).
 """
@@ -100,6 +108,8 @@ LABEL_AGENT_ACCOUNT = b"agent-account\x00"
 LABEL_AGENT_RECOVER = b"agent-recover\x00"
 LABEL_AGENT_CERT = b"agent-cert\x00"
 LABEL_AGENT_USER = b"agent-user\x00"
+LABEL_ORCHESTRATOR_KEY = b"orchestrator-key\x00"
+LABEL_ORCHESTRATOR_HANDOVER = b"orchestrator-handover\x00"
 CERT_VERSION = 1
 MAX_GEN = 2**31 - 1
 SIGNATURE_BYTES = 64
@@ -474,3 +484,25 @@ def open_user(agent_kem: X25519PrivateKey, secret: bytes, agent_id: str, user_id
     if user_plaintext({"kem": value["kem"], "sig": value["sig"]}, value["cert"]) != plaintext:
         fail("header_invalid")
     return {"cert": str(value["cert"]), "kem": str(value["kem"]), "sig": str(value["sig"])}
+
+
+def orchestrator_key_text(fp: object, pairing_id: object, session_id: object) -> bytes:
+    """The text the executing device signs over the fingerprint of the keys an orchestrator session drew
+    (`header_invalid` for a malformed fingerprint or ID)."""
+    signed = {
+        "fp": b64u_encode(b64u_decode(fp, FINGERPRINT_BYTES)),
+        "pairing_id": fields.uuid(pairing_id),
+        "session": fields.uuid(session_id),
+    }
+    return P + LABEL_ORCHESTRATOR_KEY + canonical(signed)
+
+
+def orchestrator_handover_text(ct: object, pairing_id: object, session_id: object) -> bytes:
+    """The text the task owner signs over the handover sealed to an orchestrator session (`header_invalid` for a
+    malformed ciphertext or ID)."""
+    signed = {
+        "ct": b64u_encode(b64u_decode(ct)),
+        "pairing": fields.uuid(pairing_id),
+        "session": fields.uuid(session_id),
+    }
+    return P + LABEL_ORCHESTRATOR_HANDOVER + canonical(signed)

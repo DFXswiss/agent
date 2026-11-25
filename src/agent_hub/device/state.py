@@ -14,7 +14,8 @@ and composes every other field from the sections other areas register as `<area>
 `Section(fields, provide)`: `provide(request)` returns exactly its `fields` (`sessions`, `pending_prompts`,
 `delivered_prompt_event_ids`, `prompt_queue` from the sessions area, `requests`/`credentials_changed` from requests and
 credentials, `pings` from notifications, `quota_poll_owners`/`platform_budget` from usage, `github_defaults` from
-github). A field may be provided by one area only. A field no area provides is sent empty: `[]`, `{}` for
+github, `orchestrators` from agents, KOR-57). A field may be
+provided by one area only. A field no area provides is sent empty: `[]`, `{}` for
 `delivered_prompt_event_ids`, `null` for `platform_budget`, empty lists in `prompt_queue`. The optional fields of KOR-50
 (`model_fallback`, `dfx_keys`, `dfx_key_held`, from the models area) are left out while their value is `OMIT`:
 `dfx_keys` goes to the elected issuer only, `dfx_key_held` to org devices only; so is `limits` (the subagent settings
@@ -59,6 +60,7 @@ SECTION_FIELDS: Mapping[str, Callable[[], Any]] = {
     "failover_seconds": lambda: OMIT,
     "failovers": list,
     "limits": lambda: OMIT,
+    "orchestrators": list,
 }
 """The fields sections provide, with the value of a field no area provides."""
 

@@ -466,6 +466,8 @@ def test_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.build_file == "/opt/agent-guest/build.json"
     assert config.contracts == str(Path(registry.__file__).resolve().parent.parent / "contracts")
     assert config.tools_seconds == 25
+    assert (config.orch_socket, config.orch_group) == ("/run/agent-guest/orch.sock", "agent-orch")
+    assert config.orch_mcp_socket == "/run/agent-orch/mcp.sock"
     assert load_config({}) == config
     assert load_config({"AGENT_GUEST_TOOLS_SECONDS": "30"}).tools_seconds == 30
 

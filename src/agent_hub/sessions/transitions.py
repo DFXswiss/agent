@@ -20,6 +20,10 @@ caller's audit rows (lock order of `agent_hub.sessions.taskstate`). It
    quota pause reported again with another wait updates only the wait and derives the task again (the attention
    record carries the wait);
 5. records the `session` frame (row + transition), the `task` frame and the signal `task.state` in `Applied.effects`;
+   a session that ends (`stopped`, `failed`) or is suspended revokes its main orchestrator (`session_ended`) in the
+   same transaction
+   and ends the streams of its key after the commit (`agent_hub.agents.orchestrator.end_session`, ADR-082 section
+   6.6);
 6. after a `stopped`: lets `agent_hub.sessions.prompts.carry_over` start the next main session for the prompts the
    ended one did not deliver (KOR-11); for a `failed` with `capacity_exhausted` (the device had no free VM slot):
    `agent_hub.sessions.retry` decides before step 4 whether the hub re-schedules, and then step 4 stores the refusal
@@ -43,6 +47,8 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.agents import orchestrator
+from agent_hub.agents.keys import key_id_of
 from agent_hub.errors import HubError
 from agent_hub.scheduler import load
 from agent_hub.sessions import failover, model_retry, prompts, retry, rows
@@ -217,6 +223,13 @@ def record(
         target=("session", session.id),
     )
     effects.org_frame(task.org_id, "session", rows.session_frame(connection, session.id))
+    if ends or state == SUSPENDED:
+        # a suspended VM holds no orchestrator keys either: the place is never held by a dead agent (ADR-082 §9.9)
+        for user, agent in orchestrator.end_session(connection, session.id, received_at):
+            effects.close_keys(user, [key_id_of(agent)])
+            # the guest ends the orchestrator and deletes its keys (`orchestrators` step `revoked`); a session with an
+            # orchestrator has run on its device
+            effects.hint(cast(UUID, session.device_id), orchestrator.HINT, {"session_id": str(session.id)})
     if derive:
         refresh_task(connection, task, received_at, actor, effects)
 

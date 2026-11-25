@@ -361,6 +361,7 @@ describe('pairingOutcome', () => {
     heldIdentity: false,
     gen: 1,
     revokedReason: null,
+    sessionId: null,
   });
 
   it('waits while confirmed, connects when active, fails otherwise', () => {

@@ -168,6 +168,31 @@ def test_session_endpoints_send_the_documented_requests() -> None:
     assert json.loads(seen[4].content) == {"prompt_id": "p2", "text": "more", "speaker": speaker}
 
 
+def test_orchestrator_endpoints_send_the_documented_requests() -> None:
+    """05-runner.md section 17.3 (KOR-57): keys, handover and the answer of a relay record."""
+    seen, client = recorder()
+
+    async def body() -> None:
+        async with client:
+            assert await client.orchestrator_keys(SESSION, {"hub_url": "https://hub.example"}) == {}
+            await client.orchestrator_handover(SESSION, {"pairing_id": "p"})
+            await client.orchestrator_end(SESSION, "p")
+            await client.answer_relay("pend-2", {"error": "refused"})
+            with pytest.raises(GuestProtocolError):
+                await client.answer_relay("../x", {})
+
+    run(body())
+    assert [(r.method, r.url.path) for r in seen] == [
+        ("POST", f"/v1/sessions/{SESSION}/orchestrator/keys"),
+        ("POST", f"/v1/sessions/{SESSION}/orchestrator/handover"),
+        ("POST", f"/v1/sessions/{SESSION}/orchestrator/end"),
+        ("POST", "/v1/relay/pend-2/answer"),
+    ]
+    assert json.loads(seen[0].content) == {"hub_url": "https://hub.example"}
+    assert json.loads(seen[2].content) == {"pairing_id": "p"}
+    assert json.loads(seen[3].content) == {"error": "refused"}
+
+
 def test_files_import_and_export() -> None:
     manifest = "a" * 64
     seen: list[httpx.Request] = []

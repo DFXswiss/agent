@@ -29,6 +29,9 @@ test hub (`scripts/hub_test_server.py` starts it on `--port` with the hub's writ
   (`scripts/hub_test_metrics.py`, WEB-12).
 - `POST|GET /volume/seed`, `POST /volume/{invite,joined,live}`: the data set of the volume gate
   (`scripts/hub_test_volume.py`, KOR-35).
+- `POST /sessions/<id>/orchestrator {"pairing_id", "pub", "pop", "fp", "forged"?}`: the keys of a main orchestrator
+  session registered by the session's device (`scripts/hub_test_orchestrator.py`, ADR-082 section 6); `GET` of the
+  same path: the device's view with the stored handover. Both answer `{status, body}` of the hub.
 
 Frames and hints of these changes reach the hub's browsers over the PostgreSQL bus (`hub_stream`), exactly like the
 frames of another hub process (`agent_hub.stream.bus`). Only loopback, only for tests.
@@ -53,7 +56,7 @@ from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import psycopg
@@ -90,6 +93,7 @@ hub_test_requests = _sibling("hub_test_requests")
 hub_test_operations = _sibling("hub_test_operations")
 hub_test_metrics = _sibling("hub_test_metrics")
 hub_test_volume = _sibling("hub_test_volume")
+hub_test_orchestrator = _sibling("hub_test_orchestrator")
 
 ROOT_SEED = hashlib.sha256(b"agent.dfx.swiss test platform root key").digest()
 HEARTBEAT_SECONDS = 5.0
@@ -290,6 +294,15 @@ class Director:
         headers = signed_headers(key_id_of(device_id), self.identities[device_id].sig.sign, method, url, raw)
         return self.http.request(method, url, content=raw, headers=headers)
 
+    def orchestrator(self, session_id: str, body: Json | None) -> Json:
+        """The session's device in a main orchestrator pairing: registers the keys of `body`, or (None) reads the
+        device's view (`scripts/hub_test_orchestrator.py`)."""
+        if body is None:
+            return cast(Json, hub_test_orchestrator.view(self.pool, self.signed, session_id))
+        return cast(
+            Json, hub_test_orchestrator.register(self.pool, self.signed, self.identities.__getitem__, session_id, body)
+        )
+
     # --- sessions ---
 
     def main_session(self, task_id: str) -> Json | None:
@@ -339,6 +352,7 @@ TRANSITIONS_RE = re.compile(r"^/sessions/([0-9a-f-]{36})/transitions$")
 EVENTS_RE = re.compile(r"^/sessions/([0-9a-f-]{36})/events$")
 CHILDREN_RE = re.compile(r"^/sessions/([0-9a-f-]{36})/children$")
 OPERATIONS_RE = re.compile(r"^/sessions/([0-9a-f-]{36})/operations$")
+ORCHESTRATOR_RE = re.compile(r"^/sessions/([0-9a-f-]{36})/orchestrator$")
 ONLINE_RE = re.compile(r"^/devices/([0-9a-f-]{36})/online$")
 
 
@@ -367,6 +381,8 @@ def handler(director: Director) -> type[BaseHTTPRequestHandler]:
                 return self._send(200, director.volume.status())
             if self.path == "/volume/live":
                 return self._send(200, director.volume.live_count())
+            if (orchestrator := ORCHESTRATOR_RE.match(self.path)) is not None:
+                return self._send(200, director.orchestrator(orchestrator.group(1), None))
             match = SESSION_RE.match(self.path)
             found = None if match is None else director.main_session(match.group(1))
             self._send(404, {"error": "not_found"}) if found is None else self._send(200, found)
@@ -408,6 +424,8 @@ def handler(director: Director) -> type[BaseHTTPRequestHandler]:
             answer = director.metrics.route(self.path, body)
             if answer is None:
                 answer = self._volume_post(body)
+            if answer is None and (match := ORCHESTRATOR_RE.match(self.path)) is not None:
+                answer = director.orchestrator(match.group(1), body)
             if answer is not None:
                 self._send(200, answer)
             return answer is not None

@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/orchestrator-keys.request.json",
+  "title": "guest POST /v1/sessions/{id}/orchestrator/keys request",
+  "description": "Request of POST /v1/sessions/{id}/orchestrator/keys (05-runner.md section 17.3, ADR-082 section 6.2).",
+  "type": "object",
+  "properties": {
+    "hub_url": {
+      "type": "string",
+      "description": "origin of the hub (https, http only for a loopback hub)",
+      "pattern": "^https?://[A-Za-z0-9.:\\[\\]-]+$",
+      "maxLength": 2048
+    },
+    "hub_key": {
+      "type": "object",
+      "description": "the hub's pinned response key",
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/hub_key_id"
+        },
+        "public_key": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        }
+      },
+      "required": [
+        "id",
+        "public_key"
+      ],
+      "additionalProperties": false
+    },
+    "platform_root_key": {
+      "$ref": "../common.json#/$defs/b64u_32"
+    }
+  },
+  "required": [
+    "hub_url",
+    "hub_key",
+    "platform_root_key"
+  ],
+  "additionalProperties": false
+}

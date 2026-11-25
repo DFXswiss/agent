@@ -1091,6 +1091,18 @@
       "action": "Starte den Task mit einer kleineren Aufgabe noch einmal."
     }
   },
+  "orchestrator_unavailable": {
+    "en": {
+      "title": "Not possible for this session",
+      "body": "Only a running main session of your own task in your private organization on DFX hardware can become your main orchestrator.",
+      "action": "Open such a session, or connect your AI agent from your computer."
+    },
+    "de": {
+      "title": "Für diese Session nicht möglich",
+      "body": "Nur eine laufende Haupt-Session deiner eigenen Aufgabe in deiner privaten Organisation auf DFX-Hardware kann dein Hauptorchestrator werden.",
+      "action": "Öffne eine solche Session oder verbinde deinen KI-Agenten von deinem Computer aus."
+    }
+  },
   "origin_mismatch": {
     "en": {
       "title": "Wrong address",

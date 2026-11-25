@@ -722,6 +722,44 @@
             "subagent_max_runtime_seconds"
           ],
           "additionalProperties": false
+        },
+        "orchestrators": {
+          "type": "array",
+          "description": "KOR-57 (ADR-082 section 6): the orchestrator work of the device's sessions, oldest session first; step keys: draw and register the keys; step handover: fetch the stored handover (GET /v1/device/sessions/{id}/orchestrator); step revoked: the hub revoked the session's newest pairing while the session runs, end the orchestrator in the guest and delete its keys",
+          "items": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "step": {
+                "type": "string",
+                "enum": [
+                  "keys",
+                  "handover",
+                  "revoked"
+                ]
+              },
+              "pairing_id": {
+                "oneOf": [
+                  {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "session_id",
+              "step",
+              "pairing_id"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 1000
         }
       },
       "required": [

@@ -26,6 +26,10 @@ HOOK_BASE_URL = "http://127.0.0.1:7700/hooks/"
 HOOK_TIMEOUT_SECONDS = 15
 SESSION_TOKEN_ENV = "PLATFORM_SESSION_TOKEN"
 MCP_SERVER = "platform"
+# The main orchestrator's agent tool (05-runner.md section 17.5): a second server only the orchestrator session gets,
+# through ``/mcp-orchestrator`` of the guest API; its two tools are those of ``agent_platform.connector``.
+ORCHESTRATOR_SERVER = "orchestrator"
+ORCHESTRATOR_TOOLS: tuple[str, ...] = ("search", "run")
 
 # Platform API tools of the session (03-api.md section 8.1); the same list is served by GST-04/GST-07.
 MCP_TOOLS: tuple[str, ...] = (
@@ -173,14 +177,17 @@ def build_settings() -> dict[str, Any]:
         "permissions": {
             "defaultMode": "dontAsk",
             "disableBypassPermissionsMode": "disable",
-            "allow": list(FILE_TOOLS) + list(ALLOWED_TOOLS) + [f"mcp__{MCP_SERVER}__{tool}" for tool in MCP_TOOLS],
+            "allow": list(FILE_TOOLS)
+            + list(ALLOWED_TOOLS)
+            + [f"mcp__{MCP_SERVER}__{tool}" for tool in MCP_TOOLS]
+            + [f"mcp__{ORCHESTRATOR_SERVER}__{tool}" for tool in ORCHESTRATOR_TOOLS],
             "deny": deny,
         },
         "disableAutoMode": "disable",
         "allowManagedPermissionRulesOnly": True,
         "allowManagedHooksOnly": True,
         "allowManagedMcpServersOnly": True,
-        "allowedMcpServers": [{"serverName": MCP_SERVER}],
+        "allowedMcpServers": [{"serverName": MCP_SERVER}, {"serverName": ORCHESTRATOR_SERVER}],
         "strictKnownMarketplaces": [],
         "disableSkillShellExecution": True,
         "allowedHttpHookUrls": [HOOK_BASE_URL + "*"],

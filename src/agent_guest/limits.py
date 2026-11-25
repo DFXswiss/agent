@@ -74,5 +74,6 @@ KIND_BOUNDS: Mapping[str, str] = {
     "platform.refused": "first refusal of a stretch only (bucket: burst 120, 2/s per session)",
     "metrics": "one sample round per runner request (every 15 s)",
     "workvm.call": "one per work-VM MCP tool call (the guest waits for each call's answer, up to 33 s)",
+    "hub.relay": "one per signed hub request of the main orchestrator session only (at most 16 open at a time)",
     "guest.error": "never an event: the runner writes a log line only (auth failures <= 10 per 60 s per UID)",
 }

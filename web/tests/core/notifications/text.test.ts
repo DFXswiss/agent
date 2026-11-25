@@ -320,6 +320,7 @@ describe('account-level notifications of an agent (11-agent-access.md section 8)
         heldIdentity: false,
         gen: null,
         revokedReason: null,
+        sessionId: null,
       },
     ]);
     expect(notificationNames(store.getState(), row).agent).toBe('Claude Code');

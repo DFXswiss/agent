@@ -33,6 +33,8 @@ export interface AgentEntry {
   readonly gen: number | null;
   /** Why a revoked agent was revoked (`revoked`, `replaced`, `unclaimed`, `session_ended`), else null. */
   readonly revokedReason: string | null;
+  /** The platform session the agent runs in (the orchestrator on DFX hardware, ADR-082 section 6), else null. */
+  readonly sessionId: string | null;
 }
 
 export interface AgentsState {

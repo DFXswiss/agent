@@ -24,6 +24,8 @@ SPEC_NFT_RULES = [
     'meta skuid "platform" oif lo accept',
     'meta skuid "platform" ct state established,related accept',
     'meta skuid "platform" counter drop',
+    # the account of the main orchestrator's agent tool reaches nothing (05-runner.md sections 17.2 and 17.4)
+    'meta skuid "agent-orch" counter drop',
 ]
 
 
@@ -106,6 +108,10 @@ def test_runtime_and_state_directories() -> None:
         ["d", "/run/agent-guest/harness", "0711", "root", "root", "-"],
         ["d", "/var/lib/agent-guest", "0700", "root", "root", "-"],
         ["d", "/etc/agent-guest", "0700", "root", "root", "-"],
+        # 05-runner.md section 17.4: the tool's state only for its account; its MCP socket only for the account and
+        # the API process
+        ["d", "/var/lib/agent-orch", "0700", "agent-orch", "agent-orch", "-"],
+        ["d", "/run/agent-orch", "0710", "agent-orch", "platform", "-"],
     ]
 
 
@@ -185,6 +191,27 @@ def test_mcp_json_is_the_specified_server() -> None:
             }
         }
     }
+
+
+def test_the_orchestrator_mcp_json_is_the_second_server() -> None:
+    """05-runner.md section 17.5: Claude Code reaches the agent tool only through the guest API, never starts it."""
+    config = json.loads((IMAGES / "mcp-orchestrator.json").read_text(encoding="utf-8"))
+    assert config == {
+        "mcpServers": {
+            "orchestrator": {
+                "type": "http",
+                "url": "http://127.0.0.1:7700/mcp-orchestrator",
+                "headers": {"Authorization": "Bearer ${PLATFORM_SESSION_TOKEN}"},
+            }
+        }
+    }
+
+
+def test_the_tool_launcher_runs_isolated_from_the_tool_directory() -> None:
+    lines = (IMAGES / "orchestrator" / "agent-platform").read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "#!/usr/bin/python3 -I"
+    assert 'sys.path.insert(0, "/opt/agent-orch/lib")' in lines
+    assert lines[-1] == "sys.exit(main())"
 
 
 def test_no_file_names_a_lima_user() -> None:

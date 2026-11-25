@@ -1,0 +1,1 @@
+{"mcpServers":{"orchestrator":{"type":"http","url":"http://127.0.0.1:7700/mcp-orchestrator","headers":{"Authorization":"Bearer ${PLATFORM_SESSION_TOKEN}"}}}}

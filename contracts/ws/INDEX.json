@@ -95,6 +95,10 @@
           "data": "ws/device/session.control.json"
         },
         {
+          "type": "session.orchestrator",
+          "data": "ws/device/session.orchestrator.json"
+        },
+        {
           "type": "prompt",
           "data": "ws/device/prompt.json"
         },

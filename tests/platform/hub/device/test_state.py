@@ -39,6 +39,7 @@ EMPTY_SECTIONS: dict[str, Any] = {
         "subagent_max_total": 0,
         "subagent_max_runtime_seconds": 0,
     },
+    "orchestrators": [],  # KOR-57 (ADR-082 section 6)
 }
 
 

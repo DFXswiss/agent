@@ -63,3 +63,5 @@ export const LABEL_AGENT_RECOVER = 'agent-recover\0';
 // The agent's own identity (ADR-082): the delegation certificate and the user anchor sealed to the agent.
 export const LABEL_AGENT_CERT = 'agent-cert\0';
 export const LABEL_AGENT_USER = 'agent-user\0';
+export const LABEL_ORCHESTRATOR_KEY = 'orchestrator-key\0';
+export const LABEL_ORCHESTRATOR_HANDOVER = 'orchestrator-handover\0';

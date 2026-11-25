@@ -24,6 +24,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.agents import orchestrator
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.audit.invites import audit_invite_use
 from agent_hub.config import LIMITS
@@ -50,6 +51,10 @@ class AppendResult:
     head: Head
     appended: tuple[tuple[int, dict[str, object]], ...]
     decertified: tuple[str, ...] = field(default=())
+    revoked: tuple[tuple[UUID, UUID], ...] = field(default=())
+    """`(user, agent)` of the session orchestrators on a decertified device (ADR-082 section 9.6)."""
+    hints: tuple[tuple[UUID, UUID], ...] = field(default=())
+    """`(device, session)` of those orchestrators: the hint `session.orchestrator` after the commit."""
 
 
 class _Cache:
@@ -209,6 +214,7 @@ def append(
     stored_list = list(() if log is None else log.entries)
     appended: list[tuple[int, dict[str, object]]] = []
     decertified: list[str] = []
+    revoked: list[tuple[UUID, UUID]] = []
     for index, entry in enumerate(entries):
         pointer = f"/entries/{index}"
         try:
@@ -228,13 +234,20 @@ def append(
         if body["type"] == "device_decertify":
             projection.mark_rotation_pending(connection, cast(str, body["device"]))
             decertified.append(cast(str, body["device"]))
+            revoked += orchestrator.revoke_unfit(connection, now, device=UUID(cast(str, body["device"])))
         _audit(connection, body, seq, now)
         appended.append((seq, body))
         stored_list.append(stored)
     final = VerifiedPlatformLog(tuple(stored_list), tuple(states))
     # Cached before the commit: harmless, a cache hit needs the stored head to equal the cached one.
     CACHE.put(final)
-    return AppendResult(head=final.state.head_value(), appended=tuple(appended), decertified=tuple(decertified))
+    return AppendResult(
+        head=final.state.head_value(),
+        appended=tuple(appended),
+        decertified=tuple(decertified),
+        revoked=tuple(revoked),
+        hints=tuple(orchestrator.session_hints(connection, [agent for _user, agent in revoked])),
+    )
 
 
 def _audit(connection: psycopg.Connection[Any], body: dict[str, object], seq: int, now: datetime) -> None:

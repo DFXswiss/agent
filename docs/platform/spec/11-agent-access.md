@@ -23,7 +23,7 @@ up with the agent tool `agent-platform` (repository `agent`).
 | Account of an agent alone | (rule E-27, ADR-071) an account that an agent created through an invitation without a person (§5.5): no passkey, the agent holds the identity like after a pairing. "Account without a passkey" is the state the hub checks (no active `hub.passkey` row); an account of a person never reaches it (its last passkey cannot be removed, `last_passkey`). |
 | Proof method | the named way an agent proves possession of its keys at a registration or recovery without WebAuthn (`method`, today only `agent-signature-v1`: Ed25519 signatures over the texts of §3) |
 
-## 2. Data (hub schema, migrations `0010_agent_access.sql`, `0017_agent_remote_pairing.sql`)
+## 2. Data (hub schema, migrations `0010_agent_access.sql`, `0017_agent_remote_pairing.sql`, `0032_orchestrator_session.sql`)
 
 `hub.agent`: `id uuid pk`, `user_id uuid null → principal` (null while `open`), `kem_pub bytea(32)`,
 `sig_pub bytea(32)` (unique among rows that are not revoked), `state text` ∈ {`open`,`confirmed`,`active`,`revoked`},
@@ -43,6 +43,12 @@ null` (16 bytes, set exactly for a remote row), `handover_ct bytea null` (only o
 confirmation until the claim; cleared at the claim, the revocation and – by the job `agents.unclaimed_purge` – the
 claim deadline; exported as null). A remote pairing must be confirmed within 300 s of its creation (`expires_at` =
 created + 300 s); its claim deadline is the confirmation + 600 s.
+Migration `0032_orchestrator_session.sql` (KOR-57 stage b, ADR-082 §6, additive): `session.orchestrator_at
+timestamptz null` (the task owner's latest request, §11), on `hub.agent` `device_id uuid null` and `device_sig
+bytea(64) null` (set exactly with `session_id`: the session's device and its signature over the fingerprint of the
+session's keys) and `handover_sig bytea(64) null` (the task owner's signature over `handover_ct`; set exactly with
+`handover_ct` on a session row, cleared with it). `handover_ct` is now also admitted on a `confirmed` session row; a
+session row is never remote. A session pairing's claim deadline is the confirmation + 120 s.
 
 ## 3. Crypto (labels prefixed with `P`, `04-crypto.md` §1; reference `agent_hub/crypto/agent.py`)
 
@@ -81,13 +87,18 @@ implementations check them.
 | `GET /v1/agent-pairings/{id}` | anon | → `{pairing_id,pub:{kem,sig},state:"open"|"confirmed",expires_at}` (a remote pairing adds `remote: true, nonce`) while open or confirmed and before the deadline; otherwise (unknown, claimed, revoked, expired) `404 pairing_unknown`; signed by a user (browser session or agent) the answer adds `gen`, the generation the user's certificate of this pairing names (ADR-082 §9.1) |
 | `POST /v1/passkeys/login/begin` | anon | `{pairing_id?}`: optional; a pairing that is not open before its deadline → `404 pairing_unknown`. The ceremony and the session it creates carry the pairing ID |
 | `POST /v1/me/agents` | browser session; the active agent of an account without a passkey (KOR-62; an agent of an account with a passkey gets `403 forbidden`, §6) | `{pairing_id,bundle_ct,label_ct,claim_hash,handover_ct?}` → `{agent_id}`; `handover_ct` (§3) is required for a remote pairing (`400 handover_required`) and refused for a loopback pairing (`400 handover_unexpected`); a remote confirmation sets the claim deadline to confirmation + 600 s and notifies the user (`agent_paired_remote`, §8.4); the session must have been created by a ceremony tagged with this pairing at most 300 s ago (`403 pairing_gesture_required`); the pairing must be `open` before its deadline (`404 pairing_unknown`). In the same transaction the user's previous main orchestrator (`confirmed` or `active`) is revoked and recorded in `replaces` of the new row; its open live streams are closed. A repeat with identical values (including `handover_ct`) → the same answer (nothing replaced again, nobody notified again), other values → `409 id_conflict`. New form (ADR-082 §2, §9): `{pairing_id,label_ct,claim_hash,handover_ct?,gen,cert,user_ct,batches:[{org,expected_seq,entries,wraps}],cred_wraps}` instead of `bundle_ct`; `gen` must be the user's next generation (`409 agent_gen_mismatch`, `detail.expected`), `cert` verify under the user's registered identity (`401 signature_invalid`); one batch for every org in which the user is an active member, each adding exactly this agent (`agent_add` by the user with `gen` and `cert`) through the ordinary append rules (`409 agent_batches_incomplete`, `detail.orgs`), and a wrap of the user's current `CK` epoch to the agent (`detail.expected`); confirmation, replacement, batches and wraps in one transaction, log frames after the commit. The old form (`bundle_ct`) from a browser → `409 client_outdated`; the agent of an account alone keeps both forms; an own-identity agent → `403 forbidden` |
-| `GET /v1/me/agents` | user | → `{agents:[{agent_id,state:"confirmed"|"expired"|"active"|"revoked",label_ct,created_at,confirmed_at,claimed_at,last_used_at,revoked_at,replaces:<agent id>|null,remote}]}` of the user, newest first (`expired` = confirmed, never claimed, past the deadline; `replaces` = the main orchestrator this one replaced at its confirmation); at most one row is `confirmed` or `active`; every row adds `own_identity`, `held_identity` (it held a copy of the user's identity), `pub:{kem,sig}`, `gen`, `cert` (own-identity agents, else null), `revoked_reason` and `session_id` (null until stage b) (ADR-082) |
+| `GET /v1/me/agents` | user | → `{agents:[{agent_id,state:"confirmed"|"expired"|"active"|"revoked",label_ct,created_at,confirmed_at,claimed_at,last_used_at,revoked_at,replaces:<agent id>|null,remote}]}` of the user, newest first (`expired` = confirmed, never claimed, past the deadline; `replaces` = the main orchestrator this one replaced at its confirmation); at most one row is `confirmed` or `active`; every row adds `own_identity`, `held_identity` (it held a copy of the user's identity), `pub:{kem,sig}`, `gen`, `cert` (own-identity agents, else null), `revoked_reason` and `session_id` (the orchestrator session on DFX hardware, §11; else null) (ADR-082) |
 | `DELETE /v1/me/agents` | user | → `{revoked}`: every confirmed or active agent of the user revoked at once |
 | `DELETE /v1/me/agents/{id}` | user | → `{}`; state `revoked`, sealed identity deleted; unknown or foreign → `404 not_found`; already revoked → `{}` |
 | `POST /v1/agent/claim` | agent key, state `confirmed` (`agent:confirmed`) | `{claim}` (b64u 32 B, §3) → `{agent_id,user_id,bundle_ct,label_ct,created_at,claimed_at}`; wrong claim → `401 claim_invalid` (counted; the fifth wrong claim deletes the pairing); past the deadline → `404 pairing_unknown`; repeat when `active` with the right claim → the same answer; an own-identity agent gets `user_ct`, `identity: "own"`, `gen`, `migrate: false` instead of `bundle_ct` (as `GET /v1/agent/me`); the fifth wrong claim of an own-identity row revokes it (`unclaimed`) instead of deleting it |
 | `GET /v1/agent/me` | agent key, state `active` (`agent`) | → `{agent_id,user_id,bundle_ct,label_ct,created_at,claimed_at}`; with `identity` (`own`: `user_ct`, `gen`; `user`: `bundle_ct`) and `migrate` (holds the identity and the user has a passkey; then `migrate_gen`, ADR-082 §5) |
 | `GET /v1/agent/handover` | agent key, state `confirmed` (`agent:confirmed`) | → `{agent_id,user_id,handover_ct}` of a confirmed remote pairing before its claim deadline; a loopback row, a claimed, revoked or expired one → `404 pairing_unknown`; read resource `agent.handover` |
 | `POST /v1/agent/identity` | agent key, state `active` (`agent`) | `{gen,cert,user_ct,batches,cred_wraps}` → `{agent_id,gen}`: an agent that holds its user's identity converts itself (ADR-082 §5): entries by the user (signed with the identity it holds), checked as for `POST /v1/me/agents`; sets `own_identity`, deletes `bundle_ct`, audit `agent.identity`; only for an account with a passkey (`403 forbidden`); an identical repeat → the same answer, other values → `409 id_conflict` |
+| `POST /v1/sessions/{id}/orchestrator` | browser session of the task owner (`owner`); an agent, a device or another reader `403 forbidden`, a session the user cannot read `404 not_found` | `{}` → the answer of the `GET` below; the session must be a main session (`not_main`) of a task in the owner's private organization – private, created by the owner, no other active user member (`not_private`) – on an active platform device (`not_platform`), `working` or `idle` (`not_running`), else `409 orchestrator_unavailable` with `detail.reason`; sets `session.orchestrator_at`, audit `session.orchestrator`, hint `session.orchestrator {session_id}` to the device. While the session has a live pairing (open, confirmed or active) the answer is unchanged and nobody is hinted |
+| `GET /v1/sessions/{id}/orchestrator` | browser session of the task owner (`owner`) | → `{session_id,device_id,available,reason,requested_at,pairing}` with `pairing` = null or `{pairing_id,pub:{kem,sig},fp,device_sig,state:"open"|"confirmed"|"active",expires_at,handover}` (the newest live pairing of the session; `handover`: the handover is stored); read resource `session.orchestrator` |
+| `POST /v1/device/orchestrator-pairings` | device of the session (`device:session`) | `{session_id,pairing_id,pub:{kem,sig},pop,fp,device_sig}` → `{pairing_id,expires_at}` (created + 600 s); another device `403 forbidden`, unknown session `404 not_found`; the session as above and a request it has not answered yet (`409 orchestrator_unavailable`, `not_requested`); bad proof of possession or `device_sig` (§11) under the device's registered key `401 signature_invalid`; `fp` not the fingerprint of `pub` `400 request_invalid`; replaces an open pairing of the session; the same keys of an expired open pairing open it anew; an active pairing or a confirmed one before its claim deadline, used keys, keys of a live agent or the same ID with other values `409 id_conflict`; an identical repeat of a live pairing → the stored answer. Audit `agent.pairing` (actor the device) |
+| `GET /v1/device/sessions/{id}/orchestrator` | device of the session (`device:session`) | → `{session_id,user_id,requested_at,requested,pairing}`; `user_id` = the task owner; `requested`: asked after the newest pairing of the session was registered and still allowed (draw and register keys); `pairing` = null or `{pairing_id,state,expires_at,handover:null|{ct,sig}}`; read resource `device.orchestrator`. `GET /v1/device/state` lists the same work as `orchestrators: [{session_id,step:"keys"|"handover"|"revoked",pairing_id}]` (the reconcile of a missed hint; `revoked`: the newest pairing of the running session was revoked – replaced, disconnected, suspended or unfit – and the guest ends it and deletes its keys; every revocation of a session orchestrator also hints its device) |
+| `POST /v1/agent-pairings/{id}/orchestrator-handover` | browser session of the task owner (`owner`); an agent `403 forbidden` | `{ct,sig}` → `{pairing_id,session_id}`: `ct` the handover of §3 sealed to the session's key, `sig` the owner's signature over it (§11) checked under the registered identity (`401 signature_invalid`); only for a `confirmed` session pairing of the user before its claim deadline (`404 pairing_unknown`) while the session is allowed (`409 orchestrator_unavailable`); identical repeat → same answer, other values `409 id_conflict`; audit `agent.handover`, hint `session.orchestrator` |
 | `POST /v1/agent-accounts` | anon (KOR-62) | `{invite_id,user_id,identity:{kem_pub,sig_pub},recovery:{recovery_id,bundle_ct},cred_wrap:{epoch:1,wrap,sig},agent:{agent_id,pub:{kem,sig},bundle_ct,label_ct,claim_hash},proof:{method,inv_sig,id_sig,agent_sig}}` → `{user_id,agent_id}`; the invitation as for `register/begin` (open user invitation with a known `pk_inv`, else `404 invite_unknown`); `identity`, `recovery`, `cred_wrap` as for the first passkey of `register/finish` (`params_invalid`, `wrap_unauthorized`); a wrong signature `401 signature_invalid`; a taken user, recovery or agent ID or agent key `409 id_conflict`; sealed values under 48 bytes `400 request_invalid`; an identical repeat → the same answer, nothing changed. Stores the account without a passkey and the agent `active` (§5.5) |
 | `POST /v1/recovery/finish` with `agent` | anon (KOR-62) | `{user_id,challenge,proof,agent:{agent_id,pub,bundle_ct,label_ct,claim_hash,method,agent_sig}}` → `{user_id,agent_id}`; `proof` over the recover text (§3); only for an account without a passkey (else `403 forbidden`, nothing consumed); a wrong signature `401 signature_invalid` (the challenge is used up as for a person) |
 | `GET /agents.md` | anon (not under `/v1/`) | the guide for AI agents of the web build (`docs/platform/agents.md`), `text/markdown` |
@@ -96,8 +107,8 @@ Key resolver `agent.`: unknown, `open`, or `confirmed` past its deadline → `ke
 → `key_revoked` (response-signed, like devices); `confirmed` → only `POST /v1/agent/claim` and `GET /v1/agent/handover`; `active` → §6. New auth
 class `agent` (routes `/v1/agent/*`), principal kind `agent` (acting for its user, audit actor `user`). Rate limit as a
 browser session (600/min per key). Error codes (new, `03-api.md` §11): `pairing_unknown` (404),
-`pairing_gesture_required` (403), `claim_invalid` (401), `handover_required` (400), `handover_unexpected` (400);
-client-only `pairing_mismatch`.
+`pairing_gesture_required` (403), `claim_invalid` (401), `handover_required` (400), `handover_unexpected` (400),
+`orchestrator_unavailable` (409, §11); client-only `pairing_mismatch`.
 
 ## 5. Flows
 
@@ -395,7 +406,7 @@ Codes (closed list in `agent_platform/errors.py`): `not_paired`, `agent_revoked`
 `device_request_failed`, `hub_too_old`, `pairing_pending`, `no_pending_pairing`, `pairing_busy`, `last_admin`, `not_found`, `credentials_blocked`,
 `rotation_pending`, `community_key_missing`, `not_own_account` (KOR-62), `mac_unsupported`, `release_unavailable`,
 `admin_cancelled`, `install_failed`, `device_installed`, `not_installed` (KOR-59), `github_login_missing` (KOR-65),
-`pr_not_linked`, `pr_no_conflict` (KOR-48).
+`pr_not_linked`, `pr_no_conflict` (KOR-48), `not_in_session` (KOR-57).
 Every fixed text that names a step with a person has a row in the table "Without a person" of
 `docs/platform/agent-parity.md` with the way without one (`tests/platform/test_without_person.py`).
 
@@ -481,40 +492,72 @@ journey: register, private org, team org, a second agent through an org invitati
 hand-over) and their refusals; the table "Without a person" (`test_without_person.py`); E2E-54 ("agent alone": no
 browser step, no passkey, plus the person's web view of the agent's membership and vice versa).
 
-## 11. Orchestrator on platform hardware (design; not built in this package, follow-up package)
+## 11. Orchestrator on platform hardware (KOR-57 stage b, ADR-082 §6 and §9.6-§9.9)
 
-Concept idea 34: the main orchestrator may run on DFX hardware. A **platform session** of the user on an execution
-device becomes the main orchestrator (ADR-056 §9). Same rights (§6), same revocation (§5.3), same audit (§7), same
-rule "exactly one" (it replaces a local orchestrator and is replaced by a new pairing of either form). Differences
-from §5.1:
+Concept idea 34: the main orchestrator may run on DFX hardware. A running **main session** of the user's own task in
+the user's **private organization** on a **platform device** becomes the main orchestrator. Same rights (§6), same
+revocation (§5.3), same audit (§7), same rule "exactly one" (a session pairing is a pairing like any other: it replaces
+a local orchestrator and is replaced by a new pairing of either form, `agent_one_per_user`). Hub:
+`agents/orchestrator.py`; web: `core/agents/orchestrator.ts`, `ui/screens/session/OrchestratorAction.tsx` and
+`OrchestratorDialog.tsx`; runner, guest and tool: 05-runner.md and §8.
 
-1. **Key pair inside the session.** On the user's request the runner starts the agent tool inside the session VM
-   (`agent-platform pair --session`); it draws the key pair there (§3) and keeps the private part in the VM only. It
-   hands `{pairing_id, pub, pop}` to the runner over the guest channel; the runner sends it, signed with its device
-   key, as `POST /v1/agent-pairings` with `session_id` (the hub checks that the session runs on that device for that
-   user). The runner reports the fingerprint `fp` (§3) in a device-signed session frame.
-2. **Approval in the web client.** The session page offers "Make this session my main orchestrator"; the dialog shows
-   the session, its device, "replaces <name>" if there is one, the full-access text of §5.1 step 2 (no key jargon),
-   and runs the login ceremony tagged with that pairing. The browser compares the keys of `GET /v1/agent-pairings/{id}`
-   with the device-signed `fp` (instead of the link fragment), then confirms with `POST /v1/me/agents` as in §5.1
-   step 3 (the same replacement in one transaction).
-3. **Sealed handover instead of the loopback.** The browser draws `r` and seals `{p, u, r, k}` (the fields of §5.1
-   step 4) with HPKE to the session's `kem_pub` (`info = P‖"agent-handover\0"‖ids`), and sends the ciphertext as a
-   session input of a new kind (the label `agent-handover` is now defined by the remote pairing, §3: the follow-up
-   package reuses that format, `canonical({"k","r"})` with pairing and user in `ids`, rather than a second plaintext
-   under the same label); the runner passes it unopened into the VM. Only the session's private key opens it;
-   the tool then claims and opens the identity exactly as §5.1 step 5. The loopback claim secret is replaced by this
-   channel, authenticated by the device signature of the pairing and of `fp`, and bound to the session's key.
-4. **End.** Session end, VM reset, device unassignment or revocation in the settings revoke the orchestrator; no key
-   leaves or outlives the VM.
+**Which session.** Main session (depth 0), task owner = the user, organization private, created by the user and with
+no other active user member (so the session's events are readable only by the user, the user's agent and the executing
+devices, ADR-082 §9.6), an active platform device, state `working` or `idle` (the VM runs and can draw keys). The hub
+refuses everything else with `409 orchestrator_unavailable` (`detail.reason` `not_main`, `not_private`,
+`not_platform`, `not_running`; registering keys also `not_requested`); the session page offers the step only to the
+task owner of a running main session for which `GET /v1/sessions/{id}/orchestrator` says `available`.
+
+1. **Request.** The page's dialog sends `POST /v1/sessions/{id}/orchestrator` (only the browser session of the task
+   owner: an agent – also the user's own – or a device gets `403 forbidden`; a session cannot ask for itself, it has
+   no browser session). The hub records `orchestrator_at` and hints the device (`session.orchestrator`); a runner that
+   missed the hint finds the work in `GET /v1/device/state` (`orchestrators`, step `keys`).
+2. **Keys in the VM.** The runner has the guest draw the key pair inside the VM (the private part never leaves it) and
+   registers it with `POST /v1/device/orchestrator-pairings`, signed by the device, together with
+   `device_sig = Ed25519_device(P‖"orchestrator-key\0"‖canonical({"fp","pairing_id","session"}))` over the
+   fingerprint `fp` (§3). The hub checks the proof of possession, `fp` and `device_sig` under the device's registered
+   key and binds the open pairing to the session, its device (`device_id`) and – through the session – its task owner.
+   Keys are registered only for a request the session has not answered yet (requested after the newest pairing of
+   the session, else `not_requested`: a new orchestrator needs a new gesture, ADR-082 §9.9). The same keys again after
+   their pairing expired unconfirmed open it anew (new `created_at` and `expires_at`); a confirmed pairing holds the
+   session only until its claim deadline, and keys of a confirmed, revoked or claimed pairing are `409 id_conflict`.
+3. **Approval.** The dialog reads the pairing (`GET /v1/sessions/{id}/orchestrator`, every second, at most 60 s),
+   checks in the verified log that the organization is the user's private one (private, founded with the user's
+   key, no other active user member; else `orchestrator_unavailable`), that the keys have the fingerprint `fp` and
+   that `device_sig` verifies under the device's key from the
+   **verified platform log** (a `device_certify` not ended), else `pairing_mismatch`. It shows the session ("This
+   session"), its device by name, "Replaces “X”" when the user has a main orchestrator, the full-access text and that
+   the key stays inside the session on DFX hardware and ends with it. "Confirm with passkey" runs the login ceremony
+   tagged with the pairing and confirms with `POST /v1/me/agents` exactly as §5.1 and §5.6 (certificate, one batch per
+   organization with the replacement, `cred_wraps`); the hub accepts the confirmation of a session pairing only from
+   the task owner's browser session (an agent, also the one of an account without a passkey, `403 forbidden`) while
+   the session is still allowed. The label the browser seals for itself names "A session on DFX hardware" and the
+   device (never an ID, ADR-073).
+4. **Signed handover.** The browser seals `{k, r}` to the session's key in the remote format of §3
+   (`P‖"agent-handover\0"‖canonical({"agent","user"})`) and signs the ciphertext with the user's identity:
+   `sig = Ed25519_user(P‖"orchestrator-handover\0"‖canonical({"ct","pairing","session"}))`
+   (`POST /v1/agent-pairings/{id}/orchestrator-handover`; the hub checks `sig` too). The device is hinted
+   (`orchestrators` step `handover`), fetches `{ct, sig}` and the task owner's ID from
+   `GET /v1/device/sessions/{id}/orchestrator`, checks `sig` under the owner's key from its verified log and passes
+   `ct` with the owner's public keys into the VM unopened. A hub cannot hand the session an account of its choosing.
+   The tool in the VM claims within 120 s as a remote agent does; the dialog reads the agent list until the row is
+   active (connected) or gone (failed).
+5. **End.** Every transition of the session into `stopped`, `failed` (any reason: VM reset, device unassignment, …)
+   or `suspended` (a suspended VM holds no keys) revokes its confirmed or active orchestrator in the same transaction
+   (`revoked_reason` `session_ended`, its open streams closed after the commit) and deletes an open pairing of it. The
+   same revocation follows, in the transaction of the change, when the session stops fitting while it runs: another
+   user becomes a member of the private organization (an org log append) or the device is decertified (a
+   platform-log append); the log removal follows by the user's clients
+   (§5.6). The agent list shows such an agent "On DFX hardware, in a session of one of your tasks" (`session_id`).
 
 | Threat | Protection | Residual risk |
 |---|---|---|
-| Runner or device substitutes the session's key | `fp` in a device-signed frame; the dialog names device and session; the hub binds the pairing to that session and device | a compromised device: equals a compromised computer of a local agent |
+| Hub or runner substitutes the session's key | `device_sig` over `fp`, checked by the browser under the device key of the verified platform log; the dialog names device and session; the hub binds the pairing to that session and device | a compromised device: equals a compromised computer of a local agent |
+| Hub hands the session an account of its choosing | the handover is signed by the task owner and checked by the runner under the owner's key from its verified log | KOR-55 not built: the runner trusts the hub's binding of session and task owner |
 | Runner reads the VM at run time | – | accepted: the device the user assigned already sees the session's plaintext |
-| Malicious hub | `r` sealed to the session key; bundle as §3 | as §9 (malicious JavaScript, withholding) |
-| Handover withheld or replayed | pairing single-use, claim deadline 60 s, claim bound to the agent key | denial only |
-| A session pairs itself without the user | confirmation only by the pairing-tagged passkey session of the user (§6) | – |
+| A session (or the user's agent) makes itself the orchestrator | request, confirmation and handover only from the task owner's browser session; the confirmation needs the pairing-tagged passkey login | – |
+| A session outside the private organization or on an org device | refused by the hub and not offered by the page | – |
+| Handover withheld or replayed | pairing single-use, claim deadline 120 s, claim bound to the agent key | denial only |
 
 ## 12. Rollout and rollback
 
@@ -541,6 +584,12 @@ existing row satisfies). Before rolling the hub back behind it, revoke the uncla
 SET state = 'revoked', bundle_ct = NULL, handover_ct = NULL, revoked_at = now() WHERE remote AND state =
 'confirmed'`; open remote pairings expire in 5 minutes); the old hub ignores the columns, and an old page refuses a
 remote link (it has no `c`).
+
+Migration `0032_orchestrator_session.sql` (KOR-57 stage b) is additive (nullable columns; the handover check admits
+more rows). Before rolling the hub back behind it, revoke the session orchestrators (`UPDATE hub.agent SET state =
+'revoked', revoked_reason = 'revoked', revoked_at = now(), user_ct = NULL, handover_ct = NULL, handover_sig = NULL
+WHERE session_id IS NOT NULL AND state IN ('confirmed', 'active')` and `DELETE FROM hub.agent WHERE session_id IS NOT
+NULL AND state = 'open'`); an older runner ignores the hint and the state field, an older page does not offer the step.
 
 `POST /v1/agent-accounts`, the `agent` form of `recovery/finish` and the agent's `POST /v1/me/agents` (KOR-62) need no
 migration: the existing columns hold an agent row that is `active` from its creation. An older hub answers

@@ -1,0 +1,79 @@
+{
+  "name": "e2e-63-session-orchestrator",
+  "description": "E2E-63 stage b: Ada's running main session answers its first prompt without the orchestrator's tools; once it is her main orchestrator (claimed, run again with the second MCP server) a follow-up makes it create a task, invite a member and try what a session must not do (ask to become the orchestrator, pair). The child task, Ada's second task and a task left waiting by stage a are answered on the side.",
+  "variables": { "org": "", "wg": "" },
+  "steps": [
+    {
+      "id": "first",
+      "expect": {
+        "user_text_contains": "E2E63-SESSION",
+        "has_tool_result": false,
+        "tools_exclude": ["mcp__orchestrator__run", "mcp__orchestrator__search"]
+      },
+      "reply": { "content": [{ "type": "text", "text": "Session ready kz63-ready-h4j8k2." }] }
+    },
+    {
+      "id": "act",
+      "expect": {
+        "user_text_contains": "E2E63-ACT",
+        "has_tool_result": false,
+        "tools_include": ["mcp__orchestrator__run", "mcp__orchestrator__search"]
+      },
+      "capture": { "session": { "regex": "Session ID: `([0-9a-f-]{36})`", "source": "system" } },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Acting for Ada." },
+          {
+            "type": "tool_use",
+            "name": "mcp__orchestrator__run",
+            "input": {
+              "args": ["task", "create", "--wg", "${wg}", "--text", "E2E63-CHILD kz63-child-m3n7b1: check the plan"]
+            }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__orchestrator__run",
+            "input": { "args": ["org", "invite", "--org", "${org}", "--name", "Grace kz63-guest-x5c9v2"] }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__orchestrator__run",
+            "input": { "args": ["api", "POST", "/v1/sessions/${session}/orchestrator", "--body", "{}"] }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__orchestrator__run",
+            "input": { "args": ["pair", "--session"] }
+          }
+        ]
+      }
+    },
+    {
+      "id": "done",
+      "expect": { "tool_result_contains": "invite_link" },
+      "reply": { "content": [{ "type": "text", "text": "Orchestrated kz63-done-q7w1e5." }] }
+    }
+  ],
+  "side": [
+    {
+      "id": "title",
+      "expect": { "has_tools": false },
+      "reply": { "content": [{ "type": "text", "text": "Orchestrator" }] }
+    },
+    {
+      "id": "child",
+      "expect": { "user_text_contains": "E2E63-CHILD", "has_tool_result": false },
+      "reply": { "content": [{ "type": "text", "text": "Child task answered kz63-child-answer." }] }
+    },
+    {
+      "id": "second",
+      "expect": { "user_text_contains": "E2E63-SECOND", "has_tool_result": false },
+      "reply": { "content": [{ "type": "text", "text": "Second session ready kz63-second-p2o6i4." }] }
+    },
+    {
+      "id": "stage-a",
+      "expect": { "user_text_contains": "E2E58-PROMPT", "has_tool_result": false },
+      "reply": { "content": [{ "type": "text", "text": "Stage a task answered." }] }
+    }
+  ]
+}

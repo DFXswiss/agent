@@ -202,6 +202,8 @@ def write_golden_source(tree: Path, claude: str = "2.1.330", guest: str = "0.1.0
     )
     (tree / "src/agent_guest").mkdir(parents=True)
     (tree / "src/agent_guest/__init__.py").write_text(f'__version__ = "{guest}"\n', encoding="utf-8")
+    (tree / "src/agent_platform").mkdir()  # the main orchestrator's agent tool (05-runner.md section 17.4)
+    (tree / "src/agent_platform/__init__.py").write_text('"""tool"""\n', encoding="utf-8")
     (tree / "contracts").mkdir()
 
 

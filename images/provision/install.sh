@@ -124,6 +124,11 @@ if ! id -u platform >/dev/null 2>&1; then
   useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin platform
 fi
 gpasswd -M "$lima_user" agent-ctl >/dev/null
+# The account of the main orchestrator's agent tool (05-runner.md section 17.4): no login, no home, no network.
+getent group agent-orch >/dev/null || groupadd --system agent-orch
+if ! id -u agent-orch >/dev/null 2>&1; then
+  useradd --system --gid agent-orch --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin agent-orch
+fi
 
 log "guest agent"
 install -d -m 0755 -o root -g root /opt/agent-guest /opt/agent-guest/harness
@@ -136,6 +141,41 @@ find /opt/agent-guest/agent_guest -type d -exec chmod 0755 {} +
 find /opt/agent-guest/agent_guest -type f -exec chmod 0644 {} +
 install -m 0644 -o root -g root "$IMAGES/mcp.json" /opt/agent-guest/mcp.json
 install -m 0644 -o root -g root "$IMAGES/harness/RULES.md" /opt/agent-guest/harness/RULES.md
+install -m 0644 -o root -g root "$IMAGES/mcp-orchestrator.json" /opt/agent-guest/mcp-orchestrator.json
+
+# The agent tool of the main orchestrator (05-runner.md section 17.4, key-model.md KM-37): its sources from the bundle
+# and its pinned wheels, unpacked (no pip in the image); readable and executable only by root and agent-orch.
+log "agent tool"
+TOOL_WHEELS="anyio certifi cffi cryptography h11 httpcore httpx idna pycparser typing_extensions"
+tool_dir=/opt/agent-orch
+rm -rf "$tool_dir.part"
+install -d -m 0755 "$tool_dir.part/lib/agent_cli" "$tool_dir.part/bin"
+for wheel in $TOOL_WHEELS; do
+  file=$(fetch "$(version "tool_wheel_${wheel}_url")" "$(version "tool_wheel_${wheel}_sha256")" "$wheel.whl")
+  python3 -I -m zipfile -e "$file" "$tool_dir.part/lib"
+done
+for part in agent_platform agent_runner; do
+  [ -d "$BUNDLE/src/$part" ] || die "bundle without src/$part"
+  cp -R "$BUNDLE/src/$part" "$tool_dir.part/lib/$part"
+done
+install -m 0644 "$BUNDLE/src/agent_cli/__init__.py" "$BUNDLE/src/agent_cli/keys.py" "$tool_dir.part/lib/agent_cli/"
+install -m 0755 "$IMAGES/orchestrator/agent-platform" "$tool_dir.part/bin/agent-platform"
+find "$tool_dir.part" -name __pycache__ -type d -prune -exec rm -rf {} +
+python3 -I -m compileall -q "$tool_dir.part/lib"
+chown -R root:agent-orch "$tool_dir.part"
+find "$tool_dir.part" -type d -exec chmod 0750 {} +
+find "$tool_dir.part/lib" -type f -exec chmod 0640 {} +
+chmod 0750 "$tool_dir.part/bin/agent-platform"
+rm -rf "$tool_dir"
+mv "$tool_dir.part" "$tool_dir"
+runuser -u agent-orch -- /usr/bin/python3 -I -c "$(cat <<'PY'
+import sys
+sys.path.insert(0, "/opt/agent-orch/lib")
+import agent_platform.cli, agent_platform.relay, httpx
+from cryptography.hazmat.primitives.asymmetric import x25519
+x25519.X25519PrivateKey.generate()
+PY
+)" || die "the agent tool does not load as agent-orch"
 
 log "managed settings"
 install -d -m 0755 -o root -g root /etc/claude-code

@@ -8,7 +8,8 @@ answers with ``POST /v1/pending/{id}/answer``; the API process waits for the ans
 * ``POST /v1/pending/{id}/answer {status, result | error}`` - ``{}``; unknown ID ``404 not_found``; a second, different
   answer ``409 state_conflict`` (an identical repeat is accepted)
 * op ``pending.create {session_id, kind: "operation" | "query" | "workvm", body} -> {pending_id}`` - ``body`` is the
-  journal body without ``pending_id``; it is validated with the ID added (``request_invalid`` with pointers)
+  journal body without ``pending_id``; it is validated with the ID added (``request_invalid`` with pointers); the
+  kind ``relay`` is the orchestrator tool's alone (``orch.sock``, ``control_routes/orchestrator.py``) and refused here
 * op ``pending.wait {pending_id, session_id, timeout <= 33} -> {state: "answered", answer} | {state: "waiting"}``;
   33 s is the longest MCP wait (``get_operation``/``get_subagent_result``: ``wait_seconds`` ≤ 30 plus the read margin,
   GST-07; the work VM tools: ``wait_seconds`` ≤ 30 plus 5 s, KOR-29), below the 35 s limit of the ``/mcp`` route
@@ -40,6 +41,7 @@ def create(context: ControlContext, args: dict[str, Any]) -> dict[str, Any]:
         set(args) != {"session_id", "kind", "body"}
         or not isinstance(session_id, str)
         or kind not in PENDING_KINDS
+        or kind == "relay"
         or not isinstance(body, dict)
         or "pending_id" in body
     ):

@@ -66,6 +66,7 @@ KINDS = (
     "operation.request",
     "platform.query",
     "workvm.call",
+    "hub.relay",
     "ping.delivered",
     "platform.read",
     "platform.refused",

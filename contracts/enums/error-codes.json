@@ -544,7 +544,7 @@
         400
       ],
       "origin": "hub",
-      "source": "04-crypto §8"
+      "source": "04-crypto \u00a78"
     },
     {
       "code": "log_signature",
@@ -765,6 +765,14 @@
       ],
       "origin": "hub",
       "source": "13-work-vm \u00a713.6"
+    },
+    {
+      "code": "orchestrator_unavailable",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "ADR-082"
     }
   ]
 }

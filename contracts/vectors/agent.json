@@ -1,5 +1,5 @@
 {
-  "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056, remote pairing ADR-067, account of an agent alone KOR-62, own identity of the agent ADR-082).",
+  "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056, remote pairing ADR-067, account of an agent alone KOR-62, own identity of the agent and the orchestrator on platform hardware ADR-082).",
   "agent": {
     "id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
     "kem": "Wd2Ryf-ScIuKr47a0pbISViUOBOG9ifz-tFowQFub2Q",
@@ -642,6 +642,114 @@
       "error": "header_invalid",
       "name": "user_anchor_extra_key",
       "op": "open_user"
+    },
+    {
+      "args": {
+        "fp": "CzOH3lkVGYJwp1q24gW2DQ",
+        "pairing_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "session_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "signature": "FjBIJ0vTq-uWqULwRh0WM5rYJXdEiVKzLmcQ_U6wwgw5VIAUo5Y4y3WXGt1eDMh3pVuiyZ2yhIFAbaSj2SnNCg",
+        "signer": "XEHI7t-P0giGfcW9NNFNiSTSbJaTxrj6Rc7uckHOJFI"
+      },
+      "error": "signature_invalid",
+      "name": "orchestrator_key_other_session",
+      "op": "verify_orchestrator_key"
+    },
+    {
+      "args": {
+        "fp": "jYOmYdUbALI3tDrNapXFRg",
+        "pairing_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "session_id": "01a1ee56-5e00-785f-a750-7ab98a3c4d54",
+        "signature": "FjBIJ0vTq-uWqULwRh0WM5rYJXdEiVKzLmcQ_U6wwgw5VIAUo5Y4y3WXGt1eDMh3pVuiyZ2yhIFAbaSj2SnNCg",
+        "signer": "XEHI7t-P0giGfcW9NNFNiSTSbJaTxrj6Rc7uckHOJFI"
+      },
+      "error": "signature_invalid",
+      "name": "orchestrator_key_other_fp",
+      "op": "verify_orchestrator_key"
+    },
+    {
+      "args": {
+        "fp": "CzOH3lkVGYJwp1q24gW2DQ",
+        "pairing_id": "01a1ee56-5e00-79bc-ad68-1fafbfc5d917",
+        "session_id": "01a1ee56-5e00-785f-a750-7ab98a3c4d54",
+        "signature": "FjBIJ0vTq-uWqULwRh0WM5rYJXdEiVKzLmcQ_U6wwgw5VIAUo5Y4y3WXGt1eDMh3pVuiyZ2yhIFAbaSj2SnNCg",
+        "signer": "XEHI7t-P0giGfcW9NNFNiSTSbJaTxrj6Rc7uckHOJFI"
+      },
+      "error": "signature_invalid",
+      "name": "orchestrator_key_other_pairing",
+      "op": "verify_orchestrator_key"
+    },
+    {
+      "args": {
+        "fp": "CzOH3lkVGYJwp1q24gW2DQ",
+        "pairing_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "session_id": "01a1ee56-5e00-785f-a750-7ab98a3c4d54",
+        "signature": "FjBIJ0vTq-uWqULwRh0WM5rYJXdEiVKzLmcQ_U6wwgw5VIAUo5Y4y3WXGt1eDMh3pVuiyZ2yhIFAbaSj2SnNCg",
+        "signer": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk"
+      },
+      "error": "signature_invalid",
+      "name": "orchestrator_key_by_user",
+      "op": "verify_orchestrator_key"
+    },
+    {
+      "args": {
+        "fp": "CzOH3lkVGYJwp1q24gW2",
+        "pairing_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "session_id": "01a1ee56-5e00-785f-a750-7ab98a3c4d54",
+        "signature": "FjBIJ0vTq-uWqULwRh0WM5rYJXdEiVKzLmcQ_U6wwgw5VIAUo5Y4y3WXGt1eDMh3pVuiyZ2yhIFAbaSj2SnNCg",
+        "signer": "XEHI7t-P0giGfcW9NNFNiSTSbJaTxrj6Rc7uckHOJFI"
+      },
+      "error": "header_invalid",
+      "name": "orchestrator_key_fp_short",
+      "op": "verify_orchestrator_key"
+    },
+    {
+      "args": {
+        "ct": "3DfY9vjIgR0MzdY5AUDHQeTVCNa0rMJj2_is-nhF5DyLCTqwO-lGDXbUymzRYoRLooXEFptScW4_UF7jQFFfdK665oS-1hvzuzthnvbdulUj1zr-CooWWdr5R32QfqiT9-EvV9ECPh_nFDgS5iZ0iaXKh4U8-Zw-tEKt8xQ8Pqn2H3P28yb_Lp00LYGZd83gffwoT2o",
+        "pairing_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "session_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "signature": "KdlE2o8oy-_ymsb3rBCm7OCXO39I-Qu38qNDD_3S7Wq08DPizWnbeoPThR2Dk5vtB5h8wUv246G4nDhRE6hWDw",
+        "signer": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk"
+      },
+      "error": "signature_invalid",
+      "name": "orchestrator_handover_other_session",
+      "op": "verify_orchestrator_handover"
+    },
+    {
+      "args": {
+        "ct": "NahvnZ8pDgKahnLd5p7KFjD9Peyp35vk9caz0HvfRqQ",
+        "pairing_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "session_id": "01a1ee56-5e00-785f-a750-7ab98a3c4d54",
+        "signature": "KdlE2o8oy-_ymsb3rBCm7OCXO39I-Qu38qNDD_3S7Wq08DPizWnbeoPThR2Dk5vtB5h8wUv246G4nDhRE6hWDw",
+        "signer": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk"
+      },
+      "error": "signature_invalid",
+      "name": "orchestrator_handover_other_ct",
+      "op": "verify_orchestrator_handover"
+    },
+    {
+      "args": {
+        "ct": "3DfY9vjIgR0MzdY5AUDHQeTVCNa0rMJj2_is-nhF5DyLCTqwO-lGDXbUymzRYoRLooXEFptScW4_UF7jQFFfdK665oS-1hvzuzthnvbdulUj1zr-CooWWdr5R32QfqiT9-EvV9ECPh_nFDgS5iZ0iaXKh4U8-Zw-tEKt8xQ8Pqn2H3P28yb_Lp00LYGZd83gffwoT2o",
+        "pairing_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+        "session_id": "01a1ee56-5e00-785f-a750-7ab98a3c4d54",
+        "signature": "KdlE2o8oy-_ymsb3rBCm7OCXO39I-Qu38qNDD_3S7Wq08DPizWnbeoPThR2Dk5vtB5h8wUv246G4nDhRE6hWDw",
+        "signer": "XEHI7t-P0giGfcW9NNFNiSTSbJaTxrj6Rc7uckHOJFI"
+      },
+      "error": "signature_invalid",
+      "name": "orchestrator_handover_by_device",
+      "op": "verify_orchestrator_handover"
+    },
+    {
+      "args": {
+        "ct": "3DfY9vjIgR0MzdY5AUDHQeTVCNa0rMJj2_is-nhF5DyLCTqwO-lGDXbUymzRYoRLooXEFptScW4_UF7jQFFfdK665oS-1hvzuzthnvbdulUj1zr-CooWWdr5R32QfqiT9-EvV9ECPh_nFDgS5iZ0iaXKh4U8-Zw-tEKt8xQ8Pqn2H3P28yb_Lp00LYGZd83gffwoT2o",
+        "pairing_id": "x",
+        "session_id": "01a1ee56-5e00-785f-a750-7ab98a3c4d54",
+        "signature": "KdlE2o8oy-_ymsb3rBCm7OCXO39I-Qu38qNDD_3S7Wq08DPizWnbeoPThR2Dk5vtB5h8wUv246G4nDhRE6hWDw",
+        "signer": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk"
+      },
+      "error": "header_invalid",
+      "name": "orchestrator_handover_bad_id",
+      "op": "verify_orchestrator_handover"
     }
   ],
   "label": {
@@ -652,6 +760,30 @@
       "host": "Büro-Mac",
       "name": "Claude Code"
     }
+  },
+  "orchestrator": {
+    "device": {
+      "id": "01a1ee56-5e00-7390-8018-c0145a37621b",
+      "kem": "wAz1CQhxUyntlAN3sTZbOKwuz5d9_mxNJO2OGE4ZyiA",
+      "sig": "XEHI7t-P0giGfcW9NNFNiSTSbJaTxrj6Rc7uckHOJFI"
+    },
+    "handover": {
+      "ct": "3DfY9vjIgR0MzdY5AUDHQeTVCNa0rMJj2_is-nhF5DyLCTqwO-lGDXbUymzRYoRLooXEFptScW4_UF7jQFFfdK665oS-1hvzuzthnvbdulUj1zr-CooWWdr5R32QfqiT9-EvV9ECPh_nFDgS5iZ0iaXKh4U8-Zw-tEKt8xQ8Pqn2H3P28yb_Lp00LYGZd83gffwoT2o",
+      "pairing_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+      "session_id": "01a1ee56-5e00-785f-a750-7ab98a3c4d54",
+      "signature": "KdlE2o8oy-_ymsb3rBCm7OCXO39I-Qu38qNDD_3S7Wq08DPizWnbeoPThR2Dk5vtB5h8wUv246G4nDhRE6hWDw",
+      "signer": "_jNpGaQpRaS7ZkH4Bu52MhohzN6qVCUWFHj0uZ_VzNk",
+      "text": "YWdlbnQuZGZ4LnN3aXNzL3YxL29yY2hlc3RyYXRvci1oYW5kb3ZlcgB7ImN0IjoiM0RmWTl2aklnUjBNemRZNUFVREhRZVRWQ05hMHJNSmoyX2lzLW5oRjVEeUxDVHF3Ty1sR0RYYlV5bXpSWW9STG9vWEVGcHRTY1c0X1VGN2pRRkZmZEs2NjVvUy0xaHZ6dXp0aG52YmR1bFVqMXpyLUNvb1dXZHI1UjMyUWZxaVQ5LUV2VjlFQ1BoX25GRGdTNWlaMGlhWEtoNFU4LVp3LXRFS3Q4eFE4UHFuMkgzUDI4eWJfTHAwMExZR1pkODNnZmZ3b1QybyIsInBhaXJpbmciOiIwMWExZWU1Ni01ZTAwLTcyNDItOWUyNC1mODc2MjlhZDI5NzciLCJzZXNzaW9uIjoiMDFhMWVlNTYtNWUwMC03ODVmLWE3NTAtN2FiOThhM2M0ZDU0In0"
+    },
+    "key": {
+      "fp": "CzOH3lkVGYJwp1q24gW2DQ",
+      "pairing_id": "01a1ee56-5e00-7242-9e24-f87629ad2977",
+      "session_id": "01a1ee56-5e00-785f-a750-7ab98a3c4d54",
+      "signature": "FjBIJ0vTq-uWqULwRh0WM5rYJXdEiVKzLmcQ_U6wwgw5VIAUo5Y4y3WXGt1eDMh3pVuiyZ2yhIFAbaSj2SnNCg",
+      "signer": "XEHI7t-P0giGfcW9NNFNiSTSbJaTxrj6Rc7uckHOJFI",
+      "text": "YWdlbnQuZGZ4LnN3aXNzL3YxL29yY2hlc3RyYXRvci1rZXkAeyJmcCI6IkN6T0gzbGtWR1lKd3AxcTI0Z1cyRFEiLCJwYWlyaW5nX2lkIjoiMDFhMWVlNTYtNWUwMC03MjQyLTllMjQtZjg3NjI5YWQyOTc3Iiwic2Vzc2lvbiI6IjAxYTFlZTU2LTVlMDAtNzg1Zi1hNzUwLTdhYjk4YTNjNGQ1NCJ9"
+    },
+    "session_id": "01a1ee56-5e00-785f-a750-7ab98a3c4d54"
   },
   "own_account": {
     "account": {

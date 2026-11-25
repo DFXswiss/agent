@@ -67,6 +67,7 @@ from agent_runner.billing import pause
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.inbox.pull import load_cursors
+from agent_runner.orchestrator import store as orchestrator_store
 from agent_runner.orgs import audit
 from agent_runner.prompts import hub_queue, queue, speaker
 from agent_runner.prompts.resume import RESUMED, Resumer, vm_running
@@ -504,6 +505,8 @@ class Deliverer:
         async with env.transaction() as conn:
             local = [session for session in await records.listed(conn) if session.depth == 0]
             busy = set(await queue.sessions_with_open_rows(conn))
+            # the main orchestrator's session stays: a suspend would end its keys in the VM (05-runner.md section 17.6)
+            busy |= await orchestrator_store.session_ids(conn)
         idle = {session.id: session for session in local if session.state == "idle"}
         for session_id in list(self.idle_since):
             if session_id not in idle:

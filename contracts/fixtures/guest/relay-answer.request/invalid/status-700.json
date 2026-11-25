@@ -1,0 +1,10 @@
+{
+  "status": 700,
+  "headers": {
+    "Agent-Hub-Key": "hub-1",
+    "Agent-Hub-Time": "2026-11-25T10:00:00Z",
+    "Agent-Hub-Signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "Content-Type": "application/json"
+  },
+  "body": "e30"
+}

@@ -335,6 +335,7 @@ describe('audit view', () => {
           heldIdentity: false,
           gen: null,
           revokedReason: null,
+          sessionId: null,
         },
       ]),
     );

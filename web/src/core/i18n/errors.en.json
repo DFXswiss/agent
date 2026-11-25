@@ -459,6 +459,11 @@
     "body": "The session ran out of memory.",
     "action": "Retry the task with a smaller job."
   },
+  "orchestrator_unavailable": {
+    "title": "Not possible for this session",
+    "body": "Only a running main session of your own task in your private organization on DFX hardware can become your main orchestrator.",
+    "action": "Open such a session, or connect your AI agent from your computer."
+  },
   "origin_mismatch": {
     "title": "Wrong address",
     "body": "This page was opened under an address the platform does not accept.",

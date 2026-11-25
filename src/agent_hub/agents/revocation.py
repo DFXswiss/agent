@@ -3,14 +3,15 @@
 
 In one transaction the agents are revoked (state, time, sealed identity deleted, audit `agent.revoke`) and, when an
 agent did it, the user is notified once per revoked agent (`agent_revoked:<acting agent>:<revoked agent>`). After the
-commit the notifications are published and the open streams of the revoked keys are ended in every hub process.
+commit the notifications are published, the open streams of the revoked keys are ended in every hub process and
+the device of a revoked session orchestrator gets the hint `session.orchestrator` (the guest ends it).
 """
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from agent_hub.agents import store
+from agent_hub.agents import orchestrator, store
 from agent_hub.agents.keys import key_id_of
 from agent_hub.agents.notify import account_change
 from agent_hub.db.pool import transaction
@@ -33,6 +34,8 @@ def revoke_agents(context: HubContext, user: UUID, agent_id: UUID | None) -> lis
             for agent in revoked
             for notice in account_change(connection, user, "agent_revoked", now, target=agent)
         ]
+        hints = orchestrator.session_hints(connection, revoked)
     publish_rows(notices)
     close_keys(user, [key_id_of(agent) for agent in revoked])
+    orchestrator.publish_hints(hints)
     return revoked

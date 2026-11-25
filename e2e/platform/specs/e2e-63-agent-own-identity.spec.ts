@@ -17,7 +17,18 @@
 // sealed identity, audit `agent.identity`, no identity left in the tool's state). Exactly one (step 1): Ada's second
 // pairing replaces her first agent in the same confirmation; no state of the log and no moment at the hub has two
 // active agents.
-// Stage b (the orchestrator as a platform session) extends this scenario at the marked place. Runs on T1.
+// Stage b (ADR-082 sections 6 and 9.6-9.9, 05-runner.md section 17, 11-agent-access.md section 11; the second test):
+// Ada's private org has the platform device; on her running main session she chooses "Make this session my main
+// orchestrator" and confirms with her passkey. The page names the agent it replaces (her local agent, revoked at once:
+// exactly one); the runner drew the keys in the VM (the tool and its state under the account `agent-orch`, the key
+// unreadable for the session user; the hub row holds the public keys only) and the session claims. Run again with the
+// second MCP server, the session creates a task and invites a member through the orchestrator's tools - agent
+// requests audited for the agent, shown as "Agent of Ada" - and cannot ask to become the orchestrator itself or pair
+// (`forbidden`, `not_in_session`); a local agent cannot ask for it or confirm the session's open pairing either. A
+// local `pair` replaces the session's orchestrator (exactly one); a further session made orchestrator is revoked
+// (`session_ended`) when its task is closed. Both tests run on T1.
+import { readFileSync } from 'node:fs';
+import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures/test.ts';
 import {
   anonymousBudget,
@@ -31,9 +42,18 @@ import {
   refusal,
   visit,
 } from '../fixtures/identity.ts';
-import { expectNoPlaintext } from '../fixtures/guest.ts';
+import { expectNoPlaintext, osRead, sessionState, sessionVm, vmFiles } from '../fixtures/guest.ts';
 import { agentState, agentTool, agentToolRun, copyAgentHome, pairAgent } from '../fixtures/agent-tool.ts';
-import { invite, uuid } from '../fixtures/platform.ts';
+import {
+  expectAnswerInChat,
+  home,
+  invite,
+  mainSessions,
+  platformDevice,
+  poolReady,
+  sendPrompt,
+  uuid,
+} from '../fixtures/platform.ts';
 import { testApiKey } from '../fixtures/model.ts';
 import type { Orchestrator } from '../fixtures/orchestrator.ts';
 import { PageUser } from '../../../web/e2e/helpers/user.ts';
@@ -447,10 +467,295 @@ test('@E2E-63 the main orchestrator acts with its own identity, its revocation i
   ).toBeVisible({ timeout: 30_000 });
   await person.context.close();
 
-  // Stage b (KOR-57 b): the orchestrator as a platform session extends the scenario here - a running main session of
-  // Ada becomes her main orchestrator with her passkey gesture (replacing the agent paired after step 5), creates
-  // tasks and admits members; a session cannot make itself the orchestrator without the gesture.
+  // Stage b (KOR-57 b, the orchestrator as a platform session) is the next test of this file.
 
   await expectNoPlaintext(orchestrator, CANARIES);
   await closingChecks(orchestrator);
+});
+
+// --- stage b: the main orchestrator as a platform session ---
+
+const SESSION_SCENARIO = JSON.parse(
+  readFileSync(new URL('../scenarios/e2e-63-session-orchestrator.json', import.meta.url), 'utf8'),
+) as Json;
+const ADA_B = 'Ada Session-Agent';
+const BY_SESSION_AGENT = `Agent of ${ADA_B}`;
+const FIRST_PROMPT = 'E2E63-SESSION kz63-first-a8s2d6: get ready';
+const ACT_PROMPT = 'E2E63-ACT kz63-act-f3g7h1: create the task and invite Grace';
+const SECOND_PROMPT = 'E2E63-SECOND kz63-second-j5k9l3: get ready again';
+const CHILD_TEXT = 'kz63-child-m3n7b1';
+const SESSION_CANARIES = ['kz63-first-a8s2d6', 'kz63-act-f3g7h1', 'kz63-second-j5k9l3', CHILD_TEXT];
+const LOCAL_FIRST = 'own_session_first';
+const LOCAL_NEXT = 'own_session_next';
+const ORCH_TOOL = '/opt/agent-orch';
+const ORCH_KEY = '/var/lib/agent-orch/state/agent.key';
+const SECOND_MCP = '/opt/agent-guest/mcp-orchestrator.json';
+
+/** The hub's row of the orchestrator agent of `session` (newest), with what it holds. */
+const sessionAgent = async (orchestrator: Orchestrator, session: string) =>
+  (
+    await orchestrator.hubQuery<Json>(
+      `SELECT id::text AS id, user_id::text AS user_id, state, revoked_reason, device_id::text AS device_id,
+              own_identity, held_identity, bundle_ct IS NULL AS no_bundle, user_ct IS NULL AS no_user_ct,
+              length(kem_pub) AS kem, length(sig_pub) AS sig, device_sig IS NOT NULL AS device_sig
+         FROM hub.agent WHERE session_id = '${uuid(session)}' ORDER BY created_at DESC LIMIT 1`,
+    )
+  )[0];
+
+interface OrchestratorAnswer {
+  readonly args: readonly string[];
+  readonly value: Record<string, unknown>;
+}
+
+/** The answers of the orchestrator's `run` tool in the newest model request that carries them. */
+async function orchestratorAnswers(orchestrator: Orchestrator): Promise<OrchestratorAnswer[]> {
+  const journal = (await orchestrator.doubleRequest('model', 'GET', '/_double/journal')).body as {
+    path: string;
+    body: { messages?: { role: string; content: unknown }[] } | null;
+  }[];
+  let found: OrchestratorAnswer[] = [];
+  for (const entry of journal) {
+    if (!entry.path.startsWith('/v1/messages') || entry.path.includes('count')) continue;
+    const calls = new Map<string, readonly string[]>();
+    const answers: OrchestratorAnswer[] = [];
+    for (const message of entry.body?.messages ?? []) {
+      if (!Array.isArray(message.content)) continue;
+      for (const block of message.content as Record<string, unknown>[]) {
+        if (block.type === 'tool_use' && block.name === 'mcp__orchestrator__run')
+          calls.set(String(block.id), (block.input as { args: string[] }).args);
+        const args = block.type === 'tool_result' ? calls.get(String(block.tool_use_id)) : undefined;
+        if (args === undefined) continue;
+        const content = block.content;
+        const text =
+          typeof content === 'string' ? content : (content as { text: string }[]).map((c) => c.text).join('');
+        answers.push({ args, value: JSON.parse(text) as Record<string, unknown> });
+      }
+    }
+    if (answers.length > 0) found = answers;
+  }
+  return found;
+}
+
+/**
+ * On the page of the running main session `session`, Ada makes it her main orchestrator: the dialog names the agent
+ * it replaces, waits for the session's keys, and after the passkey gesture for the session's claim. Returns the agent.
+ */
+async function makeSessionOrchestrator(
+  orchestrator: Orchestrator,
+  page: Page,
+  org: string,
+  session: string,
+  replaces: string,
+): Promise<string> {
+  await visit(page, `/o/${org}/s/${session}`);
+  await page.getByTestId('orchestrator.make').click({ timeout: 60_000 });
+  const dialog = page.getByTestId('orchestrator.dialog');
+  await expect(dialog.getByTestId('orchestrator.session')).toHaveText('This session');
+  await expect(dialog.getByTestId('orchestrator.access')).toHaveText(
+    'This session receives full access to your account and can do everything you can.',
+  );
+  await expect(dialog.getByTestId('orchestrator.replaces')).toHaveText(
+    `Replaces “${replaces}”, your current main orchestrator. “${replaces}” is disconnected at once.`,
+    { timeout: 30_000 },
+  );
+  // the runner drew the keys in the VM and registered them; the page checked the device's signature over them
+  await expect(dialog.getByTestId('orchestrator.confirm')).toBeEnabled({ timeout: 90_000 });
+  await expect(dialog.getByTestId('orchestrator.error')).toHaveCount(0);
+  const open = await sessionAgent(orchestrator, session);
+  expect(open).toMatchObject({ state: 'open', kem: 32, sig: 32, device_sig: true, no_bundle: true });
+  await anonymousBudget(COST.signIn);
+  await dialog.getByTestId('orchestrator.confirm').click();
+  await expect(dialog.getByTestId('orchestrator.outcome.connected')).toHaveText(
+    'This session is now your main orchestrator.',
+    { timeout: 180_000 },
+  );
+  await dialog.getByTestId('orchestrator.close').click();
+  await expect(page.getByTestId('orchestrator.current')).toBeVisible({ timeout: 30_000 });
+  return open!.id as string;
+}
+
+/** Waits until the session's agent runs again with the orchestrator's MCP server (after the claim, once idle). */
+async function withSecondMcp(orchestrator: Orchestrator, session: string): Promise<void> {
+  await expect
+    .poll(async () => (await sessionVm(orchestrator, session)).command.join(' '), {
+      timeout: 120_000,
+      intervals: [1000],
+    })
+    .toContain(SECOND_MCP);
+}
+
+test('@E2E-63 @needs-vm stage b: a running main session becomes the main orchestrator with the passkey gesture, acts through the platform tools and ends with the session', async ({
+  page,
+  e2e,
+  orchestrator,
+  authenticator,
+}) => {
+  test.skip(e2e.topology !== 't1', 'the session orchestrator runs on T1');
+  test.setTimeout(1_200_000);
+  await platformDevice(orchestrator);
+  await poolReady(orchestrator, 2);
+  const ada = await personOf(page, await authenticator('platform'), orchestrator, ADA_B);
+  const adaId = ada.user.userId;
+  const org = ada.onboarded.org;
+  const [{ default_wg: wg }] = (await orchestrator.hubQuery<{ default_wg: string }>(
+    `SELECT default_wg::text AS default_wg FROM hub.org WHERE id = '${uuid(org)}'`,
+  )) as [{ default_wg: string }];
+  await orchestrator.call('POST', '/doubles/model/scenario', {
+    scenario: SESSION_SCENARIO,
+    variables: { org, wg },
+    access: null,
+  });
+  // Her local agent is the main orchestrator first.
+  expect(await pairAgent(orchestrator, page, e2e.hubOrigin, LOCAL_FIRST)).toMatchObject({ ok: true });
+  const local = (await agentTool(orchestrator, LOCAL_FIRST, ['status'])).agent_id as string;
+
+  // 1. Ada's task runs on the platform device; the session is not offered to anyone but her and has no orchestrator
+  // tools yet. The golden image carries the agent tool for the account `agent-orch` only.
+  await visit(page, `/o/${org}`);
+  const task = await sendPrompt(page, FIRST_PROMPT);
+  await expectAnswerInChat(page, 'Session ready kz63-ready-h4j8k2.');
+  const [main] = await mainSessions(orchestrator, task);
+  const session = main!.id;
+  await expect.poll(() => sessionState(orchestrator, session), { timeout: 60_000 }).toBe('idle');
+  const tool = Object.values(await vmFiles(orchestrator, [ORCH_TOOL, `${ORCH_TOOL}/bin/agent-platform`], session))[0]!;
+  expect(tool[ORCH_TOOL]).toMatchObject({ owner: 'root:agent-orch', mode: '0o750' });
+  expect(tool[`${ORCH_TOOL}/bin/agent-platform`]).not.toBeNull();
+  // Attack: an agent cannot ask for it (only the task owner's browser session can).
+  const asked = await agentToolRun(orchestrator, LOCAL_FIRST, [
+    'api',
+    'POST',
+    `/v1/sessions/${session}/orchestrator`,
+    '--body',
+    '{}',
+  ]);
+  expect(asked.result).toMatchObject({ ok: false, error: 'hub_refused', hub_error: 'forbidden', status: 403 });
+  expect(
+    await orchestrator.hubQuery<Json>(
+      `SELECT orchestrator_at IS NULL AS none FROM hub.session WHERE id = '${uuid(session)}'`,
+    ),
+  ).toEqual([{ none: true }]);
+
+  // 2. The gesture. The page asks for keys, the runner draws them in the VM and registers them with the device's
+  // signature; while the pairing is open, her agent cannot confirm it - only her passkey can.
+  await visit(page, `/o/${org}/s/${session}`);
+  await page.getByTestId('orchestrator.make').click({ timeout: 60_000 });
+  await expect(page.getByTestId('orchestrator.confirm')).toBeEnabled({ timeout: 90_000 });
+  const pending = (await sessionAgent(orchestrator, session))!;
+  const stranger = await Identity.generate();
+  const confirmed = await agentToolRun(orchestrator, LOCAL_FIRST, [
+    'api',
+    'POST',
+    '/v1/me/agents',
+    '--body',
+    JSON.stringify({
+      pairing_id: pending.id,
+      label_ct: 'A'.repeat(64),
+      claim_hash: 'A'.repeat(43),
+      gen: FORGED_GEN,
+      cert: (await agentAdd(pending.id as string, stranger, adaId, stranger)).cert,
+      user_ct: 'A'.repeat(64),
+      batches: [],
+    }),
+  ]);
+  expect(confirmed.result).toMatchObject({ ok: false, error: 'hub_refused', hub_error: 'forbidden', status: 403 });
+  await page.getByTestId('orchestrator.close').click();
+  const agent = await makeSessionOrchestrator(orchestrator, page, org, session, 'Claude Code');
+  expect(agent).toBe(pending.id);
+
+  // The session's agent: active, bound to the session and its device, the hub holds its public keys only; the key
+  // stays in the VM, readable for `agent-orch` only. Exactly one: the local agent was revoked at once.
+  expect(await sessionAgent(orchestrator, session)).toMatchObject({
+    id: agent,
+    user_id: adaId,
+    state: 'active',
+    device_id: main!.device_id,
+    own_identity: true,
+    held_identity: false,
+    no_bundle: true,
+    kem: 32,
+    sig: 32,
+  });
+  expect(
+    await orchestrator.hubQuery<Json>(`SELECT state, revoked_reason FROM hub.agent WHERE id = '${uuid(local)}'`),
+  ).toEqual([{ state: 'revoked', revoked_reason: 'replaced' }]);
+  expect(await activeAgents(orchestrator, adaId)).toEqual([agent]);
+  const withSession = await ada.user.log(org);
+  expect(withSession.state.activeAgent(adaId)).toMatchObject({ id: agent, parent: adaId });
+  expect(neverTwo(withSession, adaId)).toBe(true);
+  const key = Object.values(await vmFiles(orchestrator, [ORCH_KEY], session))[0]![ORCH_KEY];
+  expect(key).toMatchObject({ owner: 'agent-orch:agent-orch', mode: '0o600' });
+  const read = await osRead(orchestrator, session, ORCH_KEY);
+  expect(read.as_user.ok).toBe(false);
+  expect(read.in_sandbox.ok).toBe(false);
+  await visit(page, '/settings');
+  const item = page.locator(`[data-testid="agents.item"][data-agent="${agent}"]`);
+  await expect(item.getByTestId('agents.item.session')).toHaveText(
+    'On DFX hardware, in a session of one of your tasks',
+    { timeout: 30_000 },
+  );
+
+  // 3. The session runs again with the orchestrator's MCP server and acts for Ada: a task and an invitation (agent
+  // requests with the hub's checks and audit); it can neither ask to become the orchestrator nor pair.
+  await withSecondMcp(orchestrator, session);
+  await visit(page, `/o/${org}/t/${task}`);
+  await page.getByTestId('chat.composer.prompt').fill(ACT_PROMPT);
+  await page.getByTestId('chat.composer.send').click();
+  await expectAnswerInChat(page, 'Orchestrated kz63-done-q7w1e5.');
+  const answers = await orchestratorAnswers(orchestrator);
+  const answer = (word: string) => answers.find((found) => found.args.slice(0, 2).join(' ') === word)?.value;
+  expect(answer('task create')).toMatchObject({ org_id: org, wg_id: wg });
+  expect(answer('org invite')).toHaveProperty('invite_link');
+  expect(answer(`api POST`)).toMatchObject({ ok: false, error: 'hub_refused', hub_error: 'forbidden', status: 403 });
+  expect(answers.find((found) => found.args[0] === 'pair')?.value).toMatchObject({
+    ok: false,
+    error: 'not_in_session',
+  });
+  const child = answer('task create')!.task_id as string;
+  expect(
+    (
+      await orchestrator.hubQuery<{ action: string }>(
+        `SELECT DISTINCT action FROM hub.audit WHERE agent_id = '${uuid(agent)}'
+           AND action IN ('task.create', 'invite.create') ORDER BY action`,
+      )
+    ).map((row) => row.action),
+  ).toEqual(['invite.create', 'task.create']);
+  await navigate(page, `/o/${org}/w/${wg}`);
+  const childRow = page.locator(`[data-testid="tasks.row"][data-task="${uuid(child)}"]`);
+  await expect(childRow.getByTestId('tasks.row.owner')).toHaveText(BY_SESSION_AGENT, { timeout: 30_000 });
+
+  // 4. A local `pair` replaces the session's orchestrator: exactly one.
+  await visit(page, '/settings');
+  expect(await pairAgent(orchestrator, page, e2e.hubOrigin, LOCAL_NEXT, true)).toMatchObject({ ok: true });
+  const next = (await agentTool(orchestrator, LOCAL_NEXT, ['status'])).agent_id as string;
+  expect(await sessionAgent(orchestrator, session)).toMatchObject({ state: 'revoked', revoked_reason: 'replaced' });
+  expect(await activeAgents(orchestrator, adaId)).toEqual([next]);
+
+  // 5. The end of a session ends its orchestrator: Ada closes the task, makes the main session of a new task her
+  // orchestrator and closes that task too - its agent is revoked with the session (`session_ended`).
+  await visit(page, `/o/${org}/t/${task}`);
+  await page.getByTestId('task.close').click();
+  await page.getByTestId('task.close.confirm').click();
+  await expect.poll(() => sessionState(orchestrator, session), { timeout: 120_000, intervals: [1000] }).toBe('stopped');
+  await home(page);
+  const second = await sendPrompt(page, SECOND_PROMPT);
+  await expectAnswerInChat(page, 'Second session ready kz63-second-p2o6i4.');
+  const [secondMain] = await mainSessions(orchestrator, second);
+  await expect.poll(() => sessionState(orchestrator, secondMain!.id), { timeout: 60_000 }).toBe('idle');
+  const ended = await makeSessionOrchestrator(orchestrator, page, org, secondMain!.id, 'Claude Code');
+  expect(await activeAgents(orchestrator, adaId)).toEqual([ended]);
+  await visit(page, `/o/${org}/t/${second}`);
+  await page.getByTestId('task.close').click();
+  await page.getByTestId('task.close.confirm').click();
+  await expect
+    .poll(async () => (await sessionAgent(orchestrator, secondMain!.id))?.revoked_reason, {
+      timeout: 120_000,
+      intervals: [1000],
+    })
+    .toBe('session_ended');
+  expect(await activeAgents(orchestrator, adaId)).toEqual([]);
+  expect(await sessionState(orchestrator, secondMain!.id)).toBe('stopped');
+
+  await expect.poll(async () => (await orchestrator.doubleState('model')).ok, { timeout: 60_000 }).toBe(true);
+  await expectNoPlaintext(orchestrator, SESSION_CANARIES);
+  await closingChecks(orchestrator, true);
 });

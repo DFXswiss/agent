@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ws/device/session.orchestrator.json",
+  "title": "device hint session.orchestrator",
+  "description": "Hint frame session.orchestrator from the hub to the device (03-api.md section 6.2, ADR-082 section 6): the task owner asked for the session as main orchestrator, or stored its handover; no content.",
+  "$ref": "objects.json#/$defs/hint_session_orchestrator"
+}

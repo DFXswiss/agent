@@ -136,6 +136,7 @@ justification or a handling.
 | `not_found` | operation, request | `input` | the object does not exist (or is not visible to the caller) | the caller uses an existing object | agent, client |
 | `not_watched` | device request | `technical` | nobody watches the session's platform browser any more (KOR-44, 13-work-vm.md §13.6); a live picture without a viewer would only cost bandwidth | the device stops the live picture; it starts again with the next viewer's hint | runner |
 | `oom` | session failure | `technical` | the VM ran out of memory | "Try again"; the operator sizes the VMs | user, operator |
+| `orchestrator_unavailable` | request | `technical` | the session cannot become the main orchestrator: not a running main session of the user's own task in the user's private organization on a platform device (ADR-082 §9.6, `detail.reason`) | the page offers the step only where the hub admits it; the user opens such a session or connects the agent from a computer | user |
 | `origin_mismatch` | passkey ceremony | `third_party` | the origin does not match; the passkey is the account's protection against others | the browser starts the ceremony again (E-12: a passkey without PRF is refused at registration with the clear hint) | browser |
 | `origin_seq_conflict` | device outbox | `technical` | another item has this number | the runner resends from the hub's position | runner |
 | `origin_seq_gap` | device outbox | `technical` | the device's outbox skipped a number | the runner resends from the hub's position | runner |

@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.platform.test_import_boundaries import SRC, STDLIB, imports_of
+
 IMAGES = Path(__file__).resolve().parents[3] / "images"
 INSTALL = IMAGES / "provision" / "install.sh"
 SLIM = IMAGES / "provision" / "10-slim.sh"
@@ -115,10 +117,20 @@ def test_apt_waits_for_the_dpkg_lock(script: Path) -> None:
     assert all(call.startswith("-o DPkg::Lock::Timeout=300 ") or call == "clean" for call in calls)
 
 
+def tool_wheels(text: str) -> list[str]:
+    """The wheel names of the agent tool (``TOOL_WHEELS`` of install.sh)."""
+    found = re.search(r'^TOOL_WHEELS="([a-z0-9_ ]+)"$', text, re.MULTILINE)
+    assert found is not None
+    return found.group(1).split()
+
+
 def test_install_reads_every_pin_from_versions_json() -> None:
     text = INSTALL.read_text(encoding="utf-8")
     versions = json.loads((IMAGES / "versions.json").read_text(encoding="utf-8"))
     used = set(re.findall(r"\$\(version ([a-z_0-9]+)\)", text))
+    assert '$(version "tool_wheel_${wheel}_url")' in text
+    assert '$(version "tool_wheel_${wheel}_sha256")' in text
+    used |= {f"tool_wheel_{name}_{part}" for name in tool_wheels(text) for part in ("url", "sha256")}
     assert used == set(versions) - {"ubuntu_image_url", "ubuntu_image_digest"}
     for value in versions.values():
         assert value not in text
@@ -126,7 +138,7 @@ def test_install_reads_every_pin_from_versions_json() -> None:
 
 def test_every_download_is_verified_before_use() -> None:
     text = INSTALL.read_text(encoding="utf-8")
-    assert text.count("$(fetch ") == 3
+    assert text.count("$(fetch ") == 4  # Claude Code (2), Node, every wheel of the agent tool
     assert 'sha256sum -c --status || die "sha256 mismatch for $url"' in text
     assert len(re.findall(r"^\s*curl ", text, re.MULTILINE)) == 1  # only inside fetch()
 
@@ -149,6 +161,16 @@ def test_install_places_the_specified_artefacts() -> None:
         'gpasswd -M "$lima_user" agent-ctl',
         "nft -c -f /etc/nftables.conf",
         "systemctl enable agent-guest-harden.service agent-guest-control.service agent-guest-api.service",
+        # the main orchestrator's agent tool (05-runner.md section 17.4)
+        "groupadd --system agent-orch",
+        "useradd --system --gid agent-orch --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin"
+        " agent-orch",
+        '"$IMAGES/mcp-orchestrator.json" /opt/agent-guest/mcp-orchestrator.json',
+        'python3 -I -m zipfile -e "$file" "$tool_dir.part/lib"',
+        'chown -R root:agent-orch "$tool_dir.part"',
+        'find "$tool_dir.part" -type d -exec chmod 0750 {} +',
+        'find "$tool_dir.part/lib" -type f -exec chmod 0640 {} +',
+        "runuser -u agent-orch -- /usr/bin/python3 -I -c",
     ):
         assert fragment in text, fragment
 
@@ -231,3 +253,68 @@ def test_harden_test_mode_check_grants_only_a_test_mode_record(
         path.write_text(record, encoding="utf-8")
     done = subprocess.run([sys.executable, "-I", "-c", _test_mode_check(), str(path)], capture_output=True, check=False)
     assert (done.returncode == 0) is granted
+
+
+def test_the_agent_tool_wheels_cover_its_third_party_imports() -> None:
+    """The tool in the image (key-model.md KM-37 exception) gets exactly the distributions its imports need, each pinned
+    by URL and sha256: the closure of ``agent_platform`` reaches only ``httpx`` and ``cryptography`` outside the
+    standard library and the bundled packages, and these with their dependencies are the wheels."""
+
+    def path_of(name: str) -> Path | None:
+        base = SRC.joinpath(*name.split("."))
+        for candidate in (base / "__init__.py", base.with_suffix(".py")):
+            if candidate.is_file():
+                return candidate
+        return None
+
+    seen: set[str] = set()
+    third: set[str] = set()
+    todo = ["agent_platform.__main__", "agent_platform.relay", "agent_platform.session"]
+    while todo:
+        name = todo.pop()
+        path = path_of(name)
+        if name in seen or path is None:
+            continue
+        seen.add(name)
+        parts = name.split(".")
+        todo += [".".join(parts[:index]) for index in range(1, len(parts))]
+        for found in imports_of(path):
+            top = found.split(".")[0]
+            if top in STDLIB:
+                continue
+            if top.startswith("agent_"):
+                todo.append(found)
+            else:
+                third.add(top)
+    assert {name.split(".")[0] for name in seen} == {"agent_platform", "agent_runner", "agent_cli"}
+    assert {name for name in seen if name.startswith("agent_cli")} <= {"agent_cli", "agent_cli.keys"}
+    assert third == {"httpx", "cryptography"}
+    text = INSTALL.read_text(encoding="utf-8")
+    wheels = tool_wheels(text)
+    # httpx -> anyio, certifi, httpcore, idna; httpcore -> h11; anyio -> typing_extensions; cryptography -> cffi;
+    # cffi -> pycparser
+    assert (
+        sorted(wheels)
+        == wheels
+        == sorted(
+            {
+                "httpx",
+                "anyio",
+                "certifi",
+                "httpcore",
+                "idna",
+                "h11",
+                "typing_extensions",
+                "cryptography",
+                "cffi",
+                "pycparser",
+            }
+        )
+    )
+    versions = json.loads((IMAGES / "versions.json").read_text(encoding="utf-8"))
+    for name in wheels:
+        url, digest = versions[f"tool_wheel_{name}_url"], versions[f"tool_wheel_{name}_sha256"]
+        assert url.startswith("https://files.pythonhosted.org/packages/")
+        assert url.endswith(".whl")
+        assert re.fullmatch(r"[0-9a-f]{64}", digest)
+        assert "none-any" in url or "aarch64" in url

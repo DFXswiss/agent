@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/session-orchestrator-get.response.json",
+  "title": "GET /v1/sessions/{session}/orchestrator response",
+  "description": "Body of a successful response to GET /v1/sessions/{session}/orchestrator (11-agent-access.md section 11, ADR-082 section 6.3): for the task owner only.",
+  "type": "object",
+  "properties": {
+    "session_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "device_id": {
+      "oneOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "available": {
+      "type": "boolean"
+    },
+    "reason": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "not_main",
+            "not_private",
+            "not_platform",
+            "not_running"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "why the session cannot become the main orchestrator; null when available"
+    },
+    "requested_at": {
+      "oneOf": [
+        {
+          "$ref": "../common.json#/$defs/time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pairing": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "pairing_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "pub": {
+              "type": "object",
+              "properties": {
+                "kem": {
+                  "$ref": "../common.json#/$defs/b64u_32"
+                },
+                "sig": {
+                  "$ref": "../common.json#/$defs/b64u_32"
+                }
+              },
+              "required": [
+                "kem",
+                "sig"
+              ],
+              "additionalProperties": false
+            },
+            "fp": {
+              "$ref": "../common.json#/$defs/b64u_16",
+              "description": "fingerprint of pub (11-agent-access.md section 3)"
+            },
+            "device_sig": {
+              "$ref": "../common.json#/$defs/b64u_64",
+              "description": "the device's Ed25519 signature over P || \"orchestrator-key\\0\" || canonical({\"fp\",\"pairing_id\",\"session\"})"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "open",
+                "confirmed",
+                "active"
+              ]
+            },
+            "expires_at": {
+              "$ref": "../common.json#/$defs/time"
+            },
+            "handover": {
+              "type": "boolean",
+              "description": "the handover is stored (until the claim)"
+            }
+          },
+          "required": [
+            "pairing_id",
+            "pub",
+            "fp",
+            "device_sig",
+            "state",
+            "expires_at",
+            "handover"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "the newest pairing of the session while it is open, confirmed or active"
+    }
+  },
+  "required": [
+    "session_id",
+    "device_id",
+    "available",
+    "reason",
+    "requested_at",
+    "pairing"
+  ],
+  "additionalProperties": false
+}

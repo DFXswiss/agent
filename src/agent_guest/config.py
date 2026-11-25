@@ -21,6 +21,9 @@ default silently.
 | ``AGENT_GUEST_FAULT_HOOKS`` | empty | empty, ``500`` or ``open`` (TEST_MODE golden only, ``fault.py``) |
 | ``AGENT_GUEST_PEER_TABLE`` | empty | empty or absolute path of the TCP socket table (``peer.py``) |
 | ``AGENT_GUEST_TOOLS_SECONDS`` | ``25`` | 1-30 (``delivery.py``, HOT-09) |
+| ``AGENT_GUEST_ORCH_SOCKET`` | ``/run/agent-guest/orch.sock`` | absolute path (``orchestrator.py``) |
+| ``AGENT_GUEST_ORCH_GROUP`` | ``agent-orch`` | group of the orchestrator socket |
+| ``AGENT_GUEST_ORCH_MCP_SOCKET`` | ``/run/agent-orch/mcp.sock`` | absolute path of the tool's MCP server |
 
 ``AGENT_GUEST_TOOLS_SECONDS`` is how long a starting agent may take to list the platform tools before its start is
 repeated; three runs in all, each with its own start of the unit and the TUI, must stay within the runner's limit of
@@ -59,8 +62,12 @@ DEFAULTS: dict[str, str] = {
     "FAULT_HOOKS": "",
     "PEER_TABLE": "",
     "TOOLS_SECONDS": "25",
+    "ORCH_SOCKET": "/run/agent-guest/orch.sock",
+    "ORCH_GROUP": "agent-orch",
+    "ORCH_MCP_SOCKET": "/run/agent-orch/mcp.sock",
 }
-PATHS = frozenset(DEFAULTS) - {"CONTROL_GROUP", "API_GROUP", "API_PORT", "FAULT_HOOKS", "PEER_TABLE", "TOOLS_SECONDS"}
+GROUPS = ("CONTROL_GROUP", "API_GROUP", "ORCH_GROUP")
+PATHS = frozenset(DEFAULTS) - {*GROUPS, "API_PORT", "FAULT_HOOKS", "PEER_TABLE", "TOOLS_SECONDS"}
 FAULT_HOOKS_VALUES = frozenset({"", "500", "open"})
 _GROUP_RE = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
 _PORT_RE = re.compile(r"0|[1-9][0-9]{0,4}")
@@ -91,6 +98,9 @@ class GuestConfig:
     fault_hooks: str = ""
     peer_table: str = ""
     tools_seconds: int = int(DEFAULTS["TOOLS_SECONDS"])
+    orch_socket: str = DEFAULTS["ORCH_SOCKET"]
+    orch_group: str = DEFAULTS["ORCH_GROUP"]
+    orch_mcp_socket: str = DEFAULTS["ORCH_MCP_SOCKET"]
 
     @property
     def api_host(self) -> str:
@@ -107,7 +117,7 @@ def load_config(environ: Mapping[str, str] | None = None) -> GuestConfig:
         value = values[name]
         if not value.startswith("/") or "\x00" in value or "\n" in value:
             raise ConfigError(name)
-    for name in ("CONTROL_GROUP", "API_GROUP"):
+    for name in GROUPS:
         if not _GROUP_RE.fullmatch(values[name]):
             raise ConfigError(name)
     if not _PORT_RE.fullmatch(values["API_PORT"]) or int(values["API_PORT"]) > 65535:
@@ -136,4 +146,7 @@ def load_config(environ: Mapping[str, str] | None = None) -> GuestConfig:
         fault_hooks=values["FAULT_HOOKS"],
         peer_table=table,
         tools_seconds=int(seconds),
+        orch_socket=values["ORCH_SOCKET"],
+        orch_group=values["ORCH_GROUP"],
+        orch_mcp_socket=values["ORCH_MCP_SOCKET"],
     )

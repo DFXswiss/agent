@@ -168,6 +168,8 @@ def test_allow_list_is_the_file_tools_web_search_and_every_platform_tool(managed
     # 13-work-vm.md section 13.7: WebSearch is refused per session (command line, policy) for the platform access.
     expected = ["Read", "Glob", "Grep", "Edit", "Write", "WebSearch"]
     expected += [f"mcp__platform__{tool}" for tool in SPEC_MCP_TOOLS]
+    # the main orchestrator's agent tool (05-runner.md section 17.5): only its session gets that server
+    expected += ["mcp__orchestrator__search", "mcp__orchestrator__run"]
     assert managed["permissions"]["allow"] == expected
 
 
@@ -216,8 +218,8 @@ def test_only_managed_rules_hooks_and_servers(managed: dict[str, Any], key: str)
     assert managed[key] is True
 
 
-def test_only_the_platform_mcp_server(managed: dict[str, Any]) -> None:
-    assert managed["allowedMcpServers"] == [{"serverName": "platform"}]
+def test_only_the_platform_mcp_server_and_the_orchestrator_tool(managed: dict[str, Any]) -> None:
+    assert managed["allowedMcpServers"] == [{"serverName": "platform"}, {"serverName": "orchestrator"}]
 
 
 def test_no_known_marketplaces(managed: dict[str, Any]) -> None:

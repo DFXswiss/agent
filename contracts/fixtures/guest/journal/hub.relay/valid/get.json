@@ -1,0 +1,12 @@
+{
+  "pending_id": "0193000a-0000-7000-8000-00000000000b",
+  "method": "GET",
+  "target": "/v1/me?x=1",
+  "headers": {
+    "Agent-Key": "agent.0193000a00007000800000000000000b",
+    "Agent-Time": "2026-11-25T10:00:00Z",
+    "Agent-Nonce": "AAECAwQFBgcICQoLDA0ODw",
+    "Agent-Signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  },
+  "body": ""
+}

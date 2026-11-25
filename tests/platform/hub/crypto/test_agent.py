@@ -393,3 +393,26 @@ def test_a_user_anchor_must_hold_keys_and_a_signature() -> None:
     with pytest.raises(CryptoError) as refused:
         agent.open_user(first.kem, secret, "a", "u", b64u_encode(hpke.seal(first.kem_public(), info, inner)))
     assert refused.value.code == "header_invalid"
+
+
+def test_the_orchestrator_texts_are_signed_by_the_device_and_by_the_owner() -> None:
+    """ADR-082 sections 6.2 and 9.8: the device signs the fingerprint of the session's keys, the task owner the sealed
+    handover; both texts rebuilt independently."""
+    section = DATA["orchestrator"]
+    session = section["session_id"]
+    key = section["key"]
+    assert key["fp"] == DATA["fingerprint"]
+    assert key["signer"] == section["device"]["sig"]
+    key_fields = {"fp": key["fp"], "pairing_id": key["pairing_id"], "session": session}
+    key_text = PREFIX + b"orchestrator-key\x00" + json.dumps(key_fields, sort_keys=True, separators=(",", ":")).encode()
+    assert b(key["text"]) == key_text == agent.orchestrator_key_text(key["fp"], key["pairing_id"], session)
+    Ed25519PublicKey.from_public_bytes(b(key["signer"])).verify(b(key["signature"]), key_text)
+    handover = section["handover"]
+    assert handover["signer"] == DATA["user"]["sig"]
+    assert handover["ct"] == DATA["remote"]["handover"]["sealed"]
+    fields = {"ct": handover["ct"], "pairing": handover["pairing_id"], "session": session}
+    text = PREFIX + b"orchestrator-handover\x00" + json.dumps(fields, sort_keys=True, separators=(",", ":")).encode()
+    assert (
+        b(handover["text"]) == text == agent.orchestrator_handover_text(handover["ct"], handover["pairing_id"], session)
+    )
+    Ed25519PublicKey.from_public_bytes(b(handover["signer"])).verify(b(handover["signature"]), text)

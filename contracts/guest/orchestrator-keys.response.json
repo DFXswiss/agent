@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/orchestrator-keys.response.json",
+  "title": "guest POST /v1/sessions/{id}/orchestrator/keys response",
+  "description": "Response of POST /v1/sessions/{id}/orchestrator/keys: the public part of the pairing the tool drew in the VM (05-runner.md section 17.3).",
+  "type": "object",
+  "properties": {
+    "pairing_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "pub": {
+      "$ref": "../common.json#/$defs/pub_keys"
+    },
+    "pop": {
+      "$ref": "../common.json#/$defs/b64u_64"
+    },
+    "fp": {
+      "$ref": "../common.json#/$defs/b64u_16"
+    }
+  },
+  "required": [
+    "pairing_id",
+    "pub",
+    "pop",
+    "fp"
+  ],
+  "additionalProperties": false
+}

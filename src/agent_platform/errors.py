@@ -84,6 +84,10 @@ NEXT: dict[str, str] = {
         "`agent-platform pair --remote` and the link and code given to the person). `recover` and `agents confirm` "
         "work for an account of an agent alone."
     ),
+    "not_in_session": (
+        "This agent runs as the main orchestrator inside a platform session: it reaches the hub only through the "
+        "session's relay and cannot pair, register, recover or log in here. Use the other commands."
+    ),
     "invalid_argument": "Check the command line (`agent-platform <command> --help`).",
     "state_damaged": ("The state directory has a wrong mode, owner or a symlink; fix it or remove it and pair again."),
     "internal": "An unexpected error happened; run the command again.",

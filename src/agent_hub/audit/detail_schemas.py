@@ -28,6 +28,14 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["agent"],
     },
+    "agent.handover": {
+        "properties": {
+            "agent": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ]
+        },
+        "required": ["agent"],
+    },
     "agent.identity": {
         "properties": {
             "agent": [
@@ -181,6 +189,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "placement_invalid",
                         "identity_forbidden",
                         "not_watched",
+                        "orchestrator_unavailable",
                     ],
                 }
             ],
@@ -1247,6 +1256,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "placement_invalid",
                         "identity_forbidden",
                         "not_watched",
+                        "orchestrator_unavailable",
                     ],
                 }
             ],
@@ -1339,6 +1349,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.device.github_identities": {"properties": {}, "required": []},
     "read.device.github_identity": {"properties": {}, "required": []},
     "read.device.logs": {"properties": {}, "required": []},
+    "read.device.orchestrator": {"properties": {}, "required": []},
     "read.device.platform_log": {"properties": {}, "required": []},
     "read.device.pull": {"properties": {}, "required": []},
     "read.device.request": {"properties": {}, "required": []},
@@ -1536,6 +1547,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["result_count"],
     },
     "read.stream.browser": {"properties": {}, "required": []},
+    "read.session.orchestrator": {"properties": {}, "required": []},
     "read.stream": {"properties": {}, "required": []},
     "read.stream.terminal": {"properties": {}, "required": []},
     "read.task.charges": {"properties": {}, "required": []},
@@ -1748,6 +1760,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["from_access", "to_access", "from_model", "to_model", "cause", "until"],
     },
+    "session.orchestrator": {"properties": {}, "required": []},
     "session.pr_linked": {
         "properties": {"epoch": [{"type": "integer", "minimum": 1, "maximum": 2147483647}]},
         "required": ["epoch"],

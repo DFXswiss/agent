@@ -15,7 +15,7 @@ from typing import Any
 from uuid import UUID
 
 from agent_hub import signals
-from agent_hub.stream.publish import Audience, publish
+from agent_hub.stream.publish import CLOSE_KEYS, Audience, publish
 
 LOG = logging.getLogger("agent_hub.sessions")
 
@@ -42,6 +42,10 @@ class Effects:
     def hint(self, device_id: UUID | str, hint: str, data: Mapping[str, Any]) -> None:
         """A content-free hint for one device (`session.start`, `session.control`, `prompt`, `reconcile`)."""
         self.frames.append((Audience("device", UUID(str(device_id))), hint, dict(data), None))
+
+    def close_keys(self, user_id: UUID, key_ids: list[str]) -> None:
+        """End the open streams of the user signed with one of `key_ids` (a revoked agent) in every hub process."""
+        self.frames.append((Audience("user", user_id), CLOSE_KEYS, {"key_ids": list(key_ids)}, None))
 
     def signal(self, name: str, **ids: UUID | int | str) -> None:
         """An internal signal (`task.state`)."""

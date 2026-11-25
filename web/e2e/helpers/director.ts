@@ -3,6 +3,7 @@
 // at a time: every new device takes the first place among the platform candidates.
 import { expect } from '@playwright/test';
 import { DIRECTOR_ORIGIN } from '../fixtures/env.ts';
+import type { TestAgent } from './agent.ts';
 
 async function call(method: string, path: string, body?: unknown): Promise<unknown> {
   const response = await fetch(`${DIRECTOR_ORIGIN}${path}`, {
@@ -68,3 +69,29 @@ export async function walk(
 
 /** The task ID of a task page URL. */
 export const TASK_PATH = /\/o\/[0-9a-f-]{36}\/t\/([0-9a-f-]{36})$/;
+
+export interface HubAnswer {
+  readonly status: number;
+  readonly body: unknown;
+}
+
+/** The session's device registers the keys of `agent` (`TestAgent.session`) for the main orchestrator; `forged`: the
+ *  hub shows the browser a device signature of another key (a hub that swapped the device key). */
+export async function registerOrchestrator(
+  session: string,
+  drawn: { readonly agent: TestAgent; readonly pop: string; readonly fp: string },
+  forged = false,
+): Promise<HubAnswer> {
+  return (await call('POST', `/sessions/${session}/orchestrator`, {
+    pairing_id: drawn.agent.id,
+    pub: drawn.agent.keys.public(),
+    pop: drawn.pop,
+    fp: drawn.fp,
+    forged,
+  })) as HubAnswer;
+}
+
+/** The session device's view of its orchestrator pairing (`GET /v1/device/sessions/{id}/orchestrator`). */
+export async function orchestratorView(session: string): Promise<HubAnswer> {
+  return (await call('GET', `/sessions/${session}/orchestrator`)) as HubAnswer;
+}

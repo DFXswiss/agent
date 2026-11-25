@@ -4,8 +4,9 @@ Fingerprint, proof of possession, the handover secret with its bundle key, claim
 to the agent and the label sealed to the user, and for a pairing from another computer (ADR-067) the agent code, the
 handover sealed to the agent, the return code and the typed forms of a code, and for an account of an agent alone
 (rule E-27, KOR-62) the registration and recovery texts with their signatures, and for the agent's own identity
-(ADR-082) the delegation certificate and the user's anchor sealed to the agent, all with fixed keys, nonces and HPKE
-ephemeral keys. Negative vectors
+(ADR-082) the delegation certificate and the user's anchor sealed to the agent, and for the main orchestrator on
+platform hardware the device's signature over the session's keys and the owner's signature over the sealed handover,
+all with fixed keys, nonces and HPKE ephemeral keys. Negative vectors
 name an operation of `OPS` (this module), its arguments and the expected error code; the generator refuses a vector
 whose code differs.
 """
@@ -26,6 +27,7 @@ AGENT_ID = fixed_id("agent/one")
 OTHER_AGENT = fixed_id("agent/two")
 ORIGIN = "https://agent.example"
 OTHER_INVITE = "AAAAAAAAAAAAAAAAAAAAAA"
+SIG = "signature_invalid"
 
 
 def _b(value: object) -> bytes:
@@ -88,6 +90,12 @@ OPS["verify_cert"] = lambda a: agent.verify_cert(
 )
 OPS["verify_account"] = lambda a: agent.verify_text(_b(a["signer"]), a["signature"], _account_text(a))
 OPS["verify_recover"] = lambda a: agent.verify_text(_b(a["signer"]), a["signature"], _recover_text(a))
+OPS["verify_orchestrator_key"] = lambda a: agent.verify_text(
+    _b(a["signer"]), a["signature"], agent.orchestrator_key_text(a["fp"], a["pairing_id"], a["session_id"])
+)
+OPS["verify_orchestrator_handover"] = lambda a: agent.verify_text(
+    _b(a["signer"]), a["signature"], agent.orchestrator_handover_text(a["ct"], a["pairing_id"], a["session_id"])
+)
 
 
 def negative(name: str, op: str, args: Json, error: str) -> Json:
@@ -306,6 +314,59 @@ def build_own_identity(bot: keys.Identity, alice: keys.Identity, user: str, secr
     return section, invalid
 
 
+def build_orchestrator(bot: keys.Identity, alice: keys.Identity, sealed: str) -> tuple[Json, list[Json]]:
+    """The main orchestrator on platform hardware (ADR-082 sections 6 and 9.8): the executing device signs the
+    fingerprint of the session's keys, the task owner signs the handover sealed to them; and their negatives."""
+    device = identity("device")
+    session = fixed_id("session/orchestrator")
+    fp = agent.fingerprint(bot.kem_public(), bot.sig_public())
+    key_text = agent.orchestrator_key_text(fp, AGENT_ID, session)
+    handover_text = agent.orchestrator_handover_text(sealed, AGENT_ID, session)
+    key: Json = {"signer": device.public()["sig"], "fp": fp, "pairing_id": AGENT_ID, "session_id": session}
+    key["signature"] = agent.sign_text(device.sig, key_text)
+    handover: Json = {"signer": alice.public()["sig"], "ct": sealed, "pairing_id": AGENT_ID, "session_id": session}
+    handover["signature"] = agent.sign_text(alice.sig, handover_text)
+    other_fp = agent.fingerprint(alice.kem_public(), alice.sig_public())
+    section = {
+        "device": {"id": ACTORS["device"], **device.public()},
+        "session_id": session,
+        "key": {**key, "text": b64u_encode(key_text)},
+        "handover": {**handover, "text": b64u_encode(handover_text)},
+    }
+    invalid = [
+        negative("orchestrator_key_other_session", "verify_orchestrator_key", {**key, "session_id": AGENT_ID}, SIG),
+        negative("orchestrator_key_other_fp", "verify_orchestrator_key", {**key, "fp": other_fp}, SIG),
+        negative("orchestrator_key_other_pairing", "verify_orchestrator_key", {**key, "pairing_id": OTHER_AGENT}, SIG),
+        negative("orchestrator_key_by_user", "verify_orchestrator_key", {**key, "signer": alice.public()["sig"]}, SIG),
+        negative("orchestrator_key_fp_short", "verify_orchestrator_key", {**key, "fp": fp[:20]}, "header_invalid"),
+        negative(
+            "orchestrator_handover_other_session",
+            "verify_orchestrator_handover",
+            {**handover, "session_id": AGENT_ID},
+            SIG,
+        ),
+        negative(
+            "orchestrator_handover_other_ct",
+            "verify_orchestrator_handover",
+            {**handover, "ct": b64u_encode(fixed("other-ct", 64))},
+            SIG,
+        ),
+        negative(
+            "orchestrator_handover_by_device",
+            "verify_orchestrator_handover",
+            {**handover, "signer": device.public()["sig"]},
+            SIG,
+        ),
+        negative(
+            "orchestrator_handover_bad_id",
+            "verify_orchestrator_handover",
+            {**handover, "pairing_id": "x"},
+            "header_invalid",
+        ),
+    ]
+    return section, invalid
+
+
 def build_agent() -> Json:
     """Every format of 11-agent-access.md section 3."""
     bot, alice, user = identity("agent"), identity("alice"), ACTORS["alice"]
@@ -333,9 +394,10 @@ def build_agent() -> Json:
     remote, remote_invalid = build_remote(bot, user, secret)
     own, own_invalid = build_own_account(bot, alice, user)
     own_identity, own_identity_invalid = build_own_identity(bot, alice, user, secret)
+    orchestrator, orchestrator_invalid = build_orchestrator(bot, alice, remote["handover"]["sealed"])
     return {
         "about": "Delegated agent access of 11-agent-access.md section 3 (ADR-056, remote pairing ADR-067, account "
-        "of an agent alone KOR-62, own identity of the agent ADR-082).",
+        "of an agent alone KOR-62, own identity of the agent and the orchestrator on platform hardware ADR-082).",
         "agent": {"id": AGENT_ID, "kem_sk": agent_sk, "sig_sk": b64u_encode(fixed("agent/sig")), **bot.public()},
         "user": {"id": user, "kem_sk": alice_sk, **alice.public()},
         "fingerprint": agent.fingerprint(kem_pub, sig_pub),
@@ -362,6 +424,7 @@ def build_agent() -> Json:
         "remote": remote,
         "own_account": own,
         "own_identity": own_identity,
+        "orchestrator": orchestrator,
         "invalid": [
             negative(
                 "pop_other_pairing",
@@ -414,6 +477,7 @@ def build_agent() -> Json:
             *remote_invalid,
             *own_invalid,
             *own_identity_invalid,
+            *orchestrator_invalid,
         ],
     }
 

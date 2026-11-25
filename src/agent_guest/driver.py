@@ -8,7 +8,8 @@ variables and nothing is inherited) and the agent version reported in the sessio
 Interface:
 
 * ``AgentDriver`` - protocol: ``kind``, ``version``, ``argv(launch)``, ``model_env(access, env)``
-* ``Launch`` - the per-start input of ``argv`` (session, harness file, resume ID, model, model access)
+* ``Launch`` - the per-start input of ``argv`` (session, harness file, resume ID, model, model access, further MCP
+  configurations: the orchestrator's second server, 05-runner.md section 17.5)
 
 Web search (13-work-vm.md section 13.7): Claude Code's own ``WebSearch`` runs at the model provider. The managed
 settings (shared by every session of the VM) allow it; the command line offers it (``--tools``) only to a session whose
@@ -41,6 +42,7 @@ DISALLOWED_TOOLS = "Bash,Agent,Task,WebFetch,NotebookEdit,Skill"
 MODEL_ENV_ACCESS = "platform"
 _ID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}")
+_CONFIG_RE = re.compile(r"/[A-Za-z0-9._/-]{1,255}")
 
 
 class DriverError(ValueError):
@@ -57,6 +59,8 @@ class Launch:
     model_id: str | None = None
     access: str = MODEL_ENV_ACCESS
     """The model access (``subscription``, ``api_key``, ``platform``); it decides about ``WebSearch``."""
+    mcp_configs: tuple[str, ...] = ()
+    """Further ``--mcp-config`` files after the platform's (absolute paths of the image)."""
 
 
 class AgentDriver(Protocol):
@@ -98,6 +102,7 @@ class ClaudeCodeDriver:
             "--strict-mcp-config",
             "--mcp-config",
             self.mcp_config,
+            *self._extra_configs(launch),
             "--tools",
             f"{TOOLS},{WEB_SEARCH_TOOL}" if web_search else TOOLS,
             "--disallowedTools",
@@ -117,6 +122,12 @@ class ClaudeCodeDriver:
                 raise DriverError("model id")
             args += ["--model", launch.model_id]
         return args
+
+    @staticmethod
+    def _extra_configs(launch: Launch) -> list[str]:
+        if not all(_CONFIG_RE.fullmatch(path) and ".." not in path for path in launch.mcp_configs):
+            raise DriverError("mcp config")
+        return list(launch.mcp_configs)
 
     def model_env(self, access: str, env: Mapping[str, str]) -> dict[str, str]:
         """The runner's model variables, checked against the allow-list of 05 section 10.3."""

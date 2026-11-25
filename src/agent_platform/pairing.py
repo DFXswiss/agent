@@ -172,6 +172,8 @@ class Pairing:
         self.expires_at = ""
         self.result: dict[str, Any] | None = None
         self.failure: PlatformError | None = None
+        self.user_pub: dict[str, str] = {}
+        """The user's public keys the claim opened (set by a successful claim)."""
 
     def register(self) -> None:
         self.hub_key, self.config_root = hub_config(self.origin)
@@ -249,6 +251,20 @@ class Pairing:
         assert self.result is not None
         return self.result
 
+    def complete_session(self, client: AgentClient, handover: Handover, user_pub: Mapping[str, str]) -> dict[str, Any]:
+        """Claim with the handover of a session pairing (`agent_platform.session`) and store the state only when the
+        user's keys the claim opened are `user_pub`, the keys the runner took from its verified log
+        (`pairing_failed` otherwise)."""
+        try:
+            user_id, first = self._verified_claim(client, handover)
+        except _WrongSecret:
+            raise PlatformError("pairing_failed", reason="claim_invalid") from None
+        if self.user_pub != dict(user_pub):
+            raise PlatformError("pairing_failed", reason="identity_mismatch")
+        self._store(user_id, first, handover)
+        assert self.result is not None
+        return self.result
+
     def fragment(self, port: int) -> str:
         fp = self.fingerprint()
         name, host = quote(self.name, safe=""), quote(self.host, safe="")
@@ -314,6 +330,7 @@ class Pairing:
             raise PlatformError("pairing_failed", reason="identity_mismatch") from None
         if isinstance(self.config_root, str) and self.config_root != handover.root_key:
             raise PlatformError("pairing_failed", reason="platform_root_mismatch")
+        self.user_pub = {"kem": user_pub["kem"], "sig": user_pub["sig"]}
         return user_id, first
 
     def _store(self, user_id: str, first: Mapping[str, Any], handover: Handover) -> None:

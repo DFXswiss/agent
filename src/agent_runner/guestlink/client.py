@@ -20,6 +20,9 @@ Transport: the Unix socket `<lima instance dir>/sock/agent-guest.sock` that Lima
 | `journal(after, limit=, wait=)` | `GET /v1/journal` (long poll) -> `JournalPage` |
 | `ack(through)` | `POST /v1/journal/ack` |
 | `answer_pending(pending_id, answer)` | `POST /v1/pending/{id}/answer` |
+| `orchestrator_keys(session_id, request)` | `POST /v1/sessions/{id}/orchestrator/keys` (05-runner.md section 17.3) |
+| `orchestrator_handover(session_id, request)` | `POST /v1/sessions/{id}/orchestrator/handover` |
+| `answer_relay(pending_id, answer)` | `POST /v1/relay/{id}/answer` (the hub's answer to a `hub.relay` record) |
 | `metrics()` | `GET /v1/metrics` |
 
 Failures raise the classes of `guestlink.errors`. Path segments (session and pending IDs) are checked before they
@@ -50,6 +53,9 @@ RESTORE_CREATE_TIMEOUT_S = 300.0
 """Limit of a `POST /v1/sessions` with `restore`: the guest renames the staged tree and hands every entry to the
 session user (the rewriting happened at the stage, KOR-33 review no. 9), which takes longer than a plain create for a
 workspace of many files."""
+ORCHESTRATOR_TIMEOUT_S = 60.0
+"""Limit of the orchestrator keys call (the guest runs the agent tool, which draws the keys) and of a relay answer
+(up to 8 MiB of the hub's answer, b64u)."""
 BASE_URL = "http://agent-guest"
 HEALTH_STATES = frozenset({"unassigned", "assigned", "broken"})
 CONTROL_ACTIONS = frozenset({"interrupt", "stop", "suspend"})
@@ -349,3 +355,20 @@ class GuestClient:
 
     async def metrics(self) -> dict[str, Any]:
         return await self._json("metrics", "GET", "/v1/metrics")
+
+    async def orchestrator_keys(self, session_id: str, request: Mapping[str, Any]) -> dict[str, Any]:
+        path = f"/v1/sessions/{_segment(session_id, 'orchestrator')}/orchestrator/keys"
+        return await self._json("orchestrator", "POST", path, json=dict(request), timeout=ORCHESTRATOR_TIMEOUT_S)
+
+    async def orchestrator_handover(self, session_id: str, request: Mapping[str, Any]) -> None:
+        path = f"/v1/sessions/{_segment(session_id, 'orchestrator')}/orchestrator/handover"
+        await self._json("orchestrator", "POST", path, json=dict(request))
+
+    async def orchestrator_end(self, session_id: str, pairing_id: str) -> None:
+        """End the session's orchestrator in the VM (its keys deleted) when it is still `pairing_id`."""
+        path = f"/v1/sessions/{_segment(session_id, 'orchestrator')}/orchestrator/end"
+        await self._json("orchestrator", "POST", path, json={"pairing_id": pairing_id})
+
+    async def answer_relay(self, pending_id: str, answer: Mapping[str, Any]) -> None:
+        path = f"/v1/relay/{_segment(pending_id, 'relay')}/answer"
+        await self._json("relay", "POST", path, json=dict(answer), timeout=ORCHESTRATOR_TIMEOUT_S)

@@ -56,8 +56,8 @@
 //
 // GitHub identities (ADR-078 section 1): the rotation body holds the primary records only (`/v1/me/credentials` lists
 // one record per kind, the contract allows four records); right after the rotation the user's further `github` records
-// are re-sealed under the new epoch (`rewrapOwnIdentities`, same ID, version + 1; the identity module is imported only
-// then, so it stays out of the first load, 06-web.md section 12.2). Should that fail, the job `github-rewrap` does it
+// are re-sealed under the new epoch (`rewrapOwnIdentities`, same ID, version + 1; the identity module comes with
+// `credentials/rotation.ts`, so it stays out of the first load, 06-web.md section 12.2). Should that fail, the job `github-rewrap` does it
 // on its next run.
 //
 // The losses, the rotation and the run are in `credentials/rotation.ts`, imported when a run needs it (not part of the

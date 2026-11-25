@@ -3,9 +3,11 @@
 - `anon_request`: the anonymous endpoints (`GET /v1/config`, `POST /v1/agent-pairings`, `POST /v1/invites/lookup`).
   The hub does not sign answers to unsigned requests; what the tool takes from them is checked otherwise (the hub key
   is pinned from `/v1/config` at pairing; the pairing answer must name the pairing; an invitation package is
-  authenticated by its code).
+  authenticated by its code). In session mode (`agent_platform.relay`) there is no anonymous request:
+  `not_in_session`.
 - `AgentClient`: every other request, signed with `agent-request-v1` under the key ID `agent.<32 hex>` by the
-  runner's signed client (`agent_runner.sync.http.HubClient`), whose answers must be signed by the pinned hub key.
+  runner's signed client (`agent_runner.sync.http.HubClient`), whose answers must be signed by the pinned hub key; in
+  session mode its transport is the guest's relay (`relay.RelayTransport`), the checks stay the same.
 
 Failures become `PlatformError`s: a connection failure `hub_unreachable`; a verified refusal `hub_refused` with the
 hub's code (`hub_error`, a code of the closed list `agent_runner.sync.codes`) and the refusal's `detail` kept on the
@@ -24,6 +26,7 @@ from urllib.parse import quote
 
 import httpx
 
+from agent_platform import relay
 from agent_platform.errors import PlatformError
 from agent_runner.crypto.ids import is_uuid7
 from agent_runner.crypto.keys import Identity
@@ -60,7 +63,9 @@ def refused(
 
 
 def anon_request(origin: str, method: str, path: str, body: object | None = None) -> dict[str, Any]:
-    """One anonymous request; the JSON object of a 2xx answer."""
+    """One anonymous request; the JSON object of a 2xx answer (`not_in_session` in session mode)."""
+    if relay.relay_path() is not None:
+        raise PlatformError("not_in_session")
     content = None if body is None else encode_body(body)
     headers = {"Content-Type": "application/json"} if body is not None else {}
     try:
@@ -95,7 +100,13 @@ class AgentClient:
         on_revoked: Callable[[], None] = lambda: None,
     ) -> None:
         self._loop = asyncio.new_event_loop()
-        self._client = HubClient(hub_url=origin, key_id=key_id(agent_id), signing_key=agent.sig, hub_key=hub_key)
+        self._client = HubClient(
+            hub_url=origin,
+            key_id=key_id(agent_id),
+            signing_key=agent.sig,
+            hub_key=hub_key,
+            transport=relay.transport(),
+        )
         self._on_revoked = on_revoked
 
     def close(self) -> None:

@@ -581,6 +581,14 @@ of its VM and **"Watch live"**, which opens the session's **Browser** tab. The o
   chosen offset – at most 2 MiB from a chunk boundary – into an off-screen terminal, then shows it; playback
   1×/4×/16×).
 - An explicit label "Read-only view – prompts are entered in the chat" is always visible.
+- Main orchestrator on DFX hardware (KOR-57, `11-agent-access.md` §11, ADR-082 §6): for the task owner of a running
+  (`working`, `idle`) main session the header asks `GET /v1/sessions/{id}/orchestrator` and offers "Make this session
+  my main orchestrator" / "Diese Session als Hauptorchestrator" only when the hub says `available` (the owner's private
+  organization, a platform device); a session that is the orchestrator already says so. The dialog (loaded when it
+  opens) asks for the session's keys, checks `device_sig` and the fingerprint under the device key of the verified
+  platform log (`pairing_mismatch` otherwise), names the session, its device, "Replaces “X”" and the full access, runs
+  the pairing-tagged passkey ceremony and the confirmation of §8.3, sends the signed handover and waits for the
+  session's claim (connected / failed).
 
 ### 5.6 Pull requests and "Fix conflicts" (KOR-48, ADR-084)
 
@@ -853,6 +861,8 @@ newest `CK` after a rotation.
   created, last used and state; "Disconnect" (`DELETE /v1/me/agents/{id}`) after a dialog that says the agent loses
   all access at once and keeps what it has already read. The notice after a pairing (`?agent=connected|failed`) is
   only a hint; the state shown is always the hub's list.
+- An agent that runs in a session on DFX hardware (`session_id`) is shown "On DFX hardware, in a session of one of your
+  tasks"; it is revoked with the reason `session_ended` when the session ends (`11-agent-access.md` §11).
 - The audit view (§9.2) marks rows with `agent_id` "by agent <name>" ("by agent" when the name is not the user's).
 - "Security activity" (`GET /v1/me/audit`) is a windowed list like §9.2 (100 rows at first, 50 per move or page, at
   most 200 rendered, "Load more" with the hub's cursor).
@@ -995,8 +1005,9 @@ load plus 10 % (HOT-16: 199.3 KiB measured, guard 219 KiB), raised to 220 KiB by
 agent of a user as a sub-principal in the membership logs at sign-in (ADR-082), which needs about 1 KiB gzip in the first
 load; the confirmation of a pairing, the revocation, the job `agents` and the community check of agent authors load
 lazily; raised to 221 KiB by KOR-48: the error texts of six new operation codes, the navigation entry and the request
-kind of the pull-request view (its other texts load with its code, area `pulls`; decisions/KOR-48.md). The guard runs
-in every package's gates (`npm run
+kind of the pull-request view (its other texts load with its code, area `pulls`; decisions/KOR-48.md); the orchestrator
+dialog of KOR-57 stage b adds its texts in both languages (the catalogs stay in the first load, HOT-16 point 8) while its
+code loads lazily. The guard runs in every package's gates (`npm run
 build:check`, the build tests and the E2E budget test), so growth of the first load is seen deterministically where it
 is caused, not later as a narrow timing failure. It is raised only together with a reason in this section. The first
 load is three scripts: the framework, the app modules imported statically from the entry (chunk group `$initial`) and

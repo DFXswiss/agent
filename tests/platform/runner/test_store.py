@@ -255,6 +255,8 @@ TABLES = {
         "restore_started",
         "restore_failed",
     ],
+    # 0031 (KOR-57, ADR-082 section 6): the main orchestrator in a session of this device
+    "orchestrator": ["session_id", "pairing_id", "state", "registered_at", "handed_over_at"],
     "context_object": [
         "object_id",
         "task_id",

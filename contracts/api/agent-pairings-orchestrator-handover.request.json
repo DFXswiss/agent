@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/agent-pairings-orchestrator-handover.request.json",
+  "title": "POST /v1/agent-pairings/{pairing_id}/orchestrator-handover request",
+  "description": "Body of POST /v1/agent-pairings/{pairing_id}/orchestrator-handover (11-agent-access.md section 11, ADR-082 sections 6.3 and 9.8): the handover sealed to the session's key and the task owner's signature over it.",
+  "type": "object",
+  "properties": {
+    "ct": {
+      "$ref": "../common.json#/$defs/bundle_ct"
+    },
+    "sig": {
+      "$ref": "../common.json#/$defs/b64u_64"
+    }
+  },
+  "required": [
+    "ct",
+    "sig"
+  ],
+  "additionalProperties": false
+}

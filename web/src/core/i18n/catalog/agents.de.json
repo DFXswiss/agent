@@ -38,5 +38,6 @@
   "dialog.held": "Dieser Agent wurde verbunden, bevor Agenten einen eigenen Schlüssel bekamen, und erhielt eine Kopie deines Kontoschlüssels. Diese Kopie öffnet weiterhin, was für dich verschlüsselt ist; deinen Kontoschlüssel selbst kann man nicht ersetzen.",
   "dialog.cleaning": "Der Agent wird aus deinen Organisationen entfernt …",
   "runs.ownComputer": "Läuft auf seinem Computer mit eigenem Schlüssel",
-  "held": "Erhielt beim Verbinden eine Kopie deines Kontoschlüssels"
+  "held": "Erhielt beim Verbinden eine Kopie deines Kontoschlüssels",
+  "runs.session": "Auf DFX-Hardware, in einer Session einer deiner Aufgaben"
 }

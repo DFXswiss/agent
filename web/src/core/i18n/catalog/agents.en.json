@@ -38,5 +38,6 @@
   "dialog.held": "This agent was connected before agents got their own key and received a copy of your account key. That copy keeps opening what is encrypted for you; your account key itself cannot be replaced.",
   "dialog.cleaning": "Removing the agent from your organizations …",
   "runs.ownComputer": "Runs on its computer with its own key",
-  "held": "Received a copy of your account key when it was connected"
+  "held": "Received a copy of your account key when it was connected",
+  "runs.session": "On DFX hardware, in a session of one of your tasks"
 }

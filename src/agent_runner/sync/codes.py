@@ -69,6 +69,7 @@ HUB_ERROR_CODES = frozenset(
         "nonce_replayed",
         "not_found",
         "not_watched",
+        "orchestrator_unavailable",
         "origin_mismatch",
         "origin_seq_conflict",
         "origin_seq_gap",

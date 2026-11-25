@@ -1,0 +1,8 @@
+{
+  "hub_url": "https://hub.example.org",
+  "hub_key": {
+    "id": "hub-1",
+    "public_key": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+  },
+  "platform_root_key": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8"
+}

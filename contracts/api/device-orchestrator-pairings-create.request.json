@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-orchestrator-pairings-create.request.json",
+  "title": "POST /v1/device/orchestrator-pairings request",
+  "description": "Body of POST /v1/device/orchestrator-pairings (11-agent-access.md section 11, ADR-082 section 6.2): the keys an orchestrator session drew in its VM, registered by the session's device.",
+  "type": "object",
+  "properties": {
+    "session_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "pairing_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "pub": {
+      "type": "object",
+      "properties": {
+        "kem": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        },
+        "sig": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        }
+      },
+      "required": [
+        "kem",
+        "sig"
+      ],
+      "additionalProperties": false
+    },
+    "pop": {
+      "$ref": "../common.json#/$defs/b64u_64"
+    },
+    "fp": {
+      "$ref": "../common.json#/$defs/b64u_16"
+    },
+    "device_sig": {
+      "$ref": "../common.json#/$defs/b64u_64"
+    }
+  },
+  "required": [
+    "session_id",
+    "pairing_id",
+    "pub",
+    "pop",
+    "fp",
+    "device_sig"
+  ],
+  "additionalProperties": false
+}

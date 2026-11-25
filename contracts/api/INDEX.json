@@ -2225,6 +2225,99 @@
       "owner": "KOR-57"
     },
     {
+      "method": "POST",
+      "path": "/v1/sessions/{session}/orchestrator",
+      "name": "session-orchestrator-request",
+      "section": "11.4",
+      "auth": "browser",
+      "rights": [
+        "owner"
+      ],
+      "path_params": {
+        "session": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/session-orchestrator-request.request.json",
+      "response": "api/session-orchestrator-request.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-57"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session}/orchestrator",
+      "name": "session-orchestrator-get",
+      "section": "11.4",
+      "auth": "browser",
+      "rights": [
+        "owner"
+      ],
+      "path_params": {
+        "session": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/session-orchestrator-get.request.json",
+      "response": "api/session-orchestrator-get.response.json",
+      "read_resource": "session.orchestrator",
+      "streaming": false,
+      "owner": "KOR-57"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/orchestrator-pairings",
+      "name": "device-orchestrator-pairings-create",
+      "section": "11.4",
+      "auth": "device",
+      "rights": [
+        "device:session"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/device-orchestrator-pairings-create.request.json",
+      "response": "api/device-orchestrator-pairings-create.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-57"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/sessions/{session}/orchestrator",
+      "name": "device-session-orchestrator-get",
+      "section": "11.4",
+      "auth": "device",
+      "rights": [
+        "device:session"
+      ],
+      "path_params": {
+        "session": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/device-session-orchestrator-get.request.json",
+      "response": "api/device-session-orchestrator-get.response.json",
+      "read_resource": "device.orchestrator",
+      "streaming": false,
+      "owner": "KOR-57"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/agent-pairings/{pairing_id}/orchestrator-handover",
+      "name": "agent-pairings-orchestrator-handover",
+      "section": "11.4",
+      "auth": "browser",
+      "rights": [
+        "owner"
+      ],
+      "path_params": {
+        "pairing_id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/agent-pairings-orchestrator-handover.request.json",
+      "response": "api/agent-pairings-orchestrator-handover.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-57"
+    },
+    {
       "method": "GET",
       "path": "/v1/agent/handover",
       "name": "agent-handover",

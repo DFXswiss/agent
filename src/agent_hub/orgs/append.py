@@ -46,6 +46,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.agents import orchestrator
 from agent_hub.agents.notify import account_change
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.audit.invites import audit_invite_use
@@ -106,6 +107,11 @@ class AppendResult:
     """Active devices after the batch (receivers of the `log` hint)."""
     notices: list[Notification] = field(default_factory=list)
     """Account notifications of the batch (an agent changed roles or access, KOR-24), published after the commit."""
+    revoked: list[tuple[UUID, UUID]] = field(default_factory=list)
+    """`(user, agent)` of the session orchestrators the batch made unfit (another user member of a private
+    organization, ADR-082 section 9.6); their streams are closed after the commit."""
+    hints: list[tuple[UUID, UUID]] = field(default_factory=list)
+    """`(device, session)` of those orchestrators: the hint `session.orchestrator` after the commit."""
 
 
 Extra = Callable[[Connection, AppendResult], None]
@@ -382,8 +388,21 @@ def append_batch(
         notices += account_change(connection, UUID(appender.actor_id), "role_changed", now, target=org_id)
     stored = store_batch_events(connection, events, after, root_key=root_key, author=appender.id, now=now)
     projection.update_org(connection, org_id, after, platform, access)
+    revoked = orchestrator.revoke_unfit(connection, now, org=org_id)
+    hints = orchestrator.session_hints(connection, [agent for _user, agent in revoked])
     users, devices = members(after.state)
-    result = AppendResult(org_id, after.head, after, batch, stored, users=users, devices=devices, notices=notices)
+    result = AppendResult(
+        org_id,
+        after.head,
+        after,
+        batch,
+        stored,
+        users=users,
+        devices=devices,
+        notices=notices,
+        revoked=revoked,
+        hints=hints,
+    )
     if extra is not None:
         extra(connection, result)
     return result

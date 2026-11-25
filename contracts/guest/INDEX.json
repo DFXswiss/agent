@@ -185,6 +185,58 @@
       "response": "guest/pending-answer.response.json"
     },
     {
+      "method": "POST",
+      "path": "/v1/sessions/{id}/orchestrator/keys",
+      "name": "orchestrator-keys",
+      "section": "7.1",
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "guest/orchestrator-keys.request.json",
+      "response_kind": "json",
+      "response": "guest/orchestrator-keys.response.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{id}/orchestrator/handover",
+      "name": "orchestrator-handover",
+      "section": "7.1",
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "guest/orchestrator-handover.request.json",
+      "response_kind": "json",
+      "response": "guest/orchestrator-handover.response.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{id}/orchestrator/end",
+      "name": "orchestrator-end",
+      "section": "7.1",
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "guest/orchestrator-end.request.json",
+      "response_kind": "json",
+      "response": "guest/orchestrator-end.response.json"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/relay/{id}/answer",
+      "name": "relay-answer",
+      "section": "7.1",
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "guest/relay-answer.request.json",
+      "response_kind": "json",
+      "response": "guest/relay-answer.response.json"
+    },
+    {
       "method": "GET",
       "path": "/v1/metrics",
       "name": "metrics",

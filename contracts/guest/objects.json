@@ -294,6 +294,64 @@
       "minLength": 1,
       "maxLength": 2048,
       "pattern": "^agent\\.dfx\\.swiss instruction from: [^\\n\\r]+$"
+    },
+    "relay_request_headers": {
+      "type": "object",
+      "description": "the headers of a relayed agent request (05-runner.md section 17.2)",
+      "properties": {
+        "Agent-Key": {
+          "type": "string",
+          "pattern": "^agent\\.[0-9a-f]{32}$"
+        },
+        "Agent-Time": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+        },
+        "Agent-Nonce": {
+          "$ref": "../common.json#/$defs/b64u_16"
+        },
+        "Agent-Signature": {
+          "$ref": "../common.json#/$defs/b64u_64"
+        },
+        "Content-Type": {
+          "type": "string",
+          "const": "application/json"
+        }
+      },
+      "required": [
+        "Agent-Key",
+        "Agent-Time",
+        "Agent-Nonce",
+        "Agent-Signature"
+      ],
+      "additionalProperties": false
+    },
+    "relay_response_headers": {
+      "type": "object",
+      "description": "the headers of the hub's answer a relay passes on (05-runner.md section 17.2)",
+      "properties": {
+        "Agent-Hub-Key": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "Agent-Hub-Time": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "Agent-Hub-Signature": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "Content-Type": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "Retry-After": {
+          "type": "string",
+          "maxLength": 32
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

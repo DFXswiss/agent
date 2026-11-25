@@ -28,6 +28,8 @@ from fastapi import Query
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
 from agent_hub import signals
+from agent_hub.agents import orchestrator
+from agent_hub.agents.keys import key_id_of as agent_key_id
 from agent_hub.agents.notify import account_change
 from agent_hub.db.pool import transaction
 from agent_hub.errors import HubError
@@ -39,7 +41,7 @@ from agent_hub.notifications.rules import Notification, publish_rows
 from agent_hub.platform import enrollments, invites
 from agent_hub.platform import log as platform_log
 from agent_hub.scheduler import waiting as scheduler_waiting
-from agent_hub.stream.publish import Audience, publish
+from agent_hub.stream.publish import Audience, close_keys, publish
 
 router = HubRouter()
 LOG = logging.getLogger("agent_hub.platform")
@@ -108,6 +110,9 @@ async def append_log(body: AppendRequest, context: Context) -> dict[str, Any]:
         except Exception:
             LOG.error("platform log: the decertified hint could not be published", exc_info=True)
         signals.emit("device.decertified", device=UUID(device))
+    for user, agent in result.revoked:
+        close_keys(user, [agent_key_id(agent)])
+    orchestrator.publish_hints(list(result.hints))
     return {"head": result.head.to_json()}
 
 

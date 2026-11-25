@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/journal/hub.relay.json",
+  "title": "journal body hub.relay",
+  "description": "Body of the journal record kind hub.relay (05-runner.md section 17.2).",
+  "$ref": "record.json#/$defs/body_hub_relay"
+}

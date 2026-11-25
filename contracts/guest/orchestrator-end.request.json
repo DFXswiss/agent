@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/orchestrator-end.request.json",
+  "title": "guest POST /v1/sessions/{id}/orchestrator/end request",
+  "description": "Request of POST /v1/sessions/{id}/orchestrator/end: the hub revoked this pairing while the session goes on, or the session ended (05-runner.md section 17.3).",
+  "type": "object",
+  "properties": {
+    "pairing_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "pairing_id"
+  ],
+  "additionalProperties": false
+}

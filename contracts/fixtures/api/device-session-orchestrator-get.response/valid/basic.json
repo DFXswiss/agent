@@ -1,0 +1,15 @@
+{
+  "session_id": "0190f0f0-0000-7000-8000-000000000001",
+  "user_id": "0190f0f0-0000-7000-8000-000000000002",
+  "requested_at": "2026-11-25T10:00:00.000Z",
+  "requested": false,
+  "pairing": {
+    "pairing_id": "0190f0f0-0000-7000-8000-000000000003",
+    "state": "confirmed",
+    "expires_at": "2026-11-25T10:00:00.000Z",
+    "handover": {
+      "ct": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "sig": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    }
+  }
+}

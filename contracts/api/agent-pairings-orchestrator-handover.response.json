@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/agent-pairings-orchestrator-handover.response.json",
+  "title": "POST /v1/agent-pairings/{pairing_id}/orchestrator-handover response",
+  "description": "Body of a successful response to POST /v1/agent-pairings/{pairing_id}/orchestrator-handover.",
+  "type": "object",
+  "properties": {
+    "pairing_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "session_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "pairing_id",
+    "session_id"
+  ],
+  "additionalProperties": false
+}

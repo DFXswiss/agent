@@ -104,11 +104,22 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "client_outdated": (409,),
     "agent_batches_incomplete": (409,),
     "agent_gen_mismatch": (409,),
+    "orchestrator_unavailable": (409,),
 }
 
 # The detail keys of `contracts/common.json#/$defs/error` (closed).
 DETAIL_KEYS = frozenset(
-    {"pointers", "expected_seq", "expected", "candidates_available", "devices", "quota", "orgs", "paging_required"}
+    {
+        "pointers",
+        "expected_seq",
+        "expected",
+        "candidates_available",
+        "devices",
+        "quota",
+        "orgs",
+        "paging_required",
+        "reason",
+    }
 )
 INTERNAL_ERROR = "unavailable"
 

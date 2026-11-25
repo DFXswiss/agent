@@ -9,6 +9,10 @@
   checkpoints).
 - `context_pr_link`: registrations of pull requests at the hub (`pr_link_work`, `pr_link_state`).
 
+A session of the main orchestrator (a row in `runner.orchestrator`, 05-runner.md section 17.6) never becomes due:
+`mark_due`, `mark_periodic` and `mark_vm_due` leave it out, and `due` and `due_on_vm` never name it (also a checkpoint
+that was due before the session became the orchestrator).
+
 Every function runs in the caller's transaction.
 """
 
@@ -63,6 +67,10 @@ OBJECT_COLUMNS = (
 )
 
 
+_NOT_ORCHESTRATOR = "NOT EXISTS (SELECT 1 FROM runner.orchestrator o WHERE o.session_id = {column})"
+"""The session `{column}` is not the main orchestrator (05-runner.md section 17.6)."""
+
+
 async def mark_due(
     conn: AsyncConnection[Any],
     *,
@@ -76,11 +84,13 @@ async def mark_due(
     """A checkpoint of the session is due (an earlier due time is kept, so a coalesced request is not delayed); with
     `forget` the hash of the last archive is dropped, so an unchanged archive is taken as a new object again."""
     await conn.execute(
-        "INSERT INTO runner.context_session (session_id, task_id, org_id, wg_id, due_at) VALUES (%s, %s, %s, %s, %s)"
+        "INSERT INTO runner.context_session (session_id, task_id, org_id, wg_id, due_at)"
+        " SELECT %s::uuid, %s::uuid, %s::uuid, %s::uuid, %s::timestamptz"
+        f" WHERE {_NOT_ORCHESTRATOR.format(column='%s::uuid')}"
         " ON CONFLICT (session_id) DO UPDATE SET due_at = LEAST(runner.context_session.due_at, EXCLUDED.due_at),"
         " attempts = 0, next_at = NULL,"
         " archive_sha256 = CASE WHEN %s THEN NULL ELSE runner.context_session.archive_sha256 END",
-        (session_id, task_id, org_id, wg_id, at, forget),
+        (session_id, task_id, org_id, wg_id, at, session_id, forget),
     )
 
 
@@ -91,13 +101,14 @@ async def mark_periodic(conn: AsyncConnection[Any], *, interval_s: float, at: da
         "INSERT INTO runner.context_session (session_id, task_id, org_id, wg_id, last_at)"
         " SELECT s.id, s.task_id, s.org_id, s.wg_id, %s FROM runner.session s"
         " WHERE s.depth = 0 AND s.state = 'working' AND NOT EXISTS (SELECT 1 FROM runner.context_session c"
-        " WHERE c.session_id = s.id) ON CONFLICT (session_id) DO NOTHING",
+        f" WHERE c.session_id = s.id) AND {_NOT_ORCHESTRATOR.format(column='s.id')}"
+        " ON CONFLICT (session_id) DO NOTHING",
         (at,),
     )
     cur = await conn.execute(
         "UPDATE runner.context_session c SET due_at = %s FROM runner.session s WHERE s.id = c.session_id"
         " AND s.depth = 0 AND s.state = 'working' AND c.due_at IS NULL"
-        " AND (c.last_at IS NULL OR c.last_at <= %s)",
+        f" AND (c.last_at IS NULL OR c.last_at <= %s) AND {_NOT_ORCHESTRATOR.format(column='s.id')}",
         (at, at - timedelta(seconds=interval_s)),
     )
     return cur.rowcount
@@ -119,7 +130,8 @@ async def due(conn: AsyncConnection[Any], at: datetime, limit: int = 16) -> list
     cursor = conn.cursor(row_factory=dict_row)
     await cursor.execute(
         f"SELECT {DUE_COLUMNS} FROM runner.context_session c WHERE c.due_at IS NOT NULL AND c.due_at <= %s"
-        f" AND (c.next_at IS NULL OR c.next_at <= %s) AND NOT {_WAITING_VM} ORDER BY c.due_at, c.session_id LIMIT %s",
+        f" AND (c.next_at IS NULL OR c.next_at <= %s) AND NOT {_WAITING_VM}"
+        f" AND {_NOT_ORCHESTRATOR.format(column='c.session_id')} ORDER BY c.due_at, c.session_id LIMIT %s",
         (at, at, limit),
     )
     return [DueSession(**row) for row in await cursor.fetchall()]
@@ -130,7 +142,8 @@ async def mark_vm_due(conn: AsyncConnection[Any], vm_id: str, at: datetime) -> i
     cur = await conn.execute(
         "INSERT INTO runner.context_session (session_id, task_id, org_id, wg_id, due_at)"
         " SELECT id, task_id, org_id, wg_id, %s FROM runner.session WHERE vm_id = %s AND depth = 0"
-        " AND state NOT IN ('stopped', 'failed') ON CONFLICT (session_id) DO UPDATE"
+        " AND state NOT IN ('stopped', 'failed')"
+        f" AND {_NOT_ORCHESTRATOR.format(column='runner.session.id')} ON CONFLICT (session_id) DO UPDATE"
         " SET due_at = LEAST(COALESCE(runner.context_session.due_at, EXCLUDED.due_at), EXCLUDED.due_at)",
         (at, vm_id),
     )
@@ -142,7 +155,8 @@ async def due_on_vm(conn: AsyncConnection[Any], vm_id: str) -> list[DueSession]:
     cursor = conn.cursor(row_factory=dict_row)
     await cursor.execute(
         f"SELECT {DUE_COLUMNS} FROM runner.context_session c JOIN runner.session s ON s.id = c.session_id"
-        " WHERE s.vm_id = %s AND c.due_at IS NOT NULL ORDER BY c.due_at, c.session_id",
+        f" WHERE s.vm_id = %s AND c.due_at IS NOT NULL AND {_NOT_ORCHESTRATOR.format(column='c.session_id')}"
+        " ORDER BY c.due_at, c.session_id",
         (vm_id,),
     )
     return [DueSession(**row) for row in await cursor.fetchall()]

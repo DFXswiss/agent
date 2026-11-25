@@ -44,6 +44,7 @@ from uuid import UUID
 import psycopg
 import psycopg.errors
 
+from agent_hub.agents import orchestrator
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.audit.recorder import unchanged
 from agent_hub.crypto import agent as agent_format
@@ -63,6 +64,10 @@ REMOTE_PAIRING_SECONDS = 300
 REMOTE_CLAIM_SECONDS = 600
 """After the confirmation of a remote pairing the agent has this long to claim: a conversational agent may answer its
 user only at the end of a turn (ADR-067 section 3)."""
+ORCHESTRATOR_CLAIM_SECONDS = 120
+"""After the confirmation of an orchestrator session's pairing the tool in the VM has this long to claim: the browser
+stores the handover after the confirmation, the runner fetches it on a hint and passes it into the VM (ADR-082
+section 6.3)."""
 NONCE_BYTES = agent_format.NONCE_BYTES
 UNCLAIMED_RETENTION_SECONDS = 3600
 MAX_OPEN_PAIRINGS = 10_000
@@ -380,13 +385,14 @@ def confirm(
         lock_user(connection, user)
     row = connection.execute(
         "SELECT state, user_id, expires_at, bundle_ct, label_ct, claim_hash, remote, handover_ct, gen, cert, user_ct,"
-        " kem_pub, sig_pub FROM hub.agent WHERE id = %s FOR UPDATE",
+        " kem_pub, sig_pub, session_id FROM hub.agent WHERE id = %s FOR UPDATE",
         (body.pairing_id,),
     ).fetchone()
     if row is None or row[2] <= now:
         raise HubError("pairing_unknown")
     state, owner, _expires, bundle_ct, label_ct, stored_hash, remote, handover_ct = row[:8]
     pub = (bytes(row[11]), bytes(row[12]))
+    session_id = row[13]
     repeat = state == "confirmed" and owner == user
     if state != "open" and not repeat:
         raise HubError("pairing_unknown")
@@ -406,6 +412,7 @@ def confirm(
             unchanged()
             return Confirmed(changed=False, remote=remote, pub=pub)
         raise HubError("id_conflict")
+    _check_session(connection, user, session_id, by_agent=by_agent)
     if body.own is not None:
         check_own(connection, user, body.pairing_id, pub, body.own)
     previous = [
@@ -418,8 +425,9 @@ def confirm(
     for agent_id in previous:
         revoke(connection, user, agent_id, now, reason="replaced")
     own = body.own
-    # a loopback agent claims at once; a remote agent gets the longer claim deadline from the confirmation on
-    deadline = "%s" if remote else "LEAST(expires_at, %s)"
+    # a loopback agent claims at once; a remote agent gets the longer claim deadline from the confirmation on, an
+    # orchestrator session its own (the handover still goes through the browser, the hub and the runner)
+    deadline = "%s" if remote or session_id is not None else "LEAST(expires_at, %s)"
     connection.execute(
         "UPDATE hub.agent SET state = 'confirmed', user_id = %s, bundle_ct = %s, label_ct = %s, claim_hash = %s,"
         " handover_ct = %s, confirmed_at = %s, source = NULL, source_net = NULL, replaces = %s,"
@@ -438,12 +446,29 @@ def confirm(
             None if own is None else own.gen,
             None if own is None else own.cert,
             None if own is None else own.user_ct,
-            now + timedelta(seconds=REMOTE_CLAIM_SECONDS if remote else CLAIM_SECONDS),
+            now + timedelta(seconds=_claim_seconds(remote=remote, session=session_id is not None)),
             body.pairing_id,
         ),
     )
     _audit(connection, "agent.confirm", user, body.pairing_id, now, remote=remote)
     return Confirmed(changed=True, replaced=tuple(previous), remote=remote, pub=pub)
+
+
+def _check_session(connection: Connection, user: UUID, session_id: UUID | None, *, by_agent: bool) -> None:
+    """The confirmation of an orchestrator session's pairing (none for another pairing): only the person
+    (`403 forbidden` for an agent, ADR-082 section 6.4), only the task owner while the session may still become the
+    orchestrator."""
+    if session_id is None:
+        return
+    if by_agent:
+        raise HubError("forbidden")
+    orchestrator.check_confirm(connection, user, session_id)
+
+
+def _claim_seconds(*, remote: bool, session: bool) -> int:
+    if remote:
+        return REMOTE_CLAIM_SECONDS
+    return ORCHESTRATOR_CLAIM_SECONDS if session else CLAIM_SECONDS
 
 
 def _raw(value: object) -> bytes | None:
@@ -691,8 +716,8 @@ def claim(connection: Connection, agent_id: UUID, claim_raw: bytes, now: datetim
         return None
     if state == "confirmed":
         connection.execute(
-            "UPDATE hub.agent SET state = 'active', claimed_at = %s, last_used_at = %s, handover_ct = NULL"
-            " WHERE id = %s",
+            "UPDATE hub.agent SET state = 'active', claimed_at = %s, last_used_at = %s, handover_ct = NULL,"
+            " handover_sig = NULL WHERE id = %s",
             (now, now, agent_id),
         )
         _audit(connection, "agent.claim", user, agent_id, now, remote=remote)
@@ -791,7 +816,7 @@ def revoke(connection: Connection, user: UUID, agent_id: UUID, now: datetime, *,
         raise ValueError("unknown revocation reason")
     connection.execute(
         "UPDATE hub.agent SET state = 'revoked', revoked_at = %s, revoked_reason = %s, bundle_ct = NULL,"
-        " user_ct = NULL, handover_ct = NULL WHERE id = %s",
+        " user_ct = NULL, handover_ct = NULL, handover_sig = NULL WHERE id = %s",
         (now, reason, agent_id),
     )
     _audit(connection, "agent.revoke", user, agent_id, now, remote=False)
@@ -814,7 +839,9 @@ def revoke_all(connection: Connection, user: UUID, now: datetime) -> list[UUID]:
 def clear_expired_handovers(connection: Connection, now: datetime) -> int:
     """Clear the sealed handover of remote pairings past their claim deadline; the number cleared."""
     cursor = connection.execute(
-        "UPDATE hub.agent SET handover_ct = NULL WHERE handover_ct IS NOT NULL AND expires_at <= %s", (now,)
+        "UPDATE hub.agent SET handover_ct = NULL, handover_sig = NULL WHERE handover_ct IS NOT NULL"
+        " AND expires_at <= %s",
+        (now,),
     )
     return cursor.rowcount
 

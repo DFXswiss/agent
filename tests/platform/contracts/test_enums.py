@@ -49,7 +49,7 @@ SPEC_ERRORS: dict[int, str] = {
     409: "id_conflict event_conflict seq_conflict version_conflict origin_seq_gap origin_seq_conflict no_device"
     " already_assigned rotation_required no_device_available invite_registered peer_outdated"
     # ADR-082 (KOR-57)
-    " client_outdated agent_batches_incomplete agent_gen_mismatch"
+    " client_outdated agent_batches_incomplete agent_gen_mismatch orchestrator_unavailable"
     # 14-community.md section 4.1 (KOR-26)
     " community_not_member community_epoch_exists community_no_key placement_invalid"
     # 13-work-vm.md section 13.6 (contracts/changes/KOR-44.md): no valid watch lease for live frames
@@ -145,6 +145,8 @@ DECIDED_AUDIT = (
     " credential.rotate outbox.rejected agent.confirm agent.claim agent.revoke notification.read"
     # KOR-57, ADR-082 section 5: the conversion of an agent that held its user's identity
     " agent.identity"
+    # KOR-57, ADR-082 section 6: the request for a session as main orchestrator and its handover
+    " session.orchestrator agent.handover"
     # KOR-40, ADR-063: the request pipeline's rows, read repeats, terminal watching, batched session events and the
     # rows of the formerly unaudited writes.
     " request.refused request.write audit.repeat read.stream.terminal event.append_batch settings.put"

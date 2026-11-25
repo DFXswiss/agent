@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-session-orchestrator-get.response.json",
+  "title": "GET /v1/device/sessions/{session}/orchestrator response",
+  "description": "Body of a successful response to GET /v1/device/sessions/{session}/orchestrator (11-agent-access.md section 11, ADR-082 sections 6.2 and 9.8): for the session's device.",
+  "type": "object",
+  "properties": {
+    "session_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "user_id": {
+      "$ref": "../common.json#/$defs/uuid",
+      "description": "the task owner, whose key from the verified log checks the handover signature"
+    },
+    "requested_at": {
+      "oneOf": [
+        {
+          "$ref": "../common.json#/$defs/time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "requested": {
+      "type": "boolean",
+      "description": "the owner asked after the newest pairing of the session was registered and the session is still allowed: draw and register keys"
+    },
+    "pairing": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "pairing_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "open",
+                "confirmed",
+                "active"
+              ]
+            },
+            "expires_at": {
+              "$ref": "../common.json#/$defs/time"
+            },
+            "handover": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "ct": {
+                      "$ref": "../common.json#/$defs/bundle_ct"
+                    },
+                    "sig": {
+                      "$ref": "../common.json#/$defs/b64u_64",
+                      "description": "the owner's signature over P || \"orchestrator-handover\\0\" || canonical({\"ct\",\"pairing\",\"session\"})"
+                    }
+                  },
+                  "required": [
+                    "ct",
+                    "sig"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "pairing_id",
+            "state",
+            "expires_at",
+            "handover"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "session_id",
+    "user_id",
+    "requested_at",
+    "requested",
+    "pairing"
+  ],
+  "additionalProperties": false
+}

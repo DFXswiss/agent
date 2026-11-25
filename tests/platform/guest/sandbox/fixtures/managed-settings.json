@@ -8,6 +8,9 @@
   "allowedMcpServers": [
     {
       "serverName": "platform"
+    },
+    {
+      "serverName": "orchestrator"
     }
   ],
   "disableAutoMode": "disable",
@@ -375,7 +378,9 @@
       "mcp__platform__browser_dialog",
       "mcp__platform__browser_tabs",
       "mcp__platform__browser_download",
-      "mcp__platform__browser_screenshot"
+      "mcp__platform__browser_screenshot",
+      "mcp__orchestrator__search",
+      "mcp__orchestrator__run"
     ],
     "defaultMode": "dontAsk",
     "deny": [

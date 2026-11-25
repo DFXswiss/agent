@@ -249,3 +249,10 @@ ADR-071 §3; the recovering agent then holds the identity again.
 12. Device-request follow-ups compare requesters through `acting`; the community accepts an agent's messages only
     while it is its user's active agent at the hub (residual: a colluding hub). Confirmations retry a batch on
     `seq_conflict` with a fresh head.
+13. **As built (KOR-57 stage b).** §6.2 and §6.5 name the channel of the design; the build differs in place, not in
+    substance: the tool runs under the guest's own system account `agent-orch` with its state in `/var/lib/agent-orch`
+    (not `$AGENT_PLATFORM_HOME` in the session's home), and it hands its signed hub requests to the guest control
+    process over that account's socket `orch.sock` (not `POST /v1/hub-relay` on the session's local API); the runner
+    forwards them unchanged (05-runner.md §17). The hub also ends the orchestrator when its session is suspended (a
+    suspended VM holds no keys) and when the session stops fitting §9.6 while it runs (another user member of the
+    private organization, a decertified device), always with `session_ended`.

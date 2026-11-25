@@ -29,6 +29,10 @@ typed or pasted like every prompt (``delivery.py``).
 stays waiting. ``agent_ended`` of the old run and ``agent_starting`` of the new one are emitted, the state stays
 ``agent_starting`` (nothing is journaled for it).
 
+``reload`` (05-runner.md section 17.5) does the same for an ``idle`` session with a conversation: the agent runs again
+with ``--resume`` of its conversation and further MCP configurations (the main orchestrator's second server once its
+agent tool claimed), and the session notice of the resumed conversation carries the given sentence once.
+
 A watcher thread per started session reads the exit status of the pane command (``tmux.py``, one status file per run):
 status 126 (the launcher) fails the session with ``sandbox_failed``, any other end within ``START_WINDOW_SECONDS``
 with ``agent_start_failed``, a later one with ``agent_exited`` - unless the session is being stopped or suspended; a
@@ -82,8 +86,8 @@ Extension points (modules of ``control_routes/``, ADR-027 section 4, discovered 
 A guest decision ends a live session with ``SessionManager.fail_running`` (``hook_unavailable``, ADR-064).
 
 Interface: ``SessionManager``, ``manager(context)``, ``install(context, manager)``, ``credential_provisioned``,
-``stop_session``, ``restart_session``, ``deferred_prompt``, ``take_notice``, ``notice_keys``, ``free_uid``, ``Paths``,
-``System``, ``LinuxSystem``.
+``stop_session``, ``restart_session``, ``reload_session``, ``deferred_prompt``, ``take_notice``, ``notice_keys``,
+``free_uid``, ``Paths``, ``System``, ``LinuxSystem``.
 """
 
 from __future__ import annotations
@@ -301,6 +305,8 @@ class _Start:
     harness_version: str
     speaker: str | None = None
     """The sender line of the initial prompt (ADR-083 section 1), stored with its registration."""
+    mcp_configs: tuple[str, ...] = ()
+    """Further MCP configurations of the agent (the orchestrator's second server after the claim, 05 section 17.5)."""
 
 
 @dataclass
@@ -630,6 +636,7 @@ class SessionManager:
             resume_claude_session_id=start.resume,
             model_id=start.model_id,
             access=start.access,
+            mcp_configs=start.mcp_configs,
         )
         limits = start.limits
         extra = [
@@ -703,27 +710,52 @@ class SessionManager:
         """Run the agent of a session that is still ``agent_starting`` again (module docstring); ``False`` when the
         session is not starting any more (accepted, stopped, failed, being stopped) or its run is unknown (a run
         re-attached after a restart of the control process: its command line is not known)."""
+        return self._rerun(session_id, "agent_starting", lambda start, session: start)
+
+    def reload(self, session_id: str, mcp_configs: tuple[str, ...], sentence: str) -> bool:
+        """Run the agent of an ``idle`` session again with ``--resume`` and the further MCP configurations
+        ``mcp_configs`` (the main orchestrator's second server after its claim, 05-runner.md section 17.5); the
+        session notice of the resumed conversation carries ``sentence`` once. ``False`` when the session is not idle,
+        has no conversation yet, is being stopped or its run is unknown. Like ``restart``: a new token, the state stays
+        (nothing journaled), ``agent_ended`` and ``agent_starting`` are emitted."""
+
+        def change(start: _Start, session: Session) -> _Start:
+            return replace(start, resume=session.claude_session_id, mcp_configs=mcp_configs)
+
+        return self._rerun(session_id, "idle", change, sentence=sentence)
+
+    def _rerun(
+        self,
+        session_id: str,
+        state: str,
+        change: Callable[[_Start, Session], _Start],
+        *,
+        sentence: str | None = None,
+    ) -> bool:
         with self._lock:
             session = self.context.state.session(session_id)
             running = self._running.get(session_id)
             if (
                 session is None
-                or session.state != "agent_starting"
+                or session.state != state
                 or session_id in self._stopping
                 or running is None
                 or running.start is None
+                or (state == "idle" and session.claude_session_id is None)
             ):
                 return False
             running.stopped = True  # its watcher must not report the end as an exit of the agent
             del self._running[session_id]
-            start = replace(running.start, token=new_token())
+            start = replace(change(running.start, session), token=new_token())
         self.system.stop_unit(unit.UNIT_PREFIX + session_id)
         self.tmux.kill_session(tmux.session_name(session_id))
         self._emit("agent_ended", session_id)
         with self._lock:
             session = self.context.state.session(session_id)
-            if session is None or session.state != "agent_starting" or session_id in self._stopping:
+            if session is None or session.state != state or session_id in self._stopping:
                 return False
+            if sentence is not None:
+                self._add_notice(session_id, sentence)
             renewed = replace(session, token_sha256=_token_sha256(start.token))
             with self.context.journal.transaction() as db:
                 self.context.state.save_session(renewed, db)
@@ -731,6 +763,16 @@ class SessionManager:
                 return False
         self._emit("agent_starting", session_id)
         return True
+
+    def _add_notice(self, session_id: str, sentence: str) -> None:
+        """Add ``sentence`` to the pending session notice (one without changed facts when there is none yet)."""
+        meta = self._meta(session_id)
+        pending = meta.get("notice")
+        if not isinstance(pending, dict):
+            pending = {"sentences": [], "facts": _lines(meta.get("facts")) or []}
+        pending["sentences"] = [*(_lines(pending.get("sentences")) or []), sentence]
+        meta["notice"] = pending
+        self._write_meta(session_id, meta)
 
     def _register_prompt(self, session_id: str, start: _Start) -> None:
         """Register the initial prompt through the prompt registry of GST-03 (05 §6.1 step 5, §4.6 no. 7) with its
@@ -1241,6 +1283,10 @@ def stop_session(context: ControlContext, session_id: str, final: str = "stopped
 
 def restart_session(context: ControlContext, session_id: str) -> bool:
     return manager(context).restart(session_id)
+
+
+def reload_session(context: ControlContext, session_id: str, mcp_configs: tuple[str, ...], sentence: str) -> bool:
+    return manager(context).reload(session_id, mcp_configs, sentence)
 
 
 def deferred_prompt(context: ControlContext, session_id: str) -> tuple[str, str] | None:

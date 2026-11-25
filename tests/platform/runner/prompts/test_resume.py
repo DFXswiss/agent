@@ -46,6 +46,27 @@ def test_an_idle_session_is_suspended_after_the_idle_time(rig: Rig) -> None:
     run(rig, body)
 
 
+def test_the_main_orchestrators_session_is_never_suspended_when_idle(rig: Rig) -> None:
+    """A suspend would end the orchestrator's keys in the VM while the hub keeps it active (review KOR-57 b no. 1)."""
+
+    async def body(env: Any) -> None:
+        pk = await setup(env, idle_seconds=60)
+        sid = await pk.add_session(state="idle")
+        async with env.pool.connection() as conn:
+            await conn.execute(
+                "INSERT INTO runner.orchestrator (session_id, pairing_id, state, registered_at, handed_over_at)"
+                " VALUES (%s, %s, 'handed_over', now(), now())",
+                (sid, session_id(9)),
+            )
+        await pk.deliverer.suspend_idle()
+        env.clock.now += 3600
+        await pk.deliverer.suspend_idle()
+        assert ("control", (sid, "suspend")) not in pk.guest.calls
+        assert (await pk.session(sid)).state == "idle"
+
+    run(rig, body)
+
+
 def test_the_idle_time_restarts_with_every_turn_and_failed_suspends_are_retried(rig: Rig) -> None:
     async def body(env: Any) -> None:
         pk = await setup(env, idle_seconds=60)

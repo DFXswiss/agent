@@ -24,6 +24,17 @@
   (`agent_paired_remote`).
 - `GET /v1/agent/me` (agent key, `active`): the agent's own row with the sealed identity, or with the sealed user
   anchor of an own-identity agent (`store.me`: `identity`, `gen`, `migrate`, `migrate_gen`).
+
+The main orchestrator on platform hardware (ADR-082 section 6, `agents/orchestrator.py`):
+
+- `POST /v1/sessions/{session}/orchestrator` (browser session of the task owner only; an agent `403 forbidden`):
+  the request; `GET` the same path: the session's device, `available`/`reason` and the pairing with `device_sig`.
+- `POST /v1/device/orchestrator-pairings` (device of the session): the keys the session drew, with `device_sig`.
+- `POST /v1/agent-pairings/{pairing_id}/orchestrator-handover` (browser session of the task owner only): the
+  handover sealed to the session's key with the owner's signature `sig`.
+- `GET /v1/device/sessions/{session}/orchestrator` (device of the session): the owner, whether keys are requested
+  and the pairing with the stored handover.
+The device is hinted (`session.orchestrator {session_id}`) after the request and after the handover.
 """
 
 from __future__ import annotations
@@ -35,14 +46,15 @@ from uuid import UUID
 from fastapi import Request
 from pydantic import Field, StrictInt, StringConstraints
 
-from agent_hub.agents import accounts, store
+from agent_hub.agents import accounts, orchestrator, store
 from agent_hub.agents.identity import Batch, apply_batches
 from agent_hub.agents.keys import key_id_of
 from agent_hub.agents.notify import account_change, remote_notice
 from agent_hub.agents.revocation import revoke_agents
-from agent_hub.auth.fields import B64u32, BundleCt, Strict, Uuid7, decode
+from agent_hub.auth.fields import B64u16Id, B64u32, BundleCt, Empty, Strict, Uuid7, decode
 from agent_hub.auth.keys import Principal
 from agent_hub.db.pool import transaction
+from agent_hub.device.keys import ActiveDevice, device_id
 from agent_hub.errors import HubError
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.pipeline import source_address
@@ -50,7 +62,8 @@ from agent_hub.http.routing import EVENT_BATCH_BYTES, HubRouter
 from agent_hub.notifications.rules import publish_rows
 from agent_hub.orgs.append import AppendResult
 from agent_hub.orgs.routes import publish_append
-from agent_hub.stream.publish import close_keys
+from agent_hub.stream.publish import close_keys, hint
+from agent_hub.workgroups.routes import path_id
 
 router = HubRouter()
 
@@ -122,6 +135,24 @@ class IdentityConvert(OwnForm):
 
 class AgentClaim(Strict):
     claim: B64u32
+
+
+class OrchestratorPairing(Strict):
+    """Body of `POST /v1/device/orchestrator-pairings`."""
+
+    session_id: Uuid7
+    pairing_id: Uuid7
+    pub: PublicKeys
+    pop: B64u64Sig
+    fp: B64u16Id
+    device_sig: B64u64Sig
+
+
+class OrchestratorHandover(Strict):
+    """Body of `POST /v1/agent-pairings/{pairing_id}/orchestrator-handover`."""
+
+    ct: BundleCt
+    sig: B64u64Sig
 
 
 def _uuid(text: str) -> UUID:
@@ -245,8 +276,10 @@ def _confirm(context: HubContext, principal: Principal, body: AgentConfirm) -> d
             notices = account_change(connection, user, "agent_paired_remote", now, target=confirmation.pairing_id)
         elif changed_remote:
             notices = remote_notice(connection, user, now, confirmation.pairing_id)
+        hints = orchestrator.session_hints(connection, list(confirmed.replaced))
     publish_rows(notices)
     close_keys(user, [key_id_of(agent) for agent in confirmed.replaced])
+    orchestrator.publish_hints(hints)
     for result in appended:
         publish_append(result)
     return {"agent_id": str(confirmation.pairing_id)}
@@ -356,3 +389,99 @@ async def convert_identity(body: IdentityConvert, principal: CurrentPrincipal, c
 @router.post("/v1/agent-accounts", auth="anon", right="anon")
 async def create_account(body: accounts.AgentAccountCreate, context: Context) -> dict[str, Any]:
     return await asyncio.to_thread(accounts.create, context, body)
+
+
+def _person(principal: Principal) -> tuple[UUID, bool]:
+    """The user and whether the request comes from the user's browser session. Only the person may make a session the
+    main orchestrator (ADR-082 section 6.4): an agent gets the browser's answer up to the check of the resource and
+    then `403 forbidden` (`orchestrator.request`, `view`, `store_handover`)."""
+    return _session_user(principal), principal.kind == "session"
+
+
+def _hint(device: UUID | None, session_id: str) -> None:
+    if device is not None:
+        hint(device, orchestrator.HINT, {"session_id": session_id})
+
+
+def _request(context: HubContext, principal: Principal, session_id: UUID) -> dict[str, Any]:
+    user, person = _person(principal)
+    with transaction(context.pool) as connection:
+        answer, device = orchestrator.request(connection, user, session_id, context.clock(), person=person)
+    _hint(device, answer["session_id"])
+    return answer
+
+
+@router.post("/v1/sessions/{session}/orchestrator", auth="browser", right="owner")
+async def request_orchestrator(
+    _body: Empty, session: str, principal: CurrentPrincipal, context: Context
+) -> dict[str, Any]:
+    return await asyncio.to_thread(_request, context, principal, path_id(session))
+
+
+def _view(context: HubContext, principal: Principal, session_id: UUID) -> dict[str, Any]:
+    user, person = _person(principal)
+    with context.pool.connection() as connection:
+        return orchestrator.view(connection, user, session_id, context.clock(), person=person)
+
+
+@router.get("/v1/sessions/{session}/orchestrator", auth="browser", right="owner", read_resource="session.orchestrator")
+async def get_orchestrator(session: str, principal: CurrentPrincipal, context: Context) -> dict[str, Any]:
+    return await asyncio.to_thread(_view, context, principal, path_id(session))
+
+
+def _register(context: HubContext, device: UUID, body: OrchestratorPairing) -> dict[str, Any]:
+    registration = orchestrator.Registration(
+        session_id=UUID(body.session_id),
+        pairing_id=UUID(body.pairing_id),
+        kem=decode(body.pub.kem),
+        sig=decode(body.pub.sig),
+        pop=body.pop,
+        fp=body.fp,
+        device_sig=body.device_sig,
+    )
+    with transaction(context.pool) as connection:
+        return orchestrator.register(connection, device, registration, context.clock())
+
+
+@router.post("/v1/device/orchestrator-pairings", auth="device", right="device:session")
+async def register_orchestrator(body: OrchestratorPairing, principal: ActiveDevice, context: Context) -> dict[str, Any]:
+    return await asyncio.to_thread(_register, context, device_id(principal), body)
+
+
+def _device_view(context: HubContext, device: UUID, session_id: UUID) -> dict[str, Any]:
+    with context.pool.connection() as connection:
+        return orchestrator.device_view(connection, device, session_id, context.clock())
+
+
+@router.get(
+    "/v1/device/sessions/{session}/orchestrator",
+    auth="device",
+    right="device:session",
+    read_resource="device.orchestrator",
+)
+async def device_orchestrator(session: str, principal: ActiveDevice, context: Context) -> dict[str, Any]:
+    return await asyncio.to_thread(_device_view, context, device_id(principal), path_id(session))
+
+
+def _store_handover(
+    context: HubContext, principal: Principal, pairing_id: str, body: OrchestratorHandover
+) -> dict[str, Any]:
+    user, person = _person(principal)
+    try:
+        key = _uuid(pairing_id)
+    except HubError:
+        raise HubError("pairing_unknown") from None
+    ct = _sealed(body.ct, "/ct")
+    with transaction(context.pool) as connection:
+        answer, device = orchestrator.store_handover(
+            connection, user, key, ct=ct, sig=body.sig, now=context.clock(), person=person
+        )
+    _hint(device, answer["session_id"])
+    return answer
+
+
+@router.post("/v1/agent-pairings/{pairing_id}/orchestrator-handover", auth="browser", right="owner")
+async def orchestrator_handover(
+    pairing_id: str, body: OrchestratorHandover, principal: CurrentPrincipal, context: Context
+) -> dict[str, Any]:
+    return await asyncio.to_thread(_store_handover, context, principal, pairing_id, body)

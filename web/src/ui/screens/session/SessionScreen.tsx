@@ -1,7 +1,8 @@
 // The session detail (06-web.md section 5.5): tabs **Terminal** (default, the read-only terminal, loaded lazily),
 // **Chat** (the outputs of this session only, with its work VM jobs; the header adds the work VM runtime),
 // **Children** (its subagent sessions, `children/ChildrenTab.tsx`) and **Browser** (the session's platform browser:
-// live picture and action record, `browser/BrowserTab.tsx`, section 5.4b). The session row comes from
+// live picture and action record, `browser/BrowserTab.tsx`, section 5.4b). The header offers the task owner "Make this
+// session my main orchestrator" where the hub allows it (`OrchestratorAction`, ADR-082 section 6). The session row comes from
 // `GET /v1/sessions/{id}`, the task (title, sibling and child rows) from `GET /v1/tasks/{task}`; the chat events of the
 // session are read newest page first, older pages on "Load more" (`useChatPaging`).
 import { lazy, Suspense, useEffect, useMemo } from 'react';
@@ -20,6 +21,7 @@ import { useAppEnv } from '../../shell/context';
 import { LoadError } from '../errors/pages';
 import { SessionFacts, SessionState } from '../../task-tabs/sessions/SessionsTab';
 import { ChildrenTab } from './children/ChildrenTab';
+import { OrchestratorAction } from './OrchestratorAction';
 import { WorkvmPanel } from './WorkvmPanel';
 import { WorkvmRuntime } from './WorkvmRuntime';
 import { Timeline } from '../../task-tabs/chat/Timeline';
@@ -72,6 +74,7 @@ function SessionView({ entry }: { readonly entry: SessionEntry }) {
         </h1>
         <SessionFacts node={{ entry }} />
         <WorkvmRuntime wg={wg} task={task} session={session} />
+        <OrchestratorAction entry={entry} depth={node?.depth ?? 0} />
       </header>
       <WorkvmPanel wg={wg} task={task} session={session} />
       <Tabs tabs={tabs} label={t('session.tabs.label')} testId="session.tabs" />

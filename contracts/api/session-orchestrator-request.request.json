@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/session-orchestrator-request.request.json",
+  "title": "POST /v1/sessions/{session}/orchestrator request",
+  "description": "Body of POST /v1/sessions/{session}/orchestrator (11-agent-access.md sections 4 and 11, ADR-082 section 6.1): no fields.",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

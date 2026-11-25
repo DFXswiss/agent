@@ -76,6 +76,23 @@
       ],
       "additionalProperties": false
     },
+    "hint_session_orchestrator": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "session.orchestrator"
+        },
+        "session_id": {
+          "$ref": "../../common.json#/$defs/uuid"
+        }
+      },
+      "required": [
+        "type",
+        "session_id"
+      ],
+      "additionalProperties": false
+    },
     "hint_prompt": {
       "type": "object",
       "properties": {
@@ -334,6 +351,9 @@
         },
         {
           "$ref": "#/$defs/hint_session_control"
+        },
+        {
+          "$ref": "#/$defs/hint_session_orchestrator"
         },
         {
           "$ref": "#/$defs/hint_prompt"

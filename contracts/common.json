@@ -240,7 +240,8 @@
         "placement_forbidden",
         "placement_invalid",
         "identity_forbidden",
-        "not_watched"
+        "not_watched",
+        "orchestrator_unavailable"
       ],
       "description": "codes the hub sends (enums/error-codes.json)"
     },
@@ -693,6 +694,17 @@
               "type": "boolean",
               "const": true,
               "description": "request_invalid: the unpaged answer would exceed its cap; repeat with paging (GET /v1/platform/enrollments, ADR-086 section 2)"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "not_main",
+                "not_private",
+                "not_platform",
+                "not_running",
+                "not_requested"
+              ],
+              "description": "orchestrator_unavailable: why the session cannot become the main orchestrator (ADR-082 section 9.6, 11-agent-access.md section 11)"
             }
           },
           "additionalProperties": false

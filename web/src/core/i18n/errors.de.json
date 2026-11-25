@@ -459,6 +459,11 @@
     "body": "Der Session ist der Arbeitsspeicher ausgegangen.",
     "action": "Starte den Task mit einer kleineren Aufgabe noch einmal."
   },
+  "orchestrator_unavailable": {
+    "title": "Für diese Session nicht möglich",
+    "body": "Nur eine laufende Haupt-Session deiner eigenen Aufgabe in deiner privaten Organisation auf DFX-Hardware kann dein Hauptorchestrator werden.",
+    "action": "Öffne eine solche Session oder verbinde deinen KI-Agenten von deinem Computer aus."
+  },
   "origin_mismatch": {
     "title": "Falsche Adresse",
     "body": "Diese Seite wurde unter einer Adresse geöffnet, welche die Plattform nicht akzeptiert.",

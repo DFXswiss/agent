@@ -222,6 +222,10 @@ export const OPS: Record<string, (a: Any) => Promise<unknown>> = {
   verify_cert: async (a) =>
     agent.verifyCert(b(a.signer), a.cert, { agent: a.agent_id, pub: a.pub, user: a.user_id, gen: a.gen }),
   open_user: async (a) => agent.openUser(await kem(a.agent_kem_sk), b(a.secret), a.agent_id, a.user_id, a.sealed),
+  verify_orchestrator_key: async (a) =>
+    agent.verifyText(b(a.signer), a.signature, agent.orchestratorKeyText(a.fp, a.pairing_id, a.session_id)),
+  verify_orchestrator_handover: async (a) =>
+    agent.verifyText(b(a.signer), a.signature, agent.orchestratorHandoverText(a.ct, a.pairing_id, a.session_id)),
   verify_context_manifest: async (a) => context.verifyManifest(a.manifest, a.sig, b(a.author_sig_pk)),
   open_context: async (a) =>
     context.openContext(Secret.of(b(a.workgroup_key)), a.manifest, a.sig, b(a.author_sig_pk), a.chunks.map(b)),
@@ -376,6 +380,21 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
     const sealedUser = await agent.sealUser(b(ag.kem), b(sec.secret), ag.id, user.id, anchor, anchorFixed);
     same(sealedUser, anchorVector.sealed, 'sealed user anchor');
     same(await agent.openUser(agentKem, b(sec.secret), ag.id, user.id, anchorVector.sealed), anchor, 'opened anchor');
+    const orchestrator = data.orchestrator;
+    const orchKey = orchestrator.key;
+    same(orchKey.fp, data.fingerprint, 'orchestrator fp');
+    const keyText = agent.orchestratorKeyText(orchKey.fp, orchKey.pairing_id, orchestrator.session_id);
+    same(keyText, orchKey.text, 'orchestrator key text');
+    await agent.verifyText(b(orchestrator.device.sig), orchKey.signature, keyText);
+    const orchHandover = orchestrator.handover;
+    const handoverText = agent.orchestratorHandoverText(
+      orchHandover.ct,
+      orchHandover.pairing_id,
+      orchestrator.session_id,
+    );
+    same(handoverText, orchHandover.text, 'orchestrator handover text');
+    same(await agent.signText(alice.sig.privateKey, handoverText), orchHandover.signature, 'orchestrator handover sig');
+    await agent.verifyText(b(user.sig), orchHandover.signature, handoverText);
   },
   encoding: async (data) => {
     for (const item of data.b64u) {

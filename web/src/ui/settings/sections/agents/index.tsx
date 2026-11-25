@@ -8,11 +8,13 @@
 // user. The log clean-up runs right after the revocation (`revokeAgent`: the log job of every org, the job `agents`
 // removes the agent with its rotations, the credential key is rotated); the dialog stays open meanwhile.
 // `?agent=connected|failed` (the agent's redirect after a pairing) is only a hint above the list; the state shown is
-// always the hub's. Where the agent runs: "Runs on another computer" (ADR-067) or, for an agent with its own key, on
-// its computer (stage b adds the orchestrator session).
+// always the hub's. Where the agent runs: "Runs on another computer" (ADR-067), "On DFX hardware, in a session of one of your tasks" for the
+// orchestrator session (ADR-082 section 6; revoked with the reason `session_ended` when the session ends) or, for
+// another agent with its own key, on its computer.
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { loadAgents } from '../../../../core/agents/list';
+import { revokeAgent, revokeAllAgents } from '../../../../core/agents/revoke';
 import { formatEventTime } from '../../../../core/i18n';
 import { requestErrorCode } from '../../../../core/requests/client';
 import { type AgentEntry, agentName, LIVE_STATES, mainOrchestrator } from '../../../../core/store/slices/agents';
@@ -61,7 +63,12 @@ function Item({ entry, onDisconnect }: { readonly entry: AgentEntry; readonly on
             {t('agents.remote')}
           </span>
         )}
-        {!entry.remote && entry.ownIdentity && (
+        {entry.sessionId !== null && (
+          <span className="text-sm text-gray-700" data-testid="agents.item.session" data-session={entry.sessionId}>
+            {t('agents.runs.session')}
+          </span>
+        )}
+        {!entry.remote && entry.sessionId === null && entry.ownIdentity && (
           <span className="text-sm text-gray-700" data-testid="agents.item.runs">
             {t('agents.runs.ownComputer')}
           </span>
@@ -118,8 +125,10 @@ export function AgentsSection() {
     setBusy(true);
     setFailure(null);
     try {
-      if (target === 'all') await import('../../../../core/agents/revoke').then((r) => r.revokeAllAgents(app.tasks));
-      else await import('../../../../core/agents/revoke').then((r) => r.revokeAgent(app.tasks, target!.agentId));
+      // imported statically: the settings and `revoke` share the lazy chunk, and an import inside one chunk has no
+      // chunk whose integrity it could check (`src/core/assets/integrity.ts`)
+      if (target === 'all') await revokeAllAgents(app.tasks);
+      else await revokeAgent(app.tasks, target!.agentId);
       setTarget(null);
     } catch (error) {
       setFailure(requestErrorCode(error));

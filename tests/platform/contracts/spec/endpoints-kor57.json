@@ -1,10 +1,14 @@
 {
-  "description": "Endpoints of the agent's own identity (11-agent-access.md section 4, KOR-57, ADR-082 section 5): an agent that holds its user's identity converts itself into an own-identity agent.",
+  "description": "Endpoints of the agent's own identity (11-agent-access.md section 4, KOR-57, ADR-082 sections 5 and 6): an agent that holds its user's identity converts itself into an own-identity agent; the task owner makes a running session on platform hardware the main orchestrator (request, device registration of the session's keys, handover).",
   "rights": [
-    "agent"
+    "agent",
+    "owner",
+    "device:session"
   ],
   "auth": [
-    "agent"
+    "agent",
+    "browser",
+    "device"
   ],
   "endpoints": [
     {
@@ -12,6 +16,46 @@
       "path": "/v1/agent/identity",
       "rights": [
         "agent"
+      ],
+      "section": "11.4"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sessions/{session}/orchestrator",
+      "rights": [
+        "owner"
+      ],
+      "section": "11.4"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sessions/{session}/orchestrator",
+      "rights": [
+        "owner"
+      ],
+      "section": "11.4"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/device/orchestrator-pairings",
+      "rights": [
+        "device:session"
+      ],
+      "section": "11.4"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/sessions/{session}/orchestrator",
+      "rights": [
+        "device:session"
+      ],
+      "section": "11.4"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/agent-pairings/{pairing_id}/orchestrator-handover",
+      "rights": [
+        "owner"
       ],
       "section": "11.4"
     }

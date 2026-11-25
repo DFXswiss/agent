@@ -5,6 +5,9 @@ Every command prints exactly one JSON object on stdout at its end (`{"ok": true,
 and `--help` are JSON as well. A top-level handler turns every unexpected failure into `{"ok": false, "error":
 "internal"}` without a traceback. Secret inputs (an invitation link, an API key, a request body) come from stdin or
 the environment, never from the command line.
+
+In session mode (`AGENT_PLATFORM_RELAY`, `relay.py`) the commands of `relay.refused_in_session` are refused with
+`not_in_session` before anything else, and every command runs with the relay as its transport to the hub.
 """
 
 from __future__ import annotations
@@ -29,7 +32,9 @@ from agent_platform import (
     names,
     orgs,
     registry,
+    relay,
     remote,
+    session,
     tasks,
     upkeep,
 )
@@ -140,6 +145,15 @@ def _with_display_name(result: dict[str, Any], context: Context) -> dict[str, An
 
 
 def cmd_pair(args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    if args.session:
+        plain = args.hub is None and not (args.remote or args.replace_pending or args.wait or args.no_browser)
+        if not plain or args.return_code is not None or args.message is not None:
+            raise PlatformError("invalid_argument")
+        if args.handover:
+            return session.handover(context.home, context.read_stdin())
+        return session.start(context.home, context.read_stdin())
+    if args.handover:
+        raise PlatformError("invalid_argument")
     if args.wait:
         if args.hub is not None or args.remote or args.replace_pending or args.message is not None:
             raise PlatformError("invalid_argument")
@@ -430,6 +444,8 @@ def _account_commands(tree: Tree) -> None:
     sub.add_argument("--return-code", help="with --wait: the code the page showed the user")
     sub.add_argument("--timeout", type=int, default=remote.WAIT_DEFAULT_S, help="with --wait: seconds (0-600)")
     sub.add_argument("--message", help=MESSAGE_HELP)
+    sub.add_argument("--session", action="store_true", help=argparse.SUPPRESS)
+    sub.add_argument("--handover", action="store_true", help=argparse.SUPPRESS)
     sub = tree.add(
         tree.commands,
         "register",
@@ -880,6 +896,8 @@ def keys_of(environ: Mapping[str, str], agent_id: str) -> dict[str, str]:
 
 
 def execute(argv: Sequence[str], environ: Mapping[str, str], stdin: TextIO) -> dict[str, Any]:
+    if environ.get(relay.RELAY_ENV) and relay.refused_in_session(argv):
+        raise PlatformError("not_in_session")
     parser = build_parser()
     try:
         args = parser.parse_args(list(argv))
@@ -890,7 +908,8 @@ def execute(argv: Sequence[str], environ: Mapping[str, str], stdin: TextIO) -> d
     handler = getattr(args, "handler", None)
     if handler is None:
         return {"ok": True, "help": parser.format_help()}
-    result = handler(args, Context(environ, stdin))
+    with relay.session_mode(environ):
+        result = handler(args, Context(environ, stdin))
     if isinstance(result.get("agent_id"), str):
         result = {**result, **keys_of(environ, result["agent_id"])}
     if args.trim is not None:

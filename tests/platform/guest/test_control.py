@@ -463,6 +463,13 @@ def test_pending_workvm_call_body_is_validated(api_client: ApiClient, session: S
         assert error.value.code == "request_invalid"
 
 
+def test_pending_relay_is_not_for_the_api_process(api_client: ApiClient, session: Session) -> None:
+    """Only the orchestrator's socket creates relay calls (05-runner.md section 17.2): api.sock refuses the kind."""
+    with pytest.raises(ApiSockError) as error:
+        api_client.pending_create(SESSION_ID, "relay", {"method": "GET"})
+    assert error.value.code == "request_invalid"
+
+
 def test_pending_query_and_wait_limit(api_client: ApiClient, context: ControlContext, session: Session) -> None:
     pending_id = api_client.pending_create(SESSION_ID, "query", QUERY)
     started = time.monotonic()

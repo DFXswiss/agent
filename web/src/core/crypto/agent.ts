@@ -35,6 +35,10 @@
 // - `sealUser`/`openUser`: the agent's anchor, the user's public keys and the certificate, sealed like the identity
 //   (`k` from `r`, AES-GCM inner with AAD = info, HPKE outer) with `info = P || "agent-user\0" || ids` and the
 //   plaintext `canonical({"cert","kem","sig"})` (exact keys, canonical, else `header_invalid`).
+// - `orchestratorKeyText`: `P || "orchestrator-key\0" || canonical({"fp","pairing_id","session"})`, signed by the
+//   device that executes an orchestrator session over the fingerprint of the keys the session drew (ADR-082 §6.2).
+// - `orchestratorHandoverText`: `P || "orchestrator-handover\0" || canonical({"ct","pairing","session"})`, signed by
+//   the task owner's identity over the handover sealed to that session (`signText`, ADR-082 §9.8).
 import { b64uDecode, b64uEncode } from '../encoding/b64u';
 import { concat, equalBytes } from '../encoding/bytes';
 import { bodyJson, canonical, parseJson } from '../encoding/json';
@@ -491,4 +495,22 @@ export async function openUser(
   const anchor = { kem: value.kem as string, sig: value.sig as string, cert: value.cert as string };
   if (!equalBytes(userPlaintext(anchor), plaintext)) fail('header_invalid');
   return anchor;
+}
+
+/** The text the executing device signs over the fingerprint of an orchestrator session's keys. */
+export function orchestratorKeyText(fp: unknown, pairingId: unknown, sessionId: unknown): Uint8Array<ArrayBuffer> {
+  const fields = { fp: b64uBytes(fp, FINGERPRINT_BYTES), pairing_id: uuid(pairingId), session: uuid(sessionId) };
+  return concat(L.label(L.LABEL_ORCHESTRATOR_KEY), canonical(fields));
+}
+
+/** The text the task owner signs over the handover sealed to an orchestrator session. */
+export function orchestratorHandoverText(ct: unknown, pairingId: unknown, sessionId: unknown): Uint8Array<ArrayBuffer> {
+  b64uDecode(ct);
+  const fields = { ct: ct as string, pairing: uuid(pairingId), session: uuid(sessionId) };
+  return concat(L.label(L.LABEL_ORCHESTRATOR_HANDOVER), canonical(fields));
+}
+
+/** The b64u Ed25519 signature of `key` over `text`. */
+export async function signText(key: CryptoKey, text: Uint8Array<ArrayBuffer>): Promise<string> {
+  return b64uEncode(await ed25519Sign(key, text));
 }

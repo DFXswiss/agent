@@ -82,7 +82,7 @@ agent: agents | id:uuid user_id:uuid kem_pub:bytes sig_pub:bytes state:code bund
   label_ct:bytes@ciphertext claim_hash:bytes claim_misses:number source:code source_net:code created_at:time
   expires_at:time confirmed_at:time claimed_at:time last_used_at:time revoked_at:time replaces:uuid
   remote:flag nonce:bytes handover_ct:bytes@ciphertext own_identity:flag held_identity:flag gen:number cert:bytes
-  user_ct:bytes@ciphertext session_id:uuid revoked_reason:code
+  user_ct:bytes@ciphertext session_id:uuid revoked_reason:code device_id:uuid device_sig:bytes handover_sig:bytes
 audit_checkpoint: audit | hub_key_id:code seq:number hash:code published_at:time signature:bytes
 browser_session: auth | key_id:code user_id:uuid@ids credential_id:bytes public_key:bytes statement:lines
   created_at:time expires_at:time ended_at:time pairing_id:uuid@agents
@@ -177,7 +177,7 @@ session: tasks | id:uuid task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid devic
   model_id:code agent_kind:code agent_version:code estimate_ms:number created_at:time ready_at:time
   first_working_at:time ended_at:time context_restore:code@contexts context_reason:code@contexts not_before:time
   github_identity:uuid wait_until:time dfx_choice:flag wait_at:time triggered_by:uuid@shared
-  interrupted_at:time interruption_ended_at:time failover_of:uuid redeliver_event_id:uuid restore_object:uuid@contexts
+  interrupted_at:time interruption_ended_at:time failover_of:uuid redeliver_event_id:uuid restore_object:uuid@contexts orchestrator_at:time
 session_ping: notifications | id:uuid session_id:uuid kind:code level:code ref:code created_at:time
   delivered_at:time
 session_transition: tasks | session_id:uuid seq:number state:code reason:code at:time received_at:time

@@ -65,6 +65,7 @@ DEVICE_HINTS = frozenset(
         "reconcile",
         "session.start",
         "session.control",
+        "session.orchestrator",
         "prompt",
         "events",
         "log",

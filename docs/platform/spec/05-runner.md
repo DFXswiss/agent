@@ -1290,3 +1290,129 @@ Paths: payload `/Library/Application Support/DFXAgentRunner/` (`versions/<v>/`, 
 `downloads/` 0700, `log/`, `state.json` 0644, `maintenance.json` 0600), plists in `/Library/LaunchDaemons/`, receipt
 `swiss.dfx.agent-runner`. Release operation: `runbooks/own-device-release.md`.
 
+
+## 17. The main orchestrator as a platform session
+
+Decision: ADR-082 §6 and §9.6–§9.9 (KOR-57). The user's main orchestrator (its agent with its own identity) may run
+inside a running **main** session of a task in the user's **private** organization on a **platform** device. The
+hub owns the request, the binding of the session to its device and task owner and the revocation at the session's
+end (`03-api.md` §4 and §6); this section is the runner's, the guest's and the agent tool's part.
+
+### 17.1 Flow
+
+1. The hub hints the runner (`session.orchestrator`, content-free); the hint wakes the reconcile run (§2.2), and
+   `GET /v1/device/state` lists the work as `orchestrators:[{session_id, step:"keys"|"handover"|"revoked",
+   pairing_id}]` (`keys` only while the session has no live pairing at the hub: every such item gets fresh keys from
+   the guest; `revoked` with the pairing the hub revoked while the session goes on: the runner ends its row, so the
+   relay stops, and asks the guest to end the orchestrator, `POST /v1/sessions/{id}/orchestrator/end`).
+   The reconcile step `orchestrator` takes each session that runs here, is a main session (`depth` 0) that has not
+   ended, whose organization is private in the verified log and whose device is a platform device; anything else is
+   skipped with a log line.
+2. Keys: the runner asks the guest (`POST /v1/sessions/{id}/orchestrator/keys`, §17.3) with the hub's origin, its
+   pinned response key and the platform root key. The guest runs `agent-platform pair --session` under the system
+   account `agent-orch` (§17.4); the tool draws the key pair in its state directory and returns
+   `{pairing_id, pub:{kem,sig}, pop, fp}`. The private keys never leave the VM. The hub key goes in with the ID
+   `pinned` (the device pins the key itself, `device.json`); the session's VM must run. The runner checks the answer
+   (exactly these fields, `fp` the fingerprint of `pub`, `pop` the proof of possession for `pairing_id`) before it
+   signs anything (`keys_invalid` otherwise). A session whose pairing was handed over is not asked again.
+3. Registration: `POST /v1/device/orchestrator-pairings`
+   `{session_id, pairing_id, pub, pop, fp, device_sig}` (signed by the device) with
+   `device_sig = b64u(Ed25519_device(P‖"orchestrator-key\0"‖canonical({"fp","pairing_id","session"})))`, `P` =
+   `agent.dfx.swiss/v1/`. The hub answers `{pairing_id, expires_at}`. The runner stores the pairing
+   (`runner.orchestrator`, `registered`).
+4. The user approves in the browser (the hub's and the web's part) and the browser stores the handover; the work list
+   then names the session with `step` `handover`. The runner fetches `GET /v1/device/sessions/{id}/orchestrator` →
+   `{session_id, user_id, requested_at, requested, pairing:{pairing_id, state, expires_at, handover:{ct, sig}|null}}`.
+   It accepts the handover only when `session_id` and `pairing_id` are its own row, `user_id` is the session's task
+   owner, the task owner is an active user of the session's organization in the runner's **verified** log and `sig`
+   verifies under that user's signing key over `P‖"orchestrator-handover\0"‖canonical({"ct","pairing","session"})`.
+   Anything else is refused (log line `handover_refused`, the pairing stays `registered`). A hub therefore cannot hand
+   the session an account of its choosing.
+5. The runner passes `{pairing_id, ct, user_id, user_pub:{kem,sig}}` (the keys from the verified log) unopened to the
+   guest (`POST /v1/sessions/{id}/orchestrator/handover`) and marks the pairing `handed_over`. The guest has the
+   tool claim (`agent-platform pair --session --handover`): the tool opens `ct` (remote handover format of ADR-067),
+   claims through the relay, checks the anchor against `user_pub` and `GET /v1/me` and stores its state. Then the
+   guest starts the tool's MCP server (`agent-platform mcp --socket /run/agent-orch/mcp.sock`) and restarts the
+   session's agent with `--resume` and the second MCP configuration (§17.5) once the session is `idle`.
+
+### 17.2 Hub relay
+
+The tool has no network: it signs every hub request itself (`agent-request-v1`, key ID `agent.<32 hex>`) and hands
+`{method, target, headers, body}` to the guest control process over `/run/agent-guest/orch.sock` (§17.4). The control
+process journals it as the pending call `relay` (journal kind `hub.relay {pending_id, method, target, headers,
+body}`, `body` b64u) of the orchestrator session and waits for the answer (`RELAY_WAIT_SECONDS`, 40 s). The runner
+(`orchestrator/journal.py`) forwards the bytes unchanged to **its own hub origin** – only for a session that has an
+orchestrator pairing (`registered` or `handed_over`) and has not ended, only with the methods `GET`, `POST`, `PUT`,
+`PATCH`, `DELETE`, a target under `/v1/` without `..` segments, the headers `Agent-Key` (an `agent.` key ID),
+`Agent-Time`, `Agent-Nonce`, `Agent-Signature`, `Content-Type` and a body of at most `RELAY_MAX_BODY` (2 MiB) – and
+answers with `POST /v1/relay/{pending_id}/answer {status, headers, body}` (the headers `Agent-Hub-Key`,
+`Agent-Hub-Time`, `Agent-Hub-Signature`, `Content-Type`, `Retry-After` as the hub sent them; body b64u, at most
+`RELAY_MAX_RESPONSE` = 8 MiB; a header value longer than the contract allows is left out) or
+`{error:"refused"|"hub_unreachable"|"too_large"}` (`refused` also for more than 16 relays of one session at a time,
+`hub_unreachable` also for any unexpected failure of the forwarding, logged by type). The tool verifies the answer
+with its pinned hub key as every agent does; the runner never signs, opens or changes anything of it. A relay record
+of any other session is answered `refused` and logged (`relay_refused`).
+
+### 17.3 Guest control routes (runner → guest, `03-api.md` §7)
+
+| Endpoint | Request → Response |
+|---|---|
+| `POST /v1/sessions/{id}/orchestrator/keys` | `{hub_url, hub_key:{id,public_key}, platform_root_key}` → `{pairing_id, pub:{kem,sig}, pop, fp}`; only for an active main session while no other session of the VM is (or is becoming) the orchestrator (`state_conflict`); a repeat for the same session before the handover returns the same pairing; the tool failing is `unavailable` |
+| `POST /v1/sessions/{id}/orchestrator/handover` | `{pairing_id, ct, user_id, user_pub:{kem,sig}}` → `{}` (the claim runs in the background); another pairing or no keys `state_conflict`; a repeat of the same handover `{}` |
+| `POST /v1/sessions/{id}/orchestrator/end` | `{pairing_id}` → `{}`; the guest stops the tool and deletes its keys when the session's orchestrator is still that pairing (revoked at the hub, or the session ended while suspended), else nothing |
+| `POST /v1/relay/{id}/answer` | `{status, headers, body}` or `{error}` → `{}`; answers a `relay` pending call (unknown `404 not_found`, a second different answer `409 state_conflict`) |
+
+### 17.4 The account `agent-orch` in the guest
+
+`install.sh` creates the system user and group `agent-orch` (no login, no home, no network: the last rule of
+`agent-sessions.nft` drops everything it sends) and installs the agent tool with its pinned wheels to `/opt/agent-orch`
+(`root:agent-orch`, directories `0750`, files `0640`: neither the session users nor the API process can read or start
+it; `images/README.md`). The state directory `/var/lib/agent-orch` is `0700` of `agent-orch`; the session users (and so
+Claude Code) cannot enter it. The guest control process (root) runs every tool command as `agent-orch` (`runuser`,
+environment `AGENT_PLATFORM_HOME=/var/lib/agent-orch/state`, `AGENT_PLATFORM_RELAY=/run/agent-guest/orch.sock`, nothing
+inherited); the MCP server runs as the transient unit `agent-orch-mcp` of that account. `orch.sock` is
+`root:agent-orch 0660` (JSON lines like `api.sock`, op `relay`); the MCP socket lies in `/run/agent-orch`
+(`agent-orch:platform 0710`), so only the account and the API process (`platform`) reach it. When the session is
+stopped or failed, when the runner ends it (§17.1) and at the start of the control process when the recorded
+orchestrator session no longer runs, the guest stops the unit and deletes the state directory's content (keys
+included); a suspend keeps it (§17.6).
+
+### 17.4a The agent tool in session mode
+
+Session mode is the environment `AGENT_PLATFORM_RELAY` (the absolute path of `orch.sock`). The guest calls, as
+`agent-orch`, with the JSON input on stdin and one JSON object on stdout (the tool's usual result):
+
+| Command | stdin → result |
+|---|---|
+| `agent-platform pair --session` | `{session_id, hub_url, hub_key:{id,public_key}, platform_root_key}` → `{ok:true, state:"waiting", pairing_id, pub:{kem,sig}, pop, fp}`; fresh keys in the state directory (a pending session pairing is replaced); nothing secret is printed |
+| `agent-platform pair --session --handover` | `{pairing_id, ct, user_id, user_pub:{kem,sig}}` → `{ok:true, state:"connected", agent_id, user_id}`; opens `ct` with the pending keys, claims through the relay, requires the anchor's keys to equal `user_pub` and `GET /v1/me`, stores the state; a failure (`pairing_failed` with `reason`) deletes the pending pairing |
+| `agent-platform mcp --socket <path>` | serves `POST /mcp` (HTTP/1.1, JSON-RPC 2.0, JSON answers, `202` for notifications) on the unix socket `<path>` (mode `0666`; the directory guards it) until `SIGTERM` |
+
+Every signed request of the tool goes through the relay: one JSON line `{"id":<int>,"op":"relay","args":{method,
+target, headers, body}}` on `orch.sock` (`body` b64u, `headers` the four `Agent-*` headers and `Content-Type` for a
+body), answered `{"id":…, "ok":true, "result":{status, headers, body}}` or `{"id":…, "ok":false, "error":
+"refused"|"hub_unreachable"|"too_large"|"timeout"|"unavailable"|"request_invalid"}`. The tool sends no anonymous
+request in session mode (`not_in_session`) and verifies every answer with the hub key pinned from the `pair
+--session` input.
+
+### 17.5 The second MCP server (session API, `03-api.md` §8)
+
+`POST /mcp-orchestrator` on `127.0.0.1:7700` authenticates like `/mcp` (session token bound to the peer UID); it answers
+only the session that is the **claimed** orchestrator (any other session `404 not_found`) and forwards the JSON-RPC body
+(≤ 1 MiB) to the tool's MCP server on `/run/agent-orch/mcp.sock`. Claude Code gets the server (`orchestrator`, tools
+`search` and `run`, KOR-63) from `/opt/agent-guest/mcp-orchestrator.json` as a second `--mcp-config` only after the
+claim; Claude Code never starts the tool. In session mode the tool runs only the guest's own command lines (`pair
+--session [--handover]`, `mcp --socket <path>`) and an allow-list of hub commands that print (`relay.SESSION_ALLOWED`:
+no local login, browser, pairing, registration, recovery or installation, no secret printed into the session, no
+long-running server), and refuses every option that writes a path (`--output`, `--config`): the session cannot make the
+account overwrite its own key store.
+
+### 17.6 No context checkpoint, no idle suspend, the end
+
+An orchestrator session (a row in `runner.orchestrator`) never becomes due for a context checkpoint (§6, KOR-33): it
+reads every scope of its user, and a checkpoint sealed under its workgroup's key would show that to every reader of the
+workgroup. Billing is unchanged. Nor is it suspended when idle (§6.3): a suspend would end its run, and the guest keeps
+the keys only while the session runs; the guest ends the orchestrator only when the session is stopped or failed (and
+when the runner ends it). The runner deletes the row once the session ended, together with a checkpoint still due
+for it. The relay also stops once the verified log no longer shows the organization private with the task owner as
+its only user (§17.2), and only the pairing's own key (`Agent-Key` = `agent.<pairing id hex>`) is relayed.

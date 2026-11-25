@@ -165,6 +165,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `POST /v1/tasks/{task}/model-consent` | task:write | `{}` → `{task_id,model_consent:true}`: the task may use DFX access while its owner's own access is used up (card `quota_choice`); delivered as `model_consent` with the task's sessions in the device state; audit `task.model_consent` (KOR-50, ADR-081 §5) |
 | `PUT /v1/tasks/{task}/placement` | task:write | `{device_id:uuid|null,vm_id:string|null}` → task: changes the chosen device/VM (`null` = automatic) for the waiting and later main sessions; same checks as `POST /v1/tasks`; audit `task.placement` (ADR-075 §6) |
 | `POST /v1/sessions/{session}/control` | task:write | `{action:"interrupt"|"stop"}` → `{}` |
+| `POST /v1/sessions/{session}/orchestrator`, `GET` the same | owner (browser session of the task owner only) | the session as the user's main orchestrator on DFX hardware (KOR-57, ADR-082 §6): request → `{session_id,device_id,available,reason,requested_at,pairing}`, `409 orchestrator_unavailable`; `11-agent-access.md` §4 and §11 |
 | `GET /v1/sessions/{session}` | task:read | → session incl. transitions, usage, device, vm, parent, children |
 | `GET /v1/tasks/{task}/logs/{object}` / `GET /v1/tasks/{task}/logs/{object}/chunks/{index}` **(new, KOR-43)** | task:read | → `{manifest,sig,created_at,completed_at}` / `{ct}` of a **complete log** of the task (output of a `test.run` or a long work VM job, ADR-080 §3, `04-crypto.md` §4.12); read log `read.task.log` / `read.task.log.chunk`; a context object, an upload in progress, another task's log or a missing chunk is `404 not_found` |
 | `GET /v1/tasks/{task}/contexts` | task:read | → `{contexts:[{object_id,session_id,author_id,epoch,chunks,size,digest,created_at,completed_at}]}`: the complete context checkpoints of the task (metadata only, newest first as in §4.6.3, at most 1000); uploads in progress are never listed (ADR-072 §5) |
@@ -444,6 +445,7 @@ receive → browser frame: p95 < 300 ms on LAN.
 | `GET /v1/device/logs` | device | `?org=&after=` → membership-log entries; `GET /v1/device/platform-log?after=` |
 | `GET /v1/device/wraps` / `POST /v1/device/wraps` | device | as §4.3 for the device as recipient / wrapper (W2) |
 | `POST /v1/device/operations` | device:session | §8.3 → decision |
+| `POST /v1/device/orchestrator-pairings`, `GET /v1/device/sessions/{session}/orchestrator` | device:session | the keys an orchestrator session drew, with the device's signature `device_sig`, and the session's orchestrator work with the task owner's signed handover (KOR-57, ADR-082 §6; `11-agent-access.md` §4 and §11); `GET /v1/device/state` adds `orchestrators:[{session_id,step:"keys"|"handover",pairing_id}]` |
 | `GET /v1/device/credentials/{owner}/{kind}` | device eligible for owner's CK | → record |
 | `PUT /v1/device/credentials/{owner}/{kind}` | same, only while answering a device request of `owner` | `{record,expected_version,request_id}` → `{version}` |
 | `GET /v1/device/github-identities` | as below | `?owner_id=` → `{identities:[{id,owner_id,owner_kind,primary,version,epoch,created_at,updated_at}]}`: every `github` record of the owner for an eligible device (so a device learns the records of an organization, e.g. the operator's account); `404` otherwise (KOR-47) |
@@ -505,7 +507,9 @@ on every connection. `log.admit` (ADR-060): the runner verifies `admit` and `use
 `admit` batch is refused with `409 peer_outdated` (`detail.devices`) while an active device of the org lacks it.
 
 Hints from hub to device (JSON frames `{"type":…}`): `hello {hub_time}`, `reconcile {}` (pull
-`/v1/device/state`), `session.start {session_id}`, `session.control {session_id,action}`, `prompt {session_id,
+`/v1/device/state`), `session.start {session_id}`, `session.control {session_id,action}`, `session.orchestrator
+{session_id}` (KOR-57, ADR-082 §6: the task owner asked for the session as main orchestrator or stored its handover;
+`GET /v1/device/sessions/{id}/orchestrator`, `11-agent-access.md` §11), `prompt {session_id,
 scope_id,scope_seq,via_agent?}`, `events {scope_id,scope_seq}`, `log {org_id,seq}`, `wraps {}`, `credentials {owner_id}`,
 `request {request_id}`, `ping {org_id,wg_id?,task_id?,level,entry_id}`, `decertified {}`, `browser {session_id}` (someone watches the session's browser, KOR-44: start the live frames).
 Frames from device: `heartbeat {capacity,sessions:[{session_id,state}],vms:[{vm_id,state}]}` every 15 s, and once more 250 ms after a VM state change (capacity, e.g. `pool_ready`, for the start estimate; changes in between coalesce).
@@ -541,6 +545,10 @@ JSON bodies except tar streams.
 | `GET /v1/journal` | `?after=<seq>&limit=<n>&wait=<s ≤ 25>` → `{records:[{seq,ts,session_id,kind,body}],head}` (long poll) |
 | `POST /v1/journal/ack` | `{through}` → `{}` |
 | `POST /v1/pending/{id}/answer` | `{status:"ok"|"error",result?,error?}` → `{}` (answers `operation.request` and `platform.query` records) |
+| `POST /v1/sessions/{id}/orchestrator/keys` | `{hub_url,hub_key:{id,public_key},platform_root_key}` → `{pairing_id,pub:{kem,sig},pop,fp}`: the agent tool of the main orchestrator draws its keys under the guest account `agent-orch` (ADR-082 §6.2, §9.7; `05-runner.md` §17.3) |
+| `POST /v1/sessions/{id}/orchestrator/handover` | `{pairing_id,ct,user_id,user_pub:{kem,sig}}` → `{}`: the handover the runner checked under the task owner's key, unopened; the tool claims in the background (`05-runner.md` §17.1 step 5) |
+| `POST /v1/sessions/{id}/orchestrator/end` | `{pairing_id}` → `{}`: the hub revoked this pairing while the session goes on, or the session ended; the guest stops the tool and deletes its keys (`05-runner.md` §17.3) |
+| `POST /v1/relay/{id}/answer` | `{status,headers,body}` or `{error:"refused"|"hub_unreachable"|"too_large"}` → `{}` (answers a `hub.relay` record, `05-runner.md` §17.2) |
 | `GET /v1/metrics` | → `{vm:{cpu_usage_usec,mem_used_bytes,mem_total_bytes,disk_used_bytes,disk_total_bytes,net_rx_bytes,net_tx_bytes,uptime_seconds,load1},sessions:[{session_id,cpu_usage_usec,mem_current_bytes,mem_max_bytes,tasks_current,io_read_bytes,io_write_bytes,workspace_bytes,state}]}` |
 
 ### 7.2 Journal record bodies (`kind` → `body`)
@@ -557,6 +565,7 @@ JSON bodies except tar streams.
 | `usage` | `{request_id,model,provider?,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,thinking_tokens,cost_usd?,context_window_tokens,request_bytes,response_bytes,status}` |
 | `operation.request` | `{pending_id,operation_id,type,params,idempotency_key?,requested_at}` |
 | `platform.query` | `{pending_id,tool,arguments}` |
+| `hub.relay` | `{pending_id,method,target,headers,body}`: a signed hub request of the orchestrator's agent tool (`body` b64u), forwarded unchanged by the runner to its hub (`05-runner.md` §17.2) |
 | `ping.delivered` | `{ping_id,via:"hook"|"tool"}` |
 | `platform.read` | `{tool:"get_notifications",result_count}` (a read the guest answers itself; the runner records event and audit as for a forwarded read, KOR-07) |
 | `platform.refused` | `{code,tool,method?}`: an MCP request refused before it was forwarded or answered; `code` ∈ `parse_error`, `invalid_request`, `method_not_found`, `unknown_tool`, `size_exceeded` (`tool` null), `params_invalid` (a tool name or null), `not_found` (`get_subagent_result`), `rate_limited` (a read tool); never arguments (KOR-07); `method` only with `method_not_found`: the refused method by name when it is a request method of the protocol (`server/discover`, `resources/read`, `prompts/get`, `completion/complete`, …), else `other` (HOT-09) |
@@ -582,6 +591,10 @@ journaled, the rest of the stretch is not, so a session cannot grow its records 
 limit of 1 MiB is checked after the authentication, so an oversized request of a session is journaled too
 (`size_exceeded`); an unauthenticated request is `401` and journals nothing. Results: `content:[{type:"text",text:<JSON>}]`, `isError` true for errors
 with JSON `{"error":<code>,"message":<English sentence>}`.
+
+The orchestrator session (ADR-082 §6.5, §9.7) has a second path, `POST /mcp-orchestrator`: same authentication, only for
+the session that is the claimed main orchestrator (else `404`), forwarded to the MCP server of its agent tool
+(`05-runner.md` §17.5).
 
 ### 8.1 Tools
 
@@ -793,7 +806,7 @@ of `agent_core.passkey.errors` (`client_data_invalid`, `challenge_mismatch`, `or
 `nonce_replayed`, `session_expired`, `unauthorized`. 403: `forbidden`, `last_admin`, `last_passkey`,
 `device_not_assigned`. 404: `not_found`, `invite_unknown`. 409: `id_conflict`, `event_conflict`, `seq_conflict`,
 `version_conflict`, `origin_seq_gap`, `origin_seq_conflict`, `no_device` (no longer answered, ADR-075), `already_assigned`, `rotation_required`, `placement_invalid`. 403 also: `placement_forbidden`.
-410: `invite_expired`. 413: `size_exceeded`, `quota_exceeded` (a context checkpoint over its quota, `detail.quota`, ADR-072 §6). 429: `rate_limited`. 503: `unavailable`. Additional: `platform_invite_required` (403), `platform_access_denied` (403), `no_device_available` (409), `invite_registered` (409, invitation already bound to another user), and every code of `04-crypto.md` §8 (e.g. `author_not_writer`, `invite_not_in_log`) with status 400 unless listed above. Delegated agent access (`11-agent-access.md` §4): `pairing_unknown` (404), `pairing_gesture_required` (403), `claim_invalid` (401); pairing from another computer (§5.4 there, ADR-072): `handover_required` (400), `handover_unexpected` (400). Own identity of the agent (ADR-082): `client_outdated` (409, the old confirmation form from a browser), `agent_batches_incomplete` (409, `detail.orgs` or the `CK` epoch in `detail.expected`), `agent_gen_mismatch` (409, the generation to sign in `detail.expected`). Client-only codes (never sent by the hub): `login_automation_failed`, `prf_missing`, `log_rollback`, `log_fork`, `platform_root_mismatch`, `pairing_mismatch`.
+410: `invite_expired`. 413: `size_exceeded`, `quota_exceeded` (a context checkpoint over its quota, `detail.quota`, ADR-072 §6). 429: `rate_limited`. 503: `unavailable`. Additional: `platform_invite_required` (403), `platform_access_denied` (403), `no_device_available` (409), `invite_registered` (409, invitation already bound to another user), and every code of `04-crypto.md` §8 (e.g. `author_not_writer`, `invite_not_in_log`) with status 400 unless listed above. Delegated agent access (`11-agent-access.md` §4): `pairing_unknown` (404), `pairing_gesture_required` (403), `claim_invalid` (401); pairing from another computer (§5.4 there, ADR-072): `handover_required` (400), `handover_unexpected` (400). Own identity of the agent (ADR-082): `client_outdated` (409, the old confirmation form from a browser), `agent_batches_incomplete` (409, `detail.orgs` or the `CK` epoch in `detail.expected`), `agent_gen_mismatch` (409, the generation to sign in `detail.expected`); the orchestrator on platform hardware (ADR-082 §6): `orchestrator_unavailable` (409, `detail.reason` one of `not_main`, `not_private`, `not_platform`, `not_running`, `not_requested`). Client-only codes (never sent by the hub): `login_automation_failed`, `prf_missing`, `log_rollback`, `log_fork`, `platform_root_mismatch`, `pairing_mismatch`.
 All enumerations of this section are closed lists in `contracts/enums/` (`error-codes.json`, `operation-error-codes.json`, `session-failure-reasons.json`); every document and implementation references them.
 Operation codes (in operation results): `unknown_type`, `params_invalid`, `repo_not_allowed`,
 `repo_not_accessible`, `branch_protected`, `branch_exists`, `non_fast_forward`, `path_invalid`, `secret_detected`,

@@ -74,9 +74,22 @@ def test_the_command_line_never_carries_a_prompt() -> None:
         "resume_claude_session_id",
         "model_id",
         "access",
+        "mcp_configs",
     ]
     assert not hasattr(ClaudeCodeDriver, "prompt_fits")
     assert "--" not in ClaudeCodeDriver("2.1.330").argv(Launch(SID, HARNESS, RESUME, "claude-sonnet-5-5"))
+
+
+def test_further_mcp_configs_follow_the_platform_one(driver: ClaudeCodeDriver) -> None:
+    """The orchestrator's second server (05-runner.md section 17.5) is one more file after ``--mcp-config``."""
+    argv = driver.argv(Launch(SID, HARNESS, RESUME, mcp_configs=("/opt/agent-guest/mcp-orchestrator.json",)))
+    index = argv.index("--mcp-config")
+    assert argv[index : index + 3] == [
+        "--mcp-config",
+        "/opt/agent-guest/mcp.json",
+        "/opt/agent-guest/mcp-orchestrator.json",
+    ]
+    assert argv[index + 3] == "--tools"
 
 
 def test_custom_binary_and_mcp_config() -> None:
@@ -94,6 +107,9 @@ def test_custom_binary_and_mcp_config() -> None:
         Launch(SID, HARNESS, resume_claude_session_id="../x"),
         Launch(SID, HARNESS, model_id="-p"),
         Launch(SID, HARNESS, model_id="a b"),
+        Launch(SID, HARNESS, mcp_configs=("relative.json",)),
+        Launch(SID, HARNESS, mcp_configs=("/opt/../etc/x.json",)),
+        Launch(SID, HARNESS, mcp_configs=("/opt/a b.json",)),
     ],
 )
 def test_unsafe_launch_input_is_refused(driver: ClaudeCodeDriver, launch: Launch) -> None:

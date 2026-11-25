@@ -4,8 +4,8 @@
 //   opened with the user's identity key (`crypto/agent.ts`), one that does not open is an unknown agent (label null).
 //   Malformed rows are left out. `replaces` names the main orchestrator a row replaced at its confirmation (or null);
 //   `remote` marks an agent paired from another computer (ADR-067; a row without it, from a hub of before KOR-42, is
-//   not remote). `own_identity`, `held_identity`, `gen` and `revoked_reason` (ADR-082) are false/null in a row of a
-//   hub that does not send them; `pub` and `cert` (when the hub sends them) only for the job. `fetchAgentRows` is the checked list without labels (the background job `agents`).
+//   not remote). `own_identity`, `held_identity`, `gen`, `revoked_reason` and `session_id` (ADR-082; the orchestrator
+//   session on DFX hardware) are false/null in a row of a hub that does not send them; `pub` and `cert` (when the hub sends them) only for the job. `fetchAgentRows` is the checked list without labels (the background job `agents`).
 // - `revokeAgent` (`revoke.ts`, loaded when somebody disconnects): `DELETE /v1/me/agents/{id}`; `revokeAllAgents`: `DELETE /v1/me/agents` (→ the number revoked).
 //   Both take effect at once at the hub; the list is loaded again afterwards, then the log clean-up runs at once
 //   (`cleanUp`: the log job of every org of the user, which runs the job `agents` – the revoked agent is removed from
@@ -63,6 +63,8 @@ export interface Row {
   /** The agent's public keys and certificate (hubs since KOR-57 stage b; checked by the job `agents`). */
   readonly pub?: { readonly kem: string; readonly sig: string } | null;
   readonly cert?: string | null;
+  /** The orchestrator session of an agent on DFX hardware (ADR-082 section 6), else null. */
+  readonly session_id?: string | null;
 }
 
 const isPub = (value: unknown): boolean =>
@@ -90,7 +92,8 @@ function isRow(value: unknown): value is Row {
       (Number.isSafeInteger(value.gen) && (value.gen as number) >= 1)) &&
     (value.revoked_reason === undefined || value.revoked_reason === null || typeof value.revoked_reason === 'string') &&
     isPub(value.pub) &&
-    (value.cert === undefined || value.cert === null || typeof value.cert === 'string')
+    (value.cert === undefined || value.cert === null || typeof value.cert === 'string') &&
+    (value.session_id === undefined || value.session_id === null || isUuid7(value.session_id))
   );
 }
 
@@ -127,6 +130,7 @@ export async function loadAgents(context: Context): Promise<void> {
         heldIdentity: row.held_identity === true,
         gen: row.gen ?? null,
         revokedReason: row.revoked_reason ?? null,
+        sessionId: row.session_id ?? null,
       });
     }
     if (store.generation === generation) setAgents(store, entries);

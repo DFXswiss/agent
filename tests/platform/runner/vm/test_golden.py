@@ -224,6 +224,32 @@ class TestBundle:
         os.chmod(root / "images" / "provision" / "install.sh", 0o644)
         assert golden.write_bundle(source, tmp_path / "c.tar") == first
 
+    def test_the_agent_tool_of_the_main_orchestrator_is_bundled(self, tmp_path: Path) -> None:
+        """05-runner.md section 17.4: its sources and the two legacy files it imports, nothing else of agent_cli."""
+        root = TestSource.tree(tmp_path)
+        for part in ("agent_platform", "agent_runner/crypto"):
+            (root / "src" / part).mkdir(parents=True)
+            (root / "src" / part / "__init__.py").write_text("", encoding="utf-8")
+            (root / "src" / part / "__pycache__").mkdir()
+            (root / "src" / part / "__pycache__" / "x.pyc").write_bytes(b"x")
+        (root / "src" / "agent_cli").mkdir()
+        (root / "src" / "agent_cli" / "__init__.py").write_text("", encoding="utf-8")
+        (root / "src" / "agent_cli" / "main.py").write_text("", encoding="utf-8")
+        (root / "src" / "agent_cli" / "keys.py").symlink_to(root / "src" / "agent_cli" / "main.py")
+        source = golden.load_source(root / "images" / "golden.yaml")
+        golden.write_bundle(source, tmp_path / "bundle.tar")
+        with tarfile.open(tmp_path / "bundle.tar") as archive:
+            names = [
+                name
+                for name in archive.getnames()
+                if name.startswith(("src/agent_platform", "src/agent_r", "src/agent_cli"))
+            ]
+        assert names == [
+            "src/agent_cli/__init__.py",
+            "src/agent_platform/__init__.py",
+            "src/agent_runner/crypto/__init__.py",
+        ]
+
     def test_the_checkout_bundle_holds_what_the_installer_and_guest_need(self, source: Source, tmp_path: Path) -> None:
         golden.write_bundle(source, tmp_path / "bundle.tar")
         with tarfile.open(tmp_path / "bundle.tar") as archive:
@@ -234,7 +260,17 @@ class TestBundle:
             "contracts/common.json",
             "contracts/mcp/tools/get_context.input.json",
             "contracts/mcp/tools/request_operation.output.json",
+            # the main orchestrator's agent tool (05-runner.md section 17.4)
+            "images/mcp-orchestrator.json",
+            "images/orchestrator/agent-platform",
+            "src/agent_platform/cli.py",
+            "src/agent_platform/guide.md",
+            "src/agent_runner/crypto/agent.py",
+            "src/agent_runner/sync/http.py",
+            "src/agent_cli/__init__.py",
+            "src/agent_cli/keys.py",
         } <= names
+        assert not any(name.startswith("src/agent_cli/") and name not in golden_tool_files() for name in names)
         assert not any(name.startswith(("contracts/tools/", "contracts/vectors/")) for name in names)
         assert any(name.startswith("contracts/guest/") for name in names)
         # every MCP tool of the guest finds its schemas (tools/list and tools/call load them at run time; without them
@@ -819,3 +855,7 @@ class TestRetire:
 
 def test_default_shell_answers_cover_every_step() -> None:
     assert set(default_shell_answers()) >= {"inspect", "tui", "selftest", "token", "seal"}
+
+
+def golden_tool_files() -> set[str]:
+    return set(golden.TOOL_FILES)

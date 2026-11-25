@@ -4,7 +4,9 @@
 // side). The loopback listener is replaced by a route of the page (`catchHandover`). A pairing from another computer
 // (ADR-067, `pair(origin, { remote: true })`) works like the agent tool: the hub's nonce gives the agent code
 // (`agentCode`), the agent fetches the sealed handover (`GET /v1/agent/handover`), checks the return code the user
-// passes back and only then claims (`finishRemote`).
+// passes back and only then claims (`finishRemote`). The keys of a main orchestrator session (ADR-082 section 6,
+// `session()`) are registered by the session's device, not by the agent; the agent opens the handover the runner
+// passes into its VM and claims (`claimSession`).
 import type { Page, Request } from '@playwright/test';
 import {
   agentCode,
@@ -62,6 +64,24 @@ export class TestAgent {
       throw new Error('the hub did not create a remote pairing');
     }
     return new TestAgent(origin, id, keys, answer.nonce ?? null);
+  }
+
+  /** Fresh keys of a session that becomes the main orchestrator, with their proof of possession and fingerprint (the
+   *  session's device registers them, `e2e/helpers/director.ts` `registerOrchestrator`). */
+  static async session(origin: string): Promise<{ agent: TestAgent; pop: string; fp: string }> {
+    const keys = await Identity.generate();
+    const id = uuid7();
+    const pub = keys.public();
+    const text = concat(label(LABEL_AGENT_PAIR), canonical({ kem: pub.kem, pairing_id: id, sig: pub.sig }));
+    const pop = b64uEncode(await keys.sign(text));
+    const fp = await fingerprint(keys.kemPublic(), keys.sigPublic());
+    return { agent: new TestAgent(origin, id, keys), pop, fp };
+  }
+
+  /** The tool in the session's VM: opens the handover `ct` the runner passed in and claims for `userId`. */
+  async claimSession(ct: string, userId: string): Promise<{ status: number; body: unknown }> {
+    const handover = await openHandover(this.keys.kem, this.id, userId, ct);
+    return this.claim(b64uEncode(handover.secret), userId);
   }
 
   /** The agent code of a remote pairing as the agent tool shows it (`XXXXX-XXXXX`). */

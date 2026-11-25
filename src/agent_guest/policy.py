@@ -3,7 +3,9 @@
 Rules in this order; the first match decides (rule numbers as in 05 section 5.3, deny texts of
 ``contracts/mcp/hook-deny-reasons.json``):
 
-1. ``mcp__platform__<tool>`` with ``<tool>`` in the tool list of 03-api.md section 8.1 -> allow
+1. ``mcp__platform__<tool>`` with ``<tool>`` in the tool list of 03-api.md section 8.1 -> allow; also
+   ``mcp__orchestrator__search`` and ``mcp__orchestrator__run``, the agent tool's server of the main orchestrator's
+   session (05-runner.md section 17.5; only that session has the server, ``/mcp-orchestrator`` refuses every other)
 1a. ``AskUserQuestion`` of a main session whose question could be built (``ask``) -> deny ``question_passed``
    (journaled as rule 1); the caller requests the operation ``human.question`` with ``question_text(tool_input)``
    before it answers (KOR-39, ADR-076 section 3). A subagent's call, or one without any question text, falls
@@ -89,6 +91,7 @@ PLATFORM_TOOLS = frozenset(
         "browser_screenshot",
     }
 )
+ORCHESTRATOR_TOOLS = frozenset({"mcp__orchestrator__search", "mcp__orchestrator__run"})
 FILE_TOOLS = frozenset({"Read", "Glob", "Grep", "Edit", "Write"})
 WEB_SEARCH_TOOL = "WebSearch"
 # 13-work-vm.md section 13.7: model accesses whose provider runs Claude Code's own web search.
@@ -315,7 +318,7 @@ class Policy:
         """The decision for one call; ``ask``: the call is ``AskUserQuestion`` of a main session with a question;
         ``web_search``: the session's model access offers ``WebSearch`` (rule 1b)."""
         platform = tool_name.startswith(PLATFORM_PREFIX) and tool_name[len(PLATFORM_PREFIX) :] in PLATFORM_TOOLS
-        if platform or (web_search and tool_name == WEB_SEARCH_TOOL):
+        if platform or tool_name in ORCHESTRATOR_TOOLS or (web_search and tool_name == WEB_SEARCH_TOOL):
             return Decision("allow", 1)
         if ask and tool_name == ASK_TOOL:
             return Decision("deny", 1, deny_reason("question_passed"))

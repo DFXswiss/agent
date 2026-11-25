@@ -7,6 +7,15 @@ same result object). It serves both eras of the protocol: a client that sends `i
 revision 2025-11-25 and earlier, a request carrying the version in `_meta` is served without one (2026-07-28,
 https://modelcontextprotocol.io/specification/latest). Nothing but protocol messages reaches stdout: while serving,
 `sys.stdout` is stderr, and commands get their stdin from the tool call, never from the protocol stream.
+
+`mcp --socket <path>` serves the same protocol over HTTP/1.1 on a unix socket (the main orchestrator inside a platform
+session, ADR-082 sections 6.5 and 9.7, 05-runner.md section 17.5): `POST /mcp` with one JSON-RPC message (at most
+`MAX_BODY` bytes, `Content-Length` required) is answered with `application/json`, a notification or response with
+`202`; a body that is no JSON is the JSON-RPC parse error with `400`, a larger one `413`; `GET`/`DELETE /mcp` are `405`
+and every other path `404`. The socket gets mode `0666`: the directory it lies in (`agent-orch:platform 0710` in the
+guest) decides who reaches it. A stale socket file is replaced, any other file at the path is `invalid_argument`. The
+server runs until `SIGTERM`/`SIGINT` and removes its socket. In session mode the tool `run` also refuses `pair` and the
+commands of `relay.refused_in_session`: the session's agent never pairs another agent or changes this one.
 """
 
 from __future__ import annotations
@@ -16,12 +25,17 @@ import contextlib
 import io
 import json
 import os
+import signal
+import socketserver
+import stat
 import sys
+import threading
 from collections.abc import Callable, Mapping
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any, NoReturn, TextIO
 
-from agent_platform import __version__, lookup
+from agent_platform import __version__, lookup, relay
 from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
 
@@ -30,6 +44,8 @@ MODERN = ("2026-07-28",)
 LEGACY = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 META_VERSION = "io.modelcontextprotocol/protocolVersion"
 META_CAPABILITIES = "io.modelcontextprotocol/clientCapabilities"
+MAX_BODY = 1024 * 1024
+SOCKET_MODE = 0o666
 PARSE_ERROR, INVALID_REQUEST, NO_METHOD, INVALID_PARAMS, UNSUPPORTED_VERSION = -32700, -32600, -32601, -32602, -32022
 # Commands that make no sense through the server: the server itself, its installation, and an endless loop.
 REFUSED = (["mcp"], ["install-connector"], ["claude", "watch"])
@@ -104,9 +120,11 @@ def tool_run(arguments: Mapping[str, Any], environ: Mapping[str, str]) -> dict[s
         or not set(arguments) <= {"args", "stdin"}
     ):
         return _bad()
-    words = [word for word in argv if not word.startswith("-")]
+    words = relay.command_words(argv)
     if any(words[: len(refused)] == refused for refused in REFUSED):
         return _bad()
+    if environ.get(relay.RELAY_ENV) and (words[:1] == ["pair"] or relay.refused_in_session(argv)):
+        return PlatformError("not_in_session").to_json()
     out = io.StringIO()
     _cli().run(argv, environ, io.StringIO(stdin), out)
     document: dict[str, Any] = json.loads(out.getvalue())
@@ -213,29 +231,127 @@ def answer(message: object, environ: Mapping[str, str]) -> dict[str, Any] | None
     return {"jsonrpc": "2.0", "id": ident, "result": result}
 
 
+def _parse(raw: bytes) -> tuple[bool, dict[str, Any] | None]:
+    """`(parsed, reply)` of one request body: the answer, or the parse error when it is no JSON."""
+    try:
+        message = json.loads(raw)
+    except (ValueError, RecursionError):
+        return False, {"jsonrpc": "2.0", "id": None, "error": {"code": PARSE_ERROR, "message": "Parse error"}}
+    return True, message
+
+
 def serve(reader: TextIO, writer: TextIO, environ: Mapping[str, str]) -> None:
     """Answer every line of `reader` until it ends; one JSON-RPC message per line in both directions."""
     for line in reader:
         if not line.strip():
             continue
-        try:
-            message = json.loads(line)
-        except (ValueError, RecursionError):
-            reply: dict[str, Any] | None = {
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {"code": PARSE_ERROR, "message": "Parse error"},
-            }
-        else:
-            reply = answer(message, environ)
+        parsed, message = _parse(line.encode("utf-8"))
+        reply = answer(message, environ) if parsed else message
         if reply is not None:
             writer.write(json.dumps(reply, separators=(",", ":")) + "\n")
             writer.flush()
 
 
+class _Handler(BaseHTTPRequestHandler):
+    server: SocketServer
+    protocol_version = "HTTP/1.1"
+    server_version = "agent-platform"
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Nothing of a request is logged."""
+
+    def _send(self, status: int, document: object = None) -> None:
+        body = b"" if document is None else json.dumps(document, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        if document is not None:
+            self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        if status == 405:
+            self.send_header("Allow", "POST")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _refuse(self, status: int) -> None:
+        self.close_connection = True
+        codes = {400: "request_invalid", 404: "not_found", 405: "not_allowed", 413: "size_exceeded"}
+        self._send(status, {"error": codes[status]})
+
+    def do_POST(self) -> None:
+        if self.path != "/mcp":
+            self._refuse(404)
+            return
+        length = self.headers.get("Content-Length", "")
+        if not length.isdigit():
+            self._refuse(400)
+            return
+        if int(length) > MAX_BODY:
+            self._refuse(413)
+            return
+        parsed, message = _parse(self.rfile.read(int(length)))
+        if not parsed:
+            self._send(400, message)
+            return
+        reply = answer(message, self.server.environ)
+        if reply is None:
+            self._send(202)
+        else:
+            self._send(200, reply)
+
+    def do_GET(self) -> None:
+        self._refuse(405 if self.path == "/mcp" else 404)
+
+    do_DELETE = do_GET
+
+
+class SocketServer(socketserver.ThreadingUnixStreamServer):
+    daemon_threads = True
+
+    def __init__(self, path: str, environ: Mapping[str, str]) -> None:
+        self.environ = environ
+        self.path = path
+        super().__init__(path, _Handler)
+
+
+def socket_server(path: str, environ: Mapping[str, str]) -> SocketServer:
+    """The server on `path` (module docstring): a stale socket is replaced, the new one gets `SOCKET_MODE`."""
+    if not path.startswith("/"):
+        raise PlatformError("invalid_argument")
+    try:
+        if not stat.S_ISSOCK(os.lstat(path).st_mode):
+            raise PlatformError("invalid_argument")
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    server = SocketServer(path, environ)
+    os.chmod(path, SOCKET_MODE)
+    return server
+
+
+def serve_socket(server: SocketServer) -> None:
+    """Serve until `SIGTERM` or `SIGINT`, then close the server and remove its socket."""
+
+    def stop(signum: int, frame: object) -> None:
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
+    previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        server.serve_forever(0.05)
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+        server.server_close()
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(server.path)
+
+
 def cmd_mcp(args: argparse.Namespace, context: Context) -> NoReturn:
-    """Serve until stdin ends, then exit without the closing JSON object of `cli.run` (stdout carries protocol
-    messages only)."""
+    """Serve until stdin ends (or, with `--socket`, until `SIGTERM`), then exit without the closing JSON object of
+    `cli.run` (stdout carries protocol messages only)."""
+    if args.socket is not None:
+        server = socket_server(args.socket, context.environ)
+        with contextlib.redirect_stdout(sys.stderr):
+            serve_socket(server)
+        raise SystemExit(0)
     writer = sys.stdout
     with contextlib.redirect_stdout(sys.stderr):
         serve(context.stdin, writer, context.environ)
@@ -292,7 +408,7 @@ def cmd_install_connector(args: argparse.Namespace, context: Context) -> dict[st
 
 
 def register(tree: Tree) -> None:
-    tree.add(
+    sub = tree.add(
         tree.commands,
         "mcp",
         cmd_mcp,
@@ -301,6 +417,7 @@ def register(tree: Tree) -> None:
         example="agent-platform mcp",
         words="chatprogramm anschluss claude-desktop connector server chat app mcp stdio",
     )
+    sub.add_argument("--socket", help=argparse.SUPPRESS)
     sub = tree.add(
         tree.commands,
         "install-connector",

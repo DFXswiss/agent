@@ -18,7 +18,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from agent_hub import signals
+from agent_hub.agents import orchestrator
 from agent_hub.agents.identity import actor
+from agent_hub.agents.keys import key_id_of as agent_key_id
 from agent_hub.errors import HubError
 from agent_hub.events.notify import announce
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
@@ -28,7 +30,7 @@ from agent_hub.notifications.rules import publish_rows
 from agent_hub.orgs import logs, rights
 from agent_hub.orgs.append import Appender, AppendResult, append_batch
 from agent_hub.orgs.genesis import Created, create_org
-from agent_hub.stream.publish import Audience, AudienceKind, publish
+from agent_hub.stream.publish import Audience, AudienceKind, close_keys, publish
 
 router = HubRouter()
 LOG_PAGE_DEFAULT = 200
@@ -91,6 +93,9 @@ def publish_append(result: AppendResult) -> None:
         publish(Audience(kind, UUID(principal.parent or recipient)), "wraps", {})
     announce(result.events)
     publish_rows(result.notices)
+    for user, agent in result.revoked:
+        close_keys(user, [agent_key_id(agent)])
+    orchestrator.publish_hints(result.hints)
     signals.emit("log.appended", org_id=result.org_id, seq=head.seq)
 
 

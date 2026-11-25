@@ -34,6 +34,22 @@
       "group": "agent"
     },
     {
+      "action": "agent.handover",
+      "group": "agent"
+    },
+    {
+      "action": "session.orchestrator",
+      "group": "session"
+    },
+    {
+      "action": "read.session.orchestrator",
+      "group": "read"
+    },
+    {
+      "action": "read.device.orchestrator",
+      "group": "read"
+    },
+    {
       "action": "agent.claim",
       "group": "agent"
     },

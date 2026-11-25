@@ -7,8 +7,10 @@ section 4 `golden`; ADR-009; images/README.md build contract).
    one build at a time per store (advisory lock), stale `building` rows of a crashed build and their instances
    are removed first.
 2. `golden` row `building` -> `limactl create --name=<prefix>golden-build-<hex>` + `start` (slim provisioning).
-3. Bundle (`images/`, `src/agent_guest/`, the JSON contracts the guest validates against) copied in, stage-2
-   installer `images/provision/install.sh`, contracts to `/opt/agent-guest/contracts`.
+3. Bundle (`images/`, `src/agent_guest/`, the JSON contracts the guest validates against, and the sources of the
+   main orchestrator's agent tool: `src/agent_platform/`, `src/agent_runner/`, `src/agent_cli/{__init__,keys}.py`,
+   05-runner.md section 17.4) copied in, stage-2 installer `images/provision/install.sh`, contracts to
+   `/opt/agent-guest/contracts`.
 4. `exec_libs` (`ldd` of `/opt/claude/claude`, of the interpreter and of `_ctypes`; realpaths, sorted, unique)
    -> `/opt/agent-guest/exec-paths.json`; Landlock ABI probe (< 4 fails the build) -> `/opt/agent-guest/build.json`
    `{claude_version, guest_version, landlock_abi, exec_paths_sha256, source_sha256, built_at}`.
@@ -76,6 +78,10 @@ TUI_TIMEOUT_S = 120.0
 CONTRACT_SKIP = frozenset({"node_modules", "fixtures", "vectors"})
 CONTRACT_TOP_SKIP = frozenset({"tools", "changes"})
 BUNDLE_SKIP = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"})
+TOOL_PARTS = ("src/agent_platform", "src/agent_runner")
+TOOL_FILES = ("src/agent_cli/__init__.py", "src/agent_cli/keys.py")
+"""The agent tool of the main orchestrator and what it imports (05-runner.md section 17.4, `install.sh` step `agent
+tool`); a tree without them bundles nothing of them."""
 _VERSION_PART_RE = re.compile(r"^[0-9a-z]+(?:[.-][0-9a-z]+)*$")
 _TAG_RE = re.compile(r"^[0-9a-z]+(?:[.-][0-9a-z]+)*$")
 _GUEST_VERSION_RE = re.compile(r'^__version__\s*=\s*"([^"]+)"\s*$', re.MULTILINE)
@@ -217,6 +223,7 @@ def _bundle_members(source: Source) -> list[tuple[str, Path]]:
         ("images", BUNDLE_SKIP, frozenset(), None),
         ("src/agent_guest", BUNDLE_SKIP, frozenset(), None),
         ("contracts", BUNDLE_SKIP | CONTRACT_SKIP, CONTRACT_TOP_SKIP, (".json",)),
+        *((part, BUNDLE_SKIP, frozenset(), None) for part in TOOL_PARTS),
     ):
         base = source.root / top
         for directory, dirnames, filenames in os.walk(base):
@@ -232,6 +239,10 @@ def _bundle_members(source: Source) -> list[tuple[str, Path]]:
                 if path.is_symlink() or not path.is_file():
                     continue
                 members.append((path.relative_to(source.root).as_posix(), path))
+    for name in TOOL_FILES:
+        path = source.root / name
+        if path.is_file() and not path.is_symlink():
+            members.append((name, path))
     return sorted(members)
 
 

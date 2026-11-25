@@ -1,0 +1,14 @@
+#!/usr/bin/python3 -I
+"""The agent tool of the main orchestrator in the guest (docs/platform/spec/05-runner.md section 17.4).
+
+Installed to /opt/agent-orch/bin (root:agent-orch 0750): only the account agent-orch runs it, with the tool and its
+pinned dependencies from /opt/agent-orch/lib. The interpreter runs isolated (-I): no environment, no user site.
+"""
+
+import sys
+
+sys.path.insert(0, "/opt/agent-orch/lib")
+
+from agent_platform.__main__ import main  # noqa: E402
+
+sys.exit(main())

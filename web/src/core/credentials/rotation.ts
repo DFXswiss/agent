@@ -6,6 +6,7 @@ import { formatTime } from '../encoding/time';
 import { Secret } from '../crypto/secret';
 import { b64uDecode } from '../encoding/b64u';
 import { authorKey } from '../github/connection';
+import { rewrapOwnIdentities } from '../github/identities';
 import {
   type AuthorKeys,
   deleteCredential,
@@ -339,8 +340,10 @@ export async function rotateCredentialKey(
   await context.client.request('POST', '/v1/me/credentials/rotate', { body: { epoch, wraps, records } });
   for (const loss of losses.values()) handled.add(loss.key);
   try {
-    // the further GitHub identities follow at once (module comment); a failure is left to the job `github-rewrap`
-    await import('../github/identities').then((identities) => identities.rewrapOwnIdentities(context));
+    // the further GitHub identities follow at once (module comment); a failure is left to the job `github-rewrap`.
+    // Imported statically: this module and the identities share the lazy chunk, and an import inside one chunk has no
+    // chunk whose integrity it could check (`src/core/assets/integrity.ts`).
+    await rewrapOwnIdentities(context);
   } catch {
     // the rotation itself is done
   }

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/guest/orchestrator-handover.request.json",
+  "title": "guest POST /v1/sessions/{id}/orchestrator/handover request",
+  "description": "Request of POST /v1/sessions/{id}/orchestrator/handover: the sealed handover the runner checked, unopened, with the task owner's keys from the verified log (05-runner.md section 17.3).",
+  "type": "object",
+  "properties": {
+    "pairing_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "ct": {
+      "type": "string",
+      "description": "the sealed handover (remote format of ADR-067), b64u",
+      "pattern": "^(?:[A-Za-z0-9_-]{4})*(?:[A-Za-z0-9_-][AQgw]|[A-Za-z0-9_-]{2}[AEIMQUYcgkosw048])?$",
+      "maxLength": 4096
+    },
+    "user_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "user_pub": {
+      "$ref": "../common.json#/$defs/pub_keys"
+    }
+  },
+  "required": [
+    "pairing_id",
+    "ct",
+    "user_id",
+    "user_pub"
+  ],
+  "additionalProperties": false
+}

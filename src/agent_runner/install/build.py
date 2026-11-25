@@ -61,7 +61,9 @@ LOCK = "scripts/macos-package/lock.json"
 REQUIREMENTS = "scripts/macos-package/requirements.lock"
 ENTITLEMENTS = "scripts/macos-package/entitlements"
 VERSIONS = "images/versions.json"
-GOLDEN_PARTS = ("images", "src/agent_guest", "contracts")
+GOLDEN_PARTS = ("images", "src/agent_guest", "contracts", "src/agent_platform", "src/agent_runner", "src/agent_cli")
+"""The golden's sources an own device builds its image from (`vm/golden.py`): the guest, its contracts and the main
+orchestrator's agent tool with what it imports (05-runner.md section 17.4)."""
 PACKAGES = ("agent_runner", "agent_cli")
 LIBRARY = "python/lib/python3.12"
 SITE = LIBRARY + "/site-packages"

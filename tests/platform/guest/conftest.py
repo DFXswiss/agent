@@ -161,6 +161,9 @@ def guest_env(short_tmp: Path, tmp_path: Path, contracts_dir: Path, own_group: s
         "AGENT_GUEST_CLAUDE_INSTALL_FILE": str(install),
         "AGENT_GUEST_BOOT_ID_FILE": str(boot),
         "AGENT_GUEST_CONTRACTS": str(contracts_dir),
+        "AGENT_GUEST_ORCH_SOCKET": str(short_tmp / "orch.sock"),
+        "AGENT_GUEST_ORCH_GROUP": own_group,
+        "AGENT_GUEST_ORCH_MCP_SOCKET": str(short_tmp / "orch-mcp.sock"),
     }
 
 

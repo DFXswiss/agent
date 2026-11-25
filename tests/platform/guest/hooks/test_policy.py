@@ -202,9 +202,17 @@ def test_rule_1_platform_tools_are_allowed(tree: Tree, name: str) -> None:
     assert make(tree).evaluate(f"mcp__platform__{name}", {"file_path": "/etc/shadow"}) == Decision("allow", 1)
 
 
+@pytest.mark.parametrize("name", ["mcp__orchestrator__search", "mcp__orchestrator__run"])
+def test_rule_1_the_orchestrator_tools_are_allowed(tree: Tree, name: str) -> None:
+    """The second server of the main orchestrator's session (05-runner.md section 17.5)."""
+    assert make(tree).evaluate(name, {"args": ["guide"]}) == Decision("allow", 1)
+
+
 @pytest.mark.parametrize(
     "name",
     [
+        "mcp__orchestrator__shell",
+        "mcp__orchestrator__",
         "Bash",
         "PowerShell",
         "Agent",

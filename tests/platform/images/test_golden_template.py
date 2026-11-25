@@ -48,8 +48,24 @@ def versions() -> dict[str, str]:
     return data
 
 
+TOOL_WHEELS = (
+    "anyio",
+    "certifi",
+    "cffi",
+    "cryptography",
+    "h11",
+    "httpcore",
+    "httpx",
+    "idna",
+    "pycparser",
+    "typing_extensions",
+)
+"""The wheels of the main orchestrator's agent tool (05-runner.md section 17.4), each with URL and sha256."""
+
+
 def test_versions_have_exactly_the_pinned_fields(versions: dict[str, str]) -> None:
-    assert set(versions) == VERSION_KEYS
+    wheels = {f"tool_wheel_{name}_{part}" for name in TOOL_WHEELS for part in ("url", "sha256")}
+    assert set(versions) == VERSION_KEYS | wheels
     assert all(isinstance(value, str) and value for value in versions.values())
 
 
