@@ -44,7 +44,9 @@ def clocked(monkeypatch: pytest.MonkeyPatch, steps: list[Callable[[], None]]) ->
     return clock
 
 
-def working_task(tool: Tool, hub: HubFake, account: User, text: str = "Fix the login bug") -> tuple[str, Callable]:
+def working_task(
+    tool: Tool, hub: HubFake, account: User, text: str = "Fix the login bug"
+) -> tuple[str, Callable[..., int]]:
     """A working task with a session and a writer of the session's events."""
     _org, wg, device = assign_device(tool, hub, account)
     task = new_task(tool, wg, text)
