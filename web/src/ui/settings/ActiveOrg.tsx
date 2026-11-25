@@ -30,13 +30,12 @@ export function ActiveOrg({ testId }: { readonly testId: string }) {
     // the names come from the verified logs; a page opened directly has not read them yet
     for (const org of unread.split(' ').filter(Boolean)) app.tasks.refreshLog(org).catch(() => false);
   }, [app, unread]);
-  if (orgs.length === 0) {
+  if (orgs.length === 0)
     return (
       <p className="text-sm text-gray-600" data-testid={`${testId}.none`}>
         {t('settings.no-org')}
       </p>
     );
-  }
   const choose = (org: string) => {
     app.activate(org);
     app.rememberOrg(org);
