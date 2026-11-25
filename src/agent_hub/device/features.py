@@ -22,6 +22,11 @@ announced it (`agent_hub.github.identities.require_feature`, `409 peer_outdated`
 and the platform role `operator` (the hub refuses to append them while an active platform device has not announced it,
 `agent_hub.platform.log`).
 
+`agent.profiles` (KOR-51, ADR-090 section 3): the runner enforces rights profiles (operation types, the work VM and
+browser tools, the reach of reads) from the section `agent_profiles` of the device state. The hub refuses to assign a
+profile to a task while an active device assigned to a workgroup of the org has not announced it
+(`agent_hub.profiles.routes`, `409 peer_outdated`).
+
 `prompt.withdraw` (KOR-46, ADR-083 section 3): the runner withdraws a pending prompt listed in `prompt_queue.withdrawn`
 of `GET /v1/device/state` and reports `session.prompt_withdrawn`. The hub refuses to request a withdrawal from a device
 that has not announced it (`409 peer_outdated`).
@@ -47,6 +52,7 @@ VM_CHOICE = "vm.choice"
 """The runner chooses the VM of each session and names it in `session_transition` (ADR-075 section 4)."""
 GITHUB_IDENTITIES = "github.identities"
 PROMPT_WITHDRAW = "prompt.withdraw"
+AGENT_PROFILES = "agent.profiles"
 MAX_FEATURES = 16
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,31}")
 

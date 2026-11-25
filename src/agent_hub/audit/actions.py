@@ -9,6 +9,10 @@ from __future__ import annotations
 AUDIT_ACTIONS = frozenset(
     {
         "agent.claim",
+        "agent_profile.set",
+        "agent_profile.delete",
+        "task.agent_profile",
+        "read.workgroup.agent_profiles",
         "read.device.github_identity",
         "read.device.github_identities",
         "read.github_identity",

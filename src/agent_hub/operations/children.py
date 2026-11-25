@@ -7,8 +7,10 @@ transition. It writes the audit row `session.requested` (actor: the requesting d
 for the org's browsers, the hint `session.start {session_id}` for the device (whose `GET /v1/device/state` lists the
 child in `sessions`) and the task derivation (`refresh_task`: the task's activity time and `task` frame). The child's
 `github_identity` is the one the registration names, else the parent session's (ADR-078 section 3); its `triggered_by`
-is the operation's (ADR-083 section 2). The model of the child is chosen by the runner (the parent's access kind, or the
-`model_id` the runner allowed). The caller holds the task row (lock order of `agent_hub.sessions.taskstate`).
+is the operation's (ADR-083 section 2); its `agent_profile` the resolved snapshot of the profile the request named
+(ADR-090 section 1; NULL: the child works with its parent's rights). The model of the child is chosen by the runner
+(the parent's access kind, or the `model_id` the runner allowed). The caller holds the task row (lock order of
+`agent_hub.sessions.taskstate`).
 """
 
 from __future__ import annotations
@@ -21,6 +23,8 @@ from uuid import UUID
 import psycopg
 
 from agent_hub.crypto.ids import uuid7
+from agent_hub.profiles.model import Profile
+from agent_hub.profiles.store import snapshot
 from agent_hub.sessions import rows
 from agent_hub.sessions.effects import Effects
 from agent_hub.sessions.lifecycle import AGENT_KIND, START_HINT
@@ -55,14 +59,15 @@ def create_child(
     effects: Effects,
     github_identity: str | None = None,
     triggered_by: UUID | None = None,
+    agent_profile: Profile | None = None,
 ) -> UUID:
     """Create the child session of an accepted `subagent.request` (module docstring); its ID."""
     child = UUID(uuid7(int(now.timestamp() * 1000)))
     connection.execute(
         "INSERT INTO hub.session (id, task_id, org_id, wg_id, owner_id, device_id, vm_id, parent_session_id,"
-        " origin_operation_id, depth, state, agent_kind, created_at, triggered_by, github_identity)"
+        " origin_operation_id, depth, state, agent_kind, created_at, triggered_by, github_identity, agent_profile)"
         " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'requested', %s, %s, %s,"
-        " COALESCE(%s::uuid, (SELECT github_identity FROM hub.session WHERE id = %s)))",
+        " COALESCE(%s::uuid, (SELECT github_identity FROM hub.session WHERE id = %s)), %s)",
         (
             child,
             task.id,
@@ -79,6 +84,7 @@ def create_child(
             triggered_by,
             github_identity,
             parent.id,
+            snapshot(agent_profile),
         ),
     )
     connection.execute(

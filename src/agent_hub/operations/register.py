@@ -28,6 +28,10 @@ registration runs in one transaction:
      (an older runner; `github.request_connection` and `github.list_identities` act with no identity) is denied while
      the session or the task names an identity or a default of the task's workgroup or org exists, so an old runner
      never acts with another account than the chosen one;
+   - H2b the rights profile (ADR-090 section 3; else `denied` with `rights_denied`): the type is allowed by the
+     session's effective profile (`agent_hub.profiles.store.effective`: the task's and every snapshot along the chain
+     of parents; none = every type); for `subagent.request` a `child_profile` resolves in the task's workgroup and is
+     within the requesting session's effective profile;
    - H3 the type is known (`agent_hub.operations.types`) - else `rejected` (`unknown_type`);
    - H4 the type's limits (`agent_hub.operations.limits`) - else `denied` (`limit_exceeded`/`budget_exceeded`); only a
      main session may ask a person: `human.question` / `human.approval` of a subagent (depth > 0) is `denied`
@@ -38,8 +42,9 @@ registration runs in one transaction:
    (`at` = hub time, `by_id` NULL = the hub) and the audit row `operation.<state>` (actor: the device; detail with
    the local check, `github_identity` and `triggered_by`). An accepted `subagent.request` creates the child session
    (`agent_hub.operations.children`; its `github_identity` is the registration's, else the parent session's, its
-   `triggered_by` the registration's, ADR-083 section 2) and
-   answers its ID. A `subagent.request` naming a `github_identity` passes the feature gate of the org first (`409
+   `triggered_by` the registration's, ADR-083 section 2, its `agent_profile` the snapshot of `child_profile`, ADR-090
+   section 1) and answers its ID, and when the registration named a `child_profile` the child's effective profile
+   (`child_profile`). A `subagent.request` naming a `github_identity` passes the feature gate of the org first (`409
    peer_outdated`, nothing stored).
 
 6. The task's attention record is refreshed (`agent_hub.attention.store`, ADR-076; the last lock of the transaction).
@@ -74,6 +79,8 @@ from agent_hub.orgs import rights
 from agent_hub.outbox.base import moment
 from agent_hub.outbox.bodies import OperationErrorCode, Time
 from agent_hub.outbox.handlers_operation import operation_row
+from agent_hub.profiles import model as profile_model
+from agent_hub.profiles import store as profiles
 from agent_hub.sessions.derive import CLOSED, FINAL
 from agent_hub.sessions.effects import Effects
 from agent_hub.sessions.taskstate import TaskRow, lock_task
@@ -112,6 +119,7 @@ class RegistrationRequest(Strict):
     params_event: dict[str, Any]
     github_identity: Uuid7 | None = None
     triggered_by: Uuid7 | None = None
+    child_profile: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_-]{0,39}$")] | None = None
 
     def check_form(self) -> None:
         """The error code comes exactly with `local_check: "rejected"` (the contract's `oneOf`)."""
@@ -188,8 +196,11 @@ def _answer(
     error_code: str | None,
     duplicate_of: UUID | None,
     child: UUID | None,
+    *,
+    with_profile: bool = False,
 ) -> dict[str, Any]:
-    """The response body of a decision."""
+    """The response body of a decision; `child_profile` (the child's effective profile) only for a registration that
+    named one (an older runner never does and would not know the field)."""
     body: dict[str, Any] = {"state": state}
     if state in ("denied", "rejected"):
         body["error_code"] = error_code
@@ -206,6 +217,9 @@ def _answer(
             body["original"]["result_event_id"] = str(original[1])
     elif child is not None:
         body["child_session_id"] = str(child)
+        if with_profile:
+            found = profiles.effective(connection, child)
+            body["child_profile"] = None if found is None else found.as_json()
     return body
 
 
@@ -267,7 +281,8 @@ def _replay(connection: Connection, request: RegistrationRequest, params_event_i
     local_error_matches = request.local_check == "passed" or tuple(decision) == ("rejected", request.error_code)
     if stored != given or not local_error_matches:
         raise HubError("id_conflict")
-    body = _answer(connection, decision[0], decision[1], row[8], children.child_of(connection, operation))
+    child = children.child_of(connection, operation)
+    body = _answer(connection, decision[0], decision[1], row[8], child, with_profile=request.child_profile is not None)
     unchanged()
     return Outcome({**body, "replayed": True})
 
@@ -316,6 +331,17 @@ def _identity_allowed(connection: Connection, request: RegistrationRequest, task
     return chosen == (None, None) and not identities.has_default(connection, task.org_id, task.wg_id)
 
 
+def _profile_allowed(connection: Connection, request: RegistrationRequest, task: TaskRow) -> bool:
+    """H2b (module docstring)."""
+    profile = profiles.effective(connection, request.session_id)
+    if not profile_model.allows(profile, request.type):
+        return False
+    if request.type != SUBAGENT_REQUEST or request.child_profile is None:
+        return True
+    child = profiles.resolve(connection, task.org_id, task.wg_id, request.child_profile)
+    return child is not None and profile_model.within(child, profile)
+
+
 def _refusal(
     connection: Connection,
     request: RegistrationRequest,
@@ -333,7 +359,7 @@ def _refusal(
         return "rejected", request.error_code
     if not rights.can(connection, task.owner_id, rights.WG_WRITE, wg_id=task.wg_id):
         return "denied", "rights_denied"
-    if not _identity_allowed(connection, request, task):
+    if not (_identity_allowed(connection, request, task) and _profile_allowed(connection, request, task)):
         return "denied", "rights_denied"
     if request.type not in OPERATION_TYPES:
         return "rejected", "unknown_type"
@@ -467,8 +493,13 @@ def register(
             effects=outcome.effects,
             github_identity=request.github_identity,
             triggered_by=None if request.triggered_by is None else UUID(request.triggered_by),
+            agent_profile=None
+            if request.child_profile is None
+            else profiles.resolve(connection, task.org_id, task.wg_id, request.child_profile),
         )
-    outcome.body = _answer(connection, state, error_code, duplicate_of, child)
+    outcome.body = _answer(
+        connection, state, error_code, duplicate_of, child, with_profile=request.child_profile is not None
+    )
     outcome.effects.org_frame(task.org_id, "operation", operation_row(connection, operation))
     attention.refresh(connection, task.id, now, outcome.effects)
     return outcome

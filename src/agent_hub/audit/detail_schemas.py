@@ -64,6 +64,22 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["agent"],
     },
+    "agent_profile.delete": {
+        "properties": {
+            "scope": [{"type": "string", "enum": ["org", "wg"]}],
+            "profile": [{"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$"}],
+        },
+        "required": ["scope", "profile"],
+    },
+    "agent_profile.set": {
+        "properties": {
+            "scope": [{"type": "string", "enum": ["org", "wg"]}],
+            "profile": [{"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$"}],
+            "reads": [{"type": "string", "enum": ["task", "workgroup", "all"]}],
+            "operations": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+        },
+        "required": ["scope", "profile", "reads", "operations"],
+    },
     "audit.repeat": {
         "properties": {
             "action": [
@@ -1565,6 +1581,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.user.lookup": {"properties": {}, "required": []},
     "read.whiteboard.history": {"properties": {}, "required": []},
     "read.whiteboards": {"properties": {}, "required": []},
+    "read.workgroup.agent_profiles": {"properties": {}, "required": []},
     "read.workgroup.charges": {"properties": {}, "required": []},
     "read.workgroup.device_candidates": {"properties": {}, "required": []},
     "read.workgroup": {"properties": {}, "required": []},
@@ -1864,6 +1881,13 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "operator_to_platform": [{"type": "boolean"}],
         },
         "required": ["model_access", "model_id", "locale"],
+    },
+    "task.agent_profile": {
+        "properties": {
+            "profile": [{"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$"}, {"type": "null"}],
+            "reads": [{"type": "string", "enum": ["task", "workgroup", "all"]}, {"type": "null"}],
+        },
+        "required": ["profile", "reads"],
     },
     "task.close": {"properties": {"by": [{"type": "string", "enum": ["user", "hub"]}]}, "required": ["by"]},
     "task.create": {

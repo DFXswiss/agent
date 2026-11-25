@@ -11,7 +11,9 @@ for the session (ADR-078 section 3, null without a choice); `triggered_by` who t
 a main session was created for, the triggering person of a child session's `subagent.request`, null when unknown;
 ADR-083 section 2). `interrupted_at` is set while the session's device has failed (ADR-087 section 2, null otherwise;
 an ended session keeps it), `failover_of` names, for a session the hub started on another device after a device
-failure, the lost session it continues (ADR-087 section 3).
+failure, the lost session it continues (ADR-087 section 3). `agent_profile` is the rights profile snapshot of a task
+(for its main sessions) or of a child started with a profile of its own (`{name, operations, reads}`, null without;
+ADR-090 section 1): a child without one works with what its parent has.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ TASK_FIELDS = (
     "main_session_id",
     "title_event_id",
     "github_identity",
+    "agent_profile",
 )
 TASK_COLUMNS = (
     "t.id, t.org_id, t.wg_id, t.owner_id, t.state, t.state_reason, t.created_at, t.state_at, t.last_activity_at,"
@@ -46,7 +49,7 @@ TASK_COLUMNS = (
     " (SELECT s.id FROM hub.session s WHERE s.task_id = t.id AND s.depth = 0 ORDER BY s.created_at DESC, s.id DESC"
     " LIMIT 1),"
     " (SELECT e.id FROM hub.event e WHERE e.task_id = t.id AND e.kind = 'task.meta' ORDER BY e.scope_seq DESC LIMIT 1),"
-    " t.github_identity, t.placement_device_id, t.placement_vm_id"
+    " t.github_identity, t.agent_profile, t.placement_device_id, t.placement_vm_id"
 )
 """The task columns: `TASK_FIELDS`, then the chosen device and VM (ADR-075; `placement` only when one is chosen)."""
 SESSION_FIELDS = (
@@ -77,13 +80,14 @@ SESSION_FIELDS = (
     "triggered_by",
     "interrupted_at",
     "failover_of",
+    "agent_profile",
 )
 SESSION_COLUMNS = (
     "id, task_id, org_id, wg_id, owner_id, device_id, vm_id, parent_session_id, origin_operation_id, depth, state,"
     " state_reason, model_access, model_id, agent_kind, agent_version, estimate_ms, created_at, ready_at,"
     " first_working_at, ended_at, context_restore, context_reason, github_identity, triggered_by,"
     " CASE WHEN interruption_ended_at IS NULL OR interruption_ended_at < interrupted_at THEN interrupted_at END,"
-    " failover_of"
+    " failover_of, agent_profile"
 )
 USAGE_FIELDS = (
     "requests",
