@@ -152,6 +152,19 @@ test('@E2E-66 @needs-vm @needs-workvm the platform browser signs in, downloads, 
   await expect
     .poll(async () => (await vmsOf(second)).map((row) => row.state), { timeout: 120_000 })
     .toEqual(['running']);
+  // the browser answered its start probe (the session row is open) before its VM is stopped by force
+  await expect
+    .poll(
+      async () =>
+        (
+          await runnerStore<{ n: number }>(
+            orchestrator,
+            `SELECT count(*)::int AS n FROM runner.browser_session WHERE task_id = '${uuid(second)}' AND state = 'open'`,
+          )
+        )[0]!.n,
+      { timeout: 120_000 },
+    )
+    .toBe(1);
   const [first] = await vmsOf(second);
   await orchestrator.call('POST', '/runners/workvm/kill', { lima_name: first!.lima_name });
   await expectAnswerInChat(page, 'The browser came back kz63-answer-h7j1k5l9.');
