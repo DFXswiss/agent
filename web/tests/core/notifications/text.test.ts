@@ -334,6 +334,7 @@ describe('model switches (ADR-081 section 5)', () => {
       to: 'subscription',
       until: null,
     });
+    expect(switchedOf({ ref: 'operator:platform:' })).toEqual({ from: 'operator', to: 'platform', until: null });
     for (const ref of [
       null,
       'auto:platform:',

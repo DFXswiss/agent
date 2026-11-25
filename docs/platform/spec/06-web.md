@@ -367,7 +367,7 @@ user).
 Below the resume notice the task page shows the newest switch of the model access of one of its sessions (audit row
 `session.model_switched`, read from `GET /v1/orgs/{org}/audit?action=session.model_switched&task=`): "Model switched:
 Claude subscription → DFX access over OpenRouter (model) · used up until 14:05" (cause `exhausted` with or without
-the time, `unusable`, `released`). It is read when the page opens, when the task or its main session changes state and
+the time, `unusable`, `released`; an operator subscription is named "operator subscription"). It is read when the page opens, when the task or its main session changes state and
 after a reconnect; without a switch, or when the audit cannot be read, nothing is shown.
 
 ### 5.2 Chat (`/o/:org/t/:task`, tab Chat)
@@ -481,7 +481,11 @@ open `workvm.request`; a stopped one (paused session) reads "stopped – starts 
   "Access in X is being updated"; `task.attention`: "Task Y needs your decision" / "Task Y is stuck" with the reason
   from `ref`, KOR-39; `device.needed` to admins: "Workgroup X in Y needs a computer – assign one", to the devices
   screen; `operator.request` to operators, account level: "Organization <id> has used up its credit and requests
-  more" / "… waits for access to the platform's computers", ADR-079); click marks read and navigates
+  more" / "… waits for access to the platform's computers", ADR-079; `model.switched` to the task's owner: "Task Y:
+  model switched: Claude subscription → DFX access over OpenRouter because Claude subscription is used up until
+  14:05" from `ref` = `<from>:<to>:<until or empty>` (access values `subscription`, `operator` – "operator
+  subscription" –, `api_key`, `platform`; a malformed ref: "Task Y: model switched"), to the task, ADR-081 §5); click
+  marks read and navigates
   (`task.attention`: to the situation view entry); "Mark all read".
 - Toasts for live notifications (auto-dismiss 6 s, accessible live region).
 

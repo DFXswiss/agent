@@ -85,6 +85,15 @@ class Limits:
     loaded: bool = False
     readings: dict[str, Reading] = field(default_factory=dict)
     version: int = 0
+    rechecks: dict[str, float] = field(default_factory=dict)
+
+    def recheck(self, name: str, now: float) -> float:
+        """The next try of an own credential that cannot be used right now: `now + RECHECK_S`, kept until it passed,
+        so a wait reports the same time for the whole recheck period."""
+        due = self.rechecks.get(name)
+        if due is None or due <= now:
+            due = self.rechecks[name] = now + RECHECK_S
+        return due
 
     def active(self, key: str, now: float | None = None) -> Limit | None:
         """The `exhausted` row of `key` while its `until` lies ahead, else None."""

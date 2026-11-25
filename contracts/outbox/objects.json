@@ -2044,7 +2044,8 @@
                   "enum": [
                     "subscription",
                     "api_key",
-                    "platform"
+                    "platform",
+                    "operator"
                   ]
                 },
                 "to_access": {
@@ -2052,7 +2053,8 @@
                   "enum": [
                     "subscription",
                     "api_key",
-                    "platform"
+                    "platform",
+                    "operator"
                   ]
                 },
                 "from_model": {
@@ -2412,6 +2414,27 @@
             "body"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "origin_seq": {
+              "$ref": "../common.json#/$defs/positive"
+            },
+            "item_kind": {
+              "type": "string",
+              "const": "session_wait"
+            },
+            "body": {
+              "$ref": "#/$defs/body_session_wait"
+            }
+          },
+          "required": [
+            "origin_seq",
+            "item_kind",
+            "body"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -2652,6 +2675,38 @@
         "org_id",
         "device_id",
         "spent_micro_usd",
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "body_session_wait": {
+      "type": "object",
+      "description": "the model-quota wait of a session (KOR-50, ADR-081 sections 3 and 4): when it continues by itself (null clears the wait) and whether DFX access would be available but the crossing rule bars it; the hub keeps the newest report by `at` and accepts it only from the device the session runs on",
+      "properties": {
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "wait_until": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dfx_choice": {
+          "type": "boolean"
+        },
+        "at": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "session_id",
+        "wait_until",
+        "dfx_choice",
         "at"
       ],
       "additionalProperties": false

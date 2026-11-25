@@ -821,7 +821,14 @@ equivalent (`subscription_equivalent`). Claude Code's own cost fields are never 
   (never while the organization's credit is exhausted). Without any release time (only blocked files): `failed`
   `model_access_unavailable` as before. A new main session starts on the access with the earliest release and is
   suspended before its first prompt; a new subagent session fails with `model_quota_exhausted`.
-- **Running sessions** (reconcile step `model_fallback`, after `billing`, on every desired state and every 5 s): an
+- **Wait reports.** Every wait of a session – a new main session waiting in its start chain as well as a later change
+  of a pause (a new release time, `dfx_choice` set or cleared, the end of the wait with `wait_until: null`) – is sent
+  as the outbox item `session_wait {session_id, wait_until: time|null, dfx_choice, at}` (only to a hub with
+  `model_fallback.api >= 1`); the hub keeps the newest report by `at`, only from the device the session runs on, and
+  derives the task's `quota_wait` / `quota_choice` from it.
+- **Running sessions** (reconcile step `model_fallback`, after `billing`, on every desired state and every 5 s; one
+  run at a time per daemon – a run that starts while another is still working waits for it, so two runs never pause,
+  move or resume the same session concurrently): an
   exhausted operator file is replaced in place by another file of the pool (gateway renewal); a change of the model
   kind pauses the session like a credit pause (`runner.model_pause`, interrupt, suspend under the deliverer's lock)
   and resumes it at once on the newly resolved access; with nothing allowed the session is `suspended` with
@@ -832,7 +839,9 @@ equivalent (`subscription_equivalent`). Claude Code's own cost fields are never 
   work." or "The model quota is available again. Continue the interrupted work."). A subagent session is moved in
   place but never paused (`model_quota_exhausted`). A running session is never moved back; a credit pause comes
   first. Every switch writes the outbox audit `session.model_switched` `{from_access, to_access, from_model, to_model,
-  cause: exhausted|unusable|released, until}`.
+  cause: exhausted|unusable|released, until}`; the access values are `subscription`, `operator` (an operator
+  subscription), `api_key` and `platform`. The hub tells the task's owner with the notification `model.switched`
+  (`ref` = `<from>:<to>:<until or empty>`).
 
 ### 10.8 Quotas of the operator's subscriptions (ADR-081 section 6)
 
@@ -841,6 +850,8 @@ equivalent (`subscription_equivalent`). Claude Code's own cost fields are never 
   [{name, state: usable|exhausted|blocked|deferred|ignored, readable, windows, limited_at, until, fetched_at}]}` – the
   complete snapshot of the device, at most every 60 s and only when something changed; file names only, never a
   token. The own subscription's `quota` item carries the latest observed limit `limited: {at, until, readable}`.
+- Accepted: the file names (labels) of the operator's subscriptions are shown to the members of every organization
+  granted the operator's subscriptions; the operator names the files accordingly (no personal data in a file name).
 - The hub keeps the newest snapshot per device and serves `GET /v1/orgs/{org}/quotas` (03-api.md §4.3): the web shows
   it in the settings section "Model access and quotas" and as the counter of the situation view, the agent tool as
   `agent-platform quotas --org`.
@@ -849,11 +860,17 @@ equivalent (`subscription_equivalent`). Claude Code's own cost fields are never 
 
 - **Issuer**: a platform device whose runner has `AGENT_RUNNER_OPENROUTER_MANAGEMENT_KEY_FILE` (0600, platform
   devices only, never logged or sent) announces `dfx_key_state {issuer: true}`; the hub elects the online issuer with
-  the smallest device ID and lists `dfx_keys.requests` (one per active org device of a non-exhausted organization
-  without a key, only while billing is active) and `dfx_keys.keys` in its device state.
-- **Issuing**: per request the issuer deletes a key left over for the same request (by name), creates one key with
-  `limit` = headroom (name `dfx-` + the first 8 characters of the request ID), seals it with HPKE to the device's
-  `device_kem`, signs the envelope with its device signing key, forgets the key and sends `dfx_key_issued`.
+  the smallest device ID and lists `dfx_keys.requests` (`{request_id, org_id, device_id, device_kem, headroom_usd}`:
+  one per active org device of a non-exhausted organization without a key, only while billing is active; a request
+  without headroom is not listed) and `dfx_keys.keys` in its device state.
+- **Issuing**: per request the issuer deletes a key left over for the same request (by name), creates one key named
+  `dfx-` + the whole request ID (the first characters of a UUIDv7 are its time part and would not tell requests
+  apart) with `limit` = `min(headroom_usd, cap)`, seals it with HPKE to the device's `device_kem`, signs the envelope
+  with its device signing key, forgets the key and sends `dfx_key_issued`. The issuer keeps at most one live key per
+  organization and device: a request for a pair that already has a live key is not answered. It touches only keys
+  whose name starts with `dfx-` (any other key of the provider account is never read, changed or deleted).
+- **Orphan sweep**: keys named `dfx-…` that the hub lists neither as a request nor as a key (left by a crash, a
+  failover or a key the hub forgot) are deleted by the issuer, so no key outlives its listing.
 - **Org device**: accepts the envelope (`dfx_key_held` of its device state) only when the signer is a platform device
   certified in its verified platform log and the header names this device, its KEM key and an organization it serves;
   keeps it sealed in `runner.dfx_key` and opens it only to provision a `platform` session. Its usage items carry the
@@ -863,6 +880,9 @@ equivalent (`subscription_equivalent`). Claude Code's own cost fields are never 
   AGENT_RUNNER_DFX_KEY_MAX_HEADROOM_USD (5))`; `disabled` switches the key off at the provider, `revoke` reads the
   final spend, reports it and deletes the key. The credit pause of ADR-062 §6 acts on an org device's `platform`
   sessions; sessions on own access there are never touched.
+- **Accepted limit**: the hub learns a key's spend only from the issuer's poll, so a key may spend up to its limit
+  between two polls (at most one poll interval of overspend per key, bounded by its headroom) before it is disabled
+  or its limit is lowered; that spend is booked at the next report.
 - Operator subscriptions stay on platform devices; no token of the pool reaches an org device.
 
 ## 11. Credentials, device requests, subscription login (ADR-011)

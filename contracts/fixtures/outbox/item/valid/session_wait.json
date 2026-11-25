@@ -1,0 +1,10 @@
+{
+  "origin_seq": 13,
+  "item_kind": "session_wait",
+  "body": {
+    "session_id": "01930028-0000-7000-8000-000000000028",
+    "wait_until": "2026-11-21T14:05:00.000Z",
+    "dfx_choice": true,
+    "at": "2026-11-21T12:00:00.000Z"
+  }
+}

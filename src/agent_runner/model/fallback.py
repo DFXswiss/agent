@@ -39,6 +39,7 @@ guest; they carry no user text.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from datetime import UTC, datetime
 from typing import Any
@@ -74,7 +75,7 @@ SWITCHED = (
     " {time}. Continue the interrupted work."
 )
 AVAILABLE = "The model quota is available again. Continue the interrupted work."
-LOADED = "_model_fallback_loaded"
+LOCK = "_model_fallback_lock"
 
 
 def sentence(source: str, target: str, until: datetime | None) -> str:
@@ -188,6 +189,8 @@ async def check(deliverer: Any, session: LocalSession) -> bool:
                 from_access=label,
                 from_model=current.model_id,
             )
+            if isinstance(outcome, Wait):
+                await pauses.report(conn, env, session.id, outcome.until, outcome.choice)
             pause = await pauses.get(conn, session.id)
         assert pause is not None
         paused = await _pause_guest(env, current, pause)
@@ -198,7 +201,7 @@ async def check(deliverer: Any, session: LocalSession) -> bool:
 
 async def _end(env: SessionEnv, session_id: str) -> None:
     async with env.transaction() as conn:
-        await pauses.end(conn, session_id, env.wall())
+        await pauses.end(conn, env, session_id)
     _line(env, f"model_pause_ended session_id={session_id}")
 
 
@@ -240,9 +243,11 @@ async def carry_on(deliverer: Any, session: LocalSession, pause: pauses.Pause) -
     """An open pause (module docstring); True while the session holds its prompts."""
     env: SessionEnv = deliverer.env
     waiting = pause.kind == pauses.WAIT
+    outcome = await access.decide(env, desired_of(env, session)) if waiting else None
+    if isinstance(outcome, Wait):
+        await _follow(env, session.id, pause, outcome)
     if await credit.credit_holds(env, session):
         return waiting
-    outcome = await access.decide(env, desired_of(env, session)) if waiting else None
     if not pause.suspended:
         if session.state in RESUMABLE:
             async with env.transaction() as conn:
@@ -262,33 +267,53 @@ async def carry_on(deliverer: Any, session: LocalSession, pause: pauses.Pause) -
                 if current.state not in SUSPENDABLE or not await _pause_guest(env, current, pause):
                     return waiting
     if waiting and not isinstance(outcome, Resolved):
-        if isinstance(outcome, Wait):
-            until = pauses.stamp(outcome.until)
-            if (until, outcome.choice) != (pause.until, pause.dfx_choice):
-                async with env.transaction() as conn:
-                    await pauses.update(conn, session.id, until=until, dfx_choice=outcome.choice)
         return True
     return await _continue(deliverer, session.id, pause)
 
 
+async def _follow(env: SessionEnv, session_id: str, pause: pauses.Pause, outcome: Wait) -> None:
+    """The wait changed (another release time, the DFX choice): the row follows it and the hub is told; an unchanged
+    wait sends nothing (`pauses.report`)."""
+    until = pauses.stamp(outcome.until)
+    async with env.transaction() as conn:
+        if (until, outcome.choice) != (pause.until, pause.dfx_choice):
+            await pauses.update(conn, session_id, until=until, dfx_choice=outcome.choice)
+        await pauses.report(conn, env, session_id, outcome.until, outcome.choice)
+
+
+def run_lock(context: Any) -> asyncio.Lock:
+    """One run at a time per daemon: the reconcile step and the daemon task never overlap."""
+    found = getattr(context, LOCK, None)
+    if isinstance(found, asyncio.Lock):
+        return found
+    created = asyncio.Lock()
+    setattr(context, LOCK, created)
+    return created
+
+
 async def run_once(deliverer: Any) -> None:
-    """One run over the sessions of this device (module docstring)."""
+    """One run over the sessions of this device (module docstring), serialized per daemon (`run_lock`). The sessions
+    it holds replace the held set as a whole; a wait recorded meanwhile by a start or resume (`pauses.pend`) stays held
+    until a run has seen its row."""
     env: SessionEnv = deliverer.env
     context = env.context
     if context is None:
         return
+    async with run_lock(context):
+        await _run(deliverer, env, context)
+
+
+async def _run(deliverer: Any, env: SessionEnv, context: Any) -> None:
     await limits.prune(context)
     async with env.transaction() as conn:
         local = await records.listed(conn)
         open_pauses = {pause.session_id: pause for pause in await pauses.open_pauses(conn)}
-    holding = pauses.holding(context)
-    if not getattr(context, LOADED, False):
-        holding.update(sid for sid, pause in open_pauses.items() if pause.kind == pauses.WAIT)
-        setattr(context, LOADED, True)
+    state = pauses.state_of(context)
+    before = set(state.sessions)
+    held_now: set[str] = set()
     live = {session.id for session in local}
     for session_id in [sid for sid in open_pauses if sid not in live]:
         await _end(env, session_id)
-        holding.discard(session_id)
     for session in local:
         found = open_pauses.get(session.id)
         try:
@@ -297,11 +322,13 @@ async def run_once(deliverer: Any) -> None:
             elif session.state in RUNNING:
                 held = await check(deliverer, session)
             else:
-                continue
+                held = False
         except Exception as exc:
             _line(env, f"model_fallback_failed session_id={session.id} error={type(exc).__name__}")
-            continue
+            held = session.id in before  # unknown: as before
         if held:
-            holding.add(session.id)
-        else:
-            holding.discard(session.id)
+            held_now.add(session.id)
+    state.sessions = held_now
+    state.pending -= set(open_pauses)
+    for session_id in [sid for sid in state.reported if sid not in live]:
+        del state.reported[session_id]

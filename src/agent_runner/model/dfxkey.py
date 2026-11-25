@@ -328,6 +328,12 @@ def org_key(context: Any, org_id: str) -> str | None:
         return None
 
 
+def has_key(context: Any, org_id: str) -> bool:
+    """An accepted envelope of `org_id` is held (no envelope is opened: the availability probe of the model fallback,
+    ADR-081 section 3)."""
+    return org_id in held_keys(context).rows
+
+
 def platform_key(context: Any, org_id: str | None = None) -> str | None:
     """The key of the `platform` access for a session of `org_id` on this device (module docstring)."""
     if context.identity.device.kind == "platform":

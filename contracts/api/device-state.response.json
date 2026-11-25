@@ -536,13 +536,19 @@
                   "device_kem": {
                     "$ref": "../common.json#/$defs/b64u_32",
                     "description": "the X25519 public key of the org device from the hub's device registry"
+                  },
+                  "headroom_usd": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "the limit of the new key (as keys[].headroom_usd); a request without headroom is not listed"
                   }
                 },
                 "required": [
                   "request_id",
                   "org_id",
                   "device_id",
-                  "device_kem"
+                  "device_kem",
+                  "headroom_usd"
                 ],
                 "additionalProperties": false
               },

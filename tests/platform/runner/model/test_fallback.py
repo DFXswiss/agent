@@ -376,8 +376,7 @@ def test_after_a_restart_the_open_waits_hold_their_prompts(store_dsn: str) -> No
         sid = await running(found)
         await mark(found, OWN)
         await fallback.run_once(found.deliverer)
-        pauses.holding(found.context).clear()  # a new daemon
-        delattr(found.context, fallback.LOADED)
+        delattr(found.context, pauses.ATTRIBUTE)  # a new daemon
         delattr(found.context, limits.ATTRIBUTE)
         limits.limits_for(found.context).wall = found.wall
         await fallback.run_once(found.deliverer)

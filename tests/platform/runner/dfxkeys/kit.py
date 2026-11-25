@@ -171,15 +171,19 @@ async def issuer_env(
         config.openrouter_key_file = write_secret(tmp / "platform.key", PLATFORM)
         config.model_upstream_openrouter = started.url
         config.dfx_key_max_headroom_micro_usd = 5_000_000
+        config.dfx_key_max_per_org = 50
         yield Issuing(env, started)
 
 
-def request_entry(request_id: str = REQUEST, *, device: str = ODEV, kem: str | None = None, **extra: Any) -> Json:
+def request_entry(
+    request_id: str = REQUEST, *, device: str = ODEV, kem: str | None = None, org: str = ORG, **extra: Any
+) -> Json:
     return {
         "request_id": request_id,
-        "org_id": ORG,
+        "org_id": org,
         "device_id": pid(device),
         "device_kem": kem if kem is not None else device_keys(device).kem_public,
+        "headroom_usd": COST,
         **extra,
     }
 

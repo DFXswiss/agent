@@ -763,6 +763,7 @@ describe('badge and notifications', () => {
         <MemoryRouter>
           <NotificationText row={row} />
           <NotificationText row={{ ...row, ref: 'platform:api_key:' }} />
+          <NotificationText row={{ ...row, ref: 'operator:platform:' }} />
           <NotificationText row={{ ...row, ref: 'broken' }} />
         </MemoryRouter>,
       ),
@@ -771,6 +772,7 @@ describe('badge and notifications', () => {
     expect(screen.getAllByTestId('notifications.text').map((node) => node.textContent)).toEqual([
       `Task “…”: model switched: Claude subscription → DFX access over OpenRouter because Claude subscription is used up until ${time}`,
       'Task “…”: model switched: DFX access over OpenRouter → API key',
+      'Task “…”: model switched: operator subscription → DFX access over OpenRouter',
       'Task “…”: model switched',
     ]);
   });

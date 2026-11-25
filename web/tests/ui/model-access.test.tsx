@@ -225,6 +225,10 @@ describe('model switch line', () => {
       [{ cause: 'exhausted', until: null, from_model: 'claude-opus' }, 'Claude subscription (claude-opus) → '],
       [{ cause: 'unusable', to_access: 'api_key', to_model: null }, '→ API key · former access could not be used'],
       [
+        { cause: 'exhausted', until: null, from_access: 'operator', to_model: null },
+        'operator subscription → DFX access',
+      ],
+      [
         { cause: 'released', from_access: 'platform', to_access: 'subscription', to_model: null },
         'subscription free again',
       ],
@@ -242,7 +246,7 @@ describe('model switch line', () => {
       throw new HubError('unavailable', 503);
     });
     hello(t);
-    await waitFor(() => expect(t.client.of(`GET /v1/orgs/${t.org}/audit`)).toHaveLength(7));
+    await waitFor(() => expect(t.client.of(`GET /v1/orgs/${t.org}/audit`)).toHaveLength(8));
     expect(screen.getByTestId('task.model-switch')).toHaveAttribute('data-to', 'other');
   });
 

@@ -57,7 +57,7 @@ from typing import Any
 from agent_runner.billing import state as billing
 from agent_runner.credentials import cache
 from agent_runner.errors import RunnerError
-from agent_runner.model import exhaustion, limits, operator, pauses, policy, provision, selection, uncounted
+from agent_runner.model import dfxkey, exhaustion, limits, operator, pauses, policy, provision, selection, uncounted
 from agent_runner.model.limits import Limits
 from agent_runner.model.selection import Choice
 from agent_runner.orgs.db import session as store_session
@@ -242,9 +242,11 @@ def plan(kinds: tuple[str, ...]) -> list[str]:
 # -- the walk over the steps (ADR-081 section 3) ------------------------------------------------------------------
 
 Build = Callable[[], Awaitable[Resolved]]
+PROBE_KEY = "probe"
+"""The key a probe (`decide`) builds with: nothing it builds is ever provisioned."""
 DFX_STEPS = frozenset({OPERATOR, "platform"})
-KIND_OF = {"subscription": "subscription", "api_key": "api_key", OPERATOR: "subscription", "platform": "platform"}
-"""The access kind towards the hub of each label (the operator's pool is reported as `subscription`, ADR-052)."""
+KIND_OF = {"subscription": "subscription", "api_key": "api_key", OPERATOR: OPERATOR, "platform": "platform"}
+"""The access value of the audit `session.model_switched` of each label (the operator's pool as `operator`)."""
 
 
 @dataclass
@@ -306,7 +308,10 @@ async def _own_step(
     known = await _limits(env)
     if isinstance(status, str):
         walk.unusable = True
-        walk.releases.append((_now(env, known) + limits.RECHECK_S, None))
+        recheck = _now(env, known) + limits.RECHECK_S
+        if known is not None:
+            recheck = known.recheck(f"{limits.own_key(desired.owner_id)}:{kind}", recheck - limits.RECHECK_S)
+        walk.releases.append((recheck, None))
         return
     secret, version = status
     choice = _select(env, replace(base, preference=kind, credentials=frozenset({kind})))
@@ -361,8 +366,17 @@ def _dfx_key(env: Any) -> str | None:
     return limits.dfx_key(env.device_id) if env.device_kind == "org" else None
 
 
+def _key_held(env: Any, org_id: str) -> bool:
+    """A key of the `platform` access exists for the organization, without opening a DFX envelope (an org device asks
+    `model.dfxkey.has_key`)."""
+    if env.device_kind == "org" and env.context is not None:
+        return dfxkey.has_key(env.context, org_id)
+    return env.platform_key(org_id) is not None
+
+
 async def _platform_step(env: Any, desired: Desired, base: selection.Request, walk: Walk, *, probe: bool) -> None:
-    key = env.platform_key(desired.org_id)
+    # a probe builds no credential that is ever sent: it only learns whether a key exists
+    key = (PROBE_KEY if _key_held(env, desired.org_id) else None) if probe else env.platform_key(desired.org_id)
     if key is None:
         return
     choice = _select(env, replace(base, preference="platform", platform_key_available=True))
@@ -397,7 +411,7 @@ async def _offered(env: Any, desired: Desired, step: str) -> bool:
     """A `dfx` step that the crossing rule bars would have an access now (the `choice` of a wait)."""
     if step == OPERATOR:
         return await operator.peek(env.context, desired.org_id) is not None
-    return env.platform_key(desired.org_id) is not None and _active(await _limits(env), _dfx_key(env)) is None
+    return _key_held(env, desired.org_id) and _active(await _limits(env), _dfx_key(env)) is None
 
 
 async def walk(env: Any, desired: Desired, *, probe: bool = False) -> Walk:
@@ -548,7 +562,8 @@ async def hold(env: Any, desired: Desired, found: Resolved) -> None:
             from_access=found.label,
             from_model=found.choice.model_id,
         )
-    pauses.holding(env.context).add(desired.session_id)
+        await pauses.report(conn, env, desired.session_id, wait.until, wait.choice)
+    pauses.pend(env.context, desired.session_id)
     _line(
         env,
         f"model_wait session_id={desired.session_id} until={time_text(wait.until)} choice={str(wait.choice).lower()}",

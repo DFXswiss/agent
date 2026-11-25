@@ -114,5 +114,6 @@ ITEM_KINDS = (
     "dfx_key_state",
     "dfx_key_issued",
     "dfx_key_usage",
+    "session_wait",
 )
 """Outbox item kinds in the order of `contracts/enums/outbox-item-kinds.json` (= the CHECK of `runner.outbox`)."""

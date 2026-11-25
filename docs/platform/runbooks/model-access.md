@@ -2,8 +2,8 @@
 
 Used-up subscriptions are passed over within their cost class, waits name their release time, quotas are visible per
 organization, and organization devices can use DFX model access through a limited key of the model provider
-([ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md), [05 §10.7–§10.9](../spec/05-runner.md#107-fallback-exhaustion-and-waits-adr-080-sections-15),
-[12-billing.md §4a](../spec/12-billing.md#4a-case-3-the-provider-key-of-an-org-device-adr-080-7)). Devices are named
+([ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md), [05 §10.7–§10.9](../spec/05-runner.md#107-fallback-exhaustion-and-waits-adr-081-sections-15),
+[12-billing.md §4a](../spec/12-billing.md#4a-case-3-the-provider-key-of-an-org-device-adr-081-7)). Devices are named
 by role only: hub device, platform device (a runner device of kind `platform`), organization device.
 
 ## 1. Release order
@@ -49,7 +49,7 @@ Billing must be active (a price list in force, [credit.md](credit.md)), so that 
    organization's balance over its keys and never gives a key more than this. Restart the hub after a change.
 
 Within a minute the issuer announces itself; for every active organization device of an organization with credit the
-hub lists a request, the issuer creates one limited key per device (name `dfx-<8 characters>`), seals it to that
+hub lists a request, the issuer creates one limited key per device (name `dfx-<request ID>`), seals it to that
 device and forgets it. The organization device then offers `platform` access. Every minute the issuer reads each key's
 spend; the hub books the difference to what it booked before as a `tokens` charge with the factor `platform`.
 

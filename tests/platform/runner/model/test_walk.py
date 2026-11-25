@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from agent_runner.model import access, limits, operator, pauses
+from agent_runner.model import access, dfxkey, limits, operator, pauses
 from agent_runner.model import session_request as model_request
 from agent_runner.model.access import AccessRefused, Resolved, Wait
 from agent_runner.model.limits import EXHAUSTED, Limit
@@ -73,7 +73,7 @@ def test_a_used_up_own_subscription_waits_and_never_crosses_to_dfx_silently(stor
             True,
             "subscription",
         )
-        assert session_id() in pauses.holding(found.context)
+        assert pauses.held(found.context, session_id())
         assert f"runner.model model_wait session_id={session_id()}" in found.log()
         # the task's consent allows the DFX access: the operator's pool
         found.set_desired(state(entry(2, consent=True)))
@@ -169,7 +169,19 @@ def test_the_dfx_key_of_an_org_device_waits_for_its_release(store_dsn: str) -> N
         pause = await found.pause_row(session_id())
         assert pause is not None
         assert (pause.from_access, until(pause)) == ("platform", T0 + limits.DFX_KEY_S)
-        decided = await access.decide(found.kit.session_env, desired(model_access_pref="platform"))
+
+        def never(*_args: object) -> str:
+            raise AssertionError("a probe opens no DFX envelope")
+
+        senv = found.kit.session_env
+        senv.platform_key = never
+        platform = desired(model_access_pref="platform")
+        assert await access.decide(senv, platform) is None  # no accepted envelope held: no DFX access
+        org = desired().org_id
+        dfxkey.held_keys(found.context).rows[org] = dfxkey.Held(org, "key-ref-0001", desired().owner_id, "sealed")
+        assert dfxkey.has_key(found.context, org)
+        assert not dfxkey.has_key(found.context, desired().task_id)
+        decided = await access.decide(senv, platform)
         assert decided == Wait(T0 + limits.DFX_KEY_S, False)
         found.wall.now += limits.DFX_KEY_S
         decided = await access.decide(found.kit.session_env, desired(model_access_pref="platform"))
@@ -221,7 +233,7 @@ def test_a_resume_that_moves_the_session_writes_the_audit(store_dsn: str, tmp_pa
         [audit] = await audits(found)
         assert audit["detail"] == {
             "from_access": "subscription",
-            "to_access": "subscription",
+            "to_access": "operator",
             "from_model": None,
             "to_model": None,
             "cause": "exhausted",

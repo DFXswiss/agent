@@ -9,11 +9,15 @@ knows none of the items and lists no requests).
   `dfx_key_issuer`, so a restart without the key file still withdraws it); a device that never was an issuer sends
   nothing. The hub elects the online issuer with the smallest device ID and lists the work in that device's state
   only.
-- **Requests** (`dfx_keys.requests: [{request_id, org_id, device_id, device_kem}]`, task `dfx_keys`): a request this
-  device answered already (`runner.dfx_key_issued`) is skipped until the hub stops listing it. Otherwise the issuer
-  deletes every key named for the request (a crash between creating a key and committing its item left it behind),
-  creates one key named `dfx-<request_id>` with the limit `min(headroom_usd, cap)` (the request's optional
-  `headroom_usd`, else 0: the first poll of the key sets the limit the hub grants), seals it to `device_kem`
+- **Requests** (`dfx_keys.requests: [{request_id, org_id, device_id, device_kem, headroom_usd}]`, task `dfx_keys`):
+  `runner.dfx_key_issued` keeps every key this device issued until it deleted it. A request answered already is
+  skipped while the hub lists it. A request is refused (logged once, nothing created) while `min(headroom_usd, cap)`
+  is 0 (`no_headroom`; never a key without room), while its device already has a live key the hub does not list with
+  `revoke` (`device_has_key`) and when its organization has `AGENT_RUNNER_DFX_KEY_MAX_PER_ORG` (default 50) live keys
+  that are not being revoked (`org_limit`): a compromised hub cannot make the issuer create keys without bound.
+  Otherwise the issuer deletes every key named for the request (a crash between creating a key and committing its
+  item left it behind), creates one key named `dfx-<request_id>` with the limit `min(headroom_usd, cap)`, seals it to
+  `device_kem`
   (`model.dfxkey.seal_envelope`, signed with this device's signing key), forgets the plaintext and writes the row and
   the item `dfx_key_issued {request_id, org_id, device_id, key_ref, envelope}` in one transaction. The whole request
   ID names the key: its first 8 characters are the time part of a UUIDv7 and are shared by requests made within about
@@ -31,7 +35,13 @@ knows none of the items and lists no requests).
   - otherwise the key is switched on and its limit set to `spent + min(headroom_usd, cap)`, with `cap` =
     `AGENT_RUNNER_DFX_KEY_MAX_HEADROOM_USD` (default 5 USD): a compromised hub cannot raise a limit beyond it.
   A malformed entry is skipped (logged); a malformed headroom counts as 0. A key the provider does not know is logged
-  once per daemon (`key_missing`), not at every poll.
+  once per daemon (`key_missing`), not at every poll. **Only keys named `dfx-...` are touched**: the name is read
+  first (`GET`), and a listed key with another name (the platform key, say - the management key can manage every key
+  of the account) is refused once per daemon (`key_refused reason=foreign`): no report, no change, no delete.
+- **Sweep** (every `POLL_S`, only while the hub lists `dfx_keys` for this device, i.e. it is the elected issuer): a key
+  named `dfx-...` that is neither listed in `keys` nor named for a listed request for `SWEEP_AFTER_S` (10 min) was
+  never delivered or was left by another issuer after a failover; nothing of it was booked, so it is deleted
+  (logged once per key) and its row dropped.
 
 Log lines `runner.dfxkeys ...` carry IDs, key references (the provider's key hash, not a secret), closed reasons and
 amounts, never a key, the management key or an envelope.
@@ -61,6 +71,9 @@ from agent_runner.sync.outbox import get_state, set_state
 from agent_runner.sync.runtime import runtime
 
 POLL_S = 60.0
+SWEEP_AFTER_S = 600.0
+DEFAULT_MAX_PER_ORG = 50
+MAX_LOGGED = 10_000
 STATE_KEY = "dfx_key_issuer"
 DEFAULT_UPSTREAM = "https://openrouter.ai/api"
 NAME_PREFIX = "dfx-"
@@ -100,7 +113,8 @@ def _uuids(raw: Mapping[str, Any], *names: str) -> bool:
 
 
 def parse_request(raw: object) -> Request | None:
-    """A request entry (an optional `headroom_usd` is the initial room), None when malformed."""
+    """A request entry (`headroom_usd` is the initial room; an older hub without it grants none), None when
+    malformed."""
     if not isinstance(raw, Mapping) or not REQUEST_KEYS <= set(raw) <= REQUEST_KEYS | {"headroom_usd"}:
         return None
     if not _uuids(raw, "request_id", "org_id", "device_id"):
@@ -138,6 +152,7 @@ class KeyState:
     reported: int | None = None
     revoked: bool = False
     missing: bool = False
+    foreign: bool = False
 
 
 @dataclass
@@ -148,7 +163,13 @@ class Issuer:
     management: Management
     cap_micro: int
     wall: Callable[[], float] = time.time
+    max_per_org: int = DEFAULT_MAX_PER_ORG
     api: bool = False
+    elected: bool = False
+    logged: set[tuple[str, ...]] = field(default_factory=set)
+    unlisted: dict[str, float] = field(default_factory=dict)
+    """Keys named `dfx-...` the hub does not list: when the sweep first saw them."""
+    sweep_at: float = 0.0
     section: Mapping[str, Any] = field(default_factory=dict)
     announced: bool | None = None
     keys: dict[str, KeyState] = field(default_factory=dict)
@@ -157,6 +178,15 @@ class Issuer:
     def line(self, text: str) -> None:
         self.context.log.write(f"runner.dfxkeys {text}\n")
         self.context.log.flush()
+
+    def once(self, key: tuple[str, ...], text: str) -> None:
+        """Log `text` once per daemon for `key` (the memory is bounded)."""
+        if key in self.logged:
+            return
+        if len(self.logged) >= MAX_LOGGED:
+            self.logged.clear()
+        self.logged.add(key)
+        self.line(text)
 
     async def enqueue(self, conn: Any, kind: str, body: Mapping[str, object]) -> None:
         sync = runtime(self.context)
@@ -174,6 +204,7 @@ class Issuer:
         """Take the issuer's part of a desired state and announce this device (module docstring)."""
         self.api = fallback_api(desired)
         found = desired.get("dfx_keys")
+        self.elected = isinstance(found, Mapping) and self.api
         self.section = found if isinstance(found, Mapping) and self.api else {}
         if not self.api:
             return
@@ -199,25 +230,64 @@ class Issuer:
         async with self.lock:
             if not self.api or self.announced is not True:
                 return
-            await self.requests(now)
-            await self.poll_keys(now)
+            directives = self.directives()
+            await self.requests(now, directives)
+            await self.poll_keys(now, directives)
+            await self.sweep(now, directives)
 
-    async def requests(self, now: float) -> None:
-        listed = [found for found in map(parse_request, _entries(self.section, "requests")) if found is not None]
+    def listed_requests(self) -> list[Request]:
+        return [found for found in map(parse_request, _entries(self.section, "requests")) if found is not None]
+
+    def directives(self) -> list[Directive]:
+        listed = [found for found in map(parse_directive, _entries(self.section, "keys")) if found is not None]
+        skipped = len(_entries(self.section, "keys")) - len(listed)
+        if skipped:
+            self.line(f"keys_invalid count={skipped}")
+        return listed
+
+    async def requests(self, now: float, directives: list[Directive]) -> None:
+        listed = self.listed_requests()
         skipped = len(_entries(self.section, "requests")) - len(listed)
         if skipped:
             self.line(f"requests_invalid count={skipped}")
         async with session(self.context.pool) as conn:
-            cursor = await conn.execute("SELECT request_id::text FROM runner.dfx_key_issued")
-            issued = {str(row[0]) for row in await cursor.fetchall()}
-            gone = sorted(issued - {request.request_id for request in listed})
-            if gone:
-                await conn.execute("DELETE FROM runner.dfx_key_issued WHERE request_id = ANY(%s::uuid[])", (gone,))
+            cursor = await conn.execute(
+                "SELECT request_id::text, org_id::text, device_id::text, key_ref FROM runner.dfx_key_issued"
+            )
+            rows = [(str(a), str(b), str(c), str(d)) for a, b, c, d in await cursor.fetchall()]
+        answered = {row[0] for row in rows}
+        revoking = {directive.key_ref for directive in directives if directive.revoke}
+        live = [(org, device) for _, org, device, key_ref in rows if key_ref not in revoking]
         for request in listed:
-            if request.request_id not in issued:
-                await self.issue(request, now)
+            if request.request_id in answered:
+                continue
+            reason = self.refusal(request, live)
+            if reason is not None:
+                self.once(
+                    ("refused", request.request_id, reason),
+                    f"request_refused request_id={request.request_id} reason={reason}",
+                )
+                continue
+            if await self.issue(request, now):
+                live.append((request.org_id, request.device_id))
 
-    async def issue(self, request: Request, now: float) -> None:
+    def refusal(self, request: Request, live: list[tuple[str, str]]) -> str | None:
+        """Why a request gets no key now (module docstring), None when it may."""
+        if min(request.headroom_micro, self.cap_micro) == 0:
+            return "no_headroom"
+        if (request.org_id, request.device_id) in live:
+            return "device_has_key"
+        if sum(1 for org, _ in live if org == request.org_id) >= self.max_per_org:
+            return "org_limit"
+        return None
+
+    async def forget(self, key_ref: str) -> None:
+        """The key is deleted at the provider: it is no longer live."""
+        async with session(self.context.pool) as conn:
+            await conn.execute("DELETE FROM runner.dfx_key_issued WHERE key_ref = %s", (key_ref,))
+
+    async def issue(self, request: Request, now: float) -> bool:
+        """Create, seal and send one key; True when it was issued."""
         name = NAME_PREFIX + request.request_id
         try:
             for orphan in await self.management.named(name):
@@ -226,7 +296,7 @@ class Issuer:
             meta, secret = await self.management.create(name, min(request.headroom_micro, self.cap_micro))
         except ManagementError as exc:
             self.line(f"issue_failed request_id={request.request_id} reason={exc.reason}")
-            return
+            return False
         header = {
             "request_id": request.request_id,
             "org_id": request.org_id,
@@ -245,7 +315,7 @@ class Issuer:
         del secret
         if not envelope:
             await self.discard(meta.hash, request.request_id)
-            return
+            return False
         body = {
             "request_id": request.request_id,
             "org_id": request.org_id,
@@ -261,6 +331,7 @@ class Issuer:
             await self.enqueue(conn, "dfx_key_issued", body)
         self.notify()
         self.line(f"issued request_id={request.request_id} key_ref={meta.hash} device_id={request.device_id}")
+        return True
 
     async def discard(self, key_ref: str, request_id: str) -> None:
         """A created key that cannot be sealed (an unusable KEM key or key) is deleted again."""
@@ -270,16 +341,12 @@ class Issuer:
         except ManagementError as exc:
             self.line(f"delete_failed key_ref={key_ref} reason={exc.reason}")
 
-    async def poll_keys(self, now: float) -> None:
-        listed = [found for found in map(parse_directive, _entries(self.section, "keys")) if found is not None]
-        skipped = len(_entries(self.section, "keys")) - len(listed)
-        if skipped:
-            self.line(f"keys_invalid count={skipped}")
+    async def poll_keys(self, now: float, listed: list[Directive]) -> None:
         for key_ref in set(self.keys) - {directive.key_ref for directive in listed}:
             del self.keys[key_ref]
         for directive in listed:
             state = self.keys.setdefault(directive.key_ref, KeyState())
-            if now < state.next_at and (state.revoked or state.directive == directive):
+            if state.foreign or (now < state.next_at and (state.revoked or state.directive == directive)):
                 continue
             state.next_at = now + POLL_S
             if state.revoked:
@@ -302,8 +369,13 @@ class Issuer:
             if directive.revoke:
                 await self.report(directive, state.reported or 0, now)
                 state.revoked = True
+                await self.forget(key_ref)
             return
         state.missing = False
+        if not meta.name.startswith(NAME_PREFIX):
+            state.foreign = True
+            self.once(("foreign", key_ref), f"key_refused key_ref={key_ref} reason=foreign")
+            return
         if meta.usage_micro != state.reported or directive.revoke:
             await self.report(directive, meta.usage_micro, now)
             state.reported = meta.usage_micro
@@ -311,6 +383,7 @@ class Issuer:
             if directive.revoke:
                 await self.management.delete(key_ref)
                 state.revoked = True
+                await self.forget(key_ref)
                 self.line(f"revoked key_ref={key_ref} spent_micro_usd={meta.usage_micro}")
                 return
             await self.adjust(directive, meta)
@@ -329,6 +402,32 @@ class Issuer:
         await self.management.patch(directive.key_ref, changes)
         shown = " ".join(f"{name}={str(value).lower()}" for name, value in sorted(changes.items()))
         self.line(f"updated key_ref={directive.key_ref} {shown}")
+
+    async def sweep(self, now: float, directives: list[Directive]) -> None:
+        """Delete the `dfx-...` keys nobody lists any more (module docstring)."""
+        if not self.elected or now < self.sweep_at:
+            return
+        self.sweep_at = now + POLL_S
+        try:
+            keys = [meta for meta in await self.management.listing() if meta.name.startswith(NAME_PREFIX)]
+        except ManagementError as exc:
+            self.once(("sweep_failed", exc.reason), f"sweep_failed reason={exc.reason}")
+            return
+        listed = {directive.key_ref for directive in directives}
+        requested = {NAME_PREFIX + request.request_id for request in self.listed_requests()}
+        candidates = {meta.hash for meta in keys if meta.hash not in listed and meta.name not in requested}
+        self.unlisted = {key_ref: self.unlisted.get(key_ref, now) for key_ref in sorted(candidates)}
+        for key_ref, since in list(self.unlisted.items()):
+            if now - since < SWEEP_AFTER_S:
+                continue
+            try:
+                await self.management.delete(key_ref)
+            except ManagementError as exc:
+                self.once(("sweep_delete", key_ref), f"delete_failed key_ref={key_ref} reason={exc.reason}")
+                continue
+            del self.unlisted[key_ref]
+            await self.forget(key_ref)
+            self.once(("swept", key_ref), f"orphan_swept key_ref={key_ref}")
 
     async def report(self, directive: Directive, spent: int, now: float) -> None:
         body = {
@@ -374,6 +473,7 @@ def issuer_for(context: Any) -> Issuer | None:
             client=options.client if isinstance(options, IssuerOptions) else default_client,
         ),
         cap_micro=getattr(config, "dfx_key_max_headroom_micro_usd", DEFAULT_DFX_KEY_MAX_HEADROOM_MICRO_USD),
+        max_per_org=getattr(config, "dfx_key_max_per_org", DEFAULT_MAX_PER_ORG),
         wall=sync.wall,
     )
     setattr(context, ATTRIBUTE, created)

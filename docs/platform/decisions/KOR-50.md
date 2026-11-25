@@ -1,8 +1,8 @@
 # KOR-50 decisions (model access with fallback, visible quotas, DFX access on own hardware)
 
 Design: [ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md); specification
-[05-runner.md §10.7–§10.9](../spec/05-runner.md#107-fallback-exhaustion-and-waits-adr-080-sections-15),
-[12-billing.md §4a](../spec/12-billing.md#4a-case-3-the-provider-key-of-an-org-device-adr-080-7), runbook
+[05-runner.md §10.7–§10.9](../spec/05-runner.md#107-fallback-exhaustion-and-waits-adr-081-sections-15),
+[12-billing.md §4a](../spec/12-billing.md#4a-case-3-the-provider-key-of-an-org-device-adr-081-7), runbook
 [model-access.md](../runbooks/model-access.md). Rules [E-02](../KONZEPT.md#e-02), [E-04](../KONZEPT.md#e-04),
 [E-05](../KONZEPT.md#e-05), [E-07](../KONZEPT.md#e-07), [E-11](../KONZEPT.md#e-11), [E-19](../KONZEPT.md#e-19);
 [§4 Punkt 4](../KONZEPT.md#k-4-b4), [§6 Punkt 2](../KONZEPT.md#k-6-b2), [Idee 45](../KONZEPT.md#k-idee-45),
@@ -52,3 +52,19 @@ Design: [ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardwar
     A18): this package follows the draft decisions – D11 (DFX access on own hardware through a limited provider key)
     and F2 (operator subscriptions stay on platform devices; no token of the pool ever reaches an organization
     device). They are to be entered there as interpretations before the merge; this package does not edit `KONZEPT.md`.
+12. **Waits reach the hub as their own item.** `session_wait {session_id, wait_until|null, dfx_choice, at}` carries a
+    waiting start (a new main session in its start chain has no `suspended` transition yet) and every later change of
+    a wait; the hub keeps the newest by `at` from the session's device only. A transition alone could not say that a
+    wait changed or ended without a state change.
+13. **The request names its headroom** (`dfx_keys.requests[].headroom_usd`), so a key is created with a limit at once
+    instead of 0 until its first poll; a request without headroom is not listed.
+14. **The issuer bounds its own work**: at most one live key per organization and device, only keys named `dfx-` +
+    the whole request ID are ever touched (other keys of the provider account never), and an orphan sweep deletes
+    `dfx-` keys the hub lists neither as a request nor as a key.
+15. **One fallback run per daemon at a time** (the reconcile step and the timer task of the same name share one
+    lock), so a session is never paused, moved or resumed by two runs at once.
+16. **`operator` is named as an access** in `session.model_switched` and the notification `model.switched`, so the
+    person sees "operator subscription → DFX access" instead of a subscription that is not theirs.
+17. **Accepted limits** (review): a provider key may spend up to its limit between two polls of the issuer (at most
+    one poll interval per key, bounded by its headroom; booked at the next report); the operator's file names are
+    shown as labels to the members of every organization granted the operator's subscriptions.

@@ -116,7 +116,8 @@
         "request_id": "01930070-0000-7000-8000-000000000070",
         "org_id": "01930001-0000-7000-8000-000000000001",
         "device_id": "01930014-0000-7000-8000-000000000014",
-        "device_kem": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU"
+        "device_kem": "BQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQU",
+        "headroom_usd": 4.5
       }
     ],
     "keys": [

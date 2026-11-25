@@ -272,7 +272,7 @@ def test_item_kinds_match_the_table_check() -> None:
     marker = "ADD CONSTRAINT outbox_item_kind_check"
     newest = [path for path in sorted(folder.glob("*.sql")) if marker in path.read_text()][-1]
     widened = newest.read_text().split(marker, 1)[1]
-    later = {"runtime", "operator_quota", "dfx_key_state", "dfx_key_issued", "dfx_key_usage"}
+    later = {"runtime", "operator_quota", "dfx_key_state", "dfx_key_issued", "dfx_key_usage", "session_wait"}
     for kind in ITEM_KINDS:
         assert f"'{kind}'" in widened
         assert f"'{kind}'" in table or kind in later

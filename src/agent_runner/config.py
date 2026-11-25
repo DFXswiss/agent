@@ -89,6 +89,7 @@ NAMES = (
     # DFX model access on own hardware (ADR-081 section 7)
     "OPENROUTER_MANAGEMENT_KEY_FILE",
     "DFX_KEY_MAX_HEADROOM_USD",
+    "DFX_KEY_MAX_PER_ORG",
 )
 # Required for the daemon (`run`, `service install`); commands that never talk to the hub load without them.
 HUB_NAMES = frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"})
@@ -122,6 +123,8 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     "CONTEXT_WORKSPACE_MIB": (4096, 0, 999_999_999),
     "CONTEXT_TRANSCRIPT_MIB": (4096, 1, 999_999_999),
     "CONTEXT_WAIT_SECONDS": (180, 0, 3600),
+    # live DFX keys one issuer creates per organization (ADR-081 section 7): a compromised hub cannot ask for more
+    "DFX_KEY_MAX_PER_ORG": (50, 1, 100_000),
 }
 WORKVM_SIZES = ("standard", "large", "xlarge")
 _URL_DEFAULTS = {
@@ -207,10 +210,13 @@ class Config:
     KOR-47, ADR-078 section 7): an admin's company `github.connect` for it answers with the operator's token."""
     openrouter_management_key_file: Path | None = None
     """The OpenRouter management key file of a DFX key issuer (platform devices only, 0600, never logged or sent;
-    ADR-081 section 7): it can create, read, change and delete the limited per-device keys and nothing else."""
+    ADR-081 section 7). It can create, read, change and delete **every** key of the provider account (the platform key
+    included), which is why it never leaves the issuing device; the issuer touches only keys named `dfx-...`."""
     dfx_key_max_headroom_micro_usd: int = DEFAULT_DFX_KEY_MAX_HEADROOM_MICRO_USD
     """The issuer's own cap of a key's headroom above its spend (`DFX_KEY_MAX_HEADROOM_USD`, default 5 USD), so a
     compromised hub cannot raise a limit beyond it (ADR-081 section 7)."""
+    dfx_key_max_per_org: int = 50
+    """Live keys the issuer keeps per organization at most (`DFX_KEY_MAX_PER_ORG`); further requests are refused."""
 
     @property
     def pg_dir(self) -> Path:
@@ -338,6 +344,7 @@ def load_config(
         operator_github_org=github_org,
         openrouter_management_key_file=management,
         dfx_key_max_headroom_micro_usd=_usd_micro(raw("DFX_KEY_MAX_HEADROOM_USD"), "DFX_KEY_MAX_HEADROOM_USD"),
+        dfx_key_max_per_org=integers["DFX_KEY_MAX_PER_ORG"],
         **_workvm(raw, require, integers, test_mode),
         context_interval_seconds=integers["CONTEXT_INTERVAL_SECONDS"],
         context_cache_mib=integers["CONTEXT_CACHE_MIB"],

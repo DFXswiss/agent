@@ -14,6 +14,7 @@
     "operator_quota",
     "dfx_key_state",
     "dfx_key_issued",
-    "dfx_key_usage"
+    "dfx_key_usage",
+    "session_wait"
   ]
 }

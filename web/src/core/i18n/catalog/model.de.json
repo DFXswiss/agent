@@ -75,6 +75,7 @@
   "switch.line": "Modell gewechselt: {from} → {to}",
   "switch.with-model": "{access} ({model})",
   "switch.access.subscription": "Claude-Abo",
+  "switch.access.operator": "Betreiber-Abo",
   "switch.access.api_key": "API-Key",
   "switch.access.platform": "DFX-Zugang über OpenRouter",
   "switch.cause.exhausted": "erschöpft",

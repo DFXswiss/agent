@@ -1,9 +1,14 @@
 """The attention record of a task as a pure function of its metadata (ADR-076 section 2, normative).
 
-`derive(inputs)` applies the rules in order; the first that applies decides:
+`derive(inputs)` applies the rules in order; the first that applies decides (rule 2a: KOR-50, ADR-081 section 5):
 
 1. task `closed` → `done/closed`;
 2. task `failed` → by the main session's reason (`FAILED_REASONS`, default `blocked/session_failed`; ref: the session);
+2a. the main session is live (not `stopped`/`failed`) and waits for model quota - a wait time set (a `suspended`
+   transition with `model_quota_exhausted` or the item `session_wait`, any live state including the start chain) or
+   `suspended` with that reason → `needs_decision/quota_choice` (ref: the session) when DFX access would be available
+   (`dfx_choice`), the task has no consent yet and the org's credit is not exhausted, else `working/quota_wait`; both
+   carry the session's `wait_until`. A cleared wait gives the other rules back;
 3. the main session is not `working` and the newest operation of its last turn that matters (`Inputs.last_turn`) is
    a. a `human.question` / `human.approval` that `succeeded` (`QUESTION_TYPES`) → `needs_decision/question` /
       `needs_decision/approval`, or
@@ -16,11 +21,7 @@
 5. task `starting` → `working/starting`; task `working` → an operation of the task `accepted` or `executing` →
    `working/operation`, no session of depth 0 `working` but a subagent `working` → `working/subagents`, else
    `working/working`;
-6. task `idle` → a main session `suspended` with `model_quota_exhausted` (ADR-081 section 5) →
-   `needs_decision/quota_choice` (ref: the session) when its transition offered the choice of DFX access
-   (`dfx_choice`), the task has no consent yet and the org's credit is not exhausted, else `working/quota_wait`; both
-   carry the session's `wait_until`. A main session reason of `IDLE_REASONS` → its record (ref: the session);
-   otherwise `done/idle`.
+6. task `idle` → a main session reason of `IDLE_REASONS` → its record (ref: the session); otherwise `done/idle`.
 
 The mappings are tables: a later package adds a reason by a row here and in `contracts/enums/attention.json` (the
 contract test compares `CATEGORIES` with the enum). Only `needs_decision` and `blocked` records carry a ref; a record
@@ -124,6 +125,7 @@ IDLE_REASONS: Mapping[str, Outcome] = MappingProxyType(
 )
 MODEL_QUOTA = "model_quota_exhausted"
 SUSPENDED = "suspended"
+ENDED = frozenset({"stopped", "failed"})
 QUOTA_CHOICE: Outcome = (NEEDS_DECISION, "quota_choice")
 QUOTA_WAIT: Outcome = (WORKING, "quota_wait")
 RUNNING_OPERATION_STATES = ("accepted", "executing")
@@ -221,16 +223,21 @@ def _scheduling(inputs: Inputs) -> Attention:
     return Attention(*(known or (WORKING, "queued")))
 
 
+def waits(main_state: str | None, main_reason: str | None, wait_until: datetime | None) -> bool:
+    """Rule 2a: the main session is live and waits for model quota (module docstring)."""
+    if main_state is None or main_state in ENDED:
+        return False
+    return wait_until is not None or (main_state == SUSPENDED and main_reason == MODEL_QUOTA)
+
+
 def _quota(inputs: Inputs) -> Attention:
-    """Rule 6, a main session waiting for model quota (module docstring)."""
+    """Rule 2a (module docstring)."""
     if inputs.main_dfx_choice and not inputs.model_consent and not inputs.credit_exhausted:
         return Attention(*QUOTA_CHOICE, "session", inputs.main_id, inputs.main_wait_until)
     return Attention(*QUOTA_WAIT, wait_until=inputs.main_wait_until)
 
 
 def _idle(inputs: Inputs) -> Attention:
-    if inputs.main_state == SUSPENDED and inputs.main_reason == MODEL_QUOTA:
-        return _quota(inputs)
     credit = IDLE_REASONS.get(inputs.main_reason or "")
     return Attention(DONE, "idle") if credit is None else _session(credit, inputs.main_id)
 
@@ -253,5 +260,7 @@ def derive(inputs: Inputs) -> Attention:
     if inputs.task_state == "failed":
         reason = inputs.main_reason or inputs.task_reason or ""
         return _session(FAILED_REASONS.get(reason, FAILED_DEFAULT), inputs.main_id)
+    if waits(inputs.main_state, inputs.main_reason, inputs.main_wait_until):
+        return _quota(inputs)
     asked = _last_turn(inputs)
     return _by_state(inputs) if asked is None else asked

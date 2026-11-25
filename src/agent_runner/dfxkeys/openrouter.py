@@ -130,6 +130,10 @@ class Management:
 
     async def named(self, name: str) -> list[KeyMeta]:
         """Every key with the name `name` (all pages, disabled keys included)."""
+        return [meta for meta in await self.listing() if meta.name == name]
+
+    async def listing(self) -> list[KeyMeta]:
+        """Every key of the account (all pages, disabled keys included)."""
         found: list[KeyMeta] = []
         offset = 0
         for _ in range(MAX_PAGES):
@@ -138,7 +142,7 @@ class Management:
                 raise ManagementError("invalid")
             if not page:
                 break
-            found.extend(meta for meta in map(parse_key, page) if meta.name == name)
+            found.extend(map(parse_key, page))
             offset += len(page)
         return found
 

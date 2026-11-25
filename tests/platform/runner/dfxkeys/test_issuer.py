@@ -62,6 +62,11 @@ def provider(started: ModelDouble, key_ref: str) -> dict[str, Any]:
     return found.document()
 
 
+def key_calls(started: ModelDouble, key_ref: str) -> int:
+    """Requests the double received for one key (`GET`, `PATCH`, `DELETE /v1/keys/{key_ref}`)."""
+    return sum(1 for entry in started.exchanges if entry["path"] == f"/v1/keys/{key_ref}")
+
+
 def issuer(issuing: Issuing) -> Issuer:
     found = issuer_for(issuing.context)
     assert found is not None
@@ -84,7 +89,7 @@ async def issue(found: Issuer, issuing: Issuing, started: ModelDouble) -> dict[s
         "envelope": issued["envelope"],
     }
     assert provider(started, key_ref)["name"] == f"dfx-{REQUEST}"
-    assert provider(started, key_ref)["limit"] == 0  # no room before the hub grants it
+    assert provider(started, key_ref)["limit"] == COST  # the room the request grants
     # the hub still lists the request until the item is pushed: nothing is issued twice
     await found.observe(issuer_state([request_entry()]))
     await found.tick(NOW + 5)
@@ -103,33 +108,34 @@ async def use(org: Any, issued: dict[str, Any], started: ModelDouble) -> tuple[s
     assert sub == secret.secret
     body = provision.platform_credential(key=sub, upstream=started.url, catalog=load_catalog(None), budget=None)
     assert body["auth_value"] == f"Bearer {sub}"
-    assert chat(started, sub) == 402  # limit 0 until the first poll
+    assert chat(started, sub) == 200
+    assert chat(started, sub) == 402  # the key's limit is reached until the issuer raises it
     return sub, body
 
 
 async def measure(found: Issuer, issuing: Issuing, started: ModelDouble, key_ref: str, sub: str) -> None:
-    """The first poll reports 0 and sets the limit; spend is reported cumulatively; the cap bounds the room."""
+    """The first poll reports the spend and sets the limit; spend is reported cumulatively; the cap bounds the room."""
     await found.observe(issuer_state([], [key_entry(key_ref, headroom=1.0)]))
     await found.tick(NOW + 10)
-    assert provider(started, key_ref)["limit"] == 1.0
+    assert provider(started, key_ref)["limit"] == COST + 1.0
     assert chat(started, sub) == 200
     assert chat(started, sub) == 200
     await found.tick(NOW + 30)  # not due
     await found.tick(NOW + 70)
-    assert provider(started, key_ref)["limit"] == 2 * COST + 1.0
+    assert provider(started, key_ref)["limit"] == 3 * COST + 1.0
     # a hub that grants more than the issuer's cap gets the cap (5 USD)
     await found.observe(issuer_state([], [key_entry(key_ref, headroom=100)]))
     await found.tick(NOW + 71)  # the entry changed: polled at once
-    assert provider(started, key_ref)["limit"] == 2 * COST + 5.0
+    assert provider(started, key_ref)["limit"] == 3 * COST + 5.0
     await found.tick(NOW + 131)  # due, but nothing changed: no report, no update
-    assert provider(started, key_ref)["limit"] == 2 * COST + 5.0
+    assert provider(started, key_ref)["limit"] == 3 * COST + 5.0
     usage = await issuing.items("dfx_key_usage")
-    assert [item["spent_micro_usd"] for item in usage] == [0, int(2 * COST * MICRO)]
+    assert [item["spent_micro_usd"] for item in usage] == [int(COST * MICRO), int(3 * COST * MICRO)]
     assert usage[1] == {
         "key_ref": key_ref,
         "org_id": ORG,
         "device_id": pid(ODEV),
-        "spent_micro_usd": 500_000,
+        "spent_micro_usd": 750_000,
         "at": time_text(NOW + 70),
     }
 
@@ -149,17 +155,17 @@ async def disable_and_revoke(found: Issuer, issuing: Issuing, started: ModelDoub
     await found.tick(NOW + 74)
     assert started.keys.documents() == []
     spent = [item["spent_micro_usd"] for item in await issuing.items("dfx_key_usage")]
-    assert spent == [0, 500_000, 750_000]
+    assert spent == [250_000, 750_000, 1_000_000]
     # the hub lists the key until it processed that report: the last spend is repeated every 60 s with a fresh
     # `at`, without calling the provider and without logging
     log = issuing.env.log()
-    calls = len(started.exchanges)
+    calls = key_calls(started, key_ref)
     await found.tick(NOW + 100)  # not due
     assert len(await issuing.items("dfx_key_usage")) == 3
     await found.tick(NOW + 134)
-    assert len(started.exchanges) == calls
+    assert key_calls(started, key_ref) == calls
     repeated = (await issuing.items("dfx_key_usage"))[-1]
-    assert (repeated["spent_micro_usd"], repeated["at"]) == (750_000, time_text(NOW + 134))
+    assert (repeated["spent_micro_usd"], repeated["at"]) == (1_000_000, time_text(NOW + 134))
     assert issuing.env.log() == log
     await found.observe(issuer_state())
     await found.tick(NOW + 300)
@@ -334,12 +340,12 @@ def test_provider_failures_are_logged_and_retried(store_dsn: str, tmp_path: Path
                 # known spend (none in this daemon: 0), so the hub can close it; then repeated without provider calls
                 usage = await issuing.items("dfx_key_usage")
                 assert (usage[-1]["key_ref"], usage[-1]["spent_micro_usd"]) == ("g" * 64, 0)
-                calls = len(started.exchanges)
+                calls = key_calls(started, "f" * 64), key_calls(started, "g" * 64)
                 await found.tick(NOW + 300)
                 after = issuing.env.log()
                 assert after.count(f"key_missing key_ref={'f' * 64}") == 1  # logged once, not at every poll
                 assert after.count(f"key_missing key_ref={'g' * 64}") == 1
-                assert len(started.exchanges) == calls + 1  # only the unrevoked key is read again
+                assert (key_calls(started, "f" * 64), key_calls(started, "g" * 64)) == (calls[0] + 1, calls[1])
                 assert [u["key_ref"] for u in await issuing.items("dfx_key_usage")][-1] == "g" * 64
 
     asyncio.run(main())

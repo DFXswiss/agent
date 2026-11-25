@@ -75,3 +75,16 @@ the outbox audit `session.model_switched`, the task's owner (while they read the
 content-free notification with `org_id`, `wg_id`, `task_id` of the session's task and `ref` =
 `<from_access>:<to_access>:<until or empty>` (a new alternative of `ref`). Texts are the web's (code + metadata
 only). An older web shows an unknown kind with its generic text.
+
+## Review additions
+
+- Outbox item kind `session_wait` (`enums/outbox-item-kinds.json`, `outbox/session_wait.json`,
+  `outbox/objects.json#/$defs/body_session_wait`, `audit/outbox.rejected.json`): `{session_id, wait_until: time|null,
+  dfx_choice, at}` - the model-quota wait of a session in any live state (also a new main session in its start
+  chain, ADR-081 section 3); `null` clears it. The hub keeps the newest report by `at`, only from the device the
+  session runs on; a main session with a wait gives the task `quota_choice` / `quota_wait`. Sent only when the device
+  state carries `model_fallback.api >= 1`.
+- `dfx_keys.requests[]` gains the required `headroom_usd` (computed as for the keys); a request without headroom is
+  not listed.
+- `operator` is a further access value of `session.model_switched` (`from_access`, `to_access`) and of the `ref` of
+  `model.switched`.

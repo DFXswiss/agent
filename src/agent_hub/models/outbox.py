@@ -7,6 +7,11 @@ handlers claimed with `BASE_KINDS`, ADR-037).
 - `dfx_key_state` (platform devices only): `issuer: true` enters the device in `hub.dfx_issuer`, `false` removes it
   (`agent_hub.models.dfx.issuer` elects among them).
 - `dfx_key_issued`, `dfx_key_usage` (platform devices only): `agent_hub.models.dfx.issued` and `usage_booked`.
+- `session_wait` (`device:session`: the session must run on the pushing device, else `404 not_found` /
+  `403 forbidden`): the model-quota wait of a session in any live state (ADR-081 sections 3 and 4) - `wait_until`
+  (null clears the wait) and `dfx_choice`; a report older than the stored change (`session.wait_at`) changes
+  nothing. A change derives the task again (its attention record shows `quota_wait` / `quota_choice` while its main
+  session waits).
 - `audit` (an extension after the outbox area's handler): a stored `session.model_switched` notifies the task's
   owner (`agent_hub.notifications.rules.switch_rule`, published after the commit).
 - `usage` (an extension after the usage and billing handlers): the provider cost of a request an **org device** made
@@ -25,8 +30,9 @@ from psycopg.types.json import Jsonb
 
 from agent_hub.models import dfx
 from agent_hub.notifications import rules
-from agent_hub.outbox.base import Handler, ItemContext, moment
-from agent_hub.outbox.bodies import AuditBody, DfxKeyStateBody, OperatorQuotaBody, UsageBody
+from agent_hub.outbox.base import Handler, ItemContext, moment, session_on_device
+from agent_hub.outbox.bodies import AuditBody, DfxKeyStateBody, OperatorQuotaBody, SessionWaitBody, UsageBody
+from agent_hub.sessions.taskstate import Actor, TaskRow, lock_task, refresh_task
 
 UPSERT_SNAPSHOT = (
     "INSERT INTO hub.operator_quota (device_id, at, snapshot, received_at) VALUES (%s, %s, %s, %s)"
@@ -76,6 +82,22 @@ def switch_notice(item: ItemContext, body: AuditBody) -> None:
     item.after.append(lambda: rules.publish_rows(rows))
 
 
+def session_wait(item: ItemContext, body: SessionWaitBody) -> None:
+    """Store the wait of a session (module docstring)."""
+    _org, _wg, task_id, session = session_on_device(item, body.session_id)
+    task = cast(TaskRow, lock_task(item.connection, task_id))
+    until = None if body.wait_until is None else moment(body.wait_until)
+    choice = body.dfx_choice and until is not None
+    changed = item.connection.execute(
+        "UPDATE hub.session SET wait_until = %s, dfx_choice = %s, wait_at = %s WHERE id = %s"
+        " AND (wait_at IS NULL OR wait_at <= %s) AND (wait_until, dfx_choice) IS DISTINCT FROM (%s::timestamptz, %s)"
+        " RETURNING id",
+        (until, choice, moment(body.at), session, moment(body.at), until, choice),
+    ).fetchone()
+    if changed is not None:
+        refresh_task(item.connection, task, item.now, Actor("device", item.device), item.effects)
+
+
 HANDLERS: Mapping[str, Handler] = {
     "operator_quota": operator_quota,
     "dfx_key_state": dfx_key_state,
@@ -83,6 +105,7 @@ HANDLERS: Mapping[str, Handler] = {
     "dfx_key_usage": dfx.usage_booked,
     "usage": key_cost,
     "audit": switch_notice,
+    "session_wait": session_wait,
 }
-BASE_KINDS = frozenset({"operator_quota", "dfx_key_state", "dfx_key_issued", "dfx_key_usage"})
+BASE_KINDS = frozenset({"operator_quota", "dfx_key_state", "dfx_key_issued", "dfx_key_usage", "session_wait"})
 """This area's handlers are the base handlers of these kinds (`agent_hub.outbox.chains`, ADR-037)."""

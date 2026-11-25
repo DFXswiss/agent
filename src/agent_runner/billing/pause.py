@@ -77,7 +77,7 @@ def charged(env: SessionEnv, session: LocalSession) -> bool:
 
 def deferred(env: SessionEnv, session: LocalSession) -> bool:
     """A follow-up must not resume the session now (module docstring)."""
-    if session.id in model_pauses.holding(env.context):
+    if model_pauses.held(env.context, session.id):
         return True
     return charged(env, session) and state.exhausted(env.desired, session.org_id)
 
@@ -191,7 +191,7 @@ async def continue_after_credit(
         )
         pauses = await cursor.fetchall()
     for session_id, org_id, interrupted, paused_at in pauses:
-        if state.exhausted(desired, org_id) or session_id in model_pauses.holding(env.context):
+        if state.exhausted(desired, org_id) or model_pauses.held(env.context, session_id):
             continue
         async with lock(session_id):
             await _continue(env, resumer, session_id, interrupted, paused_at)
@@ -221,7 +221,7 @@ async def _continue(env: SessionEnv, resumer: Any, session_id: str, interrupted:
             "UPDATE runner.credit_pause SET resumed_at = %s WHERE session_id = %s",
             (datetime.fromtimestamp(env.wall(), UTC), session_id),
         )
-        await model_pauses.end(conn, session_id, env.wall())  # one continuation for both pauses
+        await model_pauses.end(conn, env, session_id)  # one continuation for both pauses
 
 
 async def enforce(deliverer: Any, desired: Mapping[str, Any] | None) -> None:

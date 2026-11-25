@@ -39,6 +39,7 @@ ITEM_KINDS = (
     "dfx_key_state",
     "dfx_key_issued",
     "dfx_key_usage",
+    "session_wait",
 )
 """A copy of `contracts/enums/outbox-item-kinds.json` (a test compares them)."""
 OUTBOX_AUDIT_ACTIONS = (
@@ -111,6 +112,7 @@ ItemKind = Literal[
     "dfx_key_state",
     "dfx_key_issued",
     "dfx_key_usage",
+    "session_wait",
 ]
 Time = Annotated[
     str,
@@ -419,6 +421,15 @@ class DfxKeyUsageBody(Strict):
     at: Time
 
 
+class SessionWaitBody(Strict):
+    """`session_wait` (KOR-50, ADR-081 sections 3 and 4): the model-quota wait of a session (null clears it)."""
+
+    session_id: Uuid7
+    wait_until: Time | None
+    dfx_choice: bool
+    at: Time
+
+
 class MetricSample(Strict):
     """One raw metric sample (02-data-model.md section 2.8)."""
 
@@ -528,7 +539,7 @@ class OperatorGithubUsers(Strict):
     removed: Count
 
 
-ModelAccessKind = Literal["subscription", "api_key", "platform"]
+ModelAccessKind = Literal["subscription", "api_key", "platform", "operator"]
 
 
 class ModelSwitched(Strict):
@@ -613,6 +624,7 @@ BODIES: dict[str, type[Strict]] = {
     "dfx_key_state": DfxKeyStateBody,
     "dfx_key_issued": DfxKeyIssuedBody,
     "dfx_key_usage": DfxKeyUsageBody,
+    "session_wait": SessionWaitBody,
 }
 
 

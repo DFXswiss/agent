@@ -75,8 +75,8 @@ export interface Message {
   readonly switched?: ModelSwitched;
 }
 
-/** The access kinds a session runs on (`model_access` of the contracts). */
-export const SWITCH_ACCESSES = ['subscription', 'api_key', 'platform'];
+/** The access kinds a switch names: those of `model_access` and `operator` (an operator subscription, ADR-081). */
+export const SWITCH_ACCESSES = ['subscription', 'operator', 'api_key', 'platform'];
 
 export interface ModelSwitched {
   readonly from: string;

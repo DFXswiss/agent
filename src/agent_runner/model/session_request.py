@@ -20,7 +20,7 @@ from agent_runner.sessions.records import LocalSession
 
 
 async def amend(context: Any, session: LocalSession, request: dict[str, Any]) -> None:
-    if session.id not in pauses.holding(context):
+    if not pauses.held(context, session.id):
         return
     initial = request.pop("initial_prompt", None)
     if not isinstance(initial, Mapping):

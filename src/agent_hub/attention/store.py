@@ -34,7 +34,6 @@ import psycopg
 
 from agent_hub.attention.derive import (
     BLOCKING_CODES,
-    MODEL_QUOTA,
     OCCASIONS,
     QUESTION_TYPES,
     QUOTA_CHOICE,
@@ -42,11 +41,11 @@ from agent_hub.attention.derive import (
     REFUSED_STATES,
     RUNNING_OPERATION_STATES,
     SUCCEEDED,
-    SUSPENDED,
     Attention,
     Inputs,
     Operation,
     derive,
+    waits,
 )
 from agent_hub.audit.chain import AUDIT_LOCK
 from agent_hub.billing import credit
@@ -156,8 +155,8 @@ _NO_PROMPT = datetime.fromisoformat("0001-01-01T00:00:00+00:00")
 
 def _credit_exhausted(connection: Connection, inputs: tuple[Any, ...], now: datetime) -> bool:
     """Whether the org's credit is exhausted - read only for a main session waiting for model quota."""
-    main_state, main_reason, org_id = inputs
-    if main_state != SUSPENDED or main_reason != MODEL_QUOTA:
+    main_state, main_reason, wait_until, org_id = inputs
+    if not waits(main_state, main_reason, wait_until):
         return False
     return credit.exhausted(connection, org_id, now)
 
@@ -199,7 +198,7 @@ def read_inputs(connection: Connection, task_id: UUID | str, now: datetime) -> R
         main_wait_until=wait_until,
         main_dfx_choice=bool(dfx_choice),
         model_consent=bool(consent),
-        credit_exhausted=_credit_exhausted(connection, (main_state, main_reason, org_id), now),
+        credit_exhausted=_credit_exhausted(connection, (main_state, main_reason, wait_until, org_id), now),
     )
     return Read(inputs, int(total), int(active), state_at)
 

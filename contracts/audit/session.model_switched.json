@@ -10,7 +10,8 @@
       "enum": [
         "subscription",
         "api_key",
-        "platform"
+        "platform",
+        "operator"
       ]
     },
     "to_access": {
@@ -18,7 +19,8 @@
       "enum": [
         "subscription",
         "api_key",
-        "platform"
+        "platform",
+        "operator"
       ]
     },
     "from_model": {

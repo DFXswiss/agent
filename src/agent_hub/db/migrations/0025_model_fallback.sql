@@ -19,8 +19,10 @@
 -- - `charge`: a booking of a per-device key splits one outbox item into several rows (`part`, unique with the item);
 --   the share no session reported stays with the organization and has no workgroup, task or session (`tokens`
 --   only). `charge_daily` keeps such a share under the nil workgroup ID (`agent_hub.billing.outbox.NO_WG`).
--- - The outbox items `operator_quota`, `dfx_key_state`, `dfx_key_issued` and `dfx_key_usage` get receipts like every
---   other kind.
+-- - `session.wait_at`: the device time of the latest change of the wait (a transition or the item `session_wait`);
+--   an older `session_wait` changes nothing.
+-- - The outbox items `operator_quota`, `dfx_key_state`, `dfx_key_issued`, `dfx_key_usage` and `session_wait` get
+--   receipts like every other kind.
 
 ALTER TABLE hub.user_settings ADD COLUMN fallback_own_to_dfx boolean NOT NULL DEFAULT false;
 ALTER TABLE hub.user_settings ADD COLUMN fallback_operator_to_platform boolean NOT NULL DEFAULT true;
@@ -29,6 +31,7 @@ ALTER TABLE hub.task ADD COLUMN model_consent boolean NOT NULL DEFAULT false;
 
 ALTER TABLE hub.session ADD COLUMN wait_until timestamptz NULL;
 ALTER TABLE hub.session ADD COLUMN dfx_choice boolean NOT NULL DEFAULT false;
+ALTER TABLE hub.session ADD COLUMN wait_at timestamptz NULL;
 
 ALTER TABLE hub.task_attention ADD COLUMN wait_until timestamptz NULL;
 
@@ -103,7 +106,7 @@ ALTER TABLE hub.notification ADD CONSTRAINT notification_kind_check CHECK (kind 
 ALTER TABLE hub.outbox_receipt DROP CONSTRAINT outbox_receipt_item_kind_check;
 ALTER TABLE hub.outbox_receipt ADD CONSTRAINT outbox_receipt_item_kind_check CHECK (item_kind IN (
   'event', 'session_transition', 'vm_state', 'operation_transition', 'usage', 'quota', 'metrics', 'audit', 'wrap',
-  'runtime', 'operator_quota', 'dfx_key_state', 'dfx_key_issued', 'dfx_key_usage'));
+  'runtime', 'operator_quota', 'dfx_key_state', 'dfx_key_issued', 'dfx_key_usage', 'session_wait'));
 
 REVOKE ALL ON hub.quota_limit, hub.operator_quota, hub.dfx_issuer, hub.dfx_key, hub.dfx_key_cost FROM PUBLIC;
 GRANT SELECT, INSERT, UPDATE, DELETE ON hub.quota_limit, hub.operator_quota, hub.dfx_issuer, hub.dfx_key,

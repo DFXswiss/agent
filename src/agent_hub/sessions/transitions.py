@@ -13,10 +13,12 @@ caller's audit rows (lock order of `agent_hub.sessions.taskstate`). It
 4. appends `session_transition` (`at` = device clock, `received_at` = hub clock, `reported_by`), updates the session
    (`state`, `state_reason`, `ready_at` = receive time of the first `prompt_delivering`, `first_working_at` = receive
    time of the first `working`, `ended_at` for `stopped`/`failed`, reported `agent_version`/`model_access`/
-   `model_id`; the wait of a session suspended with `model_quota_exhausted`: `wait_until` and `dfx_choice`, KOR-50,
-   ADR-081 section 4 - every other transition clears them), writes the audit row `session.<state>` and derives the
-   task (`refresh_task`); the current state reported again with the same reason and another wait updates only the
-   wait and derives the task again (the attention record carries the wait);
+   `model_id`; the model-quota wait, KOR-50, ADR-081 section 4: a `suspended` transition with
+   `model_quota_exhausted` stores the reported `wait_until` and `dfx_choice`, leaving such a pause or ending the
+   session clears them, every other transition keeps a wait the item `session_wait` set; `wait_at` is the device
+   time of the change), writes the audit row `session.<state>` and derives the task (`refresh_task`); the same
+   quota pause reported again with another wait updates only the wait and derives the task again (the attention
+   record carries the wait);
 5. records the `session` frame (row + transition), the `task` frame and the signal `task.state` in `Applied.effects`;
 6. after a `stopped`: lets `agent_hub.sessions.prompts.carry_over` start the next main session for the prompts the
    ended one did not deliver (KOR-11); for a `failed` with `capacity_exhausted` (the device had no free VM slot):
@@ -44,6 +46,7 @@ from agent_hub.sessions import model_retry, prompts, retry, rows
 from agent_hub.sessions.derive import (
     ALLOWED,
     FAILED,
+    FINAL,
     REFUSED,
     SAME,
     STATES,
@@ -82,6 +85,8 @@ MODEL_ACCESS = frozenset({"subscription", "api_key", "platform"})
 MODEL_QUOTA = "model_quota_exhausted"
 """The reason of a session paused because no allowed model access is left (ADR-081 section 4)."""
 NO_WAIT: tuple[datetime | None, bool] = (None, False)
+_CLEARS = f"(%s OR (state = '{SUSPENDED}' AND state_reason = '{MODEL_QUOTA}'))"
+"""SQL: the transition ends the session (parameter) or leaves a quota pause (the row's old values)."""
 _ERROR_CODE_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 
@@ -150,7 +155,7 @@ def record(
     """Store one allowed transition of a locked session of a locked task (module docstring, step 4-5); `derive` False
     leaves the task derivation to the caller."""
     reported = details or {}
-    wait_until, dfx_choice = waiting(state, reason, wait)
+    sets, ends = state == SUSPENDED and reason == MODEL_QUOTA, state in FINAL
     connection.execute(
         "INSERT INTO hub.session_transition (session_id, seq, state, reason, at, received_at, reported_by) VALUES"
         " (%s, (SELECT COALESCE(MAX(seq), 0) + 1 FROM hub.session_transition WHERE session_id = %s), %s, %s, %s, %s,"
@@ -163,8 +168,10 @@ def record(
         " first_working_at = CASE WHEN %s = 'working' THEN COALESCE(first_working_at, %s) ELSE first_working_at END,"
         " ended_at = CASE WHEN %s IN ('stopped', 'failed') THEN %s ELSE ended_at END,"
         " agent_version = COALESCE(%s, agent_version), model_access = COALESCE(%s, model_access),"
-        " model_id = COALESCE(%s, model_id), wait_until = %s, dfx_choice = %s WHERE id = %s"
-        " RETURNING model_access, model_id",
+        " model_id = COALESCE(%s, model_id),"
+        f" wait_until = CASE WHEN %s THEN %s::timestamptz WHEN {_CLEARS} THEN NULL ELSE wait_until END,"
+        f" dfx_choice = CASE WHEN %s THEN %s WHEN {_CLEARS} THEN false ELSE dfx_choice END,"
+        f" wait_at = CASE WHEN %s OR {_CLEARS} THEN %s ELSE wait_at END WHERE id = %s RETURNING model_access, model_id",
         (
             state,
             reason,
@@ -177,8 +184,15 @@ def record(
             reported.get("agent_version"),
             reported.get("model_access"),
             reported.get("model_id"),
-            wait_until,
-            dfx_choice,
+            sets,
+            wait[0],
+            ends,
+            sets,
+            wait[1],
+            ends,
+            sets,
+            ends,
+            at,
             session.id,
         ),
     ).fetchone()
@@ -202,11 +216,6 @@ def record(
         refresh_task(connection, task, received_at, actor, effects)
 
 
-def waiting(state: str, reason: str | None, wait: tuple[datetime | None, bool]) -> tuple[datetime | None, bool]:
-    """The stored wait of a transition: the reported one for `suspended` with `model_quota_exhausted`, else none."""
-    return wait if state == SUSPENDED and reason == MODEL_QUOTA else NO_WAIT
-
-
 def _rewait(
     connection: Connection,
     task: TaskRow,
@@ -214,16 +223,19 @@ def _rewait(
     reason: str | None,
     *,
     wait: tuple[datetime | None, bool],
+    at: datetime,
     received_at: datetime,
     actor: Actor,
 ) -> Applied:
-    """The current state again: a changed wait of the same reason is stored and the task derived again."""
+    """The current state again: a changed wait of the same quota pause is stored and the task derived again."""
     applied = Applied(changed=False, state=session.state)
-    wait_until, dfx_choice = waiting(session.state, reason, wait)
+    if session.state != SUSPENDED or reason != MODEL_QUOTA:
+        return applied
+    wait_until, dfx_choice = wait
     changed = connection.execute(
-        "UPDATE hub.session SET wait_until = %s, dfx_choice = %s WHERE id = %s AND state_reason IS NOT DISTINCT FROM %s"
+        "UPDATE hub.session SET wait_until = %s, dfx_choice = %s, wait_at = %s WHERE id = %s AND state_reason = %s"
         " AND (wait_until, dfx_choice) IS DISTINCT FROM (%s::timestamptz, %s::boolean) RETURNING id",
-        (wait_until, dfx_choice, session.id, reason, wait_until, dfx_choice),
+        (wait_until, dfx_choice, at, session.id, reason, wait_until, dfx_choice),
     ).fetchone()
     if changed is not None:
         applied.effects.org_frame(task.org_id, "session", rows.session_frame(connection, session.id))
@@ -278,7 +290,7 @@ def apply(
         raise TransitionRefused()
     actor = Actor("device", UUID(str(reported_by))) if reported_by is not None else Actor("hub")
     if result == SAME:
-        return _rewait(connection, task, session, checked, wait=wait, received_at=received_at, actor=actor)
+        return _rewait(connection, task, session, checked, wait=wait, at=at, received_at=received_at, actor=actor)
     applied = Applied(changed=True, state=state)
     refused = state == FAILED and checked == retry.REASON
     attempt = retry.planned(connection, task, session.id, received_at) if refused else None
