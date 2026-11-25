@@ -89,7 +89,7 @@ function Row({ row, now }: { readonly row: SubscriptionRow; readonly now: number
           ? '—'
           : windows.map((window) => (
               <span key={window.window} className="block whitespace-nowrap">
-                {window.resetsAt === null ? '—' : until(window.resetsAt, now)}
+                {windowName(window.window)}: {window.resetsAt === null ? '—' : until(window.resetsAt, now)}
               </span>
             ))}
       </td>
@@ -104,7 +104,7 @@ function Table({ rows, now }: { readonly rows: readonly SubscriptionRow[]; reado
   const { t } = useTexts();
   return (
     <div className="overflow-x-auto rounded border border-gray-200 bg-white" data-testid="subscriptions.table">
-      <table className="w-full text-left text-sm">
+      <table className="w-full min-w-[56rem] text-left text-sm">
         <thead className="bg-gray-100">
           <tr>
             {COLUMNS.map((column) => (
@@ -137,7 +137,7 @@ export function SubscriptionsScreen() {
   const [adding, setAdding] = useState(false);
   if (!unlocked) return <Navigate to={loginTarget(location.pathname, location.search)} replace />;
   return (
-    <main className="mx-auto flex w-full max-w-5xl flex-col gap-4 p-4" data-testid="subscriptions.page">
+    <main className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-4 p-4" data-testid="subscriptions.page">
       <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold">{t('subscriptions.title')}</h1>
         <p className="text-sm text-gray-700">{t('subscriptions.intro')}</p>
@@ -158,12 +158,13 @@ export function SubscriptionsScreen() {
       )}
       {rows !== null && rows.length > 0 && (
         <>
-          <div className="flex flex-wrap gap-4">
+          <div className="flex flex-wrap gap-x-6">
             <label className="flex min-h-11 items-center gap-2">
               <input
                 type="checkbox"
                 checked={detailed}
                 onChange={(event) => setDetailed(event.target.checked)}
+                className="h-4 w-4"
                 data-testid="subscriptions.detailed"
               />
               {t('subscriptions.detailed')}
@@ -173,6 +174,7 @@ export function SubscriptionsScreen() {
                 type="checkbox"
                 checked={sorted}
                 onChange={(event) => setSorted(event.target.checked)}
+                className="h-4 w-4"
                 data-testid="subscriptions.sort"
               />
               {t('subscriptions.sort')}

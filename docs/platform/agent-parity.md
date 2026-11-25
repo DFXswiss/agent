@@ -50,6 +50,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | credential-rotate | jobs (CK re-wrap) | `credentials rotate` | done |
 | quotas | settings/quotas | `quotas` | done |
 | subscriptions-list | screens/subscriptions and the card "My subscriptions" of screens/home (every own subscription with status, use and the remaining quota per window, for the operator also the token-file subscriptions; ADR-091, rules E-30, E-31) | `subscriptions list` (token files: `quotas --org`) | done |
+| settings-subscriptions | settings/subscriptions (the link to the page "My subscriptions", ADR-091) | `subscriptions list` | done |
 | subscriptions-add | Claude subscriptions (a new subscription logged in on a platform device, ADR-090) | `subscriptions add --name --note --automatic --email` | done |
 | subscriptions-login | Claude subscriptions (log a subscription in again) | `subscriptions login --id` | done |
 | subscriptions-edit | Claude subscriptions (label and note) | `subscriptions rename --id --name`, `subscriptions note --id --note\|--clear` | done |
@@ -210,6 +211,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/me/invitees` | members-invitees |
 | `GET /v1/me/devices` | github-connect, github-token, github-company-accounts, credential-claude-relay, credential-check, pr-view, pr-fix-conflicts |
 | `GET /v1/me/quotas` | quotas |
+| `GET /v1/me/subscriptions` | subscriptions-list |
+| `GET /v1/subscriptions/{id}` | subscriptions-list |
 | `POST /v1/me/recovery/begin` | recovery-new |
 | `DELETE /v1/me/registration` | register |
 | `PUT /v1/me/settings` | settings-language, settings-model, attention-model-always |
@@ -239,7 +242,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/orgs/{org}/audit` | audit, task-model-switch |
 | `GET /v1/orgs/{org}/audit/verify` | audit |
 | `GET /v1/orgs/{org}/billing` | settings-billing, credit-balance, consumption-per-person |
-| `GET /v1/orgs/{org}/quotas` | model-quotas, attention-quota-counter |
+| `GET /v1/orgs/{org}/quotas` | model-quotas, attention-quota-counter, subscriptions-list |
 | `GET /v1/orgs/{org}/catch-up` | key-catch-up |
 | `GET /v1/orgs/{org}/devices` | devices-list, task-runtime |
 | `GET /v1/orgs/{org}/invites` | members-list, members-invite-revoke, members-invite-states |
