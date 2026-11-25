@@ -6,7 +6,8 @@ prepared account put in for its placeholders (`<org_id>`, `<wg_id>` …; an iden
 a well-formed unknown one), the optional parts `[…]` included, each alternative `a|b` run once and a `--wait` cut
 to one second. Allowed are
 success or a refusal on the merits with a `next` step; never `invalid_argument` (the tool refuses its own example),
-`request_invalid` (the hub refuses what the tool sent) or `internal` (a crash). The examples that cannot run here
+`request_invalid` (the hub refuses what the tool sent) or `internal` (a crash). `recover` gets the recovery code of
+an agent alone registered for it. The examples that cannot run here
 stand in `EXCEPTIONS` with their reason; every entry names a command that exists, and the commands that change or
 end the account run last (`LAST`).
 """
@@ -20,8 +21,10 @@ from typing import Any
 
 from agent_platform import cli, lookup
 from agent_runner.crypto.ids import uuid7
+from tests.platform.tool.conftest import Tool, make_tool
 
-from .support import Person, RealHub, pair, person, run_ok
+from .support import RealHub, run_ok
+from .test_alone import platform_invitation
 
 # Commands whose example does not run in this suite, with the reason and where it is covered instead.
 EXCEPTIONS = {
@@ -129,30 +132,37 @@ def test_the_examples_name_commands_and_the_exceptions_exist() -> None:
     assert not acceptable(1, {"ok": False, "error": "not_found"})
 
 
-def account(real: RealHub) -> tuple[dict[str, str], Person]:
-    """An org with a workgroup, a device, a task, a whiteboard entry, an invitation and a second member."""
-    ada = person(real, "Ada")
-    pair(real, ada)
-    bob = person(real, "Bob")
-    pair(real, bob)
-    org = str(run_ok(ada.tool, "org", "create", "--name", "Acme", "--display-name", "Ada")["org_id"])
-    wg = str(run_ok(ada.tool, "wg", "create", "--org", org, "--name", "Research")["wg_id"])
+def alone(real: RealHub, name: str) -> tuple[Tool, str]:
+    """An agent alone (rule E-27): registered with a platform invitation, its own name in its private organization."""
+    tool = make_tool(real.root / name.lower())
+    made = run_ok(tool, "register", "--own-account", "--display-name", name, stdin=platform_invitation(real))
+    return tool, str(made["user_id"])
+
+
+def account(real: RealHub) -> tuple[dict[str, str], Tool]:
+    """An org with a workgroup, a device, a task, a whiteboard entry, an invitation and a second member, all made by
+    agents without a person; a third agent alone gives its recovery code to `recover`."""
+    ada, _ada_id = alone(real, "Ada")
+    bob, bob_id = alone(real, "Bob")
+    org = str(run_ok(ada, "org", "create", "--name", "Acme")["org_id"])
+    wg = str(run_ok(ada, "wg", "create", "--org", org, "--name", "Research")["wg_id"])
     device, _seq = real.fleet.platform_device()
     real.fleet.platform.post({"type": "org_platform_access", "org": org, "granted": True})
-    run_ok(ada.tool, "device", "assign", "--wg", wg)
-    task = str(run_ok(ada.tool, "task", "create", "--wg", wg, "--text", "Fix the login bug")["task_id"])
-    entry = run_ok(ada.tool, "whiteboard", "add", "--org", org, "--wg", wg, "--text", "A note")
-    invited = run_ok(ada.tool, "org", "invite", "--org", org)
-    joined = run_ok(bob.tool, "org", "join", "--display-name", "Bob", stdin=str(invited["invite_link"]))
-    assert joined["org_id"] == org
-    second = run_ok(ada.tool, "org", "invite", "--org", org)
+    run_ok(ada, "device", "assign", "--wg", wg)
+    task = str(run_ok(ada, "task", "create", "--wg", wg, "--text", "Fix the login bug")["task_id"])
+    entry = run_ok(ada, "whiteboard", "add", "--org", org, "--wg", wg, "--text", "A note")
+    invited = run_ok(ada, "org", "invite", "--org", org)
+    assert run_ok(bob, "org", "join", stdin=str(invited["invite_link"]))["org_id"] == org
+    second = run_ok(ada, "org", "invite", "--org", org)
+    bot = make_tool(real.root / "bot")
+    moved = run_ok(bot, "register", "--own-account", "--display-name", "Bot", stdin=platform_invitation(real))
     return {
         "<org_id>": org,
         "<wg_id>": wg,
         "<task_id>": task,
         "<device_id>": device.id,
-        "<user_id>": bob.id,
-        "<user_id|account code|invite_id>": bob.id,
+        "<user_id>": bob_id,
+        "<user_id|account code|invite_id>": bob_id,
         "<entry_id>": str(entry["entry_id"]),
         "<invite_id>": str(second["invite_id"]),
         "<invitation link>": str(second["invite_link"]),
@@ -161,11 +171,12 @@ def account(real: RealHub) -> tuple[dict[str, str], Person]:
         "$KEY": "sk-test-" + "k" * 20,
         "$PASSWORD": "example-password",
         "…": "Also the logout",
-        "<author>": bob.id,
+        "<author>": bob_id,
+        "recovery_code": str(moved["recovery_code"]),
         "<next_after>": "0",
         "<next_before>": "1",
         "<seq>": "0",
-        "<account_code>": str(run_ok(bob.tool, "status")["account_code"]),
+        "<account_code>": str(run_ok(bob, "status")["account_code"]),
         "<agent_id>": str(uuid7()),
         "<run_id>": "tr-" + "0" * 12,
         "https://agent.dfx.swiss": real.origin,
@@ -180,11 +191,9 @@ def test_every_example_runs_against_the_real_hub(real: RealHub) -> None:
     for name in order:
         for example in variants(found[name]):
             argv, stdin = split(example, values)
-            if name == "recover":  # the code `recovery new` printed before: the account moves to a new agent
+            if name == "recover":  # the code of an agent alone: its account moves to this computer
                 stdin = values["recovery_code"]
-            code, document = ada.tool.run(*argv, stdin=stdin)
-            if name == "recovery new" and document.get("ok"):
-                values["recovery_code"] = str(document["recovery_code"])
+            code, document = ada.run(*argv, stdin=stdin)
             if not acceptable(code, document):
                 failures.append(f"{example}\n    -> {document}")
     assert not failures, "\n".join(failures)

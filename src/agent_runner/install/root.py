@@ -355,10 +355,14 @@ def _remove_owner_dirs(system: System, found: owner.Owner, removed: list[str]) -
         removed.append("runner_home")
     created = Maintenance.load(system.layout.maintenance_file).created
     for parent in sorted(created, key=lambda item: item.count("/"), reverse=True):
-        if parent in (LIMA_CONFIG, LIMA_CACHE):
-            inside = found.home / parent / ("_config" if parent == LIMA_CONFIG else "")
-            system.run(ctx.as_owner([RM, "-rf", str(inside)]))
-        if system.run(ctx.as_owner([RMDIR, str(found.home / parent)])).returncode == 0:
+        path = found.home / parent
+        if parent == LIMA_CACHE:  # only downloads: removed with its content
+            if path.exists() and system.run(ctx.as_owner([RM, "-rf", str(path)])).returncode == 0:
+                removed.append(f"created:{parent}")
+            continue
+        if parent == LIMA_CONFIG and (path / "_config").exists():
+            system.run(ctx.as_owner([RM, "-rf", str(path / "_config")]))
+        if system.run(ctx.as_owner([RMDIR, str(path)])).returncode == 0:
             removed.append(f"created:{parent}")
     return [found.home / name for name in (LIMA_CONFIG, LIMA_CACHE) if name in created]
 

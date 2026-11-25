@@ -220,7 +220,7 @@ def test_own_records_are_checked_like_the_primary_one(tool: Tool, hub: HubFake, 
 def test_primary_and_remove(tool: Tool, hub: HubFake, account: User) -> None:
     org, _wg, _device = assign_device(tool, hub, account)
     main = primary(hub, account, {**BODY, "token": "ghu_minted"})
-    other = further(hub, account, {**BODY, "login": "octo-work"})
+    other = further(hub, account, {**BODY, "login": "octo-work", "source": "token"})  # e.g. the GitHub CLI's token
     assert tool.run("github", "primary", "--identity", other)[1] == {"ok": True, "identity_id": other, "primary": True}
     found = entries(tool)
     assert (found[other]["primary"], found[main]["primary"]) == (True, False)

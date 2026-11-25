@@ -939,30 +939,26 @@ def test_lima_directories_the_installation_made_are_removed_and_reported(kit: Ki
     for item in (".lima/_config/networks.yaml", ".lima/_config/user", "Library/Caches/lima/download/x"):
         (home / item).parent.mkdir(parents=True, exist_ok=True)
         (home / item).write_text("x")
-    kit.run.on(as_owner(RM, "-rf"), lambda argv: shutil.rmtree(argv[-1]))
     kit.run.on(as_owner(RMDIR), lambda argv: Path(argv[-1]).rmdir())
     nothing_left(kit)
     runner_commands(kit.run, {"uninstall": runner_doc()})
     result = root.uninstall(kit.system, [keys.public])
-    assert "created:.lima" in result["removed"]
+    assert {"created:.lima", "created:Library/Caches/lima"} <= set(result["removed"])
     assert result["leftovers"] == []
     assert not (home / ".lima").exists()
     assert not (home / "Library/Caches/lima").exists()
 
 
 def test_an_own_lima_instance_keeps_lima_and_is_no_leftover_of_ours(kit: Kit, keys: Keys) -> None:
-    installed_for_removal(kit, keys, created=(".lima",))
+    installed_for_removal(kit, keys, created=(".lima", "Library/Caches/lima"))  # Lima never ran for the runner
     home = owner_of(kit.layout).home
-    (home / ".lima/_config").mkdir(parents=True)
-    (home / ".lima/mine").mkdir()  # an instance the owner made with Lima
-    kit.run.on(as_owner(RM, "-rf"), lambda argv: shutil.rmtree(argv[-1]))
+    (home / ".lima/mine").mkdir(parents=True)  # an instance the owner made with Lima
     kit.run.answer(as_owner(RMDIR, str(home / ".lima")), rc=1, stderr="Directory not empty")
     nothing_left(kit)
     runner_commands(kit.run, {"uninstall": runner_doc()})
     result = root.uninstall(kit.system, [keys.public])
-    assert "created:.lima" not in result["removed"]
+    assert not {"created:.lima", "created:Library/Caches/lima"} & set(result["removed"])
     assert (home / ".lima/mine").is_dir()
-    assert not (home / ".lima/_config").exists()
     assert result["leftovers"] == [f"path:{home / '.lima'}"]
 
 
