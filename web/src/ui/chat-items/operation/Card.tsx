@@ -50,6 +50,8 @@ export const KNOWN_TYPES: ReadonlySet<string> = new Set([
   'workvm.request',
   'workvm.release',
   'test.run',
+  'browser.open',
+  'browser.close',
 ]);
 
 export const STATE_BADGE: Readonly<Record<string, string>> = {

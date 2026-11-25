@@ -8,5 +8,6 @@
   "tab.chat": "Chat",
   "tab.children": "Subagents",
   "chat.empty": "Diese Session hat noch keine Ausgabe.",
-  "children.empty": "Diese Session hat keine Subagents."
+  "children.empty": "Diese Session hat keine Subagents.",
+  "tab.browser": "Browser"
 }

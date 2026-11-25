@@ -1,5 +1,7 @@
 // The session detail (06-web.md section 5.5): tabs **Terminal** (default, the read-only terminal, loaded lazily),
-// **Chat** (the outputs of this session only, with its work VM jobs; the header adds the work VM runtime) and **Children** (its subagent sessions, `children/ChildrenTab.tsx`). The session row comes from
+// **Chat** (the outputs of this session only, with its work VM jobs; the header adds the work VM runtime),
+// **Children** (its subagent sessions, `children/ChildrenTab.tsx`) and **Browser** (the session's platform browser:
+// live picture and action record, `browser/BrowserTab.tsx`, section 5.4b). The session row comes from
 // `GET /v1/sessions/{id}`, the task (title, sibling and child rows) from `GET /v1/tasks/{task}`; the chat events of the
 // task are pulled like on the task page.
 import { lazy, Suspense, useEffect, useMemo } from 'react';
@@ -13,6 +15,7 @@ import { pullOnce } from '../../../core/tasks/pull';
 import { useLiveReload } from '../../hooks/useLiveReload';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
+import { BrowserTab } from '../../browser/BrowserTab';
 import { ChunkBoundary } from '../../lazy/ChunkBoundary';
 import { useAppEnv } from '../../shell/context';
 import { LoadError } from '../errors/pages';
@@ -25,7 +28,7 @@ import { activeTab, Tabs } from '../task/Tabs';
 
 const TerminalView = lazy(() => import('../../terminal/TerminalView'));
 
-const TAB_IDS = ['terminal', 'chat', 'children'] as const;
+const TAB_IDS = ['terminal', 'chat', 'children', 'browser'] as const;
 
 function SessionChat({ entry }: { readonly entry: SessionEntry }) {
   const { app } = useAppEnv();
@@ -85,6 +88,7 @@ function SessionView({ entry }: { readonly entry: SessionEntry }) {
       )}
       {active === 'chat' && <SessionChat entry={entry} />}
       {active === 'children' && <ChildrenTab entry={entry} />}
+      {active === 'browser' && <BrowserTab org={org} wg={wg} task={task} session={session} />}
     </main>
   );
 }

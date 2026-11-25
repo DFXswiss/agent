@@ -6,6 +6,8 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { vi } from 'vitest';
 import { createI18n } from '../../src/core/i18n';
 import type { EventEntry } from '../../src/core/store/slices/events';
+import { Prefs } from '../../src/core/account/prefs';
+import type { BrowserContext } from '../../src/core/browser/watch';
 import type { TerminalContext } from '../../src/core/terminal/watch';
 import { I18nProvider } from '../../src/ui/i18n';
 import { AppEnvProvider } from '../../src/ui/shell/context';
@@ -20,6 +22,19 @@ export interface Mounted {
     watch: ReturnType<typeof vi.fn>;
     read: ReturnType<typeof vi.fn<TerminalContext['read']>>;
   };
+  readonly browser: BrowserContext;
+  readonly prefs: Prefs;
+}
+
+/** The Browser tab's context: an empty record, a watch that does nothing and an opener that refuses. */
+export function emptyBrowser(t: TaskWorld): BrowserContext {
+  return {
+    store: t.store,
+    client: { request: async () => ({ events: [], next_after: null, head: 0 }) },
+    read: async () => [],
+    watch: () => ({ setKbps: () => undefined, release: () => undefined }),
+    opener: () => () => Promise.reject(new Error('no frames here')),
+  };
 }
 
 export function mount(
@@ -27,6 +42,8 @@ export function mount(
   routes: { path: string; element: ReactNode }[],
   path: string,
   locale: 'en' | 'de' = 'en',
+  browser: BrowserContext = emptyBrowser(t),
+  prefs: Prefs = new Prefs(null),
 ): Mounted {
   const router = createMemoryRouter([...routes, { path: '*', element: <p data-testid="elsewhere">elsewhere</p> }], {
     initialEntries: [path],
@@ -38,7 +55,7 @@ export function mount(
     read: vi.fn<TerminalContext['read']>(async () => []),
     watch: vi.fn(() => () => undefined),
   };
-  const app = { store: t.store, tasks: t.context, terminal } as never;
+  const app = { store: t.store, tasks: t.context, terminal, browser, prefs } as never;
   render(
     <AppEnvProvider value={{ app, credentials: {} as never, origin: 'https://hub.example' }}>
       <I18nProvider value={createI18n(locale)}>
@@ -46,7 +63,7 @@ export function mount(
       </I18nProvider>
     </AppEnvProvider>,
   );
-  return { router, terminal };
+  return { router, terminal, browser, prefs };
 }
 
 let next = 100;
