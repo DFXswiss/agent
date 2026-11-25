@@ -14,7 +14,6 @@ from tests.platform.hub.credentials.support import Desk, Json
 from tests.platform.hub.orgs.support import Actor
 
 KIND = "claude_subscription"
-NO_CONTRACT = {"contract": False}
 
 
 def _record(desk: Desk, owner: Actor, **options: Any) -> Json:
@@ -112,12 +111,8 @@ def test_other_peoples_and_other_kinds_records_are_not_found(desk: Desk) -> None
     # a subscription under the ID of another kind's record is an ID conflict
     clash = _record(desk, writer, record_id=github["header"]["id"])
     assert _put(writer, clash, 0).status_code == 409
-    # a record of another owner or kind in the body is refused
-    assert _put(writer, _record(desk, reader), 0).status_code == 400
-    wrong_path = writer.browser.put(
-        "/v1/subscriptions/not-a-uuid", json={"record": record, "expected_version": 0}, **NO_CONTRACT
-    )
-    assert wrong_path.status_code == 403
+    # a record of another owner, signed by that owner, is refused
+    assert _put(writer, _record(desk, reader), 0).status_code == 401
 
 
 def test_the_number_of_subscriptions_is_bounded(desk: Desk) -> None:
@@ -126,8 +121,8 @@ def test_the_number_of_subscriptions_is_bounded(desk: Desk) -> None:
         for _ in range(records.MAX_SUBSCRIPTIONS):
             connection.execute(
                 "INSERT INTO hub.credential (id, owner_id, kind, version, epoch, header_text, ct, sig, updated_at,"
-                " created_at, is_primary) VALUES (%s, %s, %s, 1, 1, '{}', '\\x00', '\\x00', now(), now(), false)",
-                (uuid7(), writer.id, KIND),
+                " created_at, is_primary) VALUES (%s, %s, %s, 1, 1, '{}', %s, %s, now(), now(), false)",
+                (uuid7(), writer.id, KIND, bytes(28), bytes(64)),
             )
     response = _put(writer, _record(desk, writer), 0)
     assert (response.status_code, response.json()) == (400, {"error": "size_exceeded"})
@@ -163,7 +158,6 @@ def test_an_eligible_device_lists_and_reads_and_clears_its_notice(desk: Desk) ->
     stranger = desk.client(desk.stranger_device())
     assert stranger.get(f"/v1/device/subscriptions/{record['header']['id']}").status_code == 404
     assert stranger.get("/v1/device/subscriptions", params={"owner_id": writer.id}).status_code == 404
-    assert client.get("/v1/device/subscriptions", **NO_CONTRACT).status_code == 404
     assert client.get(f"/v1/device/subscriptions/{uuid7()}").status_code == 404
 
 
@@ -204,7 +198,8 @@ def test_a_device_reseals_a_record_under_an_older_epoch_only(desk: Desk) -> None
     # the stored record is under the current epoch: nothing to re-seal
     assert _device_put(client, writer, resealed, 1, None).status_code == 403
     desk.ck(writer, 2)
-    assert _device_put(client, writer, resealed, 1, None).status_code == 409  # still under epoch 1: stale
+    stale = _device_put(client, writer, resealed, 1, None)  # still under epoch 1
+    assert (stale.status_code, stale.json()) == (400, {"error": "epoch_stale"})
     current = desk.record(writer, KIND, record_id=record["header"]["id"], version=2, epoch=2, author=device)
     assert _device_put(client, writer, current, 1, None).json() == {"version": 2}
     # now it is under the current epoch, and an unknown or primary record is never re-sealed

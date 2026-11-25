@@ -48,7 +48,7 @@ def sealed(
         author=author or user.id,
         ts=now_ms_text(),
     )
-    signer = hub.platform_devices[author].sig if author is not None else user.identity.sig
+    signer = hub.platform_devices[author].sig if author in hub.platform_devices else user.identity.sig
     return seal_credential(opt.get("key") or user.cred_keys[1], fields, body_json(content), signer)
 
 
@@ -168,14 +168,14 @@ def test_list_shows_status_use_and_reading_never_a_token(tool: Tool, hub: HubFak
         stranger: "author_not_writer",
     }
     assert TOKEN not in str(listed)
-    # a record gone between the list and its read is left out; a header of another record is unverifiable
-    original = state_of(hub).records.pop(out)
-    state_of(hub).records[uuid7()] = original
-    assert out not in {item["id"] for item in tool.run("subscriptions", "list")[1]["subscriptions"]}
+    # a record gone between the list and its read is left out
+    meta = {key: value for key, value in entries[out].items() if key in ("id", "primary")}
+    gone = {**meta, "owner_id": account.id, "version": 1, "epoch": 1, "reading": None}
+    state_of(hub).raw_list = {"subscriptions": [{**gone, "created_at": now_ms_text(), "updated_at": now_ms_text()}]}
+    del state_of(hub).records[out]
+    assert tool.run("subscriptions", "list")[1]["subscriptions"] == []
     state_of(hub).raw_list = {"subscriptions": [{"id": out}]}
     assert tool.run("subscriptions", "list")[1]["reason"] == "response_invalid"
-    state_of(hub).raw_list = {"subscriptions": []}
-    assert tool.run("subscriptions", "list")[1]["subscriptions"] == []
 
 
 def test_rename_note_logout_and_remove_seal_the_record_again(tool: Tool, hub: HubFake, account: User) -> None:

@@ -18,13 +18,23 @@
           "$ref": "../common.json#/$defs/uuid"
         },
         "name": {
-          "$ref": "../credentials/claude_subscription.json#/$defs/name"
+          "type": "string",
+          "description": "the owner's label of the subscription (no control character)",
+          "pattern": "^[^\u0000-\u001f]+$",
+          "minLength": 1,
+          "maxLength": 64
         },
         "note": {
-          "$ref": "../credentials/claude_subscription.json#/$defs/note"
+          "type": "string",
+          "description": "the owner's remark: what the subscription is for (no line break)",
+          "pattern": "^[^\u0000-\u001f]+$",
+          "minLength": 1,
+          "maxLength": 500
         },
         "email": {
-          "$ref": "../credentials/claude_subscription.json#/$defs/email"
+          "type": "string",
+          "pattern": "^[!-?A-~]{1,64}@[A-Za-z0-9-]{1,63}(\\.[A-Za-z0-9-]{1,63}){0,8}$",
+          "maxLength": 254
         }
       },
       "required": [

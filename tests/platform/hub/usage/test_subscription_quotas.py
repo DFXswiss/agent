@@ -53,18 +53,19 @@ def test_a_reading_of_a_further_subscription_is_kept_per_record(meter: Meter) ->
     writer = meter.scene.writer
     meter.subscribe(writer)
     first, second = _further(meter, writer), _further(meter, writer)
-    assert _reading(meter, writer, first, window("seven_day", 12.5), fetched=meter.time(-10)) == ("ok", None)
-    unreadable = {"owner_id": writer.id, "subscription_id": second, "unavailable": True, "fetched_at": meter.time(-5)}
+    early, late = meter.time(-10), meter.time(-5)
+    assert _reading(meter, writer, first, window("seven_day", 12.5), fetched=early) == ("ok", None)
+    unreadable = {"owner_id": writer.id, "subscription_id": second, "unavailable": True, "fetched_at": late}
     assert meter.status("quota", unreadable, meter.low) == ("ok", None)
     readings = _listed(writer)
     assert readings[first] == {
-        "fetched_at": meter.time(-10),
+        "fetched_at": early,
         "device_id": meter.low.id,
         "unreadable": False,
         "windows": [window("seven_day", 12.5)],
     }
     assert readings[second] == {
-        "fetched_at": meter.time(-5),
+        "fetched_at": late,
         "device_id": meter.low.id,
         "unreadable": True,
         "windows": [],
@@ -104,17 +105,18 @@ def test_the_primary_reading_comes_from_the_owners_windows(meter: Meter) -> None
     primary = str(meter.rows("SELECT id FROM hub.credential WHERE owner_id = %s", writer.id)[0][0])
     assert _listed(writer) == {primary: None}
     windows = (window("seven_day", 40), window("five_hour", 90))
-    assert meter.quota(writer.id, *windows, fetched=meter.time(-3)) == ("ok", None)
+    first, second = meter.time(-3), meter.time(-2)
+    assert meter.quota(writer.id, *windows, fetched=first) == ("ok", None)
     assert _listed(writer)[primary] == {
-        "fetched_at": meter.time(-3),
+        "fetched_at": first,
         "device_id": meter.low.id,
         "unreadable": False,
         "windows": [window("five_hour", 90), window("seven_day", 40)],
     }
-    gone = {"owner_id": writer.id, "unavailable": True, "fetched_at": meter.time(-2)}
+    gone = {"owner_id": writer.id, "unavailable": True, "fetched_at": second}
     assert meter.status("quota", gone, meter.low) == ("ok", None)
     assert _listed(writer)[primary] == {
-        "fetched_at": meter.time(-2),
+        "fetched_at": second,
         "device_id": meter.low.id,
         "unreadable": True,
         "windows": [],

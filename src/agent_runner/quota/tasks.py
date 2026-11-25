@@ -39,7 +39,7 @@ async def tick(context: Any, subscriptions: SubscriptionPoller, wall: Any) -> No
     await subscriptions.tick(desired, wall())
     further = getattr(context, FURTHER, None)
     if not isinstance(further, FurtherPoller):
-        further = FurtherPoller(context=context, url=subscriptions.url)
+        further = FurtherPoller(context=context, url=getattr(subscriptions, "url", ""))
         setattr(context, FURTHER, further)
     further.client = subscriptions.client
     await further.tick(desired, wall())

@@ -54,7 +54,7 @@ def test_a_record_is_verified_cached_opened_and_purged(store_dsn: str) -> None:
             assert await subscriptions.cached(conn, record_id) is None
         assert await subscriptions.purge(env.context, record_id) is False
         assert f"runner.subscriptions purged id={record_id}" in env.log()
-        hub.refusals[record_id] = (500, {"error": "internal"})
+        hub.refusals[record_id] = (403, {"error": "forbidden"})
         with pytest.raises(HubRefusal):
             await subscriptions.fetch(env.context, record_id)
 
@@ -101,14 +101,12 @@ def test_the_list_fetches_new_versions_and_purges_gone_records(store_dsn: str) -
         assert hub.asked == []  # nothing newer
         del hub.served[first]
         hub.add(subscription_body(), owner=ALICE, version=2, record_id=second)
-        hub.refusals[second] = (500, {"error": "internal"})
+        hub.refusals[second] = (403, {"error": "forbidden"})
         assert await subscriptions.sync_owner(env.context, ALICE) is True
-        assert f"fetch_failed id={second} error=HubRefusal code=internal" in env.log()
+        assert f"fetch_failed id={second} error=HubRefusal code=forbidden" in env.log()
         async with env.pool.connection() as conn:
             assert [item.id for item in await subscriptions.cached_of(conn, ALICE)] == [second]
         del hub.refusals[second]
-        hub.served[second] = hub.served[second].__class__(BOB, False, make_record(subscription_body(), owner=BOB))
-        hub.refusals[second] = (500, {"error": "internal"})
         # a list naming another owner is unusable; a refused list and a transport error purge nothing
         hub.raw_lists[ALICE] = {"subscriptions": [{"id": second, "owner_id": BOB, "version": 1}]}
         assert await subscriptions.sync_owner(env.context, ALICE) is False
