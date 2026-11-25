@@ -275,7 +275,7 @@ row adds `R-` rows with their tests and replaces the row here.
 
 Younger than the concept; where they contradict it, the rule holds. Wording, date and reference in
 [`KONZEPT.md`](../KONZEPT.md#teil-b--regeln-und-entscheide-des-auftraggebers); a new rule is entered there first. The
-interpretations A1–A18 (part C) have no rows of their own; the rows above and below cite them where they apply.
+interpretations A1–A19 (part C) have no rows of their own; the rows above and below cite them where they apply.
 
 | ID | Ref | Rule (short) | Status | Where |
 |---|---|---|---|---|
@@ -315,6 +315,7 @@ interpretations A1–A18 (part C) have no rows of their own; the rows above and 
 | E-32 | [E-32](../KONZEPT.md#e-32) | Nothing runs on the user's computer except at most a Claude session that steers agent.dfx.swiss; everything local today (the `agent` tool with ledger, coordinator, A38, AI accounts, `knock` and dashboard, the legacy hub, the tooling that builds, checks, merges and releases the platform) becomes a working mode of the platform that is chosen per session or task – by a sentence in the prompt, in the web client or with the agent tool – never forced and never on by default, and is then carried out completely. | offen | [ADR-098](../adr/098-working-modes.md) (KOR-72; build packages in its §9) |
 | E-32 | [E-32](../KONZEPT.md#e-32) | Nothing runs on the user's computer except at most a Claude session that steers agent.dfx.swiss; everything local today (the `agent` tool with ledger, coordinator, A38, AI accounts, `knock` and dashboard, the legacy hub, the tooling that builds, checks, merges and releases the platform) becomes a working mode of the platform that is chosen per session or task – by a sentence in the prompt, in the web client or with the agent tool – never forced and never on by default, and is then carried out completely. | offen | KOR-72 |
 | E-30 | [E-30](../KONZEPT.md#e-30) | All self-hosted GitHub Actions runs of the DFX organisations run through agent.dfx.swiss, each job in a fresh VM deleted afterwards; jobs that change the device itself are a stated exception. | offen | concept [16-ci-runners.md](16-ci-runners.md), decisions open (§13 there) |
+| E-30 | [E-30](../KONZEPT.md#e-30) | All self-hosted GitHub Actions runs of the DFX organisations run through agent.dfx.swiss. | offen | concept [16-ci-runners.md](16-ci-runners.md), decisions open (§13 there); note: one VM per job and the exception of host-bound jobs are interpretation [A19](../KONZEPT.md#a-19) |
 | E-31 | [E-31](../KONZEPT.md#e-31) | One shared capacity: no own machines for self-hosted runners next to the platform; the operator's whole computing capacity belongs to agent.dfx.swiss, and a runner is obtained on request as a VM from the same pool as the work VMs. | offen | concept [16-ci-runners.md](16-ci-runners.md) (§6.6 there) |
 
 ## R-P Assignment guardrails (`PROJECT.md`)

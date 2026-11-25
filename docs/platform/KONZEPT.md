@@ -790,21 +790,18 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 ### E-30 – Alle selbst gehosteten GitHub-Actions-Läufe über agent.dfx.swiss
 
 - **Datum:** 2026-11-25
-- **Regel:** Die selbst gehosteten GitHub-Actions-Läufe der DFX-Organisationen laufen über agent.dfx.swiss, jeder Job
-  in einer frischen, danach gelöschten VM; das Konzept dazu steht in [spec/16-ci-runners.md](spec/16-ci-runners.md).
-- **Hinweis:** Läufe, die das Gerät selbst ändern (Deploy-Jobs, mit denen sich ein Gerät selbst einrichtet), können
-  nicht in einer VM laufen: Eine VM ohne Freigaben sieht das Gerät nicht, und ein Rückweg aus der VM auf das Gerät
-  höbe die Trennung auf. Das Konzept führt sie als Ausnahme mit Begründung
-  ([spec/16-ci-runners.md §1](spec/16-ci-runners.md#1-purpose-and-scope)). Das ist eine Feststellung, keine
-  Einschränkung der Regel.
+- **Regel:** Alle selbst gehosteten GitHub-Actions-Läufe der DFX-Organisationen laufen über agent.dfx.swiss; das
+  Konzept dazu steht in [spec/16-ci-runners.md](spec/16-ci-runners.md).
 - **Wortlaut:** „ich will alle self hostet runns über agent.dfx.swiss laufen lassen, repo dazu ist dfxswiss/agent“ –
   als Auftrag zum Konzept: „was muss beachtet werden damit agent.dfx.swiss github runner dienstleistungen erbringen
   kann? dann das gesamte Konzept vollständig dokumentieren inkl allem, auch die Lösung für MacOs RUnner inkl der
   Abklärungen von Lizenzen und technischer Machbarkeit, anforderungen an Hardware und co. Das volle SetUp“
-- **Bezug:** ergänzt [Idee 27](#k-idee-27) (Wegwerf-VM je Testlauf, [A9](#a-9)). In Spannung, Auflösung offen
+- **Bezug:** ergänzt [Idee 27](#k-idee-27) (Wegwerf-VM je Testlauf, [A9](#a-9)); die VM je Job und die
+  gerätegebundenen Läufe legt [A19](#a-19) aus. In Spannung, Auflösung offen
   ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)): [Grundprinzip](#k-gp),
   [§2 Punkt 5](#k-2-b5) und [§16 Punkt 2](#k-16-b2) (ein CI-Job ist keine Nutzeranfrage und gehört zu keiner
-  Workgroup); [§3 Punkt 5](#k-3-b5) (VM je Workgroup, hier je Job); [§5](#k-5) (der Hub sieht keine Inhalte);
+  Workgroup); [§3 Punkt 5](#k-3-b5) (VM je Workgroup, nach [A19](#a-19) je Job); [§5](#k-5) (der Hub sieht keine
+  Inhalte);
   [§9 Punkt 5](#k-9-b5), [§10 Punkt 3](#k-10-b3) und [§10 Punkt 6](#k-10-b6) (git und freie Shell sind
   Claude-Sessions verboten, ein CI-Gast braucht sie); [§10 Punkt 8](#k-10-b8) und [§11](#k-11) (Audit je
   Operation); [E-10](#e-10) (Ausgang), [E-11](#e-11) (Freigaben), [E-25](#e-25) (Härtung nur auf Bestellung);
@@ -890,6 +887,9 @@ offene Fragen nach dem Wortlaut des Konzepts: A1–A7 aus dem Abgleich der volls
 Auftraggeber am selben Abend mitgeteilt), A8–A18 aus dem Restplan vom 2026-11-24, A19 aus
 KOR-72 vom 2026-11-26. Sie gelten für alle Arbeiten, bis er
 anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Aussage gilt, [E-01](#e-01)).
+Auftraggeber am selben Abend mitgeteilt), A8–A18 aus dem Restplan vom 2026-11-24, A19 aus dem CI-Konzept vom
+2026-11-25. Sie gelten für alle Arbeiten, bis er anders entscheidet; dahinter steht die Rangfolge (die jüngere
+ausdrückliche Aussage gilt, [E-01](#e-01)).
 
 <a id="a-1"></a>
 - **A1 – Hilfs-KIs:** Subagenten dürfen dasselbe wie ihr Hauptagent ([E-11](#e-11) ist jünger als
@@ -969,6 +969,11 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
   werden nicht wählbar ([E-32](#e-32)). Spine, Checklisten und Done-Gates des Werkzeugs werden nicht nachgebaut, ihre
   Wirkung tragen Operationen, Prüfurteile, Merge-Kriterien und die Treiber der Arbeitsweisen. Umgesetzt mit
   [ADR-098](adr/098-working-modes.md).
+- **A19 – Eine VM je CI-Job:** Jeder selbst gehostete GitHub-Actions-Job ([E-30](#e-30)) läuft in einer frischen VM,
+  die danach gelöscht wird – Empfehlung der Recherche vom 2026-11-25 und GitHubs Empfehlung für Einmal-Runner, nicht
+  Wortlaut des Auftraggebers. Ausgenommen sind Läufe, die das Gerät selbst ändern oder prüfen: Eine VM ohne Freigaben
+  sieht das Gerät nicht, und ein Rückweg aus der VM auf das Gerät höbe die Trennung auf
+  ([spec/16-ci-runners.md §1](spec/16-ci-runners.md#1-purpose-and-scope)).
 
 ## Teil D – Pflege
 
@@ -1014,7 +1019,7 @@ Stand 2026-11-26. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber nennt, welche Schalter umgelegt werden (gebaut, [ADR-079](adr/079-no-approval-as-precondition.md); ein Startguthaben gibt es nicht, [E-14](#e-14), entschieden 2026-11-25); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
-| [E-30](#e-30) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Entscheide des Auftraggebers ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)), danach Bau |
+| [E-30](#e-30), [A19](#a-19) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Entscheide des Auftraggebers ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)), danach Bau |
 | [E-31](#e-31) Gemeinsame Kapazität | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | wie [E-30](#e-30) ([spec/16-ci-runners.md §6.6](spec/16-ci-runners.md#66-shared-capacity)) |
 | [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
