@@ -286,6 +286,8 @@ agent-platform task create --wg <wg_id> --text -  < prompt.txt   # or --text "â€
 agent-platform task show --task <task_id>                        # the task and its chat, decrypted here
 agent-platform task prompt --task <task_id> --text "â€¦"           # a further prompt to its session
 agent-platform task follow --task <task_id> [--after <next_after>] [--wait 60]  # new answers; repeat with next_after
+agent-platform task wait --task <task_id> [--timeout 600]        # blocks until idle/closed/failed (at most 3600 s);
+# one result: state, reason, answer (last output, 4000 chars), pull_requests, timed_out, next_after
 agent-platform task list --wg <wg_id> [--state open|closed]
 ```
 
