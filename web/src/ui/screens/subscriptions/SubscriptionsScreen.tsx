@@ -12,8 +12,7 @@ import { useStore } from '../../hooks/useStore';
 import { useAppEnv } from '../../shell/context';
 import { loginTarget } from '../../shell/guard';
 import { useReason } from '../../settings/sections/github/reason';
-import { ProviderList, percent, useTexts } from '../../subscriptions/ProviderList';
-import { TICK_MS } from '../../subscriptions/SubscriptionsCard';
+import { ProviderList, percent, TICK_MS, useTexts } from '../../subscriptions/ProviderList';
 import { useSubscriptions } from '../../subscriptions/useSubscriptions';
 
 const COLUMNS = [
@@ -103,7 +102,14 @@ function Row({ row, now }: { readonly row: SubscriptionRow; readonly now: number
 function Table({ rows, now }: { readonly rows: readonly SubscriptionRow[]; readonly now: number }) {
   const { t } = useTexts();
   return (
-    <div className="overflow-x-auto rounded border border-gray-200 bg-white" data-testid="subscriptions.table">
+    <div
+      className="overflow-x-auto rounded border border-gray-200 bg-white"
+      // the table scrolls sideways on a phone: keyboard users reach it, and it is named (axe scrollable-region-focusable)
+      tabIndex={0}
+      role="region"
+      aria-label={t('subscriptions.title')}
+      data-testid="subscriptions.table"
+    >
       <table className="w-full min-w-[56rem] text-left text-sm">
         <thead className="bg-gray-100">
           <tr>

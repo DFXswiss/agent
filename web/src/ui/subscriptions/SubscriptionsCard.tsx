@@ -5,10 +5,8 @@
 import { Link } from 'react-router-dom';
 import { providerGroups } from '../../core/subscriptions/subscriptions';
 import { useNow } from '../countdown/useNow';
-import { ProviderList, useTexts } from './ProviderList';
+import { ProviderList, TICK_MS, useTexts } from './ProviderList';
 import { useSubscriptions } from './useSubscriptions';
-
-export const TICK_MS = 30_000;
 
 export function SubscriptionsCard() {
   const { t } = useTexts();
@@ -42,5 +40,3 @@ export function SubscriptionsCard() {
     </section>
   );
 }
-
-export default SubscriptionsCard;

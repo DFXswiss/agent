@@ -19,6 +19,8 @@ import '../../core/i18n/lazy/subscriptions';
 
 /** Older than this, a measurement is marked old. */
 export const OLD_MS = 60 * 60 * 1000;
+/** How often the shown ages and times to a reset move on. */
+export const TICK_MS = 30_000;
 
 const LEVEL_CLASS = { ok: 'bg-green-600', warn: 'bg-amber-500', low: 'bg-red-600' } as const;
 // One line: name | time to the reset | bar | percent. On a phone the bar takes a second row of its own below the

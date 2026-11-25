@@ -10,7 +10,7 @@
 // - The four groups in this order: "Needs your decision", "Stuck", "Running", "Recently finished" (the last links the
 //   default workgroup's full task list), each a windowed list paged by the hub (`AttentionGroup.tsx`).
 // Live `attention` frames update the entries and the counters (batched in the store, counters at most once a second).
-import { lazy, Suspense, useId, useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { selectNoTask } from '../../../core/attention/view';
 import { CATEGORIES, type AttentionSummary } from '../../../core/store/slices/attention';
@@ -25,9 +25,7 @@ import { useDirectory, useOrgView } from '../tasks/hooks';
 import { AttentionGroup } from './AttentionGroup';
 import { useSummary } from './hooks';
 import { QuotaCounter } from './QuotaCounter';
-
-// the user's own subscriptions at a glance (KOR-68): a chunk of its own, the situation view does not wait for it
-const SubscriptionsCard = lazy(() => import('../../subscriptions/SubscriptionsCard'));
+import { SubscriptionsCard } from '../../subscriptions/SubscriptionsCard';
 
 /** The counters in their order: test ID suffix and field of the summary. */
 const COUNTERS: readonly [string, keyof AttentionSummary][] = [
@@ -156,9 +154,7 @@ export function HomeScreen() {
       </div>
       <Counters org={org} />
       <QuotaCounter org={org} />
-      <Suspense fallback={null}>
-        <SubscriptionsCard />
-      </Suspense>
+      <SubscriptionsCard />
       {CATEGORIES.map((category) => (
         <AttentionGroup
           key={category}
