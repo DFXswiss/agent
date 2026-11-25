@@ -20,7 +20,7 @@ from agent_runner.crypto.ids import uuid7
 from agent_runner.guestlink.errors import GuestRefused, GuestUnreachable
 from agent_runner.operations.extensions import OperationContext, OperationFailed, prechecks
 from agent_runner.prompts.resume import RETRY
-from agent_runner.subagents import instructions, session_state, target_checks, turns
+from agent_runner.subagents import instructions, session_state, store, target_checks, turns
 from agent_runner.subagents.controller import GRACE_S, SETTLE_S, Subagents, ping_id
 from agent_runner.subagents.instructions import Instruction
 
@@ -688,6 +688,43 @@ def test_a_child_suspended_while_its_instruction_waited_is_resumed_only_within_t
         assert "AGENT_RUNNER_SESSIONS_PER_VM" in full.answer["error"]["message"]
         assert guest(found).registered() == []
         assert (await found.stored(child)).state == "suspended"
+
+    run(rig, body)
+
+
+def test_a_turn_followed_at_once_by_the_next_instruction_is_still_pinged_once(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        found = await setup(env)
+        parent, child, first = await full_child(found)
+        await found.output(child, "First answer.", "msg_a")
+        await turn_ends(found, child)
+        # the parent instructs again within the settle time; the child already works on it
+        op = await instruct(found, parent, child)
+        assert op.state == "succeeded"
+        await found.state(child, "prompt_accepted", prompt_id=op.id)
+        await found.tick()
+        assert [p.ping_id for p in found.pinged] == [turns.ping_id(child, first)]
+        assert any(f"turn_ended child_session_id={child} instruction_id={first}" in line for line in found.lines)
+        # once per daemon
+        await found.tick()
+        assert len(found.pinged) == 1
+        # the newest turn is pinged as usual when it ends
+        await turn_ends(found, child)
+        await settle_turn(found)
+        assert [p.ping_id for p in found.pinged] == [turns.ping_id(child, first), turns.ping_id(child, op.id)]
+        # without live children nothing is asked
+        turns_of = found.controller.turns
+        await turns_of.ping_earlier([])
+        # a turn that ended longer ago than the watch window is not pinged again (a restarted daemon)
+        turns_of.turned.clear()
+        async with env.pool.connection() as conn:
+            await conn.execute(
+                "UPDATE runner.subagent_instruction SET ended_at = ended_at - make_interval(secs => %s)"
+                " WHERE operation_id = %s",
+                (store.RECENT_S + 60, first),
+            )
+        await turns_of.ping_earlier([await found.stored(child)])
+        assert len(found.pinged) == 2
 
     run(rig, body)
 

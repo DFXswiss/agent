@@ -178,8 +178,8 @@ SPEC_ATTENTION = {
     "blocked": (
         "since_desc",
         "session_failed guest_error device_unreachable model_access_missing no_capacity operation_refused"
-        " device_failed",  # ADR-087
-        " limit_reached",
+        " device_failed"  # ADR-087
+        " limit_reached",  # ADR-088
     ),
     "working": ("since_desc", "queued starting working operation subagents quota_wait"),  # quota_*: ADR-081
     "done": ("since_desc", "idle closed"),

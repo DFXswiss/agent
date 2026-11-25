@@ -101,6 +101,20 @@ async def newest(conn: AsyncConnection[Any], children: list[str]) -> dict[str, I
     return {row["child_session_id"]: Instruction(**row) for row in await cursor.fetchall()}
 
 
+async def ended_before_newest(conn: AsyncConnection[Any], children: list[str], since: datetime) -> list[Instruction]:
+    """The instructions of `children` whose turn ended at or after `since` and that are not their child's newest one
+    (a later instruction followed quickly), oldest first."""
+    cursor = conn.cursor(row_factory=dict_row)
+    await cursor.execute(
+        f"SELECT {COLUMNS} FROM runner.subagent_instruction i WHERE i.child_session_id = ANY(%s::uuid[])"
+        " AND i.ended_at IS NOT NULL AND i.ended_at >= %s AND EXISTS (SELECT 1 FROM runner.subagent_instruction j"
+        " WHERE j.child_session_id = i.child_session_id AND (j.created_at, j.operation_id) > (i.created_at,"
+        " i.operation_id)) ORDER BY i.ended_at, i.operation_id",
+        (children, since),
+    )
+    return [Instruction(**row) for row in await cursor.fetchall()]
+
+
 async def delivered(conn: AsyncConnection[Any], operation_id: str, at: datetime) -> None:
     await conn.execute(
         "UPDATE runner.subagent_instruction SET delivered_at = %s WHERE operation_id = %s AND delivered_at IS NULL",

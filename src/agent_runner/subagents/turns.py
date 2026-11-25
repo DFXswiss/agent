@@ -314,6 +314,24 @@ class Turns:
         self.c.line(f"turn_ended child_session_id={child.id} instruction_id={instruction}")
         await self.c.notify_parent(child, None if newest is None else ping_id(child.id, newest.operation_id))
 
+    async def ping_earlier(self, live: list[LocalSession]) -> None:
+        """The turn ping of every earlier instruction whose turn ended while a later one already followed (the parent
+        instructed again before the newest turn's end was handled, `due`): no settling is needed, the child's records
+        of that turn came before the later prompt. Once per daemon and instruction; within `store.RECENT_S`."""
+        if not live:
+            return
+        since = datetime.fromtimestamp(self.env.wall() - store.RECENT_S, UTC)
+        async with store_session(self.env.db) as conn:
+            earlier = await instructions.ended_before_newest(conn, [child.id for child in live], since)
+        children = {child.id: child for child in live}
+        for row in earlier:
+            key = self.key(row.child_session_id, row)
+            if key in self.turned:
+                continue
+            self.turned.add(key)
+            self.c.line(f"turn_ended child_session_id={row.child_session_id} instruction_id={row.operation_id}")
+            await self.c.notify_parent(children[row.child_session_id], ping_id(row.child_session_id, row.operation_id))
+
     async def settled(self, key: str, vm_id: str | None) -> bool:
         """The end of a turn whose last records arrived (`controller.Subagents.settled_since`)."""
         return bool(await self.c.settled_since(key, vm_id, self.seen, self.heads))

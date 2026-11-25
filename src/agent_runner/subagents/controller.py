@@ -338,6 +338,9 @@ class Subagents:
                 self._full(child, now, await survey())
             elif child.state == "idle" and now - self.idle_since.setdefault(child.id, now) >= GRACE_S:
                 self._spawn_end(child.id, self._finish(child))
+        await self.turns.ping_earlier(
+            [child for child in found if child.state not in FINAL and await self.turns.current(child)]
+        )
 
     def _full(self, child: LocalSession, now: float, survey: tuple[dict[str, Instruction], set[str]]) -> None:
         """A full child that has not ended (`turns.py`): stopped when its parent ended, else the work of an idle one;
