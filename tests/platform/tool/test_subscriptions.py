@@ -25,8 +25,9 @@ ORG = "01930001-0000-7000-8000-0000000000aa"
 
 
 @pytest.fixture(autouse=True)
-def fast_polls(monkeypatch: pytest.MonkeyPatch) -> None:
+def fast_polls(monkeypatch: pytest.MonkeyPatch, hub: HubFake) -> None:
     monkeypatch.setattr(devicereq, "POLL_S", 0.01)
+    state_of(hub).announce = True
 
 
 def body(token: str | None = TOKEN, **extra: Any) -> Json:

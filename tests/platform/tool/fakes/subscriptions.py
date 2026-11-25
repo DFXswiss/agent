@@ -8,7 +8,8 @@ section 4.8):
 - `PUT /v1/subscriptions/{id}`: an own further record (the primary one is `403 forbidden`) signed by the caller under
   the current `CK` epoch (`409 epoch_stale`), at the stored version (`409 version_conflict`);
 - `DELETE /v1/subscriptions/{id}`: an own record (also the primary one), else `404`;
-- `GET /v1/me/devices` lists `features`: `subscriptions` for every device but those in `outdated`.
+- `GET /v1/me/devices` lists `features` once `announce` is on: `subscriptions` for every device but those in
+  `outdated`.
 """
 
 from __future__ import annotations
@@ -28,6 +29,8 @@ KIND = "claude_subscription"
 class Subscriptions:
     records: dict[str, Json] = field(default_factory=dict)
     readings: dict[str, Json | None] = field(default_factory=dict)
+    announce: bool = False
+    """`GET /v1/me/devices` lists `features` (the tests of this area switch it on; other suites see the rows as before)."""
     outdated: set[str] = field(default_factory=set)
     puts: list[Json] = field(default_factory=list)
     conflicts: int = 0
@@ -137,7 +140,7 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
 
     def devices(request: Request, body: Any) -> tuple[int, Any]:
         status, answer = original_devices(request, body)
-        if status == 200:
+        if status == 200 and found.announce:
             for row in answer["devices"]:
                 if isinstance(row, dict) and "features" not in row:
                     row["features"] = [] if row.get("device_id") in found.outdated else ["subscriptions"]
