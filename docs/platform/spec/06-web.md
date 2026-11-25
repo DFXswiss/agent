@@ -891,6 +891,19 @@ newest `CK` after a rotation.
   `setup_token`, "from the Claude Code login" for `login_token`, ADR-056) and, for a login token, its expiry
   (an expired one highlighted).
 
+**Claude subscriptions (KOR-69, [ADR-090](../adr/090-every-subscription-logged-in-centrally.md)).** Settings section
+"Claude subscriptions" (`settings/subscription-logins`, components `ui/subscriptions/`): every own subscription
+(`core/credentials/subscriptions.ts`: list, each record verified and opened in the browser; never the token) as a card
+with status, address and note; "Add a subscription" (name, note, optionally "sign in through my mailbox" with an
+address) and "Log in now"/"Log in again" start `claude.login` with the subscription's ID on an online device that
+announced `subscriptions` – no device choice – and continue as the relay of the credentials section (link in a new
+tab, paste the code); "Name and note", "Use" (only measure, for sessions of the user's organizations, the operator
+pool for the role `operator`; an organization or the pool already chosen stays visible to be switched off), "Log out"
+(with the place to revoke the token at the provider) and "Remove" (with a confirmation; also for a record that does
+not open). The page "My subscriptions" (KOR-68) opens the same dialogs at "Add subscription" and at "Log in now" of a
+further subscription that is not logged in. A login is started once per attempt; closing the dialog while it starts
+sends nothing more.
+
 ### 8.3 Connected agents (KOR-24, `11-agent-access.md`)
 
 - `/settings` → "Connected agents": `GET /v1/me/agents`, each with name and computer (opened from the sealed label),
