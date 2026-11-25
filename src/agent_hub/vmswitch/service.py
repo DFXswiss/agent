@@ -4,9 +4,10 @@
   `wg:read` and `org:admin` of the workgroup's organization (the member with administration rights; `404 not_found`
   without `wg:read`, `403 forbidden` without `org:admin`). The VM must be a live VM of the workgroup (`404 not_found`
   otherwise). When its device last reported it outdated (`hub.vm.upgrade`), the request is stored
-  (`switch_requested_at`, kept when already set; `switch_requested_by`), audited (`vm.switch_requested {vm_id,
-  device_id}`) and the device is woken (hint `reconcile`, after the commit); a current VM (`upgrade` NULL) stores
-  nothing. The answer is the preview: the VM's status as reported, `requested` and `requested_at`.
+  (`switch_requested_at`, kept when already set; `switch_requested_by`) and the device is woken (hint `reconcile`,
+  after the commit); a current VM (`upgrade` NULL) stores nothing. Either way the write is audited
+  (`vm.switch_requested {vm_id, device_id, requested}`). The answer is the preview: the VM's status as reported,
+  `requested` and `requested_at`.
 - `requested(connection, device)`: the VMs of the device with a request that are still live and outdated, oldest
   request first (the desired state's `vm_switch`).
 - `apply_report(connection, body)`: what a `vm_state` report adds (`outbox.py`): `upgrade` when present (NULL ends a
@@ -56,23 +57,23 @@ def request_switch(
             "UPDATE hub.vm SET switch_requested_at = %s, switch_requested_by = %s WHERE id = %s",
             (requested_at, user, vm),
         )
-        append_audit(
-            connection,
-            AuditRow(
-                at=now,
-                actor_kind="user",
-                actor_id=user,
-                action="vm.switch_requested",
-                result="ok",
-                org_id=org[0],
-                wg_id=wg,
-                device_id=device,
-                target_kind="wg",
-                target_id=str(wg),
-                detail={"vm_id": vm, "device_id": str(device)},
-            ),
-        )
         wake = device
+    append_audit(
+        connection,
+        AuditRow(
+            at=now,
+            actor_kind="user",
+            actor_id=user,
+            action="vm.switch_requested",
+            result="ok",
+            org_id=org[0],
+            wg_id=wg,
+            device_id=device,
+            target_kind="wg",
+            target_id=str(wg),
+            detail={"vm_id": vm, "device_id": str(device), "requested": upgrade is not None},
+        ),
+    )
     answer = {
         "vm_id": vm,
         "device_id": str(device),

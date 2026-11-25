@@ -383,6 +383,11 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("disk_gib", INT),
         ("created_at", TS),
         ("state_at", TS),
+        # 0035 (KOR-70, ADR-093): the switch to the newest golden
+        ("upgrade", J),
+        ("replaced_by", T),
+        ("switch_requested_at", TS),
+        ("switch_requested_by", U),
     ],
     # 2.5
     "operation": [
@@ -997,6 +1002,7 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
                 "restore_failed",
                 "workspace_partial",
                 "workspace_omitted",
+                "golden_switch",  # KOR-70 (ADR-093 section 4)
             ],
         ),
         ("context_object", "state", ["uploading", "complete"]),
@@ -1055,7 +1061,7 @@ def test_context_reasons_equal_the_contract(owner: psycopg.Connection[Any], repo
     definitions = json.loads((repo_root / "contracts/common.json").read_text())["$defs"]
     reasons = definitions["context_reason"]["enum"]
     fallback = definitions["context_fallback_reason"]["enum"]
-    assert reasons == [*fallback, "workspace_partial", "workspace_omitted"]
+    assert reasons == [*fallback, "workspace_partial", "workspace_omitted", "golden_switch"]
     listed = re.findall(r"'([^']*)'::text", _check_values(owner, "session", "context_reason"))
     assert set(listed) == {*reasons, "fallback", "restored"}
 

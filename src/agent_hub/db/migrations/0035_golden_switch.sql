@@ -3,7 +3,7 @@
 -- `vm.upgrade` is the switch status of an outdated workgroup VM as its device reports it with `vm_state` (contracts
 -- `vm_upgrade`: golden, state, holds, sessions that move; NULL once current), `vm.replaced_by` the VM that replaced a
 -- switched one (on its `deleted` report). `vm.switch_requested_at/by` record a member with administration rights who
--- asked for the switch now (`POST /v1/workgroups/{wg}/vms/{vm}/switch`); the desired state names such VMs to their
+-- asked for the switch now (`POST /v1/workgroups/{{wg}}/vms/{{vm}}/switch`); the desired state names such VMs to their
 -- device until the VM is current or deleted. `session.context_reason` gains `golden_switch` for a restored session
 -- whose VM was switched while it was paused (the whole workspace came along).
 --

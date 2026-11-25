@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/audit/vm.switch_requested.json",
   "title": "audit detail vm.switch_requested",
-  "description": "detail of audit rows with action vm.switch_requested: a member with administration rights asked the device to switch a workgroup VM to the newest golden now (ADR-093 section 5). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "description": "detail of audit rows with action vm.switch_requested: a member with administration rights asked the device to switch a workgroup VM to the newest golden now (ADR-093 section 5); requested false: the device reported the VM current, nothing was stored. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
   "type": "object",
   "properties": {
     "vm_id": {
@@ -10,11 +10,15 @@
     },
     "device_id": {
       "$ref": "../common.json#/$defs/uuid"
+    },
+    "requested": {
+      "type": "boolean"
     }
   },
   "required": [
     "vm_id",
-    "device_id"
+    "device_id",
+    "requested"
   ],
   "additionalProperties": false
 }

@@ -272,7 +272,9 @@ def test_the_lists_show_vms_sessions_and_the_organization_assignment(desk: Desk,
     body = desk.scene.reader.browser.get(f"/v1/workgroups/{desk.wg}").json()
     found = {item["device_id"]: item for item in body["devices"]}
     assert found[device.id]["assigned_via"] == "org"
-    assert found[desk.scene.device.id]["vms"] == [{"vm_id": vm, "state": "running", "sessions": 1}]
+    assert found[desk.scene.device.id]["vms"] == [
+        {"vm_id": vm, "state": "running", "sessions": 1, "golden_version": "golden-1", "upgrade": None}
+    ]
     devices = desk.scene.writer.browser.get(f"/v1/orgs/{desk.org}/devices").json()["devices"]
     listed = {item["device_id"]: item for item in devices}
     assert listed[device.id]["assigned_org"] is True

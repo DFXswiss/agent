@@ -109,8 +109,11 @@ def test_restart_path_for_a_stopped_vm_and_golden_replacement(rig: Rig, harness:
         again = await starter.start(desired(2))
         assert (again.started, again.path) == (True, "restart")
         assert (await found.stored(desired(2).session_id)).vm_id == vm_id
-        # a newer golden: the stopped VM is replaced by a fresh clone of it (no suspended session)
+        # a newer golden: the stopped VM is replaced by a fresh clone of it once no session on it goes on (ADR-093:
+        # a session that is not paused with a complete checkpoint holds the VM)
         await manager.stop_vm(vm_id)
+        async with env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.session SET state = 'stopped' WHERE vm_id = %s", (vm_id,))
         harness.add_golden("g2", minute=5)
         replaced = await starter.start(desired(3))
         assert (replaced.started, replaced.path) == (True, "clone")

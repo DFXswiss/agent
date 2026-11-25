@@ -254,9 +254,13 @@ TABLES = {
         "restore_audit",
         "restore_started",
         "restore_failed",
+        "checkpoint_state",  # 0034 (KOR-70, ADR-093)
     ],
     # 0031 (KOR-57, ADR-082 section 6): the main orchestrator in a session of this device
     "orchestrator": ["session_id", "pairing_id", "state", "registered_at", "handed_over_at"],
+    # 0034 (KOR-70, ADR-093): the switch of workgroup VMs to the newest golden
+    "golden_switch": ["old_vm_id", "new_vm_id", "golden_version", "switched_at"],
+    "golden_switch_hold": ["vm_id", "reason", "session_key", "since"],
     "context_object": [
         "object_id",
         "task_id",

@@ -1,0 +1,19 @@
+{
+  "description": "Endpoints added by KOR-70 (ADR-093): a member with administration rights asks for the switch of a workgroup VM to the newest golden now (03-api.md section 4.5).",
+  "rights": [
+    "wg:read"
+  ],
+  "auth": [
+    "browser"
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/v1/workgroups/{wg}/vms/{vm}/switch",
+      "rights": [
+        "wg:read"
+      ],
+      "section": "4.5"
+    }
+  ]
+}
