@@ -206,6 +206,18 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     count: 2,
     reason: 'subagents of one session: at most 10 per task and depth 2 (hub operations/limits.py)',
   },
+  'src/ui/subscriptions/ProviderList.tsx': {
+    count: 3,
+    reason:
+      "the user's own subscriptions (at most 40, subscriptions-list.response.json) by provider (a closed set), and " +
+      'the windows of one provider (5 hours, week, week per model: at most 16 per reading)',
+  },
+  'src/ui/screens/subscriptions/SubscriptionsScreen.tsx': {
+    count: 4,
+    reason:
+      "the fixed columns, the user's own subscriptions (at most 40, subscriptions-list.response.json) and the " +
+      'windows of one reading in two cells (at most 16)',
+  },
 };
 
 const SKIP = 'src/ui/lists/';
