@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   deleteProfile,
   listProfiles,
+  profileLabel,
   profileOf,
   saveProfile,
   sessionRole,
@@ -24,6 +25,8 @@ const entry = (id: string, parent: string | null, profile: unknown = null): Sess
 describe('profiles', () => {
   it('reads well-formed snapshots only', () => {
     expect(profileOf(REVIEW)).toEqual(REVIEW);
+    expect(profileLabel(profileOf(REVIEW), 'none')).toBe('review');
+    expect(profileLabel(null, 'none')).toBe('none');
     for (const bad of [
       null,
       'review',

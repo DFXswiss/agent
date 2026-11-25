@@ -44,6 +44,11 @@ export function profileOf(value: unknown): AgentProfile | null {
   return { name, operations, reads };
 }
 
+/** The text of a profile: its name, else `none` (every right, E-11). */
+export function profileLabel(profile: AgentProfile | null, none: string): string {
+  return profile === null ? none : profile.name;
+}
+
 /** The profile name a session works with (module comment). */
 export function sessionRole(
   sessions: Readonly<Record<string, SessionEntry>>,

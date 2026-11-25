@@ -3,7 +3,13 @@
 // `PUT /v1/tasks/{task}/agent-profile` (it applies at once to the task's sessions and their subagents; `409
 // peer_outdated` when a device of the organization runs an older runner).
 import { useState } from 'react';
-import { listProfiles, profileOf, setTaskProfile, type ListedProfile } from '../../../core/profiles/profiles';
+import {
+  listProfiles,
+  profileLabel,
+  profileOf,
+  setTaskProfile,
+  type ListedProfile,
+} from '../../../core/profiles/profiles';
 import type { TaskRow } from '../../../core/store/slices/tasks';
 import { sendErrorCode } from '../../../core/tasks/send';
 import { useI18n } from '../../i18n';
@@ -38,7 +44,7 @@ export function TaskProfile({ row, writer }: { readonly row: TaskRow; readonly w
       <p className="flex flex-wrap items-center gap-2">
         <span>{t('profiles.task.current')}</span>
         <span data-testid="task.profile.name" data-profile={current?.name ?? ''}>
-          {current === null ? t('profiles.task.none') : current.name}
+          {profileLabel(current, t('profiles.task.none'))}
         </span>
         {writer && choices === null && (
           <button type="button" className={BUTTON} onClick={edit} data-testid="task.profile.change">
