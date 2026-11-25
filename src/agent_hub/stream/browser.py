@@ -12,19 +12,27 @@ stored frame is deleted. The renewal also removes expired rows of other processe
 device in a workgroup it is assigned to (`403 forbidden`, unknown `404 not_found`); a frame must pass
 `agent_hub.crypto.browserframe.check_frame` with the path's session and its workgroup and name an epoch of that
 workgroup (`400 request_invalid`; the hub never decrypts); without a valid lease the answer is `409 not_watched`.
-A frame replaces the session's row of `hub.browser_live` (unlogged, the only frame the hub keeps); after the commit
-the reference `{session_id, seq}` is published (`BROWSER_LIVE_REF`, a bus message carries at most 7900 bytes, a frame
-up to 512 KiB), and every hub process reads the row once and sends `browser_live {session_id, frame}` to its streams
-watching the session. The answer `{until, kbps}` names the latest valid lease and the largest wish among the valid
-leases. No audit row per frame (the stream's `read.stream.browser` records who watches).
+A frame replaces the session's row of `hub.browser_live` (unlogged, the only frame the hub keeps) in the transaction
+that holds the session's valid leases `FOR SHARE`: a process that ends its last lease meanwhile waits for the commit and
+then deletes the frame with it, so no frame stays without a lease; a frame of the same browser session whose `seq` is
+not above the stored one is answered but neither stored nor published. At most `FRAMES_PER_SECOND` frame posts per
+session and second are taken per hub process (`FrameLimiter`; beyond, `429 rate_limited` with `Retry-After: 1` and
+nothing stored). After the commit the reference `{session_id, seq}` is published (`BROWSER_LIVE_REF`, a bus message
+carries at most 7900 bytes, a frame up to 512 KiB), and every hub process reads the row once and sends `browser_live
+{session_id, frame}` to its streams watching the session. The answer `{until, kbps}` names the latest valid lease and
+the largest wish among the valid leases. No audit row per frame (the stream's `read.stream.browser` records who
+watches).
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+import threading
+import time
+from collections import deque
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, cast
+from typing import Any
 from uuid import UUID
 
 import psycopg
@@ -41,6 +49,33 @@ Connection = psycopg.Connection[Any]
 LEASE_SECONDS = 30
 RENEW_SECONDS = 10
 HINT = "browser"
+FRAMES_PER_SECOND = 10
+
+
+@dataclass
+class FrameLimiter:
+    """At most `limit` frame posts per session in any second of `clock` (one per hub process)."""
+
+    limit: int = FRAMES_PER_SECOND
+    clock: Callable[[], float] = time.monotonic
+    _posts: dict[UUID, deque[float]] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def admit(self, session: UUID) -> None:
+        """Count one frame post of the session (`429 rate_limited` beyond the limit, not counted)."""
+        now = self.clock()
+        with self._lock:
+            for key in [key for key, times in self._posts.items() if times[-1] <= now - 1.0]:
+                del self._posts[key]  # sessions without a post in the last second
+            times = self._posts.setdefault(session, deque())
+            while times and times[0] <= now - 1.0:
+                times.popleft()
+            if len(times) >= self.limit:
+                raise HubError("rate_limited", headers={"Retry-After": "1"})
+            times.append(now)
+
+
+LIMITER = FrameLimiter()
 
 
 @dataclass(frozen=True)
@@ -146,21 +181,23 @@ def post_live(
         ).fetchone()
         if known is None:
             raise _invalid("/frame/epoch")
-    lease = connection.execute(
-        "SELECT max(until), max(kbps) FROM hub.browser_watch WHERE session_id = %s AND until > %s",
+    leases = connection.execute(
+        "SELECT until, kbps FROM hub.browser_watch WHERE session_id = %s AND until > %s FOR SHARE",
         (session.session_id, now),
-    ).fetchone()
-    until, kbps = cast(tuple[Any, Any], lease)  # an aggregate always returns one row
-    if until is None:
+    ).fetchall()
+    if not leases:
         raise HubError("not_watched")
-    answer = {"until": format_time(until), "kbps": int(kbps)}
-    if checked is None:
-        return Posted(answer, session.org_id, session.wg_id, None)
-    seq = int(str(checked["seq"]))
-    connection.execute(
-        "INSERT INTO hub.browser_live (session_id, browser_id, seq, frame, received_at) VALUES (%s, %s, %s, %s, %s)"
-        " ON CONFLICT (session_id) DO UPDATE SET browser_id = EXCLUDED.browser_id, seq = EXCLUDED.seq,"
-        " frame = EXCLUDED.frame, received_at = EXCLUDED.received_at",
-        (session.session_id, checked["browser"], seq, Jsonb(checked), now),
+    answer = {"until": format_time(max(row[0] for row in leases)), "kbps": max(int(row[1]) for row in leases)}
+    seq = None if checked is None else int(str(checked["seq"]))
+    stored = checked is not None and (
+        connection.execute(
+            "INSERT INTO hub.browser_live (session_id, browser_id, seq, frame, received_at) VALUES (%s, %s, %s, %s, %s)"
+            " ON CONFLICT (session_id) DO UPDATE SET browser_id = EXCLUDED.browser_id, seq = EXCLUDED.seq,"
+            " frame = EXCLUDED.frame, received_at = EXCLUDED.received_at"
+            " WHERE hub.browser_live.browser_id <> EXCLUDED.browser_id OR hub.browser_live.seq < EXCLUDED.seq"
+            " RETURNING 1",
+            (session.session_id, checked["browser"], seq, Jsonb(checked), now),
+        ).fetchone()
+        is not None
     )
-    return Posted(answer, session.org_id, session.wg_id, seq)
+    return Posted(answer, session.org_id, session.wg_id, seq if stored else None)

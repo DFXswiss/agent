@@ -7,6 +7,8 @@ streams and are not replayed (13-work-vm.md section 13.6, threat model B7-B12)."
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 import uuid
 from datetime import timedelta
 from typing import Any, cast
@@ -17,6 +19,7 @@ from psycopg.types.json import Jsonb
 
 from agent_hub.crypto import browserframe
 from agent_hub.crypto.encoding import format_time
+from agent_hub.device.access import device_view
 from agent_hub.stream import browser
 from agent_hub.stream.bus import BusMessage
 from agent_hub.stream.publish import BROWSER_LIVE_REF, Audience, Published, publish
@@ -223,6 +226,10 @@ def test_the_live_route(scene: Scene, hub: HubHarness, live: LiveHub) -> None:
     assert watching.frame().data["frame"] == second  # type: ignore[union-attr]
     assert plain.quiet() == []
     assert terminal.quiet() == []
+    older = _frame(scene, session, seq=1)
+    assert _post(hub, key, session, older).json() == {"until": until, "kbps": 1000}  # answered, not taken
+    assert _stored(scene, session) == [(BROWSER, 2, second)]
+    assert watching.quiet() == []
     viewer = live.stream(browser_key(scene.reader), org=scene.org, browser=session)
     hello, initial = viewer.frames(2)
     assert hello.event == "hello"
@@ -347,3 +354,76 @@ def test_a_device_key_is_needed(scene: Scene, hub: HubHarness) -> None:
         f"/v1/device/sessions/{session}/browser/live", json={}
     )
     assert refused.status_code == 403
+
+
+def test_a_new_browser_session_restarts_the_frames_and_posts_are_capped(
+    scene: Scene, hub: HubHarness, live: LiveHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _task, session = scene.start_session()
+    key = device_key(hub.keys, scene.device, scene.org)
+    watching = _watch(live, scene.writer, scene.org, session)
+    assert _post(hub, key, session, _frame(scene, session, seq=9)).status_code == 200
+    assert watching.frame().data["frame"]["seq"] == 9  # type: ignore[union-attr]
+    restarted = _frame(scene, session, seq=0, browser="br-ba9876543210")
+    assert _post(hub, key, session, restarted).status_code == 200
+    assert _stored(scene, session) == [("br-ba9876543210", 0, restarted)]
+    assert watching.frame().data["frame"] == restarted  # type: ignore[union-attr]
+    monkeypatch.setattr(browser, "LIMITER", browser.FrameLimiter(limit=1))
+    assert _post(hub, key, session, _frame(scene, session, seq=1, browser="br-ba9876543210")).status_code == 200
+    capped = _post(hub, key, session, _frame(scene, session, seq=2, browser="br-ba9876543210"))
+    assert (capped.status_code, capped.json(), capped.headers["retry-after"]) == (429, {"error": "rate_limited"}, "1")
+    assert _stored(scene, session)[0][1] == 1  # nothing stored
+    assert _post(hub, key, session).status_code == 200  # an empty post only answers the lease: not counted
+
+
+def test_the_frame_limiter() -> None:
+    now = [0.0]
+    limiter = browser.FrameLimiter(limit=2, clock=lambda: now[0])
+    first, second = uuid.uuid4(), uuid.uuid4()
+    limiter.admit(first)
+    limiter.admit(first)
+    limiter.admit(second)
+    with pytest.raises(Exception, match="rate_limited"):
+        limiter.admit(first)
+    now[0] = 0.5
+    with pytest.raises(Exception, match="rate_limited"):
+        limiter.admit(first)
+    now[0] = 1.0
+    limiter.admit(first)  # the posts of the first second have left the window
+    assert set(limiter._posts) == {first}  # a session without a post in the last second is forgotten
+    now[0] = 1.5
+    limiter.admit(first)
+    now[0] = 2.2
+    limiter.admit(first)  # the post at 1.0 left the window, the one at 1.5 still counts
+    with pytest.raises(Exception, match="rate_limited"):
+        limiter.admit(first)
+
+
+def test_a_frame_is_never_left_without_a_lease(scene: Scene, hub: HubHarness) -> None:
+    _task, session = scene.start_session()
+    now = hub.clock()
+    with hub.pool.connection() as connection:
+        connection.execute(
+            "INSERT INTO hub.browser_watch (session_id, instance, until, kbps) VALUES (%s, 'other', %s, 500)",
+            (session, now + timedelta(seconds=browser.LEASE_SECONDS)),
+        )
+    released = threading.Event()
+
+    def release() -> None:  # the other process's last stream stops watching the session
+        with hub.pool.connection() as connection, connection.transaction():
+            browser.write_leases(connection, "other", {uuid.UUID(session): None}, now)
+        released.set()
+
+    device = uuid.UUID(scene.device.id)
+    with hub.pool.connection() as connection, connection.transaction():
+        view = device_view(connection, device, hub.config.platform_root_key)
+        frame = _frame(scene, session, seq=3)
+        posted = browser.post_live(connection, view, device, uuid.UUID(session), frame=frame, now=now)
+        assert (posted.answer["kbps"], posted.seq) == (500, 3)
+        worker = threading.Thread(target=release)
+        worker.start()
+        time.sleep(0.3)
+        assert not released.is_set()  # the lease is held until the frame is committed
+    worker.join(10)
+    assert released.is_set()
+    assert (_leases(scene, session), _stored(scene, session)) == ([], [])

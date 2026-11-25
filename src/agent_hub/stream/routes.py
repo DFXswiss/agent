@@ -127,6 +127,8 @@ class LiveRequest(BaseModel):
 
 
 def _post_live(context: HubContext, device: UUID, session: UUID, frame: dict[str, Any] | None) -> dict[str, Any]:
+    if frame is not None:
+        live.LIMITER.admit(session)  # before any work: a refused frame stores nothing
     now = context.clock()
     with transaction(context.pool) as connection:
         view = device_view(connection, device, context.config.platform_root_key)
