@@ -21,6 +21,7 @@
   "card.starting": "Startet seit {seconds} s, Ziel unter 10 s.",
   "card.overdue": "Verzögert: startet seit {seconds} s.",
   "watch": "Live ansehen",
+  "record.open": "Protokoll öffnen",
   "tab.title": "Plattform-Browser",
   "tab.none": "Diese Session hat noch keinen Browser geöffnet.",
   "tab.refused": "Der Browser dieser Session kann nicht angesehen werden.",

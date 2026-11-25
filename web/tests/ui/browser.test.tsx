@@ -100,12 +100,15 @@ describe('chat item browser.state', () => {
     await card(t, state(overrides));
     expect(screen.getByTestId('chat.browser.state.title')).toHaveTextContent(title);
     expect(screen.queryByTestId('browser.watch') !== null).toBe(watch);
+    // a closed browser session keeps the way to its record (idea 44: the record stays after the teardown)
+    expect(screen.queryByTestId('browser.record.open') !== null).toBe(!watch);
   });
 
   it('has no "Watch live" without a session and a neutral row for a body that does not follow the contract', async () => {
     const t = await taskWorld();
     await card(t, state(), null);
     expect(screen.queryByTestId('browser.watch')).toBeNull();
+    expect(screen.queryByTestId('browser.record.open')).toBeNull();
     const other = await taskWorld();
     await card(other, { ...state(), extra: 1 });
     expect(screen.getByTestId('chat.workvm.invalid')).toBeInTheDocument();

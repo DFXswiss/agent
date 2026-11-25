@@ -54,7 +54,8 @@ export default function StateCard({ item }: ChatItemProps) {
   const { org } = useParams();
   const state = parseBrowserState(body);
   if (state === null) return <Invalid />;
-  const live = state.state !== 'closed' && sessionId !== null && org !== undefined;
+  const linked = sessionId !== null && org !== undefined;
+  const closed = state.state === 'closed';
   return (
     <div
       className="flex flex-col gap-2 rounded border border-gray-200 p-3 text-sm"
@@ -93,13 +94,13 @@ export default function StateCard({ item }: ChatItemProps) {
           </span>
         )}
       </p>
-      {live && (
+      {linked && (
         <Link
           className="min-h-11 self-start py-2 text-blue-800 underline"
           to={`/o/${encodeURIComponent(org)}/s/${encodeURIComponent(sessionId)}?tab=browser`}
-          data-testid="browser.watch"
+          data-testid={closed ? 'browser.record.open' : 'browser.watch'}
         >
-          {t('browser.watch')}
+          {t(closed ? 'browser.record.open' : 'browser.watch')}
         </Link>
       )}
     </div>

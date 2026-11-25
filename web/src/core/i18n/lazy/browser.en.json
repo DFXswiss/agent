@@ -21,6 +21,7 @@
   "card.starting": "Starting for {seconds} s, target under 10 s.",
   "card.overdue": "Delayed: starting for {seconds} s.",
   "watch": "Watch live",
+  "record.open": "Open the record",
   "tab.title": "Platform browser",
   "tab.none": "This session has not opened a browser yet.",
   "tab.refused": "The browser of this session cannot be watched.",

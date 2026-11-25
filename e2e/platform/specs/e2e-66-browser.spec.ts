@@ -130,7 +130,7 @@ test('@E2E-66 @needs-vm @needs-workvm the platform browser signs in, downloads, 
   const readyMs = states.find((body) => body.state === 'open')!.ready_ms as number;
 
   // The record in the browser tab (after the teardown): rows newest first with the masked password.
-  await page.getByTestId('chat.browser.state').last().getByTestId('browser.watch').click();
+  await page.getByTestId('chat.browser.state').last().getByTestId('browser.record.open').click();
   await expect(page.getByTestId('browser.record.row')).toHaveCount(actions.length, { timeout: 60_000 });
   await expect(page.getByTestId('browser.record.text').filter({ hasText: '••••' })).toHaveCount(1);
   await expect(page.getByTestId('browser.live.badge')).not.toHaveText(/Live/);
