@@ -444,6 +444,11 @@
     "body": "Das Gesuchte existiert nicht oder ist für dich nicht sichtbar.",
     "action": "Gehe zurück zur Startseite."
   },
+  "not_watched": {
+    "title": "Niemand sieht zu",
+    "body": "Das Live-Bild dieses Browsers wird nur gesendet, solange jemand zusieht.",
+    "action": "Öffne den Browser-Tab der Session, um zuzusehen."
+  },
   "oom": {
     "title": "Speicher erschöpft",
     "body": "Der Session ist der Arbeitsspeicher ausgegangen.",

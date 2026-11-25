@@ -444,6 +444,11 @@
     "body": "The requested item does not exist or you cannot see it.",
     "action": "Go back to the start page."
   },
+  "not_watched": {
+    "title": "Nobody is watching",
+    "body": "The live picture of this browser is sent only while someone watches it.",
+    "action": "Open the session's Browser tab to watch it."
+  },
   "oom": {
     "title": "Out of memory",
     "body": "The session ran out of memory.",

@@ -1067,6 +1067,18 @@
       "action": "Gehe zurück zur Startseite."
     }
   },
+  "not_watched": {
+    "en": {
+      "title": "Nobody is watching",
+      "body": "The live picture of this browser is sent only while someone watches it.",
+      "action": "Open the session's Browser tab to watch it."
+    },
+    "de": {
+      "title": "Niemand sieht zu",
+      "body": "Das Live-Bild dieses Browsers wird nur gesendet, solange jemand zusieht.",
+      "action": "Öffne den Browser-Tab der Session, um zuzusehen."
+    }
+  },
   "oom": {
     "en": {
       "title": "Out of memory",
