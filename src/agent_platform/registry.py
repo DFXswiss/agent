@@ -27,6 +27,7 @@ from agent_platform import (
     pulls,
     security,
     sessions,
+    subscriptions,
     testruns,
     wgsettings,
     whiteboards,
@@ -55,4 +56,5 @@ MODULES: tuple[Callable[[Any], None], ...] = (
     connector.register,
     modelaccess.register,
     pulls.register,
+    subscriptions.register,
 )

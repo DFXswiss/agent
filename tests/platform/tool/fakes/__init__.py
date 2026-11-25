@@ -19,4 +19,5 @@ INSTALLERS: tuple[str, ...] = (
     "model_access",
     "pulls",
     "stream",
+    "subscriptions",
 )

@@ -1,0 +1,150 @@
+"""Claude subscriptions in the hub fake as `agent_hub.subscriptions.routes` and `store` run them (ADR-090, 03-api.md
+section 4.8):
+
+- the primary record of a user is the `claude_subscription` row of `HubFake.credentials`; further records live in
+  `records` by ID with their reading (`readings`, by ID; the primary one's under the user's ID);
+- `GET /v1/me/subscriptions`: the caller's records, newest first, with their readings;
+- `GET /v1/subscriptions/{id}`: an own record, else `404`;
+- `PUT /v1/subscriptions/{id}`: an own further record (the primary one is `403 forbidden`) signed by the caller under
+  the current `CK` epoch (`409 epoch_stale`), at the stored version (`409 version_conflict`);
+- `DELETE /v1/subscriptions/{id}`: an own record (also the primary one), else `404`;
+- `GET /v1/me/devices` lists `features`: `subscriptions` for every device but those in `outdated`.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, cast
+
+from agent_runner.crypto.credential import verify_credential
+from agent_runner.crypto.errors import CryptoError
+
+from ..hubfake import HubFake, Json, Request, now_ms_text
+
+KIND = "claude_subscription"
+
+
+@dataclass
+class Subscriptions:
+    records: dict[str, Json] = field(default_factory=dict)
+    readings: dict[str, Json | None] = field(default_factory=dict)
+    outdated: set[str] = field(default_factory=set)
+    puts: list[Json] = field(default_factory=list)
+    conflicts: int = 0
+    """The next PUTs answered `409 version_conflict` regardless."""
+    raw_list: Json | None = None
+    """An answer of `GET /v1/me/subscriptions` sent as it is (a hub that breaks the contract)."""
+    refuse_delete: bool = False
+
+
+def state_of(hub: HubFake) -> Subscriptions:
+    found = getattr(hub, "kor69_subscriptions", None)
+    if found is None:
+        found = Subscriptions()
+        setattr(hub, "kor69_subscriptions", found)  # noqa: B010
+    return cast(Subscriptions, found)
+
+
+def add(hub: HubFake, owner: str, record: Json, reading: Json | None = None) -> str:
+    """Seed a further record (as stored) and its reading."""
+    header = record["header"]
+    state_of(hub).records[header["id"]] = {"owner_id": owner, "record": record}
+    state_of(hub).readings[header["id"]] = reading
+    return str(header["id"])
+
+
+def install(hub: HubFake) -> None:  # noqa: PLR0915
+    found = state_of(hub)
+
+    def rows(user: str) -> list[Json]:
+        listed = []
+        primary = hub.credentials.get((user, KIND))
+        if primary is not None:
+            listed.append((primary["record"], True, found.readings.get(user)))
+        for record_id, row in found.records.items():
+            if row["owner_id"] == user:
+                listed.append((row["record"], False, found.readings.get(record_id)))
+        return [
+            {
+                "id": record["header"]["id"],
+                "owner_id": user,
+                "primary": primary,
+                "version": record["header"]["version"],
+                "epoch": record["header"]["epoch"],
+                "created_at": now_ms_text(),
+                "updated_at": now_ms_text(),
+                "reading": reading,
+                "record": record,
+            }
+            for record, primary, reading in listed
+        ]
+
+    def own(user: str, record_id: str) -> Json | None:
+        return next((row for row in rows(user) if row["id"] == record_id), None)
+
+    def listing(request: Request, body: Any) -> tuple[int, Any]:
+        if found.raw_list is not None:
+            return 200, found.raw_list
+        found_rows = rows(cast(str, request.user))
+        return 200, {"subscriptions": [{k: v for k, v in row.items() if k != "record"} for row in found_rows]}
+
+    def get(request: Request, body: Any, record_id: str) -> tuple[int, Any]:
+        row = own(cast(str, request.user), record_id)
+        if row is None:
+            return 404, {"error": "not_found"}
+        return 200, {"owner_id": row["owner_id"], "primary": row["primary"], "record": row["record"]}
+
+    def put(request: Request, body: Json, record_id: str) -> tuple[int, Any]:  # noqa: PLR0911
+        user = hub.users[cast(str, request.user)]
+        found.puts.append(body)
+        if found.conflicts:
+            found.conflicts -= 1
+            return 409, {"error": "version_conflict", "detail": {"expected": 0}}
+        row = own(user.id, record_id)
+        if row is not None and row["primary"]:
+            return 403, {"error": "forbidden"}
+        record = body["record"]
+        header = record["header"]
+        key = user.identity.sig_public() if header["author"] == user.id else hub.agents[header["author"]].sig
+        try:
+            checked = verify_credential(record, key)
+        except CryptoError:
+            return 400, {"error": "signature_invalid"}
+        if (checked["owner"], checked["kind"], checked["id"]) != (user.id, KIND, record_id):
+            return 400, {"error": "header_invalid"}
+        if checked["epoch"] != user.cred_epoch:
+            return 409, {"error": "epoch_stale"}
+        version = 0 if row is None else int(row["version"])
+        if body["expected_version"] != version:
+            return 409, {"error": "version_conflict", "detail": {"expected": version}}
+        found.records[record_id] = {"owner_id": user.id, "record": record}
+        return 200, {"version": checked["version"]}
+
+    def delete(request: Request, body: Any, record_id: str) -> tuple[int, Any]:
+        user = cast(str, request.user)
+        row = own(user, record_id)
+        if found.refuse_delete:
+            return 403, {"error": "forbidden"}
+        if row is None:
+            return 404, {"error": "not_found"}
+        if row["primary"]:
+            hub.credentials.pop((user, KIND))
+        else:
+            del found.records[record_id]
+        return 200, {}
+
+    original_devices = hub.r_devices
+
+    def devices(request: Request, body: Any) -> tuple[int, Any]:
+        status, answer = original_devices(request, body)
+        if status == 200:
+            for row in answer["devices"]:
+                row["features"] = [] if row["device_id"] in found.outdated else ["subscriptions"]
+        return status, answer
+
+    hub.override("r_devices", devices)
+    path = r"/v1/subscriptions/(?P<record_id>[0-9a-f-]+)"
+    hub.add_route("GET", r"/v1/me/subscriptions", listing)
+    hub.add_route("GET", path, get)
+    hub.add_route("PUT", path, put)
+    hub.add_route("DELETE", path, delete)
