@@ -638,7 +638,8 @@ async def _no_profile(_conn: object, _session: object, _tool: str) -> None:
 def test_handler_answers_the_call_of_an_own_session(monkeypatch: pytest.MonkeyPatch) -> None:
     workvms = FakeWorkVms()
     monkeypatch.setattr(journal, "workvms_for", lambda context: workvms)
-    monkeypatch.setattr(journal, "profile_check", SimpleNamespace(tool=_no_profile))  # the profile check: tests/platform/runner/profiles
+    # the profile check itself: tests/platform/runner/profiles
+    monkeypatch.setattr(journal, "profile_check", SimpleNamespace(tool=_no_profile))
     env = FakeEnv()
     target = FakeJournal(env, session())
     entry = record(body("workvm_output", {"job_id": JOB}))

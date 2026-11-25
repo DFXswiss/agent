@@ -222,13 +222,21 @@ class OKit:
                 (owner, Jsonb({})),
             )
 
-    async def settings(self, repositories: list[str], protected: list[str] | None = None, draft: bool = True) -> None:
-        """A verified `settings.workgroup` event of the default workgroup, pulled by the real inbox."""
+    async def settings(
+        self,
+        repositories: list[str],
+        protected: list[str] | None = None,
+        draft: bool = True,
+        **extra: Any,
+    ) -> None:
+        """A verified `settings.workgroup` event of the default workgroup, pulled by the real inbox (`extra`: the
+        optional keys, e.g. `merge_criteria`, `separate_duties`)."""
         self.scope_seq += 1
         body = {
             "repositories": repositories,
             "protected_branches": protected if protected is not None else ["main", "master", "develop", "release/*"],
             "pr_draft_default": draft,
+            **extra,
         }
         org = self.env.world.orgs[ORG]
         sealed = seal(org, "alice", "settings.workgroup", label=f"settings{self.scope_seq}", body=body)

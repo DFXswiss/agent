@@ -51,6 +51,12 @@ SPEC_OPERATIONS: dict[str, tuple[set[str], set[str]]] = {
     "github.list_identities": (set(), set()),
     # ADR-084 (KOR-48)
     "github.merge_base": ({"repo", "number"}, {"discard"}),
+    # ADR-090 (KOR-51)
+    "github.list_reviews": ({"repo", "number"}, set()),
+    "github.get_checks": ({"repo", "ref"}, set()),
+    "review.verdict": ({"repo", "number", "head_sha", "outcome", "summary"}, {"evidence"}),
+    "security.report": ({"repo", "ref", "tool", "passed", "findings"}, {"run_id"}),
+    "github.merge": ({"repo", "number", "head_sha"}, set()),
 }
 MANDATORY = [
     "agent.dfx.swiss",
@@ -144,7 +150,8 @@ MANDATORY = [
     # KOR-48 (ADR-084 section 4): the merge commit of a pull request, never a merge of the pull request
     'request `github.commit` with `"merge": true` (never with `paths`)',
     "need a decision in that commit",
-    "Never merge or close the pull request",
+    "Do not merge or close the pull request unless your instruction asks for it",
+    "never look for another way",
 ]
 FORBIDDEN = [
     "say so in your answer",

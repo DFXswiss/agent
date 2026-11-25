@@ -5,8 +5,9 @@ ADR-012).
 
 - the type's field set (`crypto.dedupe.dedupe_fields`, normalised: repository lower case, branch names
   without `refs/heads/`, SHAs lower case, texts as `sha256_hex`) built from the effective parameters plus the
-  requesting session (`github.checkout` `session`, `subagent.request` parent `session`) and the pre-check's dedupe
-  fields (`github.checkout` `ref` = resolved commit SHA, `github.commit` `parent_sha` and `tree_sha`);
+  requesting session (`github.checkout` `session`, `subagent.request` parent `session`, `review.verdict` `session`)
+  and the pre-check's dedupe fields (`github.checkout` `ref` = resolved commit SHA, `github.commit` `parent_sha` and
+  `tree_sha`);
 - `github.create_issue` (KOR-25): `repo`, `title` and `body` as `sha256_hex` (an issue left without body counts as
   the empty text), so the same issue is not opened twice within the window of `contracts/ops/dedupe-fields.json`;
 - types without dedupe fields (`github.list_repositories`, `github.get_pull_request`, the reading and connection types
@@ -32,7 +33,7 @@ from typing import Any
 from agent_runner.crypto.dedupe import DEDUPE_TYPES, dedupe_fields, dedupe_tag, idempotency_fields
 from agent_runner.crypto.kdf import dedupe_key
 
-SESSION_FIELD_TYPES = frozenset({"github.checkout", "subagent.request"})
+SESSION_FIELD_TYPES = frozenset({"github.checkout", "subagent.request", "review.verdict"})
 WINDOWS: Mapping[str, int] = MappingProxyType(
     {
         "github.checkout": 600,
@@ -43,6 +44,8 @@ WINDOWS: Mapping[str, int] = MappingProxyType(
         "github.comment": 86400,
         "github.create_issue": 86400,
         "subagent.request": 600,
+        "review.verdict": 2592000,
+        "github.merge": 86400,
     }
 )
 """Seconds a type's dedupe slot is held (`contracts/ops/dedupe-fields.json` `window_seconds`)."""

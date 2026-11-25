@@ -97,6 +97,7 @@ AREAS: dict[ModuleType, list[str]] = {
         "reconcile",
         "requests",
         "retention",
+        "reviews",
         "session_api",
         "sessions",
         "startguard",

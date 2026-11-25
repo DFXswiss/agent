@@ -3,7 +3,7 @@ section 12.1): REST only, with the GitHub identity each operation's pre-check re
 (`ops.executor`, `github.identity`, KOR-47; the acting user is `credentials.acting`'s, HOT-14); checkout, commit and
 push (RUN-10) in their own modules; the issue types, the pull-request list and the connection request (KOR-25) in
 `issues`, `pull_list` and `connection`; the identity list (KOR-47) in `listing`; the merge of a pull request's base into
-the workspace (KOR-48) in `merge_base`."""
+the workspace (KOR-48) in `merge_base`; reviews, checks and the merge of a pull request (KOR-51) in `merge`."""
 
 from __future__ import annotations
 
@@ -18,7 +18,9 @@ from agent_runner.github import (
     connection,
     issues,
     listing,
+    merge,
     merge_base,
+    ops,
     pull_list,
     pulls,
     push,
@@ -42,4 +44,7 @@ EXECUTORS: dict[str, Callable[..., Any]] = {
     "github.request_connection": connection.execute,
     "github.list_identities": listing.execute,
     "github.merge_base": merge_base.execute,
+    "github.list_reviews": ops.executor(merge.list_reviews),
+    "github.get_checks": ops.executor(merge.get_checks),
+    "github.merge": ops.executor(merge.merge),
 }

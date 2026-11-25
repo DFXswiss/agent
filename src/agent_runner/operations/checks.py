@@ -63,6 +63,9 @@ MAX_LABELS = 20
 MAX_PER_PAGE = 100
 MAX_PAGE = 1000
 MAX_DECISIONS = 1000
+EVIDENCE_ITEMS = 50
+"""Items of `review.verdict` `evidence` (one message, ADR-090 section 4)."""
+EVIDENCE_REF_LENGTH = 1000
 CHOICES = ("head", "base", "deleted", "edited")
 ISSUE_TITLE_MAX = 256
 UPDATE_FIELDS = ("state", "title", "body", "labels")
@@ -136,6 +139,40 @@ QUESTION: Rule = _text(1, rules.QUESTION_LIMITS["question_max_length"])
 MODEL: Rule = lambda value: isinstance(value, str) and _MODEL_ID_RE.fullmatch(value) is not None  # noqa: E731
 PROFILE: Rule = lambda value: isinstance(value, str) and PROFILE_NAME_RE.fullmatch(value) is not None  # noqa: E731
 DIRECTION: Rule = _one_of("desc", "asc")
+EVIDENCE_KINDS = frozenset({"operation", "test_run", "security_report", "url", "note"})
+FINDING_LEVELS = frozenset({"critical", "high", "medium", "low", "info"})
+_TOOL_RE = re.compile(r"[A-Za-z0-9._+-]{1,64}")
+_RUN_ID_RE = re.compile(r"tr-[0-9a-f]{12}")
+
+
+def _evidence(value: object) -> bool:
+    """`review.verdict` `evidence`: at most 50 `{kind, ref}` (one message, ADR-090 section 4)."""
+    return (
+        isinstance(value, list)
+        and len(value) <= EVIDENCE_ITEMS
+        and all(
+            isinstance(item, dict)
+            and set(item) == {"kind", "ref"}
+            and item["kind"] in EVIDENCE_KINDS
+            and isinstance(item["ref"], str)
+            and 1 <= len(item["ref"]) <= EVIDENCE_REF_LENGTH
+            for item in value
+        )
+    )
+
+
+def _findings(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == FINDING_LEVELS
+        and all(type(count) is int and count >= 0 for count in value.values())
+    )
+
+
+EVIDENCE: Rule = _evidence
+FINDINGS: Rule = _findings
+TOOL: Rule = lambda value: isinstance(value, str) and _TOOL_RE.fullmatch(value) is not None  # noqa: E731
+RUN_ID: Rule = lambda value: isinstance(value, str) and _RUN_ID_RE.fullmatch(value) is not None  # noqa: E731
 UUID: Rule = lambda value: isinstance(value, str) and _UUID_RE.fullmatch(value) is not None  # noqa: E731
 _CWD_RE = re.compile(r"/[^\x00]{0,4095}", re.DOTALL)
 _BROWSER_URL_RE = re.compile(r"https?://[^\x00-\x20\x7f]{1,4088}")
@@ -174,6 +211,42 @@ TYPES: Mapping[str, TypeRules] = {
     ),
     "github.merge_base": TypeRules(
         {"repo": REPO, "number": _number, "discard": BOOL, "github_identity": UUID}, ("repo", "number")
+    ),
+    # ADR-090 section 4 (KOR-51)
+    "github.list_reviews": TypeRules({"repo": REPO, "number": _number, "github_identity": UUID}, ("repo", "number")),
+    "github.get_checks": TypeRules({"repo": REPO, "ref": REF, "github_identity": UUID}, ("repo", "ref")),
+    "github.merge": TypeRules(
+        {
+            "repo": REPO,
+            "number": _number,
+            "head_sha": SHA,
+            "method": _one_of("merge", "squash", "rebase"),
+            "github_identity": UUID,
+        },
+        ("repo", "number", "head_sha"),
+    ),
+    "review.verdict": TypeRules(
+        {
+            "repo": REPO,
+            "number": _number,
+            "head_sha": SHA,
+            "outcome": _one_of("passed", "rejected"),
+            "summary": _text(1, 4000),
+            "evidence": EVIDENCE,
+        },
+        ("repo", "number", "head_sha", "outcome", "summary"),
+    ),
+    "security.report": TypeRules(
+        {
+            "repo": REPO,
+            "ref": REF,
+            "tool": TOOL,
+            "passed": BOOL,
+            "findings": FINDINGS,
+            "run_id": RUN_ID,
+            "summary": _text(1, 4000),
+        },
+        ("repo", "ref", "tool", "passed", "findings"),
     ),
     "github.push": TypeRules(
         {"repo": REPO, "branch": BRANCH, "commit_sha": SHA, "github_identity": UUID}, ("repo", "branch", "commit_sha")

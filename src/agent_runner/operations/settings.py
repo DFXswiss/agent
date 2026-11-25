@@ -3,7 +3,8 @@ step 3).
 
 The inbox hands every verified `settings.workgroup` event (E1-E5, author `wg:write` at `lh`, decrypted with a held
 scope key) to `keep`: the body must be exactly `{repositories, protected_branches, pr_draft_default}` with the contract
-shapes, else the event is refused (`settings_invalid`). The latest event per workgroup wins by the hub's scope order
+shapes, optionally with `merge_criteria` and `separate_duties` (KOR-51, ADR-090 sections 5 and 6), else the event is
+refused (`settings_invalid`). The latest event per workgroup wins by the hub's scope order
 (`scope_seq`); it is kept as received with the author's verified signing key (`runner.workgroup_settings`) and opened
 again only into memory (`load`).
 
@@ -32,6 +33,9 @@ from agent_runner.operations.stored import open_stored
 
 INVALID = "settings_invalid"
 KEYS = frozenset({"repositories", "protected_branches", "pr_draft_default"})
+OPTIONAL_KEYS = frozenset({"merge_criteria", "separate_duties"})
+CRITERIA_KEYS = frozenset({"passed_verdicts", "verdict_profile", "checks_green", "github_approvals"})
+_PROFILE_RE = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 MAX_REPOSITORIES = 500
 MAX_PATTERNS = 100
 _REPO_RE = re.compile(r"^[a-z0-9-]{1,39}/[a-z0-9._-]{1,100}$")
@@ -43,11 +47,23 @@ class SettingsInvalid(ValueError):
 
 
 @dataclass(frozen=True)
+class MergeCriteria:
+    """The formal criteria of `github.merge` (ADR-090 section 5); the defaults require nothing."""
+
+    passed_verdicts: int = 0
+    verdict_profile: str = "review"
+    checks_green: bool = False
+    github_approvals: int = 0
+
+
+@dataclass(frozen=True)
 class WorkgroupSettings:
     repositories: frozenset[str]
     """Allowed repositories, lower case; empty means no restriction."""
     protected_branches: tuple[str, ...]
     pr_draft_default: bool
+    merge_criteria: MergeCriteria = MergeCriteria()
+    separate_duties: bool = False
     unreadable: bool = False
     """The stored event no longer opens or parses: no repository is allowed (fail closed)."""
 
@@ -75,14 +91,42 @@ def _strings(value: object, pattern: re.Pattern[str], limit: int) -> list[str]:
     return list(value)
 
 
+def _count(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise SettingsInvalid("count")
+    return value
+
+
+def _flag(value: object) -> bool:
+    if not isinstance(value, bool):
+        raise SettingsInvalid("flag")
+    return value
+
+
+def _criteria(value: object) -> MergeCriteria:
+    if not isinstance(value, Mapping) or not set(value) <= CRITERIA_KEYS:
+        raise SettingsInvalid("merge_criteria")
+    profile = value.get("verdict_profile", "review")
+    if not isinstance(profile, str) or _PROFILE_RE.fullmatch(profile) is None:
+        raise SettingsInvalid("verdict_profile")
+    return MergeCriteria(
+        passed_verdicts=_count(value.get("passed_verdicts", 0)),
+        verdict_profile=profile,
+        checks_green=_flag(value.get("checks_green", False)),
+        github_approvals=_count(value.get("github_approvals", 0)),
+    )
+
+
 def parse(body: Mapping[str, object]) -> WorkgroupSettings:
     """The settings of a `settings.workgroup` body (`SettingsInvalid` for any other shape)."""
-    if set(body) != KEYS or not isinstance(body["pr_draft_default"], bool):
+    if not KEYS <= set(body) <= KEYS | OPTIONAL_KEYS or not isinstance(body["pr_draft_default"], bool):
         raise SettingsInvalid("keys")
     return WorkgroupSettings(
         repositories=frozenset(_strings(body["repositories"], _REPO_RE, MAX_REPOSITORIES)),
         protected_branches=tuple(_strings(body["protected_branches"], _PATTERN_RE, MAX_PATTERNS)),
         pr_draft_default=body["pr_draft_default"],
+        merge_criteria=_criteria(body.get("merge_criteria", {})),
+        separate_duties=_flag(body.get("separate_duties", False)),
     )
 
 
