@@ -387,6 +387,10 @@ def cmd_task_follow(account: Account, args: argparse.Namespace, context: Context
     return tasks.task_follow(account, args.task, args.after, args.wait)
 
 
+def cmd_task_wait(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return tasks.task_wait(account, args.task, args.timeout)
+
+
 def cmd_diagnose(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
     return diagnose.diagnose(account, args.task)
 
@@ -615,6 +619,19 @@ def _task_commands(tree: Tree) -> None:
     sub.add_argument("--task", required=True)
     sub.add_argument("--after", type=int, default=0, help="next_after of the previous call (0: from the start)")
     sub.add_argument("--wait", type=int, default=60, help="seconds to wait for the first new event (0-600)")
+    sub = tree.add(
+        group,
+        "wait",
+        with_account(cmd_task_wait),
+        "wait until the task no longer works: its answer and pull requests in one result",
+        example="agent-platform task wait --task <task_id> [--timeout 600]",
+        words="abwarten fertig blockieren ergebnis abholen bis antwort da block until done finished result pull",
+        then="agent-platform task follow --task <task_id> --after <next_after>",
+    )
+    sub.add_argument("--task", required=True)
+    sub.add_argument(
+        "--timeout", type=int, default=tasks.WAIT_DEFAULT_S, help="seconds to wait at most (0-3600, default 600)"
+    )
 
 
 def _claude_commands(tree: Tree) -> None:
