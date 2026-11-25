@@ -38,6 +38,8 @@ class Subscriptions:
     raw_list: Json | None = None
     """An answer of `GET /v1/me/subscriptions` sent as it is (a hub that breaks the contract)."""
     refuse_delete: bool = False
+    refuse_put: bool = False
+    """Every PUT is answered `403 forbidden`."""
 
 
 def state_of(hub: HubFake) -> Subscriptions:
@@ -100,6 +102,8 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
     def put(request: Request, body: Json, record_id: str) -> tuple[int, Any]:  # noqa: PLR0911
         user = hub.users[cast(str, request.user)]
         found.puts.append(body)
+        if found.refuse_put:
+            return 403, {"error": "forbidden"}
         if found.conflicts:
             found.conflicts -= 1
             return 409, {"error": "version_conflict", "detail": {"expected": 0}}

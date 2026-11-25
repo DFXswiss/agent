@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 
-from agent_platform import devicereq
+from agent_platform import devicereq, subscriptions
 from agent_runner.crypto.credential import new_header, open_credential, seal_credential
 from agent_runner.crypto.encoding import body_json, parse_json
 from agent_runner.crypto.ids import uuid7
@@ -233,3 +233,28 @@ def test_use_seals_the_choice_and_sends_its_mirror(tool: Tool, hub: HubFake, acc
     assert state_of(hub).puts[-1]["use"] == {"pool": False, "orgs": []}
     for argv in (("--measure", "--pool"), ()):
         assert tool.run("subscriptions", "use", "--id", record_id, *argv)[1]["reason"] == "use", argv
+
+
+def test_malformed_and_refused_records_end_with_their_code(
+    tool: Tool, hub: HubFake, account: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assign_device(tool, hub, account)
+    extra = add(hub, account.id, sealed(hub, account, body(unknown=True)))
+    bad_use = add(hub, account.id, sealed(hub, account, body(use={"pool": True})))
+    foreign = add(hub, account.id, sealed(hub, account, body(name="Team")))
+    record = state_of(hub).records[foreign]["record"]
+    state_of(hub).records[foreign]["record"] = {**record, "header": {**record["header"], "kind": "github"}}
+    entries = {item["id"]: item for item in tool.run("subscriptions", "list")[1]["subscriptions"]}
+    assert {key: entries[key]["code"] for key in (extra, bad_use, foreign)} == {
+        extra: "params_invalid",
+        bad_use: "params_invalid",
+        foreign: "header_invalid",
+    }
+    # a refusal other than a concurrent write is not tried again
+    kept = add(hub, account.id, sealed(hub, account, body(name="Kept")))
+    state_of(hub).refuse_put = True
+    assert tool.run("subscriptions", "rename", "--id", kept, "--name", "x")[1]["hub_error"] == "forbidden"
+    assert len(state_of(hub).puts) == 1
+    # a device the verified logs give no keys for is skipped
+    monkeypatch.setattr(subscriptions, "device_keys", lambda _account, _device: None)
+    assert tool.run("subscriptions", "add", "--name", "x")[1]["reason"] == "device_outdated"
