@@ -19,7 +19,9 @@ import re
 import shlex
 from typing import Any
 
-from agent_platform import cli, lookup
+import pytest
+
+from agent_platform import cli, creds, lookup
 from agent_runner.crypto.ids import uuid7
 from tests.platform.tool.conftest import Tool, make_tool
 
@@ -176,6 +178,8 @@ def account(real: RealHub) -> tuple[dict[str, str], Tool]:
         "recovery_code": str(moved["recovery_code"]),
         "<next_after>": "0",
         "<next_before>": "1",
+        "<owner>": "octo-org",  # a pull request address: https://github.com/<owner>/<name>/pull/<n>
+        "<n>": "7",
         "<seq>": "0",
         "<account_code>": str(run_ok(bob, "status")["account_code"]),
         "<agent_id>": str(uuid7()),
@@ -184,7 +188,9 @@ def account(real: RealHub) -> tuple[dict[str, str], Tool]:
     }, ada
 
 
-def test_every_example_runs_against_the_real_hub(real: RealHub) -> None:
+def test_every_example_runs_against_the_real_hub(real: RealHub, monkeypatch: pytest.MonkeyPatch) -> None:
+    # a device request the device double never answers (`credentials check`) waits one second, not its default 60
+    monkeypatch.setattr(creds, "DEFAULT_WAIT_S", 1)
     values, ada = account(real)
     found = commands()
     order = [name for name in found if name not in EXCEPTIONS and name not in LAST] + list(LAST)
