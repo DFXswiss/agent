@@ -1,0 +1,203 @@
+{
+  "name": "e2e-66-browser",
+  "description": "E2E-66 (KOR-44, ADR-085): the session opens the platform browser on a local sign-in site, signs in through the form, waits while the user watches live, downloads the report and closes the browser; a second task opens the browser implicitly, its VM is killed, the next action gets a fresh VM with a notice, and the browser is left to the idle teardown.",
+  "variables": {
+    "site": "http://host.lima.internal:0",
+    "password": "unset"
+  },
+  "steps": [
+    {
+      "id": "open",
+      "expect": {
+        "user_text_contains": "E2E63-BROWSER",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Opening the platform browser."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "browser.open",
+              "params": {
+                "url": "${site}/login"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "user",
+      "expect": {
+        "tool_result_contains": "\"browser_id\":\"br-"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__browser_type",
+            "input": {
+              "target": "#user",
+              "text": "ada",
+              "snapshot": false
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "password",
+      "expect": {
+        "tool_result_contains": "\"ok\":true"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__browser_type",
+            "input": {
+              "target": "#password",
+              "text": "${password}",
+              "submit": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "look",
+      "expect": {
+        "tool_result_contains": "Signed in as ada"
+      },
+      "delay_ms": 45000,
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__browser_snapshot",
+            "input": {}
+          }
+        ]
+      }
+    },
+    {
+      "id": "download",
+      "expect": {
+        "tool_result_contains": "Download report"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__browser_download",
+            "input": {
+              "target": "#report"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "close",
+      "expect": {
+        "tool_result_contains": "report.csv"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "browser.close",
+              "params": {}
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "done",
+      "expect": {
+        "tool_result_contains": "\"closed\":true"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The report is in the workspace kz63-answer-p4s8d2f6."
+          }
+        ]
+      }
+    },
+    {
+      "id": "failover-open",
+      "expect": {
+        "user_text_contains": "E2E63-FAILOVER",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__browser_navigate",
+            "input": {
+              "url": "${site}/login"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "failover-next",
+      "expect": {
+        "tool_result_contains": "\"browser_id\":\"br-"
+      },
+      "delay_ms": 30000,
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__browser_snapshot",
+            "input": {}
+          }
+        ]
+      }
+    },
+    {
+      "id": "failover-again",
+      "expect": {
+        "tool_result_contains": "started again"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__browser_navigate",
+            "input": {
+              "url": "${site}/login"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "failover-done",
+      "expect": {
+        "tool_result_contains": "\"ok\":true"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The browser came back kz63-answer-h7j1k5l9."
+          }
+        ]
+      }
+    }
+  ]
+}

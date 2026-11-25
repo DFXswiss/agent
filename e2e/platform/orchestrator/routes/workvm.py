@@ -9,6 +9,7 @@ of platform browser sessions (KOR-44). Answers `{runner: {"image": name | null, 
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from orchestrator.context import Context
@@ -95,4 +96,16 @@ def post_workvm(ctx: Context, _params: dict[str, str], body: Any) -> tuple[int, 
     return 200, out
 
 
-ROUTES = [Route("POST", "/runners/workvm", post_workvm)]
+def post_kill(ctx: Context, _params: dict[str, str], body: Any) -> tuple[int, Any]:
+    """`POST /runners/workvm/kill` (`{"lima_name": "<runner prefix>wvm-<8 hex>"}`): stops a work VM of a runner by force
+    (`limactl stop -f`), as if it failed: the runner's row stays `running` (E2E-66, a browser VM that fails)."""
+    name = body.get("lima_name") if isinstance(body, dict) and set(body) == {"lima_name"} else None
+    for runner in ctx.runners.values():
+        prefix = runner.env.get("AGENT_RUNNER_VM_PREFIX", "")
+        if isinstance(name, str) and prefix and re.fullmatch(re.escape(prefix) + r"wvm-[0-9a-f]{8}", name):
+            done = runner.node.run(["limactl", "stop", "-f", name], env=runner.env, timeout=STEP_TIMEOUT_S)
+            return 200, {"runner": runner.name, "rc": done["rc"]}
+    raise RouteError(400, "invalid", 'body must be {"lima_name": "<runner prefix>wvm-<8 hex>"} of a runner of the run')
+
+
+ROUTES = [Route("POST", "/runners/workvm", post_workvm), Route("POST", "/runners/workvm/kill", post_kill)]

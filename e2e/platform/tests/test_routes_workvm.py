@@ -83,3 +83,13 @@ def test_browser_idle_seconds(ctx: Context) -> None:  # noqa: F811
     status, _answer = call(ctx, "POST", "/runners/workvm", {"slots": 1, "browser_idle_seconds": 60})
     assert status == 200
     assert ctx.runners["runner-1"].env["AGENT_RUNNER_BROWSER_IDLE_SECONDS"] == "60"
+
+
+def test_kill_a_work_vm(ctx: Context) -> None:  # noqa: F811
+    prepared(ctx)
+    for body in [None, {"lima_name": "golden"}, {"lima_name": "wp-t-e2e-r1-wvm-0123abcd", "x": 1}]:
+        assert call(ctx, "POST", "/runners/workvm/kill", body)[0] == 400
+    status, answer = call(ctx, "POST", "/runners/workvm/kill", {"lima_name": "wp-t-e2e-r1-wvm-0123abcd"})
+    assert status == 200
+    assert answer["runner"] == "runner-1"
+    assert ["limactl", "stop", "-f", "wp-t-e2e-r1-wvm-0123abcd"] in runs(ctx)
