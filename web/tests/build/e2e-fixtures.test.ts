@@ -1,8 +1,8 @@
 // The Playwright fixtures that are plain functions: port selection, source path mapping, source maps, the hub test
 // server's routing rules and the list of sources the merged coverage gate expects.
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isAppSource, isBrowserGated, sourcePath } from '../../e2e/fixtures/coverage-options.ts';
 import { appSources, withSourceMaps } from '../../e2e/fixtures/coverage.ts';
@@ -25,6 +25,8 @@ import {
 import { CACHE_ASSETS, CACHE_INDEX, SECURITY_HEADERS } from '../../e2e/fixtures/headers.ts';
 import { spawn } from 'node:child_process';
 import { handler, startHub, testConfig, waitForHealth } from '../../e2e/fixtures/server.ts';
+import { laneReady } from '../../e2e/fixtures/test.ts';
+import { laneError } from '../../e2e/volume/completeness.ts';
 import { WEB_DIR } from '../helpers';
 
 const ORIGIN = 'http://localhost:8790';
@@ -98,6 +100,35 @@ describe('e2e environment', () => {
     // every project with the device double that is not in the main lane runs one test at a time
     for (const project of config.projects ?? [])
       if (laneOf(project.name!) !== 'main') expect(project.workers, project.name).toBe(1);
+  });
+
+  it('waits for a lane until it answers, reports a lane that failed to start, gives up in time', async () => {
+    const answers = [false, false, true];
+    await laneReady('vitest-lane', { intervalMs: 1, fetchHealth: async () => answers.shift() ?? false });
+    expect(answers).toEqual([]);
+    await expect(
+      laneReady('vitest-lane', { timeoutMs: 5, intervalMs: 1, fetchHealth: async () => false }),
+    ).rejects.toThrow(/did not answer in time/);
+    const failure = laneError(WEB_DIR, 'vitest-lane');
+    mkdirSync(dirname(failure), { recursive: true });
+    writeFileSync(failure, 'exited with 1');
+    try {
+      await expect(laneReady('vitest-lane', { fetchHealth: async () => true })).rejects.toThrow(
+        'lane vitest-lane did not start: exited with 1',
+      );
+    } finally {
+      rmSync(failure);
+    }
+  });
+
+  it('gives every spec of a lane the automatic lane fixture', () => {
+    // a spec must take `test` from the suite's fixtures (they wait for the lane), never from Playwright itself
+    for (const dir of ['devices', 'volume']) {
+      for (const name of readdirSync(join(WEB_DIR, 'e2e', dir)).filter((file) => file.endsWith('.spec.ts'))) {
+        const source = readFileSync(join(WEB_DIR, 'e2e', dir, name), 'utf8');
+        expect(source, name).toMatch(/import \{[^}]*\btest\b[^}]*\} from '\.\.?\/(fixtures\/test|fixtures)\.ts'/);
+      }
+    }
   });
 
   it('starts the lanes of the selected projects only', () => {

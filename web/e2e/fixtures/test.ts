@@ -8,7 +8,9 @@ import { test as base, expect, type BrowserContext, type BrowserContextOptions, 
 import { CoverageReport } from 'monocart-coverage-reports';
 import { e2eCoverage } from './coverage-options.ts';
 import { withSourceMaps } from './coverage.ts';
-import { LANE_VARIABLE, laneOf } from './env.ts';
+import { existsSync, readFileSync } from 'node:fs';
+import { laneError } from '../volume/completeness.ts';
+import { directorOrigin, LANE_VARIABLE, laneOf, WEB_DIR } from './env.ts';
 
 export interface CspViolation {
   readonly page: string;
@@ -47,20 +49,48 @@ interface Fixtures {
   newContext: (options?: BrowserContextOptions) => Promise<BrowserContext>;
 }
 
-/** Enters the lane of the worker's project (`fixtures/env.ts`): read by `directorOrigin()` in every helper. */
-export function enterLane(project: string): string {
+/**
+ * Waits until the lane's device double answers (`fetchHealth`, default: `GET /health`): the global setup starts a
+ * volume lane in the background, because it may wait for the other volume lane's seed (decisions/HOT-21.md); a lane
+ * that failed to start is reported at once (`laneError`); after `timeoutMs` the wait fails.
+ */
+export async function laneReady(
+  lane: string,
+  options: { timeoutMs?: number; intervalMs?: number; fetchHealth?: () => Promise<boolean> } = {},
+): Promise<void> {
+  const failure = laneError(WEB_DIR, lane);
+  const health =
+    options.fetchHealth ??
+    (() =>
+      fetch(`${directorOrigin()}/health`).then(
+        (response) => response.ok,
+        () => false,
+      ));
+  const deadline = Date.now() + (options.timeoutMs ?? 25 * 60_000);
+  for (;;) {
+    if (existsSync(failure)) throw new Error(`lane ${lane} did not start: ${readFileSync(failure, 'utf8')}`);
+    if (await health()) return;
+    if (Date.now() > deadline) throw new Error(`lane ${lane} did not answer in time`);
+    await new Promise((resolve) => setTimeout(resolve, options.intervalMs ?? 1000));
+  }
+}
+
+/** Enters the lane of the worker's project (`fixtures/env.ts`, read by `directorOrigin()` in every helper) and waits
+ *  until the lane answers - for every project of a lane, whatever fixtures its tests use (`lane`, automatic). */
+export async function enterLane(project: string): Promise<string> {
   const lane = laneOf(project);
   process.env[LANE_VARIABLE] = lane;
+  await laneReady(lane);
   return lane;
 }
 
 export const test = base.extend<Fixtures, { lane: string }>({
-  // set before any test of the worker (`browserName` only gives the fixture its required destructuring pattern)
+  // entered before any test or `beforeAll` of the worker (`browserName` only gives the required destructuring pattern)
   lane: [
     async ({ browserName: _browserName }, use, info) => {
-      await use(enterLane(info.project.name));
+      await use(await enterLane(info.project.name));
     },
-    { scope: 'worker', auto: true },
+    { scope: 'worker', auto: true, timeout: 26 * 60_000 },
   ],
   // Playwright needs a destructuring pattern; `baseURL` is an unused built-in fixture.
   cspViolations: async ({ baseURL: _baseURL }, use) => {

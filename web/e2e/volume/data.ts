@@ -1,10 +1,10 @@
 // The volume data set of the worker's lane (seeded once per lane by `seed` through the device double,
 // `scripts/hub_test_volume.py`) and the follow-up calls of the volume specs.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { expect } from '@playwright/test';
-import { directorOrigin, laneOf, WEB_DIR } from '../fixtures/env.ts';
-import { laneError, seedFile } from './completeness.ts';
+import { directorOrigin, WEB_DIR } from '../fixtures/env.ts';
+import { seedFile } from './completeness.ts';
 
 export interface VolumeData {
   readonly org: string;
@@ -40,25 +40,6 @@ export async function director(method: 'GET' | 'POST', path: string, body?: unkn
   return data;
 }
 
-/**
- * Waits until the lane's device double answers: the global setup starts a volume lane in the background, because it
- * may wait for the other volume lane's seed (decisions/HOT-21.md); a lane that failed to start is reported at once.
- */
-async function laneReady(lane: string): Promise<void> {
-  const failure = laneError(WEB_DIR, lane);
-  const deadline = Date.now() + 25 * 60_000;
-  for (;;) {
-    if (existsSync(failure)) throw new Error(`volume lane ${lane} did not start: ${readFileSync(failure, 'utf8')}`);
-    const up = await fetch(`${directorOrigin()}/health`).then(
-      (response) => response.ok,
-      () => false,
-    );
-    if (up) return;
-    if (Date.now() > deadline) throw new Error(`volume lane ${lane} did not answer within 25 minutes`);
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-}
-
 interface SeedState {
   readonly state: 'idle' | 'running' | 'done' | 'failed';
   readonly data?: VolumeData;
@@ -73,7 +54,6 @@ interface SeedState {
  */
 export async function seed(project: string): Promise<VolumeData> {
   const counts = JSON.parse(process.env.VOLUME_COUNTS ?? '{}') as Record<string, number>;
-  await laneReady(laneOf(project));
   await director('POST', '/volume/seed', { counts });
   let state: SeedState = { state: 'running' };
   await expect

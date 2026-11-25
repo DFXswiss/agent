@@ -33,10 +33,16 @@ export function contextOptions(use: Record<string, unknown>) {
   return Object.fromEntries(keys.filter((key) => use[key] !== undefined).map((key) => [key, use[key]]));
 }
 
-export const test = base.extend<{ volume: VolumeUser }, { volumeUser: VolumeUser }>({
+export const test = base.extend<{ volume: VolumeUser }, { lane: string; volumeUser: VolumeUser }>({
+  // every test of a volume project waits for its lane, also one without a signed-in user (`anonymous.spec.ts`)
+  lane: [
+    async ({ browserName: _browserName }, use, info) => {
+      await use(await enterLane(info.project.name));
+    },
+    { scope: 'worker', auto: true, timeout: 26 * 60_000 },
+  ],
   volumeUser: [
-    async ({ browser }, use, info) => {
-      enterLane(info.project.name);
+    async ({ browser, lane: _lane }, use, info) => {
       const data = await seed(info.project.name);
       const use_ = info.project.use as Record<string, unknown>;
       const context: BrowserContext = await browser.newContext(contextOptions(use_));
