@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import io
 import json
@@ -16,7 +17,7 @@ from typing import Any
 from agent_runner.sessions.records import LocalSession
 from agent_runner.store.pool import open_pool
 from agent_runner.vm.lima import Instance, LimaError
-from agent_runner.workvm import jobs, sync
+from agent_runner.workvm import browser_helper, jobs, sync
 from agent_runner.workvm.jobs import ShellResult
 from agent_runner.workvm.manager import Deps, Settings, WorkVms
 from agent_runner.workvm.records import WorkVm
@@ -110,6 +111,74 @@ class Job:
     exit_code: int | None = None
 
 
+JPEG = b"\xff\xd8\xff\xe0fake-jpeg"
+PAGE_URL = "https://example.test/"
+
+
+def browser_answer(**changes: Any) -> dict[str, Any]:
+    """A valid `workvm-browser call` answer (section 13.3) with `changes`."""
+    answer: dict[str, Any] = {
+        "ok": True,
+        "error": None,
+        "notice": None,
+        "url": PAGE_URL,
+        "title": "Example",
+        "tab": 0,
+        "tabs": [{"index": 0, "url": PAGE_URL, "title": "Example", "active": True}],
+        "snapshot": '- heading "Example" [ref=e1]',
+        "masked": False,
+        "result": None,
+        "image": {"width": 960, "height": 600, "jpeg": base64.b64encode(JPEG).decode()},
+        "file": None,
+    }
+    answer.update(changes)
+    return answer
+
+
+BrowserScript = dict[str, Any] | ShellResult | Callable[[dict[str, Any]], dict[str, Any] | ShellResult]
+
+
+class FakeBrowser:
+    """`workvm-browser` of every fake VM: `call` answers from `script` (else `browser_answer()`), `selftest` from
+    `probes` (else ok); a VM in `World.dead` answers nothing; the upload copy (`/bin/sh -c ...`) is recorded."""
+
+    def __init__(self, world: World) -> None:
+        self.world = world
+        self.requests: list[tuple[str, dict[str, Any]]] = []
+        self.script: list[BrowserScript] = []
+        self.probes: list[ShellResult] = []
+        self.uploads: list[tuple[str, dict[str, bytes]]] = []
+        self.upload_result = ShellResult(0, b"", False)
+
+    async def __call__(self, vm: WorkVm, argv: Sequence[str], *, stdin: bytes | Path | None) -> ShellResult:
+        if vm.id in self.world.dead:
+            return ShellResult(255, b"", False)
+        if argv[2] == "/bin/sh":
+            assert isinstance(stdin, Path)
+            with tarfile.open(stdin) as archive:
+                files = {}
+                for member in archive.getmembers():
+                    reader = archive.extractfile(member)
+                    assert reader is not None
+                    files[member.name] = reader.read()
+            self.uploads.append((argv[-1], files))
+            return self.upload_result
+        command = argv[3]
+        self.world.shell_calls.append((vm.id, "browser." + command))
+        if command == "selftest":
+            return self.probes.pop(0) if self.probes else ShellResult(0, b'{"ok": true}\n', False)
+        assert command == "call"
+        assert isinstance(stdin, bytes)
+        request = json.loads(stdin)
+        self.requests.append((vm.id, request))
+        step: BrowserScript = self.script.pop(0) if self.script else browser_answer()
+        if callable(step):
+            step = step(request)
+        if isinstance(step, ShellResult):
+            return step
+        return ShellResult(0, json.dumps(step).encode() + b"\n", False)
+
+
 class FakeHelper:
     """`workvm-job` of every fake VM (one job table for the whole world)."""
 
@@ -129,6 +198,8 @@ class FakeHelper:
         limit: int,
         out: Path | None = None,
     ) -> ShellResult:
+        if list(argv[:3]) in (["sudo", "-n", browser_helper.HELPER], ["sudo", "-n", "/bin/sh"]):
+            return await self.world.browser(vm, argv, stdin=stdin)
         assert list(argv[:3]) == ["sudo", "-n", jobs.HELPER]
         command, args = argv[3], list(argv[4:])
         self.world.shell_calls.append((vm.id, command))
@@ -184,6 +255,7 @@ class FakeHelper:
         assert command in ("pack", "packfile")
         assert out is not None
         if command == "packfile":
+            self.world.packed.append(args[0])
             out.write_bytes(pack_tar({args[1]: b"\x89PNG"}))
         else:
             out.write_bytes(self.pack)
@@ -302,10 +374,16 @@ class World:
     """Organizations whose credit is used up (`Deps.exhausted`)."""
     capture: Any = None
     """`Deps.capture` (None: long job output is not kept as a log)."""
+    dead: set[str] = field(default_factory=set)
+    """Work VMs that answer no shell call (a killed VM)."""
+    packed: list[str] = field(default_factory=list)
+    """VM paths `workvm-job packfile` brought out of a VM."""
     helper: FakeHelper = field(init=False)
+    browser: FakeBrowser = field(init=False)
 
     def __post_init__(self) -> None:
         self.helper = FakeHelper(self)
+        self.browser = FakeBrowser(self)
 
     def guest(self) -> FakeGuest:
         return FakeGuest(self)

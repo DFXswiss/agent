@@ -6,7 +6,8 @@ Every `running` work VM of this device is billed to the second as `vm_kind` `wor
 
 - a **task VM** is shared by the task's sessions on this device in a holding state (`meter.HOLDING`: never
   `suspended`), split evenly like a workgroup VM; when none holds it, the session that requested it bears it;
-- a **session VM** and a **run VM** (one test run) belong to their session.
+- a **session VM**, a **run VM** (one test run) and a **browser VM** (a platform browser session, KOR-44) belong to
+  their session.
 
 A stopped VM (paused session) is not running and costs nothing. The meter runs only on platform devices.
 """
@@ -23,7 +24,7 @@ VM_KIND = "work"
 
 
 async def work_vms(_context: Any, conn: AsyncConnection[Any]) -> list[MeteredVm]:
-    """The running work and run VMs with the sessions that bear them (module docstring)."""
+    """The running work, run and browser VMs with the sessions that bear them (module docstring)."""
     cursor = await conn.execute(
         "SELECT w.id, w.size, w.scope, COALESCE(w.session_id, w.requested_by)::text,"
         " array_remove(array_agg(s.id::text ORDER BY s.id), NULL) FROM runner.workvm w"

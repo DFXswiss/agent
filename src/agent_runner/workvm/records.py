@@ -1,10 +1,11 @@
 """Work VM rows of the runner store (docs/platform/spec/13-work-vm.md section 8, migration 0012).
 
-`runner.workvm` holds one row per work VM the runner created (scope `task`, `session`, or `run` for the fresh VM of one
-test run, migration 0022); the partial unique indexes make "one live task VM per
-task", "one live session VM per session" and "one live VM per slot" database rules. `runner.workvm_mirror` keeps the
-SHA-256 manifest of the workspace files last mirrored into a VM (per VM, session and root directory), so the next
-mirror sends only changed files. `runner.workvm_image` lists the work images (`ready`: the newest one is cloned).
+`runner.workvm` holds one row per work VM the runner created (scope `task`, `session`, `run` for the fresh VM of one
+test run, migration 0022, or `browser` for the VM of a platform browser session, migration 0028); the partial unique
+indexes make "one live task VM per task", "one live session VM per session" and "one live VM per slot" database rules.
+`runner.workvm_mirror` keeps the SHA-256 manifest of the workspace files last mirrored into a VM (per VM, session and
+root directory), so the next mirror sends only changed files. `runner.workvm_image` lists the work images (`ready`: the
+newest one is cloned).
 
 All queries take the daemon's `psycopg_pool.AsyncConnectionPool` (`db`). Column names in `update` are keyword names
 of the code, never input.
@@ -103,11 +104,11 @@ async def live(db: Any, *states: str) -> list[WorkVm]:
 
 
 async def counts(db: Any, *, task_id: str, org_id: str, owner_id: str | None) -> tuple[int, int, int]:
-    """Live VMs of the task (without its run VMs), of the organization and of the owner (spec 11 section 2 limits,
-    ADR-080 section 2)."""
+    """Live VMs of the task (without its run and browser VMs), of the organization and of the owner (spec 11 section 2
+    limits, ADR-080 section 2, ADR-085 section 2)."""
     rows = await _rows(
         db,
-        "SELECT count(*) FILTER (WHERE task_id = %s AND scope <> 'run') AS task,"
+        "SELECT count(*) FILTER (WHERE task_id = %s AND scope NOT IN ('run', 'browser')) AS task,"
         " count(*) FILTER (WHERE org_id = %s) AS org,"
         " count(*) FILTER (WHERE owner_id IS NOT DISTINCT FROM %s) AS owner"
         " FROM runner.workvm WHERE state <> 'deleted'",

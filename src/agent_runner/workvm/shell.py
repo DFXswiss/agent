@@ -67,6 +67,10 @@ class VmShell:
     slot: int
     lima_name: str
 
+    def argv(self, argv: Sequence[str]) -> list[str]:
+        """The full host argv that runs `argv` in the VM (also the long-lived screencast of the platform browser)."""
+        return [*self.command.prefix(self.slot), "shell", "--workdir", "/", self.lima_name, *argv]
+
     async def __call__(
         self,
         argv: Sequence[str],
@@ -76,9 +80,8 @@ class VmShell:
         limit: int,
         out: Path | None = None,
     ) -> ShellResult:
-        full = [*self.command.prefix(self.slot), "shell", "--workdir", "/", self.lima_name, *argv]
         process = await asyncio.create_subprocess_exec(
-            *full,
+            *self.argv(argv),
             stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,

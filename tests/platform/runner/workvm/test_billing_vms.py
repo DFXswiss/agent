@@ -1,6 +1,6 @@
 """U-RUN-workvm billing: work and run VMs in the VM runtime meter (`workvm/billing_vms.py:VMS`, KOR-43, ADR-080
 section 4; KOR-31 meter): only running VMs, size and `vm_kind` `work`; a task VM is shared by the task's holding
-sessions or borne by its requester, a session VM and a run VM by their session."""
+sessions or borne by its requester, a session VM, a run VM and a browser VM (KOR-44) by their session."""
 
 from __future__ import annotations
 
@@ -69,6 +69,7 @@ def test_running_work_and_run_vms_with_who_bears_them(runner_dsn: str) -> None:
         vm(conn, "wvm-0000000b", 1, scope="session", state="running", session=S2, by=S2)
         vm(conn, "wvm-0000000c", 2, scope="run", state="running", session=S3, by=S3)
         vm(conn, "wvm-0000000d", 3, scope="session", state="stopped", session=S1, by=S1)
+        vm(conn, "wvm-0000000e", 4, scope="browser", state="running", session=S1, by=S1)
 
     async def run() -> list[meter.MeteredVm]:
         db = await open_pool(runner_dsn)
@@ -81,9 +82,10 @@ def test_running_work_and_run_vms_with_who_bears_them(runner_dsn: str) -> None:
         finally:
             await db.close()
 
-    shared, own, run_vm, alone, own_again, run_again = asyncio.run(run())
+    shared, own, run_vm, browser_vm, alone, own_again, run_again, browser_again = asyncio.run(run())
     assert shared == meter.MeteredVm("wvm-0000000a", "work", "standard", (S1, S2))
     assert own == meter.MeteredVm("wvm-0000000b", "work", "standard", (S2,))
     assert run_vm == meter.MeteredVm("wvm-0000000c", "work", "large", (S3,))
     assert alone == meter.MeteredVm("wvm-0000000a", "work", "standard", (S3,))  # nobody holds it: its requester
-    assert (own_again, run_again) == (own, run_vm)
+    assert browser_vm == meter.MeteredVm("wvm-0000000e", "work", "standard", (S1,))  # a browser VM: its session
+    assert (own_again, run_again, browser_again) == (own, run_vm, browser_vm)

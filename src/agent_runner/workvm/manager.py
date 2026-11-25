@@ -19,6 +19,7 @@
 - **paused sessions** (KOR-43, ADR-080 section 4): `pause` stops the session's VM (no RAM, no runtime); a request or
   call of the resumed session starts it again (`_resume`), or deletes it and gets a new one when its RAM does not fit.
 - **run VMs** (scope `run`, `obtain_run_vm`): one fresh VM per `test.run` of `agent_runner.workvm.testrun`.
+- **browser VMs** (scope `browser`): the VM of a session's platform browser (`agent_runner.workvm.browser`).
 - **logs**: a job whose output is longer than its event keeps (`RUN_OUTPUT_LIMIT`) is captured as an encrypted log
   object in the background (`capture`, injected); its final `workvm.run` event names the log, and the teardown of its
   VM waits for the capture (at most `CAPTURE_TIMEOUT`).
@@ -101,6 +102,10 @@ NO_CREDIT = (
     " Tell the user; the work continues once credit is available."
 )
 RUN_SCOPE = "run"
+BROWSER_SCOPE = "browser"
+OWNED_SCOPES = frozenset({RUN_SCOPE, BROWSER_SCOPE})
+"""VMs owned by one test run or one browser session (ADR-080, ADR-085): no `workvm.state` events, no per-task limit,
+not torn down by the idle pass or stopped by the credit stop of this manager (their owner ends them)."""
 
 
 def lima_reason(detail: str) -> str:
@@ -282,7 +287,7 @@ class WorkVms:
             self.deps.db, task_id=session.task_id, org_id=session.org_id, owner_id=session.owner_id
         )
         settings = self.deps.settings
-        over_task = scope != RUN_SCOPE and task >= settings.max_per_task  # run VMs are short: no per-task limit
+        over_task = scope not in OWNED_SCOPES and task >= settings.max_per_task  # owned VMs: no per-task limit
         if over_task or org >= settings.max_per_org or owner >= settings.max_per_owner:
             raise OperationFailed("limit_exceeded", message="The limit of work VMs is reached.")
         return image
@@ -459,7 +464,7 @@ class WorkVms:
         self.deps.log(
             f"runner.workvm created workvm_id={vm.id} slot={vm.slot} size={vm.size} scope={vm.scope} pooled=0"
         )
-        if vm.scope != RUN_SCOPE:
+        if vm.scope not in OWNED_SCOPES:
             await self._emit_state(running, "created")
         return running
 
@@ -512,7 +517,7 @@ class WorkVms:
         self.deps.log(
             f"runner.workvm created workvm_id={vm.id} slot={vm.slot} size={vm.size} scope={vm.scope} pooled=1"
         )
-        if vm.scope != RUN_SCOPE:
+        if vm.scope not in OWNED_SCOPES:
             await self._emit_state(vm, "created")
         return vm
 
@@ -663,7 +668,7 @@ class WorkVms:
             await self.wait_captures(vm.id)
             if not await self._remove(current, reason=reason):
                 return
-            if current.scope != RUN_SCOPE:
+            if current.scope not in OWNED_SCOPES:
                 await self._emit_state(current, "deleted", reason=reason)
         self.deps.log(f"runner.workvm deleted workvm_id={vm.id} reason={reason}")
 
@@ -913,7 +918,7 @@ class WorkVms:
                 reason = await records.delete_reason(self.deps.db, vm.id) or "failed"
                 if await self._remove(current, reason=reason):
                     swept += 1
-                    if current.scope != RUN_SCOPE:
+                    if current.scope not in OWNED_SCOPES:
                         await self._emit_state(current, "deleted", reason=reason)
         known = {vm.lima_name for vm in await records.live(self.deps.db)}
         known |= {entry.lima_name for entry in await records.pool(self.deps.db)}
@@ -934,7 +939,7 @@ class WorkVms:
 
     async def idle_pass(self) -> list[str]:
         """Tear down VMs idle for `WORKVM_IDLE_SECONDS` (no call and no running job) and VMs stopped that long; run
-        VMs belong to their run. Returns their IDs."""
+        and browser VMs belong to their run or browser session. Returns their IDs."""
         removed: list[str] = []
         limit = timedelta(seconds=self.deps.settings.idle_seconds)
         for vm in await records.live(self.deps.db, "stopped"):
@@ -942,7 +947,7 @@ class WorkVms:
                 await self.delete(vm, reason="session_paused")
                 removed.append(vm.id)
         for vm in await records.live(self.deps.db, "running"):
-            if vm.scope == RUN_SCOPE:
+            if vm.scope in OWNED_SCOPES:
                 continue
             await self._settle_runs(vm, at_teardown=False)
             last = max(vm.last_used_at, self.last_call.get(vm.id, vm.last_used_at))
@@ -1155,7 +1160,7 @@ class WorkVms:
         screenshot: str | None = None
         if action == "screenshot" and answer.get("screenshot"):
             screenshot = str(arguments.get("path", f".workvm/screenshots/{job_id}.png"))
-            await self._fetch_file(env, vm, session, str(answer["screenshot"]), screenshot)
+            await self.fetch_file(env, vm, session, str(answer["screenshot"]), screenshot)
         return {
             "url": str(arguments["url"]),
             "final_url": str(answer.get("final_url", ""))[:8192],
@@ -1168,7 +1173,7 @@ class WorkVms:
             "job_id": job_id,
         }
 
-    async def _fetch_file(self, env: Any, vm: WorkVm, session: LocalSession, vm_path: str, target: str) -> None:
+    async def fetch_file(self, env: Any, vm: WorkVm, session: LocalSession, vm_path: str, target: str) -> None:
         """Bring one file of the VM into the workspace at `target` (its directory is merged, nothing else changes)."""
         directory, _, name = target.rpartition("/")
         shell = self.deps.shell_for(vm)
@@ -1361,6 +1366,12 @@ def _time(milliseconds: int) -> str:
 async def export_workspace(env: Any, session: LocalSession, target: Path) -> None:
     """The guest export of the whole workspace into `target` (raises `CallFailed` when it cannot be read)."""
     await _export(env, session, ".", target)
+
+
+async def export_directory(env: Any, session: LocalSession, root: str, target: Path) -> None:
+    """The guest export of the workspace directory `root` into `target` (raises `CallFailed` when it cannot be
+    read, also when it does not exist)."""
+    await _export(env, session, root, target)
 
 
 async def _export(env: Any, session: LocalSession, root: str, target: Path, *, missing_ok: bool = False) -> None:
