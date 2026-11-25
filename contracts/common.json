@@ -3906,6 +3906,54 @@
         "since"
       ],
       "additionalProperties": false
+    },
+    "agent_profile_name": {
+      "type": "string",
+      "description": "name of a rights profile: a built-in role or an own profile of an organization or a workgroup (ADR-090 section 2)",
+      "pattern": "^[a-z][a-z0-9_-]{0,39}$"
+    },
+    "agent_profile_reads": {
+      "type": "string",
+      "description": "reach of the read tools of a profile, narrowest first: task, workgroup, all (ADR-090 section 1)",
+      "enum": [
+        "task",
+        "workgroup",
+        "all"
+      ]
+    },
+    "agent_profile": {
+      "type": "object",
+      "description": "a resolved rights profile (ADR-090 section 1): the operation types a session may request and the reach of its reads",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/agent_profile_name"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/operation_type"
+          },
+          "maxItems": 256
+        },
+        "reads": {
+          "$ref": "#/$defs/agent_profile_reads"
+        }
+      },
+      "required": [
+        "name",
+        "operations",
+        "reads"
+      ],
+      "additionalProperties": false
+    },
+    "agent_profile_scope": {
+      "type": "string",
+      "description": "where a profile is defined (ADR-090 section 2)",
+      "enum": [
+        "builtin",
+        "org",
+        "wg"
+      ]
     }
   }
 }

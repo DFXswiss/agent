@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-agent-profile-delete.request.json",
+  "title": "DELETE /v1/orgs/{org}/agent-profiles/{name} request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

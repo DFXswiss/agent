@@ -406,6 +406,27 @@ Usage billing and prepaid credit (KOR-31) are specified in `12-billing.md`: the 
 The endpoints of the community (`/v1/community…`), its error codes and the audience `all` with the frame `community` are
 specified in `14-community.md` §4 and §5 (KOR-26, ADR-069).
 
+### 4.13 Rights profiles (KOR-51, ADR-090)
+
+A rights profile is an optional restriction of a session `{name, operations, reads}` (`common.json#/$defs/agent_profile`):
+the operation types it may request and the reach of its reads (`task` ⊂ `workgroup` ⊂ `all`). No profile = every right
+(A1, E-11); nothing assigns one by default. Built-in roles `read_only`, `development`, `security`, `review`, `merge` are
+derived from the class of every type (`contracts/ops/classes.json`); own profiles belong to an organization or a
+workgroup and resolve in the order workgroup, organization, built-in (built-in names are reserved).
+
+| Endpoint | Right | Purpose |
+|---|---|---|
+| `GET /v1/workgroups/{wg}/agent-profiles` | wg:read | `{profiles:[{name,operations,reads,scope:"builtin"|"org"|"wg",updated_at}], classes:{type:class}}` (read resource `workgroup.agent_profiles`) |
+| `PUT /v1/workgroups/{wg}/agent-profiles/{name}` | wg:write | `{operations,reads}` → `{}`; unknown types `400 request_invalid` with pointers, a built-in name `400 request_invalid` `/name`; audited `agent_profile.set` |
+| `DELETE /v1/workgroups/{wg}/agent-profiles/{name}` | wg:write | `{}`; unknown `404`; audited `agent_profile.delete` |
+| `PUT /v1/orgs/{org}/agent-profiles/{name}`, `DELETE …` | org:admin | the same for the organization |
+| `PUT /v1/tasks/{task}/agent-profile` | wg:write | `{profile: name|null}` → `{profile: snapshot|null}`; resolves the name in the task's workgroup (`404` unknown), stores the snapshot on the task (its main sessions), sends the `task` frame and `reconcile {}` to the task's devices; assigning passes the feature gate `agent.profiles` (`409 peer_outdated`); audited `task.agent_profile` |
+
+Assignments are snapshots: a later change of a definition never changes them. The **effective profile** of a session
+is the intersection of the task's snapshot and every snapshot along its chain of parents (a child started with a
+`profile` of its own keeps it in `session.agent_profile`): the types all allow, the narrowest reach. Task and session
+rows carry `agent_profile` (null without). The device state carries the section `agent_profiles` (§6.1).
+
 ## 5. Browser live channel
 
 `GET /v1/stream` (signed, read with `fetch` streaming; `Accept: text/event-stream`). Query: `org=<id>` (one
@@ -541,7 +562,7 @@ JSON bodies except tar streams.
 |---|---|
 | `GET /v1/health` | → `{guest_version,claude_version,state:"unassigned"|"assigned"|"broken",org_id?,wg_id?,sessions:[{session_id,state}],landlock_abi,boot_id}` |
 | `POST /v1/assign` | `{vm_id,org_id,wg_id}` → `{}`; refused if already assigned to another wg (`already_assigned`) |
-| `POST /v1/sessions` | `{session_id,task_id,parent_session_id,depth,harness:{context_markdown},model:{access,model_id,env:{…}},resume_claude_session_id?,restore?:{claude_session_id,object_id,note?},initial_prompt?:{prompt_id,text,speaker?},limits:{memory_max,cpu_quota,tasks_max,runtime_max_sec}}` → `{state:"sandbox_ready"}`; further transitions via journal. `restore` (ADR-072 §7, not with `resume_claude_session_id`) creates the sandbox from the context staged for this session ID and resumes its conversation (`note`: the sentence about what changed, delivered as the session notice of 05-runner.md §8); without a matching staging `409 state_conflict` |
+| `POST /v1/sessions` | `{session_id,task_id,parent_session_id,depth,harness:{context_markdown},model:{access,model_id,env:{…}},resume_claude_session_id?,restore?:{claude_session_id,object_id,note?},initial_prompt?:{prompt_id,text,speaker?},limits:{memory_max,cpu_quota,tasks_max,runtime_max_sec},profile?:{name,operations,reads}|null}` → `{state:"sandbox_ready"}`; further transitions via journal. `profile` (KOR-51, ADR-090 §3; guest 0.4.0 and later): the session's effective rights profile - the guest does not offer the work VM and browser tools whose type it does not allow and records an operation of another type as locally rejected (`rights_denied`). `restore` (ADR-072 §7, not with `resume_claude_session_id`) creates the sandbox from the context staged for this session ID and resumes its conversation (`note`: the sentence about what changed, delivered as the session notice of 05-runner.md §8); without a matching staging `409 state_conflict` |
 | `PUT /v1/sessions/{id}/credential` | `{upstream_base_url,auth_header,auth_value,extra_headers:{…},provider_allowlist?:[…]}` → `{}`; memory only, replaced on refresh; a model request that finds no credential is held until the next provisioning (`05-runner.md` §10.2) |
 | `POST /v1/sessions/{id}/prompts` | `{prompt_id,text,speaker?}` → `{state:"registered"}`; `speaker`: the sender line (ADR-083 §1), returned with the acceptance as hook context; delivery result via journal (`session.state` with `prompt_accepted`/`prompt_refused`) |
 | `POST /v1/sessions/{id}/control` | `{action:"interrupt"|"stop"|"suspend"}` → `{}` |
@@ -678,6 +699,12 @@ company record of an organization the human is an active member of; and a `githu
 `github_identity` (a runner from before KOR-47) when the task or session has a GitHub identity or a default of the
 task's workgroup or organization exists, so an old runner never acts with another account than the chosen one.
 `subagent.request`: the child session gets the registration's `github_identity`, else its parent's.
+Rights profiles (KOR-51, ADR-090 §3): check **H2b**, right after H2a, denies (`rights_denied`) a type the session's
+effective profile (§4.13) does not allow, and for `subagent.request` a `child_profile` (the profile name of the
+request, plaintext) that does not resolve in the task's workgroup or allows more than the requesting session. An
+accepted request that named a `child_profile` stores its snapshot on the child and answers the child's effective
+profile as `child_profile` (`null` = every right); without one the answer has no such field and the child has its
+parent's rights.
 
 ## 9. Operation types (formal rules)
 
@@ -733,7 +760,7 @@ original released its slot (`failed`, `expired`), or with other content (e.g. an
 | `github.request_connection` | `{}` | none; the acting user's GitHub connection is the subject (held while missing, below) | – | – | `{login}` of the connected account |
 | `subagent.request` | `{purpose,prompt,model_id?}` | purpose 1–200, prompt 1–32768 chars; `model_id` from the allowed list of the parent session's access kind (checked by the runner against the model catalog ⇒ `model_not_allowed`) | parent session, sha256(purpose‖prompt) | 10 min | `{session_id}` (hub creates the child session; H4 limits are the hub's settings depth, running children per task and children per task, ADR-088 §2, `limit_exceeded`; the request is the child's first instruction, `instruction_id` = its operation ID) |
 | `github.request_connection` | `{}` | none; the task owner's GitHub connection is the subject (held while missing, below) | – | – | `{login}` of the connected account |
-| `subagent.request` | `{purpose,prompt,model_id?,github_identity?}` (`github_identity`: the child session's identity, usable by the acting human, else `identity_forbidden`; KOR-47) | purpose 1–200, prompt 1–32768 chars; `model_id` from the allowed list of the parent session's access kind (checked by the runner against the model catalog ⇒ `model_not_allowed`) | parent session, sha256(purpose‖prompt) | 10 min | `{session_id}` (hub creates the child session; H4 limits are the hub's settings depth, running children per task and children per task, ADR-088 §2, `limit_exceeded`; the request is the child's first instruction, `instruction_id` = its operation ID) |
+| `subagent.request` | `{purpose,prompt,model_id?,github_identity?,profile?}` (`github_identity`: the child session's identity, usable by the acting human, else `identity_forbidden`; KOR-47; `profile`: the child's rights profile, within the requesting session's effective rights, else `rights_denied`, ADR-090 §1 – registered as `child_profile`) | purpose 1–200, prompt 1–32768 chars; `model_id` from the allowed list of the parent session's access kind (checked by the runner against the model catalog ⇒ `model_not_allowed`) | parent session, sha256(purpose‖prompt) | 10 min | `{session_id}` (hub creates the child session; H4 limits are the hub's settings depth, running children per task and children per task, ADR-088 §2, `limit_exceeded`; the request is the child's first instruction, `instruction_id` = its operation ID) |
 | `subagent.instruct` | `{session_id,prompt}` | prompt 1–32768 chars; runner pre-check: `session_id` is a child of the requesting session in the same task that has not ended (else `rejected` `not_found`; the hub cannot read the parameters); a suspended child is resumed, so `subagent_max_running` and the room of its VM are checked (`limit_exceeded`) (ADR-088 §1) | – (idempotency key only) | – | `{session_id,instruction_id}` once the child's guest registered the prompt (`prompt_id` = operation ID, the child's sender line); instructions of one child are handed over one at a time in the order of their creation, one per turn (the next waits until the previous one was accepted and its turn ended); a suspended child is resumed first; a child that ended meanwhile ⇒ `not_found` |
 | `subagent.stop` | `{session_id}` | runner pre-check as `subagent.instruct` (without the limits) (ADR-088 §1) | – (idempotency key only) | – | `{session_id,state:"stopping"|"stopped"|"failed"}`: the child is stopped; `stopping` while its guest cannot be reached |
 | `github.list_identities` | `{}` | none (KOR-47) | – | – | `{acting_user,current,identities:[{id,login,owner_kind,owner_id,primary,signing,source}],co_authors:[{user_id,login}]}`: the identities the acting human may use in this task that the device can open (`source` `own`, `task_org`, `operator`), the one the resolution picks now (`current`, null when none) and the humans that may be named as co-authors |

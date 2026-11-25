@@ -1,0 +1,5 @@
+{
+  "operations": [
+    "github.get_issue"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-agent-profile-put.request.json",
+  "title": "PUT /v1/workgroups/{wg}/agent-profiles/{name} request",
+  "description": "Create or change an own profile (writers of the workgroup; a built-in name is 400 request_invalid, ADR-090 section 2).",
+  "type": "object",
+  "properties": {
+    "operations": {
+      "type": "array",
+      "items": {
+        "$ref": "../common.json#/$defs/operation_type"
+      },
+      "maxItems": 256,
+      "description": "the operation types the profile allows; each a known type (400 request_invalid with the pointers of the others)"
+    },
+    "reads": {
+      "$ref": "../common.json#/$defs/agent_profile_reads"
+    }
+  },
+  "required": [
+    "operations",
+    "reads"
+  ],
+  "additionalProperties": false
+}

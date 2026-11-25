@@ -805,6 +805,54 @@
           },
           "minItems": 0,
           "maxItems": 1000
+        },
+        "agent_profiles": {
+          "type": "object",
+          "description": "rights profiles (ADR-090 section 3; KOR-51): the effective profile of every session of the device (null = every right) and what every profile name resolves to in each assigned workgroup; always sent by a hub of this release, optional in the schema for older hubs",
+          "properties": {
+            "api": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "profiles interface version"
+            },
+            "sessions": {
+              "type": "object",
+              "propertyNames": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/agent_profile"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "workgroups": {
+              "type": "object",
+              "propertyNames": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "additionalProperties": {
+                "type": "object",
+                "propertyNames": {
+                  "$ref": "../common.json#/$defs/agent_profile_name"
+                },
+                "additionalProperties": {
+                  "$ref": "../common.json#/$defs/agent_profile"
+                }
+              }
+            }
+          },
+          "required": [
+            "api",
+            "sessions",
+            "workgroups"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

@@ -1,0 +1,6 @@
+{
+  "scope": "wg",
+  "profile": "reviewer",
+  "reads": "task",
+  "operations": 4
+}

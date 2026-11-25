@@ -2999,6 +2999,124 @@
       "read_resource": null,
       "streaming": false,
       "owner": "KOR-69"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/agent-profiles",
+      "name": "workgroup-agent-profiles",
+      "section": "4.13",
+      "auth": "browser",
+      "rights": [
+        "wg:read"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/workgroup-agent-profiles.request.json",
+      "response": "api/workgroup-agent-profiles.response.json",
+      "read_resource": "workgroup.agent_profiles",
+      "streaming": false,
+      "owner": "KOR-51"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/workgroups/{wg}/agent-profiles/{name}",
+      "name": "workgroup-agent-profile-put",
+      "section": "4.13",
+      "auth": "browser",
+      "rights": [
+        "wg:write"
+      ],
+      "path_params": {
+        "wg": "uuid",
+        "name": "agent_profile_name"
+      },
+      "request_kind": "body",
+      "request": "api/workgroup-agent-profile-put.request.json",
+      "response": "api/workgroup-agent-profile-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-51"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/workgroups/{wg}/agent-profiles/{name}",
+      "name": "workgroup-agent-profile-delete",
+      "section": "4.13",
+      "auth": "browser",
+      "rights": [
+        "wg:write"
+      ],
+      "path_params": {
+        "wg": "uuid",
+        "name": "agent_profile_name"
+      },
+      "request_kind": "query",
+      "request": "api/workgroup-agent-profile-delete.request.json",
+      "response": "api/workgroup-agent-profile-delete.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-51"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/orgs/{org}/agent-profiles/{name}",
+      "name": "org-agent-profile-put",
+      "section": "4.13",
+      "auth": "browser",
+      "rights": [
+        "org:admin"
+      ],
+      "path_params": {
+        "org": "uuid",
+        "name": "agent_profile_name"
+      },
+      "request_kind": "body",
+      "request": "api/org-agent-profile-put.request.json",
+      "response": "api/org-agent-profile-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-51"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/orgs/{org}/agent-profiles/{name}",
+      "name": "org-agent-profile-delete",
+      "section": "4.13",
+      "auth": "browser",
+      "rights": [
+        "org:admin"
+      ],
+      "path_params": {
+        "org": "uuid",
+        "name": "agent_profile_name"
+      },
+      "request_kind": "query",
+      "request": "api/org-agent-profile-delete.request.json",
+      "response": "api/org-agent-profile-delete.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-51"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/tasks/{task}/agent-profile",
+      "name": "task-agent-profile-put",
+      "section": "4.13",
+      "auth": "browser",
+      "rights": [
+        "wg:write"
+      ],
+      "path_params": {
+        "task": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/task-agent-profile-put.request.json",
+      "response": "api/task-agent-profile-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-51"
     }
   ]
 }

@@ -1,0 +1,42 @@
+{
+  "description": "The class of every operation type (ADR-090 section 2). Built-in profiles (roles) are derived from the classes: read_only = read, delegate, ask; development = read, write, run, delegate, ask; security = read, run, scan, delegate, ask; review = read, review, run, delegate, ask; merge = read, merge, delegate, ask. Every type of ops/INDEX.json has exactly one class.",
+  "classes": [
+    "read",
+    "write",
+    "run",
+    "delegate",
+    "ask",
+    "scan",
+    "review",
+    "merge"
+  ],
+  "types": {
+    "browser.close": "run",
+    "browser.open": "run",
+    "github.checkout": "read",
+    "github.comment": "write",
+    "github.commit": "write",
+    "github.create_branch": "write",
+    "github.create_issue": "write",
+    "github.create_pull_request": "write",
+    "github.get_issue": "read",
+    "github.get_pull_request": "read",
+    "github.list_identities": "read",
+    "github.list_issues": "read",
+    "github.list_pull_requests": "read",
+    "github.list_repositories": "read",
+    "github.merge_base": "write",
+    "github.push": "write",
+    "github.request_connection": "read",
+    "github.update_issue": "write",
+    "human.approval": "ask",
+    "human.question": "ask",
+    "subagent.instruct": "delegate",
+    "subagent.request": "delegate",
+    "subagent.stop": "delegate",
+    "task.set_title": "write",
+    "test.run": "run",
+    "workvm.release": "run",
+    "workvm.request": "run"
+  }
+}

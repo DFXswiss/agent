@@ -66,9 +66,9 @@ SPEC_GUEST = {
     ("GET", "/v1/health"): ("", "guest_version claude_version state org_id wg_id sessions landlock_abi boot_id"),
     ("POST", "/v1/assign"): ("vm_id org_id wg_id", ""),
     ("POST", "/v1/sessions"): (
-        # restore: contracts/changes/KOR-33.md
+        # restore: contracts/changes/KOR-33.md; profile: contracts/changes/KOR-51.md
         "session_id task_id parent_session_id depth harness model resume_claude_session_id restore initial_prompt"
-        " limits",
+        " limits profile",
         "state",
     ),
     ("PUT", "/v1/sessions/{id}/credential"): (
@@ -681,7 +681,8 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
         None,
     ),
     "github.request_connection": ("", "login", "", None),
-    "subagent.request": ("purpose prompt model_id github_identity", "session_id", "session prompt", 600),
+    # profile: ADR-090 section 1 (contracts/changes/KOR-51.md)
+    "subagent.request": ("purpose prompt model_id github_identity profile", "session_id", "session prompt", 600),
     # ADR-088 section 1: duplicate protection through the idempotency key only
     "subagent.instruct": ("session_id prompt", "session_id instruction_id", "", None),
     "subagent.stop": ("session_id", "session_id state", "", None),

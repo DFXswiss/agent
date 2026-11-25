@@ -1,0 +1,27 @@
+{
+  "profiles": [
+    {
+      "name": "read_only",
+      "operations": [
+        "github.get_issue",
+        "subagent.request"
+      ],
+      "reads": "all",
+      "scope": "builtin",
+      "updated_at": null
+    },
+    {
+      "name": "triage",
+      "operations": [
+        "github.get_issue"
+      ],
+      "reads": "task",
+      "scope": "wg",
+      "updated_at": "2026-11-25T10:00:00.000Z"
+    }
+  ],
+  "classes": {
+    "github.get_issue": "read",
+    "github.merge": "merge"
+  }
+}

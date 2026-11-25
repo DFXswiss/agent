@@ -1,0 +1,15 @@
+{
+  "profiles": [
+    {
+      "name": "read_only",
+      "operations": [
+        "github.get_issue",
+        "subagent.request"
+      ],
+      "reads": "all",
+      "scope": "task",
+      "updated_at": null
+    }
+  ],
+  "classes": {}
+}

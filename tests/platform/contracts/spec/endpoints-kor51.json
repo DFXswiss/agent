@@ -1,0 +1,61 @@
+{
+  "description": "Endpoints of rights profiles (ADR-090, KOR-51): the profiles usable in a workgroup, own profiles of a workgroup or an organization, and the profile of a task.",
+  "rights": [
+    "wg:read",
+    "wg:write",
+    "org:admin"
+  ],
+  "auth": [
+    "browser"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/agent-profiles",
+      "rights": [
+        "wg:read"
+      ],
+      "section": "4.13"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/workgroups/{wg}/agent-profiles/{name}",
+      "rights": [
+        "wg:write"
+      ],
+      "section": "4.13"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/workgroups/{wg}/agent-profiles/{name}",
+      "rights": [
+        "wg:write"
+      ],
+      "section": "4.13"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/orgs/{org}/agent-profiles/{name}",
+      "rights": [
+        "org:admin"
+      ],
+      "section": "4.13"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/orgs/{org}/agent-profiles/{name}",
+      "rights": [
+        "org:admin"
+      ],
+      "section": "4.13"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/tasks/{task}/agent-profile",
+      "rights": [
+        "wg:write"
+      ],
+      "section": "4.13"
+    }
+  ]
+}

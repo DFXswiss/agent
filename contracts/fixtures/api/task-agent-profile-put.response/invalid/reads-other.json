@@ -1,0 +1,10 @@
+{
+  "profile": {
+    "name": "read_only",
+    "operations": [
+      "github.get_issue",
+      "subagent.request"
+    ],
+    "reads": "some"
+  }
+}

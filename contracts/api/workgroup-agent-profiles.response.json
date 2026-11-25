@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-agent-profiles.response.json",
+  "title": "GET /v1/workgroups/{wg}/agent-profiles response",
+  "description": "Every profile usable in the workgroup, by name: the built-in roles, the organization's and the workgroup's own (a workgroup's own profile wins over the organization's of the same name), and the class of every operation type (ADR-090 section 2).",
+  "type": "object",
+  "properties": {
+    "profiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "$ref": "../common.json#/$defs/agent_profile_name"
+          },
+          "operations": {
+            "type": "array",
+            "items": {
+              "$ref": "../common.json#/$defs/operation_type"
+            },
+            "maxItems": 256
+          },
+          "reads": {
+            "$ref": "../common.json#/$defs/agent_profile_reads"
+          },
+          "scope": {
+            "$ref": "../common.json#/$defs/agent_profile_scope"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "$ref": "../common.json#/$defs/time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "operations",
+          "reads",
+          "scope",
+          "updated_at"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "classes": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "../common.json#/$defs/operation_type"
+      },
+      "additionalProperties": {
+        "type": "string",
+        "enum": [
+          "read",
+          "write",
+          "run",
+          "delegate",
+          "ask",
+          "scan",
+          "review",
+          "merge"
+        ]
+      }
+    }
+  },
+  "required": [
+    "profiles",
+    "classes"
+  ],
+  "additionalProperties": false
+}

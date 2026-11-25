@@ -361,6 +361,10 @@
         "github_identity": {
           "$ref": "../common.json#/$defs/uuid",
           "description": "the subagent session's GitHub identity (default: the parent session's, ADR-078 section 3)"
+        },
+        "profile": {
+          "$ref": "../common.json#/$defs/agent_profile_name",
+          "description": "the rights profile the child is started with (ADR-090 section 1): within the requesting session's rights, else rights_denied; default: the child has the requesting session's rights"
         }
       },
       "required": [

@@ -936,6 +936,22 @@
     {
       "action": "read.device.subscriptions",
       "group": "read"
+    },
+    {
+      "action": "agent_profile.set",
+      "group": "settings"
+    },
+    {
+      "action": "agent_profile.delete",
+      "group": "settings"
+    },
+    {
+      "action": "task.agent_profile",
+      "group": "task"
+    },
+    {
+      "action": "read.workgroup.agent_profiles",
+      "group": "read"
     }
   ]
 }

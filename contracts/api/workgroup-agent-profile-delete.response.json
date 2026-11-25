@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-agent-profile-delete.response.json",
+  "title": "DELETE /v1/workgroups/{wg}/agent-profiles/{name} response",
+  "description": "Empty object.",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

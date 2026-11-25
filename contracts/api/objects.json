@@ -127,6 +127,17 @@
             }
           ],
           "description": "the GitHub identity chosen for the task (ADR-078 section 3)"
+        },
+        "agent_profile": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/agent_profile"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the rights profile of the task's main sessions (ADR-090 section 1), null without"
         }
       },
       "required": [
@@ -492,6 +503,17 @@
             }
           ],
           "description": "the lost session this one continues after a device failure (ADR-087 section 3). Absent from older hubs."
+        },
+        "agent_profile": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/agent_profile"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the rights profile a child was started with (ADR-090 section 1), null without (a child without one works with its parent's rights; a main session with its task's)"
         }
       },
       "required": [

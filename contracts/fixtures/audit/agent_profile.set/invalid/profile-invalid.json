@@ -1,0 +1,6 @@
+{
+  "scope": "org",
+  "profile": "Reviewer",
+  "reads": "all",
+  "operations": 1
+}

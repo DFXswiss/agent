@@ -63,6 +63,17 @@
         "triggered_by": {
           "$ref": "../common.json#/$defs/uuid",
           "description": "the human whose instruction the operation follows (ADR-078 section 2); optional"
+        },
+        "child_profile": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/agent_profile_name"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "for subagent.request: the profile the child is started with (ADR-090 section 1; plaintext, the name only); absent or null: the child works with its parent's rights"
         }
       },
       "required": [
@@ -140,6 +151,17 @@
         "triggered_by": {
           "$ref": "../common.json#/$defs/uuid",
           "description": "the human whose instruction the operation follows (ADR-078 section 2); optional"
+        },
+        "child_profile": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/agent_profile_name"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "for subagent.request: the profile the child is started with (ADR-090 section 1; plaintext, the name only); absent or null: the child works with its parent's rights"
         }
       },
       "required": [

@@ -1,0 +1,7 @@
+{
+  "operations": [
+    "github.get_issue",
+    "github.list_issues"
+  ],
+  "reads": "task"
+}

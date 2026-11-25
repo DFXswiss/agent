@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-agent-profile-put.response.json",
+  "title": "PUT /v1/tasks/{task}/agent-profile response",
+  "description": "The stored snapshot, null when cleared.",
+  "type": "object",
+  "properties": {
+    "profile": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/agent_profile"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "profile"
+  ],
+  "additionalProperties": false
+}
