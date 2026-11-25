@@ -158,3 +158,57 @@ def test_workgroup_rename(tool: Tool, hub: HubFake, account: User, tmp_path: Pat
     assert tool.run("wg", "rename", "--wg", wg, "--name", " ")[1]["error"] == "invalid_argument"
     hub.wraps[:] = [wrap for wrap in hub.wraps if wrap["scope"] != "org" or wrap["recipient_id"] != account.id]
     assert tool.run("wg", "rename", "--wg", wg, "--name", "X")[1]["reason"] == "epoch_stale"
+
+
+def test_merge_criteria_and_separate_duties(tool: Tool, hub: HubFake, account: User) -> None:
+    """KOR-51 (ADR-090 sections 5 and 6): optional, off by default, set one by one."""
+    wg = default_wg(hub, account)
+    code, saved = tool.run(
+        "wg",
+        "settings",
+        "--wg",
+        wg,
+        "--merge-verdicts",
+        "1",
+        "--merge-checks-green",
+        "true",
+        "--separate-duties",
+        "true",
+    )
+    assert code == 0, saved
+    assert saved["settings"]["merge_criteria"] == {"passed_verdicts": 1, "checks_green": True}
+    assert saved["settings"]["separate_duties"] is True
+    more = tool.run(
+        "wg",
+        "settings",
+        "--wg",
+        wg,
+        "--merge-verdict-profile",
+        "qa",
+        "--merge-approvals",
+        "2",
+        "--separate-duties",
+        "false",
+    )[1]["settings"]
+    assert more["merge_criteria"] == {
+        "passed_verdicts": 1,
+        "checks_green": True,
+        "verdict_profile": "qa",
+        "github_approvals": 2,
+    }
+    assert more["separate_duties"] is False
+    shown = tool.run("wg", "settings", "--wg", wg)[1]
+    assert (shown["status"], shown["settings"]["merge_criteria"]["verdict_profile"]) == ("set", "qa")
+    assert tool.run("wg", "settings", "--wg", wg, "--merge-verdicts", "-1")[1]["reason"] == "count_invalid"
+    assert tool.run("wg", "settings", "--wg", wg, "--merge-verdict-profile", "Bad")[1]["reason"] == "profile_invalid"
+    bads: list[dict[str, Any]] = [
+        {"merge_criteria": []},
+        {"merge_criteria": {"other": 1}},
+        {"merge_criteria": {"passed_verdicts": True}},
+        {"merge_criteria": {"verdict_profile": "Bad"}},
+        {"merge_criteria": {"checks_green": 1}},
+        {"separate_duties": "yes"},
+    ]
+    for bad in bads:
+        assert wgsettings.check_body({**wgsettings.DEFAULTS, **bad}) is None, bad
+    assert wgsettings.merge_settings({"repositories": []}, {}) == {"repositories": []}

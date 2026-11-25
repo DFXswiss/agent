@@ -24,6 +24,7 @@ from agent_platform import (
     membership,
     modelaccess,
     ownmac,
+    profiles,
     pulls,
     security,
     sessions,
@@ -59,4 +60,5 @@ MODULES: tuple[Callable[[Any], None], ...] = (
     pulls.register,
     subscriptions.register,
     vmswitch.register,
+    profiles.register,
 )

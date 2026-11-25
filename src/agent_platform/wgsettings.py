@@ -8,7 +8,10 @@ and again by the hub). Repositories are `owner/name` (stored lower case, duplica
 allows every repository the user's GitHub connection reaches. Protected branch patterns: at most 100.
 
 - `repos list|allow|disallow --wg`: the list, and a change of it;
-- `wg settings --wg`: shows the settings, or with `--protected-branch` / `--pr-draft-default` sets them;
+- `wg settings --wg`: shows the settings, or with `--protected-branch` / `--pr-draft-default` sets them; the merge
+  criteria and the separation of duties (KOR-51, ADR-090 sections 5 and 6, all optional and off by default) with
+  `--merge-verdicts N`, `--merge-verdict-profile NAME`, `--merge-checks-green true|false`, `--merge-approvals N` and
+  `--separate-duties true|false`;
 - `wg rename --wg --name`: the workgroup's name, a `wg.profile` event of the org scope sealed with the org key (admins).
 """
 
@@ -35,9 +38,35 @@ PATTERN_RE = re.compile(r"[A-Za-z0-9._/*+-]{1,200}")
 DEFAULTS: dict[str, Any] = {"repositories": [], "protected_branches": list(DEFAULT_PROTECTED), "pr_draft_default": True}
 
 
+KEYS = frozenset({"pr_draft_default", "protected_branches", "repositories"})
+OPTIONAL_KEYS = frozenset({"merge_criteria", "separate_duties"})
+CRITERIA_KEYS = frozenset({"passed_verdicts", "verdict_profile", "checks_green", "github_approvals"})
+PROFILE_RE = re.compile(r"[a-z][a-z0-9_-]{0,39}")
+
+
+def _count(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _criteria_valid(value: object) -> bool:
+    if not isinstance(value, dict) or not set(value) <= CRITERIA_KEYS:
+        return False
+    profile = value.get("verdict_profile", "review")
+    return (
+        all(_count(value.get(name, 0)) for name in ("passed_verdicts", "github_approvals"))
+        and isinstance(value.get("checks_green", False), bool)
+        and isinstance(profile, str)
+        and PROFILE_RE.fullmatch(profile) is not None
+    )
+
+
 def check_body(body: object) -> dict[str, Any] | None:
     """A body exactly as `contracts/events/settings.workgroup.json` allows it, else None."""
-    if not isinstance(body, dict) or sorted(body) != ["pr_draft_default", "protected_branches", "repositories"]:
+    if not isinstance(body, dict) or not KEYS <= set(body) <= KEYS | OPTIONAL_KEYS:
+        return None
+    if "merge_criteria" in body and not _criteria_valid(body["merge_criteria"]):
+        return None
+    if not isinstance(body.get("separate_duties", False), bool):
         return None
 
     def listed(value: object, pattern: re.Pattern[str], most: int) -> bool:
@@ -126,11 +155,34 @@ def repos_change(account: Account, wg: str, names: list[str], allow: bool) -> di
     return {**_repos_result(save(account, wg, {**settings, "repositories": repositories})), "changed": True}
 
 
-def wg_settings(account: Account, wg: str, patterns: list[str] | None, draft: str | None) -> dict[str, Any]:
+def merge_settings(settings: dict[str, Any], merge: dict[str, Any]) -> dict[str, Any]:
+    """`settings` with the given merge criteria and separation (`None` values are left as they are)."""
+    criteria = dict(settings.get("merge_criteria", {}))
+    for name in ("passed_verdicts", "github_approvals"):
+        if merge.get(name) is not None:
+            if merge[name] < 0:
+                raise PlatformError("invalid_argument", reason="count_invalid")
+            criteria[name] = merge[name]
+    if merge.get("verdict_profile") is not None:
+        if PROFILE_RE.fullmatch(merge["verdict_profile"]) is None:
+            raise PlatformError("invalid_argument", reason="profile_invalid")
+        criteria["verdict_profile"] = merge["verdict_profile"]
+    if merge.get("checks_green") is not None:
+        criteria["checks_green"] = merge["checks_green"] == "true"
+    out = {**settings, "merge_criteria": criteria} if criteria else dict(settings)
+    if merge.get("separate_duties") is not None:
+        out["separate_duties"] = merge["separate_duties"] == "true"
+    return out
+
+
+def wg_settings(
+    account: Account, wg: str, patterns: list[str] | None, draft: str | None, merge: dict[str, Any] | None = None
+) -> dict[str, Any]:
     shown = current(account, wg)
-    if patterns is None and draft is None:
+    wanted = {name: value for name, value in (merge or {}).items() if value is not None}
+    if patterns is None and draft is None and not wanted:
         return shown
-    settings = dict(shown["settings"])
+    settings = merge_settings(dict(shown["settings"]), wanted)
     if patterns is not None:
         values: list[str] = []
         for pattern in (item.strip() for item in patterns):
@@ -172,7 +224,14 @@ def _change(allow: bool) -> Any:
 
 
 def _settings(account: Account, args: Any, context: Context) -> dict[str, Any]:
-    return wg_settings(account, args.wg, args.protected_branch, args.pr_draft_default)
+    merge = {
+        "passed_verdicts": args.merge_verdicts,
+        "verdict_profile": args.merge_verdict_profile,
+        "checks_green": args.merge_checks_green,
+        "github_approvals": args.merge_approvals,
+        "separate_duties": args.separate_duties,
+    }
+    return wg_settings(account, args.wg, args.protected_branch, args.pr_draft_default, merge)
 
 
 def _rename(account: Account, args: Any, context: Context) -> dict[str, Any]:
@@ -223,6 +282,11 @@ def register(tree: Tree) -> None:
     sub.add_argument("--wg", required=True)
     sub.add_argument("--protected-branch", action="append", help="branch or pattern, repeatable (replaces the list)")
     sub.add_argument("--pr-draft-default", choices=["true", "false"])
+    sub.add_argument("--merge-verdicts", type=int, help="passed verdicts of review sessions a merge needs (0: none)")
+    sub.add_argument("--merge-verdict-profile", help="the profile those sessions must have (default review)")
+    sub.add_argument("--merge-checks-green", choices=["true", "false"])
+    sub.add_argument("--merge-approvals", type=int, help="approving GitHub reviews a merge needs (0: none)")
+    sub.add_argument("--separate-duties", choices=["true", "false"])
     sub = tree.command(
         group,
         "rename",
