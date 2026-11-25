@@ -12,7 +12,8 @@
 // - the note that the work VM's own browser is neither recorded nor live (E-09).
 //
 // Pictures are shown as `data:` URLs of the decrypted JPEG bytes (the hub's CSP allows `img-src 'self' data:`, not
-// `blob:`), made only for the rows in the window and the main picture and dropped with them. The record's position text is announced (`aria-live`) only after the user moved the window.
+// `blob:`), made only for the rows in the window and the main picture and dropped with them. The record's position
+// text is announced (`aria-live`) only after the user moved the window.
 import './texts';
 import { type ChangeEvent, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { type Bandwidth, BANDWIDTH_IDS, bandwidthOf, kbpsOf } from '../../core/browser/bandwidth';
@@ -27,6 +28,9 @@ import { useNow } from '../countdown/useNow';
 import { useStore } from '../hooks/useStore';
 import { useI18n } from '../i18n';
 import { useAppEnv } from '../shell/context';
+
+/** `aria-live` of the record's position: off until the user moved the window, then polite. */
+const ANNOUNCE = ['off', 'polite'] as const;
 
 /** Rows of the record in the page at a time. */
 export const RECORD_ROWS = 20;
@@ -304,11 +308,7 @@ function Record({ watch }: { readonly watch: BrowserWatch }) {
         </p>
       )}
       {rows.length > 0 && (
-        <p
-          className="text-sm text-gray-700"
-          data-testid="browser.record.range"
-          aria-live={moved ? 'polite' : undefined}
-        >
+        <p className="text-sm text-gray-700" data-testid="browser.record.range" aria-live={ANNOUNCE[Number(moved)]}>
           {t(rangeKey(more), {
             from: start + 1,
             to: start + rows.length,

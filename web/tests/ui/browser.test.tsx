@@ -227,7 +227,7 @@ describe('browser tab', () => {
     expect(picture).toHaveAttribute('alt', 'The page after the action click');
     expect(screen.getByTestId('browser.live.badge')).toHaveTextContent('Recorded picture of');
     expect(screen.getByTestId('browser.record.range')).toHaveTextContent('Entries 1–7 of 7, newest first');
-    expect(screen.getByTestId('browser.record.range')).not.toHaveAttribute('aria-live');
+    expect(screen.getByTestId('browser.record.range')).toHaveAttribute('aria-live', 'off');
     expect(screen.queryByTestId('browser.record.older')).toBeNull();
     expect(t.watch).toHaveBeenCalledWith(t.t.org, SESSION, expect.anything(), 1000);
   });
