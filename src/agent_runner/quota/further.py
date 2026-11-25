@@ -106,7 +106,7 @@ class FurtherPoller:
             self.expiry[item.id] = known
         if known[1] is None or not (force or now >= known[1] - renewal.RENEW_BEFORE_S):
             return False
-        return await self.renewals().renew(item, now)
+        return await self.renewals().renew(item, now, force=force)
 
     async def tick(self, desired: Mapping[str, Any] | None, now: float) -> None:
         named = owners(desired) if api(desired) else []
@@ -184,6 +184,7 @@ class FurtherPoller:
         status = response.status_code
         base = {"owner_id": item.owner, "subscription_id": item.id}
         if status == 401 and await self.renew_due(item, now, force=True):
+            state.next_at = now  # measured again at the next tick, with the new token
             return
         if status in (401, 403):
             state.unavailable_version = item.version

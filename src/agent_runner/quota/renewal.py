@@ -7,7 +7,7 @@ the owner (`further.FurtherPoller`, owners of `quota_poll_owners` - never two de
 for such a record `RENEW_BEFORE_S` before `expires_at` and at once after the usage endpoint answered `401`:
 
 1. **Fresh record.** The record is fetched anew (`subscriptions.fetch`); a record without both tokens (not logged
-   in, logged out by its owner, refused before) is not renewed.
+   in, logged out by its owner, refused before) or whose fresh version is not due (a newer login) is not renewed.
 2. **Token endpoint.** `POST CLAUDE_TOKEN_URL` with JSON `{grant_type: "refresh_token", refresh_token, client_id:
    CLAUDE_OAUTH_CLIENT_ID, scope}` (the record's scopes), `TIMEOUT_S`, no redirects - the request the pinned Claude
    Code renews with. Neither the request nor the answer is logged; a failure logs its status or error type only.
@@ -209,8 +209,9 @@ class Renewer:
     retry_at: dict[str, float] = field(default_factory=dict)
     """Record ID -> when a failed renewal may be tried again."""
 
-    async def renew(self, item: Subscription, now: float) -> bool:
-        """Renew the record (module docstring); True when a new version was written or the record was marked."""
+    async def renew(self, item: Subscription, now: float, *, force: bool = False) -> bool:
+        """Renew the record when its fresh version is still due (`force`: after a `401`) (module docstring); True when
+        a new version was written or the record was marked."""
         if now < self.retry_at.get(item.id, float("-inf")):
             return False
         if await pending(self.context, item.id):
@@ -225,7 +226,8 @@ class Renewer:
             self.retry_at[item.id] = now + RETRY_S
             return False
         try:
-            if not renewable(body):
+            expiry = expires(body)
+            if expiry is None or not (force or now >= expiry - RENEW_BEFORE_S):
                 return False
             return await self._exchange(current, body, now)
         finally:

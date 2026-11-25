@@ -121,6 +121,11 @@ def screen_url(lines: Sequence[str]) -> str | None:
     return url
 
 
+def _regular(descriptor: int) -> bool:
+    info = os.fstat(descriptor)
+    return stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid()
+
+
 def _read(path: Path) -> Any:
     """The JSON of a regular file of this account (no link, at most `MAX_FILE` bytes); None when it is missing."""
     try:
@@ -129,11 +134,13 @@ def _read(path: Path) -> Any:
         return None
     except OSError:
         raise LoginUnusable("token_invalid") from None
+    if not _regular(descriptor):
+        os.close(descriptor)
+        raise LoginUnusable("token_invalid")
     with os.fdopen(descriptor, "rb") as stream:
-        info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_size > MAX_FILE:
-            raise LoginUnusable("token_invalid")
         data = stream.read(MAX_FILE + 1)
+    if len(data) > MAX_FILE:
+        raise LoginUnusable("token_invalid")
     try:
         return json.loads(data)
     except ValueError:
@@ -184,7 +191,8 @@ def read_login(config_dir: Path) -> FullLogin:
         isinstance(refresh, str) and TOKEN_RE.fullmatch(refresh)
     ):
         raise LoginUnusable("token_invalid")
-    scopes = scopes_of(data.get("scopes"))
+    listed = data.get("scopes")
+    scopes = scopes_of(listed if isinstance(listed, list) else None)
     if not set(scopes) >= REQUIRED_SCOPES:
         raise LoginUnusable("scope_missing")
     return FullLogin(
