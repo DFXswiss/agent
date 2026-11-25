@@ -172,6 +172,8 @@ EXCLUDED: Mapping[str, str] = {
     "schema_version": "the target is migrated by `agent-hub migrate`; the header names the applied migrations",
     "ceremony": "passkey ceremonies live 300 s and are purged after a day; open ceremonies end with the old hub",
     "device_presence": "runtime state: a device is online again once it reconnects to the restored hub",
+    "browser_watch": "runtime state: watch leases end within 30 s and the open streams write them again (KOR-44)",
+    "browser_live": "runtime state: the latest live frame of a watched browser, replaced by the next one (KOR-44)",
 }
 
 RULE_BY_TABLE: Mapping[str, TableRule] = {rule.table: rule for rule in RULES}
