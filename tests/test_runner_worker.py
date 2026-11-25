@@ -44,6 +44,8 @@ COMMENT_ID = 555
 TRIGGER = f"comment:{REPO}:7:{COMMENT_ID}"
 ISSUE_URL = f"https://github.com/{REPO}/issues/7"
 COMMENT_URL = f"{ISSUE_URL}#issuecomment-{COMMENT_ID}"
+# The API's comment answer names its thread on the API host, not the web host.
+API_ISSUE_URL = f"https://api.github.com/repos/{REPO}/issues/7"
 ANALYSIS_TEMPLATE = "Explain {{REPO}} {{NUMBER}} {{HEAD}} {{JOB_ID}}.\n"
 ANALYSIS_STDOUT = "Likely cause.\nSTATUS: complete\nRESULT: done\n"
 # A sentinel so a test can ask for a raw string answer (including `"null"`)
@@ -165,7 +167,7 @@ def _fake_runner(
         "body": "Reported failure.",
         "user": {"login": "alice"},
         "html_url": COMMENT_URL,
-        "issue_url": ISSUE_URL,
+        "issue_url": API_ISSUE_URL,
     }
     default_issue = {"title": "Broken thing", "body": "Steps to reproduce."}
 
@@ -985,10 +987,10 @@ def test_log_error_prompt_fences_the_thread_and_keeps_its_tokens_literal(
 def test_log_error_writes_the_number_a_hash_ref_names_as_the_marker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # `_number` accepts a `#7` ref. The marker must carry the accepted number,
-    # because finalize strips a leading `#` from the ref it compares; a marker
-    # that kept the `#` would never match and published work would be recorded
-    # as not done.
+    # `_number` accepts a `#7` ref. The marker carries the ref with an optional
+    # leading `#` removed, because finalize compares the marker text with the
+    # ref after stripping one `#`; a marker that kept the `#` would never match
+    # and published work would be recorded as not done.
     paths = _write_worker_files(tmp_path)
     _insert_analysis_job(tmp_path, paths, monkeypatch, ref="#7")
 
@@ -1033,6 +1035,48 @@ def test_log_error_marker_for_a_hash_ref_matches_finalize(
     )
     assert line == "DONE log-error 7"
     assert transcript_has_marker(line, "#7") is True
+
+
+@pytest.mark.parametrize(
+    ("ref", "expected_marker"),
+    [
+        # `_number` reads `007` as 7, but finalize compares the marker text
+        # with the ref text, so the leading zeros have to survive.
+        ("007", "DONE log-error 007"),
+        # The optional `#` is stripped, exactly as finalize strips it.
+        ("#007", "DONE log-error 007"),
+    ],
+)
+def test_log_error_marker_keeps_the_ref_text_finalize_compares(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    ref: str,
+    expected_marker: str,
+) -> None:
+    # The worker writes the marker and the same line is then read back through
+    # finalize's marker reader. Writing the integer `_number` accepted turned
+    # `007` into `7`, which finalize could never match, so a posted analysis
+    # recorded work_performed="no".
+    paths = _write_worker_files(tmp_path)
+    _insert_analysis_job(tmp_path, paths, monkeypatch, ref=ref)
+
+    code, _out = _run(
+        paths,
+        tmp_path,
+        launch=_fake_launch(
+            [], protocol_result="done", stdout=ANALYSIS_STDOUT
+        ),
+        execute=_done_executor(activity_type="comment.post"),
+    )
+
+    assert code == 0
+    line = next(
+        line
+        for line in _transcript(paths).splitlines()
+        if line.startswith("DONE log-error")
+    )
+    assert line == expected_marker
+    assert transcript_has_marker(line, ref) is True
 
 
 def test_log_error_posts_an_analysis_on_a_pull_request(
@@ -1320,7 +1364,9 @@ def test_log_error_rejects_a_comment_from_another_thread(
         paths,
         tmp_path,
         runner=_fake_runner(
-            comment={"issue_url": f"https://github.com/{REPO}/issues/8"}
+            comment={
+                "issue_url": f"https://api.github.com/repos/{REPO}/issues/8"
+            }
         ),
         launch=_fake_launch(
             launches, protocol_result="done", stdout=ANALYSIS_STDOUT
@@ -1330,6 +1376,81 @@ def test_log_error_rejects_a_comment_from_another_thread(
     assert code == 2
     assert launches == []
     assert runner_worker.FAILED_FOREIGN_COMMENT in _transcript(paths)
+
+
+@pytest.mark.parametrize(
+    "issue_url",
+    [
+        # Another repository carries the same number.
+        "https://api.github.com/repos/other/repository/issues/7",
+        # Another owner of a repository with the same name.
+        "https://api.github.com/repos/other-owner/example-repository/issues/7",
+        # Another host, even with the exact same path.
+        f"https://github.com/{REPO}/issues/7",
+        # A trailing path segment after the number.
+        f"https://api.github.com/repos/{REPO}/issues/7/comments",
+        # A trailing slash is not the exact thread address either.
+        f"https://api.github.com/repos/{REPO}/issues/7/",
+    ],
+)
+def test_log_error_requires_the_exact_issue_url_of_this_thread(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    issue_url: str,
+) -> None:
+    # The endswith check let another repository's same-numbered thread through.
+    # The whole URL must name this job's repository and number.
+    paths = _write_worker_files(tmp_path)
+    _insert_analysis_job(tmp_path, paths, monkeypatch)
+    launches: list[dict[str, Any]] = []
+    posted: list[str] = []
+
+    code, _out = _run(
+        paths,
+        tmp_path,
+        runner=_fake_runner(comment={"issue_url": issue_url}),
+        launch=_fake_launch(
+            launches, protocol_result="done", stdout=ANALYSIS_STDOUT
+        ),
+        execute=_done_executor(posted, activity_type="comment.post"),
+    )
+
+    assert code == 2
+    assert launches == []
+    assert posted == []
+    assert runner_worker.FAILED_FOREIGN_COMMENT in _transcript(paths)
+    assert not (paths.logs / "job-1.prompt").exists()
+
+
+def test_log_error_accepts_the_same_thread_in_another_letter_case(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # GitHub owner and repository names are case-insensitive, so the API may
+    # echo the repository in another letter case than the row stores.
+    paths = _write_worker_files(tmp_path)
+    _insert_analysis_job(tmp_path, paths, monkeypatch)
+    launches: list[dict[str, Any]] = []
+    posted: list[str] = []
+
+    code, _out = _run(
+        paths,
+        tmp_path,
+        runner=_fake_runner(
+            comment={
+                "issue_url": "https://api.github.com/repos/"
+                "Example-Owner/Example-Repository/issues/7"
+            }
+        ),
+        launch=_fake_launch(
+            launches, protocol_result="done", stdout=ANALYSIS_STDOUT
+        ),
+        execute=_done_executor(posted, activity_type="comment.post"),
+    )
+
+    assert code == 0
+    assert len(launches) == 1
+    assert len(posted) == 1
+    assert "DONE log-error 7" in _transcript(paths)
 
 
 def test_log_error_rejects_a_triggering_comment_over_the_bound(

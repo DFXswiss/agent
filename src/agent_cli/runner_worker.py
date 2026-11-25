@@ -569,13 +569,16 @@ def _comment_material(
 ) -> str:
     """The triggering comment's body, or a fixed failure.
 
-    The comment's `issue_url` must name this job's issue or pull request: a
-    comment id that belongs to another thread cannot feed this job, even when
-    the row's trigger was written wrongly. `user.login` and `html_url` are read
-    as well, because a comment without its author or its canonical address is
-    not a shape this worker understands and is refused instead of guessed
-    around. The body is bounded rather than truncated, so the lane reads
-    exactly what was posted.
+    The comment's `issue_url` must be exactly this job's thread:
+    `https://api.github.com/repos/<owner>/<name>/issues/<number>`. The owner
+    and name are compared case-insensitively with the job's repository and the
+    number exactly, so a comment from another repository (even one with the
+    same number), another owner, another host or a longer path cannot feed this
+    job, even when the row's trigger was written wrongly. `user.login` and
+    `html_url` are read as well, because a comment without its author or its
+    canonical address is not a shape this worker understands and is refused
+    instead of guessed around. The body is bounded rather than truncated, so
+    the lane reads exactly what was posted.
     """
     owner, name = repo.split("/", 1)
     data = _gh_json_object(
@@ -597,7 +600,10 @@ def _comment_material(
         or not isinstance(issue_url, str)
     ):
         raise _WorkerError(FAILED_COMMENT)
-    if not issue_url.endswith(f"/issues/{number}"):
+    expected_issue_url = (
+        f"https://api.github.com/repos/{owner}/{name}/issues/{number}"
+    )
+    if issue_url.casefold() != expected_issue_url.casefold():
         raise _WorkerError(FAILED_FOREIGN_COMMENT)
     if len(body) > MAX_COMMENT_CHARS:
         raise _WorkerError(FAILED_COMMENT_TOO_LONG)
@@ -1220,10 +1226,12 @@ def _run_worker_body(
             raise _WorkerError(FAILED_ANALYSIS_POST)
     # finalize's `marker` kind reads this line. It is written only after the
     # comment is `done`, so a job that failed to post never records work it did
-    # not publish. The number `_number` accepted is written, not the raw `ref`:
-    # finalize strips a leading `#` from the ref it compares, so a `#7` ref
-    # would never match a marker that still carried the `#`.
-    transcript.write(f"DONE log-error {number}")
+    # not publish. The marker carries the row's `ref` without an optional
+    # leading `#`, not the integer `_number` accepted: finalize compares the
+    # marker text with the ref text after stripping one leading `#`, so `007`
+    # must stay `007` while `#7` becomes `7`.
+    marker_ref = ref[1:] if ref.startswith("#") else ref
+    transcript.write(f"DONE log-error {marker_ref}")
     return "analysis posted"
 
 

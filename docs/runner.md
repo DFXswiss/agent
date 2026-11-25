@@ -292,8 +292,11 @@ both skills; only the facts read and the shape of the output branch:
    * `log-error`: read the trigger comment with
      `gh api repos/<owner>/<name>/issues/comments/<id>` and the issue or pull
      request with `gh api repos/<owner>/<name>/issues/<n>`. The comment's
-     `issue_url` must end with `/issues/<n>` of this job, so a trigger from
-     another thread cannot feed it. Comment text is bounded at 65,536
+     `issue_url` must be exactly
+     `https://api.github.com/repos/<owner>/<name>/issues/<n>` for this job's
+     repository and number, with owner and name compared case-insensitively and
+     the number exactly, so a trigger from another thread or repository cannot
+     feed it. Comment text is bounded at 65,536
      characters, the title at 1,024 and the body at 65,536; a larger text
      fails rather than being truncated. A failed call, a non-JSON answer or a
      wrong shape fails with a fixed line that never copies `gh` output.
@@ -342,10 +345,10 @@ both skills; only the facts read and the shape of the output branch:
 10. Execute the activity through the script's GitHub executor and require the
     row to be `done`.
     * `pr-review`: append `worker: review posted`.
-    * `log-error`: append the line `DONE log-error <n>` to the transcript
-      (this is what `finalize`'s `marker` kind reads; it carries the number,
-      because `finalize` strips a leading `#` from the row's ref), then
-      `worker: analysis posted`.
+    * `log-error`: append the line `DONE log-error <ref>` to the transcript
+      (this is what `finalize`'s `marker` kind reads; it carries the row's
+      `ref` with an optional leading `#` removed, so `007` stays `007` while
+      `#7` becomes `7`), then `worker: analysis posted`.
     Then write the exit file.
 
 Every progress line is also written to the job's standard output with the
