@@ -207,8 +207,22 @@ export function validRequestBody(kind: RequestKind, body: unknown, followUp: boo
       );
     case 'claude.login':
       if (followUp) return keysAre(body, ['code']) && matches(body.code, CODE_RE, 512);
-      return keysAre(body, ['mode']) && (body.mode === 'manual' || body.mode === 'automatic');
+      // KOR-69 (ADR-090 section 2): a further subscription, its label and note and, automatic only, the address
+      return (
+        keysAre(body, ['mode'], ['subscription_id', 'name', 'note', 'email']) &&
+        (body.mode === 'manual' || body.mode === 'automatic') &&
+        optionalUuid(body.subscription_id) &&
+        (body.name === undefined || isLabel(body.name, 64)) &&
+        (body.note === undefined || isLabel(body.note, 500)) &&
+        (body.email === undefined || (body.mode === 'automatic' && matches(body.email, EMAIL_RE, 254)))
+      );
   }
+}
+
+/** A subscription's name or note: 1 to `most` characters without a control character (ADR-090 section 1). */
+export function isLabel(value: unknown, most: number): value is string {
+  // eslint-disable-next-line no-control-regex
+  return typeof value === 'string' && value.length > 0 && value.length <= most && !/[\u0000-\u001f]/.test(value);
 }
 
 function failed(body: Record<string, unknown>): boolean {
