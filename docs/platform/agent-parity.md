@@ -119,6 +119,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | devices-assign | screens/devices | `device assign --wg\|--org` | done |
 | devices-unassign-org | screens/devices | `device unassign --org` (with rotation) | done |
 | wg-placement | screens/workgroups | `wg placement` | done |
+| wg-vm-switch | screens/workgroups | `wg vm-switch --wg --vm [--preview]` | done |
 | devices-unassign | screens/devices | `device unassign` | done |
 | devices-invite | screens/devices | `device invite` | done |
 | devices-profile | screens/devices | `device rename` | done |
@@ -289,6 +290,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/workgroups/{wg}` | task-create |
 | `GET /v1/workgroups/{wg}/device-candidates` | devices-assign, task-create |
 | `PUT /v1/workgroups/{wg}/placement` | wg-placement |
+| `POST /v1/workgroups/{wg}/vms/{vm}/switch` | wg-vm-switch |
 | `GET /v1/workgroups/{wg}/tasks` | tasks-list, tasks-overview |
 | `GET /v1/workgroups/{wg}/pr-links` | pr-view |
 | `POST /v1/workgroups/{wg}/pr-links` | pr-link-address |

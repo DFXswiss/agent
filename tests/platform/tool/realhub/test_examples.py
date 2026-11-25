@@ -186,6 +186,7 @@ def account(real: RealHub) -> tuple[dict[str, str], Tool]:
         "<agent_id>": str(uuid7()),
         "<run_id>": "tr-" + "0" * 12,
         "<browser_id>": "br-" + "0" * 12,
+        "<vm_id>": "vm-" + "0" * 8,  # an unknown VM: refused on the merits (KOR-70)
         "https://agent.dfx.swiss": real.origin,
     }, ada
 

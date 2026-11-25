@@ -508,6 +508,9 @@
   "src/agent_hub/users/identity.py": {
    "MAX_INVITEES": "open"
   },
+  "src/agent_hub/vmswitch/service.py": {
+   "REQUESTED_MAX": "answer"
+  },
   "src/agent_hub/whiteboards/read.py": {
    "HISTORY_MAX": "page",
    "LIST_MAX": "page",
@@ -982,6 +985,11 @@
   "src/agent_runner/vm/golden.py": {
    "MAX_SUFFIX": "size"
   },
+  "src/agent_runner/vm/golden_switch.py": {
+   "MAX_HOLDS": "answer",
+   "MAX_REFRESHES": "retry",
+   "MAX_SESSIONS": "answer"
+  },
   "src/agent_runner/vm/lifecycle.py": {
    "UNHEALTHY_LIMIT": "page"
   },
@@ -1225,7 +1233,8 @@
    "/oneOf/1/properties/requests/maxItems": "answer",
    "/oneOf/1/properties/rotation_pending/maxItems": "answer",
    "/oneOf/1/properties/sessions/maxItems": "answer",
-   "/oneOf/1/properties/subscriptions/properties/shared/maxItems": "answer"
+   "/oneOf/1/properties/subscriptions/properties/shared/maxItems": "answer",
+   "/oneOf/1/properties/vm_switch/maxItems": "answer"
   },
   "contracts/api/device-subscriptions-list.response.json": {
    "/properties/subscriptions/maxItems": "open"
@@ -1548,7 +1557,9 @@
    "/$defs/log_manifest/properties/size/maximum": "integer",
    "/$defs/log_manifest/properties/stored/maximum": "integer",
    "/$defs/positive/maximum": "integer",
-   "/$defs/seq/maximum": "integer"
+   "/$defs/seq/maximum": "integer",
+   "/$defs/vm_upgrade/properties/holds/maxItems": "answer",
+   "/$defs/vm_upgrade/properties/sessions/maxItems": "answer"
   },
   "contracts/credentials/claude_subscription.json": {
    "/properties/scopes/maxItems": "answer",
