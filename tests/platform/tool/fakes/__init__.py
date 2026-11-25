@@ -18,4 +18,5 @@ INSTALLERS: tuple[str, ...] = (
     "runlogs",
     "model_access",
     "pulls",
+    "stream",
 )

@@ -12,6 +12,7 @@ from typing import Any
 from agent_platform import (
     alone,
     billing,
+    browser,
     community,
     connector,
     credkey,
@@ -46,6 +47,7 @@ MODULES: tuple[Callable[[Any], None], ...] = (
     keywraps.register,
     workvm.register,
     testruns.register,
+    browser.register,
     billing.register,
     community.register,
     alone.register,

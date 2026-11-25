@@ -415,6 +415,9 @@ class HubFake:
                 length = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(length) if length else b""
                 status, body, signed, *extra = hub.handle(self.command, self.path, dict(self.headers.items()), raw)
+                if callable(body):  # a streaming answer (fakes/stream.py) writes itself, unsigned
+                    body(self)
+                    return
                 data = json.dumps(body, separators=(",", ":")).encode()
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
