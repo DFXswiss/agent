@@ -139,3 +139,17 @@ At the end print a table: item, approach, outcome (with addresses, ports and cod
 | WVM-09 | pending | |
 | WVM-10 | pending | together with `egress-check.sh` |
 | model-driven | pending | |
+
+## Browser VMs (KOR-44, ADR-085)
+
+A browser VM is a work VM of scope `browser` in a slot of its own: the same account, host filter and egress, so every
+case above applies to it unchanged; on the first execution device the probe is run in a browser VM as well
+(`attack-probes.sh` inside it, while the session's browser session is open). Additionally:
+
+| ID | Attack | Expected (pass) | Control |
+|---|---|---|---|
+| WVM-11 | From the platform browser itself (`browser_navigate` to `http://host.lima.internal:<port>/` for the WVM-01 ports, to the host's own addresses and to a private address) | every page fails to load (`ok:false`, connection refused or timed out) | the host filter of the browser VM's slot (WVM-01 … WVM-03) |
+| WVM-12 | Watching the browser of another task's session (`GET /v1/stream?browser=<session>` without `task:read` of it), posting live frames for a session of another device | `404 not_found` / `403 forbidden` | hub rights of the stream and of the live route (hub tests of KOR-44) |
+
+Status: WVM-11 pending like WVM-01 … WVM-05 (TEST_MODE has no host filter, E2E-66 runs there); WVM-12 is covered by
+the hub tests.
