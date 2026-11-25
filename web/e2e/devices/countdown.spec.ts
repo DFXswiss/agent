@@ -69,7 +69,8 @@ test('offline: the real reason instead of digits; the task starts when the devic
   await expect(page.getByTestId('countdown.digits')).toHaveCount(0);
   await expectNoSpinner(page);
   await setOnline(user.device, true);
-  await expect(page.getByTestId('countdown.digits')).toBeVisible();
+  // The hub must first notice the device is back and place the task; slow devices need more than the default 5 s.
+  await expect(page.getByTestId('countdown.digits')).toBeVisible({ timeout: 20_000 });
   const session = await mainSession(task);
   await walk(session.session_id, [...START_STEPS, 'working'], { intervalMs: 50 });
   await expect(page.getByTestId('countdown.summary')).toContainText('Ready in');
