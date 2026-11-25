@@ -13,6 +13,7 @@ import {
   logoutSubscription,
   newSubscriptionId,
   noteSubscription,
+  openSubscription,
   readingOf,
   removeSubscription,
   renameSubscription,
@@ -135,6 +136,13 @@ describe('loadSubscriptions', () => {
     t.client.on('GET /v1/me/subscriptions', () => ({ subscriptions: [] }));
     t.store.update('me', (me) => ({ ...me, userId: null }));
     await expect(loadSubscriptions(t.context)).rejects.toMatchObject({ code: 'unauthorized' });
+  });
+
+  it('refuses an answer that is no record', async () => {
+    const { t } = await world();
+    await expect(openSubscription(t.context, A, null, [])).rejects.toMatchObject({ code: 'header_invalid' });
+    const answer = { owner_id: t.me.id, record: 'x' };
+    await expect(openSubscription(t.context, A, answer, [])).rejects.toMatchObject({ code: 'header_invalid' });
   });
 
   it('passes other errors of a read on', async () => {

@@ -35,7 +35,7 @@ export function UseEditor({
   const { t } = useI18n();
   const reason = useReason();
   const profile = useStore((state) => state.me.profile, app.store);
-  const platform = useStore((state) => state.orgs.platform?.state ?? null, app.store);
+  const platform = useStore((state) => (state.orgs.platform === null ? null : state.orgs.platform.state), app.store);
   const userId = useStore((state) => state.me.userId, app.store);
   const operator = platform !== null && userId !== null && platform.hasRole(userId, OPERATOR_ROLE);
   const orgs = meOrgs(profile).map((item) => item.org_id);

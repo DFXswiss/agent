@@ -9,6 +9,8 @@ import { sealResponse } from '../../src/core/crypto/request';
 import { HubError } from '../../src/core/net/signedFetch';
 import { noteResponse } from '../../src/core/store/slices/requests';
 import { SubscriptionManager } from '../../src/ui/subscriptions/SubscriptionManager';
+import { SubscriptionsScreen } from '../../src/ui/screens/subscriptions/SubscriptionsScreen';
+import { setPhase } from '../../src/core/store/slices/session';
 import type { CredWorld } from '../core/credentials/world';
 import { A, body, ORG, reading, SubHub, TOKEN, world } from '../core/credentials/sub-hub';
 import { mount } from './chat-world';
@@ -264,5 +266,39 @@ describe('settings section', () => {
     mount(t, [{ path: '/s', element: <SubscriptionLoginsSection /> }], '/s');
     expect(await screen.findByTestId('submanage.empty')).toBeVisible();
     expect(screen.getByTestId('subscription-logins.section')).toHaveTextContent('platform device');
+  });
+});
+
+describe('the page My subscriptions', () => {
+  it('adds a subscription and logs one in from the page', async () => {
+    const { t, hub } = await world();
+    await hub.add(A, { email: null, kind: 'setup_token', name: 'Out' });
+    t.client.on('GET /v1/me/devices', () => ({
+      devices: [
+        {
+          device_id: t.device.id,
+          kind: 'platform',
+          org_id: t.org,
+          wg_ids: [t.wg],
+          online: true,
+          last_seen_at: null,
+          features: ['subscriptions'],
+        },
+      ],
+    }));
+    const d = device(t);
+    setPhase(t.store, 'unlocked');
+    mount(t, [{ path: '/subscriptions', element: <SubscriptionsScreen /> }], '/subscriptions');
+    fireEvent.click(await screen.findByTestId('subscriptions.row.login'));
+    await screen.findByTestId('claude.waiting');
+    await hub.add(A, body({ name: 'Out' }));
+    await d.respond(0, { step: 'done' }, true);
+    await waitFor(() => expect(screen.queryByTestId('subscriptions.row.login')).toBeNull());
+    fireEvent.click(screen.getByTestId('subscriptions.add'));
+    fireEvent.change(screen.getByTestId('subadd.name'), { target: { value: 'New' } });
+    fireEvent.click(screen.getByTestId('subadd.start'));
+    await screen.findByTestId('claude.waiting');
+    await d.respond(1, { step: 'done' }, true);
+    expect(await screen.findByTestId('subscriptions.add')).toBeVisible();
   });
 });
