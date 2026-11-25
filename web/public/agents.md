@@ -71,8 +71,8 @@ without network it fails within seconds with a message. Run the lines as they ar
 
 ```sh
 curl -LsSf https://astral.sh/uv/0.13.10/install.sh | env UV_UNMANAGED_INSTALL="$HOME/.agent-platform-uv" sh
-~/.agent-platform-uv/uv venv --clear --python 3.12 ~/.agent-platform-venv
-~/.agent-platform-uv/uv pip install --python ~/.agent-platform-venv --refresh-package dfx-agent "dfx-agent[platform] @ https://github.com/DFXswiss/agent/archive/refs/heads/ad5f2026-live.tar.gz"
+~/.agent-platform-uv/uv venv --no-config --managed-python --clear --python 3.12 ~/.agent-platform-venv
+~/.agent-platform-uv/uv pip install --no-config --python ~/.agent-platform-venv --reinstall-package dfx-agent "dfx-agent[platform] @ https://github.com/DFXswiss/agent/archive/refs/heads/ad5f2026-live.tar.gz"
 mkdir -p ~/.local/bin
 [ -e ~/.local/bin/agent-platform ] || ln -s ~/.agent-platform-venv/bin/agent-platform ~/.local/bin/agent-platform
 ~/.local/bin/agent-platform guide   # the short start, as shipped with the tool
@@ -98,8 +98,8 @@ programs (for example `agent`), and `uv tool install` or `pipx install` of it wo
 already installed on this computer; `uv` itself stays in `~/.agent-platform-uv` and replaces no `uv` you have. Do not
 install with `pip` of the system `python3`: on macOS (Python 3.9) it searches for many minutes without an end. Without
 `curl` (some minimal Linux systems), write `wget -qO-` instead of `curl -LsSf` in the first line. If `~/.local/bin` is
-not on the `PATH`, call `~/.local/bin/agent-platform` with its path. To update, run the same lines again. Do not use
-`sudo`.
+not on the `PATH`, call `~/.local/bin/agent-platform` with its path. To update, run the third line (`uv pip install`)
+again. Do not use `sudo`.
 
 ## 1. Connect to your user's account
 
