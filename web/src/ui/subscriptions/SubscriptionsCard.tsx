@@ -28,12 +28,17 @@ export function SubscriptionsCard() {
         </Link>
       </div>
       {rows.length === 0 ? (
-        <p className="text-gray-700" data-testid="subscriptions.card.empty">
-          {t('subscriptions.empty')}{' '}
-          <Link to="/subscriptions" className="underline" data-testid="subscriptions.card.add">
+        <div className="flex flex-col gap-1 text-gray-700" data-testid="subscriptions.card.empty">
+          <p>{t('subscriptions.empty')}</p>
+          {/* a full touch target on a phone, not a link inside the sentence */}
+          <Link
+            to="/subscriptions"
+            className="flex min-h-11 items-center self-start underline"
+            data-testid="subscriptions.card.add"
+          >
             {t('subscriptions.add')}
           </Link>
-        </p>
+        </div>
       ) : (
         <ProviderList groups={providerGroups(rows)} now={now} />
       )}

@@ -177,7 +177,7 @@ describe('the card of the home page', () => {
     expect(screen.queryByTestId('subscriptions.card')).toBeNull();
     answer.resolve({ subscriptions: [] });
     expect(await screen.findByTestId('subscriptions.card.empty')).toHaveTextContent(
-      'No subscription yet. Add one and the platform logs it in and measures it for you. Add subscription',
+      'No subscription yet. Add one and the platform logs it in and measures it for you.Add subscription',
     );
     expect(screen.getByTestId('subscriptions.card')).toHaveTextContent('My subscriptions');
     expect(screen.getByTestId('subscriptions.card.add')).toHaveAttribute('href', '/subscriptions');
