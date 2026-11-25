@@ -412,6 +412,130 @@ describe('loadSubscriptions', () => {
   });
 });
 
+describe('loadSubscriptions (review KOR-68)', () => {
+  it('lists a repeated ID once and shows a record with a forged signature as "cannot be opened" with its reading', async () => {
+    const t = await credWorld();
+    t.client.on('GET /v1/me/subscriptions', () => ({
+      subscriptions: [item(1, { reading: measured([win('seven_day', 130)]) }), item(1), item(2)],
+    }));
+    const record = (await serveRecord(t, 1, SUBSCRIPTION)) as { sig: string };
+    serve(t, 1, () => ({ owner_id: t.me.id, primary: false, record: { ...record, sig: 'A'.repeat(86) } }));
+    await serveRecord(t, 2, SUBSCRIPTION);
+    const rows = await loadSubscriptions(t.context);
+    expect(rows.map((row) => [row.key, row.status])).toEqual([
+      [id(1), 'unverifiable'],
+      [id(2), 'logged_in'],
+    ]);
+    expect(rows[0]!.code).not.toBeNull();
+    // more than 100 % is kept as measured (the bar is full, the figure says it)
+    expect(rows[0]!.reading?.windows).toEqual([{ window: 'seven_day', usedPercent: 130, resetsAt: ms(LATER) }]);
+  });
+
+  it('shows the readings when the own keys cannot be read', async () => {
+    const t = await credWorld();
+    t.client.on('GET /v1/me/subscriptions', () => ({
+      subscriptions: [item(1, { reading: measured([win('seven_day', 40)]) })],
+    }));
+    await serveRecord(t, 1, SUBSCRIPTION);
+    t.client.on('GET /v1/wraps', () => {
+      throw new HubError('unavailable', 503);
+    });
+    const rows = await loadSubscriptions(t.context);
+    expect(rows.map((row) => [row.status, row.code, row.reading?.windows.length])).toEqual([
+      ['unverifiable', 'epoch_stale', 1],
+    ]);
+  });
+
+  it('leaves out an organization whose quotas cannot be read, never the others', async () => {
+    const t = await credWorld();
+    const [refusing, malformed] = await Promise.all([idOf('org refusing'), idOf('org malformed')]);
+    const root = await ed25519KeyPair(await seed('platform root'));
+    const fresh = await appendPlatform(null, t.platform.entries, t.platform.root);
+    const entries = await buildPlatformEntries(t.platform.state.headValue(), root.privateKey, [
+      { type: 'role_grant', subject: t.me.id, role: OPERATOR_ROLE },
+      ...[t.org, refusing, malformed].map((org) => ({ type: 'org_operator_subscriptions', org, granted: true })),
+    ]);
+    setPlatform(t.store, await appendPlatform(fresh, entries, t.platform.root));
+    setProfile(t.store, {
+      orgs: [refusing, malformed, t.org].map((org) => ({
+        org_id: org,
+        role: 'admin',
+        private: false,
+        default_wg: t.wg,
+      })),
+    });
+    t.client.on('GET /v1/me/subscriptions', () => ({ subscriptions: [] }));
+    t.client.on(`GET /v1/orgs/${refusing}/quotas`, () => {
+      throw new HubError('forbidden', 403);
+    });
+    t.client.on(`GET /v1/orgs/${malformed}/quotas`, () => ({ own: null }));
+    t.client.on(`GET /v1/orgs/${t.org}/quotas`, () => ({
+      own: { windows: [], unreadable: null, limited: null },
+      operator: {
+        granted: true,
+        subscriptions: [
+          {
+            label: 'a',
+            state: 'usable',
+            readable: true,
+            used_percent: 30,
+            resets_at: LATER,
+            limited_at: null,
+            until: null,
+            fetched_at: AT,
+          },
+        ],
+      },
+      platform: { available: true },
+      summary: { usable: 1, exhausted: 0, next_release: null },
+    }));
+    expect((await loadSubscriptions(t.context)).map((row) => row.key)).toEqual(['operator:a']);
+  });
+});
+
+describe('token files named like an own record', () => {
+  it('lists only the record, with the reading of the file when the record has none', async () => {
+    const t = await credWorld();
+    const root = await ed25519KeyPair(await seed('platform root'));
+    const fresh = await appendPlatform(null, t.platform.entries, t.platform.root);
+    const entries = await buildPlatformEntries(t.platform.state.headValue(), root.privateKey, [
+      { type: 'role_grant', subject: t.me.id, role: OPERATOR_ROLE },
+      { type: 'org_operator_subscriptions', org: t.org, granted: true },
+    ]);
+    setPlatform(t.store, await appendPlatform(fresh, entries, t.platform.root));
+    setProfile(t.store, { orgs: [{ org_id: t.org, role: 'admin', private: false, default_wg: t.wg }] });
+    t.client.on('GET /v1/me/subscriptions', () => ({
+      subscriptions: [item(1, { reading: measured([win('seven_day', 12)]) }), item(2), item(3)],
+    }));
+    await serveRecord(t, 1, { ...SUBSCRIPTION, name: 'Kuno' });
+    await serveRecord(t, 2, { ...SUBSCRIPTION, name: 'Abo5' });
+    await serveRecord(t, 3, { ...SUBSCRIPTION });
+    const file = (label: string, used: number) => ({
+      label,
+      state: 'usable',
+      readable: true,
+      used_percent: used,
+      resets_at: LATER,
+      limited_at: null,
+      until: null,
+      fetched_at: AT,
+    });
+    t.client.on(`GET /v1/orgs/${t.org}/quotas`, () => ({
+      own: { windows: [], unreadable: null, limited: null },
+      operator: { granted: true, subscriptions: [file('kuno', 90), file('ABO5', 40), file('other', 5)] },
+      platform: { available: true },
+      summary: { usable: 3, exhausted: 0, next_release: null },
+    }));
+    const rows = await loadSubscriptions(t.context);
+    expect(rows.map((row) => [row.key, row.source, row.reading?.windows[0]?.usedPercent ?? null])).toEqual([
+      [id(3), 'record', null],
+      [id(2), 'record', 40],
+      [id(1), 'record', 12],
+      ['operator:other', 'operator', 5],
+    ]);
+  });
+});
+
 const rowOf = (key: string, provider: string, windows: QuotaWindow[] | null, fetchedAt = ms(AT)): SubscriptionRow => ({
   key,
   provider,
@@ -461,9 +585,10 @@ describe('providers', () => {
       headline: { window: 'seven_day', usedPercent: 80 },
       windows: [w('five_hour', 30), w('seven_day', 80)],
       newest: ms(LATER),
+      headlineAt: ms(LATER),
     });
     expect(claude.rows.map((found) => found.key)).toEqual(['c1', 'c2']);
-    expect(groups[2]).toMatchObject({ name: 'ChatGPT', headline: null, windows: [], newest: null });
+    expect(groups[2]).toMatchObject({ name: 'ChatGPT', headline: null, headlineAt: null, windows: [], newest: null });
     expect(providerGroups(rows, true).map((group) => group.provider)).toEqual(['zeta', 'claude', 'alpha', 'openai']);
     expect(providerGroups([])).toEqual([]);
   });

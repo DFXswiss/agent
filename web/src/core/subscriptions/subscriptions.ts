@@ -9,7 +9,10 @@
 //   shows its reading (`unverifiable` with the code).
 // - For the holder of the platform role `operator` only: the operator subscriptions that platform devices still read
 //   from token files (KOR-50, ADR-081 section 6), from `GET /v1/orgs/{org}/quotas` of the organizations the verified
-//   platform log grants them, once per label (the newest read wins). The hub gives only their fullest window.
+//   platform log grants them, once per label (the newest read wins); an organization whose answer fails is left out.
+//   A token file named like an own record (ignoring case) is that subscription: only the record's row is listed, with
+//   the file's reading when the record has none.
+//   The hub gives only their fullest window.
 // - `providerGroups` groups the rows by provider (`PROVIDERS`; an unknown provider ID shows itself, so a further
 //   provider needs no change here): the headline is the week of the most-used account (else its fullest window), the
 //   details the 5-hour window, the week and the week per model at the highest use of the accounts, then the accounts.
@@ -130,11 +133,17 @@ export interface Listed {
   readonly updatedAt: number | null;
 }
 
-/** The checked items of the list (a malformed answer is `unavailable`, a malformed item is left out). */
+/** The checked items of the list (a malformed answer is `unavailable`, a malformed item and a repeated ID are left
+ *  out: nothing is listed twice). */
 export function listedItems(body: unknown): Listed[] {
   if (!isRecord(body) || !Array.isArray(body.subscriptions)) throw new HubError('unavailable', 200);
+  const seen = new Set<string>();
   return body.subscriptions.flatMap((item): Listed[] =>
-    isRecord(item) && typeof item.id === 'string' && typeof item.primary === 'boolean'
+    isRecord(item) &&
+    typeof item.id === 'string' &&
+    typeof item.primary === 'boolean' &&
+    !seen.has(item.id) &&
+    seen.add(item.id)
       ? [{ id: item.id, primary: item.primary, reading: reading(item.reading), updatedAt: time(item.updated_at) }]
       : [],
   );
@@ -224,8 +233,13 @@ async function operatorRows(context: RequestsContext): Promise<SubscriptionRow[]
     .filter((org) => platform.operatorSubscribed(org));
   const newest = new Map<string, SubscriptionRow>();
   for (const org of granted) {
-    const answer = parseOrgQuotas(await context.client.request('GET', `/v1/orgs/${encodeURIComponent(org)}/quotas`));
-    for (const sub of answer.operator.subscriptions) {
+    // an organization whose quotas cannot be read (refused, an older hub, a malformed answer) is left out: it never
+    // hides the user's own subscriptions or those of the other organizations
+    const answer = await context.client
+      .request('GET', `/v1/orgs/${encodeURIComponent(org)}/quotas`)
+      .then(parseOrgQuotas)
+      .catch(() => null);
+    for (const sub of answer?.operator.subscriptions ?? []) {
       const known = newest.get(sub.label);
       if (known !== undefined && (known.reading?.fetchedAt ?? -1) >= (sub.fetchedAt ?? -1)) continue;
       newest.set(sub.label, {
@@ -270,7 +284,14 @@ export async function loadSubscriptions(context: LoadContext): Promise<Subscript
     // the devices that log a subscription in write its record: their keys come from the verified logs
     for (const org of meOrgs(profile).map((item) => item.org_id))
       if (context.store.getState().orgs.byId[org]?.log == null) await context.refreshLog(org).catch(() => false);
-    const keys = userId === null || identity === null ? [] : (await listOwnKeys(context, userId, identity)).opening;
+    // without the own keys every record shows its reading as "cannot be opened" (epoch_stale), never nothing
+    const keys =
+      userId === null || identity === null
+        ? []
+        : await listOwnKeys(context, userId, identity).then(
+            (found) => found.opening,
+            () => [],
+          );
     for (const item of listed) {
       try {
         const answer = await context.client.request('GET', `/v1/subscriptions/${encodeURIComponent(item.id)}`);
@@ -287,7 +308,16 @@ export async function loadSubscriptions(context: LoadContext): Promise<Subscript
       (a.name ?? a.key).localeCompare(b.name ?? b.key) ||
       a.key.localeCompare(b.key),
   );
-  return [...rows, ...(await operatorRows(context))];
+  // a token file whose name equals the name of an own record (ignoring case) is that subscription: the record's row
+  // stays, with the file's reading when it has none of its own, and the file is not listed again (nothing twice)
+  const byName = new Map(rows.flatMap((row) => (row.name === null ? [] : [[row.name.toLowerCase(), row] as const])));
+  const files: SubscriptionRow[] = [];
+  for (const file of await operatorRows(context)) {
+    const record = byName.get(file.key.slice('operator:'.length).toLowerCase());
+    if (record === undefined) files.push(file);
+    else if (record.reading === null) rows[rows.indexOf(record)] = { ...record, reading: file.reading };
+  }
+  return [...rows, ...files];
 }
 
 // --- providers ---
@@ -307,6 +337,8 @@ export interface ProviderGroup {
   readonly name: string;
   /** The headline of the most-used account; null when nothing is measured. */
   readonly headline: QuotaWindow | null;
+  /** Unix ms of the reading the headline comes from, null without a headline. */
+  readonly headlineAt: number | null;
   /** Each window at the highest use of the accounts, ordered. */
   readonly windows: readonly QuotaWindow[];
   readonly rows: readonly SubscriptionRow[];
@@ -324,12 +356,18 @@ export function providerGroups(rows: readonly SubscriptionRow[], sortByUsed = fa
       const known = highest.get(window.window);
       if (known === undefined || known.usedPercent < window.usedPercent) highest.set(window.window, window);
     }
-    const heads = members.map(headlineOf).filter((window) => window !== null);
+    const heads = members
+      .flatMap((row) => {
+        const window = headlineOf(row);
+        return window === null ? [] : [{ window, at: row.reading!.fetchedAt }];
+      })
+      .sort((a, b) => b.window.usedPercent - a.window.usedPercent);
     const reads = members.flatMap((row) => (row.reading === null ? [] : [row.reading.fetchedAt]));
     return {
       provider,
       name: providerName(provider),
-      headline: heads.sort((a, b) => b.usedPercent - a.usedPercent)[0] ?? null,
+      headline: heads[0]?.window ?? null,
+      headlineAt: heads[0]?.at ?? null,
       windows: ordered([...highest.values()]),
       rows: members,
       newest: reads.length === 0 ? null : Math.max(...reads),

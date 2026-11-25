@@ -233,6 +233,38 @@ describe('the card of the home page', () => {
   });
 });
 
+describe('the review of KOR-68', () => {
+  it('marks an old headline on the closed line, names the source of every reading and caps the meter value', async () => {
+    const t = await world();
+    t.client.on(LIST, () => ({
+      subscriptions: [
+        item(1, { reading: measured([win('seven_day', 130, NOW + 3600_000)], { fetched_at: OLD }) }),
+        item(2, { reading: measured([win('seven_day', 20, null)], { device_id: null }) }),
+      ],
+    }));
+    await serveRecord(t, 1, { ...SUBSCRIPTION, name: 'One' });
+    await serveRecord(t, 2, { ...SUBSCRIPTION, name: 'Two' });
+    await operator(t, [operatorSub('file', 10, FRESH)]);
+    mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/');
+    const provider = await screen.findByTestId('subscriptions.provider');
+    expect(within(provider).getByTestId('subscriptions.provider.old')).toHaveTextContent('old (2 h ago)');
+    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-valuenow', '100');
+    toggle(provider, true);
+    const ages = (await screen.findAllByTestId('subscriptions.account.age')).map((found) => found.textContent);
+    expect(ages).toEqual([
+      'measured 2 h ago · device 0190f000',
+      'measured 5 min ago · device —',
+      'measured 5 min ago · token file',
+    ]);
+    cleanup();
+    // fresh readings: no mark
+    t.client.on(LIST, () => ({ subscriptions: [item(2, { reading: measured([win('seven_day', 20, null)]) })] }));
+    mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/');
+    await screen.findByTestId('subscriptions.provider.used');
+    expect(screen.queryByTestId('subscriptions.provider.old')).toBeNull();
+  });
+});
+
 describe('the refresh', () => {
   it('reads again every minute and stops when the card is gone', async () => {
     vi.useRealTimers();

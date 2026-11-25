@@ -55,5 +55,8 @@
   "col.device": "Device",
   "col.checked": "Checked",
   "col.changed": "Changed",
-  "settings.link": "Open “My subscriptions”"
+  "settings.link": "Open “My subscriptions”",
+  "by.file": "token file",
+  "by.device": "device {id}",
+  "old": "old ({age})"
 }

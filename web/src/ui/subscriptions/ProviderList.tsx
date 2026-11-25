@@ -74,7 +74,7 @@ export function Bar({
       role="meter"
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-valuenow={Math.round(used)}
+      aria-valuenow={Math.min(Math.round(used), 100)}
       aria-label={label}
       className="order-last col-span-3 block h-2.5 w-full overflow-hidden rounded bg-gray-200 sm:order-none sm:col-span-1"
       data-testid={testId}
@@ -125,6 +125,9 @@ function Account({ row, now }: { readonly row: SubscriptionRow; readonly now: nu
             data-old={old ? 'yes' : 'no'}
           >
             {t('subscriptions.recorded', { age: age(read, now) })}
+            {row.source === 'operator'
+              ? ` · ${t('subscriptions.by.file')}`
+              : ` · ${t('subscriptions.by.device', { id: row.reading!.deviceId?.slice(0, 8) ?? '—' })}`}
           </span>
         )}
       </span>
@@ -180,6 +183,11 @@ function Provider({
             ▶
           </span>
           <span className="truncate font-semibold">{group.name}</span>
+          {group.headlineAt !== null && now - group.headlineAt > OLD_MS && (
+            <span className="shrink-0 text-xs font-semibold text-red-800" data-testid="subscriptions.provider.old">
+              {t('subscriptions.old', { age: age(group.headlineAt, now) })}
+            </span>
+          )}
         </span>
         {group.headline === null ? (
           <span className={NONE} data-testid="subscriptions.provider.none">

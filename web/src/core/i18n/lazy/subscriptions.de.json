@@ -55,5 +55,8 @@
   "col.device": "Gerät",
   "col.checked": "Geprüft",
   "col.changed": "Geändert",
-  "settings.link": "„Meine Abos“ öffnen"
+  "settings.link": "„Meine Abos“ öffnen",
+  "by.file": "Token-Datei",
+  "by.device": "Gerät {id}",
+  "old": "alt ({age})"
 }

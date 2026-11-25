@@ -14,7 +14,7 @@ form of the page "Subscriptions" of the local dashboard: one line per provider w
 the used share; opened, the 5-hour window, the week, the week per model and every account with its own bar and the age
 of its measurement; below a table with every column; "detailed" and "sort by used". Everything is measured centrally
 (ADR-090 §4); nothing runs on the user's computer. The subscriptions that platform devices still read from the
-operator's token files (`abo4`, `abo5`) are not records and appear only in `GET /v1/orgs/{org}/quotas`.
+operator's token files are not records and appear only in `GET /v1/orgs/{org}/quotas`.
 
 ## Decision
 
@@ -23,10 +23,11 @@ operator's token files (`abo4`, `abo5`) are not records and appear only in `GET 
    none ("not logged in") and use – the hub never sees them. A record the browser cannot open keeps its reading and
    shows "cannot be opened (code)". For the holder of the platform role `operator` in the verified platform log only,
    the token-file subscriptions are read from `GET /v1/orgs/{org}/quotas` of the organizations the log grants them, once
-   per label (the newest read wins); the hub gives only their fullest window, shown as such. Records and token files
-   have different keys (record ID, `operator:<label>`), so nothing is listed twice; a subscription that moved from its
-   file to a record is listed once the operator deletes the file (ADR-090 §5). No display names for token files: they
-   would need a new table, and the files are being replaced by records.
+   per label (the newest read wins; an organization whose answer fails is left out); the hub gives only their fullest
+   window, shown as such. A token file whose name equals the name of an own record (ignoring case) is that
+   subscription, moving from its file to a record (ADR-090 §5): only the record's row is listed, with the file's
+   reading when the record has none – nothing is listed twice. No display names for token files: they would need a
+   new table, and the files are being replaced by records.
 2. **Providers are drivers.** Rows are grouped by provider; a provider is one entry of a list (display name per ID,
    `claude` and `openai` today) and an unknown ID shows itself, so a further provider needs no change of the view.
 3. **Figures.** Percentages are the used share as measured; bars are coloured by what is left – amber from 70 % used
