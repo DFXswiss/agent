@@ -32,10 +32,14 @@ REASONS: dict[str, str] = {
 WAITING: dict[str, str] = {
     "no_device": (
         "Assign a device to the workgroup (`agent-platform device assign --wg <wg_id>`) or to the whole organization"
-        " (`agent-platform device assign --org <org_id>`, admins); the task starts by itself."
+        " (`agent-platform device assign --org <org_id>`, admins), or make this computer one (`agent-platform device"
+        " add --this-computer --wg <wg_id>`); the task starts by itself."
     ),
     "device_offline": "The device is offline; wait a few minutes or assign another device.",
-    "capacity_exhausted": "All devices are busy; the task starts by itself when capacity is free.",
+    "capacity_exhausted": (
+        "All devices are busy, or a device just added still builds its image (a few minutes); the task starts by"
+        " itself when one is ready."
+    ),
     "platform_access_required": (
         "The organization has no device of its own and no access to the operator's devices; assign an own device or"
         " ask the operator for access. The task starts by itself then."
@@ -58,6 +62,15 @@ WAITING: dict[str, str] = {
     ),
 }
 REASONS |= WAITING
+# The next step of a task whose newest session failed for a reason that a command fixes
+# (`contracts/enums/session-failure-reasons.json`); any other reason is `task_failed`.
+FAILED: dict[str, str] = {
+    "model_access_unavailable": (
+        "Connect the model access: `agent-platform claude connect` (the Claude Code login of this computer), or an"
+        " API key (`agent-platform credentials set-api-key`). The task then continues by itself."
+    ),
+}
+REASONS |= FAILED
 REASONS |= {
     "task_failed": "Send the prompt again or start a new task.",
     "task_closed": "The task is closed; start a new task.",
@@ -65,6 +78,16 @@ REASONS |= {
     "task_running": "The task runs; nothing to do.",
 }
 _RUNNING = {"starting", "working", "idle", "running"}
+
+
+def task_next(row: dict[str, Any]) -> str | None:
+    """The next step for a task row: why a `scheduling` task waits, or what fixes a `failed` one (KOR-67)."""
+    reason = row.get("state_reason")
+    if row.get("state") == "scheduling":
+        return WAITING.get(str(reason), REASONS["task_waiting"])
+    if row.get("state") == "failed":
+        return FAILED.get(str(reason), REASONS["task_failed"])
+    return None
 
 
 def finding(check: str, reason: str) -> dict[str, str]:

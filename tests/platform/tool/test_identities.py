@@ -616,3 +616,24 @@ def test_company_account_from_the_github_cli_login_and_app_choice(
     code, own = tool.run("github", "connect", "--app", "oauth_app", "--identity", identity, "--wait", "5")
     assert code == 0, own
     assert opened(hub, own["request_id"]) == {"app": "oauth_app", "identity_id": identity}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        ("ghu_minted", "device_flow", True),
+        ("gho_minted", "device_flow", True),
+        ("gho_from_the_cli", "token", False),
+        ("ghp_classic", "device_flow", False),
+    ],
+)
+def test_accounts_and_status_agree_on_revocable(
+    tool: Tool, hub: HubFake, account: User, case: tuple[str, str, bool]
+) -> None:
+    """One rule for both commands and the web (KOR-67): a token the device flow minted, `ghu_` or `gho_`."""
+    token, source, expected = case
+    assign_device(tool, hub, account)
+    main = primary(hub, account, {**BODY, "token": token, "source": source})
+    code, status = tool.run("github", "status")
+    assert code == 0, status
+    assert (entries(tool)[main]["revocable"], status["revocable"]) == (expected, expected)

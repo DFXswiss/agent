@@ -45,7 +45,15 @@ from typing import Any
 from agent_platform import devicereq, identities
 from agent_platform.account import Account
 from agent_platform.commands import Context, Tree
-from agent_platform.credentials import KINDS, PRINTABLE_RE, SOURCES, put_record, valid_body, valid_mailbox
+from agent_platform.credentials import (
+    KINDS,
+    PRINTABLE_RE,
+    SOURCES,
+    put_record,
+    revocable,
+    valid_body,
+    valid_mailbox,
+)
 from agent_platform.devicereq import choose_device, finish, resume, show_in_browser, submit, wait
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import rows_of
@@ -56,8 +64,6 @@ from agent_runner.crypto.errors import CryptoError
 CHECK_KINDS = ("anthropic_api_key", "claude_subscription", "mailbox")
 GITHUB_SETTINGS_URL = "https://github.com/settings/applications"
 DEFAULT_WAIT_S = 60
-MINTED = ("ghu_", "gho_")
-"""Prefixes of the tokens a device flow mints (GitHub App user token, OAuth App token; KOR-65)."""
 GH_HOST = "github.com"
 GH_TIMEOUT_S = 30
 
@@ -71,7 +77,7 @@ def summary(kind: str, body: dict[str, Any]) -> dict[str, Any]:
             "source": body.get("source", SOURCES[0]),
             "created_at": body["created_at"],
             # minted by a device flow (the GitHub App's `ghu_` or the OAuth App's `gho_`, KOR-65): revoked on disconnect
-            "revocable": body.get("source", SOURCES[0]) == SOURCES[0] and str(body["token"]).startswith(MINTED),
+            "revocable": revocable(body),
         }
     if kind == "claude_subscription":
         return {"email": body["email"], "origin": body["kind"], "expires_at": body.get("expires_at")}

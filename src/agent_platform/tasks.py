@@ -42,7 +42,7 @@ from typing import Any, cast
 from urllib.parse import urlencode
 
 from agent_platform.account import Account, KeyRing
-from agent_platform.diagnose import WAITING
+from agent_platform.diagnose import WAITING, task_next
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import open_item, seal
 from agent_platform.hub import segment
@@ -59,6 +59,9 @@ TITLE_MAX = 80
 FOLLOW_POLL_S = 2.0
 FOLLOW_WAIT_MAX_S = 600
 STATES = ("open", "closed")
+# `task list`: at most this many tasks; `open` pages through at most OPEN_PAGES pages of the hub.
+LIST_LIMIT = 50
+OPEN_PAGES = 10
 DECISIONS = {"approve": "Approved.", "decline": "Declined."}
 CHAT_KINDS = (
     "prompt",
@@ -299,6 +302,7 @@ def task_show(account: Account, task: str) -> dict[str, Any]:
         "placement": row.get("placement"),
         "main_session": main_session(answer),
         "waiting": waiting_reason(row),
+        "next": task_next(row),
         "title": titles[-1] if titles else None,
         "events": annotate(account, (org, wg, task), chat, metas),
         "unverified": skipped,
@@ -316,16 +320,35 @@ def titles(account: Account, org: str, wg: str) -> dict[str, str]:
     return found
 
 
+def _rows(account: Account, wg: str, query: dict[str, Any]) -> tuple[list[Any], Any]:
+    """One page of the workgroup's tasks (newest first) and the hub's `next_before`."""
+    answer = account.call("GET", f"/v1/workgroups/{segment(wg)}/tasks?{urlencode({'limit': LIST_LIMIT, **query})}")
+    rows = answer.get("tasks")
+    if not isinstance(rows, list):
+        raise PlatformError("hub_refused", reason="response_invalid")
+    return rows, answer.get("next_before")
+
+
+def _open_rows(account: Account, wg: str) -> list[Any]:
+    """The newest tasks that are not closed: the hub filters by one state of a task's sessions only, `open` is every
+    state but `closed` (KOR-67), so the tool pages and filters (at most `OPEN_PAGES` pages)."""
+    found: list[Any] = []
+    query: dict[str, Any] = {}
+    for _page in range(OPEN_PAGES):
+        rows, before = _rows(account, wg, query)
+        found += [row for row in rows if isinstance(row, dict) and row.get("state") != "closed"]
+        if len(found) >= LIST_LIMIT or not isinstance(before, str):
+            break
+        query = {"before": before}
+    return found[:LIST_LIMIT]
+
+
 def task_list(account: Account, wg: str, state: str | None) -> dict[str, Any]:
     """The tasks of a workgroup with their verified titles."""
     if state is not None and state not in STATES:
         raise PlatformError("invalid_argument")
     org = find_org(account, _id(wg))
-    query = urlencode({"limit": 50, **({"state": state} if state else {})})
-    answer = account.call("GET", f"/v1/workgroups/{segment(wg)}/tasks?{query}")
-    rows = answer.get("tasks")
-    if not isinstance(rows, list):
-        raise PlatformError("hub_refused", reason="response_invalid")
+    rows = _open_rows(account, wg) if state == "open" else _rows(account, wg, {"state": state} if state else {})[0]
     found = titles(account, org, wg)
     tasks = [
         {
@@ -371,6 +394,13 @@ def task_follow(account: Account, task: str, after: int, wait: int) -> dict[str,
             skipped += 1
             continue
         events.append(opened)
-    state = _task_row(account, task).get("state")
+    now = _task_row(account, task)
     chat = annotate(account, (org, wg, task), events, None)
-    return {"task_id": task, "state": state, "events": chat, "next_after": last, "unverified": skipped}
+    return {
+        "task_id": task,
+        "state": now.get("state"),
+        "next": task_next(now),
+        "events": chat,
+        "next_after": last,
+        "unverified": skipped,
+    }

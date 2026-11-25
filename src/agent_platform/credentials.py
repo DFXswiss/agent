@@ -85,6 +85,17 @@ def _signing_key(value: object) -> bool:
     )
 
 
+MINTED = ("ghu_", "gho_")
+"""Prefixes of the tokens a device flow mints (GitHub App user token, OAuth App token; KOR-65)."""
+
+
+def revocable(body: dict[str, Any]) -> bool:
+    """Whether the devices revoke the token of a `github` body at GitHub when it is removed: a token the device flow
+    minted (`source` device flow and a prefix of `MINTED`). The one rule of `github status`, `github accounts` and
+    the web (`isRevocable`); KOR-67."""
+    return body.get("source", SOURCES[0]) == SOURCES[0] and str(body["token"]).startswith(MINTED)
+
+
 def valid_github(body: dict[str, Any]) -> bool:
     """A `github` body (one GitHub identity, ADR-078): `source`, `name` and `signing_key` are optional."""
     return (

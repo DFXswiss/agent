@@ -45,13 +45,14 @@ def test_create_list_prompt_show(tool: Tool, hub: HubFake, account: User) -> Non
     assert listed["tasks"] == [
         {
             "task_id": task,
-            "state": "queued",
+            "state": "scheduling",
             "title": "Fix the login bug",
             "created_at": listed["tasks"][0]["created_at"],
             "last_activity_at": listed["tasks"][0]["last_activity_at"],
         }
     ]
     assert tool.run("task", "list", "--wg", wg, "--state", "closed")[1]["tasks"] == []
+    assert [row["task_id"] for row in tool.run("task", "list", "--wg", wg, "--state", "open")[1]["tasks"]] == [task]
     code, shown = tool.run("task", "show", "--task", task)
     assert code == 0, shown
     assert shown["title"] == "Fix the login bug"
@@ -143,7 +144,7 @@ def test_follow_returns_new_events_and_the_next_position(
     code, first = tool.run("task", "follow", "--task", task, "--wait", "0")
     assert code == 0, first
     assert [event["body"]["text"] for event in first["events"]] == ["Hello"]
-    assert (first["state"], first["unverified"], first["next_after"]) == ("queued", 0, 2)
+    assert (first["state"], first["unverified"], first["next_after"]) == ("scheduling", 0, 2)
     # nothing new: an empty answer once the wait is over
     empty = tool.run("task", "follow", "--task", task, "--after", "2", "--wait", "0")[1]
     assert (empty["events"], empty["next_after"]) == ([], 2)
@@ -167,3 +168,25 @@ def test_follow_returns_new_events_and_the_next_position(
     assert (odd["events"], odd["unverified"], odd["next_after"]) == ([], 3, foreign[-1]["scope_seq"])
     for argv in (("--after", "-1"), ("--wait", "601")):
         assert tool.run("task", "follow", "--task", task, *argv)[1]["error"] == "invalid_argument"
+
+
+def test_open_tasks_are_every_state_but_closed_across_pages(
+    tool: Tool, hub: HubFake, account: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--state open` is the tool's word (KOR-67): the hub knows the session states only, so the tool pages through the
+    workgroup's tasks and leaves out the closed ones, up to `LIST_LIMIT` tasks or `OPEN_PAGES` pages."""
+    wg = default_wg(hub, account)
+    made = [str(tool.run("task", "create", "--wg", wg, "--text", f"Task {n}")[1]["task_id"]) for n in range(5)]
+    for task in made[1::2]:
+        hub.tasks[task]["task"]["state"] = "closed"
+    hub.tasks[made[4]]["task"]["state"] = "working"
+    monkeypatch.setattr(tasks, "LIST_LIMIT", 2)
+    listed = tool.run("task", "list", "--wg", wg, "--state", "open")[1]["tasks"]
+    assert [(row["task_id"], row["state"]) for row in listed] == [(made[4], "working"), (made[2], "scheduling")]
+    monkeypatch.setattr(tasks, "LIST_LIMIT", 1)
+    monkeypatch.setattr(tasks, "OPEN_PAGES", 2)
+    assert [row["task_id"] for row in tool.run("task", "list", "--wg", wg, "--state", "open")[1]["tasks"]] == [made[4]]
+    hub.tasks[made[4]]["task"]["state"] = "closed"
+    assert tool.run("task", "list", "--wg", wg, "--state", "open")[1]["tasks"] == []
+    monkeypatch.setattr(tasks, "OPEN_PAGES", 10)
+    assert [row["task_id"] for row in tool.run("task", "list", "--wg", wg, "--state", "open")[1]["tasks"]] == [made[2]]

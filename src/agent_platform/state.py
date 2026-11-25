@@ -4,8 +4,13 @@
 `state.json` (`0600`): hub origin, pinned hub key, platform root key, agent and user ID, label, the sealed identity
 and the handover secret `r`; and the agent's private keys: in the macOS login keychain (generic password, service
 `agent-platform`, account = agent ID, through the `security` program of `AGENT_PLATFORM_SECURITY`) where one is
-available, else in `agent.key` (`0600`). A directory or file with another mode or owner, or a symlink, is refused
-(`state_damaged`). `delete` removes both (after `key_revoked`).
+available, else in `agent.key` (`0600`). Over ssh (`SSH_CONNECTION`, `SSH_CLIENT` or `SSH_TTY` set) the keys go to
+`agent.key` at once: there the login keychain is locked or cannot ask, and keys kept there while it was open could
+not be read by a later ssh session (KOR-67, rule E-27). A `security` call that does not end within
+`SECURITY_TIMEOUT_S` counts as failed. Keys in a keychain this session cannot read are `state_damaged` with the
+reason `keychain_unreadable`; `keys_at` names where the keys are (the commands print it as `keys`). A directory or
+file with another mode or owner, or a symlink, is refused (`state_damaged`). `delete` removes both (after
+`key_revoked`).
 
 A pending pairing from another computer (ADR-067, `agent_platform.remote`) keeps `pending.json` (`0600`) and its
 private keys in the keychain item `agent-platform` / `<pairing id>` where available, else in `pending.key` (`0600`);
@@ -42,6 +47,7 @@ SECURITY_TIMEOUT_S = 30.0
 STATE_VERSION = 1
 KEYCHAIN = "keychain"
 FILE = "file"
+SSH_VARIABLES = ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")
 
 
 def home_dir(environ: Mapping[str, str]) -> Path:
@@ -55,10 +61,19 @@ def security_program(environ: Mapping[str, str]) -> str:
 
 
 def run_security(program: str, args: list[str], stdin: str | None = None) -> subprocess.CompletedProcess[str]:
-    """Run the `security` program; its output is returned to the caller and never logged."""
-    return subprocess.run(
-        [program, *args], input=stdin, capture_output=True, text=True, timeout=SECURITY_TIMEOUT_S, check=False
-    )
+    """Run the `security` program; its output is returned to the caller and never logged. A call that does not end
+    in time (a dialog nobody sees) is a failure (exit code 124)."""
+    try:
+        return subprocess.run(
+            [program, *args], input=stdin, capture_output=True, text=True, timeout=SECURITY_TIMEOUT_S, check=False
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess([program, *args], 124, "", "timeout")
+
+
+def over_ssh(environ: Mapping[str, str]) -> bool:
+    """A session over ssh (its login keychain is locked, or unlocked only for a while)."""
+    return any(environ.get(name) for name in SSH_VARIABLES)
 
 
 def keychain_available(program: str, platform: str = sys.platform) -> bool:
@@ -98,7 +113,7 @@ class Home:
     @classmethod
     def from_env(cls, environ: Mapping[str, str]) -> Home:
         program = security_program(environ)
-        return cls(home_dir(environ), program, keychain_available(program))
+        return cls(home_dir(environ), program, keychain_available(program) and not over_ssh(environ))
 
     @property
     def state_file(self) -> Path:
@@ -175,7 +190,7 @@ class Home:
         if where == KEYCHAIN:
             done = run_security(self.security, ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", agent_id, "-w"])
             if done.returncode != 0:
-                raise PlatformError("state_damaged")
+                raise PlatformError("state_damaged", reason="keychain_unreadable")
             return decode_keys(done.stdout)
         if where != FILE:
             raise PlatformError("state_damaged")
@@ -183,6 +198,12 @@ class Home:
             return decode_keys(self._read(key_file or self.key_file))
         except FileNotFoundError:
             raise PlatformError("state_damaged") from None
+
+    def keys_at(self, where: object) -> str | None:
+        """Where the private keys are, as the commands print it (`keys`)."""
+        if where == KEYCHAIN:
+            return f"login keychain, item {KEYCHAIN_SERVICE}"
+        return str(self.key_file) if where == FILE else None
 
     # --- pending.json (a pairing from another computer) ---
 

@@ -48,6 +48,7 @@ from agent_platform.commands import (
 from agent_platform.credentials import put_record, read_record
 from agent_platform.errors import PlatformError
 from agent_platform.pairing import pair, register
+from agent_platform.state import Home
 from agent_runner.crypto.identity import account_code, format_account_code
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
@@ -729,7 +730,9 @@ def _org_commands(tree: Tree) -> None:
         "member-name",
         writing(cmd_org_member_name),
         "give or change the provisional name of a member or an invitation (admins)",
-        example="agent-platform org member-name --org <org_id> --user <user_id|account code|invite_id>",
+        example=(
+            'agent-platform org member-name --org <org_id> --user <user_id|account code|invite_id> --name "Bob Example"'
+        ),
         words="umbenennen vorläufiger name mitglied rename member provisional name",
     )
     sub.add_argument("--org", required=True)
@@ -847,6 +850,18 @@ def emit(stream: TextIO, document: Mapping[str, Any]) -> None:
     stream.flush()
 
 
+def keys_of(environ: Mapping[str, str], agent_id: str) -> dict[str, str]:
+    """`keys`: where this computer keeps the private keys of the agent a command names, when it is the connected one
+    (after `pair`, `register`, `recover`, and in `status`; KOR-67)."""
+    home = Home.from_env(environ)
+    try:
+        state = home.load()
+    except PlatformError:
+        return {}
+    where = home.keys_at(state.get("key_store")) if state.get("agent_id") == agent_id else None
+    return {} if where is None else {"keys": where}
+
+
 def execute(argv: Sequence[str], environ: Mapping[str, str], stdin: TextIO) -> dict[str, Any]:
     parser = build_parser()
     try:
@@ -859,6 +874,8 @@ def execute(argv: Sequence[str], environ: Mapping[str, str], stdin: TextIO) -> d
     if handler is None:
         return {"ok": True, "help": parser.format_help()}
     result = handler(args, Context(environ, stdin))
+    if isinstance(result.get("agent_id"), str):
+        result = {**result, **keys_of(environ, result["agent_id"])}
     if args.trim is not None:
         result = trimmed(result, args.limit, args.fields, args.trim)
     return {"ok": True, **result}

@@ -53,8 +53,9 @@ NEXT: dict[str, str] = {
     ),
     "no_org": "Create an organization (`agent-platform org create`) or name an existing one.",
     "no_device": (
-        "No execution device is available for this workgroup: assign one with `agent-platform device assign`, or "
-        "try again later."
+        "No execution device is available for this workgroup: assign one (`agent-platform device assign --wg "
+        "<wg_id>`), or make this computer one (`agent-platform device add --this-computer --wg <wg_id>`); then run "
+        "the command again."
     ),
     "not_admin": "Only an admin of the organization can do this; ask an admin.",
     "no_write_access": "The user has no write access to this workgroup; ask an admin of the organization for it.",
@@ -119,6 +120,14 @@ NEXT: dict[str, str] = {
 CODES = frozenset(NEXT)
 # A different next step for one reason of a code (the texts are fixed here as well).
 NEXT_FOR_REASON: dict[tuple[str, str], str] = {
+    ("install_failed", "admin_dialog_over_ssh"): (
+        "Over ssh macOS shows no administrator dialog: run `sudo -v` in this session (the account's password, once), "
+        "then this command again at once; or run it in a terminal on the Mac's screen."
+    ),
+    ("state_damaged", "keychain_unreadable"): (
+        "The agent's keys are in the login keychain, which this session cannot read (it is locked, for example over "
+        "ssh): run `security unlock-keychain` in this session, then the command again."
+    ),
     ("pairing_failed", "claim_lost"): (
         "The pairing may have completed at the hub while its answer was lost, so the hub may list this agent as "
         "connected although it kept nothing. Ask your user to disconnect it in the settings (Connected agents), "

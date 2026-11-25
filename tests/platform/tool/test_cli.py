@@ -130,7 +130,9 @@ def test_keys_must_be_present(tool: Tool, hub: HubFake, account: User) -> None:
     data = json.loads((tool.home / "state.json").read_text())
     for item in tool.keychain.glob("agent-platform__*"):
         item.unlink()
-    assert tool.run("status")[1]["error"] == "state_damaged"
+    refused = tool.run("status")[1]
+    assert (refused["error"], refused["reason"]) == ("state_damaged", "keychain_unreadable")
+    assert "security unlock-keychain" in refused["next"]
     for where in ("file", "other"):
         (tool.home / "state.json").write_text(json.dumps({**data, "key_store": where}))
         assert tool.run("status")[1]["error"] == "state_damaged"
@@ -153,6 +155,32 @@ def test_home_and_keychain_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     home.delete(None, state.KEYCHAIN)
     assert not home.key_file.exists()
     home.delete("a", state.FILE)
+
+
+def test_over_ssh_the_keys_go_to_the_file_and_the_output_says_where(
+    tool: Tool, hub: HubFake, account: User, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Rule E-27 (KOR-67): over ssh the login keychain is locked or cannot ask, so the keys go to `agent.key`; every
+    command that names the connected agent prints where its keys are."""
+    shown = tool.run("status")[1]
+    on_mac = sys.platform == "darwin"
+    assert shown["keys"] == ("login keychain, item agent-platform" if on_mac else str(tool.home / "agent.key"))
+    assert tool.run("status", env={"SSH_CONNECTION": "192.0.2.1 50000 192.0.2.2 22"})[1]["keys"] == shown["keys"]
+    for name in state.SSH_VARIABLES:
+        remote = Home.from_env({**tool.env, name: "x"})
+        assert remote.keychain is False
+        assert remote.store_keys("a", Identity.generate()) == state.FILE
+        assert remote.keys_at(state.FILE) == str(remote.key_file)
+    assert Home.from_env(tool.env).keychain is on_mac
+    assert Home.from_env(tool.env).keys_at("other") is None
+    assert cli.keys_of({**tool.env, "AGENT_PLATFORM_HOME": str(tmp_path / "none")}, shown["agent_id"]) == {}
+    assert cli.keys_of(tool.env, "someone-else") == {}
+
+    def hangs(*args: object, **kwargs: object) -> object:
+        raise subprocess.TimeoutExpired("security", state.SECURITY_TIMEOUT_S)
+
+    monkeypatch.setattr(state.subprocess, "run", hangs)
+    assert state.run_security("/usr/bin/security", ["-i"], "x").returncode == 124
 
 
 # --- revocation and transport ---

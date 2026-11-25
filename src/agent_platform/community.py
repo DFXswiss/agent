@@ -665,7 +665,7 @@ def register(tree: Tree) -> None:
         "messages",
         _messages,
         "verified and decrypted messages, oldest first",
-        example="agent-platform community messages [--before <next_before>] [--after <seq>] [--limit 50] [--mark-read]",
+        example="agent-platform community messages [--before <next_before> | --after <seq>] [--limit 50] [--mark-read]",
         words="gruppenchat lesen community nachrichten messages read group chat",
     )
     where = messages.add_mutually_exclusive_group()

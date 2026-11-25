@@ -283,7 +283,9 @@ hashes stay valid). `GET /v1/orgs/{org}/audit` returns `agent_id` when set; the 
 
 ### 8.1 State and output
 State directory `$AGENT_PLATFORM_HOME` (default `~/.agent-platform`, `0700`): `agent.key` (`0600`, private keys;
-on macOS kept in the login keychain as generic password `agent-platform` / `<agent id>` instead, where available),
+on macOS kept in the login keychain as generic password `agent-platform` / `<agent id>` instead, where available –
+never over ssh, where the keychain is locked or cannot ask; keys there that a session cannot read are
+`state_damaged`/`keychain_unreadable`; every result naming the connected agent says where its keys are, `keys`; KOR-67),
 `state.json` (`0600`: hub origin, pinned hub key ID and public key, platform root key, agent and user ID, the sealed
 identity and `r`). Files with other modes, owners or symlinks are refused (`state_damaged`). On `key_revoked` the tool
 deletes both files. Every command prints exactly one JSON object on stdout: `{"ok":true,…}` or

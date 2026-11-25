@@ -58,6 +58,9 @@ CONFIRMED_ROUTES = (("POST", "/v1/agent/claim"), ("GET", "/v1/agent/handover"))
 Json = dict[str, Any]
 Hook = Callable[[Json | None, "Request"], tuple[Any, ...] | None]
 
+# The states of a task at the hub (agent_hub/sessions/derive.py TASK_STATES).
+TASK_STATES = ("scheduling", "starting", "working", "idle", "failed", "closed")
+
 
 def now_ms_text(offset: timedelta = timedelta()) -> str:
     return format_time(datetime.now(UTC) + offset)
@@ -878,7 +881,7 @@ class HubFake:
             return 409, {"error": "no_device"}
         for event in body["events"]:
             self.store_event(wg, event)
-        row = {"task_id": task, "org_id": org, "wg_id": wg, "owner_id": request.user, "state": "queued"}
+        row = {"task_id": task, "org_id": org, "wg_id": wg, "owner_id": request.user, "state": "scheduling"}
         row |= {"state_reason": None, "created_at": now_ms_text(), "last_activity_at": now_ms_text(), "closed_at": None}
         placement = body.get("placement")
         row["placement"] = None if placement is None else {"vm_id": None, **placement}
@@ -901,8 +904,13 @@ class HubFake:
         if org is None or self._member(request, org) is None:
             return 404, {"error": "not_found"}
         state = request.query.get("state")
-        rows = [t["task"] for t in self.tasks.values() if t["task"]["wg_id"] == wg]
-        return 200, {"tasks": [r for r in rows if state is None or r["state"] == state], "next_before": None}
+        if state is not None and state not in TASK_STATES:  # the hub filters by its task states only
+            return 400, {"error": "request_invalid", "detail": {"pointers": ["/state"]}}
+        rows = [t["task"] for t in reversed(self.tasks.values()) if t["task"]["wg_id"] == wg]
+        rows = [r for r in rows if state is None or r["state"] == state]
+        start = int(request.query.get("before", "0"))
+        end = start + int(request.query.get("limit", "50"))
+        return 200, {"tasks": rows[start:end], "next_before": str(end) if end < len(rows) else None}
 
     # --- the situation view (the shapes of 03-api.md section 4.6 and agent_hub's attention endpoints) ---
 

@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from agent_platform.batch import build_batch
-from agent_platform.diagnose import WAITING
+from agent_platform.diagnose import FAILED, REASONS, WAITING
 from agent_runner.crypto import invite as invite_format
 from agent_runner.crypto.ids import uuid7
 from agent_runner.crypto.keys import Identity
@@ -260,9 +260,17 @@ def test_task_create_with_placement_and_show(tool: Tool, hub: HubFake, account: 
     row |= {"state": "scheduling", "state_reason": "placement_full", "main_session_id": None}
     shown = tool.run("task", "show", "--task", task)[1]
     assert (shown["waiting"], shown["main_session"]) == ("placement_full", None)
+    assert shown["next"] == WAITING["placement_full"]
     assert shown["placement"] == {"device_id": device, "vm_id": "vm-0000000b"}
     row["state_reason"] = "<script>"
     assert tool.run("task", "show", "--task", task)[1]["waiting"] == "task_waiting"
+    assert tool.run("task", "show", "--task", task)[1]["next"] == REASONS["task_waiting"]
+    # failed: the command that fixes the reason (KOR-67), in `task show` and `task follow`
+    row |= {"state": "failed", "state_reason": "model_access_unavailable"}
+    assert tool.run("task", "show", "--task", task)[1]["next"] == FAILED["model_access_unavailable"]
+    assert "claude connect" in tool.run("task", "follow", "--task", task, "--wait", "0")[1]["next"]
+    row["state_reason"] = "oom"
+    assert tool.run("task", "show", "--task", task)[1]["next"] == REASONS["task_failed"]
     # running: device and VM of the main session
     session = uuid7()
     row |= {"state": "working", "state_reason": None, "main_session_id": session}
@@ -273,7 +281,7 @@ def test_task_create_with_placement_and_show(tool: Tool, hub: HubFake, account: 
         {"session": {"session_id": session, "state": "working", "device_id": device, "vm_id": "vm-0000000b"}},
     ]
     shown = tool.run("task", "show", "--task", task)[1]
-    assert shown["waiting"] is None
+    assert (shown["waiting"], shown["next"]) == (None, None)
     assert shown["main_session"] == {"session_id": session, "state": "working", "device_id": device,
                                      "vm_id": "vm-0000000b"}  # fmt: skip
     hub.tasks[task]["sessions"] = None

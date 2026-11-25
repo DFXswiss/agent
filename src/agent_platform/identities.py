@@ -47,7 +47,7 @@ from typing import Any
 from agent_platform.account import Account, unverified
 from agent_platform.batch import make_wrap
 from agent_platform.commands import Context, Tree
-from agent_platform.credentials import SOURCES, valid_github
+from agent_platform.credentials import SOURCES, revocable, valid_github
 from agent_platform.devicereq import Keys, device_keys
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import rows_of, uuid_argument
@@ -62,7 +62,6 @@ from agent_runner.crypto.log.wraps import CRED, WrapSlot, cred_readers
 KIND = "github"
 USER, ORG = "user", "org"
 SCOPES = ("org", "wg")
-REVOCABLE_PREFIX = "ghu_"
 GITHUB_SETTINGS_URL = "https://github.com/settings/applications"
 CONCURRENT = frozenset({"version_conflict", "epoch_stale"})
 MAX_EPOCH = 2**31 - 1
@@ -193,7 +192,7 @@ def account_of(body: dict[str, Any]) -> dict[str, Any]:
         "scopes": body["scopes"],
         "signing": "signing_key" in body,
         "created_at": body["created_at"],
-        "revocable": str(body["token"]).startswith(REVOCABLE_PREFIX),
+        "revocable": revocable(body),
     }
 
 
