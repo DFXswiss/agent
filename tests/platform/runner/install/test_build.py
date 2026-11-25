@@ -475,6 +475,7 @@ def test_a_mach_o_file_inside_an_archive_refuses_a_signed_build_and_is_named(
     assert captured.err == f"sign_missing path={where}\n"
     assert bench.run.called("codesign") == []
     assert bench.run.called("pkgbuild") == []
+    assert bench.run.called(*compile_argv(bench.python)) == []  # refused right after staging
     # without an identity the build stays as it was: nothing is signed or checked
     assert build.main(argv, bench.tools) == 0
     assert bench.run.called("codesign") == []
@@ -499,6 +500,7 @@ def test_mach_o_files_inside_archives_are_found_by_content(tmp_path: Path) -> No
         "nested.tar.gz": tar([("inner.zip", inner_zip, 0o644), ("plain", b"plain", 0o644)], mode="w:gz"),
         "broken.gz": b"\x1f\x8b" + b"\0" * 20,
         "broken.zip": b"PK\x03\x04" + b"\0" * 20,
+        "truncated.bz2": bz2.compress(MACHO * 64)[:-8],
         "broken.tar": b"x" * 257 + b"ustar" + b"\0" * 300,
         "plain": MACHO,
         "short": b"\x1f",

@@ -46,7 +46,10 @@ Status: Accepted (2026-11-24)
   file with the hardened runtime and a timestamp (entitlements in `scripts/macos-package/entitlements/`: virtualization for
   Lima, disabled library validation for the Python interpreter), then writes the manifest, then builds and signs the
   package; notarisation and stapling follow (`runbooks/own-device-release.md`). Without an identity the same build
-  produces an unsigned package (tests, and until DFX has a Developer ID).
+  produces an unsigned package (tests, and until DFX has a Developer ID). Amended by HOT-20: notarisation also checks
+  Mach-O files inside archives, which `codesign` cannot sign in place; Lima's agents for macOS guests are left out
+  (own devices run Linux guests only) and a signed build refuses any other archived Mach-O file (`sign_missing`,
+  `decisions/HOT-20.md`).
 - Reproducible (unsigned builds; a signed build adds time-stamped signatures, so its check compares the unsigned
   stage of two builds): two builds of one commit and lock produce the same `release.json` (normalised modes and times, byte
   code with unchecked hashes and the installed path, each file compiled by a fresh interpreter that reads no byte

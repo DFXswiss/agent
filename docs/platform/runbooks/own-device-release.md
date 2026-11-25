@@ -58,7 +58,8 @@ cannot sign in place. The build therefore leaves Lima's agents for macOS guests 
 the payload (own devices run Linux guests only), and a build with `--sign-identity` refuses any other archived Mach-O
 file before signing: `build_failed` `sign_missing`, with one `sign_missing path=<archive>/<member>` line per file on
 standard error. Do not submit such a build; report the paths as a build defect (the test
-`test_a_mach_o_file_inside_an_archive_refuses_a_signed_build_and_is_named` covers the class). A build without
+`test_a_mach_o_file_inside_an_archive_refuses_a_signed_build_and_is_named` covers the class; background in
+[decisions/HOT-20.md](../decisions/HOT-20.md)). A build without
 identities is not checked.
 
 Without a Developer ID (sections 2 and 4 only, `notarized: false`) the agent way installs and updates: `device add`

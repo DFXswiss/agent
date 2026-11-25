@@ -103,6 +103,19 @@ STREAMS: tuple[tuple[bytes, Callable[[bytes], bytes]], ...] = (
     (b"BZh", bz2.decompress),
 )
 TAR_MAGIC = (257, b"ustar")
+# What reading a damaged or unsupported archive raises (ValueError: a truncated stream; RuntimeError: an encrypted
+# zip member; NotImplementedError: an unsupported zip method).
+UNREADABLE = (
+    OSError,
+    EOFError,
+    ValueError,
+    RuntimeError,
+    NotImplementedError,
+    zlib.error,
+    lzma.LZMAError,
+    zipfile.BadZipFile,
+    tarfile.TarError,
+)
 HEAD = 262
 MACHO = (b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xfe\xed\xfa\xcf", b"\xbe\xba\xfe\xca")
 LAUNCHER = """#!/bin/sh
@@ -372,7 +385,7 @@ def _members(name: str, data: bytes) -> list[tuple[str, bytes]]:
     named like the archive without its suffix. Data that does not read as its archive holds no member."""
     try:
         return _read_members(name, data)
-    except (OSError, EOFError, zlib.error, lzma.LZMAError, zipfile.BadZipFile, tarfile.TarError):
+    except UNREADABLE:
         return []
 
 
@@ -398,9 +411,8 @@ def _read_members(name: str, data: bytes) -> list[tuple[str, bytes]]:
 
 def archived_macho(tree: Path) -> list[str]:
     """Mach-O files inside archives below `tree` (nested archives included), as `archive/member` paths relative to
-    `tree`; `codesign` cannot sign them in place."""
+    `tree`; `codesign` cannot sign them in place. One archive of the tree is held in memory at a time."""
     found: list[str] = []
-    pending: list[tuple[str, bytes]] = []
     for directory, _dirnames, filenames in os.walk(tree):
         for name in sorted(filenames):
             path = Path(directory) / name
@@ -409,15 +421,30 @@ def archived_macho(tree: Path) -> list[str]:
             with path.open("rb") as handle:
                 head = handle.read(HEAD)
             if _is_archive(head):
-                pending.append((path.relative_to(tree).as_posix(), path.read_bytes()))
-    while pending:
-        name, data = pending.pop()
-        for member, content in _members(name, data):
-            if content[:4] in MACHO:
-                found.append(member)
-            elif _is_archive(content[:HEAD]):
-                pending.append((member, content))
+                found += _archived_macho(path.relative_to(tree).as_posix(), path.read_bytes())
     return sorted(found)
+
+
+def _archived_macho(name: str, data: bytes) -> list[str]:
+    found: list[str] = []
+    for member, content in _members(name, data):
+        if content[:4] in MACHO:
+            found.append(member)
+        elif _is_archive(content[:HEAD]):
+            found += _archived_macho(member, content)
+    return found
+
+
+def refuse_archived_macho(tools: Tools, options: Options, tree: Path) -> None:
+    """A signed build stops when a Mach-O file lies inside an archive: `codesign` cannot sign it in place and
+    notarisation rejects it (`build_failed` `sign_missing`, each one logged as `sign_missing path=<archive>/<member>`).
+    Without an identity nothing is checked."""
+    if options.sign_identity is None:
+        return
+    archived = archived_macho(tree)
+    if archived:
+        tools.log += [f"sign_missing path={name}" for name in archived]
+        raise RunnerError("build_failed", "sign_missing")
 
 
 def entitlements_for(source: Path, path: Path) -> Path | None:
@@ -430,15 +457,10 @@ def entitlements_for(source: Path, path: Path) -> Path | None:
 
 
 def codesign(tools: Tools, options: Options, source: Path, tree: Path) -> int:
-    """Sign every Mach-O file (hardened runtime, time stamp); returns their number. No identity: nothing. A Mach-O
-    file inside an archive cannot be signed in place and would fail notarisation: `build_failed` `sign_missing`, each
-    one logged as `sign_missing path=<archive>/<member>`."""
+    """Sign every Mach-O file (hardened runtime, time stamp); returns their number. No identity: nothing. Archived
+    Mach-O files were refused before (`refuse_archived_macho`)."""
     if options.sign_identity is None:
         return 0
-    archived = archived_macho(tree)
-    if archived:
-        tools.log += [f"sign_missing path={name}" for name in archived]
-        raise RunnerError("build_failed", "sign_missing")
     files = macho_files(tree)
     for path in files:
         argv = ["codesign", "--force", "--options", "runtime", "--timestamp", "--sign", options.sign_identity]
@@ -563,6 +585,7 @@ def build(options: Options, tools: Tools) -> Result:
     tree = options.work / "stage"
     stage(tools, options, source, lock, tree, version=version)
     trust(options, tree)
+    refuse_archived_macho(tools, options, tree)
     normalise(tree, seconds)
     compile_python(tools, tree, version)
     normalise(tree, seconds)

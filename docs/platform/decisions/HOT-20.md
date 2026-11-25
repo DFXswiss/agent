@@ -17,8 +17,9 @@ unpacking, signing with a time stamp and packing again reproducibly, for a file 
 
 ## The class
 A build with `--sign-identity` looks into every archive of the staged payload by content (zip including wheels and
-jars, gzip, xz, bzip2, tar, nested), before any `codesign` call. A Mach-O member refuses the build with
+jars, gzip, xz, bzip2, tar, nested) right after staging, before byte code and signing; one archive of the tree
+is held in memory at a time. A Mach-O member refuses the build with
 `build_failed` `sign_missing`; the log has one `sign_missing path=<archive>/<member>` line per file, and the command
 now writes its log lines to standard error when it fails (also `pyc_failed`). An archive whose content does not read
-holds no member for this check. A build without identity is unchanged and unchecked. The manifest and reproducibility
+(truncated, encrypted, unsupported method) holds no member for this check. A build without identity is unchanged and unchecked. The manifest and reproducibility
 are unaffected: the removal happens before modes, times and the manifest, the same for every build of a commit.
