@@ -30,6 +30,7 @@ from typing import Any, cast
 import agent_hub
 from agent_hub.crypto import (
     aead,
+    browserframe,
     bundle,
     credential,
     dedupe,
@@ -134,6 +135,10 @@ OPS: dict[str, Callable[[Json], object]] = {
         _b(a["pk_inv"]), a["user_id"], _b(a["challenge"]), a["inv_sig"]
     ),
     "dedupe_fields": lambda a: dedupe.dedupe_fields(a["type"], a["params"]),
+    "check_frame": lambda a: browserframe.check_frame(a["frame"]),
+    "open_frame": lambda a: browserframe.open_frame(
+        _b(a["workgroup_key"]), a["frame"], session=a["session"], wg=a["wg"]
+    ),
 }
 
 
@@ -1269,6 +1274,116 @@ def build_identity() -> Json:
     }
 
 
+def build_browserframe() -> Json:
+    """Live frames of a platform browser session (section 4.13, ADR-085): `k_frame`, the AAD, the sealed frame and
+    the refusals in the check order of `agent_hub.crypto.browserframe`."""
+    wk, salt, nonce = fixed("browserframe/wg-key"), fixed("browserframe/salt"), fixed("browserframe/nonce", 12)
+    browser, session, wg = "br-0123456789ab", fixed_id("browserframe/session"), fixed_id("browserframe/wg")
+    epoch, seq, ts = 4, 17, "2026-11-25T12:00:00.000Z"
+    jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00" + fixed("browserframe/picture") + b"\xff\xd9"
+    frame = browserframe.seal_frame(
+        wk, browser=browser, session=session, wg=wg, epoch=epoch, seq=seq, ts=ts, jpeg=jpeg, salt=salt, nonce=nonce
+    )
+    other = browserframe.seal_frame(
+        wk, browser=browser, session=session, wg=wg, epoch=epoch, seq=seq + 1, ts=ts, jpeg=jpeg, salt=salt, nonce=nonce
+    )
+    opened = {"workgroup_key": b64u_encode(wk), "session": session, "wg": wg}
+    short = b64u_encode(bytes(browserframe.FRAME_CT_MIN - 1))
+    return {
+        "about": "Live frames of a platform browser session of 04-crypto.md section 4.13 (ADR-085): k_frame from WK "
+        "and the frame salt, the AAD over browser, epoch, seq, session, ts and wg, the frame without signature. A ct "
+        "above limits.frame_ct_max decoded is size_exceeded (not stored here because of its size).",
+        "workgroup_key": b64u_encode(wk),
+        "salt": b64u_encode(salt),
+        "nonce": b64u_encode(nonce),
+        "browser": browser,
+        "session": session,
+        "wg": wg,
+        "epoch": epoch,
+        "seq": seq,
+        "ts": ts,
+        "jpeg": b64u_encode(jpeg),
+        "k_frame": b64u_encode(browserframe.frame_key(wk, salt, browser)),
+        "aad": browserframe.frame_aad(browser=browser, session=session, wg=wg, epoch=epoch, seq=seq, ts=ts).decode(
+            "ascii"
+        ),
+        "frame": frame,
+        "limits": {
+            "frame_bytes": browserframe.FRAME_BYTES,
+            "frame_ct_min": browserframe.FRAME_CT_MIN,
+            "frame_ct_max": browserframe.FRAME_CT_MAX,
+        },
+        "invalid": [
+            negative("extra_key", "check_frame", {"frame": {**frame, "sig": "AAAA"}}, "header_invalid"),
+            negative(
+                "missing_key",
+                "check_frame",
+                {"frame": {k: v for k, v in frame.items() if k != "salt"}},
+                "header_invalid",
+            ),
+            negative(
+                "non_ascii_ts", "check_frame", {"frame": {**frame, "ts": "2026-11-25T12:00:00.000\u017a"}}, "non_ascii"
+            ),
+            negative("version_2", "check_frame", {"frame": {**frame, "v": 2}}, "header_invalid"),
+            negative(
+                "bad_browser", "check_frame", {"frame": {**frame, "browser": "br-0123456789AB"}}, "header_invalid"
+            ),
+            negative("session_not_uuid", "check_frame", {"frame": {**frame, "session": "s"}}, "header_invalid"),
+            negative("epoch_zero", "check_frame", {"frame": {**frame, "epoch": 0}}, "header_invalid"),
+            negative("seq_negative", "check_frame", {"frame": {**frame, "seq": -1}}, "header_invalid"),
+            negative("seq_text", "check_frame", {"frame": {**frame, "seq": "17"}}, "header_invalid"),
+            negative(
+                "ts_without_ms", "check_frame", {"frame": {**frame, "ts": "2026-11-25T12:00:00Z"}}, "header_invalid"
+            ),
+            negative(
+                "salt_short", "check_frame", {"frame": {**frame, "salt": b64u_encode(salt[:31])}}, "header_invalid"
+            ),
+            negative("ct_padded", "check_frame", {"frame": {**frame, "ct": str(frame["ct"]) + "="}}, "header_invalid"),
+            negative("ct_too_short", "check_frame", {"frame": {**frame, "ct": short}}, "header_invalid"),
+            negative(
+                "other_session",
+                "open_frame",
+                {**opened, "frame": frame, "session": fixed_id("browserframe/session-2")},
+                "header_invalid",
+            ),
+            negative(
+                "other_wg",
+                "open_frame",
+                {**opened, "frame": frame, "wg": fixed_id("browserframe/wg-2")},
+                "header_invalid",
+            ),
+            negative(
+                "other_workgroup_key",
+                "open_frame",
+                {**opened, "frame": frame, "workgroup_key": b64u_encode(fixed("browserframe/wg-key-2"))},
+                "decrypt_failed",
+            ),
+            negative("seq_changed", "open_frame", {**opened, "frame": {**frame, "seq": seq + 1}}, "decrypt_failed"),
+            negative(
+                "ct_of_other_seq", "open_frame", {**opened, "frame": {**frame, "ct": other["ct"]}}, "decrypt_failed"
+            ),
+            negative(
+                "other_browser",
+                "open_frame",
+                {**opened, "frame": {**frame, "browser": "br-ba9876543210"}},
+                "decrypt_failed",
+            ),
+            negative(
+                "ts_changed",
+                "open_frame",
+                {**opened, "frame": {**frame, "ts": "2026-11-25T12:00:00.001Z"}},
+                "decrypt_failed",
+            ),
+            negative(
+                "salt_changed",
+                "open_frame",
+                {**opened, "frame": {**frame, "salt": b64u_encode(fixed("browserframe/salt-2"))}},
+                "decrypt_failed",
+            ),
+        ],
+    }
+
+
 SECTIONS: tuple[Section, ...] = (
     Section("encoding", build_encoding),
     Section("kdf", build_kdf),
@@ -1283,6 +1398,7 @@ SECTIONS: tuple[Section, ...] = (
     Section("enroll", build_enroll),
     Section("dedupe", build_dedupe),
     Section("identity", build_identity),
+    Section("browserframe", build_browserframe),
 )
 
 

@@ -1,0 +1,435 @@
+{
+  "aad": "agent.dfx.swiss/v1/browser-frame\u0000{\"browser\":\"br-0123456789ab\",\"epoch\":4,\"seq\":17,\"session\":\"01a1ee56-5e00-7c18-9bf7-7ad5e3baa011\",\"ts\":\"2026-11-25T12:00:00.000Z\",\"wg\":\"01a1ee56-5e00-71a1-a922-7c9ac1f81e5f\"}",
+  "about": "Live frames of a platform browser session of 04-crypto.md section 4.13 (ADR-085): k_frame from WK and the frame salt, the AAD over browser, epoch, seq, session, ts and wg, the frame without signature. A ct above limits.frame_ct_max decoded is size_exceeded (not stored here because of its size).",
+  "browser": "br-0123456789ab",
+  "epoch": 4,
+  "frame": {
+    "browser": "br-0123456789ab",
+    "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+    "epoch": 4,
+    "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+    "seq": 17,
+    "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+    "ts": "2026-11-25T12:00:00.000Z",
+    "v": 1,
+    "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+  },
+  "invalid": [
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "sig": "AAAA",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        }
+      },
+      "error": "header_invalid",
+      "name": "extra_key",
+      "op": "check_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        }
+      },
+      "error": "header_invalid",
+      "name": "missing_key",
+      "op": "check_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000ź",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        }
+      },
+      "error": "non_ascii",
+      "name": "non_ascii_ts",
+      "op": "check_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 2,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        }
+      },
+      "error": "header_invalid",
+      "name": "version_2",
+      "op": "check_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789AB",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        }
+      },
+      "error": "header_invalid",
+      "name": "bad_browser",
+      "op": "check_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "s",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        }
+      },
+      "error": "header_invalid",
+      "name": "session_not_uuid",
+      "op": "check_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 0,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        }
+      },
+      "error": "header_invalid",
+      "name": "epoch_zero",
+      "op": "check_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": -1,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        }
+      },
+      "error": "header_invalid",
+      "name": "seq_negative",
+      "op": "check_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": "17",
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        }
+      },
+      "error": "header_invalid",
+      "name": "seq_text",
+      "op": "check_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        }
+      },
+      "error": "header_invalid",
+      "name": "ts_without_ms",
+      "op": "check_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdEQ",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        }
+      },
+      "error": "header_invalid",
+      "name": "salt_short",
+      "op": "check_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA=",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        }
+      },
+      "error": "header_invalid",
+      "name": "ct_padded",
+      "op": "check_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        }
+      },
+      "error": "header_invalid",
+      "name": "ct_too_short",
+      "op": "check_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        },
+        "session": "01a1ee56-5e00-75ac-b434-73fbf58befd5",
+        "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f",
+        "workgroup_key": "OmitqSQE3fJADvGqN1BNJ3t6yE1CNv02-Ye1RJSCd5k"
+      },
+      "error": "header_invalid",
+      "name": "other_session",
+      "op": "open_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        },
+        "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+        "wg": "01a1ee56-5e00-7898-b8a1-9f0064f8410f",
+        "workgroup_key": "OmitqSQE3fJADvGqN1BNJ3t6yE1CNv02-Ye1RJSCd5k"
+      },
+      "error": "header_invalid",
+      "name": "other_wg",
+      "op": "open_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        },
+        "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+        "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f",
+        "workgroup_key": "vMa2OpMt5vFyXRYE607wO-XmcQKidFYDnKHQfABXYBA"
+      },
+      "error": "decrypt_failed",
+      "name": "other_workgroup_key",
+      "op": "open_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 18,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        },
+        "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+        "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f",
+        "workgroup_key": "OmitqSQE3fJADvGqN1BNJ3t6yE1CNv02-Ye1RJSCd5k"
+      },
+      "error": "decrypt_failed",
+      "name": "seq_changed",
+      "op": "open_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCeImqBRIcIDppavv4aK9S6g",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        },
+        "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+        "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f",
+        "workgroup_key": "OmitqSQE3fJADvGqN1BNJ3t6yE1CNv02-Ye1RJSCd5k"
+      },
+      "error": "decrypt_failed",
+      "name": "ct_of_other_seq",
+      "op": "open_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-ba9876543210",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        },
+        "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+        "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f",
+        "workgroup_key": "OmitqSQE3fJADvGqN1BNJ3t6yE1CNv02-Ye1RJSCd5k"
+      },
+      "error": "decrypt_failed",
+      "name": "other_browser",
+      "op": "open_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.001Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        },
+        "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+        "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f",
+        "workgroup_key": "OmitqSQE3fJADvGqN1BNJ3t6yE1CNv02-Ye1RJSCd5k"
+      },
+      "error": "decrypt_failed",
+      "name": "ts_changed",
+      "op": "open_frame"
+    },
+    {
+      "args": {
+        "frame": {
+          "browser": "br-0123456789ab",
+          "ct": "gRGjj9PMUDJrjpG0DFD23SqHhP70H7WDrN_RuampqbHiYWVXhMkUydFAzwvW-djPIXlNwgJLRmuCMoRo6scOn-8G0VcRK7vJcA",
+          "epoch": 4,
+          "salt": "BBe57G9ht8xRU_GenmILvFYp5rT_EL_TGTI9VE5EDbA",
+          "seq": 17,
+          "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+          "ts": "2026-11-25T12:00:00.000Z",
+          "v": 1,
+          "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f"
+        },
+        "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+        "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f",
+        "workgroup_key": "OmitqSQE3fJADvGqN1BNJ3t6yE1CNv02-Ye1RJSCd5k"
+      },
+      "error": "decrypt_failed",
+      "name": "salt_changed",
+      "op": "open_frame"
+    }
+  ],
+  "jpeg": "_9j_4AAQSkZJRgCugV2rKKDAhQOFWCp4cKug6Na87iNXvyNtiSML6lzZCf_Z",
+  "k_frame": "qSXU_dXB76EktDSvoTeT_QfYlH7tEyE2P9gddTW4yQI",
+  "limits": {
+    "frame_bytes": 524288,
+    "frame_ct_max": 524316,
+    "frame_ct_min": 29
+  },
+  "nonce": "gRGjj9PMUDJrjpG0",
+  "salt": "5HKwg85E-YX42mkRs0gjkP9O7mq7ahZelaug-nTdESU",
+  "seq": 17,
+  "session": "01a1ee56-5e00-7c18-9bf7-7ad5e3baa011",
+  "ts": "2026-11-25T12:00:00.000Z",
+  "wg": "01a1ee56-5e00-71a1-a922-7c9ac1f81e5f",
+  "workgroup_key": "OmitqSQE3fJADvGqN1BNJ3t6yE1CNv02-Ye1RJSCd5k"
+}
