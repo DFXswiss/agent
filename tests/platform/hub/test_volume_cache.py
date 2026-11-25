@@ -79,6 +79,17 @@ def test_the_key_of_the_repository_covers_the_seed_and_the_device_double(cache_m
     assert "hub_test_volume" in sys.modules
 
 
+def test_the_postgres_tools_match_the_server(cache_module: ModuleType, migrated_db: HubDatabase) -> None:
+    admin_url = make_conninfo(**{**migrated_db.admin_params, "dbname": migrated_db.name})
+    assert cache_module.tool("pg_dump", admin_url, {"WEB_E2E_PG_BIN": "/opt/pg"}) == "/opt/pg/pg_dump"
+    found = cache_module.tool("pg_restore", admin_url, {})
+    assert found.endswith("pg_restore")
+    with migrated_db.admin() as admin:
+        major = admin.info.server_version // 10000
+    if found != "pg_restore":
+        assert f"{major}/bin/" in found
+
+
 def entry(cache: Path, name: str, age: float = 0, files: tuple[str, ...] | None = None) -> Path:
     path = cache / name
     path.mkdir(parents=True)

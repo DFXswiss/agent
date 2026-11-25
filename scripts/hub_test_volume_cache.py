@@ -10,11 +10,12 @@ schema or the code that writes it changes. `scripts/hub_test_server.py --volume-
 - an entry holds the database rows (`data.dump`, `pg_dump --data-only` as the superuser, taken by the device double
   when the seed is complete and before any follow-up route changes it), what the device double knows beyond the
   database (`state.json`: the seed's answer, the founder's and the volume device's keys, the scope keys and the
-  community key) and the hub's signing key (`signing.key`: the hub signs audit checkpoints with it);
+  community key) and the hub's signing key (`signing.key`: the hub signs audit checkpoints with it); `pg_dump` and
+  `pg_restore` of the server's major version (`tool`);
 - an entry is used for `MAX_AGE` (the data set is placed relative to the time it was made: messages of the last 20
   days, open invitations); older ones and all but the newest `KEEP` are removed;
 - a hub test server with a usable entry restores the rows into its freshly migrated database before the hub starts
-  (`TRUNCATE` of every table, `pg_restore --data-only --disable-triggers`) and its device double takes over the state;
+  (`TRUNCATE` of every table, `pg_restore --data-only` as replica) and its device double takes over the state;
   without one, the device double seeds and stores a new entry (written to a temporary directory and renamed, so two
   lanes seeding at once never leave a half entry; the first rename wins).
 """
@@ -30,7 +31,7 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,14 @@ STALE = 3600
 CALLED = ("agent_hub/platform", "agent_hub/device")
 """Packages the seed reaches over the hub's HTTP API (platform log appends, device enrollment)."""
 FILES = ("data.dump", "state.json", "signing.key")
+BIN_VARIABLE = "WEB_E2E_PG_BIN"
+"""Directory of `pg_dump`/`pg_restore` (else those of the server's major version where packages put them, else PATH):
+a newer `pg_dump` writes settings an older server refuses on restore."""
+BIN_DIRS = (
+    "/opt/homebrew/opt/postgresql@{major}/bin",
+    "/usr/local/opt/postgresql@{major}/bin",
+    "/usr/lib/postgresql/{major}/bin",
+)
 SYSTEM_SCHEMAS = ("pg_catalog", "information_schema", "pg_toast")
 
 
@@ -91,6 +100,19 @@ def key(root: Path = ROOT, modules: Iterable[str] | None = None) -> str:
     return digest.hexdigest()[:24]
 
 
+def tool(name: str, admin_url: str, environ: Mapping[str, str] = os.environ) -> str:
+    """`pg_dump`/`pg_restore` for the server at `admin_url` (`BIN_VARIABLE`)."""
+    if environ.get(BIN_VARIABLE):
+        return str(Path(environ[BIN_VARIABLE]) / name)
+    with psycopg.connect(admin_url) as connection:
+        major = connection.info.server_version // 10000
+    for pattern in BIN_DIRS:
+        path = Path(pattern.format(major=major)) / name
+        if path.is_file():
+            return str(path)
+    return name
+
+
 def usable(cache: Path, name: str, clock: float | None = None) -> Path | None:
     """The complete entry `name` if it is younger than `MAX_AGE`."""
     entry = cache / name
@@ -126,7 +148,7 @@ def store(cache: Path, name: str, admin_url: str, state: dict[str, Any], signing
     try:
         subprocess.run(
             [
-                "pg_dump",
+                tool("pg_dump", admin_url),
                 "--data-only",
                 "--format=custom",
                 "--compress=1",
@@ -145,25 +167,54 @@ def store(cache: Path, name: str, admin_url: str, state: dict[str, Any], signing
     return cache / name
 
 
+ENABLE = {"O": "ENABLE", "A": "ENABLE ALWAYS", "R": "ENABLE REPLICA", "D": "DISABLE"}
+"""`ALTER TABLE … <mode> TRIGGER` for each `pg_trigger.tgenabled`."""
+
+
 def restore(admin_url: str, entry: Path) -> None:
-    """Replaces every row of the freshly migrated database at `admin_url` by the entry's rows."""
+    """Replaces every row of the freshly migrated database at `admin_url` by the entry's rows.
+
+    The user triggers (the append-only tables refuse `TRUNCATE` even as replica: `ENABLE ALWAYS`) are switched off by
+    name and afterwards back to their exact mode; the rows are restored as replica, so the foreign keys' internal
+    triggers do not fire on the way (the rows come from a consistent database of the same schema).
+    """
     with psycopg.connect(admin_url, autocommit=True) as connection:
         tables = connection.execute(
             "SELECT schemaname, tablename FROM pg_catalog.pg_tables WHERE schemaname <> ALL(%s) ORDER BY 1, 2",
             (list(SYSTEM_SCHEMAS),),
         ).fetchall()
+        triggers = connection.execute(
+            "SELECT n.nspname, c.relname, t.tgname, t.tgenabled FROM pg_catalog.pg_trigger t"
+            " JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace"
+            " WHERE NOT t.tgisinternal AND n.nspname <> ALL(%s) ORDER BY 1, 2, 3",
+            (list(SYSTEM_SCHEMAS),),
+        ).fetchall()
+
+        def switch(modes: dict[str, str]) -> None:
+            with connection.transaction():
+                for schema, table, name, enabled in triggers:
+                    connection.execute(
+                        sql.SQL("ALTER TABLE {} {} TRIGGER {}").format(
+                            sql.Identifier(schema, table), sql.SQL(modes[enabled]), sql.Identifier(name)
+                        )
+                    )
+
+        dump = str(entry / "data.dump")
+        switch(dict.fromkeys(ENABLE, "DISABLE"))
         if tables:
             names = sql.SQL(", ").join(sql.Identifier(schema, table) for schema, table in tables)
             connection.execute(sql.SQL("TRUNCATE {} RESTART IDENTITY CASCADE").format(names))
-    subprocess.run(
-        [
-            "pg_restore",
-            "--data-only",
-            "--disable-triggers",
-            "--single-transaction",
-            "--exit-on-error",
-            f"--dbname={admin_url}",
-            str(entry / "data.dump"),
-        ],
-        check=True,
-    )
+        subprocess.run(
+            [
+                tool("pg_restore", admin_url),
+                "--data-only",
+                "--single-transaction",
+                "--exit-on-error",
+                "--dbname",
+                admin_url,
+                dump,
+            ],
+            check=True,
+            env={**os.environ, "PGOPTIONS": "-c session_replication_role=replica"},
+        )
+        switch(ENABLE)
