@@ -308,6 +308,8 @@ interpretations A1–A18 (part C) have no rows of their own; the rows above and 
 | E-27 | [E-27](../KONZEPT.md#e-27) | An AI agent can do everything, also without a human (own account by invitation, own key). | gebaut | [ADR-071](../adr/071-agent-own-account.md) |
 | E-28 | [E-28](../KONZEPT.md#e-28) | Personal message of the requester wherever someone grants access. | offen | KOR-64 |
 | E-29 | [E-29](../KONZEPT.md#e-29) | GitHub works for every customer with every repository their GitHub account can access (own account, own or third-party organization, fork). | gebaut | [ADR-077](../adr/077-github-every-repository.md) |
+| E-30 | [E-30](../KONZEPT.md#e-30) | A user sees the remaining quota of all own model subscriptions with the time of each reading. | offen | KOR-68; readings of central logins [ADR-090](../adr/090-every-subscription-logged-in-centrally.md) |
+| E-31 | [E-31](../KONZEPT.md#e-31) | Every Claude subscription has its own login on a platform device, is measured and renewed there, never copied to a computer of the user, and serves only the sessions its owner switches on (default: measure only). | gebaut (view: KOR-68) | [ADR-090](../adr/090-every-subscription-logged-in-centrally.md) |
 
 ## R-P Assignment guardrails (`PROJECT.md`)
 

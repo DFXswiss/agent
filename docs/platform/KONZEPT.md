@@ -751,6 +751,34 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Bezug:** ergänzt [§9](#k-9) und [E-05](#e-05).
 - **Umsetzung:** gebaut – [ADR-077](adr/077-github-every-repository.md) (KOR-65).
 
+<a id="e-30"></a>
+
+### E-30 – Eigene Abos auf einen Blick
+
+- **Datum:** 2026-11-25 15:58
+- **Regel:** Ein Nutzer sieht auf agent.dfx.swiss das verbleibende Kontingent aller seiner Modell-Abos, auch solcher,
+  die nicht über die Plattform laufen, mit dem Zeitpunkt der Messung.
+- **Wortlaut:** „ich will das auf agent.dfx.swiss sehen können“ (zu einer Tabelle mit dem verbleibenden
+  Wochenkontingent aller seiner Claude-Abos)
+- **Bezug:** ergänzt [§4 Punkt 4](#k-4-b4) und [§7](#k-7).
+- **Umsetzung:** offen – KOR-68; die Messung zentral angemeldeter Abos [ADR-090](adr/090-every-subscription-logged-in-centrally.md) (KOR-69).
+
+<a id="e-31"></a>
+
+### E-31 – Alle Abos zentral anmelden, nichts läuft lokal
+
+- **Datum:** 2026-11-25
+- **Regel:** Jedes Claude-Abo eines Nutzers hat eine eigene Anmeldung auf einem Plattformgerät, wird dort gemessen und
+  erneuert und nie auf einen Rechner des Nutzers übertragen; genutzt wird es nur für die Sitzungen, für die der
+  Inhaber es einzeln einschaltet (Voreinstellung: nur messen).
+- **Wortlaut:** „… das will ich! und zwar zentral, und zwar für alle meine abos! ich will nichts local laufen lassen,
+  soll alles zentral“ (zum Dashboard der Abos, [E-30](#e-30))
+- **Bezug:** ergänzt [E-30](#e-30), [E-07](#e-07) und [§4 Punkt 2](#k-4-b2); Zugänge einer Person werden nur nach
+  ihrem ausdrücklichen Schalten genutzt.
+- **Umsetzung:** gebaut – [ADR-090](adr/090-every-subscription-logged-in-centrally.md) (KOR-69): mehrere
+  Anmeldungen je Inhaber und Messung, Verwendung je Abo und Umzug von den Token-Dateien; die Ansicht in der
+  Oberfläche folgt KOR-68.
+
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
 **Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und
@@ -871,6 +899,7 @@ Stand 2026-11-25. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | Regel / Stelle | Gebauter Stand heute | Schließt |
 |---|---|---|
 | [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber nennt, welche Schalter umgelegt werden (gebaut, [ADR-079](adr/079-no-approval-as-precondition.md); ein Startguthaben gibt es nicht, [E-14](#e-14), entschieden 2026-11-25); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
+| [E-30](#e-30), [E-31](#e-31) Ansicht | Die Abos eines Nutzers und ihre Messung sind über `agent-platform subscriptions` und die Schnittstelle bedienbar; der Abschnitt „Meine Abos“ der Oberfläche fehlt noch | KOR-68 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
 | [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |
