@@ -209,8 +209,7 @@ describe('SubscriptionCard', () => {
     fireEvent.click(within(again2).getByTestId('subuse.save'));
     expect(await screen.findByTestId('subuse.saved')).toBeVisible();
     expect((await hub.opened(A)).use).toEqual({ pool: true, orgs: [t.org] });
-    const used = await screen.findByTestId(`subcard.${A}`);
-    fireEvent.click(await within(used).findByTestId('subcard.use'));
+    const used = await screen.findByTestId(`subcard.${A}`); // the editor stays open after a save
     fireEvent.click(within(used).getByTestId('subuse.measure'));
     hub.failPut = [new HubError('forbidden', 403)];
     fireEvent.click(within(used).getByTestId('subuse.save'));
@@ -219,7 +218,6 @@ describe('SubscriptionCard', () => {
     await screen.findByTestId('subuse.saved');
     expect('use' in (await hub.opened(A))).toBe(false);
     const measured = await screen.findByTestId(`subcard.${A}`);
-    fireEvent.click(await within(measured).findByTestId('subcard.use'));
     fireEvent.click(within(measured).getByTestId('subcard.use.close'));
     fireEvent.click(within(measured).getByTestId('subcard.logout'));
     expect(await screen.findByTestId('subcard.revoke')).toHaveTextContent('claude.ai/settings');
