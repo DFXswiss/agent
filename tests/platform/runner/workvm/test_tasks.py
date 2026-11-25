@@ -51,9 +51,19 @@ class FakeRuns:
         return 0
 
 
+class FakeBrowsers:
+    def __init__(self, workvms: FakeWorkVms) -> None:
+        self.workvms = workvms
+
+    async def idle_pass(self) -> list[str]:
+        self.workvms.calls.append("browser_idle_pass")
+        return []
+
+
 @pytest.fixture(autouse=True)
 def runs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tasks, "runs_of", lambda context, workvms: FakeRuns(workvms))
+    monkeypatch.setattr(tasks, "browsers_of", lambda context, workvms: FakeBrowsers(workvms))
 
 
 def test_task_is_registered() -> None:
@@ -77,7 +87,11 @@ def test_reconcile_then_idle_passes_until_stopping(monkeypatch: pytest.MonkeyPat
         await asyncio.wait_for(tasks.run_workvm(context), 5)
         return workvms.calls
 
-    assert asyncio.run(run()) == ["runs", "reconcile", *["guard_pass", "idle_pass", "sweep", "pool_pass"] * 3]
+    assert asyncio.run(run()) == [
+        "runs",
+        "reconcile",
+        *["guard_pass", "browser_idle_pass", "idle_pass", "sweep", "pool_pass"] * 3,
+    ]
 
 
 def test_a_stop_during_the_wait_ends_the_task_without_another_pass(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,7 +108,15 @@ def test_a_stop_during_the_wait_ends_the_task_without_another_pass(monkeypatch: 
         await asyncio.wait_for(task, 5)
         return workvms.calls
 
-    assert asyncio.run(run()) == ["runs", "reconcile", "guard_pass", "idle_pass", "sweep", "pool_pass"]
+    assert asyncio.run(run()) == [
+        "runs",
+        "reconcile",
+        "guard_pass",
+        "browser_idle_pass",
+        "idle_pass",
+        "sweep",
+        "pool_pass",
+    ]
 
 
 def test_a_stopped_daemon_reconciles_only(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -123,4 +145,8 @@ def test_an_assigned_pool_entry_refills_at_once(monkeypatch: pytest.MonkeyPatch)
         await asyncio.wait_for(task, 5)
         return workvms.calls
 
-    assert asyncio.run(run()) == ["runs", "reconcile", *["guard_pass", "idle_pass", "sweep", "pool_pass"] * 2]
+    assert asyncio.run(run()) == [
+        "runs",
+        "reconcile",
+        *["guard_pass", "browser_idle_pass", "idle_pass", "sweep", "pool_pass"] * 2,
+    ]

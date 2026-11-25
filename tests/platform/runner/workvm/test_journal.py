@@ -72,11 +72,15 @@ def workvm_tools() -> dict[str, Path]:
 def test_rules_match_the_contracts() -> None:
     tools = workvm_tools()
     assert "workvm_browse" in tools
-    assert set(tools) == set(journal.RULES)
+    assert "browser_navigate" in tools
+    assert set(tools) == set(journal.TOOL_RULES) == set(journal.RULES) | set(journal.BROWSER_RULES)
     path = ROOT / "contracts" / "mcp" / "objects.json"
     defs = json.loads(path.read_text(encoding="utf-8"))["$defs"]
-    assert {name.removeprefix("input_") for name in defs if name.startswith("input_workvm_")} == set(tools)
-    for tool, (fields, required) in journal.RULES.items():
+    assert {name.removeprefix("input_") for name in defs if name.startswith("input_workvm_")} == set(journal.RULES)
+    assert {name.removeprefix("input_") for name in defs if name.startswith("input_browser_")} == set(
+        journal.BROWSER_RULES
+    )
+    for tool, (fields, required) in journal.TOOL_RULES.items():
         schema = resolve(json.loads(tools[tool].read_text(encoding="utf-8")), tools[tool])
         assert schema == resolve(defs[f"input_{tool}"], path), tool
         assert schema["additionalProperties"] is False, tool
@@ -149,6 +153,36 @@ ACCEPTED: list[tuple[str, Json]] = [
     ),
     ("workvm_browse", {"url": "https://example.com/", "action": "click", "selector": "#ok", "text": "", "wait_ms": 0}),
     ("workvm_browse", {"url": "https://example.com/", "path": "a" * 4096}),
+]
+
+
+URL = "https://example.com/"
+ACCEPTED += [
+    ("browser_navigate", {"url": URL, "wait_until": "networkidle", "snapshot": False}),
+    ("browser_navigate", {"history": "reload"}),
+    ("browser_navigate", {"query": "q" * 512}),
+    ("browser_snapshot", {}),
+    ("browser_click", {"target": "e12", "double": True, "button": "right"}),
+    ("browser_click", {"x": 0, "y": 799}),
+    ("browser_click", {"x": 1279, "y": 0, "snapshot": True}),
+    ("browser_hover", {"target": "s" * 1024}),
+    ("browser_type", {"target": "e1", "text": "", "submit": True, "clear": False}),
+    ("browser_select", {"target": "e1", "values": ["v" * 1024] * 64}),
+    ("browser_press", {"key": "Control+A"}),
+    ("browser_scroll", {}),
+    ("browser_scroll", {"target": "e1", "dy": -100000}),
+    ("browser_wait", {"text": "a", "timeout_ms": 20000}),
+    ("browser_wait", {"gone": "a"}),
+    ("browser_wait", {"url": "/done"}),
+    ("browser_wait", {"ms": 0}),
+    ("browser_evaluate", {"expression": "document.title"}),
+    ("browser_upload", {"target": "e1", "paths": ["a"] * 16}),
+    ("browser_dialog", {"action": "dismiss", "text": ""}),
+    ("browser_tabs", {"action": "new", "url": URL, "index": 63}),
+    ("browser_download", {"target": "e1", "path": "out/a.pdf"}),
+    ("browser_download", {"url": URL}),
+    ("browser_screenshot", {}),
+    ("browser_screenshot", {"path": "a.png", "full_page": True, "snapshot": False}),
 ]
 
 
@@ -240,6 +274,55 @@ REFUSED_ARGUMENTS: list[tuple[str, Json]] = [
 ]
 
 
+REFUSED_ARGUMENTS += [
+    ("browser_navigate", {}),
+    ("browser_navigate", {"url": URL, "history": "back"}),
+    ("browser_navigate", {"url": URL, "query": "q"}),
+    ("browser_navigate", {"url": "ftp://a"}),
+    ("browser_navigate", {"history": "up"}),
+    ("browser_navigate", {"query": ""}),
+    ("browser_navigate", {"query": "q" * 513}),
+    ("browser_navigate", {"url": URL, "wait_until": "idle"}),
+    ("browser_navigate", {"url": URL, "snapshot": 1}),
+    ("browser_snapshot", {"snapshot": False}),
+    ("browser_click", {}),
+    ("browser_click", {"target": "e1", "x": 1, "y": 1}),
+    ("browser_click", {"x": 1}),
+    ("browser_click", {"y": 1}),
+    ("browser_click", {"x": 1280, "y": 0}),
+    ("browser_click", {"x": 0, "y": 800}),
+    ("browser_click", {"target": ""}),
+    ("browser_click", {"target": "e1", "button": "back"}),
+    ("browser_hover", {}),
+    ("browser_type", {"target": "e1"}),
+    ("browser_type", {"target": "e1", "text": "t" * 65537}),
+    ("browser_select", {"target": "e1", "values": []}),
+    ("browser_select", {"target": "e1", "values": ["v"] * 65}),
+    ("browser_select", {"target": "e1", "values": ["v" * 1025]}),
+    ("browser_select", {"target": "e1", "values": "v"}),
+    ("browser_press", {"key": ""}),
+    ("browser_press", {"key": "k" * 65}),
+    ("browser_scroll", {"dy": 100001}),
+    ("browser_wait", {}),
+    ("browser_wait", {"timeout_ms": 5}),
+    ("browser_wait", {"ms": 20001}),
+    ("browser_wait", {"text": ""}),
+    ("browser_wait", {"url": "u" * 4097}),
+    ("browser_evaluate", {"expression": ""}),
+    ("browser_upload", {"target": "e1", "paths": []}),
+    ("browser_upload", {"target": "e1", "paths": ["a"] * 17}),
+    ("browser_upload", {"target": "e1", "paths": ["/abs"]}),
+    ("browser_dialog", {"action": "ok"}),
+    ("browser_dialog", {"action": "accept", "text": "t" * 4097}),
+    ("browser_tabs", {"action": "close", "index": 64}),
+    ("browser_tabs", {"action": "move"}),
+    ("browser_download", {}),
+    ("browser_download", {"target": "e1", "url": URL}),
+    ("browser_download", {"url": URL, "path": "/abs"}),
+    ("browser_screenshot", {"full_page": "yes"}),
+]
+
+
 @pytest.mark.parametrize(("tool", "arguments"), REFUSED_ARGUMENTS)
 def test_parse_refuses_invalid_arguments(tool: str, arguments: Json) -> None:
     with pytest.raises(JournalRecordInvalid) as caught:
@@ -320,8 +403,25 @@ class FakeWorkVms:
         return await self.outcome(tool, arguments)
 
 
-def calls_with(workvms: FakeWorkVms | None) -> Calls:
-    return Calls(cast(WorkVms, workvms))
+def calls_with(workvms: FakeWorkVms | None, browsers: FakeWorkVms | None = None) -> Calls:
+    return Calls(cast(WorkVms, workvms), cast(Any, browsers))
+
+
+@pytest.fixture(autouse=True)
+def no_browsers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(journal, "browsers_for", lambda context: None)
+
+
+def test_a_browser_tool_goes_to_the_browsers() -> None:
+    env, workvms, browsers = FakeEnv(), FakeWorkVms(), FakeWorkVms()
+    answer = answer_of(calls_with(workvms, browsers), env, "browser_snapshot", {})
+    assert answer == {"status": "ok", "result": {"tool": "browser_snapshot"}}
+    assert (workvms.calls, browsers.calls) == ([], [(env, SESSION_A, "browser_snapshot", {})])
+    env = FakeEnv()
+    assert answer_of(calls_with(workvms), env, "browser_snapshot", {}) == {
+        "status": "error",
+        "error": {"error": "unavailable", "message": NOT_ENABLED},
+    }
 
 
 async def settle(calls: Calls) -> None:
@@ -500,10 +600,13 @@ def test_calls_for_creates_once_per_context(monkeypatch: pytest.MonkeyPatch) -> 
         seen.append(context)
         return workvms
 
+    browsers = FakeWorkVms()
     monkeypatch.setattr(journal, "workvms_for", workvms_for)
+    monkeypatch.setattr(journal, "browsers_for", lambda context: browsers)
     context = SimpleNamespace(_workvm_calls="not calls")
     first = journal.calls_for(context)
     assert cast(Any, first.workvms) is workvms
+    assert cast(Any, first.browsers) is browsers
     assert journal.calls_for(context) is first
     assert seen == [context]
     monkeypatch.setattr(journal, "workvms_for", lambda context: None)

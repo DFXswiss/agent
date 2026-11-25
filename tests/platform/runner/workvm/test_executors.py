@@ -57,6 +57,8 @@ def test_registered_executors() -> None:
         "workvm.request": executors.request_workvm,
         "workvm.release": executors.release_workvm,
         "test.run": executors.run_tests,
+        "browser.open": executors.open_browser,
+        "browser.close": executors.close_browser,
     } == executors.EXECUTORS
 
 
@@ -100,3 +102,28 @@ def test_a_test_run_goes_to_the_test_runs_or_fails_without_work_vms(monkeypatch:
     monkeypatch.setattr(executors, "testruns_for", lambda context: FakeRuns() if context is CONTEXT else None)
     result = asyncio.run(executors.run_tests(operation_context({"kind": "unit", "command": "x"})))
     assert result == {"run_id": "tr-000000000001", "params": {"kind": "unit", "command": "x"}}
+
+
+def test_the_browser_operations_go_to_the_browsers_or_fail_without_work_vms(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeBrowsers:
+        async def open(self, ctx: OperationContext) -> dict[str, Any]:
+            return {"opened": dict(ctx.params)}
+
+        async def close(self, ctx: OperationContext) -> dict[str, Any]:
+            return {"closed": True}
+
+    monkeypatch.setattr(executors, "browsers_for", lambda context: None)
+    with pytest.raises(OperationFailed) as caught:
+        asyncio.run(executors.open_browser(operation_context({})))
+    assert caught.value.code == "workvm_unavailable"
+    assert asyncio.run(executors.close_browser(operation_context({}))) == {
+        "closed": False,
+        "browser_id": None,
+        "actions": 0,
+        "reason": None,
+    }
+    monkeypatch.setattr(executors, "browsers_for", lambda context: FakeBrowsers() if context is CONTEXT else None)
+    assert asyncio.run(executors.open_browser(operation_context({"url": "https://a.test/"}))) == {
+        "opened": {"url": "https://a.test/"}
+    }
+    assert asyncio.run(executors.close_browser(operation_context({}))) == {"closed": True}

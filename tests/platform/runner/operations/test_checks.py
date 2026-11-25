@@ -65,6 +65,8 @@ VALID: dict[str, dict[str, Any]] = {
     "human.question": {"question": "Which database should the service use?\n- PostgreSQL\n- SQLite"},
     "human.approval": {"question": "May I delete the old branch?"},
     "github.merge_base": {"repo": REPO, "number": 7, "discard": True},
+    "browser.open": {"url": "https://example.com/" + "a" * 4076, "idle_seconds": 3600},
+    "browser.close": {},
 }
 
 
@@ -488,3 +490,22 @@ def test_a_trailer_like_line_in_the_message_is_refused(message: str) -> None:
 def test_the_words_inside_a_line_are_fine() -> None:
     message = "Mention co-authored-by: in the docs.\nNo trailer here: signed-off-by"
     assert checks.check(request("github.commit", with_("github.commit", message=message)))["message"] == message
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"url": "ftp://example.com/"},
+        {"url": "https://exa mple.com/"},
+        {"url": "https://example.com/" + "a" * 4077},
+        {"url": 5},
+        {"idle_seconds": 59},
+        {"idle_seconds": 3601},
+        {"idle_seconds": True},
+        {"x": 1},
+    ],
+)
+def test_browser_open_parameters_are_checked(params: dict[str, Any]) -> None:
+    assert refused("browser.open", params).code == "params_invalid"
+    assert checks.check(request("browser.open", {})) == checks.effective("browser.open", {}, SETTINGS)
+    assert refused("browser.close", {"url": "https://example.com/"}).code == "params_invalid"

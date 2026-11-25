@@ -51,7 +51,11 @@ GUEST_BUNDLE_DIR = "/tmp/agent-workvm"
 PROVISION = "images/workvm/provision.sh"
 PROVISION_TIMEOUT_S = 3600.0
 SMOKE_TIMEOUT_S = 300.0
-SMOKE_SCRIPT = "python3 --version && node --version && /usr/local/sbin/workvm-job selftest"
+SMOKE_SCRIPT = (
+    "python3 --version && node --version && /usr/local/sbin/workvm-job selftest"
+    " && /usr/local/bin/workvm-browser selftest"
+)
+"""The smoke test of a new work image: the toolchains, the job helper and the platform browser (KOR-44)."""
 CHUNK = 1 << 20
 _NAME_RE = re.compile(r"^[0-9a-z]+(?:[.-][0-9a-z]+)*$")
 

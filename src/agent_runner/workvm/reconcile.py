@@ -6,10 +6,12 @@ desired state already named the task closed, else `session_ended`).
 On every desired state of the hub:
 
 - **closed tasks**: a session listed with `task_closed: true` names a closed task; every VM of that task (task,
-  session and run VMs) is deleted at once with the reason `task_closed`, and its test runs end `cancelled`.
+  session, run and browser VMs) is deleted at once with the reason `task_closed`, and its test runs end `cancelled`.
 - **credit**: on a platform device every running work VM of an organization whose credit is used up is stopped at
   once (`credit_exhausted`: no RAM, no runtime billed); running test runs end `cancelled` within one poll
   (`testrun.TestRuns`). The VM is deleted after the idle time unless the resumed session uses it again.
+- **platform browser** (KOR-44): the browser sessions of a closed task close (`task_closed`) and those of an
+  organization without credit close (`credit_exhausted`); their VMs go with them (`browser.Browsers`).
 
 The hub is untrusted (00-overview.md section 3): it can only make the device give up its own VMs early.
 """
@@ -23,8 +25,8 @@ from typing import Any
 from agent_runner.reconcile.engine import Run
 from agent_runner.registry import ReconcileStep
 from agent_runner.workvm import records
-from agent_runner.workvm.manager import RUN_SCOPE, WorkVms
-from agent_runner.workvm.service import existing, runs_of
+from agent_runner.workvm.manager import OWNED_SCOPES, WorkVms
+from agent_runner.workvm.service import browsers_of, existing, runs_of
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
@@ -47,7 +49,7 @@ async def credit_pass(workvms: WorkVms) -> list[str]:
     stopped: list[str] = []
     for vm in await records.live(workvms.deps.db, "running"):
         if (
-            vm.scope != RUN_SCOPE
+            vm.scope not in OWNED_SCOPES
             and workvms.deps.exhausted(vm.org_id)
             and await workvms.stop(vm, reason="credit_exhausted")
         ):
@@ -60,9 +62,12 @@ async def step(run: Run) -> None:
     if run.desired is None or workvms is None:
         return
     runs = runs_of(run.context, workvms)
+    browsers = browsers_of(run.context, workvms)
     for task_id in closed_tasks(run.desired):
         runs.cancel(reason="task_closed", task_id=task_id)
+        await browsers.close_task(task_id)
         await workvms.close_task(task_id)
+    await browsers.credit_pass()
     await credit_pass(workvms)
 
 

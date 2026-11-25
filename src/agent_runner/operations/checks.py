@@ -135,6 +135,7 @@ MODEL: Rule = lambda value: isinstance(value, str) and _MODEL_ID_RE.fullmatch(va
 DIRECTION: Rule = _one_of("desc", "asc")
 UUID: Rule = lambda value: isinstance(value, str) and _UUID_RE.fullmatch(value) is not None  # noqa: E731
 _CWD_RE = re.compile(r"/[^\x00]{0,4095}", re.DOTALL)
+_BROWSER_URL_RE = re.compile(r"https?://[^\x00-\x20\x7f]{1,4088}")
 
 
 @dataclass(frozen=True)
@@ -282,6 +283,15 @@ TYPES: Mapping[str, TypeRules] = {
         },
         ("kind", "command"),
     ),
+    # docs/platform/spec/13-work-vm.md section 13.1 (ADR-085)
+    "browser.open": TypeRules(
+        {
+            "url": lambda value: isinstance(value, str) and _BROWSER_URL_RE.fullmatch(value) is not None,
+            "idle_seconds": _range(60, 3600),
+        },
+        (),
+    ),
+    "browser.close": TypeRules({}, ()),
     "human.question": TypeRules({"question": QUESTION}, ("question",)),
     "human.approval": TypeRules({"question": QUESTION}, ("question",)),
 }

@@ -2,7 +2,8 @@
 ADR-080 section 4). Runs in the journal page's transaction, so the work itself runs in the background:
 
 - a session in a final state: its session work VM is torn down, and the task work VM when no other session of the
-  task is active; its test runs end `cancelled` (`session_ended`);
+  task is active; its test runs end `cancelled` and its platform browser session closes (`session_ended`, or
+  `task_closed` when its task was closed);
 - a session that was suspended (paused): the VMs it works in are stopped (`WorkVms.pause`, no RAM and no runtime
   while they stand) unless a job still runs in them - a long build the session waits for keeps running and the idle
   pass decides as before. The credit stop is the reconcile step `workvm`.
@@ -19,7 +20,7 @@ from psycopg import AsyncConnection
 from agent_runner.sessions.extensions import StateObserver
 from agent_runner.sessions.records import FINAL, LocalSession
 from agent_runner.workvm.reconcile import closed_tasks
-from agent_runner.workvm.service import existing, runs_of
+from agent_runner.workvm.service import browsers_of, existing, runs_of
 
 PENDING: set[asyncio.Task[Any]] = set()
 
@@ -41,6 +42,7 @@ async def observe(journal: Any, _conn: AsyncConnection[Any], session: LocalSessi
         reason = "task_closed" if closed else "session_ended"
         runs_of(journal.env.context, workvms).cancel(reason=reason, session_id=session.id)
         _background(workvms.session_ended(session, reason=reason))
+        _background(browsers_of(journal.env.context, workvms).session_ended(session.id, reason=reason))
     elif state == "suspended":
         _background(workvms.pause(session, reason="session_paused", when_idle=True))
 

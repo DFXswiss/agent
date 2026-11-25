@@ -56,10 +56,24 @@ class RecordingRuns:
 RUNS = RecordingRuns()
 
 
+class RecordingBrowsers:
+    def __init__(self) -> None:
+        self.ended: list[tuple[str, str]] = []
+
+    async def session_ended(self, session_id: str, *, reason: str = "session_ended") -> list[str]:
+        self.ended.append((session_id, reason))
+        return []
+
+
+BROWSERS = RecordingBrowsers()
+
+
 @pytest.fixture(autouse=True)
 def runs(monkeypatch: pytest.MonkeyPatch) -> RecordingRuns:
     RUNS.cancelled.clear()
+    BROWSERS.ended.clear()
     monkeypatch.setattr(session_state, "runs_of", lambda context, workvms: RUNS)
+    monkeypatch.setattr(session_state, "browsers_of", lambda context, workvms: BROWSERS)
     return RUNS
 
 
@@ -95,6 +109,7 @@ def test_only_a_final_state_ends_the_session_work_vms(state: str | None) -> None
     ended = observe(context, {"state": state} if state is not None else {})
     assert ended == ([SESSION] if state in FINAL else [])
     assert RUNS.cancelled == ([{"reason": "session_ended", "session_id": SESSION.id}] if state in FINAL else [])
+    assert BROWSERS.ended == ([(SESSION.id, "session_ended")] if state in FINAL else [])  # its browser closes
     assert set() == session_state.PENDING
 
 
@@ -131,7 +146,7 @@ def test_the_teardown_runs_in_the_background() -> None:
         return held, before, workvms.ended, len(session_state.PENDING)
 
     held, before, after, left = asyncio.run(run())
-    assert (held, before, after, left) == (1, [], [SESSION], 0)
+    assert (held, before, after, left) == (2, [], [SESSION], 0)  # the work VMs and the browser
 
 
 def test_the_end_of_a_closed_task_s_session_is_named_task_closed() -> None:
@@ -150,3 +165,4 @@ def test_the_end_of_a_closed_task_s_session_is_named_task_closed() -> None:
     asyncio.run(run())
     assert workvms.reasons == ["task_closed"]
     assert RUNS.cancelled == [{"reason": "task_closed", "session_id": SESSION.id}]
+    assert BROWSERS.ended == [(SESSION.id, "task_closed")]

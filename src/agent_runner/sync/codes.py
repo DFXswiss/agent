@@ -68,6 +68,7 @@ HUB_ERROR_CODES = frozenset(
         "non_ascii",
         "nonce_replayed",
         "not_found",
+        "not_watched",
         "origin_mismatch",
         "origin_seq_conflict",
         "origin_seq_gap",

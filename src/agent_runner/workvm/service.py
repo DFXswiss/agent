@@ -12,6 +12,11 @@ Test runs (`testruns_for`, KOR-43): the daemon's `testrun.TestRuns` over the sam
 jobs are sealed into the context object cache (`agent_runner.contexts.logs`), at most `LOG_MAX_MIB` per log. On a
 platform device an exhausted organization (`billing.state.exhausted` of the last desired state) gets no new VM.
 
+The platform browser (`browsers_for`, KOR-44): the daemon's `browser.Browsers` over the same work VMs with
+`BROWSER_IDLE_SECONDS` and `BROWSER_SEARCH_URL`, and its live picture (`browser_live.LiveStreams`, capped by
+`BROWSER_LIVE_MAX_KBPS`) that posts sealed frames to the hub with the device's signed client and the workgroup's
+current key (`HubLink`) and runs the screencast over the slot's `limactl shell`.
+
 Work images: in self mode the stopped image instance in the runner's Lima home is the clone base of every slot. With
 slot accounts each slot keeps its own base `<prefix>wbase-<image hash>` in its Lima home, created from the image's
 exported disk in `IMAGES_DIR` (readable by the slot accounts) on first use.
@@ -32,10 +37,13 @@ from agent_runner.billing import state as billing_state
 from agent_runner.errors import RunnerError
 from agent_runner.sessions.events import session_event
 from agent_runner.sessions.records import LocalSession
+from agent_runner.sync.http import HubTransportError
 from agent_runner.vm import records as vm_records
 from agent_runner.vm.capacity import physical_memory_mib
 from agent_runner.vm.lima import Lima
 from agent_runner.workvm import accounts, firewall, records
+from agent_runner.workvm.browser import Browsers, BrowserSettings
+from agent_runner.workvm.browser_live import Link, LiveStreams, spawn_process
 from agent_runner.workvm.jobs import WorkVmError
 from agent_runner.workvm.manager import Deps, Identity, Settings, WorkVms
 from agent_runner.workvm.records import WorkVm
@@ -44,6 +52,7 @@ from agent_runner.workvm.testrun import Store, TestRuns, read_output
 
 ATTRIBUTE = "_workvms"
 RUNS_ATTRIBUTE = "_testruns"
+BROWSERS_ATTRIBUTE = "_browsers"
 MIB = 1024 * 1024
 BOUNDARY_TTL = 60.0
 IMAGES_DIR = Path("/var/agent-workvm/images")
@@ -79,6 +88,65 @@ def runs_of(context: Any, workvms: WorkVms) -> TestRuns:
     )
     setattr(context, RUNS_ATTRIBUTE, runs)
     return runs
+
+
+def browsers_for(context: Any) -> Browsers | None:
+    """The daemon's platform browser; None where there are no work VMs."""
+    workvms = workvms_for(context)
+    return None if workvms is None else browsers_of(context, workvms)
+
+
+def existing_browsers(context: Any) -> Browsers | None:
+    found = getattr(context, BROWSERS_ATTRIBUTE, None)
+    return found if isinstance(found, Browsers) else None
+
+
+def browsers_of(context: Any, workvms: WorkVms) -> Browsers:
+    """The daemon's platform browser over its work VMs, with its live picture (built once)."""
+    found = existing_browsers(context)
+    if found is not None:
+        return found
+    config = context.config
+    browsers = Browsers(
+        workvms=workvms,
+        settings=BrowserSettings(idle_seconds=config.browser_idle_seconds, search_url=config.browser_search_url),
+    )
+    link = HubLink(context)
+
+    async def spawn(vm: WorkVm, argv: Sequence[str]) -> Any:
+        return await spawn_process(workvms.deps.shell_for(vm), argv)
+
+    browsers.live = LiveStreams(
+        browsers, Link(post=link.post, key=link.key, spawn=spawn), max_kbps=config.browser_live_max_kbps
+    )
+    setattr(context, BROWSERS_ATTRIBUTE, browsers)
+    return browsers
+
+
+class HubLink:
+    """The live picture's way to the hub: the device's signed client and the workgroup's current key."""
+
+    def __init__(self, context: Any) -> None:
+        self.context = context
+
+    def _env(self) -> Any:
+        from agent_runner.contexts.env import contexts_for  # noqa: PLC0415 - the context area imports the sessions
+
+        env = contexts_for(self.context)
+        if env is None:
+            raise HubTransportError("not_enrolled")
+        return env
+
+    async def post(self, target: str, body: Mapping[str, Any]) -> Mapping[str, Any]:
+        answer: Mapping[str, Any] = await self._env().hub.request("POST", target, dict(body))
+        return answer
+
+    async def key(self, wg_id: str) -> tuple[int, bytes] | None:
+        from agent_runner.contexts.checkpoint import current_key  # noqa: PLC0415
+
+        env = self._env()
+        async with env.sessions.transaction() as conn:
+            return await current_key(conn, env.sessions.storage_key, wg_id)
 
 
 class Capturer:

@@ -42,7 +42,8 @@ PROVISION = f"""#!/bin/bash
 set -euo pipefail
 printf '#!/bin/sh\\necho v0-test\\n' > /usr/local/bin/node
 printf '#!/bin/sh\\n[ "$1" = selftest ]\\n' > /usr/local/sbin/workvm-job
-chmod 0755 /usr/local/bin/node /usr/local/sbin/workvm-job
+printf '#!/bin/sh\\n[ "$1" = selftest ]\\n' > /usr/local/bin/workvm-browser
+chmod 0755 /usr/local/bin/node /usr/local/sbin/workvm-job /usr/local/bin/workvm-browser
 echo built > {MARKER}
 """
 SMALL = {r"^cpus: \d+$": "cpus: 2", r"^memory: \S+$": "memory: 2GiB", r"^disk: \S+$": "disk: 10GiB"}

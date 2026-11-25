@@ -298,6 +298,9 @@ def config(home: Path, **changes: Any) -> SimpleNamespace:
         "workvm_max_per_owner": 8,
         "workvm_ssh_port_base": 47200,
         "workvm_template": None,
+        "browser_idle_seconds": 900,
+        "browser_live_max_kbps": 2000,
+        "browser_search_url": "https://search.test/?q={q}",
     }
     values.update(changes)
     return SimpleNamespace(**values)
@@ -634,3 +637,71 @@ def json_text(value: Any) -> str:
     import json  # noqa: PLC0415
 
     return json.dumps(value)
+
+
+# -- the platform browser (KOR-44) -----------------------------------------------------------------------------------
+
+
+def test_the_browser_is_built_once_with_its_live_picture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import agent_runner.workvm.browser_live as live_module  # noqa: PLC0415
+
+    fake_service(monkeypatch)
+    ctx = context(tmp_path)
+    browsers = service.browsers_for(ctx)
+    assert browsers is not None
+    assert browsers.workvms is service.existing(ctx)
+    assert service.browsers_for(ctx) is browsers
+    assert service.existing_browsers(ctx) is browsers
+    assert (browsers.settings.idle_seconds, browsers.settings.search_url) == (900, "https://search.test/?q={q}")
+    assert browsers.live.max_kbps == 2000
+    assert service.browsers_for(context(tmp_path, workvm_slots=0)) is None
+
+    spawned: list[Any] = []
+
+    async def spawn_process(shell: Any, argv: Any) -> str:
+        spawned.append((shell, list(argv)))
+        return "process"
+
+    monkeypatch.setattr(service, "spawn_process", spawn_process)
+    vm: Any = SimpleNamespace(slot=1, lima_name="agentwvm-0000000a")
+    assert asyncio.run(browsers.live.link.spawn(vm, ["a"])) == "process"
+    [(shell, argv)] = spawned
+    assert (shell.slot, shell.lima_name, argv) == (1, "agentwvm-0000000a", ["a"])
+    assert live_module.Link is type(browsers.live.link)
+
+
+def test_the_hub_link_posts_signed_and_reads_the_current_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    import agent_runner.contexts.env as contexts_env  # noqa: PLC0415
+    from agent_runner.contexts import checkpoint  # noqa: PLC0415
+    from agent_runner.sync.http import HubTransportError  # noqa: PLC0415
+
+    posted: list[tuple[str, str, Any]] = []
+
+    class Hub:
+        async def request(self, method: str, target: str, body: Any) -> dict[str, Any]:
+            posted.append((method, target, body))
+            return {"kbps": 1000}
+
+    class Transaction:
+        async def __aenter__(self) -> str:
+            return "conn"
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+    sessions = SimpleNamespace(transaction=Transaction, storage_key=b"k")
+    found: dict[str, Any] = {"env": None}
+    monkeypatch.setattr(contexts_env, "contexts_for", lambda ctx: found["env"])
+
+    async def current_key(conn: Any, storage_key: bytes, wg_id: str) -> tuple[int, bytes]:
+        assert (conn, storage_key) == ("conn", b"k")
+        return (2, wg_id.encode())
+
+    monkeypatch.setattr(checkpoint, "current_key", current_key)
+    link = service.HubLink(SimpleNamespace())
+    with pytest.raises(HubTransportError):
+        asyncio.run(link.post("/t", {}))
+    found["env"] = SimpleNamespace(hub=Hub(), sessions=sessions)
+    assert asyncio.run(link.post("/t", {"frame": 1})) == {"kbps": 1000}
+    assert posted == [("POST", "/t", {"frame": 1})]
+    assert asyncio.run(link.key("wg")) == (2, b"wg")

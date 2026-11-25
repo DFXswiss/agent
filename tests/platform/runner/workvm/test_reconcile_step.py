@@ -71,6 +71,21 @@ def test_the_step_closes_tasks_and_stops_the_vms_of_an_exhausted_organization(
         return []
 
     monkeypatch.setattr(reconcile, "runs_of", lambda context, workvms: SimpleNamespace(cancel=cancel))
+    browsers: list[str] = []
+
+    async def close_task(task_id: str) -> list[str]:
+        browsers.append(f"task_closed:{task_id}")
+        return []
+
+    async def credit_pass() -> list[str]:
+        browsers.append("credit")
+        return []
+
+    monkeypatch.setattr(
+        reconcile,
+        "browsers_of",
+        lambda context, workvms: SimpleNamespace(close_task=close_task, credit_pass=credit_pass),
+    )
 
     world.settings = dataclasses.replace(world.settings, slots=4)
 
@@ -88,6 +103,7 @@ def test_the_step_closes_tasks_and_stops_the_vms_of_an_exhausted_organization(
         return cancelled
 
     assert world.run(body) == [{"reason": "task_closed", "task_id": TASK}]
+    assert browsers == [f"task_closed:{TASK}", "credit"]  # the browser sessions close with the same causes
     found = {(row["task"], row["scope"]): (row["state"], row["delete_reason"]) for row in rows(world)}
     assert found[(TASK, "task")] == ("deleted", "task_closed")
     assert found[(TASK_B, "task")] == ("stopped", None)  # credit: stopped, not deleted
