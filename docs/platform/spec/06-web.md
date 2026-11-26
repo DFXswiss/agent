@@ -345,6 +345,21 @@ The home of an organization shows where people are needed, across all workgroups
   "Subagent `#42.1` of `<name> #42` on behalf of `<person>`" (`actors` of the response; the name when the task's
   name is in the store, else the handle); the filter "On behalf of" (`on_behalf_of`).
 
+### 4.0b "Prozesse optimieren" (KOR-53, [ADR-095](../adr/095-process-analysis.md))
+
+The situation view and the workgroup view (§5.1) show the button "Prozesse optimieren" to a person who may write a
+workgroup (there: this workgroup). It opens a dialog with the workgroup (default: the default workgroup in the
+situation view – scope `org` –, the current one in the workgroup view – scope `wg`), the period (1, 7, 30 or 90 days,
+preset 7) and, for scope `org`, the sentence "Der Bericht ist für alle Mitglieder der Workgroup <name> sichtbar und
+kann Summen aller Workgroups enthalten, die du lesen kannst." "Starten" sends the task through the ordinary send
+sequence (§4.3) with the fixed title and prompt of `contracts/tasks/analysis.json` in the UI language and
+`analysis {scope, since, until}`, then opens it. `peer_outdated` names the devices to update. Analysis tasks carry the
+badge "Analyse" in lists and on the task page; the task's profile (`analysis`) is shown without the change button
+(with the sentence that an analysis only reads and a way to start an ordinary task). On every output of an analysis
+task the chat offers "Übernehmen": the person chooses the workgroup's or the organization's whiteboard (only where
+the person may write; the organization choice repeats the visibility sentence) and the text becomes a whiteboard
+entry signed by the person (§6.1). The agent tool offers the same (`agent-platform optimize`, `optimize adopt`).
+
 ### 4.1 Entry
 
 Right after the first login (and on `/o/:org` whenever the user has no task yet) the home screen shows the composer

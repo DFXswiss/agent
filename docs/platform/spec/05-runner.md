@@ -1366,6 +1366,16 @@ not offer the excluded tools and records an excluded operation as locally reject
 profile. Merges (`github.merge`), verdicts (`review.verdict`) and the workgroup's merge criteria and separation of
 duties are §12.1 and 03-api.md §9.
 
+**Process analysis** (KOR-53, [ADR-095](../adr/095-process-analysis.md)): the read tools `get_usage`, `list_audit`,
+`list_workgroup_operations` and `get_metrics` (03-api.md §8.1) are answered like `list_tasks`: the arguments are
+checked again, the workgroup (`workgroup_id`, default the session's) must be readable by the read scope (owner ∩
+instructing human, device assigned, within the profile's reach), then the runner asks the hub's device route of that
+workgroup (03-api.md §6.1) and keeps only rows of the session's organization and that workgroup in the contract's
+form; an audit row's `detail` keeps only flat tokens and an untokenised `target_id` becomes null. Every call is a
+`platform.read` event and a `read.session.<tool>` audit row with `read_wg_id` and `triggered_by`. The runner announces
+`platform.analysis` (`Agent-Features`), which the hub requires for analysis tasks. A session with the profile
+`analysis` is restricted like any other profile; its main session's harness names the analysis brief.
+
 ## 14. Metrics
 
 Sampling every 15 s by the `metrics` task (sources and sinks in `08-monitoring.md`): host values, `limactl list

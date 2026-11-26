@@ -95,6 +95,11 @@ timestamptz NULL and `session.dfx_choice` bool default false (the wait of a sess
 `model_quota_exhausted`) and `task_attention.wait_until` timestamptz NULL (the time a `quota_wait` / `quota_choice`
 record continues by itself).
 
+Process analysis (KOR-53, [ADR-095](../adr/095-process-analysis.md), migration `0037_process_analysis`):
+`task.analysis` jsonb NULL (`{scope: org|wg, since, until}` of an analysis task, plaintext metadata of the request);
+indexes `session (wg_id, created_at DESC, id DESC)`, `operation (wg_id, created_at DESC, id DESC)` and `audit (wg_id,
+seq DESC) WHERE wg_id IS NOT NULL` for the session reads of one workgroup's usage, operations and audit.
+
 Device failure (KOR-58, ADR-087, migration `0031_device_failure`): `device.offline_since` (hub time the device went
 offline; cleared by a connect or heartbeat); `session.interrupted_at` (an active session of a failed device; it
 stays) and `interruption_ended_at` (its device was back before a move; interrupted while the first is newer),
