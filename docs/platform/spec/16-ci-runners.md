@@ -262,8 +262,9 @@ shared pool of [E-34](../KONZEPT.md#e-34) and [E-35](../KONZEPT.md#e-35) (§6.6)
   the job ends [GH-HOOKS-SCRIPTS]. Deletion in a `finally` shielded from cancellation, as for test runs
   (`13-work-vm.md` §12.2); a failed deletion stays `deleting` and is retried by the sweep every minute
   (`13-work-vm.md` §7). CI VMs use their own name prefix, and the sweep also removes the GitHub runner registration.
-- Reusable: APFS clone, warm pool, FIFO, deletion in `finally`, slot accounts and pf (`13-work-vm.md` §6, §7, §12.2).
-  Not reusable as is: the `runner.workvm` row requires `task_id`, `org_id` and `wg_id` (and `session_id` for the
+- Reusable: APFS clone, warm pool, FIFO, deletion in `finally` (`13-work-vm.md` §7, §12.2). Slot accounts and pf
+  (`13-work-vm.md` §6) are reusable only with the changes of §9.3 (accounts and their pf/wrapper/sudoers entries per
+  job instead of a fixed installed set). Not reusable as is: the `runner.workvm` row requires `task_id`, `org_id` and `wg_id` (and `session_id` for the
   scope `session`) (`13-work-vm.md` §8); the session golden forbids Bash and git (`05-runner.md` §4); output through `workvm-job` is
   not needed for jobs (GitHub carries the logs) but useful for diagnosis.
 
@@ -641,13 +642,18 @@ The recommendation flips (research 2 §7):
   `:192-193`), not between jobs. A root-owned or read-only `_config` is no remedy: `limactl start` then fails with
   `_config/networks.yaml: permission denied`, which is why HOT-18 replaced the root-owned `_config`
   (`docs/platform/decisions/HOT-18.md` point 5, `src/agent_runner/workvm/accounts.py:21-24`). **Recommendation**
-  (part of D-20, not decided): every CI job gets a fresh slot account – a new account name and a new UID, neither ever
-  reused. After the job the account is torn down completely: kill all processes of the UID, tear down its launchd user
-  domain, remove its crontab and `at` jobs, delete every file owned by the UID in the whole file system, and delete the
-  account. The teardown is finished before another CI account starts on the device and at the latest before the
-  device's next work VM allocation, so that nothing of the account keeps running. Reusing a slot account for CI is
-  **not** recommended, because the state of an account cannot be enumerated conclusively and cleaning a reused
-  account therefore never provably removes everything.
+  (part of D-20, not decided): the CI accounts have two mandatory properties; how they are achieved is left to the
+  build.
+  - **(a) Nothing of a CI job carries over** into a later job or onto the device: neither processes nor files nor any
+    other state of the account the job ran under (examples, expressly not exhaustive: the home with Lima `_config` and
+    `override.yaml`, crontab and `at` jobs, the launchd user domain, `/private/var/folders/…`, `/tmp`). Because the
+    state of a macOS account cannot be enumerated conclusively, the obvious implementation is an own account per job
+    that is torn down completely afterwards; a root-owned `_config` is excluded by HOT-18 (see above).
+  - **(b) Every account is covered by the work VM boundary before its first process**: pf rules per UID, wrapper and
+    sudoers allow-list (`13-work-vm.md` §6), fail-closed; at teardown these entries are removed.
+  - How this is built (creating and deleting accounts, port assignment, parallelism, teardown without blocking work VM
+    allocations) is open and part of D-20. The recommendation sets no ordering that restricts parallel CI VMs or work VM
+    allocations.
 - Separation between agent VMs and CI VMs on one device:
   - Slot accounts, Lima homes and pf rules are separate per workload kind and, within CI, per class; an account is
     never reused across them.
@@ -929,7 +935,7 @@ single option, the row says so. Everything else is open. The tendency is the fac
 | D-17 | RealUnit goldens | where they run today; whether they move into VMs | clarify first (§8.5) |
 | D-18 | Experimental Lima feature in production | yes, pinned with spike; no | depends on M-12, M-16 |
 | D-19 | macOS tool | Lima; Tart; Anka/Orka; GitHub-hosted; dedicated Mac without VM (excluded by E-34 as an own machine; deviates from A20, §8.6) | Lima, Tart as fallback (§8.6) |
-| D-20 | Hardening order ([E-25](../KONZEPT.md#e-25)) | order the hardening expressly: which of §9.3–§9.7 and of the separation per class of §5 (own runner group, scale set, VM pool and slot accounts per class) the client orders before which stage; includes the recommended gate U (§9.3) with its two build parts: order it, order parts of it, or not; includes the repository preconditions for class U (§9.6: secrets only in environments bound to protected branches, organisation secrets only where needed, `GITHUB_TOKEN` read-only by default) | order gate U before stage 3; proposed default: class U does not start before this decision, and not in a repository that misses the §9.6 preconditions |
+| D-20 | Hardening order ([E-25](../KONZEPT.md#e-25)) | order the hardening expressly: which of §9.3–§9.7 and of the separation per class of §5 (own runner group, scale set, VM pool and slot accounts per class) the client orders before which stage; includes the recommended gate U (§9.3) with its two build parts: order it, order parts of it, or not; includes the recommended properties (a) and (b) of the CI accounts (§9.3: nothing of a job carries over; every account covered by the work VM boundary before its first process) and how they are built; includes the repository preconditions for class U (§9.6: secrets only in environments bound to protected branches, organisation secrets only where needed, `GITHUB_TOKEN` read-only by default) | order gate U before stage 3; proposed default: class U does not start before this decision, and not in a repository that misses the §9.6 preconditions |
 | D-21 | Legal review of the Apple licences | 2B(iii) for the installation type (DFU/IPSW), governing law, intra-group charging, Xcode in a guest | review on the original text before the macOS pilot |
 | D-22 | Shares of the pool (§6.6) | values of `MIN_SHARE`, `MAX_SHARE`, `HEADROOM_INTERACTIVE`, organisation and class shares, `LATENCY_BUDGET`, `POOL_FAILURE_RESERVE`; order between workload kinds; may CI demand stop idle agent VMs? how much Linux capacity may the pilot device give up for macOS VMs? | open, after M-19/M-20 |
 | D-23 | Where CI placement is decided | (a) each device offers only its own free capacity to GitHub; (b) one leading controller for all devices; (c) hub (metadata rule, D-3) | open, after M-8 |
@@ -971,7 +977,7 @@ single option, the row says so. Everything else is open. The tendency is the fac
 | Deploy runner reached by other workflows | Class H runs persistently on the host of a pool device; a label or a changed `runs-on` in a PR targets it | Own group with one repository and protected workflow refs, no PR trigger; without groups pull deployment (§5, D-1 (c), D-9); check in §12.3 step c |
 | CI load displaces sessions | CI VMs hold capacity or slow the device; session starts wait or fail | Shares, headroom, latency budget, stop of new CI VMs (§6.6, M-19); displacement metrics (§11.2) |
 | Co-residency of foreign code with workgroup plaintext (**carried knowingly**) | CI jobs with foreign PR code run on the devices that hold workgroup plaintext; this is the client's decision ([E-35](../KONZEPT.md#e-35)), not an oversight, and no own CI device separates them | The client carries this risk by E-35; the countermeasures stay a recommendation: gate U (§9.3; open, D-7, D-20), separation rules of §9.3, D-24 |
-| Side channel between workloads | Foreign code and workgroup plaintext on one host: CPU caches, timing, hypervisor bug | Nothing writable shared, separate slot accounts (§9.3); the rest is a residual risk of E-34 and E-35, carried knowingly by the client (E-35), named again with D-20. Residual risk: after an escape the job controls the whole slot account – its home (Lima `_config` with an `override.yaml`, background processes, other files) and every state a macOS account can hold outside it (examples, not exhaustive: crontab and `at` jobs, jobs in its launchd user domain `user/<uid>`, `/private/var/folders/…`, its files in `/tmp`); such state can carry over into later jobs of the same slot and cannot be enumerated conclusively. Recommended: a fresh slot account per CI job (new name and new UID, never reused), torn down completely after the job (kill all processes of the UID, tear down its launchd user domain, remove crontab and `at` jobs, delete every file of the UID in the whole file system, delete the account) before another CI account starts on the device and at the latest before the device's next work VM allocation, so that nothing of it keeps running; reusing a slot account for CI is not recommended – a root-owned `_config` breaks `limactl start` (HOT-18) (§9.3; open, D-20). The escape from the VM itself (hypervisor bug) stays a residual risk |
+| Side channel between workloads | Foreign code and workgroup plaintext on one host: CPU caches, timing, hypervisor bug | Nothing writable shared, separate slot accounts (§9.3); the rest is a residual risk of E-34 and E-35, carried knowingly by the client (E-35), named again with D-20. Residual risk: after an escape the job controls the whole slot account – its processes, its home (Lima `_config` with an `override.yaml`, other files) and every state a macOS account can hold outside it (examples, not exhaustive: crontab and `at` jobs, jobs in its launchd user domain `user/<uid>`, `/private/var/folders/…`, its files in `/tmp`); such state can carry over into later jobs and cannot be enumerated conclusively. Recommended: properties (a) and (b) of §9.3 – nothing of a CI job carries over into a later job or onto the device, and every account is covered by the work VM boundary (pf per UID, wrapper and sudoers allow-list) before its first process, fail-closed; how this is built is left to the build (§9.3; recommendation, open, D-20). The escape from the VM itself (hypervisor bug) stays a residual risk |
 | Pool failure hits both workloads | Device, egress, update or boundary failure stops sessions and CI together | Failure reserve, rolling maintenance (one device at a time), repair way without CI (§11.3) |
 | Mixing U and T | A JIT runner takes another matching job | Groups per class, repository/workflow policy, no shared labels (§5) |
 | Theft of the app key | Key in the runner process or a VM | Own account or signer, organisation runner permission only, rotation (D-4) |
