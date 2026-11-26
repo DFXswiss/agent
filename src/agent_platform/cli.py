@@ -386,7 +386,7 @@ def cmd_task_list(account: Account, args: argparse.Namespace, context: Context) 
     if args.mine or (args.org is not None and args.by_person):
         raise PlatformError("invalid_argument")
     if args.org is not None:
-        # every readable workgroup of the org with the filters: the task dashboard of one org (E-43, ADR-101)
+        # every readable workgroup of the org with the filters: the task dashboard of one org (ADR-101)
         dashboard = sessions.Dashboard(
             org=args.org,
             state=query.state,

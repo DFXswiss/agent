@@ -19,7 +19,7 @@ Additive changes; an older client never sends the new fields, an older hub never
 - `audit/task.fields.json` (new action `task.fields`, `enums/audit-actions.json`); `audit/task.create.json`: optional
   `captured: true`.
 
-Task dashboard (E-43, ADR-101), additive as well:
+Task dashboard (ADR-101, delivered with E-41), additive as well:
 
 - `api/orgs-tasks-counts.{request,response}.json`, `api/INDEX.json`: `GET /v1/orgs/{org}/tasks/counts` (`org:member`)
   with the list filters and `wg`; answer `{by_status, by_urgency, total}`.

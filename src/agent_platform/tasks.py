@@ -491,8 +491,6 @@ def task_list(account: Account, wg: str, query: ListQuery | None = None) -> dict
     return {"org_id": org, "wg_id": wg, "tasks": tasks, "truncated": truncated}
 
 
-
-
 def task_follow(account: Account, task: str, after: int, wait: int) -> dict[str, Any]:
     """The task's chat events after the scope position `after`, waiting up to `wait` seconds for the first one.
 

@@ -302,7 +302,7 @@ def _dashboard(desk: Desk) -> dict[str, str]:
 
 
 def test_the_dashboard_counters(desk: Desk) -> None:
-    """E-43, ADR-101 section 1: per status the tasks matching every filter but the status, per urgency every filter
+    """ADR-101 section 1: per status the tasks matching every filter but the status, per urgency every filter
     but the urgency, total all of them."""
     _dashboard(desk)
     base = f"/v1/orgs/{desk.org}/tasks/counts"
@@ -349,7 +349,7 @@ def test_the_dashboard_counters(desk: Desk) -> None:
 
 
 def test_the_list_by_urgency(desk: Desk) -> None:
-    """E-43, ADR-101 section 2: `order=urgency`, the most urgent first, then the latest activity, paged."""
+    """ADR-101 section 2: `order=urgency`, the most urgent first, then the latest activity, paged."""
     found = _dashboard(desk)
     base = f"/v1/workgroups/{desk.wg}/tasks?order=urgency&limit=1"
     seen: list[str] = []

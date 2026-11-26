@@ -74,7 +74,7 @@ export function selectRowInfo(rows: readonly TaskRow[]): (state: StoreState) => 
     for (const row of rows) {
       next.set(row.task_id, {
         title: selectTitle(row.wg_id, row.task_id, row.title_event_id)(state),
-        // the owner in the row's own organization (the dashboard lists several, E-43)
+        // the owner in the row's own organization (the dashboard lists several, ADR-101)
         owner: selectOwner(row.org_id, row.wg_id, row.task_id)(state),
       });
     }
@@ -110,7 +110,7 @@ export function selectDirectories(key: string): (state: StoreState) => ReadonlyM
 }
 
 /**
- * The names of several organizations (at least one; the task dashboard lists all of them, E-43); pulls their profiles
+ * The names of several organizations (at least one; the task dashboard lists all of them, ADR-101); pulls their profiles
  * once.
  */
 export function useDirectories(orgs: readonly string[]): ReadonlyMap<string, Directory> {

@@ -7,7 +7,7 @@
   the last activity of the page's last row instead of its creation time (the task overview of the web client merges
   the lists of several workgroups by activity and pages each with its own cursor). The ticket filters of ADR-100
   (`status`, `urgency`, `assignee`, `topic`; `none` for tasks without a person or topic) combine with the state.
-  `order="urgency"` (E-43, ADR-101) puts the most urgent first, then the latest activity; its cursor adds the rank.
+  `order="urgency"` (ADR-101) puts the most urgent first, then the latest activity; its cursor adds the rank.
 - `count_tasks(wgs)`: the counters of the task dashboard per status and per urgency (ADR-101 section 1).
 - `get_task(task)`: the task row, its sessions as a tree order (depth, creation), each with its usage and its newest
   100 transitions, and the newest 100 task transitions.
@@ -80,7 +80,7 @@ class TicketFilter:
 URGENCY = "urgency"
 URGENCY_RANKS = {"low": 0, "normal": 1, "high": 2, "urgent": 3}
 RANK_SQL = "(CASE t.urgency WHEN 'urgent' THEN 3 WHEN 'high' THEN 2 WHEN 'normal' THEN 1 ELSE 0 END)"
-"""The rank of a task's urgency for `order=urgency` (E-43, ADR-101 section 2): the most urgent first."""
+"""The rank of a task's urgency for `order=urgency` (ADR-101 section 2): the most urgent first."""
 _URGENCY_INDEX = rows.TASK_FIELDS.index("urgency")
 _ACTIVITY_INDEX = ORDERS["activity"][1]
 
@@ -162,10 +162,8 @@ STATUS_KEYS = ("todo", "inProgress", "completed")
 URGENCY_KEYS = tuple(URGENCY_RANKS)
 
 
-def count_tasks(
-    connection: Connection, wgs: list[UUID], *, state: str | None, ticket: TicketFilter
-) -> dict[str, Any]:
-    """The counters of the task dashboard (E-43, ADR-101 section 1) over the workgroups `wgs` (the caller checked that
+def count_tasks(connection: Connection, wgs: list[UUID], *, state: str | None, ticket: TicketFilter) -> dict[str, Any]:
+    """The counters of the task dashboard (ADR-101 section 1) over the workgroups `wgs` (the caller checked that
     it reads each): per status the tasks that match every filter but the status, per urgency those that match every
     filter but the urgency, and `total` the tasks that match all of them - so a click on a counter gives that many."""
     clauses = ["t.wg_id = ANY(%s)"]

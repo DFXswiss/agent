@@ -103,7 +103,7 @@ test('a member sees the tasks of the workgroups they can read, never those of an
     'Market report for Switzerland',
     'Plan the product launch',
   ]);
-  // Bob is in two organizations (his own and Ada's): the dashboard names the organization of each row (E-43)
+  // Bob is in two organizations (his own and Ada's): the dashboard names the organization of each row (ADR-101)
   await expect(rows.getByTestId('tasks.row.wg')).toHaveText([/ · Default$/, / · Research$/, / · Default$/]);
   await expect(rows.getByTestId('tasks.row.owner')).toHaveText(['Bob Member', 'Ada Lovelace', 'Ada Lovelace']);
   // Ada's readable workgroups (the route's organization first), then Bob's own; never "Secret"

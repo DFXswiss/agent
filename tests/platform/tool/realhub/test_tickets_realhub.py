@@ -138,7 +138,7 @@ def test_refusals(real: RealHub) -> None:
 
 
 def test_the_dashboard_over_organizations(real: RealHub) -> None:
-    """E-43, ADR-101 section 4: `task overview` lists the tasks of every readable workgroup of every organization,
+    """ADR-101 section 4: `task overview` lists the tasks of every readable workgroup of every organization,
     filtered, searched and sorted, with the counters; `task list --org` is the same for one organization."""
     ada, org, wg = _setup(real)
     other_org = str(run_ok(ada.tool, "org", "create", "--name", "Beta", "--display-name", "Ada")["org_id"])

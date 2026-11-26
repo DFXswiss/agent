@@ -136,7 +136,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | devices-own-mac-remove | screens/devices (unpair; the Mac then removes its installation by itself, ADR-074) | `device remove --this-computer` | done |
 | tasks-list | screens/tasks | `task list` | done |
 | tasks-overview | screens/tasks (overview of an org) | `task overview --org --state --mine --search` | done |
-| tasks-dashboard | screens/tasks (the task dashboard over every organization and workgroup: counters per status and urgency, filters by organization, workgroup, state, status, urgency, person, topic, GitHub organisation, repository, "only mine" and title, order; E-43, ADR-101) | `task overview [--org\|--wg] --state --mine --search --status --urgency --assignee --topic --github-org --repo --order`, `task list --org\|--wg` with the same filters | done |
+| tasks-dashboard | screens/tasks (the task dashboard over every organization and workgroup: counters per status and urgency, filters by organization, workgroup, state, status, urgency, person, topic, GitHub organisation, repository, "only mine" and title, order; ADR-101) | `task overview [--org\|--wg] --state --mine --search --status --urgency --assignee --topic --github-org --repo --order`, `task list --org\|--wg` with the same filters | done |
 | task-create | screens/home, screens/tasks | `task create --device --vm --github-identity` | done |
 | task-github-identity | screens/home, screens/tasks, screens/task (the task's GitHub identity at creation and changed later, ADR-078 section 3) | `task create --github-identity`, `task github-identity --task --identity --none` | done |
 | task-view | screens/task (chat) | `task show` | done |

@@ -31,7 +31,7 @@ export const MAX_ROWS = 200;
 
 export interface TaskTableProps {
   readonly org: string;
-  /** The organizations of the rows (the task dashboard lists several, E-43; default `org` alone). */
+  /** The organizations of the rows (the task dashboard lists several, ADR-101; default `org` alone). */
   readonly orgs?: readonly string[];
   /** The windowed list this table is (`tasks.list` for a workgroup and home, `tasks.overview` for the overview). */
   readonly listId?: ListId;

@@ -2,8 +2,9 @@
 
 Status: Accepted (2026-11-26)
 
-Implements [E-43](../KONZEPT.md#e-43) with its interpretation [A24](../KONZEPT.md#a-24) ("ganz wichtig, wir brauchen
-ein dashboard für alle tasks! wo man filtern kann nach Zuständig, prio, status und co"), under
+A direct order of the client, delivered together with the captured tasks of [E-41](../KONZEPT.md#e-41)
+([ADR-100](100-captured-tasks.md)) and without a rule of its own in the concept: "ganz wichtig, wir brauchen ein
+dashboard für alle tasks! wo man filtern kann nach Zuständig, prio, status und co". Under
 [E-04](../KONZEPT.md#e-04)/[E-26](../KONZEPT.md#e-26) (the agent tool can do the same) and [E-25](../KONZEPT.md#e-25)
 (exactly what was ordered). Built from the task overview of an organization ([E-21](../KONZEPT.md#e-21), KOR-32), the
 agent tool's `task overview` and the situation view per organization (KOR-39), and the ticket fields of
@@ -79,7 +80,7 @@ agent account wrote the task, as in the web. The MCP server reaches both through
   the hub double and the real hub.
 
 ## Alternatives considered
-- A new screen beside the overview: two lists of the same tasks (E-43 asks to build it from the existing overview).
+- A new screen beside the overview: two lists of the same tasks (the order asks to build it from the existing overview).
 - Counting in the client: wrong as soon as a list has a further page.
 - One hub route over all organizations: the rights, keys and logs are per organization; the client already verifies
   each organization's log and merges.

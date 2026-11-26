@@ -246,7 +246,7 @@ async def task_counts(
     assignee: str | None = None,
     topic: str | None = None,
 ) -> dict[str, Any]:
-    """The counters of the task dashboard (E-43, ADR-101 section 1) over the readable workgroups of the org."""
+    """The counters of the task dashboard (ADR-101 section 1) over the readable workgroups of the org."""
     if state is not None and state not in TASK_STATES:
         raise HubError("request_invalid", detail={"pointers": ["/state"]})
     ticket = _ticket_filter(status, urgency, assignee, topic)

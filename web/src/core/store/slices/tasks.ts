@@ -231,7 +231,7 @@ export function newestFirst(tasks: Readonly<Record<string, TaskRow>>, ids: Itera
   return [...new Set(ids)].sort((a, b) => time(b) - time(a) || Number(b > a) - Number(b < a));
 }
 
-/** The IDs in the order of the list key `filter` (`newestFirst` for the latest activity; E-43, ADR-101 section 2). */
+/** The IDs in the order of the list key `filter` (`newestFirst` for the latest activity; ADR-101 section 2). */
 export function inListOrder(
   tasks: Readonly<Record<string, TaskRow>>,
   ids: Iterable<string>,

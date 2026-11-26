@@ -15,7 +15,7 @@
 - `session terminal`: the `session.terminal` chunks of the session (`kinds=session.terminal&session=<id>`), checked
   with the session's device as author (E7), as text: the output frames (`o`) in order, raw and without terminal
   control sequences; `next_after` continues after the last chunk read.
-- `task overview`, the task dashboard (E-43, ADR-101 section 4): every task of the workgroups the user can read in
+- `task overview`, the task dashboard (ADR-101 section 4): every task of the workgroups the user can read in
   every organization of the user (or of `--org`, or of the workgroup `--wg`; from the verified log, others are never
   asked), captured tasks and agent tasks in one list, merged in the chosen order (latest activity, creation or
   urgency), with verified title, owner (the signed author of the task's first `task.meta` of a person or an agent
@@ -290,7 +290,7 @@ def metas(account: Account, org: str, wg: str) -> dict[str, tuple[str | None, st
 
 @dataclass(frozen=True)
 class Dashboard:
-    """What `task overview` asks for (E-43, ADR-101 section 4): the place (every organization of the user, one org or
+    """What `task overview` asks for (ADR-101 section 4): the place (every organization of the user, one org or
     one workgroup), the task state, "only mine" (the signed owner), the title search, the ticket filters of ADR-100
     and the order."""
 

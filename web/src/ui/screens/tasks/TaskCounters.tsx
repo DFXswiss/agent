@@ -1,4 +1,4 @@
-// The counters of the task dashboard (E-43, ADR-101 section 1): per status and per urgency the number of tasks of the
+// The counters of the task dashboard (ADR-101 section 1): per status and per urgency the number of tasks of the
 // shown organizations under the hub filters of the list (`core/tasks/counts.ts`). A click on a counter sets that
 // filter, a click on the chosen one clears it. They load again when a filter changes, when a row of the shown
 // workgroups appears or changes its status or urgency (a live row frame), and after a reconnect (KOR-11).

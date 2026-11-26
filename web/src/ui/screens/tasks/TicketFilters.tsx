@@ -56,7 +56,7 @@ export function TicketFilters({
   onChange,
 }: {
   readonly org: string;
-  /** The organizations whose people and topics are offered (the task dashboard, E-43; default `org` alone). */
+  /** The organizations whose people and topics are offered (the task dashboard, ADR-101; default `org` alone). */
   readonly orgs?: readonly string[];
   readonly values: TicketFilterValues;
   readonly onChange: (values: TicketFilterValues) => void;

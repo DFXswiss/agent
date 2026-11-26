@@ -70,7 +70,7 @@ export interface Overview {
 }
 
 /** The user a task belongs to: its owner, or the user of an owner that is an agent (null while unknown); in the row's
- * own organization (the dashboard merges several, E-43). */
+ * own organization (the dashboard merges several, ADR-101). */
 function mineOf(state: StoreState, row: TaskRow): string | null {
   const owner = selectOwner(row.org_id, row.wg_id, row.task_id)(state);
   const log = orgEntry(state.orgs, row.org_id).log;

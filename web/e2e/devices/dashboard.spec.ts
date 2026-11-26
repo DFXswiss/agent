@@ -1,4 +1,4 @@
-// The task dashboard (E-43, ADR-101) against the real hub, on the desktop and on the phones: one click from Home and
+// The task dashboard (ADR-101) against the real hub, on the desktop and on the phones: one click from Home and
 // from the menu; the tasks of two organizations of the user in one list with "organization · workgroup"; the counters
 // per status and per urgency on top (a click filters, a second click clears; the hub counts); the filters by
 // organization, person (Zuständig), urgency (Prio) and status; the order "most urgent first" and the title search.

@@ -1,4 +1,4 @@
-// U-WEB-ui-tasks (dashboard, E-43, ADR-101 section 3): the task overview as the dashboard of every organization of
+// U-WEB-ui-tasks (dashboard, ADR-101 section 3): the task overview as the dashboard of every organization of
 // the user – rows of both organizations with "organization · workgroup", the organization filter, the counters per
 // status and urgency summed over the organizations (a click filters, a second click clears), the order, the counters
 // loaded again after a changed row or a reconnect, and a failed counter request. The Playwright spec runs the same

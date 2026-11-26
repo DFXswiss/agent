@@ -197,7 +197,7 @@ export function HomeScreen() {
       <div className="flex flex-col gap-1" data-testid="attention.screen">
         <h1 className="text-xl font-semibold">{t('attention.title')}</h1>
         <p className="text-sm text-gray-700">{t('attention.intro')}</p>
-        {/* the task dashboard with every task of every organization, one click away (E-43) */}
+        {/* the task dashboard with every task of every organization, one click away (ADR-101) */}
         <Link
           className="flex min-h-11 items-center self-start text-sm text-blue-800 underline"
           to={`/o/${encodeURIComponent(org)}/tasks`}

@@ -47,7 +47,7 @@ export function selectTopicsOf(key: string): (state: StoreState) => ReadonlyMap<
   };
 }
 
-/** The topics of several organizations (the task dashboard, E-43); pulls them once. */
+/** The topics of several organizations (the task dashboard, ADR-101); pulls them once. */
 export function useTopicsOf(orgs: readonly string[]): ReadonlyMap<string, readonly Topic[]> {
   const { app } = useAppEnv();
   const key = orgs.join(',');

@@ -189,7 +189,7 @@ session, and every prompt that starts a new main session moves `todo` to `inProg
 filters by `status`, `urgency`, `assignee` and `topic` (an ID or `none`). Title, description, GitHub organisation and
 repository are sealed in `task.meta` (§10), topic names in `topic.profile`.
 
-**Task dashboard (KOR-75, ADR-101, E-43).** `GET /v1/orgs/{org}/tasks/counts` (org:member, audit read
+**Task dashboard (KOR-75, ADR-101).** `GET /v1/orgs/{org}/tasks/counts` (org:member, audit read
 `read.org.tasks.counts`) `?state=&status=&urgency=&assignee=&topic=&wg=` → `{by_status:{todo,inProgress,completed},
 by_urgency:{low,normal,high,urgent},total}` over the tasks of the workgroups of the organization the user can read
 (`wg`: one of them; an unreadable one `404`), with the filters of `GET /v1/workgroups/{wg}/tasks`; the counters per

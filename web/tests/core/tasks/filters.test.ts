@@ -51,7 +51,7 @@ describe('filter keys', () => {
   });
 });
 
-describe('the order of a list (E-43, ADR-101 section 2)', () => {
+describe('the order of a list (ADR-101 section 2)', () => {
   it('keys the order last and sends it only when asked', () => {
     const key = filterKey({ status: 'todo', order: 'urgency' });
     expect(key).toBe('status=todo&order=urgency');

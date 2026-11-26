@@ -1,5 +1,5 @@
 {
-  "description": "Endpoints added by KOR-75 (ADR-100, E-41; ADR-101, E-43): the ticket fields of a task - status, urgency, person and topic - and the counters of the task dashboard (03-api.md section 4.6).",
+  "description": "Endpoints added by KOR-75 (ADR-100, E-41; ADR-101): the ticket fields of a task - status, urgency, person and topic - and the counters of the task dashboard (03-api.md section 4.6).",
   "rights": [
     "task:write",
     "org:member"

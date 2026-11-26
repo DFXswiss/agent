@@ -6,7 +6,7 @@
 // slice uses it.
 import type { TaskRow } from '../store/slices/tasks';
 
-/** The filters the hub applies; null or absent: not filtered. `order` is the list's order (E-43, ADR-101 section 2;
+/** The filters the hub applies; null or absent: not filtered. `order` is the list's order (ADR-101 section 2;
  * absent: latest activity). */
 export interface HubFilter {
   readonly state?: string | null;

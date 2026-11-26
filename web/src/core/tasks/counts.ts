@@ -1,4 +1,4 @@
-// The counters of the task dashboard (E-43, ADR-101 section 1): per status and per urgency the number of tasks of the
+// The counters of the task dashboard (ADR-101 section 1): per status and per urgency the number of tasks of the
 // readable workgroups, from `GET /v1/orgs/{org}/tasks/counts` of every organization shown, summed. The hub filters of
 // the list apply (state, person, topic; one workgroup); a status counter ignores the status filter and an urgency
 // counter the urgency filter, so a click on a counter gives that many rows. The sealed filters (title search, "only

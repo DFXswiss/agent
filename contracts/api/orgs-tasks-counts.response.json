@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/orgs-tasks-counts.response.json",
   "title": "GET /v1/orgs/{org}/tasks/counts response",
-  "description": "The counters of the task dashboard (E-43, ADR-101 section 1) over the readable workgroups: per status the tasks matching every filter but the status, per urgency those matching every filter but the urgency, total those matching all.",
+  "description": "The counters of the task dashboard (ADR-101 section 1) over the readable workgroups: per status the tasks matching every filter but the status, per urgency those matching every filter but the urgency, total those matching all.",
   "type": "object",
   "properties": {
     "by_status": {

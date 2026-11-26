@@ -45,7 +45,7 @@ GITHUB_REPO_RE = re.compile("([A-Za-z0-9][A-Za-z0-9-]{0,38})/[A-Za-z0-9_.-]{1,10
 NONE = "none"
 ME = "me"
 ORDERS = ("activity", "created", "urgency")
-"""The orders of `task list` and `task overview` (E-43, ADR-101 section 2): latest activity (default), newest
+"""The orders of `task list` and `task overview` (ADR-101 section 2): latest activity (default), newest
 creation, most urgent first."""
 
 

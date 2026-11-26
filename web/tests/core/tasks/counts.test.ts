@@ -1,4 +1,4 @@
-// U-WEB-ui-tasks (dashboard counters, E-43, ADR-101 section 1): the request of one organization's counters (the hub
+// U-WEB-ui-tasks (dashboard counters, ADR-101 section 1): the request of one organization's counters (the hub
 // filters without the order, one workgroup), the check of the answer, the sum over organizations and what the
 // counters depend on among the loaded rows.
 import { describe, expect, it } from 'vitest';

@@ -64,7 +64,7 @@ describe('lists', () => {
     expect(newestFirst({ ...tasks, d: active }, ['a', 'b', 'c', 'd'])).toEqual(['d', 'b', 'c', 'a']);
   });
 
-  it('keeps a list in the order of its key (E-43, ADR-101 section 2)', () => {
+  it('keeps a list in the order of its key (ADR-101 section 2)', () => {
     const tasks = {
       a: row('a', '2026-11-21T12:00:00.000Z', { urgency: 'low' }),
       b: row('b', '2026-11-21T12:00:01.000Z'),
