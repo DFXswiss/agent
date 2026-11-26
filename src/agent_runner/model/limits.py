@@ -16,8 +16,10 @@ rate limits only and are never limited here.
   was found for (`model.operator` keeps them; a new content releases the block).
 
 The rows are read once per daemon (`load`); rows whose `until` passed are deleted then. The memory also holds the
-latest quota reading of each access (`readings`, never a token) and a change counter for the operator quota
-snapshot (`version`).
+latest quota reading of each access (`readings`, never a token), a change counter for the operator quota
+snapshot (`version`) and the models an access does not cover (`models`, HOT-26: the provider answered "usage credits
+are required for this model"; per access key, model and the identity of the content that was refused, for
+`REFUSED_MODEL_S`; memory only - a restarted daemon learns it again from the next refusal).
 
 `full_until(windows, now)` is the rule of a readable quota: only the windows of the whole subscription count
 (`five_hour`, `seven_day`; a per-model `weekly:<model>` window does not, Claude Code changes the model itself); the
@@ -46,6 +48,8 @@ PROBE_S = 900.0
 DFX_KEY_S = 120.0
 RECHECK_S = 300.0
 """An own credential that cannot be used on this device right now is tried again after this time."""
+REFUSED_MODEL_S = 6 * 3600.0
+"""A model an access refused ("not in the plan", HOT-26) is tried on that access again after this time."""
 WHOLE = ("five_hour", "seven_day")
 EXHAUSTED = "exhausted"
 BLOCKED = "blocked"
@@ -86,6 +90,8 @@ class Limits:
     readings: dict[str, Reading] = field(default_factory=dict)
     version: int = 0
     rechecks: dict[str, float] = field(default_factory=dict)
+    models: dict[tuple[str, str], tuple[float, str | None]] = field(default_factory=dict)
+    """(access key, model) -> (until, identity of the refused content): models an access does not cover (HOT-26)."""
 
     def recheck(self, name: str, now: float) -> float:
         """The next try of an own credential that cannot be used right now: `now + RECHECK_S`, kept until it passed,
@@ -102,6 +108,19 @@ class Limits:
             return None
         assert row.until is not None
         return row if row.until > (self.wall() if now is None else now) else None
+
+    def refuse_model(self, key: str, model: str, identity: str | None, now: float) -> None:
+        """The access `key` (with the content `identity`) does not cover `model` (HOT-26): until `now +
+        REFUSED_MODEL_S`."""
+        self.models[(key, model)] = (now + REFUSED_MODEL_S, identity)
+
+    def refuses(self, key: str, model: str | None, identity: str | None, now: float | None = None) -> bool:
+        """The access `key` refused `model` for the same content and the time has not passed."""
+        found = None if model is None else self.models.get((key, model))
+        if found is None:
+            return False
+        until, refused = found
+        return refused == identity and until > (self.wall() if now is None else now)
 
     def blocks(self) -> dict[str, str]:
         """Operator file name -> identity text of the persisted `401`/`403` blocks."""

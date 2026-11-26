@@ -44,6 +44,17 @@ the task its quiet line. After `revocation.MAX_TRIES` continuations without a su
 within `revocation.WAIT_S`, or when the session ended, the refusal is given up: the error stays visible as before and
 the held prompts are delivered. The session is never suspended for it and no `runner.model_pause` row is written.
 
+**Model not in the plan** (HOT-26, the same flow): a refusal `model_not_in_plan` of the session's model ("Usage credits
+are required for this model") marks the access as not covering the model (`model.limits.Limits.refuses`) and the
+session as refused. Once it is idle, the run renews its provisioning; the operator pool moves it to another file that
+is not known to refuse the model (`model.gateways.operator_target`, the file with the most room first) and the session
+gets `MODEL_SERVED` with the audit line `renewed`. Without such a file it keeps its model, never moves to another one,
+and waits with its prompts held; the wait is told once (log `model_access_wait`, audit `session.model_switched` with
+the cause `model_unavailable`: "no subscription with access to <model> free") and ends when a file that serves the
+model becomes usable or the refusal's time (`model.limits.REFUSED_MODEL_S`) passed (then the former access is tried
+again). No tries limit and no `revocation.WAIT_S` here: each refusal marks one more file. The used-up check of step 1
+already looks only for files that serve the session's model.
+
 The sentences have a stable prompt ID per pause (`prompt_id`; a refusal: its time), so a repeated hand-over is the same
 prompt for the guest; they carry no user text.
 """
@@ -90,7 +101,12 @@ RENEWED = (
     "The platform renewed this session's model access; the last request was refused with the former access."
     " Continue the interrupted work."
 )
+MODEL_SERVED = (
+    "The platform moved this session to a subscription that serves {model}; the last request was refused because the"
+    " former subscription does not cover {model}. Continue the interrupted work."
+)
 RENEWED_CAUSE = "renewed"
+WAIT_CAUSE = "model_unavailable"
 LOCK = "_model_fallback_lock"
 
 
@@ -168,7 +184,8 @@ async def _used_up(env: SessionEnv, session: LocalSession) -> tuple[str, limits.
     if key.startswith(limits.OPERATOR):
         pool = operator.pool_for(env.context)
         assert pool is not None  # the session is bound to one of its files
-        if pool.choose(exclude=(key[len(limits.OPERATOR) :],), org_id=session.org_id) is not None:
+        other = pool.choose(exclude=(key[len(limits.OPERATOR) :],), org_id=session.org_id, model=session.model_id)
+        if other is not None:
             return None  # step 1: the renewal moves it to another file
     return label, limit
 
@@ -305,6 +322,8 @@ async def renew(deliverer: Any, session: LocalSession) -> bool:
     found = revocation.revocations(context)
     refused = found.refused[session.id]
     tries = found.tries.get(session.id, 0)
+    if refused.model is not None:
+        return await _model_refused(deliverer, session, refused, tries)
     if tries >= revocation.MAX_TRIES:
         return _give_up(env, session.id, "tries")
     if session.state == "idle" and not await credit.credit_holds(env, session):
@@ -317,16 +336,70 @@ async def renew(deliverer: Any, session: LocalSession) -> bool:
     return True
 
 
+async def _model_refused(deliverer: Any, session: LocalSession, refused: revocation.Refusal, tries: int) -> bool:
+    """A main session whose access does not cover its model (module docstring: model not in the plan); True while it
+    holds its prompts."""
+    env: SessionEnv = deliverer.env
+    context = env.context
+    model = refused.model
+    assert model is not None
+    if session.state in RESUMABLE:
+        # suspended meanwhile (idle rule): its next prompt resumes it, and the resume chooses an access for the model
+        return _give_up(env, session.id, "suspended")
+    if session.state != "idle" or await credit.credit_holds(env, session):
+        return True
+    await gateways.refresh(env, session)
+    stamp = access.provisions(context).stamps.get(session.id)
+    label, key = await label_of(env, session)
+    assert key is not None  # a subscription can run out
+    identity = None if stamp is None or stamp.operator is None else operator.identity_text(stamp.operator[1])
+    moved = stamp is not None and stamp != refused.stamp
+    if moved or not limits.limits_for(context).refuses(key, model, identity):
+        return await _renewed(deliverer, session.id, refused, tries)
+    found = revocation.revocations(context)
+    if session.id not in found.announced:
+        found.announced.add(session.id)
+        _line(env, f"model_access_wait session_id={session.id} access={label} model={model}")
+        await _audit(env, session, refused.label, label, WAIT_CAUSE)
+    return True
+
+
 def _give_up(env: SessionEnv, session_id: str, reason: str) -> bool:
     revocation.settle(env.context, session_id, continued=False)
     _line(env, f"access_renewal_given_up session_id={session_id} reason={reason}")
     return False
 
 
+async def _audit(env: SessionEnv, session: LocalSession, source: str, target: str, cause: str) -> None:
+    """`session.model_switched` with a cause of HOT-26 (`renewed`, `model_unavailable`); only towards a hub with
+    `model_fallback.api >= 2`; the session's model on both sides."""
+    if not policy.renewed_api(env.desired):
+        return
+    detail = {
+        "from_access": access.KIND_OF[source],
+        "to_access": access.KIND_OF[target],
+        "from_model": session.model_id,
+        "to_model": session.model_id,
+        "cause": cause,
+        "until": None,
+    }
+    audit = {
+        "action": "session.model_switched",
+        "result": "ok",
+        "task_id": session.task_id,
+        "session_id": session.id,
+        "target_kind": "session",
+        "target_id": session.id,
+        "detail": detail,
+    }
+    async with env.transaction() as conn:
+        await env.outbox.enqueue(conn, "audit", audit)
+
+
 async def _renewed(deliverer: Any, session_id: str, refused: revocation.Refusal, tries: int) -> bool:
-    """Continue the refused session on its valid access: the renewal sentence (its prompt ID stable per refusal and
-    try), then the audit line; True while it must be tried again (it is no longer idle, its VM or guest cannot be
-    reached now)."""
+    """Continue the refused session on its valid access: the renewal sentence (or, for a model the former access did
+    not cover, the model sentence; its prompt ID stable per refusal and try), then the audit line; True while it must
+    be tried again (it is no longer idle, its VM or guest cannot be reached now)."""
     env: SessionEnv = deliverer.env
     async with deliverer.lock(session_id):
         async with env.transaction() as conn:
@@ -339,32 +412,14 @@ async def _renewed(deliverer: Any, session_id: str, refused: revocation.Refusal,
         try:
             async with await env.client(row) as guest:
                 prompt = prompt_id(f"{session_id}:renewed:{tries}", refused.paused_at)
-                await guest.register_prompt(session_id, prompt, RENEWED)
+                text = RENEWED if refused.model is None else MODEL_SERVED.format(model=refused.model)
+                await guest.register_prompt(session_id, prompt, text)
         except (GuestError, RunnerError) as exc:
             _line(env, f"model_continue_failed session_id={session_id} code={exc.code}")
             return True
     revocation.settle(env.context, session_id, continued=True)
     _line(env, f"model_continued session_id={session_id} from={refused.label} to={target} cause={RENEWED_CAUSE}")
-    if policy.renewed_api(env.desired):
-        detail = {
-            "from_access": access.KIND_OF[refused.label],
-            "to_access": access.KIND_OF[target],
-            "from_model": current.model_id,
-            "to_model": current.model_id,
-            "cause": RENEWED_CAUSE,
-            "until": None,
-        }
-        audit = {
-            "action": "session.model_switched",
-            "result": "ok",
-            "task_id": current.task_id,
-            "session_id": session_id,
-            "target_kind": "session",
-            "target_id": session_id,
-            "detail": detail,
-        }
-        async with env.transaction() as conn:
-            await env.outbox.enqueue(conn, "audit", audit)
+    await _audit(env, current, refused.label, target, RENEWED_CAUSE)
     return False
 
 

@@ -332,21 +332,24 @@ async def _own_step(
 
 
 async def _operator_step(env: Any, desired: Desired, base: selection.Request, walk: Walk, *, probe: bool) -> bool:
-    """The operator's pool; True when the organization may use it and every file is used up."""
+    """The operator's pool; True when the organization may use it and every file is used up. A file that refused the
+    session's model is left out (HOT-26)."""
+    found = _select(env, replace(base, preference="subscription", credentials=frozenset({"subscription"})))
+    model = None if found is None else found.model_id
     if probe:
-        name = await operator.peek(env.context, desired.org_id)
+        name = await operator.peek(env.context, desired.org_id, model)
         pool = operator.pool_for(env.context)
         held = None if name is None or pool is None else pool.current(name)
         if name is not None and held is not None:
             walk.found = await _operator_resolved(env, desired, base, name, held, bind=False)
             return False
     else:
-        picked = await operator.pick(env.context, desired.org_id)
+        picked = await operator.pick(env.context, desired.org_id, model)
         if picked is not None:
             name, token, identity = picked
             walk.found = await _operator_resolved(env, desired, base, name, (token, identity), bind=True)
             return False
-    used = operator.used_up(env.context, desired.org_id)
+    used = operator.used_up(env.context, desired.org_id, model)
     if not used:
         return False
     until, first = used[0]

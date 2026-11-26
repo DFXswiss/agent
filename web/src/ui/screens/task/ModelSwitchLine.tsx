@@ -2,7 +2,8 @@
 // model access (its access was used up, could not be used or was released again), the newest switch is shown below the
 // header – "Model switched: Claude subscription → DFX access over OpenRouter · used up until 14:05"; a session the
 // platform continued after its access was renewed (cause `renewed`, HOT-26) gets the quiet line "Access renewed –
-// continuing (Claude subscription)". Read from the
+// continuing (Claude subscription)"; a session that waits because no subscription covers its model (cause
+// `model_unavailable`) shows "Waiting: no subscription with access to claude-… free". Read from the
 // audit (`core/credentials/switches.ts`) when the task opens, when the task or its main session changes state (a
 // switch pauses and resumes the session) and after a reconnect; nothing is shown without a switch or when the audit
 // cannot be read.
@@ -45,15 +46,21 @@ export function ModelSwitchLine({ row }: { readonly row: TaskRow }) {
       model: model ?? '',
     });
   const timed = found.cause === 'exhausted' && found.until !== null;
-  const text =
-    found.cause === 'renewed'
-      ? t('model.switch.renewed', { access: access(found.toAccess, found.toModel) })
-      : `${t('model.switch.line', {
+  const switched = () =>
+    `${t('model.switch.line', {
           from: access(found.fromAccess, found.fromModel),
           to: access(found.toAccess, found.toModel),
         })} · ${t(timed ? 'model.switch.cause.exhausted.until' : `model.switch.cause.${found.cause}`, {
           time: clock(found.until ?? 0),
         })}`;
+  const text =
+    found.cause === 'renewed'
+      ? t('model.switch.renewed', { access: access(found.toAccess, found.toModel) })
+      : found.cause === 'model_unavailable'
+        ? t('model.switch.model-unavailable', {
+            model: found.toModel ?? t(`model.switch.access.${found.toAccess}`),
+          })
+        : switched();
   return (
     <p
       className="text-sm text-gray-700"

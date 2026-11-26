@@ -82,6 +82,7 @@
   "switch.cause.unusable": "former access could not be used",
   "switch.cause.released": "subscription free again",
   "switch.renewed": "Access renewed – continuing ({access})",
+  "switch.model-unavailable": "Waiting: no subscription with access to {model} free",
   "consent": "Continue with DFX access",
   "consent.always": "Always",
   "consent.hint": "DFX access is charged by use to the organization's credit. Without an answer the task continues by itself on your subscription once it is free again.",

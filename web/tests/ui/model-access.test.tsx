@@ -237,6 +237,14 @@ describe('model switch line', () => {
         /^Access renewed – continuing \(operator subscription\)$/,
       ],
       [
+        { cause: 'model_unavailable', from_access: 'operator', to_access: 'operator', to_model: 'claude-fable' },
+        /^Waiting: no subscription with access to claude-fable free$/,
+      ],
+      [
+        { cause: 'model_unavailable', from_access: 'operator', to_access: 'operator', to_model: null },
+        /^Waiting: no subscription with access to operator subscription free$/,
+      ],
+      [
         { cause: 'released', from_access: 'platform', to_access: 'subscription', to_model: null },
         'subscription free again',
       ],
@@ -252,7 +260,7 @@ describe('model switch line', () => {
       throw new HubError('unavailable', 503);
     });
     hello(t);
-    await waitFor(() => expect(t.client.of(`GET /v1/orgs/${t.org}/audit`)).toHaveLength(9));
+    await waitFor(() => expect(t.client.of(`GET /v1/orgs/${t.org}/audit`)).toHaveLength(11));
     expect(screen.getByTestId('task.model-switch')).toHaveAttribute('data-to', 'subscription');
     // a row outside the contract's lists is no switch
     t.client.on(`GET /v1/orgs/${t.org}/audit`, () => ({ rows: [switchRow(3, { cause: 'later' })], next_before: null }));

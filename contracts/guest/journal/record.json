@@ -553,6 +553,13 @@
           "type": "integer",
           "minimum": 100,
           "maximum": 599
+        },
+        "refusal": {
+          "type": "string",
+          "enum": [
+            "model_not_in_plan"
+          ],
+          "description": "HOT-26: present only when the provider refused the request with an error whose message says that the subscription does not cover the requested model (for example 'Usage credits are required for this model'); the runner then treats the access as refused for this model, not as used up"
         }
       },
       "required": [

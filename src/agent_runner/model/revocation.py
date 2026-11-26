@@ -18,6 +18,11 @@ used-up access - one more cause of the same flow, not a second mechanism:
   differs from the one it was refused with (a renewed record, a renewed or another file), or the gateway got a
   credential at most `FRESH_S` before the refusal (the request carried the former token just before the new one
   arrived).
+- **Model not in the plan** (`refusal: "model_not_in_plan"` of the record, any status): the access does not cover the
+  requested model. The refusal is remembered for the access key, the model and the identity of the refused content
+  (`model.limits.Limits.refuse_model`, so the pool's choice leaves the access out for that model); a refusal of the
+  session's own model marks the session with `Refusal.model` (`model.fallback` moves it to an access that serves the
+  model or lets it wait on its model, told once: `announced`). Such a record is no `401` refusal and no limit.
 - `tries`: continuations since the last successful answer; after `MAX_TRIES`, or when no valid access arrives within
   `WAIT_S`, the refusal is given up: the error stays visible as before and the next prompt of a person is delivered.
 
@@ -32,11 +37,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from agent_runner.model import pauses
+from agent_runner.model import limits, pauses
 from agent_runner.sessions.records import LocalSession
 
 ATTRIBUTE = "model_revocations"
 REFUSED = 401
+MODEL_NOT_IN_PLAN = "model_not_in_plan"
 FRESH_S = 60.0
 """A provisioning at most this long before the refusal holds the new access (the request carried the former one)."""
 WAIT_S = 300.0
@@ -55,15 +61,19 @@ class Refusal:
     """The access label then (`subscription` or `operator`, `model.access.Resolved.label`)."""
     paused_at: datetime
     """The wall time of the refusal: the stable prompt ID of its continuation (`model.fallback.prompt_id`)."""
+    model: str | None = None
+    """None: the token was refused (`401`); else the model the access does not cover (`model_not_in_plan`)."""
 
 
 @dataclass
 class Revocations:
-    """Per daemon: the refused sessions, the time of the last provisioning of each session and the tries."""
+    """Per daemon: the refused sessions, the time of the last provisioning of each session, the tries and the sessions
+    whose wait for a subscription with their model was announced."""
 
     refused: dict[str, Refusal] = field(default_factory=dict)
     provisioned_at: dict[str, float] = field(default_factory=dict)
     tries: dict[str, int] = field(default_factory=dict)
+    announced: set[str] = field(default_factory=set)
 
 
 def revocations(context: Any) -> Revocations:
@@ -75,9 +85,27 @@ def revocations(context: Any) -> Revocations:
     return created
 
 
-def observe(env: Any, session: LocalSession, status: object, stamp: object, label: str) -> None:
+@dataclass(frozen=True)
+class Seen:
+    """One `usage` record of a session on a subscription, as `observe` takes it."""
+
+    status: object
+    stamp: object
+    """The session's current provisioning stamp."""
+    label: str
+    key: str
+    """The access key (`model.limits`)."""
+    identity: str | None = None
+    """The identity text of an operator entry's content the session holds (None: the owner's own)."""
+    refusal: object = None
+    """`refusal` of the record (`MODEL_NOT_IN_PLAN`)."""
+    model: object = None
+    """`model` of the record."""
+
+
+def observe(env: Any, session: LocalSession, seen: Seen) -> None:
     """One `usage` record of a session (module docstring)."""
-    context = env.context
+    context, status = env.context, seen.status
     if context is None or session.model_access != "subscription" or session.depth != 0:
         return
     if isinstance(status, bool) or not isinstance(status, int):
@@ -85,16 +113,36 @@ def observe(env: Any, session: LocalSession, status: object, stamp: object, labe
     found = revocations(context)
     if 200 <= status < 300:
         found.tries.pop(session.id, None)
+        found.announced.discard(session.id)
         if found.refused.pop(session.id, None) is not None:
             pauses.state_of(context).refused.discard(session.id)
             env.log(f"runner.model access_answered session_id={session.id}")
         return
+    if seen.refusal == MODEL_NOT_IN_PLAN and isinstance(seen.model, str):
+        _model_refused(env, session, seen, seen.model)
+        return
     if status != REFUSED or session.id in found.refused:
         return
+    _mark(env, session, Refusal(env.clock(), seen.stamp, seen.label, datetime.fromtimestamp(env.wall(), UTC)))
+    env.log(f"runner.model access_refused session_id={session.id} access={seen.label}")
+
+
+def _mark(env: Any, session: LocalSession, refusal: Refusal) -> None:
+    revocations(env.context).refused[session.id] = refusal
+    pauses.state_of(env.context).refused.add(session.id)
+
+
+def _model_refused(env: Any, session: LocalSession, seen: Seen, model: str) -> None:
+    """The access does not cover `model`: remembered for the access and the model (`model.limits`); a refusal of the
+    session's own model also marks the session (it moves to an access that serves the model, or waits)."""
+    known = limits.limits_for(env.context)
+    known.refuse_model(seen.key, model, seen.identity, known.wall())
+    env.log(f"runner.model model_refused session_id={session.id} access={seen.label} model={model}")
+    current = revocations(env.context).refused.get(session.id)
+    if model != session.model_id or (current is not None and current.model == model):
+        return
     paused_at = datetime.fromtimestamp(env.wall(), UTC)
-    found.refused[session.id] = Refusal(at=env.clock(), stamp=stamp, label=label, paused_at=paused_at)
-    pauses.state_of(context).refused.add(session.id)
-    env.log(f"runner.model access_refused session_id={session.id} access={label}")
+    _mark(env, session, Refusal(env.clock(), seen.stamp, seen.label, paused_at, model))
 
 
 def provisioned(context: Any, session_id: str, at: float) -> None:
@@ -115,6 +163,7 @@ def settle(context: Any, session_id: str, *, continued: bool) -> None:
     session's prompts are no longer held for it."""
     found = revocations(context)
     del found.refused[session_id]
+    found.announced.discard(session_id)
     if continued:
         found.tries[session_id] = found.tries.get(session_id, 0) + 1
     else:
@@ -128,4 +177,5 @@ def prune(context: Any, live: set[str]) -> None:
     for table in (found.refused, found.provisioned_at, found.tries):
         for session_id in [sid for sid in table if sid not in live]:
             del table[session_id]
+    found.announced &= live
     pauses.state_of(context).refused &= live

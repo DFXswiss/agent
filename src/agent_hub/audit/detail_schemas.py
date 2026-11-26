@@ -1842,7 +1842,9 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "to_access": [{"type": "string", "enum": ["subscription", "api_key", "platform", "operator"]}],
             "from_model": [{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"}, {"type": "null"}],
             "to_model": [{"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"}, {"type": "null"}],
-            "cause": [{"type": "string", "enum": ["exhausted", "unusable", "released", "renewed"]}],
+            "cause": [
+                {"type": "string", "enum": ["exhausted", "unusable", "released", "renewed", "model_unavailable"]}
+            ],
             "until": [
                 {
                     "type": "string",

@@ -144,6 +144,14 @@ the session as before HOT-26 (the error is visible, the next prompt is delivered
 `runner.model_pause` would replace the row of a quota pause of the same session and lose its `released` cause.
 Subagent sessions are not continued (their one turn ends with the error, like a used-up access ends them).
 
+**Same class: a subscription that does not cover the model.** A move after a `429` brought a session that must run on
+one model to a freshly added subscription whose plan did not include that model ("Request rejected (429) · Usage
+credits are required for this model"); the session stood still. Such an answer is now journaled by the gateway as
+`refusal: model_not_in_plan` and carried on by the same flow (ADR-081 §4 point 8): remembered per subscription and
+model, left out by the pool's choice for that model, the session moved to a subscription that serves its model or –
+without one – waiting on its model with the line "kein Abo mit Zugang zu <Modell> frei", never moved to another
+model. Roll-out: runners first (an older runner ignores the new field of the `usage` record), then the guest image.
+
 ## Consequences
 - The refresh token lies, sealed, in the record at the hub (like every credential, readable only with the owner's
   `CK`: the owner's clients and eligible devices). It never reaches a guest, a log, a metric or the hub in plaintext;

@@ -5,7 +5,8 @@ sections 1, 5 and 6).
   `operator_quota`, `limited` of `quota`, `wait_until`/`dfx_choice` of `session_transition`, the session failure reason
   `model_quota_exhausted` and the audit action `session.model_switched`. An older hub has no `model_fallback`; the
   runner then sends none of them (the hub would refuse them). `renewed_api(desired)` (`api >= 2`, HOT-26): the hub
-  also accepts the cause `renewed` of `session.model_switched` (a refused access continued on its renewal).
+  also accepts the causes `renewed` (a refused access continued) and `model_unavailable` (a session waits for a
+  subscription with access to its model) of `session.model_switched`.
 - `settings(desired, session_id)`: the owner's fallback settings (`fallback.own_to_dfx`, default off;
   `fallback.operator_to_platform`, default on) and the task's consent (`model_consent`, default false) delivered with
   the session's entry of `sessions`. A missing or malformed value means the default (an older hub delivers none).

@@ -497,7 +497,7 @@ error code).
 Below the resume notice the task page shows the newest switch of the model access of one of its sessions (audit row
 `session.model_switched`, read from `GET /v1/orgs/{org}/audit?action=session.model_switched&task=`): "Model switched:
 Claude subscription → DFX access over OpenRouter (model) · used up until 14:05" (cause `exhausted` with or without
-the time, `unusable`, `released`; an operator subscription is named "operator subscription"). A session the platform continued after its access was renewed (cause `renewed`, HOT-26, ADR-092 §5) shows the quiet line "Access renewed – continuing (Claude subscription)" / "Zugang erneuert – weiter (Claude-Abo)" instead. It is read when the page opens, when the task or its main session changes state and
+the time, `unusable`, `released`; an operator subscription is named "operator subscription"). A session the platform continued after its access was renewed (cause `renewed`, HOT-26, ADR-092 §5) shows the quiet line "Access renewed – continuing (Claude subscription)" / "Zugang erneuert – weiter (Claude-Abo)" instead; a session that waits because no subscription covers its model (cause `model_unavailable`, ADR-081 §4 point 8) shows "Waiting: no subscription with access to <model> free" / "Wartet: kein Abo mit Zugang zu <Modell> frei". It is read when the page opens, when the task or its main session changes state and
 after a reconnect; without a switch, or when the audit cannot be read, nothing is shown.
 
 ### 5.2 Chat (`/o/:org/t/:task`, tab Chat)

@@ -30,7 +30,7 @@ export interface ModelSwitch {
 /** The access kinds of a switch (`model_access` and `operator`, an operator subscription). */
 export const SWITCH_ACCESSES: readonly string[] = ['subscription', 'operator', 'api_key', 'platform'];
 /** The causes of a switch. */
-export const SWITCH_CAUSES: readonly string[] = ['exhausted', 'unusable', 'released', 'renewed'];
+export const SWITCH_CAUSES: readonly string[] = ['exhausted', 'unusable', 'released', 'renewed', 'model_unavailable'];
 
 const text = (value: unknown): value is string => typeof value === 'string' && value !== '';
 const oneOf = (list: readonly string[], value: unknown): value is string => list.includes(value as string);

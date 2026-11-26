@@ -267,12 +267,13 @@ def test_what_is_not_marked(store_dsn: str) -> None:
         await found.consume()
         assert revocation.revocations(found.context).refused == {}
         env = SimpleNamespace(context=None)
-        revocation.observe(env, await found.stored(parent), 401, None, "subscription")
+        own = revocation.Seen(401, None, "subscription", "own:" + ALICE)
+        revocation.observe(env, await found.stored(parent), own)
         context = SimpleNamespace()
         env = SimpleNamespace(context=context)
         session = await found.stored(parent)
         for status in (None, True, "401"):
-            revocation.observe(env, session, status, None, "subscription")
+            revocation.observe(env, session, revocation.Seen(status, None, "subscription", "own:" + ALICE))
         assert revocation.revocations(context).refused == {}
 
     run(store_dsn, None, body)

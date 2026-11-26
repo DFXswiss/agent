@@ -43,6 +43,11 @@ runner log and the metrics.
   `exhausted`: no new binding, and a bound session is moved to another usable file by its renewal (in place, the
   model stays); without one the gateway keeps what it holds and the reconcile step `model_fallback` pauses the
   session.
+- **Models not in the plan** (HOT-26): an entry whose provider refused a model ("usage credits are required for this
+  model", `model.limits.Limits.refuses`, for the content that was refused) is not chosen for a session on that model
+  (`choose`/`pick`/`peek`/`used_up` with `model`); a session bound to it moves to another entry that is not known to
+  refuse the model, by its renewal (`model.gateways.operator_target`); without one it keeps what it holds and waits
+  (`model.fallback.renew`). It still serves other models.
 - **Shared subscriptions** (KOR-69, ADR-090 section 3): further Claude subscriptions of users that the desired state
   lists (`subscriptions.shared`) join the pool as entries named `sub-<record ID>` (`refresh_shared`): the record is
   fetched and verified like every record of its owner (`credentials.subscriptions`) and used only for a session of an
@@ -205,6 +210,8 @@ class Pool:
     """Session ID -> the file of that last block or deferral."""
     exhausted: Callable[[str], bool] = lambda _name: False
     """The file's access is marked used up (`model.limits`; wired by `pool_for`)."""
+    refuses: Callable[[str, str | None], bool] = lambda _name, _model: False
+    """The file's current content refused the model ("not in the plan", `model.limits.Limits.refuses`; HOT-26)."""
     quota: dict[str, float] = field(default_factory=dict)
     """File name -> `used_percent` of its fullest window of the last reading (`model.limits.fullest`)."""
     reported: dict[str, object] = field(default_factory=dict)
@@ -350,9 +357,10 @@ class Pool:
         assert entry.identity is not None
         return entry.token, entry.identity
 
-    def choose(self, exclude: Iterable[str] = (), org_id: str | None = None) -> str | None:
+    def choose(self, exclude: Iterable[str] = (), org_id: str | None = None, model: str | None = None) -> str | None:
         """The usable entry for a new binding of a session of `org_id` (module docstring), or None; without an
-        organization the token files only (their organizations were checked by the caller)."""
+        organization the token files only (their organizations were checked by the caller). With `model` an entry
+        that refused that model is left out (HOT-26)."""
         skipped = set(exclude)
         usable = [
             name
@@ -360,6 +368,7 @@ class Pool:
             if name not in skipped
             and self.state(name) == USABLE
             and (name in self.files if org_id is None else self.allowed(name, org_id))
+            and not self.refuses(name, model)
         ]
         if not usable:
             return None
@@ -464,6 +473,13 @@ def attach(context: Any, pool: Pool) -> None:
     """Wire the pool to the daemon's limits (`model.limits`): a file marked used up is `exhausted`."""
     found = limits.limits_for(context)
     pool.exhausted = lambda name: found.active(limits.operator_key(name)) is not None
+
+    def refuses(name: str, model: str | None) -> bool:
+        entry = pool.entries().get(name)
+        identity = None if entry is None or entry.identity is None else identity_text(entry.identity)
+        return found.refuses(limits.operator_key(name), model, identity)
+
+    pool.refuses = refuses
 
 
 # -- bindings (`runner.operator_binding`) ------------------------------------------------------------------------------
@@ -585,13 +601,14 @@ async def observed(
     return name, counts
 
 
-async def pick(context: Any, org_id: str) -> tuple[str, str, Identity] | None:
-    """A usable entry for a new session of `org_id`: `(name, token, identity)`; None when the organization may use
-    neither the files nor a shared subscription, or none is usable."""
+async def pick(context: Any, org_id: str, model: str | None = None) -> tuple[str, str, Identity] | None:
+    """A usable entry for a new session of `org_id` on `model`: `(name, token, identity)`; None when the organization
+    may use neither the files nor a shared subscription, or none is usable (an entry that refused the model is
+    none)."""
     pool = await refreshed(context)
     if pool is None or not pool.serves(org_id):
         return None
-    name = pool.choose(org_id=org_id)
+    name = pool.choose(org_id=org_id, model=model)
     if name is None:
         pool.log(f"runner.model operator_pool_empty problem={pool.problem or 'none'}")
         return None
@@ -600,18 +617,19 @@ async def pick(context: Any, org_id: str) -> tuple[str, str, Identity] | None:
     return name, *current
 
 
-async def peek(context: Any, org_id: str) -> str | None:
-    """The entry `pick` would take for a session of `org_id` now, without binding or logging (ADR-081: what a resume
-    would get)."""
+async def peek(context: Any, org_id: str, model: str | None = None) -> str | None:
+    """The entry `pick` would take for a session of `org_id` on `model` now, without binding or logging (ADR-081: what
+    a resume would get)."""
     pool = await refreshed(context)
     if pool is None or not pool.serves(org_id):
         return None
-    return pool.choose(org_id=org_id)
+    return pool.choose(org_id=org_id, model=model)
 
 
-def used_up(context: Any, org_id: str) -> list[tuple[float, str]]:
-    """`(release time, name)` of the used-up entries of the pool for a session of `org_id`, earliest first; empty when
-    the organization may use none of them (ADR-081 section 3: the pool's step waits for the earliest release)."""
+def used_up(context: Any, org_id: str, model: str | None = None) -> list[tuple[float, str]]:
+    """`(release time, name)` of the used-up entries of the pool for a session of `org_id` on `model`, earliest first;
+    empty when the organization may use none of them (ADR-081 section 3: the pool's step waits for the earliest
+    release; an entry that refused the model is no release, HOT-26)."""
     pool = pool_for(context)
     if pool is None:
         return []
@@ -619,7 +637,7 @@ def used_up(context: Any, org_id: str) -> list[tuple[float, str]]:
     released: list[tuple[float, str]] = []
     for name in pool.entries():
         limit = found.active(limits.operator_key(name))
-        allowed = pool.allowed(name, org_id)
+        allowed = pool.allowed(name, org_id) and not pool.refuses(name, model)
         if allowed and pool.state(name) == EXHAUSTED and limit is not None and limit.until is not None:
             released.append((limit.until, name))
     return sorted(released)

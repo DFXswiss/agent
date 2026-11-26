@@ -32,8 +32,9 @@ A session's gateway holds the credential it was provisioned with at the start (`
   pool is renewed from the file, not from an owner record: its stamp carries the file's name and identity, so a
   replaced file (a renewed short-lived token) is provisioned again at the next renewal (the task
   `operator_subscriptions` runs it every few seconds for bound sessions). A bound file that is blocked (`401`/`403`
-  for the content the session holds), gone or no longer usable moves the session to another usable file; when none is
-  usable the gateway keeps what it holds. A file deferred by a `429` keeps its sessions. When the organization is no
+  for the content the session holds), gone or no longer usable, or that refused the session's model (HOT-26), moves
+  the session to another usable file that is not known to refuse that model; when none is usable the gateway keeps
+  what it holds. A file deferred by a `429` keeps its sessions. When the organization is no
   longer approved the access is withdrawn. The owner's record does not matter for a bound session (a purge of it does
   not withdraw it).
 - **Refused access** (HOT-26): every provisioning of a running session (renewal, reprovisioning) is noted for
@@ -134,9 +135,11 @@ async def operator_target(
     if not pool.serves(session.org_id):
         _line(env, f"operator_access_revoked session_id={session.id}")
         return None
-    current = pool.current(name) if pool.allowed(name, session.org_id) else None
+    model = session.model_id
+    usable = pool.allowed(name, session.org_id) and not pool.refuses(name, model)
+    current = pool.current(name) if usable else None
     if current is None:
-        other = pool.choose(exclude=(name,), org_id=session.org_id)
+        other = pool.choose(exclude=(name,), org_id=session.org_id, model=model)
         if other is None:
             pool.note(f"exhausted:{session.id}", name, f"operator_pool_exhausted session_id={session.id} file={name}")
             return KEEP

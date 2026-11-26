@@ -872,7 +872,9 @@ settings and the task's consent (§10.7, ADR-081).
   A renewal carries `max(own charges journaled above journal_through, old spent + observed − new spent)`; a new day or
   no budget clears it (KOR-03, KOR-10).
 - Streams responses unchanged (`read1` 64 KiB); parses SSE `message_start`/`message_delta` for usage and, for
-  OpenRouter, `usage.cost` and `provider`; non-stream JSON `usage`. Writes journal `usage` per request.
+  OpenRouter, `usage.cost` and `provider`; non-stream JSON `usage`. Writes journal `usage` per request. An error
+  answer of the provider whose message says the subscription does not cover the requested model ("Usage credits are
+  required for this model", "not included in your plan", …) adds `refusal: "model_not_in_plan"` (HOT-26, §10.7).
 - OpenRouter provider allow-list (catalog `providers_allowed`, empty = any): a `provider` outside the list is
   recorded as audit `model.provider_outside_allowlist` (metadata) and counted; the request is not blocked
   (provider is only known after the response starts).
@@ -1014,6 +1016,19 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   delivered) after 3 continuations without a successful answer or without a valid access within 300 s; the marks of
   ended sessions are dropped. A restart of the daemon drops the marks (the session stays as it is). Subagent sessions
   and `api_key`/`platform` sessions are not marked. No `runner.model_pause` row, no suspension.
+- **Model not in the plan** (HOT-26, ADR-081 §4 point 8). A `usage` record with `refusal: "model_not_in_plan"` (any
+  status, typically `429`) is neither a deferral of an operator file nor part of an exhaustion streak. The runner
+  remembers the refusal for the access key, the model and the identity of the refused content for 6 h
+  (`model.limits.Limits.refuses`, memory; log `runner.model model_refused session_id=… access=… model=…`). The pool's
+  choice (`Pool.choose`, `pick`, `peek`, `used_up`, the used-up check of a running session, the renewal of a bound
+  session) leaves such a file out for that model; it still serves other models. A refusal of the session's own model
+  also marks the session refused (prompts held). Once it is `idle` and its credit allows it, the run renews its
+  provisioning: a file that serves the model (the most room first) → the session is continued with "The platform
+  moved this session to a subscription that serves <model>; …" and the audit cause `renewed`. Without one the
+  session keeps its model (never another model) and waits; the wait is told once (log `model_access_wait`, audit
+  `session.model_switched` with `cause: model_unavailable`, the model on both sides, `until: null`) and ends when a
+  file that serves the model is usable, or when the refusal's 6 h passed (the access is tried again). No tries limit
+  and no 300 s limit for this cause. An own subscription that refuses the model waits the same way.
 
 ### 10.8 Quotas of the operator's subscriptions (ADR-081 section 6)
 
