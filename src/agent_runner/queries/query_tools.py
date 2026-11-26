@@ -11,13 +11,17 @@ from typing import Any
 
 from agent_runner.queries.tools import (
     get_context,
+    get_metrics,
     get_operation,
     get_task,
     get_task_messages,
+    get_usage,
     get_whiteboard,
+    list_audit,
     list_members,
     list_operations,
     list_tasks,
+    list_workgroup_operations,
     list_workgroups,
 )
 
@@ -33,5 +37,9 @@ TOOLS: dict[str, Callable[..., Any]] = {
         get_whiteboard,
         list_operations,
         get_operation,
+        get_usage,
+        list_audit,
+        list_workgroup_operations,
+        get_metrics,
     )
 }

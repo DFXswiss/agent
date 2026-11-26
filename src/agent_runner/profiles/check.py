@@ -10,7 +10,8 @@
 - `reach(db, session_id, parent_id)`: the reach of the session's reads (`all` without a profile); the read tools apply
   it to every workgroup and task they read (`queries.rights.ReadScope.outside_reach`). `read_refusal(reach, tool,
   arguments)` refuses at once what reads beyond the reach as a whole: the members of the whole organization for reach
-  `workgroup` and `task`, `list_tasks` and the organization and workgroup whiteboards for reach `task`. The names of
+  `workgroup` and `task`, `list_tasks`, the workgroup-wide reads of ADR-095 (`WORKGROUP_WIDE`: usage, audit,
+  operations and metrics of a workgroup) and the organization and workgroup whiteboards for reach `task`. The names of
   the organization's workgroups (`list_workgroups`) stay readable: they are organization metadata every member sees.
 """
 
@@ -28,6 +29,8 @@ from agent_runner.queries.rights import REACH_SENTENCE
 from agent_runner.subagents.extensions import QueryOutcome, failure
 
 CHILD_PROFILE = "child_profile"
+WORKGROUP_WIDE = frozenset({"list_tasks", "get_usage", "list_audit", "list_workgroup_operations", "get_metrics"})
+"""Reads over every task of a workgroup: beyond reach `task`."""
 
 
 def refusal(profile: model.Profile, what: str, depth: int) -> str:
@@ -78,6 +81,6 @@ def read_refusal(reach: str, tool: str, arguments: Mapping[str, Any]) -> QueryOu
         return failure("forbidden", REACH_SENTENCE.format(reach=reach))
     if reach != "task":
         return None
-    if tool == "list_tasks" or (tool == "get_whiteboard" and arguments.get("level") != "task"):
+    if tool in WORKGROUP_WIDE or (tool == "get_whiteboard" and arguments.get("level") != "task"):
         return failure("forbidden", REACH_SENTENCE.format(reach="task"))
     return None

@@ -57,6 +57,7 @@ FEATURES = (
     "prompt.withdraw",
     "subscriptions",
     "agent.profiles",
+    "platform.analysis",
 )
 """What this runner understands: `log.admit` - membership logs with `admit` entries and platform logs with
 `user_certify`/`user_decertify` (the copied verifier of `agent_runner.crypto.log`); `github.ways` - it announces the
@@ -64,7 +65,9 @@ ways of "Connect GitHub" it can run (`features`, KOR-65), so a device without th
 `prompt.withdraw` - the withdrawal of waiting prompts through `prompt_queue.withdrawn` of the device state (ADR-083
 section 3); `subscriptions` - `claude.login` for further subscriptions (`subscription_id`, `name`, `note`, `email`;
 ADR-094 section 2), so clients send those fields only to such a device;
-`agent.profiles` - the rights profiles of the section `agent_profiles` (ADR-094 section 3)."""
+`agent.profiles` - the rights profiles of the section `agent_profiles` (ADR-094 section 3); `platform.analysis` - the
+session read tools `get_usage`, `list_audit`, `list_workgroup_operations` and `get_metrics` (ADR-095 section 3), so the
+hub creates an analysis task only while every device of the organization announced it."""
 DEVICE_FLOW = "github.device_flow"
 OAUTH_APP = "github.oauth_app"
 OPERATOR_GITHUB = "github.operator"

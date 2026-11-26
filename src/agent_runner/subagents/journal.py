@@ -43,6 +43,10 @@ READ_TOOLS = frozenset(
         "get_operation",
         "list_operations",
         "get_subagent_result",
+        "get_usage",
+        "list_audit",
+        "list_workgroup_operations",
+        "get_metrics",
     }
 )
 """The `read.session.<tool>` tools of `contracts/enums/outbox-audit-actions.json` (a test compares them)."""

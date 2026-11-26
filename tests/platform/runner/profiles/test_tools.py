@@ -117,6 +117,10 @@ def test_reads_beyond_the_reach() -> None:
     assert check.read_refusal("task", "get_whiteboard", {"level": "workgroup"}) is not None
     assert check.read_refusal("task", "get_whiteboard", {"level": "task", "task_id": MAIN}) is None
     assert check.read_refusal("task", "get_task", {"task_id": MAIN}) is None
+    # the workgroup-wide reads of ADR-095: within reach workgroup, beyond reach task as a whole
+    for tool in ("get_usage", "list_audit", "list_workgroup_operations", "get_metrics"):
+        assert check.read_refusal("workgroup", tool, {}) is None
+        assert check.read_refusal("task", tool, {}) is not None
 
     def scope(reach: str) -> ReadScope:
         return ReadScope(
