@@ -25,7 +25,7 @@ interface Admin {
 
 async function newPage(browser: Browser, baseURL: string): Promise<Page> {
   const context = await browser.newContext({ baseURL });
-  // the reloads below need the passkey again: "Stay signed in" (rule E-37) off, as in the fixtures' contexts
+  // the reloads below need the passkey again: "Stay signed in" (rule E-40) off, as in the fixtures' contexts
   await stayOff(context);
   const page = await context.newPage();
   await addAuthenticator(page);

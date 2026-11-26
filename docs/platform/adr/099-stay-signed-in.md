@@ -2,7 +2,7 @@
 
 Status: Accepted (2026-11-26, KOR-74)
 
-Implements [E-37](../KONZEPT.md#e-37) (stay signed in on agent.dfx.swiss after a reload, in a new tab, after closing
+Implements [E-40](../KONZEPT.md#e-40) (stay signed in on agent.dfx.swiss after a reload, in a new tab, after closing
 and reopening the tab and after a browser restart, until the user signs out), under [E-25](../KONZEPT.md#e-25) (change
 existing bounds only as far as needed, no additional protection layer) and [E-12](../KONZEPT.md#e-12) (PRF passkeys).
 Amends [ADR-006](006-passkey-prf-key-management.md) (the optional browser device key becomes the default way a browser
@@ -96,7 +96,7 @@ applied by the hub (the passkey certificate keeps its 12 h bound).
 - Tests: hub `tests/platform/hub/auth/test_login.py` (renewal); web `tests/core/account/session.test.ts` (restore,
   renewal, tabs, sign-out); Playwright `web/e2e/stay-signed-in.spec.ts` (reload, new tab, reopened tab, restarted
   browser, silent renewal of a session about to end – the device double sets the hub's session end, `POST
-  /users/<id>/sessions/expiring` – "Stay signed in" off, sign-out). The specs written before E-37 run with the choice
+  /users/<id>/sessions/expiring` – "Stay signed in" off, sign-out). The specs written before E-40 run with the choice
   off (`staySignedIn` fixture), so they keep testing the locked reload; `prf-missing.spec.ts` follows §1 (the remembered
   browser stays signed in; sign-out deletes the entry).
 - Docs: 06-web.md §2.3, §2.6, §3.3, §3.4; 04-crypto.md §2, §4.9, §5.4, §9; 03-api.md §4.1; key model; agent parity

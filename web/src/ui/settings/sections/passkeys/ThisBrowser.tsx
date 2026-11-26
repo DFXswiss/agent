@@ -1,4 +1,4 @@
-// "Stay signed in" on this browser profile (06-web.md sections 3.3 and 3.4, rule E-37): with a device-key entry the
+// "Stay signed in" on this browser profile (06-web.md sections 3.3 and 3.4, rule E-40): with a device-key entry the
 // browser stays signed in and opens the data without a passkey – shown with its date and "Forget on this browser"
 // (deletes the IndexedDB entry; the session then simply ends, a reload asks for the passkey); without one "Stay signed
 // in on this browser" (a new non-extractable device key encrypts the identity in memory). Only the signed-in user's

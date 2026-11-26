@@ -1,4 +1,4 @@
-// "Stay signed in" (rule E-37, ADR-099; 06-web.md sections 2.3, 3.3, 3.4) against the real hub: after the sign-in the
+// "Stay signed in" (rule E-40, ADR-099; 06-web.md sections 2.3, 3.3, 3.4) against the real hub: after the sign-in the
 // browser stays signed in and unlocked – a reload, a new tab, a closed and reopened tab and a restarted browser open
 // without the passkey; a session about to end renews itself without a gesture; with "Stay signed in" off a reload is
 // locked as before; signing out removes the session and this browser's device-key entry.

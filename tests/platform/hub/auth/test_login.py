@@ -5,7 +5,7 @@ resolver of the signature gate, `POST /v1/session/end` and `POST /v1/session/ren
 The certificate is verified against the stored passkey (V1-V11), bound to the ceremony's hub value, the counter
 must not regress, the session lasts at most 43080 s, and the session key then signs every request: expired →
 `session_expired`, ended or passkey removed or user disabled → `key_revoked`. A still valid session renews itself to
-30 days from the hub's clock (rule E-37), the same key and row.
+30 days from the hub's clock (rule E-40), the same key and row.
 """
 
 from __future__ import annotations
@@ -317,7 +317,7 @@ def test_session_end_needs_a_session(browser: FakeBrowser) -> None:
     assert (response.status_code, response.json()) == (401, {"error": "signature_missing"})
 
 
-# --- renewal (rule E-37, ADR-099) -------------------------------------------------------------------------------------
+# --- renewal (rule E-40, ADR-099) -------------------------------------------------------------------------------------
 
 
 def test_renewal_extends_the_same_session(browser: FakeBrowser, account: Account) -> None:

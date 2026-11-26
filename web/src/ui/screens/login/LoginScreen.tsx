@@ -5,7 +5,7 @@
 // otherwise the `prf_missing` guidance of WEB-14 (`ui/prf-missing`: recovery code once, no rotation; remember this
 // browser; a PRF passkey from another device). After an unlock without PRF of a PRF-capable passkey whose slot is
 // missing, the slot is uploaded so the next sign-in needs only the passkey. "Lost your passkeys?" leads to `/recover`.
-// "Stay signed in" (rule E-37, on unless switched off; the choice is kept for this browser in `Prefs`) lets the unlock
+// "Stay signed in" (rule E-40, on unless switched off; the choice is kept for this browser in `Prefs`) lets the unlock
 // keep the identity with this browser's device key, so a reload, a new tab or a restart opens without the passkey.
 import { useState } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';

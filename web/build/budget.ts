@@ -11,7 +11,7 @@ import { parseAttributes } from './sri.ts';
  * The guard of the build: the measured first load (199.3 KiB gzip, HOT-16) plus 10 %, raised to 220 KiB by KOR-57 (the
  * agent rules every client verifies at sign-in) and to 221 KiB by KOR-48 (the error texts and the navigation entry of the
  * pull-request view) and to 224 KiB by KOR-56 (the support rules every client verifies and the support parts of the
- * background jobs) and to 225 KiB by KOR-74 (rule E-37: the unlock with the device key at start-up runs before the first
+ * background jobs) and to 225 KiB by KOR-74 (rule E-40: the unlock with the device key at start-up runs before the first
  * screen, with the session renewal and the "Stay signed in" choice of the sign-in page); the texts of the orchestrator
  * dialog (KOR-57) stay within it, well below the 300 KiB ceiling of section 12.2, so every package sees growth of the
  * first load in its own gates. Raise it only with a reason there.

@@ -166,7 +166,7 @@ function manualTimer() {
   };
 }
 
-describe('AppSession: stay signed in (rule E-37)', () => {
+describe('AppSession: stay signed in (rule E-40)', () => {
   /** An onboarded browser whose app has this browser's device keys; `again` is a reload of it (same IndexedDB). */
   async function staying(options: { stay?: boolean; now?: () => number } = {}) {
     const context = await setup(options.now === undefined ? {} : { now: options.now });

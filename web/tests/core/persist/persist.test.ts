@@ -73,7 +73,7 @@ describe('persist', () => {
     await expect(persist.saveSession({ ...(await session()), renewedAt: -1 })).rejects.toThrow();
   });
 
-  it('keeps the time of the last renewal (rule E-37)', async () => {
+  it('keeps the time of the last renewal (rule E-40)', async () => {
     const persist = await Persist.open(new IDBFactory());
     await persist.saveSession({ ...(await session()), renewedAt: 1_700_000_000_000 });
     expect((await persist.loadSession())!.renewedAt).toBe(1_700_000_000_000);

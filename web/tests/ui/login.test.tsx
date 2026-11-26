@@ -143,7 +143,7 @@ describe('LoginScreen', () => {
     expect([...bundles.keys()]).toEqual(['recovery']);
   });
 
-  it('offers "Stay signed in", on by default, and keeps the choice for this browser (rule E-37)', async () => {
+  it('offers "Stay signed in", on by default, and keeps the choice for this browser (rule E-40)', async () => {
     const { app } = await loginPage();
     const stay = screen.getByTestId('login.stay') as HTMLInputElement;
     expect(stay.checked).toBe(true);

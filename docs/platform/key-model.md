@@ -31,7 +31,7 @@ whoever can open it; *entitled* = the verified log makes a principal a reader of
 | Principal | Identified by | Own long-term keys | Acts through | Built |
 |---|---|---|---|---|
 | **Human user** (optionally with the root-signed platform role `inviter`) | user ID (UUIDv7), registered identity `pub{kem,sig}`, passkeys | user identity (X25519 + Ed25519) in the identity bundle | browser sessions, its agent | yes |
-| **Browser session** of a user | P-256 session key in a 12 h session certificate signed by a passkey assertion; a browser that stays signed in renews the session with that key for 30 days at a time ([E-37](KONZEPT.md#e-37), [ADR-099](adr/099-stay-signed-in.md)) | the session key; it holds the user's unlocked identity in memory while the tab is open; a **remembered browser** ("Stay signed in", default on) also keeps it at rest under a non-extractable IndexedDB key (`persist/device-key`, [06 §3.3](spec/06-web.md#33-prf-required-prf_missing-guidance)) | the user's identity | yes |
+| **Browser session** of a user | P-256 session key in a 12 h session certificate signed by a passkey assertion | the session key; it holds the user's unlocked identity in memory while the tab is open; a **remembered browser** also keeps it at rest under a non-extractable IndexedDB key (`persist/device-key`, [06 §3.3](spec/06-web.md#33-prf-required-prf_missing-guidance)) | the user's identity | yes |
 | **Execution device** – org device (enrolled by an org invitation) or platform device (certified by the platform root) | device ID, `pub{kem,sig}` in the membership log (org device) or the platform log (platform device) | device identity (X25519 + Ed25519), runner storage key derived from it | the runner; the sessions it runs | yes |
 | **Agent of the user** (main orchestrator, [idea 34](KONZEPT.md#k-idee-34), [ADR-056](adr/056-delegated-agent-access.md)) | agent ID (key ID `agent.<hex>` at the hub), a sub-principal of kind `agent` with its user as parent in every log of the user ([ADR-082](adr/082-agent-own-identity.md)) | agent key pair = its identity (X25519 opens its wraps, Ed25519 signs requests, entries, events, wraps, records); a delegation certificate by the user's identity; the registering agent of an account without a person holds the account's identity ([E-27](KONZEPT.md#e-27)) | its own identity with its user's rights | yes (local); on DFX hardware: in the session VM under the account `agent-orch` (KM-41) |
 | **Platform session** (a Claude Code session, its subagents) | session ID, bearer session token inside the VM | **none** | the device that runs it (device-signed events, operations and reads) | yes |
@@ -366,7 +366,9 @@ bearing on keys).
 | [E-31](KONZEPT.md#e-31) | Every subscription is a `claude_subscription` record under the user's `CK`, logged in and renewed by an eligible device; its use is sealed in the record (ADR-090). | none | – |
 | [E-32](KONZEPT.md#e-32) | Working modes chosen per session or task, nothing on the user's computer; the keys a mode needs are decided with that mode (KOR-72). | none | – |
 | [E-33](KONZEPT.md#e-33) | Platform operations in parallel, each in its own isolated environment; a mailbox credential belongs to its subscription (KOR-73 decides its keys). | none | – |
-| [E-37](KONZEPT.md#e-37) | Stay signed in: the identity at rest under the browser's non-extractable device key (the "remembered browser" of §2, default on), the same session key renewed by itself at the hub before its end (ADR-099); sign-out deletes both. | carried | [§1](#1-principals), [§2](#2-keys-per-principal) |
+| [E-34](KONZEPT.md#e-34) | Self-hosted CI runs through the platform (concept): CI VMs (concept) hold no scope key and no device key; placement of the CI app key is open (spec/16 D-4; recommendation: never in a VM or at the hub). | decision needed | KM-37 |
+| [E-35](KONZEPT.md#e-35) | One shared capacity: the rule itself names no key; with [E-36](KONZEPT.md#e-36) a pool device holds the keys of the workgroups it serves while CI VMs run on it (data access of the device, as for idea 35). | decision needed | [§6](#6-where-plaintext-lies) |
+| [E-36](KONZEPT.md#e-36) | CI jobs, also with foreign PR code, share the devices with the work VMs (no own CI device): a pool device holds the plaintext and keys of the workgroups it serves while CI VMs run on it; the separating measures (gate U, spec/16 D-7, D-20) stay a recommendation. | decision needed | [§6](#6-where-plaintext-lies) |
 | [A1](KONZEPT.md#a-1) | Subagents have the parent's rights and no keys. | carried | [§1](#1-principals) |
 | [A2](KONZEPT.md#a-2) | Conflict fix by merge commit. | none | – |
 | [A3](KONZEPT.md#a-3) | The hardening is built: the agent has its own identity as a sub-principal and is rotated out on revocation (ADR-082); the rekey of the user's identity for copies made before is a decision of the owner. | decision needed | KM-28, KM-30, KM-39 |
@@ -385,6 +387,8 @@ bearing on keys).
 | [A16](KONZEPT.md#a-16) | Workflow files are not blocked. | none | – |
 | [A17](KONZEPT.md#a-17) | Protected branches. | none | – |
 | [A18](KONZEPT.md#a-18) | Blocked attempts are logged. | none | – |
+| [A20](KONZEPT.md#a-20) | One throw-away VM per CI job; no bearing of its own on keys (the keys around CI VMs: row E-34). | none | – |
+| [A21](KONZEPT.md#a-21) | That the runner runs on the same devices as the work VMs is decided by [E-36](KONZEPT.md#e-36); that it is a VM stays interpretation [A20](KONZEPT.md#a-20). The pool device holds the keys of the workgroups it serves while CI VMs run on it. | decision needed | [§6](#6-where-plaintext-lies) |
 
 ## 11. Gaps and the requirements on the follow-up packages
 

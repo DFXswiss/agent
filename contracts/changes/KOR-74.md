@@ -4,7 +4,7 @@ ADR-027 section 3 (additive).
 
 ## `POST /v1/session/renew` (new)
 
-Rule E-37 ("Angemeldet bleiben", ADR-099): a browser that stays signed in renews its session before it ends, signed
+Rule E-40 ("Angemeldet bleiben", ADR-099): a browser that stays signed in renews its session before it ends, signed
 by the still valid session key. New schemas `api/session-renew.request.json` (empty body, as `session/end`) and
 `api/session-renew.response.json` (`key_id` of the renewed session and its new `expires_at`; for an agent key, which
 does not expire, its key ID and `null`), their fixtures under

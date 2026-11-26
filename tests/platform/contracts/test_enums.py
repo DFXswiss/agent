@@ -179,7 +179,7 @@ KOR51_AUDIT = "agent_profile.set agent_profile.delete task.agent_profile"
 """Rights profiles (ADR-094): own profiles of an org or a workgroup, the profile of a task."""
 # ADR-096 (KOR-56): the support release
 KOR56_AUDIT = "support.people support.write support.name"
-# rule E-37, ADR-099 (KOR-74): the renewal of a browser session
+# rule E-40, ADR-099 (KOR-74): the renewal of a browser session
 KOR74_AUDIT = "auth.session_renew"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 03-api.md section 4.6.2, ADR-075 section 7: reasons of a waiting task beyond the session failure reasons

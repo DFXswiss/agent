@@ -36,7 +36,7 @@ A requirement is done only when all listed tests pass in the hermetic suite (and
 | R-1.4 | [§1 b2](../KONZEPT.md#k-1-b2) | Invitations are generated as codes and passed on. | 128-bit code, text form `XXXXX-…`, link `/invite#<code>`; hub sees only `invite_id`. | WEB, HUB | 04 §3, §5.7 | E2E-02, E2E-03 |
 | R-1.5 | [§1 b3](../KONZEPT.md#k-1-b3) | Users accept the invitation. | `accept` log entry signed by invitee and `sk_inv`. | WEB, HUB | 04 §5.2 | E2E-02 |
 | R-1.6 | [§1 b3](../KONZEPT.md#k-1-b3) | Users set up a passkey. | WebAuthn with UV required and PRF: a passkey without PRF output is refused at registration, when added and in a recovery (KOR-22); a recovery code is created on request in the settings. ADR-006, ADR-055. | WEB, HUB | 04 §5.1, 03 §4.1 | E2E-01, E2E-30 |
-| R-1.7 | [§1 b3](../KONZEPT.md#k-1-b3) | Users sign in at `agent.dfx.swiss`. | Passkey login certifies a session key (12 h; a browser that stays signed in renews it, [E-37](../KONZEPT.md#e-37)) and unlocks the identity in one gesture; RP ID = host of `AGENT_HUB_PUBLIC_URL` (localhost in tests). | WEB, HUB | 04 §5.4, §4.9 | E2E-01, E2E-30 |
+| R-1.7 | [§1 b3](../KONZEPT.md#k-1-b3) | Users sign in at `agent.dfx.swiss`. | Passkey login certifies a session key (12 h) and unlocks the identity in one gesture; RP ID = host of `AGENT_HUB_PUBLIC_URL` (localhost in tests). | WEB, HUB | 04 §5.4, §4.9 | E2E-01, E2E-30 |
 | R-1.8 | [§1 b4](../KONZEPT.md#k-1-b4) | Devices are paired with an invitation code. | `agent-runner enroll --code`. | RUN, HUB | 04 §5.8, 03 §6.1 | E2E-04 |
 | R-1.9 | [§1 b4](../KONZEPT.md#k-1-b4) | Devices then authenticate cryptographically with a device-specific key, like SSH, without requiring SSH. | Ed25519 device key, `agent-request-v1` signed requests and signed WebSocket upgrade. | RUN, HUB | 03 §1, §6 | E2E-04, U-HUB-auth |
 | R-1.10 | [§1 b5](../KONZEPT.md#k-1-b5) (proposal) | One-time codes. | **Adopted**: every code is single use (L7, hub marks used). ADR-005. | HUB, WEB, RUN | 04 §4.7, §5.7 | E2E-03 |
@@ -275,7 +275,7 @@ row adds `R-` rows with their tests and replaces the row here.
 
 Younger than the concept; where they contradict it, the rule holds. Wording, date and reference in
 [`KONZEPT.md`](../KONZEPT.md#teil-b--regeln-und-entscheide-des-auftraggebers); a new rule is entered there first. The
-interpretations A1–A18 (part C) have no rows of their own; the rows above and below cite them where they apply.
+interpretations A1–A21 (part C) have no rows of their own; the rows above and below cite them where they apply.
 
 | ID | Ref | Rule (short) | Status | Where |
 |---|---|---|---|---|
@@ -312,7 +312,9 @@ interpretations A1–A18 (part C) have no rows of their own; the rows above and 
 | E-31 | [E-31](../KONZEPT.md#e-31) | Every Claude subscription has its own login on a platform device, is measured and renewed there, never copied to a computer of the user, and serves only the sessions its owner switches on (default: measure only). | gebaut | [ADR-090](../adr/090-every-subscription-logged-in-centrally.md) |
 | E-32 | [E-32](../KONZEPT.md#e-32) | Nothing runs on the user's computer except at most a Claude session that steers agent.dfx.swiss; everything local today (the `agent` tool with ledger, coordinator, A38, AI accounts, `knock` and dashboard, the legacy hub, the tooling that builds, checks, merges and releases the platform) becomes a working mode of the platform that is chosen per session or task – by a sentence in the prompt, in the web client or with the agent tool – never forced and never on by default, and is then carried out completely; the accesses these need (Apple signing, server access, mailboxes, subscriptions) move along without asking, services on the computer that do not come from this repository stay out. | offen | [ADR-098](../adr/098-working-modes.md) (KOR-72; build packages in its §9) |
 | E-33 | [E-33](../KONZEPT.md#e-33) | Independent work the platform does for a user runs at the same time, each in its own isolated environment – sessions, test runs and browsers as well as platform operations such as logging in several subscriptions; nothing forces them into a queue: what an operation needs belongs to it (every subscription has its own mailbox). | offen | KOR-73 |
-| E-37 | [E-37](../KONZEPT.md#e-37) | After the sign-in a browser stays signed in and unlocked – reload, new tab, closed and reopened tab, browser restart – without a passkey prompt until the user signs out; the session renews itself while the browser is used; "Stay signed in" is selectable and on by default (off: as before); sign-out removes the session and this browser's device-key entry. | gebaut | [ADR-099](../adr/099-stay-signed-in.md) (KOR-74), 06 §2.3, §3.3, §3.4, 04 §5.4, `web/e2e/stay-signed-in.spec.ts` |
+| E-34 | [E-34](../KONZEPT.md#e-34) | All self-hosted GitHub Actions runs of the DFX organisations run through agent.dfx.swiss. | offen | concept [16-ci-runners.md](16-ci-runners.md), decisions open (§13 there); note: one VM per job is interpretation [A20](../KONZEPT.md#a-20); host-bound jobs are not covered by it and are an open deviation (decision D-1 there, [KONZEPT part D](../KONZEPT.md#d-offen)) |
+| E-35 | [E-35](../KONZEPT.md#e-35) | One shared capacity: no own machines for self-hosted runners next to the platform; the operator's whole server capacity belongs to agent.dfx.swiss, and a runner is obtained through the platform. | offen | concept [16-ci-runners.md](16-ci-runners.md) (§6.6 there); note: that the runner runs on the same devices as the work VMs is decided by [E-36](../KONZEPT.md#e-36); that it is a VM stays interpretation [A20](../KONZEPT.md#a-20) (summed up in [A21](../KONZEPT.md#a-21)); host-bound jobs: decision D-1 there, [KONZEPT part D](../KONZEPT.md#d-offen) |
+| E-36 | [E-36](../KONZEPT.md#e-36) | CI jobs, also with foreign PR code, run on the same devices as the work VMs of the workgroups; there is no own CI device, not even inside the platform. | offen | concept [16-ci-runners.md](16-ci-runners.md) (§6.6, §9 there); gate U stays a recommendation (decisions D-7, D-20 there) |
 
 ## R-P Assignment guardrails (`PROJECT.md`)
 
@@ -354,7 +356,7 @@ interpretations A1–A18 (part C) have no rows of their own; the rows above and 
 | R-14 | 7 |
 | R-15 | 3 |
 | R-P | 13 |
-| **Total** | **153** (130 from Grundprinzip and §1–§12 and idea 26); R-16 and R-E are tracked separately (24 rows each) |
+| **Total** | **153** (130 from Grundprinzip and §1–§12 and idea 26); R-16 (24 rows) and R-E (36 rows) are tracked separately |
 
 Every row of R-0 to R-13 names at least one `E2E-*` test; R-14, R-15 and R-P rows name the test or gate that
 proves the decision. Every milestone of `09-milestones.md` lists the R-IDs that must be green at its exit; the

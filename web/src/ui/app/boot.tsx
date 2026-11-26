@@ -1,6 +1,6 @@
 // Start of the client (06-web.md sections 2.2, 2.6, 10.4, 12.6): locale, configuration check against the hub, browser
 // support, the persistence and the stored session (a reload is `locked`, or `unlocked` by the device key of a browser
-// that stays signed in, rule E-37), then the app
+// that stays signed in, rule E-40), then the app
 // with its router – or the blocking error page / the unsupported-browser page. Once the hub is known, the long-task
 // early warning starts (ADR-086 section 5), signed in or not; its code is a lazy chunk (not in the first load).
 import { StrictMode } from 'react';

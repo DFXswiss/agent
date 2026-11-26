@@ -50,7 +50,7 @@ export function PrfMissing({ signIn, unlock, onUnlocked, onCancel, keys = device
     }
     // a PRF-capable passkey without slot: upload it now that the identity is confirmed
     await uploadMissingSlot(app, signIn, identity);
-    // remembered, this browser also stays signed in (rule E-37: the same device key)
+    // remembered, this browser also stays signed in (rule E-40: the same device key)
     if (remember && (await rememberBrowser(signIn.userId, identity, keys))) app.noteRemembered(true);
     onUnlocked();
   };

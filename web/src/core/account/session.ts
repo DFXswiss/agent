@@ -2,7 +2,7 @@
 // signed client, the background-job runner, the event reader and the live channel of the active org.
 //
 // - `restore()` at start-up: a stored, unexpired session key makes the browser `locked` (signed requests work, but
-//   identity and scope keys live only in memory, section 2.3). A browser that stays signed in (rule E-37, ADR-099)
+//   identity and scope keys live only in memory, section 2.3). A browser that stays signed in (rule E-40, ADR-099)
 //   opens the identity with its device key (`persist/device-key.ts`) and goes on to `unlocked` without the passkey.
 // - `begin(signIn)` stores a new session key (non-extractable, IndexedDB) – first sign-in and renewal alike.
 // - `unlock(identity)` checks the identity against the registered public keys (`GET /v1/me`), loads the profile,
@@ -59,7 +59,7 @@ export type SessionPersist = Pick<
 /** What the session needs of this browser's device keys (`persist/device-key.ts`). */
 export type DeviceStore = Pick<DeviceKeys, 'remember' | 'unlock' | 'forget'>;
 
-/** How often a browser that stays signed in looks at its session (rule E-37). */
+/** How often a browser that stays signed in looks at its session (rule E-40). */
 export const KEEP_CHECK_MS = 60_000;
 /** A tab renews the session when its last renewal is this old (or the session is about to end). */
 export const RENEW_EVERY_MS = 3_600_000;
@@ -94,7 +94,7 @@ export interface AppSessionDeps {
     readonly start: (tick: () => void, ms: number) => unknown;
     readonly stop: (handle: unknown) => void;
   };
-  /** This browser's device keys (rule E-37); without them the browser never stays signed in. */
+  /** This browser's device keys (rule E-40); without them the browser never stays signed in. */
   readonly device?: () => Promise<DeviceStore>;
   /** Runs a renewal alone among the tabs of this browser (default: `exclusiveOf(undefined)`). */
   readonly exclusive?: <T>(run: () => Promise<T>) => Promise<T>;
@@ -140,7 +140,7 @@ export class AppSession {
   #live: { readonly org: string; readonly connection: Promise<LiveConnection | null> } | null = null;
   /** The handle of the `interval` timer while unlocked. */
   #interval: unknown = null;
-  /** This browser keeps the signed-in user's identity with its device key (rule E-37). */
+  /** This browser keeps the signed-in user's identity with its device key (rule E-40). */
   #remembered = false;
   /** The handle of the renewal check while the browser stays signed in. */
   #keeping: unknown = null;
@@ -205,7 +205,7 @@ export class AppSession {
     return this.store.getState().me.userId;
   }
 
-  /** This browser keeps the identity with its device key and renews the session by itself (rule E-37). */
+  /** This browser keeps the identity with its device key and renews the session by itself (rule E-40). */
   get staysSignedIn(): boolean {
     return this.#remembered;
   }
@@ -309,7 +309,7 @@ export class AppSession {
   }
 
   /**
-   * "Stay signed in" after an unlock (rule E-37): on – this browser's device key keeps `identity` and the session
+   * "Stay signed in" after an unlock (rule E-40): on – this browser's device key keeps `identity` and the session
    * renews itself; off – this browser's entry of the user is deleted (a reload is `locked` as before).
    */
   async #stayOnBrowser(identity: Identity): Promise<void> {
@@ -350,7 +350,7 @@ export class AppSession {
   }
 
   /**
-   * The renewal check of a browser that stays signed in (rule E-37, ADR-099): a session another tab renewed or signed
+   * The renewal check of a browser that stays signed in (rule E-40, ADR-099): a session another tab renewed or signed
    * in for the same user (IndexedDB) is taken over; when this browser's last renewal is an hour old or the session is
    * about to end, `POST /v1/session/renew` (signed by the still valid key) moves its end and the new end is stored for
    * every tab. One tab at a time (`exclusive`); a failure leaves the session as it is (an ended one shows the usual
@@ -682,7 +682,7 @@ export class AppSession {
 
   /**
    * Sign-out (06-web.md section 2.6): the hub ends the session (best effort), this browser's device-key entry of the
-   * user is deleted (rule E-37: nothing keeps the browser signed in any more), then everything local is cleared.
+   * user is deleted (rule E-40: nothing keeps the browser signed in any more), then everything local is cleared.
    */
   async signOut(): Promise<void> {
     const userId = this.userId;

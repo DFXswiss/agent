@@ -1,5 +1,5 @@
 {
-  "description": "Endpoints added by KOR-74 (ADR-099, rule E-37): a browser that stays signed in renews its session with the still valid session key (03-api.md section 4.1).",
+  "description": "Endpoints added by KOR-74 (ADR-099, rule E-40): a browser that stays signed in renews its session with the still valid session key (03-api.md section 4.1).",
   "rights": [
     "user"
   ],

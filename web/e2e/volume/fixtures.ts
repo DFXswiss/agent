@@ -48,7 +48,7 @@ export const test = base.extend<{ volume: VolumeUser }, { lane: string; volumeUs
       const data = await seed(info.project.name);
       const use_ = info.project.use as Record<string, unknown>;
       const context: BrowserContext = await browser.newContext(contextOptions(use_));
-      // the measured sign-in flows of the volume gate are those of a browser that does not stay signed in (rule E-37)
+      // the measured sign-in flows of the volume gate are those of a browser that does not stay signed in (rule E-40)
       await stayOff(context);
       const violations: CspViolation[] = [];
       await context.exposeBinding(CSP_BINDING, (_source, violation: CspViolation) => {

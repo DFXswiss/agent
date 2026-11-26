@@ -2,7 +2,7 @@
 // - V8 coverage of every page, added to the monocart cache with the build's source maps;
 // - a CSP listener: every `securitypolicyviolation` of any page fails the test (06-web.md section 10.2);
 // - the lane of the worker's project (`lane`): the helpers call that lane's device double;
-// - "Stay signed in" (rule E-37) off unless a spec asks for the default (`staySignedIn`).
+// - "Stay signed in" (rule E-40) off unless a spec asks for the default (`staySignedIn`).
 // Both apply to the default `context` and to every context created with the `newContext` fixture; specs that need
 // more contexts (other locales, several users) use `newContext` instead of `browser.newContext`.
 import { test as base, expect, type BrowserContext, type BrowserContextOptions, type Page } from '@playwright/test';
@@ -49,8 +49,8 @@ interface Fixtures {
   cspViolations: CspViolation[];
   newContext: (options?: BrowserContextOptions) => Promise<BrowserContext>;
   /**
-   * "Stay signed in" (rule E-37) as the product's default (on). Off for every spec unless it sets
-   * `test.use({ staySignedIn: true })`: the specs written before E-37 rely on a reload asking for the passkey, so their
+   * "Stay signed in" (rule E-40) as the product's default (on). Off for every spec unless it sets
+   * `test.use({ staySignedIn: true })`: the specs written before E-40 rely on a reload asking for the passkey, so their
    * browsers carry the user's choice "off" (the same `localStorage` entry the sign-in page writes).
    */
   staySignedIn: boolean;
