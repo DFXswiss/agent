@@ -21,6 +21,16 @@ Flow (each page has ``<body data-page="…">`` so a browser driver can tell wher
    ``client_id``) renews such a login like the provider: a new access token and a **new** refresh token; the used one
    is dead from then on (``400 invalid_grant``, as is an unknown one).
 
+KOR-73 (ADR-100 section 8) adds the shapes of the real pages: the sign-in mail also carries a six-digit code
+(``Your login code is NNNNNN``; with ``link: false`` only the code), the check-email page a code form (``POST
+/login/code``, input ``autocomplete=one-time-code``, milestone ``code_entered``); an address of ``new_accounts`` has
+no account yet: its first authorize page after the sign-in redirects to ``GET /onboarding`` (full name, date of birth,
+the consent boxes ``terms`` and ``age`` - both required - and ``marketing``; ``POST /onboarding`` registers it,
+milestone ``registered``, and returns to the authorize page); the fault ``challenge`` puts a check for humans before
+the e-mail page (title "Just a moment...", a ``cf-turnstile`` box whose checkbox sits at viewport position
+`CHALLENGE_BOX` and passes only when it is clicked: ``POST /challenge`` sets a clearance cookie, milestone
+``challenge_passed``). The register state is in ``GET /_double/state`` (``registered``: address -> marketing).
+
 Error pages (``data-page="error"``, the reason in ``#error-code``) answer unexpected states: invalid parameters, an
 unknown or used link, a missing session, a decline. Requests that the clients under test never send correctly
 (invalid OAuth parameters, malformed token requests, unknown routes, a mail that cannot be sent) are failures of the
@@ -41,6 +51,7 @@ plain HTTP, like every double). ``python -m agent_doubles.login_cli.authpage --c
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import os
@@ -75,7 +86,10 @@ DEFAULT_MAIL_FROM = "Claude <no-reply@auth.double.test>"
 SESSION_COOKIE = "double_session"
 MAGIC_LIFETIME = 900
 CODE_LIFETIME = 600
-FAULTS = frozenset({"email_page", "no_mail", "authorize_page", "code_page", "token"})
+FAULTS = frozenset({"email_page", "no_mail", "authorize_page", "code_page", "token", "challenge"})
+CLEARANCE_COOKIE = "double_clearance"
+CHALLENGE_BOX = (100, 100, 24)
+"""Left and top edge (CSS pixels) and size of the challenge's checkbox."""
 MILESTONES = (
     "email_page",
     "mail_sent",
@@ -85,6 +99,9 @@ MILESTONES = (
     "declined",
     "code_page",
     "token",
+    "challenge_passed",
+    "code_entered",
+    "registered",
 )
 # Values that grant access (magic-link tokens, codes, PKCE verifiers, states, issued tokens) never reach the journal.
 # ``next`` is the stored authorize URL, which holds the state.
@@ -138,6 +155,12 @@ def error_page(code: str, text: str) -> bytes:
     return page("error", "Something went wrong", body)
 
 
+def mail_code(seed: str, n: int) -> str:
+    """The six-digit code of the n-th sign-in mail."""
+    digest = hashlib.sha256(f"{seed}:mail-code:{n}".encode()).digest()
+    return f"{int.from_bytes(digest[:4], 'big') % 1_000_000:06d}"
+
+
 def hidden(name: str, value: str) -> str:
     return f'<input type="hidden" name="{name}" value="{html.escape(value)}">'
 
@@ -171,14 +194,23 @@ class Scenario:
     fault: str | None = None
     expect: tuple[str, ...] = ()
     seed: str = codes.DEFAULT_SEED
+    link: bool = True
+    new_accounts: tuple[str, ...] = ()
 
     def describe(self) -> dict[str, Any]:
-        return {"junk": self.junk, "fault": self.fault, "expect": list(self.expect), "seed": self.seed}
+        return {
+            "junk": self.junk,
+            "fault": self.fault,
+            "expect": list(self.expect),
+            "seed": self.seed,
+            "link": self.link,
+            "new_accounts": list(self.new_accounts),
+        }
 
 
 def parse_scenario(body: Any) -> Scenario:
     data = body_object(body)
-    unknown = set(data) - {"junk", "fault", "expect", "seed"}
+    unknown = set(data) - {"junk", "fault", "expect", "seed", "link", "new_accounts"}
     if unknown:
         raise ControlError(f"unknown scenario keys {sorted(unknown)}")
     junk = data.get("junk", False)
@@ -193,7 +225,13 @@ def parse_scenario(body: Any) -> Scenario:
         raise ControlError(f"expect must list milestones of {list(MILESTONES)}")
     if not isinstance(seed, str) or not seed:
         raise ControlError("seed must be a non-empty string")
-    return Scenario(junk, fault, tuple(expect), seed)
+    link = data.get("link", True)
+    new_accounts = data.get("new_accounts", [])
+    if not isinstance(link, bool):
+        raise ControlError("link must be a boolean")
+    if not isinstance(new_accounts, list) or not all(isinstance(a, str) and "@" in a for a in new_accounts):
+        raise ControlError("new_accounts must list e-mail addresses")
+    return Scenario(junk, fault, tuple(expect), seed, link, tuple(new_accounts))
 
 
 @dataclass
@@ -206,6 +244,11 @@ class _Run:
     grants: dict[str, Grant] = field(default_factory=dict)
     refresh: dict[str, str] = field(default_factory=dict)
     """Live refresh token -> its scope."""
+    mail_codes: dict[str, str] = field(default_factory=dict)
+    """Code of a sign-in mail -> its magic token."""
+    registered: dict[str, bool] = field(default_factory=dict)
+    """Registered new account -> whether it agreed to marketing mails."""
+    clearances: set[str] = field(default_factory=set)
     counters: dict[str, int] = field(default_factory=dict)
     milestones: list[str] = field(default_factory=list)
     failures: list[str] = field(default_factory=list)
@@ -344,6 +387,7 @@ class AuthPageDouble:
                 requests=run.requests,
                 scenario=run.scenario.describe(),
                 milestones=list(run.milestones),
+                registered=dict(run.registered),
                 urls=self.info(),
             )
 
@@ -371,21 +415,29 @@ class AuthPageDouble:
         """Issue a magic link for `email` and mail it; the token. Raises OSError/smtplib errors when sending fails."""
         with self.lock:
             run = self.run
-            token = codes.magic_token(run.scenario.seed, run.next("magic"))
+            number = run.next("magic")
+            token = codes.magic_token(run.scenario.seed, number)
             run.magic[token] = Magic(email, next_url, self.clock())
-            fault, junk = run.scenario.fault, run.scenario.junk
+            code = mail_code(run.scenario.seed, number)
+            run.mail_codes[code] = token
+            fault, junk, with_link = run.scenario.fault, run.scenario.junk, run.scenario.link
         if fault == "no_mail":
             return token
         if self.smtp is None:
             raise OSError("no SMTP server configured")
         link = f"{self.page_url}/magic-link#{token}"
+        text = f"Your login code is {code}.\n"
+        markup = f"<p>Your login code is <b>{code}</b>.</p>"
+        if with_link:
+            text = f"Click the link below to log in:\n\n{link}\n\nThe link expires in 15 minutes.\n\n" + text
+            markup = f'<p>Click the link below to log in:</p><p><a href="{html.escape(link)}">Log in</a></p>' + markup
         raw = compose(
             self.mail_from,
             [email],
             "Secure link to log in to Claude",
             when=self.clock(),
-            text=f"Click the link below to log in:\n\n{link}\n\nThe link expires in 15 minutes.\n",
-            html=f'<p>Click the link below to log in:</p><p><a href="{html.escape(link)}">Log in</a></p>',
+            text=text,
+            html=markup,
             spam=junk,
         )
         # An explicit local name: smtplib would otherwise look up the host's FQDN, which can block for seconds.
@@ -406,6 +458,39 @@ class AuthPageDouble:
             run.sessions[sid] = magic.email
         self.reached("signed_in")
         return sid, magic.next
+
+    def use_code(self, code: str) -> tuple[str, str] | None:
+        """Session ID and next URL for the code of a sign-in mail (its magic token is used), or None."""
+        with self.lock:
+            token = self.run.mail_codes.pop(code, None)
+        if token is None:
+            return None
+        used = self.use_magic(token)
+        if used is not None:
+            self.reached("code_entered")
+        return used
+
+    def needs_registration(self, email: str) -> bool:
+        with self.lock:
+            return email in self.run.scenario.new_accounts and email not in self.run.registered
+
+    def register(self, email: str, marketing: bool) -> None:
+        with self.lock:
+            self.run.registered[email] = marketing
+        self.reached("registered")
+
+    def clear(self, cookie_header: str | None) -> bool:
+        """Whether the browser passed the check for humans (fault ``challenge``)."""
+        morsel = SimpleCookie(cookie_header or "").get(CLEARANCE_COOKIE)
+        with self.lock:
+            return morsel is not None and morsel.value in self.run.clearances
+
+    def clearance(self) -> str:
+        with self.lock:
+            value = codes.session_id(self.run.scenario.seed, self.run.next("clearance"))
+            self.run.clearances.add(value)
+        self.reached("challenge_passed")
+        return value
 
     def session_email(self, cookie_header: str | None) -> str | None:
         if not cookie_header:
@@ -567,6 +652,10 @@ class _PageHandler(DoubleHandler):
                 ("POST", "/login"): self._login,
                 ("GET", "/magic-link"): self._magic_page,
                 ("POST", "/magic-link/verify"): self._magic_verify,
+                ("POST", "/login/code"): self._login_code,
+                ("GET", "/onboarding"): self._onboarding_get,
+                ("POST", "/onboarding"): self._onboarding_post,
+                ("POST", "/challenge"): self._challenge,
                 ("GET", codes.CALLBACK_PATH): self._callback,
                 ("POST", codes.TOKEN_PATH): self._token,
                 ("GET", "/favicon.ico"): self._favicon,
@@ -606,7 +695,23 @@ class _PageHandler(DoubleHandler):
         if problem is not None:
             self._error(entry, 400, "invalid_request", problem, failure=True)
             return
-        email = double.session_email(self.headers.get("cookie"))
+        cookie = self.headers.get("cookie")
+        if double.run.scenario.fault == "challenge" and not double.clear(cookie):
+            left, top, size = CHALLENGE_BOX
+            body = (
+                f'<div class="cf-turnstile" style="position:absolute;left:{left}px;top:{top}px">'
+                '<form method="post" action="/challenge" id="cf">'
+                f"{hidden('next', self.path)}"
+                '<label style="display:flex;align-items:center;gap:8px;font:16px sans-serif">'
+                f'<input type="checkbox" id="human" style="width:{size}px;height:{size}px;margin:0" '
+                "onchange=\"document.getElementById('cf').submit()\"> Verify you are human</label></form></div>"
+            )
+            self._html(entry, 200, page("challenge", "Just a moment...", body))
+            return
+        email = double.session_email(cookie)
+        if email is not None and double.needs_registration(email):
+            self._redirect(entry, "/onboarding?" + urlencode({"next": self.path}))
+            return
         if email is None:
             double.reached("email_page")
             body = (
@@ -648,8 +753,72 @@ class _PageHandler(DoubleHandler):
         except (OSError, smtplib.SMTPException) as exc:
             self._error(entry, 502, "mail_failed", f"the e-mail could not be sent ({type(exc).__name__})", failure=True)
             return
-        body = f'<p id="sent-to">We sent a secure link to {html.escape(email)}.</p>'
+        body = (
+            f'<p id="sent-to">We sent a secure link and a login code to {html.escape(email)}.</p>\n'
+            '<form method="post" action="/login/code">\n<label for="code">Verification code</label>\n'
+            '<input id="code" name="code" autocomplete="one-time-code" inputmode="numeric">\n'
+            '<button type="submit" id="verify-code">Verify Email Address</button>\n</form>'
+        )
         self._html(entry, 200, page("check-email", "Check your email", body))
+
+    def _signed_in(self, entry: Entry, used: tuple[str, str]) -> None:
+        sid, next_url = used
+        secure = "; Secure" if self.double.ca is not None else ""
+        cookie = f"{SESSION_COOKIE}={sid}; Path=/; HttpOnly; SameSite=Lax{secure}"
+        self._redirect(entry, next_url, [("set-cookie", cookie)])
+
+    def _login_code(self, entry: Entry, query: dict[str, str], raw: bytes) -> None:
+        used = self.double.use_code(self._form(raw).get("code", "").strip())
+        if used is None:
+            self._error(entry, 400, "invalid_code", "the code is invalid, used or expired")
+            return
+        self._signed_in(entry, used)
+
+    def _onboarding_get(self, entry: Entry, query: dict[str, str], raw: bytes) -> None:
+        email = self.double.session_email(self.headers.get("cookie"))
+        next_url = query.get("next", "")
+        if email is None or not next_url.startswith(codes.AUTHORIZE_PATH + "?"):
+            self._error(entry, 400, "invalid_request", "no session or no return URL", failure=True)
+            return
+        body = (
+            '<form method="post" action="/onboarding">\n'
+            f"{hidden('next', next_url)}\n"
+            '<label for="full-name">Full name</label>\n'
+            '<input id="full-name" name="full_name" autocomplete="name" required>\n'
+            '<label for="birth">Date of birth</label>\n<input id="birth" name="birth_date" type="date" required>\n'
+            '<label><input type="checkbox" name="terms" required> I agree to the Consumer Terms and the Acceptable Use '
+            "Policy and acknowledge the Privacy Policy</label>\n"
+            '<label><input type="checkbox" name="age" required> I confirm that I am at least 18 years old</label>\n'
+            '<label><input type="checkbox" name="marketing"> Send me occasional product updates and promotional '
+            "emails</label>\n"
+            '<button type="submit" id="create">Create account</button>\n</form>'
+        )
+        self._html(entry, 200, page("register", "Create your account", body))
+
+    def _onboarding_post(self, entry: Entry, query: dict[str, str], raw: bytes) -> None:
+        double = self.double
+        email = double.session_email(self.headers.get("cookie"))
+        form = self._form(raw)
+        next_url = form.get("next", "")
+        if email is None or not next_url.startswith(codes.AUTHORIZE_PATH + "?"):
+            self._error(entry, 400, "invalid_request", "no session or no return URL", failure=True)
+            return
+        if not form.get("full_name", "").strip() or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", form.get("birth_date", "")):
+            self._error(entry, 400, "incomplete", "name and date of birth are required")
+            return
+        if form.get("terms") != "on" or form.get("age") != "on":
+            self._error(entry, 400, "consent_missing", "the terms and the age must be confirmed")
+            return
+        double.register(email, form.get("marketing") == "on")
+        self._redirect(entry, next_url)
+
+    def _challenge(self, entry: Entry, query: dict[str, str], raw: bytes) -> None:
+        next_url = self._form(raw).get("next", "")
+        if not next_url.startswith(codes.AUTHORIZE_PATH + "?"):
+            self._error(entry, 400, "invalid_request", "invalid return URL", failure=True)
+            return
+        value = self.double.clearance()
+        self._redirect(entry, next_url, [("set-cookie", f"{CLEARANCE_COOKIE}={value}; Path=/; SameSite=Lax")])
 
     def _magic_page(self, entry: Entry, query: dict[str, str], raw: bytes) -> None:
         body = (
@@ -667,10 +836,7 @@ class _PageHandler(DoubleHandler):
         if used is None:
             self._error(entry, 400, "invalid_magic_link", "the link is invalid, used or expired")
             return
-        sid, next_url = used
-        secure = "; Secure" if double.ca is not None else ""
-        cookie = f"{SESSION_COOKIE}={sid}; Path=/; HttpOnly; SameSite=Lax{secure}"
-        self._redirect(entry, next_url, [("set-cookie", cookie)])
+        self._signed_in(entry, used)
 
     def _authorize_post(self, entry: Entry, query: dict[str, str], raw: bytes) -> None:
         double = self.double

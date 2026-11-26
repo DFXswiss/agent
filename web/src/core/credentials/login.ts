@@ -8,12 +8,16 @@
 //   program reports it) – the token never reaches the browser. In the automatic mode (mailbox automation) the device
 //   reports `progress` stages; when the automation fails it answers `authorize` with `automation: "failed"`, which the
 //   UI shows as `login_automation_failed` and continues as the relay.
+// - KOR-73 (ADR-100 section 4): when the automation meets a check for humans the device answers `verify` with the
+//   sandbox's picture (newest wins); the owner's click into it goes out as the follow-up `{click: {x, y}}` (fractions of
+//   the picture, `sendClick`), and `{relay: true}` (`sendRelay`) gives the automation up for the link and the code.
+//   `authorize` may name why the automation gave up (`reason`).
 // - `loginProgress`: the flow's state from the original request and its follow-up: the newest verified response of
 //   either (follow-up last) decides; a hub state that ended the active request without an answer is `timeout`
 //   (`expired`) or `request_failed` (`failed`).
 // - `startCheck`: `credential.check {kind}` (the API key or the subscription) or `mailbox.check {}`; `checkProgress`
 //   reads `done {valid}` or a failure.
-import { REQUEST_FAILED, type ResponseBody } from '../requests/bodies';
+import { type AutomationReason, REQUEST_FAILED, type ResponseBody, type VerifyImage } from '../requests/bodies';
 import {
   type OpenedResponse,
   type PreparedRequest,
@@ -35,26 +39,48 @@ export async function startLogin(context: RequestsContext, device: string, mode:
   return prepared;
 }
 
-/** Seals and posts the authorization code as the follow-up of `original`. */
-export async function sendCode(
-  context: RequestsContext,
-  original: PreparedRequest,
-  code: string,
-): Promise<PreparedRequest> {
+async function followUp(context: RequestsContext, original: PreparedRequest, body: unknown): Promise<PreparedRequest> {
   const prepared = await prepareRequest(context, {
     device: original.device.device,
     kind: 'claude.login',
-    body: { code: code.trim() },
+    body,
     follows: original,
   });
   await submitRequest(context, prepared);
   return prepared;
 }
 
+/** Seals and posts the authorization code as the follow-up of `original`. */
+export function sendCode(context: RequestsContext, original: PreparedRequest, code: string): Promise<PreparedRequest> {
+  return followUp(context, original, { code: code.trim() });
+}
+
+/** Seals and posts the owner's click into the picture of a check for humans (fractions of its width and height). */
+export function sendClick(
+  context: RequestsContext,
+  original: PreparedRequest,
+  x: number,
+  y: number,
+): Promise<PreparedRequest> {
+  const clamp = (value: number) => Math.min(1, Math.max(0, value));
+  return followUp(context, original, { click: { x: clamp(x), y: clamp(y) } });
+}
+
+/** Gives the automation up: the device continues with the link and the code. */
+export function sendRelay(context: RequestsContext, original: PreparedRequest): Promise<PreparedRequest> {
+  return followUp(context, original, { relay: true });
+}
+
 export type LoginProgress =
   | { readonly step: 'waiting' }
   | { readonly step: 'progress'; readonly stage: string }
-  | { readonly step: 'authorize'; readonly url: string; readonly automationFailed: boolean }
+  | {
+      readonly step: 'authorize';
+      readonly url: string;
+      readonly automationFailed: boolean;
+      readonly reason: AutomationReason | null;
+    }
+  | { readonly step: 'verify'; readonly frame: number; readonly image: VerifyImage }
   | { readonly step: 'done'; readonly email: string | null }
   | { readonly step: 'failed'; readonly code: string };
 
@@ -77,7 +103,14 @@ function fromBody(body: ResponseBody): LoginProgress | null {
     case 'failed':
       return { step: 'failed', code: body.code };
     case 'authorize':
-      return { step: 'authorize', url: body.url, automationFailed: body.automation === 'failed' };
+      return {
+        step: 'authorize',
+        url: body.url,
+        automationFailed: body.automation === 'failed',
+        reason: body.reason ?? null,
+      };
+    case 'verify':
+      return { step: 'verify', frame: body.frame, image: body.image };
     case 'progress':
       return { step: 'progress', stage: body.stage };
     default:
@@ -99,11 +132,18 @@ export function loginProgress(original: RequestView, followUp: RequestView | nul
 
 export type CheckKind = 'anthropic_api_key' | 'claude_subscription' | 'mailbox';
 
-/** Seals and posts the check of the stored `kind` credential to `device`. */
-export async function startCheck(context: RequestsContext, device: string, kind: CheckKind): Promise<PreparedRequest> {
+/** Seals and posts the check of the stored `kind` credential to `device`; for `mailbox` with `subscriptionId` the own
+ * mailbox of that further subscription (KOR-73). */
+export async function startCheck(
+  context: RequestsContext,
+  device: string,
+  kind: CheckKind,
+  subscriptionId?: string,
+): Promise<PreparedRequest> {
+  const mailbox = subscriptionId === undefined ? {} : { subscription_id: subscriptionId };
   const prepared =
     kind === 'mailbox'
-      ? await prepareRequest(context, { device, kind: 'mailbox.check', body: {} })
+      ? await prepareRequest(context, { device, kind: 'mailbox.check', body: mailbox })
       : await prepareRequest(context, { device, kind: 'credential.check', body: { kind } });
   await submitRequest(context, prepared);
   return prepared;

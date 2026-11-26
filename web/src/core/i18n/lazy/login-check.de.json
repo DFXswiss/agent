@@ -1,0 +1,15 @@
+{
+  "verify.title": "Bitte bestätige, dass du ein Mensch bist",
+  "verify.intro": "Der Anbieter zeigt in der Anmelde-Sandbox eine Prüfung für Menschen. Diese Prüfung erledigst du selbst: Klicke im Bild dorthin, wo du auf der Seite klicken würdest (meist das Kästchen). Die Plattform überträgt nur deinen Klick, sie löst nichts selbst.",
+  "verify.picture": "Bild {frame} der Anmelde-Sandbox – klicken, um dort zu klicken",
+  "verify.clicked": "Klick gesendet – das nächste Bild kommt gleich.",
+  "verify.relay": "Selbst im eigenen Browser anmelden",
+  "reason.disabled": "Die Automatik ist auf dem Gerät ausgeschaltet.",
+  "reason.no_sandbox": "Das Gerät hat gerade keine Browser-Sandbox frei.",
+  "reason.human_check": "Die Prüfung für Menschen wurde nicht bestanden oder du hast den eigenen Browser gewählt.",
+  "reason.consent_missing": "Die Registrierung verlangt eine Zustimmung, die nicht erteilt wurde.",
+  "reason.account_missing": "Zu dieser Adresse gibt es noch kein Konto, und es fehlen die Angaben zum Anlegen.",
+  "reason.unknown_page": "Der Anbieter zeigte eine unbekannte Seite.",
+  "reason.mail_timeout": "Die Login-E-Mail kam nicht rechtzeitig an.",
+  "reason.browser_failed": "Der Browser der Sandbox ist ausgefallen."
+}

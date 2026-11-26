@@ -105,6 +105,7 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
                 "subscriptions",
                 "agent.profiles",
                 "platform.analysis",
+                "subscriptions.parallel",
             ),
         ),
         (
@@ -121,6 +122,7 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
                 "subscriptions",
                 "agent.profiles",
                 "platform.analysis",
+                "subscriptions.parallel",
             ),
         ),
         (
@@ -137,6 +139,7 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
                 "subscriptions",
                 "agent.profiles",
                 "platform.analysis",
+                "subscriptions.parallel",
                 "github.device_flow",
                 "github.oauth_app",
             ),
@@ -155,6 +158,7 @@ def test_a_body_outside_the_contract_is_upstream_error(store_dsn: str, github: G
                 "subscriptions",
                 "agent.profiles",
                 "platform.analysis",
+                "subscriptions.parallel",
                 "github.device_flow",
                 "github.operator",
             ),

@@ -51,7 +51,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | quotas | settings/quotas | `quotas` | done |
 | subscriptions-list | screens/subscriptions and the card "My subscriptions" of screens/home (every own subscription with status - also `relogin` when the device could not renew it -, use, expiry, plan and the remaining quota per window, for the operator also the token-file subscriptions; ADR-091, ADR-092, rules E-30, E-31) | `subscriptions list` (token files: `quotas --org`) | done |
 | settings-subscriptions | settings/subscriptions (the link to the page "My subscriptions", ADR-091) | `subscriptions list` | done |
-| subscriptions-add | screens/subscriptions ("Add subscription") and settings/subscription-logins (a new subscription logged in on a platform device, ADR-090) | `subscriptions add --name --note --automatic --email` | done |
+| subscriptions-add | screens/subscriptions ("Add subscription") and settings/subscription-logins (a new subscription logged in on a platform device, ADR-090; with its own mailbox, use and registration, ADR-100) | `subscriptions add --name --note --automatic --email --mailbox-host --mailbox-user --mailbox-email --mailbox-password-stdin --org --register-name --birth-date --consent` | done |
+| subscriptions-add-many | screens/subscriptions ("Mehrere Abos hinzufügen": several subscriptions at once, each with its own mailbox, use and registration, progress per subscription; ADR-100, rule E-33) | `subscriptions add-many --file --wait` | done |
+| subscriptions-mailbox | screens/subscriptions and settings/subscription-logins (the own mailbox of a subscription: set, remove, check; ADR-100 §1) | `subscriptions mailbox --id --mailbox-host --mailbox-user --mailbox-email --mailbox-password-stdin --clear --check` | done |
+| subscriptions-check | screens/subscriptions (the check for humans of a running login: the live picture, a person's click, "sign in in my own browser"; ADR-100 §4) | `subscriptions check --request --out --click --relay` | done |
 | subscriptions-login | screens/subscriptions ("Log in now") and settings/subscription-logins (log a subscription in again) | `subscriptions login --id` | done |
 | subscriptions-edit | settings/subscription-logins (label and note) | `subscriptions rename --id --name`, `subscriptions note --id --note\|--clear` | done |
 | subscriptions-logout | settings/subscription-logins (drop the access and refresh token, keep name, note and use) | `subscriptions logout --id` | done |
@@ -207,8 +210,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/agent-pairings/{pairing}` | agents-pair |
 | `POST /v1/agent-pairings/{pairing}/orchestrator-handover` | session-orchestrator |
 | `GET /v1/config` | connect-agent, settings-model |
-| `POST /v1/device-requests` | github-connect, github-token, github-accounts, github-company-accounts, credential-claude-relay, credential-check, pr-view, pr-fix-conflicts |
-| `GET /v1/device-requests/{request}` | github-connect, github-token, github-accounts, github-company-accounts, credential-claude-relay, credential-check, pr-view, pr-fix-conflicts |
+| `POST /v1/device-requests` | github-connect, github-token, github-accounts, github-company-accounts, credential-claude-relay, credential-check, pr-view, pr-fix-conflicts, subscriptions-add-many, subscriptions-check, subscriptions-mailbox |
+| `GET /v1/device-requests/{request}` | github-connect, github-token, github-accounts, github-company-accounts, credential-claude-relay, credential-check, pr-view, pr-fix-conflicts, subscriptions-add-many, subscriptions-check, subscriptions-mailbox |
 | `PUT /v1/github-defaults/{scope}/{scope_id}` | github-company-accounts, github-wg-default |
 | `GET /v1/github-identities/{identity}` | github-accounts, github-rewrap, operations-identity |
 | `PUT /v1/github-identities/{identity}` | github-company-accounts, github-rewrap |
@@ -236,7 +239,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/me/quotas` | quotas |
 | `GET /v1/me/subscriptions` | subscriptions-list |
 | `GET /v1/subscriptions/{id}` | subscriptions-list, subscriptions-edit, subscriptions-use, subscriptions-logout |
-| `PUT /v1/subscriptions/{id}` | subscriptions-edit, subscriptions-use, subscriptions-logout |
+| `PUT /v1/subscriptions/{id}` | subscriptions-edit, subscriptions-use, subscriptions-logout, subscriptions-add, subscriptions-add-many, subscriptions-mailbox |
 | `DELETE /v1/subscriptions/{id}` | subscriptions-remove |
 | `GET /v1/me/mailboxes` | mailboxes-list |
 | `GET /v1/mailboxes/{id}` | mailboxes-list, mailboxes-edit, mailboxes-release, mailboxes-check |
@@ -362,6 +365,7 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | action:task-waiting | `github connect --from-gh`, `github connect --token` (the waiting card's next step `github connect` needs a person at GitHub's device page; an access step at GitHub - install, approval, SSO - needs the account at GitHub) | outside |
 | action:github-token | `github connect --from-gh` (the GitHub CLI login of this computer), `github connect --token` (any existing token) | built |
 | action:github-connect | `github connect --from-gh` (the GitHub CLI login of this computer), `github connect --token` (any existing token; the device page needs a person at GitHub) | outside |
+| next:human_only | `subscriptions check --relay` (gives the automation up: link and code); the check for humans of the provider's sign-in page is answered by a person by design and never by a model (ADR-100 §4) | outside |
 | action:github-accounts | `github connect --from-gh`, `github connect --token` (a further own account through an existing token; the device page needs a person at GitHub) | outside |
 | action:github-company-accounts | `github connect --org --token` (a company account through an existing token, e.g. the operator's or a dedicated account's; the device page needs a person at GitHub) | outside |
 | next:not_paired | `register --own-account`, `recover --hub` | built |
