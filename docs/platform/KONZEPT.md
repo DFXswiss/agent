@@ -823,6 +823,22 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Umsetzung:** offen – Zielbild, Wahl und Abbaupfad [ADR-098](adr/098-working-modes.md) (KOR-72); gebaut wird in
   den dort in §9 genannten Paketen.
 
+<a id="e-33"></a>
+
+### E-33 – Plattform-Vorgänge laufen parallel, jeder in seiner eigenen Sandbox
+
+- **Datum:** 2026-11-26
+- **Regel:** Was die Plattform für einen Nutzer erledigt, läuft gleichzeitig, wenn die Vorgänge voneinander unabhängig
+  sind, und jeder in seiner eigenen, abgeschotteten Umgebung. Das gilt wie für Sitzungen, Testläufe und Browser auch für
+  Vorgänge der Plattform selbst, etwa die Anmeldung mehrerer Abos. Es gibt keine Einzelplätze, die solche Vorgänge in eine
+  Reihe zwingen: Was ein Vorgang braucht, gehört zu ihm. So hat jedes Abo sein eigenes Postfach statt eines einzigen je
+  Konto.
+- **Wortlaut:** „agent sollte doch so augebaut sein dass es parallel solche dinge machen kann in parallellen sandboxen“
+  (zur Anmeldung von fünf neuen Abos, die nur nacheinander ging, weil die Plattform nur ein Postfach je Konto hält)
+- **Bezug:** präzisiert [§16 Punkt 1](#k-16-b1) (Hunderte parallele Hauptagenten und temporäre Umgebungen) für die
+  Vorgänge der Plattform; ergänzt [E-31](#e-31) (jedes Abo zentral angemeldet) und [E-32](#e-32).
+- **Umsetzung:** offen – Postfach je Abo und parallele Anmeldungen in KOR-73.
+
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
 **Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und

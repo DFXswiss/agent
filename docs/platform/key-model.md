@@ -365,6 +365,7 @@ bearing on keys).
 | [E-30](KONZEPT.md#e-30) | Overview of all own subscriptions (readings only; the hub sees numbers and times, no address or name). | none | – |
 | [E-31](KONZEPT.md#e-31) | Every subscription is a `claude_subscription` record under the user's `CK`, logged in and renewed by an eligible device; its use is sealed in the record (ADR-090). | none | – |
 | [E-32](KONZEPT.md#e-32) | Working modes chosen per session or task, nothing on the user's computer; the keys a mode needs are decided with that mode (KOR-72). | none | – |
+| [E-33](KONZEPT.md#e-33) | Platform operations in parallel, each in its own isolated environment; a mailbox credential belongs to its subscription (KOR-73 decides its keys). | none | – |
 | [A1](KONZEPT.md#a-1) | Subagents have the parent's rights and no keys. | carried | [§1](#1-principals) |
 | [A2](KONZEPT.md#a-2) | Conflict fix by merge commit. | none | – |
 | [A3](KONZEPT.md#a-3) | The hardening is built: the agent has its own identity as a sub-principal and is rotated out on revocation (ADR-082); the rekey of the user's identity for copies made before is a decision of the owner. | decision needed | KM-28, KM-30, KM-39 |
