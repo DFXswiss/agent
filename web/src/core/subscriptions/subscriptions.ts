@@ -17,8 +17,12 @@
 //   provider needs no change here) and shows the total of all its accounts, never the fullest account (`totalWindows`,
 //   ADR-091 section 3): each window (5 hours, week, week per model, fullest) counts the accounts that measured it – the
 //   used share is their mean, every account weighted equally (an account without that window does not count), the
-//   reset the next one of them. The headline is the total of the week (else the fullest total window); the details are
-//   the total windows, then every account with its own bar. "sort by used" orders the providers by that headline.
+//   reset the next one of them. The headline is the total of the week (else the fullest total window), with how many
+//   accounts are usable now ("usable now: X of N", `usableNow`); the details are the total windows, then every account
+//   with its own bar. "sort by used" orders the providers by that headline.
+// - Each account's bar shows the window that binds it now (`bindingOf`): the fuller of the 5-hour window and the week
+//   (the week on a tie), so an account whose 5 hours are used up is not shown as free; the other one stays as a small
+//   second value.
 //
 // Percentages are the used share as measured; the bars are coloured by what is left (from 70 % used amber = 30 %
 // left, from 90 % red = 10 % left). Nothing missing is shown as 0 %. The page is the owner's own: nobody else reads it.
@@ -334,8 +338,31 @@ function headlineIn<T extends QuotaWindow>(windows: readonly T[]): T | null {
   );
 }
 
-/** The headline window of one row: its week, else its fullest window. */
-export const headlineOf = (row: SubscriptionRow): QuotaWindow | null => headlineIn(row.reading?.windows ?? []);
+/** The window that binds one account now and the other one of 5 hours and week (null when it has only one). */
+export interface Binding {
+  readonly binding: QuotaWindow;
+  readonly other: QuotaWindow | null;
+}
+
+/** The window that binds an account now (ADR-091 section 3): the fuller of the 5-hour window and the week, the week
+ *  on a tie; with only one of them that one; with neither (a token file gives only its fullest window) its fullest
+ *  window. `other` is the other one of 5 hours and week, so no value is lost. Null when nothing is measured. */
+export function bindingOf(row: SubscriptionRow): Binding | null {
+  const windows = row.reading?.windows ?? [];
+  const five = windows.find((window) => window.window === 'five_hour') ?? null;
+  const week = windows.find((window) => window.window === 'seven_day') ?? null;
+  if (five !== null && week !== null)
+    return five.usedPercent > week.usedPercent ? { binding: five, other: week } : { binding: week, other: five };
+  const single = week ?? five ?? [...windows].sort((a, b) => b.usedPercent - a.usedPercent)[0] ?? null;
+  return single === null ? null : { binding: single, other: null };
+}
+
+/** Whether an account can be used now: it is logged in and readable, and its binding window is below 100 %. */
+export function usableNow(row: SubscriptionRow): boolean {
+  if (row.status !== 'logged_in' && row.status !== 'measured') return false;
+  const found = bindingOf(row);
+  return found !== null && found.binding.usedPercent < 100;
+}
 
 /** One window as the total of the accounts that measured it. */
 export interface TotalWindow extends QuotaWindow {
@@ -388,6 +415,8 @@ export interface ProviderGroup {
   /** Each window as the total of the accounts that measured it, ordered. */
   readonly windows: readonly TotalWindow[];
   readonly rows: readonly SubscriptionRow[];
+  /** How many of its accounts can be used now (`usableNow`). */
+  readonly usable: number;
   /** Unix ms of the newest read of any account, null when none was read. */
   readonly newest: number | null;
 }
@@ -408,6 +437,7 @@ export function providerGroups(rows: readonly SubscriptionRow[], sortByUsed = fa
       headlineAt: headline?.measuredAt ?? null,
       windows,
       rows: members,
+      usable: members.filter(usableNow).length,
       newest: reads.length === 0 ? null : Math.max(...reads),
     };
   });

@@ -13,6 +13,8 @@
   "accounts": "Accounts",
   "total.one": "1 account",
   "total.many": "all {n}",
+  "usable": "usable now: {n} of {total}",
+  "other": "{window}: {used}",
   "own": "own sessions",
   "fullest": "fullest window",
   "status.logged_in": "logged in",

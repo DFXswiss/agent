@@ -277,12 +277,16 @@ The home of an organization shows where people are needed, across all workgroups
 - **My subscriptions** (KOR-68, [ADR-091](../adr/091-subscriptions-at-a-glance.md), rule E-30): below the counters a
   card with every subscription of the user, measured centrally – per provider a collapsible line with the time to
   the reset, a bar and the used share of the week as the total of all its accounts, never its fullest account (named
-  as such: "all 9", with one account "1 account"); opened, the 5-hour window, the week and the week per model as
-  totals, every account with its own bar and the age of its reading, and the age of the provider's newest read. A
-  total counts the accounts that have a reading of that window: the used share is their mean, every account weighted
+  as such: "all 9", with one account "1 account") and "usable now: X of N" (the accounts that are logged in, readable
+  and below 100 % in their binding window); opened, the 5-hour window, the week and the week per model as totals,
+  every account with its own bar and the age of its reading, and the age of the provider's newest read. A total
+  counts the accounts that have a reading of that window: the used share is their mean, every account weighted
   equally (an account without the window does not count), the time the one to the next reset among them; without a
-  week the headline is the fullest total window (ADR-091 §3). Amber from 70 % used, red from 90 %, a reading older
-  than 60 minutes marked old. Data: `GET /v1/me/subscriptions` and every record opened in the browser (name, note,
+  week the headline is the fullest total window. The bar of an account shows the window that binds it now – the
+  fuller of the 5-hour window and the week (the week on a tie; with only one of them that one, with neither its
+  fullest window) – with used share, colour and time to its reset, named next to it ("5h", "Week"); the other of the
+  two stays visible as a small second value ("Week: 13%"; ADR-091 §3). Amber from 70 % used, red from 90 %, a
+  reading older than 60 minutes marked old. Data: `GET /v1/me/subscriptions` and every record opened in the browser (name, note,
   address, logged in or not, use; ADR-090), for the platform role `operator` also the token-file subscriptions of `GET
   /v1/orgs/{org}/quotas` of the granted organizations (an organization whose answer fails is left out; a token file
   named like an own record, ignoring case, is not listed again – the record's row stays, with the file's reading when it

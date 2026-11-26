@@ -1,14 +1,16 @@
 // The provider rows of "My subscriptions" (KOR-68, after the page "Subscriptions" of the local dashboard): per provider
 // a line with the time to the reset, a bar and the used share of the week as the total of all its accounts ("all 9",
-// `totalWindows`: the mean of the accounts that measured it, the next reset of them – never the fullest account);
-// opened, the 5-hour window, the week and the week per model as such totals, then every account with its own bar and
-// the age of its measurement, and the age of the provider's newest read. Nothing missing is shown as 0 %. Used by the
+// `totalWindows`: the mean of the accounts that measured it, the next reset of them – never the fullest account) and
+// how many accounts are usable now; opened, the 5-hour window, the week and the week per model as such totals, then
+// every account with the bar of the window that binds it now (`bindingOf`: the fuller of 5 hours and week, named next
+// to it, the other one as a small second value) and the age of its measurement, and the age of the provider's newest
+// read. Nothing missing is shown as 0 %. Used by the
 // card of the home page and by the full page.
 import { useState } from 'react';
 import {
   ageParts,
+  bindingOf,
   FULLEST,
-  headlineOf,
   type ProviderGroup,
   type QuotaWindow,
   type SubscriptionRow,
@@ -65,10 +67,13 @@ export function Bar({
   used,
   label,
   testId,
+  window,
 }: {
   readonly used: number;
   readonly label: string;
   readonly testId: string;
+  /** The window the bar shows, as `data-window`. */
+  readonly window?: string;
 }) {
   const level = usedLevel(used);
   return (
@@ -81,6 +86,7 @@ export function Bar({
       className="order-last col-span-3 block h-2.5 w-full overflow-hidden rounded bg-gray-200 sm:order-none sm:col-span-1"
       data-testid={testId}
       data-level={level}
+      data-window={window}
     >
       <span className={`block h-full ${LEVEL_CLASS[level]}`} style={{ width: `${Math.min(used, 100)}%` }} />
     </span>
@@ -110,8 +116,9 @@ function Line({
 }
 
 function Account({ row, now }: { readonly row: SubscriptionRow; readonly now: number }) {
-  const { t, age, until, rowName } = useTexts();
-  const head = headlineOf(row);
+  const { t, age, until, rowName, windowName } = useTexts();
+  const found = bindingOf(row);
+  const head = found?.binding ?? null;
   const read = row.reading?.fetchedAt ?? null;
   const name = rowName(row);
   const old = read !== null && now - read > OLD_MS;
@@ -130,6 +137,18 @@ function Account({ row, now }: { readonly row: SubscriptionRow; readonly now: nu
             {row.source === 'operator' ? ` · ${t('subscriptions.by.file')}` : ` · ${t('subscriptions.by.device')}`}
           </span>
         )}
+        {found?.other != null && (
+          <span
+            className="block text-gray-600"
+            data-testid="subscriptions.account.other"
+            data-window={found.other.window}
+          >
+            {t('subscriptions.other', {
+              window: windowName(found.other.window),
+              used: percent(found.other.usedPercent),
+            })}
+          </span>
+        )}
       </span>
       {head === null ? (
         <span className={NONE} data-testid="subscriptions.account.none">
@@ -139,10 +158,24 @@ function Account({ row, now }: { readonly row: SubscriptionRow; readonly now: nu
         </span>
       ) : (
         <>
-          <span className={RESET}>{until(head.resetsAt, now)}</span>
-          <Bar used={head.usedPercent} label={name} testId="subscriptions.account.bar" />
-          <span className={USED} data-testid="subscriptions.account.used">
-            {percent(head.usedPercent)}
+          <span className={RESET} data-testid="subscriptions.account.reset">
+            {until(head.resetsAt, now)}
+          </span>
+          <Bar
+            used={head.usedPercent}
+            label={`${name} – ${windowName(head.window)}`}
+            testId="subscriptions.account.bar"
+            window={head.window}
+          />
+          <span className={`${USED} flex flex-col items-end leading-tight`}>
+            <span data-testid="subscriptions.account.used">{percent(head.usedPercent)}</span>
+            <span
+              className="text-xs whitespace-nowrap text-gray-600"
+              data-testid="subscriptions.account.window"
+              data-window={head.window}
+            >
+              {windowName(head.window)}
+            </span>
           </span>
         </>
       )}
@@ -181,13 +214,20 @@ function Provider({
         className={`${GRID} min-h-11 cursor-pointer list-none py-1.5 [&::-webkit-details-marker]:hidden`}
         data-testid="subscriptions.provider.summary"
       >
-        <span className="flex min-w-0 items-center gap-2">
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2">
           <span aria-hidden="true" className="w-3 shrink-0 text-xs text-gray-600 group-open:rotate-90">
             ▶
           </span>
           <span className="truncate font-semibold">{group.name}</span>
           <span className="shrink-0 text-xs text-gray-600" data-testid="subscriptions.provider.total">
             {total}
+          </span>
+          <span
+            className={`shrink-0 text-xs ${group.usable === 0 ? 'font-semibold text-red-800' : 'text-gray-600'}`}
+            data-testid="subscriptions.provider.usable"
+            data-usable={group.usable}
+          >
+            {t('subscriptions.usable', { n: group.usable, total: group.rows.length })}
           </span>
           {group.headlineAt !== null && now - group.headlineAt > OLD_MS && (
             <span className="shrink-0 text-xs font-semibold text-red-800" data-testid="subscriptions.provider.old">

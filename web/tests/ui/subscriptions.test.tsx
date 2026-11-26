@@ -204,6 +204,8 @@ describe('the card of the home page', () => {
     expect(within(provider).getByTestId('subscriptions.provider.summary')).toHaveTextContent('Claude');
     // seven records and two token files: the line stands for all of them
     expect(within(provider).getByTestId('subscriptions.provider.total')).toHaveTextContent('all 9');
+    // Team, own sessions, Gamma and team-a are below 100 % in their binding window; the others are not measured
+    expect(within(provider).getByTestId('subscriptions.provider.usable')).toHaveTextContent('usable now: 4 of 9');
     // the week of the three accounts that measured it: (95 + 50 + 10) / 3, the next reset of them
     expect(within(provider).getByTestId('subscriptions.provider.used')).toHaveTextContent('51.7%');
     expect(within(provider).getByTestId('subscriptions.provider.reset')).toHaveTextContent('<1 min');
@@ -268,6 +270,54 @@ describe('the review of KOR-68', () => {
     mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/');
     await screen.findByTestId('subscriptions.provider.used');
     expect(screen.queryByTestId('subscriptions.provider.old')).toBeNull();
+  });
+});
+
+describe('the binding window of an account', () => {
+  it('shows an account whose 5 hours are used up as used up, not by its week', async () => {
+    const t = await world();
+    t.client.on(LIST, () => ({
+      subscriptions: [
+        item(1, {
+          reading: measured([win('five_hour', 100, NOW + 90 * 60_000), win('seven_day', 13, NOW + 4 * 86400_000)]),
+        }),
+        item(2, {
+          reading: measured([win('five_hour', 30, NOW + 60 * 60_000), win('seven_day', 100, NOW + 2 * 86400_000)]),
+        }),
+      ],
+    }));
+    await serveRecord(t, 1, { ...SUBSCRIPTION, name: 'Nora' });
+    await serveRecord(t, 2, { ...SUBSCRIPTION, name: 'Otto' });
+    mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/');
+    const provider = await screen.findByTestId('subscriptions.provider');
+    // neither can be used now; the provider line stays with the mean of the week ((13 + 100) / 2)
+    expect(within(provider).getByTestId('subscriptions.provider.usable')).toHaveTextContent('usable now: 0 of 2');
+    expect(within(provider).getByTestId('subscriptions.provider.usable')).toHaveAttribute('data-usable', '0');
+    expect(within(provider).getByTestId('subscriptions.provider.used')).toHaveTextContent('56.5%');
+    toggle(provider, true);
+    await screen.findByTestId('subscriptions.provider.details');
+    const nora = account(id(1));
+    expect(within(nora).getByTestId('subscriptions.account.bar')).toHaveAttribute('data-level', 'low');
+    expect(within(nora).getByTestId('subscriptions.account.bar')).toHaveAttribute('data-window', 'five_hour');
+    expect(within(nora).getByTestId('subscriptions.account.bar')).toHaveAttribute('aria-label', 'Nora – 5h');
+    expect(within(nora).getByTestId('subscriptions.account.used')).toHaveTextContent('100%');
+    expect(within(nora).getByTestId('subscriptions.account.window')).toHaveTextContent('5h');
+    expect(within(nora).getByTestId('subscriptions.account.reset')).toHaveTextContent('1 h 30 min');
+    expect(within(nora).getByTestId('subscriptions.account.other')).toHaveTextContent('Week: 13%');
+    const otto = account(id(2));
+    expect(within(otto).getByTestId('subscriptions.account.bar')).toHaveAttribute('data-window', 'seven_day');
+    expect(within(otto).getByTestId('subscriptions.account.window')).toHaveTextContent('Week');
+    expect(within(otto).getByTestId('subscriptions.account.reset')).toHaveTextContent('2 d 0 h');
+    expect(within(otto).getByTestId('subscriptions.account.other')).toHaveTextContent('5h: 30%');
+    cleanup();
+    // in German
+    mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/', 'de');
+    const de = await screen.findByTestId('subscriptions.provider');
+    expect(within(de).getByTestId('subscriptions.provider.usable')).toHaveTextContent('jetzt nutzbar: 0 von 2');
+    toggle(de, true);
+    await screen.findByTestId('subscriptions.provider.details');
+    expect(within(account(id(1))).getByTestId('subscriptions.account.window')).toHaveTextContent('5 h');
+    expect(within(account(id(1))).getByTestId('subscriptions.account.other')).toHaveTextContent('Woche: 13%');
   });
 });
 
@@ -387,8 +437,25 @@ describe('the page', () => {
     const own = account(id(2));
     expect(own).toHaveAttribute('data-status', 'logged_in');
     expect(own).toHaveTextContent('own sessions claude@example.com');
+    // the week binds (50 % against 20 % of the 5 hours); the 5 hours stay as the second value
     expect(within(own).getByTestId('subscriptions.account.used')).toHaveTextContent('50%');
+    expect(within(own).getByTestId('subscriptions.account.window')).toHaveTextContent('Week');
+    expect(within(own).getByTestId('subscriptions.account.reset')).toHaveTextContent('1 d 3 h');
+    expect(within(own).getByTestId('subscriptions.account.other')).toHaveTextContent('5h: 20%');
     expect(within(own).getByTestId('subscriptions.account.bar')).toHaveAttribute('data-level', 'ok');
+    expect(within(own).getByTestId('subscriptions.account.bar')).toHaveAttribute('data-window', 'seven_day');
+    // the 5 hours bind (72 % against 10 % of the week): amber, with their own reset
+    const gamma = account(id(5));
+    expect(within(gamma).getByTestId('subscriptions.account.used')).toHaveTextContent('72%');
+    expect(within(gamma).getByTestId('subscriptions.account.window')).toHaveTextContent('5h');
+    expect(within(gamma).getByTestId('subscriptions.account.reset')).toHaveTextContent('due');
+    expect(within(gamma).getByTestId('subscriptions.account.bar')).toHaveAttribute('data-level', 'warn');
+    expect(within(gamma).getByTestId('subscriptions.account.other')).toHaveTextContent('Week: 10%');
+    // only the week: no second value
+    expect(within(account(id(1))).queryByTestId('subscriptions.account.other')).toBeNull();
+    expect(within(account('operator:team-a')).getByTestId('subscriptions.account.window')).toHaveTextContent(
+      'fullest window',
+    );
     expect(within(own).getByTestId('subscriptions.account.age')).toHaveAttribute('data-old', 'no');
     expect(within(own).getByTestId('subscriptions.account.age')).toHaveTextContent('measured 5 min ago');
     expect(within(account(id(1))).getByTestId('subscriptions.account.age')).toHaveAttribute('data-old', 'yes');

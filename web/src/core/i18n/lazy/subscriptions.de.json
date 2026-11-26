@@ -13,6 +13,8 @@
   "accounts": "Konten",
   "total.one": "1 Konto",
   "total.many": "alle {n}",
+  "usable": "jetzt nutzbar: {n} von {total}",
+  "other": "{window}: {used}",
   "own": "eigene Sessions",
   "fullest": "höchstes Fenster",
   "status.logged_in": "angemeldet",

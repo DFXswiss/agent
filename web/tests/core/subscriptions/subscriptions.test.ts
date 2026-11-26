@@ -13,8 +13,8 @@ import { setIdentity, setProfile } from '../../../src/core/store/slices/me';
 import { setPlatform } from '../../../src/core/store/slices/orgs';
 import {
   ageParts,
+  bindingOf,
   FULLEST,
-  headlineOf,
   KIND,
   listedItems,
   loadSubscriptions,
@@ -28,6 +28,7 @@ import {
   type SubscriptionRow,
   totalWindows,
   untilParts,
+  usableNow,
   usedLevel,
 } from '../../../src/core/subscriptions/subscriptions';
 import { credWorld, type CredWorld, storedRecord, SUBSCRIPTION } from '../credentials/world';
@@ -561,13 +562,68 @@ describe('providers', () => {
     expect(providerName('mistral')).toBe('mistral');
   });
 
-  it('takes the week as the headline, else the fullest window', () => {
-    expect(headlineOf(rowOf('a', 'claude', null))).toBeNull();
-    expect(headlineOf(rowOf('a', 'claude', []))).toBeNull();
-    expect(headlineOf(rowOf('a', 'claude', [w('five_hour', 90), w('seven_day', 10)]))?.window).toBe('seven_day');
-    expect(headlineOf(rowOf('a', 'claude', [w('five_hour', 20), w('weekly:x', 60), w('weekly:y', 5)]))?.window).toBe(
-      'weekly:x',
-    );
+  describe('the window that binds an account', () => {
+    const bound = (windows: QuotaWindow[] | null) => {
+      const found = bindingOf(rowOf('a', 'claude', windows));
+      return found === null ? null : [found.binding.window, found.binding.usedPercent, found.other?.window ?? null];
+    };
+
+    it('is the 5-hour window when it is used up, the week stays as the other value', () => {
+      // the account of the question: 5 hours at 100 %, week at 13 % – not free
+      expect(bound([w('five_hour', 100), w('seven_day', 13)])).toEqual(['five_hour', 100, 'seven_day']);
+      expect(bindingOf(rowOf('a', 'claude', [w('five_hour', 100), w('seven_day', 13)]))?.other?.usedPercent).toBe(13);
+    });
+
+    it('is the week when it is used up', () => {
+      expect(bound([w('five_hour', 4), w('seven_day', 100)])).toEqual(['seven_day', 100, 'five_hour']);
+      expect(bound([w('seven_day', 80), w('five_hour', 79.9), w('weekly:opus', 99)])).toEqual([
+        'seven_day',
+        80,
+        'five_hour',
+      ]);
+    });
+
+    it('is the week on a tie', () => {
+      expect(bound([w('five_hour', 100), w('seven_day', 100)])).toEqual(['seven_day', 100, 'five_hour']);
+      expect(bound([w('five_hour', 0), w('seven_day', 0)])).toEqual(['seven_day', 0, 'five_hour']);
+    });
+
+    it('takes the one that is there when the other is missing, else the fullest window', () => {
+      expect(bound(null)).toBeNull();
+      expect(bound([])).toBeNull();
+      expect(bound([w('five_hour', 100)])).toEqual(['five_hour', 100, null]);
+      expect(bound([w('seven_day', 13), w('weekly:opus', 90)])).toEqual(['seven_day', 13, null]);
+      expect(bound([w(FULLEST, 40)])).toEqual([FULLEST, 40, null]);
+      expect(bound([w('weekly:x', 60), w('weekly:y', 5)])).toEqual(['weekly:x', 60, null]);
+    });
+  });
+
+  it('counts an account as usable now when its binding window is below 100 %', () => {
+    const as = (status: SubscriptionRow['status'], windows: QuotaWindow[] | null) => ({
+      ...rowOf('a', 'claude', windows),
+      status,
+    });
+    expect(usableNow(as('logged_in', [w('five_hour', 100), w('seven_day', 13)]))).toBe(false);
+    expect(usableNow(as('logged_in', [w('five_hour', 99.9), w('seven_day', 13)]))).toBe(true);
+    expect(usableNow(as('logged_in', [w('five_hour', 10), w('seven_day', 100)]))).toBe(false);
+    expect(usableNow(as('logged_in', [w('five_hour', 140)]))).toBe(false);
+    expect(usableNow(as('measured', [w(FULLEST, 40)]))).toBe(true);
+    expect(usableNow(as('measured', [w(FULLEST, 100)]))).toBe(false);
+    // nothing measured, not logged in or not readable: not usable
+    expect(usableNow(as('logged_in', null))).toBe(false);
+    expect(usableNow(as('logged_in', []))).toBe(false);
+    expect(usableNow(as('not_logged_in', [w('seven_day', 10)]))).toBe(false);
+    expect(usableNow(as('not_readable', [w('seven_day', 10)]))).toBe(false);
+    const group = providerGroups([
+      as('logged_in', [w('five_hour', 100), w('seven_day', 13)]),
+      { ...as('logged_in', [w('five_hour', 30), w('seven_day', 40)]), key: 'b' },
+      { ...as('logged_in', [w('seven_day', 100)]), key: 'c' },
+      { ...as('logged_in', null), key: 'd' },
+    ])[0]!;
+    expect(group.usable).toBe(1);
+    expect(group.rows).toHaveLength(4);
+    // the provider line stays with the mean per window
+    expect(group.headline).toMatchObject({ window: 'seven_day', usedPercent: 51, accounts: 3 });
   });
 
   it('totals a window over several accounts: the mean, every account weighted equally', () => {

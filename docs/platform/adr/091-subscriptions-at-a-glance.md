@@ -36,12 +36,19 @@ operator's token files are not records and appear only in `GET /v1/orgs/{org}/qu
    of it – its used share is their mean, every account weighted equally (an account without that window does not
    count), its time the one to the next reset among them. The headline is the total of the week (else the fullest
    total window), the detail windows are the totals of each window; the line says that it stands for all accounts
-   ("all 9", with one account "1 account"), so it is not taken for an account of the same name. Below, every account
-   keeps its own bar; "sort by used" orders the providers by the headline total. Nothing missing is shown as 0 %. A
+   ("all 9", with one account "1 account"), so it is not taken for an account of the same name, and how many accounts
+   can be used now ("usable now: 3 of 9": logged in, readable and below 100 % in their binding window). Below, every
+   account keeps its own bar, of the window that binds it now: the fuller of the 5-hour window and the week (the week
+   on a tie; with only one of them that one; with neither the fullest window, as for a token file), with its used
+   share, its colour and its time to the reset, named next to it ("5h", "Week"); the other one of the two stays as a
+   small second value ("Week: 13%"). An account whose 5 hours are used up is thus shown as used up even when its week
+   is nearly free. The table keeps every window. "sort by used" orders the providers by the headline total. Nothing missing is shown as 0 %. A
    measurement older than 60 minutes is marked old; the headline is old when one of the readings it counts is. Times
    to the reset read as the local dashboard's (`5 d 19 h`, `3 h 12 min`, `4 min`, `<1 min`, due); ages as
    `N s/min/h/d ago`. (Until 2026-11-26 the headline was the week of the most-used account and the windows the highest
-   use across the accounts: with nine subscriptions it read 99 % while about a fifth of the weekly quota was left.)
+   use across the accounts: with nine subscriptions it read 99 % while about a fifth of the weekly quota was left.
+   Until 2026-11-26 the bar of an account showed its week, so an account with 5 hours at 100 % and the week at 13 %
+   looked green and free while it could not be used.)
 4. **Where.** A card on the home page (the situation view of the landing organization, which needs no choice since
    KOR-68 stage 0), collapsed and opened per provider, with a link to the page `/subscriptions` (both switches, the
    table) and from the settings. The card and the page load lazily; the first load of the app does not grow. Without
