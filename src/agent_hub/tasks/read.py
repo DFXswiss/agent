@@ -55,11 +55,13 @@ class TicketFilter:
         """The SQL conditions over `hub.task t` and their parameters."""
         clauses: list[str] = []
         params: list[Any] = []
-        for column, value in (("status", self.status), ("urgency", self.urgency)):
-            if value is not None:
-                clauses.append(f"t.{column} = %s")
-                params.append(value)
-        for column, value in (("assignee_id", self.assignee), ("topic_id", self.topic)):
+        given: tuple[tuple[str, UUID | str | None], ...] = (
+            ("status", self.status),
+            ("urgency", self.urgency),
+            ("assignee_id", self.assignee),
+            ("topic_id", self.topic),
+        )
+        for column, value in given:
             if value == NONE:
                 clauses.append(f"t.{column} IS NULL")
             elif value is not None:

@@ -89,8 +89,21 @@ def test_capture_filter_edit_and_start(real: RealHub) -> None:
         None,
         None,
     )
+    retitled = run_ok(ada.tool, "task", "edit", "--task", second, "--title", "Write the notes")
+    assert (retitled["title"], retitled["status"]) == ("Write the notes", "todo")
+    moved = run_ok(ada.tool, "task", "edit", "--task", second, "--assignee", "me", "--new-topic", "Docs")
+    assert (moved["assignee_id"], moved["topic"]) == (ada.id, "Docs")
+    renamed = run_ok(ada.tool, "topic", "create", "--org", org, "--name", "Documentation", "--topic", moved["topic_id"])
+    assert renamed["topic_id"] == moved["topic_id"]
+    assert run_ok(ada.tool, "task", "show", "--task", second)["task"]["topic"] == "Documentation"
+    third = run_ok(
+        ada.tool, "task", "capture", "--wg", wg, "--title", "Payments, part two", "--topic", str(first["topic_id"])
+    )
+    assert third["topic"] == "Payments"
     done = run_ok(ada.tool, "task", "edit", "--task", second, "--status", "completed")
     assert (done["status"], done["state"]) == ("completed", "closed")
+    assert listed("--state", "closed", "--github-org", "Example") == []
+    assert listed("--state", "open", "--github-org", "Example") == [task]
     back = run_ok(ada.tool, "task", "edit", "--task", second, "--status", "todo")
     assert (back["status"], back["state"]) == ("todo", "idle")
 

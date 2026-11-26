@@ -424,7 +424,7 @@ def cmd_topic_list(account: Account, args: argparse.Namespace, context: Context)
 
 
 def cmd_topic_create(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    return tickets.topic_create(account, tickets.uuid_argument(args.org), args.name, args.topic)
+    return tickets.topic_create(account, args.org, args.name, args.topic)
 
 
 def cmd_task_prompt(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:

@@ -19,7 +19,7 @@ edit`, `task start`, `topic list`, `topic create` and the ticket fields and filt
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode
@@ -90,19 +90,28 @@ def checked_code(value: str, allowed: tuple[str, ...], reason: str) -> str:
 # --- topics ---
 
 
+def _body(opened: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The body of an opened event; empty for one that did not verify or is locked."""
+    body = opened.get("body") if opened is not None else None
+    return body if isinstance(body, dict) else {}
+
+
+def newest_topics(events: Iterable[Mapping[str, Any] | None]) -> dict[str, str]:
+    """Topic ID -> name from opened `topic.profile` events in scope order: the last one of a `ref` wins; an event
+    that did not verify, is locked or has no name is skipped."""
+    names: dict[str, str] = {}
+    for opened in events:
+        name = _body(opened).get("name")
+        if opened is not None and isinstance(name, str):
+            names[str(opened["ref"])] = name
+    return names
+
+
 def topics(account: Account, org: str) -> dict[str, str]:
     """The topics of the organization: topic ID -> name of its newest verified `topic.profile`."""
     ring = account.keys(org)
-    newest: dict[str, tuple[int, str]] = {}
-    for item in scope_events(account, org, {"kinds": TOPIC_KIND}):
-        opened = open_item(account, org, (ORG, org), item, ring=ring)
-        body = None if opened is None else opened.get("body")
-        if opened is None or not isinstance(body, dict) or not isinstance(body.get("name"), str):
-            continue
-        ref = str(opened["ref"])
-        if opened["seq"] > newest.get(ref, (0, ""))[0]:
-            newest[ref] = (int(opened["seq"]), str(body["name"]))
-    return {ref: name for ref, (_seq, name) in newest.items()}
+    items = scope_events(account, org, {"kinds": TOPIC_KIND})
+    return newest_topics(open_item(account, org, (ORG, org), item, ring=ring) for item in items)
 
 
 def topic_list(account: Account, org: str) -> dict[str, Any]:
@@ -118,6 +127,7 @@ def topic_create(account: Account, org: str, name: str, topic: str | None = None
     if TOPIC_RE.fullmatch(text) is None:
         raise _invalid("topic_invalid")
     ref = uuid7() if topic is None else uuid_argument(topic)
+    uuid_argument(org)
     post_event(account, seal(account, org, (ORG, org), TOPIC_KIND, {"name": text}, ref=ref))
     return {"org_id": org, "topic_id": ref, "name": text}
 
@@ -125,25 +135,40 @@ def topic_create(account: Account, org: str, name: str, topic: str | None = None
 # --- the sealed fields of a workgroup's tasks ---
 
 
+def newest_meta(events: Iterable[Mapping[str, Any] | None]) -> dict[str, dict[str, str]]:
+    """Task ID -> the sealed fields from opened `task.meta` events in scope order: each field from the last event
+    that carries it (a device's `task.set_title` carries only the title); others are skipped."""
+    found: dict[str, dict[str, str]] = {}
+    for opened in events:
+        fields = {
+            name: value for name, value in _body(opened).items() if name in META_FIELDS and isinstance(value, str)
+        }
+        if opened is not None and fields:
+            found.setdefault(str(opened["task"]), {}).update(fields)
+    return found
+
+
 def ticket_meta(account: Account, org: str, wg: str, task: str | None = None) -> dict[str, dict[str, str]]:
-    """Task ID -> the sealed fields, each from the newest verified `task.meta` that carries it."""
+    """Task ID -> the sealed fields of the workgroup's tasks (of `task` alone when given), `newest_meta`."""
     query = {"kinds": "task.meta", **({"task": task} if task is not None else {})}
     ring = account.keys(org)
-    newest: dict[tuple[str, str], tuple[int, str]] = {}
-    for item in scope_events(account, wg, query):
-        opened = open_item(account, org, (WG, wg), item, ring=ring)
-        body = None if opened is None else opened.get("body")
-        if opened is None or not isinstance(body, dict):
-            continue
-        for name in META_FIELDS:
-            value = body.get(name)
-            key = (str(opened["task"]), name)
-            if isinstance(value, str) and opened["seq"] > newest.get(key, (0, ""))[0]:
-                newest[key] = (int(opened["seq"]), value)
-    found: dict[str, dict[str, str]] = {}
-    for (owner, name), (_seq, value) in newest.items():
-        found.setdefault(owner, {})[name] = value
-    return found
+    return newest_meta(open_item(account, org, (WG, wg), item, ring=ring) for item in scope_events(account, wg, query))
+
+
+def merged_meta(current: Mapping[str, str], changed: Mapping[str, str]) -> dict[str, str]:
+    """The full set a new `task.meta` carries: the current fields with the changed ones (a title is required)."""
+    merged = {**current, **changed}
+    if "title" not in merged:
+        raise PlatformError("invalid_argument", reason="title_missing")
+    return merged
+
+
+def answered_task(answer: Mapping[str, Any], task: str) -> dict[str, Any]:
+    """The task row of a hub answer, which must name the task (`hub_refused`/`response_invalid` otherwise)."""
+    row = answer.get("task")
+    if not isinstance(row, dict) or row.get("task_id") != task:
+        raise PlatformError("hub_refused", reason="response_invalid")
+    return row
 
 
 def _meta_view(meta: Mapping[str, str]) -> dict[str, str | None]:
@@ -214,15 +239,20 @@ class Ticket:
         return {name: value for name, value in given.items() if value is not None}
 
 
-def task_capture(account: Account, wg: str, ticket: Ticket) -> dict[str, Any]:
-    """`task capture`: a task without an agent (module docstring)."""
-    org = find_org(account, uuid_argument(wg))
+def captured_meta(ticket: Ticket) -> dict[str, str]:
+    """The sealed fields of a new captured task (a title, no status; empty fields left out)."""
     if ticket.title is None or ticket.status is not None:
         raise PlatformError("invalid_argument")
-    meta = {name: value for name, value in checked_meta(ticket.sealed()).items() if value != ""}
+    return {name: value for name, value in checked_meta(ticket.sealed()).items() if value != ""}
+
+
+def task_capture(account: Account, wg: str, ticket: Ticket) -> dict[str, Any]:
+    """`task capture`: a task without an agent (module docstring)."""
+    meta = captured_meta(ticket)
     plain: dict[str, Any] = {}
     if ticket.urgency is not None:
         plain["urgency"] = checked_code(ticket.urgency, URGENCIES, "urgency_invalid")
+    org = find_org(account, uuid_argument(wg))
     person = assignee_id(account, org, ticket.assignee)
     if person is not None:
         plain["assignee_id"] = person
@@ -232,9 +262,7 @@ def task_capture(account: Account, wg: str, ticket: Ticket) -> dict[str, Any]:
     task = uuid7()
     event = seal(account, org, (WG, wg), "task.meta", meta, wg=wg, task=task)
     answer = account.call("POST", "/v1/tasks", {"task_id": task, "wg_id": wg, "events": [event], **plain})
-    row = answer.get("task")
-    if not isinstance(row, dict) or row.get("task_id") != task:
-        raise PlatformError("hub_refused", reason="response_invalid")
+    row = answered_task(answer, task)
     return {
         "org_id": org,
         "wg_id": wg,
@@ -246,46 +274,42 @@ def task_capture(account: Account, wg: str, ticket: Ticket) -> dict[str, Any]:
 
 
 def _task_row(account: Account, task: str) -> dict[str, Any]:
-    answer = account.call("GET", f"/v1/tasks/{segment(uuid_argument(task))}")
-    row = answer.get("task")
-    if not isinstance(row, dict) or row.get("task_id") != task:
-        raise PlatformError("hub_refused", reason="response_invalid")
-    return row
+    return answered_task(account.call("GET", f"/v1/tasks/{segment(uuid_argument(task))}"), task)
 
 
-def task_edit(account: Account, task: str, ticket: Ticket) -> dict[str, Any]:
-    """`task edit`: the given fields of the task (module docstring)."""
-    row = _task_row(account, task)
-    wg = str(row["wg_id"])
-    org = find_org(account, wg)
-    sealed = checked_meta(ticket.sealed())
+def plain_changes(ticket: Ticket) -> dict[str, Any]:
+    """The plaintext fields `task edit` names that need no organization: status and urgency, and `none` for person
+    or topic (the rest is resolved against the organization)."""
     plain: dict[str, Any] = {}
     if ticket.status is not None:
         plain["status"] = checked_code(ticket.status, STATUSES, "status_invalid")
     if ticket.urgency is not None:
         plain["urgency"] = checked_code(ticket.urgency, URGENCIES, "urgency_invalid")
-    if ticket.assignee is not None:
-        plain["assignee_id"] = None if ticket.assignee == NONE else assignee_id(account, org, ticket.assignee)
-    if ticket.topic == NONE and ticket.new_topic is None:
+    if ticket.assignee == NONE:
+        plain["assignee_id"] = None
+    if ticket.topic == NONE:
         plain["topic_id"] = None
-    elif ticket.topic is not None or ticket.new_topic is not None:
+    return plain
+
+
+def task_edit(account: Account, task: str, ticket: Ticket) -> dict[str, Any]:
+    """`task edit`: the given fields of the task (module docstring)."""
+    sealed = checked_meta(ticket.sealed())
+    plain = plain_changes(ticket)
+    row = _task_row(account, task)
+    wg = str(row["wg_id"])
+    org = find_org(account, wg)
+    if ticket.assignee not in (None, NONE):
+        plain["assignee_id"] = assignee_id(account, org, ticket.assignee)
+    if ticket.topic not in (None, NONE) or ticket.new_topic is not None:
         plain["topic_id"] = _topic_choice(account, org, ticket.topic, ticket.new_topic)
     if not sealed and not plain:
         raise PlatformError("invalid_argument")
     if sealed:
-        current = ticket_meta(account, org, wg, task).get(task, {})
-        merged = {**current, **sealed}
-        if "github_repo" in sealed and sealed["github_repo"] == "" and "github_org" not in sealed:
-            merged["github_org"] = current.get("github_org", "")
-        if "title" not in merged:
-            raise PlatformError("invalid_argument", reason="title_missing")
+        merged = merged_meta(ticket_meta(account, org, wg, task).get(task, {}), sealed)
         post_event(account, seal(account, org, (WG, wg), "task.meta", merged, wg=wg, task=task))
     if plain:
-        answer = account.call("PUT", f"/v1/tasks/{segment(task)}/fields", plain)
-        updated = answer.get("task")
-        if not isinstance(updated, dict) or updated.get("task_id") != task:
-            raise PlatformError("hub_refused", reason="response_invalid")
-        row = updated
+        row = answered_task(account.call("PUT", f"/v1/tasks/{segment(task)}/fields", plain), task)
     return ticket_show(account, task, row)
 
 
@@ -316,6 +340,14 @@ def start_text(meta: Mapping[str, str]) -> str:
     return f"{title}\n\n{description}" if description else title
 
 
+def start_prompt(meta: Mapping[str, str], text: str | None) -> str:
+    """The first prompt: `text` when given, else `start_text`; never blank (`invalid_argument`)."""
+    prompt = text if text is not None else start_text(meta)
+    if not prompt.strip():
+        raise _invalid("prompt_missing")
+    return prompt
+
+
 def task_start(account: Account, task: str, text: str | None = None) -> dict[str, Any]:
     """`task start`: the task's agent starts with its first prompt (default `start_text`)."""
     from agent_platform.tasks import task_prompt  # noqa: PLC0415 - tasks imports this module
@@ -323,10 +355,7 @@ def task_start(account: Account, task: str, text: str | None = None) -> dict[str
     row = _task_row(account, task)
     wg = str(row["wg_id"])
     org = find_org(account, wg)
-    prompt = text if text is not None else start_text(ticket_meta(account, org, wg, task).get(task, {}))
-    if not prompt.strip():
-        raise _invalid("prompt_missing")
-    started = task_prompt(account, task, prompt)
+    started = task_prompt(account, task, start_prompt(ticket_meta(account, org, wg, task).get(task, {}), text))
     return {**started, "status": status_of(_task_row(account, task))}
 
 

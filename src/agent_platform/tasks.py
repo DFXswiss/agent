@@ -368,13 +368,7 @@ def task_show(account: Account, task: str) -> dict[str, Any]:
     chat = latest_runs([e for e in events if e["kind"] != "task.meta"])
     keys = ("task_id", "org_id", "wg_id", "owner_id", "state", "state_reason", "created_at", "closed_at")
     agents = task_names(account, org, wg, task)
-    sealed = {
-        name: value
-        for event in metas
-        if isinstance(event.get("body"), dict)
-        for name, value in event["body"].items()
-        if name in tickets.META_FIELDS and isinstance(value, str)
-    }  # the newest task.meta that carries a field wins (metas are in scope order)
+    sealed = tickets.newest_meta(metas).get(task, {})
     names = tickets.topics(account, org) if row.get("topic_id") else {}
     ticket = {
         **tickets.row_fields(row, names),
@@ -427,12 +421,6 @@ def _scanned_rows(
     return found[:LIST_LIMIT], len(found) > LIST_LIMIT or isinstance(before, str)
 
 
-def _open_rows(account: Account, wg: str, extra: str = "") -> tuple[list[Any], bool]:
-    """The newest tasks that are not closed: the hub filters by one task state only, `open` is every state but
-    `closed` (KOR-67), so the tool pages and filters (`_scanned_rows`)."""
-    return _scanned_rows(account, wg, lambda row: row.get("state") != "closed", extra)
-
-
 def task_list(account: Account, wg: str, state: str | None, filters: tickets.Filters | None = None) -> dict[str, Any]:
     """The tasks of a workgroup with their verified titles, their main agents (`<name> #<number>`, ADR-095) and their
     ticket fields (ADR-100), filtered by `filters` (status, urgency, person and topic at the hub, GitHub organisation
@@ -440,13 +428,13 @@ def task_list(account: Account, wg: str, state: str | None, filters: tickets.Fil
     if state is not None and state not in STATES:
         raise PlatformError("invalid_argument")
     org = find_org(account, _id(wg))
+    wanted = filters or tickets.Filters()
     extra = tickets.list_query(account, org, filters)
-    meta = tickets.ticket_meta(account, org, wg) if filters is not None and filters.sealed() else None
+    meta = tickets.ticket_meta(account, org, wg) if wanted.sealed() else None
 
     def keep(row: dict[str, Any]) -> bool:
-        if state == "open" and row.get("state") == "closed":
-            return False
-        return meta is None or (filters is not None and filters.matches(meta.get(str(row.get("task_id")), {})))
+        is_open = state != "open" or row.get("state") != "closed"
+        return is_open and (meta is None or wanted.matches(meta.get(str(row.get("task_id")), {})))
 
     if state == "open" or meta is not None:
         scan = extra + ("&state=closed" if state == "closed" else "")

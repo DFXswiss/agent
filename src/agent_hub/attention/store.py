@@ -204,12 +204,14 @@ def read_inputs(connection: Connection, task_id: UUID | str, now: datetime) -> R
 
 
 def _lock(connection: Connection, task_id: UUID | str, now: datetime) -> tuple[Stored, bool] | None:
-    """The task's attention row held `FOR UPDATE` and whether this call inserted it; None for an unknown task."""
+    """The task's attention row held `FOR UPDATE` and whether this call inserted it; None for an unknown task and for
+    a captured task that has no session yet (ADR-100 section 6: no record)."""
     connection.execute("SELECT pg_advisory_xact_lock(%s)", (AUDIT_LOCK,))
     inserted = connection.execute(
         "INSERT INTO hub.task_attention (task_id, org_id, wg_id, owner_id, category, reason, since, seq,"
         " subagents_total, subagents_active, updated_at)"
-        " SELECT id, org_id, wg_id, owner_id, 'working', 'queued', state_at, 1, 0, 0, %s FROM hub.task WHERE id = %s"
+        " SELECT t.id, t.org_id, t.wg_id, t.owner_id, 'working', 'queued', t.state_at, 1, 0, 0, %s FROM hub.task t"
+        " WHERE t.id = %s AND EXISTS (SELECT 1 FROM hub.session s WHERE s.task_id = t.id)"
         " ON CONFLICT (task_id) DO NOTHING RETURNING task_id",
         (now, task_id),
     ).fetchone()
@@ -268,8 +270,6 @@ def attention_json(row: tuple[Any, ...]) -> dict[str, Any]:
 def refresh(connection: Connection, task_id: UUID | str, now: datetime, effects: Effects) -> bool:
     """Derive and store the record of a task in the caller's transaction (module docstring); whether it changed. A
     task without any session (captured, never started; ADR-100 section 6) has no record."""
-    if connection.execute("SELECT 1 FROM hub.session WHERE task_id = %s LIMIT 1", (task_id,)).fetchone() is None:
-        return False
     locked = _lock(connection, task_id, now)
     if locked is None:
         return False

@@ -28,7 +28,7 @@ def _meta(desk: Desk, actor: Actor, task: str) -> Json:
     return desk.scene.wg_event(actor, "task.meta", task=task, scope_id=desk.wg, wg=desk.wg)
 
 
-def _capture(desk: Desk, actor: Actor | None = None, task: str | None = None, **body: Any) -> Any:
+def _capture(desk: Desk, *, actor: Actor | None = None, task: str | None = None, **body: Any) -> Any:
     who = actor or desk.scene.writer
     task_id = task or new_id()
     return desk.create(who, task_id, events=[_meta(desk, who, task_id)], json_extra=body)
@@ -112,12 +112,15 @@ def test_capture_refuses_malformed_fields(desk: Desk, extra: dict[str, Any], poi
 
 
 def test_capture_refuses_unknown_people_and_topics(desk: Desk) -> None:
-    for extra, pointer in (
-        ({"assignee_id": desk.scene.stranger.id}, "/assignee_id"),
-        ({"assignee_id": desk.scene.device.id}, "/assignee_id"),
-        ({"topic_id": new_id()}, "/topic_id"),
-    ):
-        response = _capture(desk, **extra)
+    cases: list[tuple[str, str]] = [
+        ("assignee_id", desk.scene.stranger.id),
+        ("assignee_id", desk.scene.device.id),
+        ("topic_id", new_id()),
+    ]
+    for name, value in cases:
+        pointer = f"/{name}"
+        field: dict[str, Any] = {name: value}
+        response = _capture(desk, urgency="normal", **field)
         assert response.status_code == 400, response.text
         assert response.json()["detail"]["pointers"] == [pointer]
 
