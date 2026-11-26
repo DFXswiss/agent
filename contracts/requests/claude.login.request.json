@@ -54,7 +54,7 @@
             },
             "consents": {
               "type": "array",
-              "description": "consents the owner gave explicitly: terms (terms of use and privacy policy), age (confirmation of the minimum age), marketing (product e-mails); only these boxes are ever ticked",
+              "description": "consents the owner gave explicitly: terms (terms of use and privacy policy), age (confirmation of the minimum age), marketing (product e-mails); only these boxes are ever ticked (each at most once, checked by the clients and the runner)",
               "items": {
                 "type": "string",
                 "enum": [
@@ -63,7 +63,6 @@
                   "marketing"
                 ]
               },
-              "uniqueItems": true,
               "maxItems": 3
             }
           },
