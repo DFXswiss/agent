@@ -233,6 +233,27 @@ def test_verify_ranges(writer: psycopg.Connection[Any], monkeypatch: pytest.Monk
         verify_chain(writer, 0)
 
 
+def test_read_audit_reads_batches_bounded_by_bytes(
+    writer: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rows = _three(writer)
+    statements: list[str] = []
+    execute = psycopg.Connection.execute
+
+    def counted(self: psycopg.Connection[Any], query: Any, *args: Any, **kwargs: Any) -> Any:
+        statements.append(str(query))
+        return execute(self, query, *args, **kwargs)
+
+    monkeypatch.setattr(psycopg.Connection, "execute", counted)
+    assert list(read_audit(writer)) == rows
+    assert len(statements) == 3  # the sizes, one batch of three rows, the sizes after the head
+    statements.clear()
+    monkeypatch.setattr(chain, "READ_BYTES", 1)  # every row is larger: one row per batch
+    assert list(read_audit(writer)) == rows
+    assert len(statements) == 7
+    assert verify_chain(writer).ok
+
+
 @pytest.mark.parametrize(
     ("change", "field"),
     [

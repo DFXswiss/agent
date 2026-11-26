@@ -2,9 +2,9 @@
 
 Every table of the hub schema has exactly one rule here, or is named in `EXCLUDED` with its reason; a test compares the
 rules with the migrated schema, so a later migration that adds a table cannot be forgotten by the export. A rule is the
-condition that selects the rows of one org (`%(org)s` and the ID sets of `Selection`) and whether the rows are
-append-only (two exports of one hub must agree on such a row; for every other row the newest export wins when several
-exports are restored together, `agent_hub.backup.restore`).
+condition that selects the rows of one org (`%(org)s`, the ID sets of `Selection` and subqueries) and whether the rows
+are append-only (two exports of one hub must agree on such a row; for every other row the newest export wins when
+several exports are restored together, `agent_hub.backup.restore`).
 
 The org's own rows are those of the org, its workgroups, tasks, sessions and operations. Rows of principals (users,
 devices) belong to every org the principal is a member of, so they appear in each of its exports. The platform log,
@@ -42,6 +42,11 @@ WG_ROWS = "wg_id = ANY(%(wgs)s)"
 USER_ROWS = "user_id = ANY(%(users)s)"
 DEVICE_ROWS = "device_id = ANY(%(devices)s)"
 ALL_ROWS = "TRUE"
+# The org's tasks, sessions and operations grow with its work: selected by subqueries in the export's snapshot, never
+# as ID lists in memory (HOT-27).
+TASK_ROWS = "task_id IN (SELECT id FROM hub.task WHERE org_id = %(org)s)"
+SESSION_ROWS = "session_id IN (SELECT id FROM hub.session WHERE org_id = %(org)s)"
+OPERATION_ROWS = "operation_id IN (SELECT id FROM hub.operation WHERE org_id = %(org)s)"
 SCOPE_ROWS = (
     "(scope = 'org' AND scope_id = %(org)s) OR (scope = 'wg' AND scope_id = ANY(%(wgs)s))"
     " OR (scope = 'cred' AND (scope_id = ANY(%(users)s) OR scope_id = %(org)s))"
@@ -116,15 +121,15 @@ RULES: tuple[TableRule, ...] = (
     # the attention records (ADR-076): a projection whose `since` and `seq` keep the history of the occasions, so it is
     # exported rather than derived again (a missing row is derived by the job `attention.backfill`)
     TableRule("task_attention", ORG_ROWS),
-    TableRule("task_transition", "task_id = ANY(%(tasks)s)", append_only=True),
+    TableRule("task_transition", TASK_ROWS, append_only=True),
     TableRule("session", ORG_ROWS),
-    TableRule("session_transition", "session_id = ANY(%(sessions)s)", append_only=True),
+    TableRule("session_transition", SESSION_ROWS, append_only=True),
     TableRule("vm", "wg_id = ANY(%(wgs)s) OR (wg_id IS NULL AND device_id = ANY(%(devices)s))"),
     TableRule("operation", ORG_ROWS),
-    TableRule("operation_transition", "operation_id = ANY(%(operations)s)", append_only=True),
+    TableRule("operation_transition", OPERATION_ROWS, append_only=True),
     TableRule("dedupe_slot", WG_ROWS),
     TableRule("whiteboard_entry", ORG_ROWS),
-    TableRule("session_ping", "session_id = ANY(%(sessions)s)"),
+    TableRule("session_ping", SESSION_ROWS),
     # the org's notifications and the account notifications of its users (`agent.account_change`, no org; ADR-056)
     TableRule("notification", "org_id = %(org)s OR (org_id IS NULL AND recipient_id = ANY(%(users)s))"),
     # the records of the org's users and the org's own company records (ADR-078)
@@ -138,7 +143,7 @@ RULES: tuple[TableRule, ...] = (
     TableRule("metric_sample", DEVICE_ROWS),
     TableRule("metric_rollup", DEVICE_ROWS),
     TableRule("metric_rollup_cursor", ALL_ROWS, seeded=True),
-    TableRule("usage_counter", "session_id = ANY(%(sessions)s)"),
+    TableRule("usage_counter", SESSION_ROWS),
     TableRule("quota_snapshot", "owner_id = ANY(%(users)s)"),
     TableRule("quota_unreadable", "owner_id = ANY(%(users)s)"),
     # the newest reading of each non-primary subscription of the org's users (KOR-69, ADR-090)
@@ -174,7 +179,7 @@ RULES: tuple[TableRule, ...] = (
     TableRule("context_chunk", "object_id IN (SELECT id FROM hub.context_object WHERE org_id = %(org)s)"),
     TableRule("pr_link", WG_ROWS),
     # withdrawals of waiting prompts reference their task (KOR-46, ADR-083 section 3)
-    TableRule("prompt_withdrawal", "task_id = ANY(%(tasks)s)"),
+    TableRule("prompt_withdrawal", TASK_ROWS),
     TableRule("audit", ALL_ROWS, append_only=True),
     TableRule("audit_checkpoint", ALL_ROWS, append_only=True),
 )
