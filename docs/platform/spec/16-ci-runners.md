@@ -23,8 +23,9 @@ not repeated here).
   not covered by A20: open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)).
 - Organisations in scope: the DFX organisations on GitHub, each with its own installation of the CI app (§4). The
   exact list of organisations, repositories and labels is the inventory of stage 0 (§12) and is kept in [OPS].
-- Public repositories with self-hosted CI according to [OPS] include `DFXswiss/backend` and `DFXswiss/realunit-app`;
-  their fork-PR settings are part of the stage 0 inventory ([OPS]). `DFXswiss/agent` itself uses GitHub-hosted runners only
+- Public repositories documented with self-hosted CI in [OPS] include `DFXswiss/backend` and `DFXswiss/realunit-app`
+  (where the golden tests of the latter run today is open, §8.5, D-17); their current runners and fork-PR settings are
+  part of the stage 0 inventory ([OPS]). `DFXswiss/agent` itself uses GitHub-hosted runners only
   (`.github/workflows/platform-runner.yml:17,32-33,68`).
 - GitHub-hosted jobs stay as they are; moving them is not part of E-34.
 
