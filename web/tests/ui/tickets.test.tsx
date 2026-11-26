@@ -102,15 +102,18 @@ describe('capture task', () => {
       return { results: [{ id: 'x', scope_id: t.org, scope_seq: 10 + created }] };
     });
     t.client.on('POST /v1/tasks', (body) => ({
-      task: taskRow(t, { task_id: (body as { task_id: string }).task_id, wg_id: research, main_session_id: null }),
+      task: taskRow(t, { task_id: (body as { task_id: string }).task_id, wg_id: t.wg, main_session_id: null }),
       session: null,
-      events: [{ id: 'm', scope_id: research, scope_seq: 1 }],
+      events: [{ id: 'm', scope_id: t.wg, scope_seq: 1 }],
     }));
     const router = mount(t, `/o/${t.org}/capture`, captureRoutes(t, [t.wg, research]));
     fireEvent.click(screen.getByTestId('tickets.capture.open'));
     const form = screen.getByTestId('tickets.capture');
     expect(screen.getByTestId('tickets.capture.submit')).toBeDisabled();
+    // the workgroup choice (the test world holds the key of the default workgroup only)
     fireEvent.change(screen.getByTestId('tickets.capture.wg'), { target: { value: research } });
+    expect(screen.getByTestId('tickets.capture.wg')).toHaveValue(research);
+    fireEvent.change(screen.getByTestId('tickets.capture.wg'), { target: { value: t.wg } });
     fireEvent.change(screen.getByTestId('tickets.capture.title'), { target: { value: 'Review invoices' } });
     fireEvent.change(screen.getByTestId('tickets.capture.description'), { target: { value: 'All of them' } });
     fireEvent.change(screen.getByTestId('tickets.capture.person'), { target: { value: t.me.id } });
@@ -133,7 +136,7 @@ describe('capture task', () => {
     fireEvent.submit(form);
     await waitFor(() => expect(screen.getByTestId('tickets.capture.done')).toBeInTheDocument());
     const body = t.client.of('POST /v1/tasks')[0]!.body as Record<string, unknown>;
-    expect(body).toMatchObject({ wg_id: research, urgency: 'urgent', assignee_id: t.me.id, topic_id: TOPIC });
+    expect(body).toMatchObject({ wg_id: t.wg, urgency: 'urgent', assignee_id: t.me.id, topic_id: TOPIC });
     expect(body.events).toHaveLength(1);
     expect(screen.queryByTestId('tickets.capture')).toBeNull();
     fireEvent.click(screen.getByTestId('tickets.capture.show'));
@@ -195,7 +198,8 @@ describe('ticket filters and rows', () => {
     ];
     t.client.on(`GET /v1/workgroups/${t.wg}/tasks`, (_body, target) => {
       listed.push(target);
-      return { tasks: rows, next_before: null };
+      // the hub filters: no row matches all four filters below
+      return { tasks: target.includes('status=') ? [] : rows, next_before: null };
     });
     putEvents(t.store, t.wg, [
       event(t, t.wg, 2, { kind: 'task.meta', task: 'a' }, { title: 'Alpha', github_org: 'acme' }),
