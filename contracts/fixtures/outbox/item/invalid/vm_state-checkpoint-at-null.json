@@ -1,0 +1,36 @@
+{
+  "origin_seq": 4,
+  "item_kind": "vm_state",
+  "body": {
+    "vm_id": "vm-0a1b2c3d",
+    "wg_id": "01930002-0000-7000-8000-000000000002",
+    "state": "running",
+    "golden_version": "2026.11.21-1",
+    "cpus": 4,
+    "memory_mib": 8192,
+    "disk_gib": 40,
+    "at": "2026-11-21T12:00:00.000Z",
+    "upgrade": {
+      "golden_version": "2026.11.25-2",
+      "golden_built_at": "2026-11-25T08:00:00.000Z",
+      "state": "waiting",
+      "holds": [
+        {
+          "reason": "checkpoint_impossible",
+          "session_id": "01930003-0000-7000-8000-000000000001",
+          "since": "2026-11-21T12:00:00.000Z",
+          "checkpoint_at": null
+        },
+        {
+          "reason": "checkpoint_impossible",
+          "session_id": "01930003-0000-7000-8000-000000000002",
+          "since": "2026-11-21T12:00:00.000Z"
+        }
+      ],
+      "sessions": [
+        "01930003-0000-7000-8000-000000000001",
+        "01930003-0000-7000-8000-000000000002"
+      ]
+    }
+  }
+}
