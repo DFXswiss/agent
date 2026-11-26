@@ -12,6 +12,9 @@
 // section 12.2), and no such request is sent before it registered. Without a registration every body of the kind is
 // refused.
 //
+// `mailbox.check` may carry the body of the mailbox to check (KOR-74, ADR-099 section 9); without it the device checks
+// the primary mailbox.
+//
 // Used by WEB-09 (`github.connect`), WEB-10 (`claude.login`, `credential.check`, `mailbox.check`) and KOR-48
 // (`github.pull_status`, `core/pulls/status.ts`).
 import { isUuid7 } from '../encoding/ids';
@@ -166,6 +169,51 @@ export const isGithubBody = (value: unknown): value is GithubBody =>
 
 export const optionalUuid = (value: unknown): boolean => value === undefined || isUuid7(value);
 
+/** The name of a mailbox (`contracts/credentials/mailbox.json`, ADR-099 section 2). */
+export const MAILBOX_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+/** At most this many workgroups in a mailbox's release (`use.wgs`). */
+export const MAX_MAILBOX_WGS = 50;
+const HOST_RE = /^[A-Za-z0-9.-]{1,253}$/;
+const IMAP_USER_RE = /^[ -~]{1,256}$/;
+
+/** The plaintext body of a `mailbox` credential record (`contracts/credentials/mailbox.json`). */
+export interface MailboxBody {
+  readonly imap_host: string;
+  readonly imap_port: number;
+  readonly imap_user: string;
+  readonly imap_password: string;
+  readonly email: string;
+  /** KOR-74 (ADR-099 section 2): the name, the purpose and the release to workgroups, each optional. */
+  readonly name?: string;
+  readonly purpose?: string;
+  readonly use?: { readonly wgs: readonly string[] };
+}
+
+const codePoints = (value: unknown, min: number, max: number): boolean =>
+  typeof value === 'string' && [...value].length >= min && [...value].length <= max;
+
+/** The release of a mailbox: at most `MAX_MAILBOX_WGS` distinct workgroup IDs. */
+export const isMailboxUse = (value: unknown): value is { readonly wgs: readonly string[] } =>
+  isRecord(value) &&
+  keysAre(value, ['wgs']) &&
+  Array.isArray(value.wgs) &&
+  value.wgs.length <= MAX_MAILBOX_WGS &&
+  value.wgs.every(isUuid7) &&
+  new Set(value.wgs).size === value.wgs.length;
+
+/** The body exactly as `contracts/credentials/mailbox.json` allows it (`name`, `purpose`, `use` optional). */
+export const isMailboxBody = (value: unknown): value is MailboxBody =>
+  isRecord(value) &&
+  keysAre(value, ['imap_host', 'imap_port', 'imap_user', 'imap_password', 'email'], ['name', 'purpose', 'use']) &&
+  matches(value.imap_host, HOST_RE) &&
+  isInt(value.imap_port, 1, 65535) &&
+  matches(value.imap_user, IMAP_USER_RE) &&
+  codePoints(value.imap_password, 1, 1024) &&
+  matches(value.email, EMAIL_RE, 254) &&
+  (value.name === undefined || matches(value.name, MAILBOX_NAME_RE)) &&
+  (value.purpose === undefined || codePoints(value.purpose, 1, 500)) &&
+  (value.use === undefined || isMailboxUse(value.use));
+
 /** The checks of a kind whose code registers itself (module comment). */
 export interface KindChecks {
   readonly request: (body: Record<string, unknown>, followUp: boolean) => boolean;
@@ -196,7 +244,8 @@ export function validRequestBody(kind: RequestKind, body: unknown, followUp: boo
         (body.signing_key === undefined || typeof body.signing_key === 'boolean')
       );
     case 'mailbox.check':
-      return !followUp && keysAre(body, []);
+      // without `mailbox`: the primary mailbox; with it: that mailbox (KOR-74, ADR-099 section 9)
+      return !followUp && keysAre(body, [], ['mailbox']) && (body.mailbox === undefined || isMailboxBody(body.mailbox));
     case 'github.pull_status':
       return registered.get(kind)?.request(body, followUp) ?? false;
     case 'credential.check':

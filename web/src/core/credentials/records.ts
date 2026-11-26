@@ -34,7 +34,7 @@ import { authorKey, formerAgentKey, isGithubBody, selfWrapperKey } from '../gith
 import { CRED } from '../log/wraps';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
-import { EMAIL_RE } from '../requests/bodies';
+import { EMAIL_RE, isMailboxBody, type MailboxBody } from '../requests/bodies';
 import { type RequestsContext, RequestError } from '../requests/client';
 import { type CredentialEntry, setCredentials } from '../store/slices/credentials';
 
@@ -51,8 +51,6 @@ function refuse(code: string): never {
 // --- bodies (contracts/credentials/*.json) ---
 
 const PRINTABLE_RE = /^[!-~]{1,4096}$/;
-const HOST_RE = /^[A-Za-z0-9.-]{1,253}$/;
-const IMAP_USER_RE = /^[ -~]{1,256}$/;
 
 const keysAre = (value: Record<string, unknown>, keys: readonly string[]): boolean =>
   Object.keys(value).sort().join(',') === [...keys].sort().join(',');
@@ -64,13 +62,8 @@ export interface ApiKeyBody {
   readonly key: string;
 }
 
-export interface MailboxBody {
-  readonly imap_host: string;
-  readonly imap_port: number;
-  readonly imap_user: string;
-  readonly imap_password: string;
-  readonly email: string;
-}
+/** The `mailbox` body (with the optional name, purpose and release of KOR-74) is checked in `requests/bodies.ts`. */
+export { isMailboxBody, type MailboxBody };
 
 /** `setup_token`: a long-lived token of `claude setup-token`; `login_token`: the access token of the local Claude Code
  *  login, transferred by the user's agent tool, with its expiry (ADR-056 section 7). */
@@ -86,21 +79,6 @@ export interface SubscriptionBody {
 
 export const isApiKeyBody = (value: unknown): value is ApiKeyBody =>
   isRecord(value) && keysAre(value, ['key']) && typeof value.key === 'string' && PRINTABLE_RE.test(value.key);
-
-export const isMailboxBody = (value: unknown): value is MailboxBody =>
-  isRecord(value) &&
-  keysAre(value, ['imap_host', 'imap_port', 'imap_user', 'imap_password', 'email']) &&
-  typeof value.imap_host === 'string' &&
-  HOST_RE.test(value.imap_host) &&
-  Number.isSafeInteger(value.imap_port) &&
-  (value.imap_port as number) >= 1 &&
-  (value.imap_port as number) <= 65535 &&
-  typeof value.imap_user === 'string' &&
-  IMAP_USER_RE.test(value.imap_user) &&
-  typeof value.imap_password === 'string' &&
-  [...value.imap_password].length >= 1 &&
-  [...value.imap_password].length <= 1024 &&
-  isEmail(value.email);
 
 const isHeaderTime = (value: unknown): boolean => {
   try {

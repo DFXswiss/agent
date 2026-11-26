@@ -2413,8 +2413,7 @@
             "$ref": "../common.json#/$defs/uuid"
           },
           "minItems": 0,
-          "maxItems": 50,
-          "uniqueItems": true
+          "maxItems": 50
         }
       },
       "required": [

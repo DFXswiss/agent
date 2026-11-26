@@ -574,6 +574,43 @@ with `hub_error: peer_outdated` names the execution `devices` that need a newer 
 `task operations` names the account each operation acted with (`github_account`) and who triggered it
 (`triggered_by`).
 
+**Mailboxes**
+
+```sh
+agent-platform mailbox list                                      # name, address, purpose, primary, wgs; never the password
+printf '%s' "$PASSWORD" | agent-platform mailbox add --name signup --email bot@example.com --imap-host imap.example.com --imap-user bot@example.com
+agent-platform mailbox change --id <mailbox_id> --purpose "sign-up mails"   # what is not given stays; --password-stdin
+agent-platform mailbox release --id <mailbox_id> --wg <wg_id>    # sessions of that workgroup may read it; --none: no one
+agent-platform mailbox check --id <mailbox_id>                   # a device signs in to it (mailbox.check)
+agent-platform mailbox delete --id <mailbox_id>
+```
+
+Mailboxes (ADR-099, rule E-31): your user keeps any number of mailboxes, each sealed under your user's credential key;
+the hub never sees host, user, password, address, name or purpose. The first one is the primary one, the mailbox of
+the automatic Claude login (`credentials set-mailbox` writes it too). `mailbox add` reads the password from stdin
+only, never from the command line; `--name` (`[a-z0-9][a-z0-9._-]`, at most 64 characters) is unique among your
+user's mailboxes, `--purpose` says what it is for, `--wg` releases it at once (repeatable, workgroup IDs). Nothing is
+released by default: a session can read a mailbox only once it is released to the workgroup of its task, and only
+while its owner has access to that workgroup. `mailbox list` names a hub mirror of the release that differs from the
+sealed one (`mirror`); the sealed one decides.
+
+**Read a mailbox** (sessions and agents): the operation `mail.find` (`request_operation {type: "mail.find", params:
+{mailbox, from, subject, since, wait_seconds, body}}`), never a work VM; the password never appears in a session. The
+device reads the mailbox (inbox and spam, read only, nothing is marked read) and answers the newest matching mails
+first (`limit`, 1-20, default 5); `body: true` adds the text and the links of each mail, `id` (from an earlier
+answer) reads one mail. `mailbox` is the name or ID of a mailbox released to the session's workgroup; an unknown one
+is refused with `not_found`, naming the released ones. With `wait_seconds` (up to 300) the device waits for a mail
+that arrived at or after `since` (default: two minutes before the request) and answers as soon as one matches; none
+in time is `messages: []` with `timed_out: true`, not a failure. Do not poll: one call waits. Wait up to five minutes
+for a sign-in mail and read its link:
+
+```json
+{"type": "mail.find", "params": {"mailbox": "signup", "from": "noreply@example.com", "subject": "sign in", "wait_seconds": 300, "body": true}}
+```
+
+The answer is `{mailbox, messages: [{id, folder, from, to, subject, date, size, text, links}], waited_seconds,
+timed_out}`; the sign-in link is in `messages[0].links`.
+
 **Account**
 
 ```sh
