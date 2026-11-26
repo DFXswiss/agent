@@ -196,7 +196,9 @@ export function validRequestBody(kind: RequestKind, body: unknown, followUp: boo
         (body.signing_key === undefined || typeof body.signing_key === 'boolean')
       );
     case 'mailbox.check':
-      return !followUp && keysAre(body, []);
+      // without `mailbox`: the primary mailbox; with it: that mailbox, checked in full by its sender
+      // (`core/credentials/mailboxes.ts`, KOR-74, ADR-099 section 9)
+      return !followUp && keysAre(body, [], ['mailbox']) && (body.mailbox === undefined || isRecord(body.mailbox));
     case 'github.pull_status':
       return registered.get(kind)?.request(body, followUp) ?? false;
     case 'credential.check':

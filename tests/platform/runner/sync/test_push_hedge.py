@@ -609,6 +609,7 @@ def test_a_conflict_answered_to_the_first_request_stays_fatal_while_the_copy_fai
         async with rig(harness) as r:
             r.env.hub.stored[1] = canonical({"origin_seq": 1, "item_kind": "metrics", "body": {"other": 1}})
             await r.env.enqueue("metrics", METRICS)
+            r.pusher.conflict_repairable = False  # a push of this process was answered before: no lost tail (HOT-25)
             r.wire.hold[0], r.wire.hold[1] = asyncio.Event(), asyncio.Event()
             r.wire.fail[1] = HubTransportError("hub_unreachable", reused=False, cause="ReadError")
             push = asyncio.ensure_future(r.pusher.push_once())

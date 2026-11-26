@@ -1,0 +1,53 @@
+{
+  "description": "Endpoints of mailboxes (ADR-099, KOR-74): the mailboxes of a user with their release, one mailbox record, and the device's read of the mailboxes released to a workgroup.",
+  "rights": [
+    "user",
+    "device_eligible"
+  ],
+  "auth": [
+    "browser",
+    "device"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/me/mailboxes",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/mailboxes/{id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/mailboxes/{id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/mailboxes/{id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/mailboxes",
+      "rights": [
+        "device_eligible"
+      ],
+      "section": "6.1"
+    }
+  ]
+}

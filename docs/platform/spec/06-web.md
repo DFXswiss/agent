@@ -958,6 +958,16 @@ not open). The page "My subscriptions" (KOR-68) opens the same dialogs at "Add s
 further subscription that is not logged in. A login is started once per attempt; closing the dialog while it starts
 sends nothing more.
 
+**Mailboxes (KOR-74, [ADR-099](../adr/099-mailboxes-read-by-the-platform.md)).** Settings section "Mailboxes"
+(`settings/mailboxes`, core `core/credentials/mailboxes.ts`): every own mailbox (`GET /v1/me/mailboxes`, each record
+opened in the browser) as a card with name, address, purpose, the workgroups it is released to and "for the automatic
+login" on the primary one; "Add a mailbox" (name, purpose, address, IMAP host, port 993, user, password), "Change"
+(the password field stays empty to keep the stored one), "Release" (checkboxes of the workgroups the user has access
+to; the sealed `use {wgs}` and its plaintext mirror), "Check" (device request `mailbox.check` with the mailbox body,
+sealed to the device) and "Remove" (one confirmation). Sessions of a released workgroup read the mailbox with
+`mail.find`; the password never leaves the record and the device. The view and its texts (area `mailbox`) are a chunk
+of their own loaded when the settings show the section, so the first load keeps its budget.
+
 ### 8.3 Connected agents (KOR-24, `11-agent-access.md`)
 
 - `/settings` → "Connected agents": `GET /v1/me/agents`, each with name and computer (opened from the sealed label),
@@ -1113,7 +1123,9 @@ dialog of KOR-57 stage b adds its texts in both languages (the catalogs stay in 
 code loads lazily. Raised to 224 KiB by KOR-56 (ADR-096): every client verifies support releases, support authors
 and wraps to support persons in the membership and platform logs at sign-in, and the background jobs offer the support
 slots in catch-up and rotate released workgroups after a person left support – about 2.6 KiB gzip in the first load
-together with the packages merged at the same time; the support area, the release dialog and their texts load lazily. The guard runs in every package's gates (`npm run
+together with the packages merged at the same time; the support area, the release dialog and their texts load lazily.
+Raised to 225 KiB by KOR-74 (ADR-099): the settings entry "Mailboxes" and the mailbox fields of the credential
+reader (about 0.2 KiB gzip); the section's view, its core module and its texts (area `mailbox`) load lazily. The guard runs in every package's gates (`npm run
 build:check`, the build tests and the E2E budget test), so growth of the first load is seen deterministically where it
 is caused, not later as a narrow timing failure. It is raised only together with a reason in this section. The first
 load is three scripts: the framework, the app modules imported statically from the entry (chunk group `$initial`) and

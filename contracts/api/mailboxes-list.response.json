@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/mailboxes-list.response.json",
+  "title": "GET /v1/me/mailboxes response",
+  "description": "Every mailbox of the caller, newest change first, with its release mirror (03-api.md section 4.8, ADR-099).",
+  "type": "object",
+  "properties": {
+    "mailboxes": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/mailbox_meta"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    }
+  },
+  "required": [
+    "mailboxes"
+  ],
+  "additionalProperties": false
+}

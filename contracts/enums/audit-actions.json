@@ -1020,6 +1020,22 @@
     {
       "action": "read.org.support",
       "group": "read"
+    },
+    {
+      "action": "read.me.mailboxes",
+      "group": "read"
+    },
+    {
+      "action": "read.mailbox",
+      "group": "read"
+    },
+    {
+      "action": "read.device.mailboxes",
+      "group": "read"
+    },
+    {
+      "action": "mail.read",
+      "group": "runner"
     }
   ]
 }

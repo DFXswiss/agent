@@ -57,6 +57,10 @@ SPEC_OPERATIONS: dict[str, tuple[set[str], set[str]]] = {
     "review.verdict": ({"repo", "number", "head_sha", "outcome", "summary"}, {"evidence"}),
     "security.report": ({"repo", "ref", "tool", "passed", "findings"}, {"run_id"}),
     "github.merge": ({"repo", "number", "head_sha"}, set()),
+    "mail.find": (
+        {"mailbox"},
+        {"from", "subject", "since", "until", "folder", "limit", "body", "id", "wait_seconds"},
+    ),
 }
 MANDATORY = [
     "agent.dfx.swiss",
