@@ -1,0 +1,12 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-0000000000b1",
+  "type": "mail.find",
+  "params": {
+    "mailbox": "signup-1",
+    "from": "anthropic.com",
+    "since": "2026-11-26T10:00:00.000Z",
+    "body": true,
+    "limit": 1,
+    "wait_seconds": 300
+  }
+}

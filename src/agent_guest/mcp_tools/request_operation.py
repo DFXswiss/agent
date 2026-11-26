@@ -13,7 +13,9 @@ local_error?}`` (pending call of kind
   request carries ``local_check:"passed"`` (a hint: the runner repeats the formal checks)
 * otherwise the tool waits up to ``WAIT_SECONDS`` (20 s, 03 §12) for the runner's answer to the pending call (sent when
   the operation is final, 05 §12 step 7) and returns it; no answer in time is ``{operation_id, status:"pending"}``
-  (the runner pings ``operation.finished`` later; ``get_operation`` reads the result)
+  (the runner pings ``operation.finished`` later; ``get_operation`` reads the result). ``mail.find`` waits for a mail
+  on the device (ADR-099 section 5), so the tool waits ``WAIT_SECONDS`` plus its ``wait_seconds`` (at most
+  ``MAIL_WAIT_SECONDS``, in steps of at most ``STEP_SECONDS`` of the control socket) - the session does not poll
 
 Tool arguments that do not match ``mcp/tools/request_operation.input.json`` are refused by the MCP server
 (``params_invalid``) before this handler runs: without a valid ``type`` and ``params`` object there is no
@@ -32,6 +34,8 @@ from agent_guest.mcp_tools import _forward
 from agent_guest.schema import SchemaSet, pointers
 
 WAIT_SECONDS = 20.0
+MAIL_WAIT_SECONDS = 320.0
+STEP_SECONDS = 30.0
 MAX_POINTER_LENGTH = 256
 clock: Clock = SystemClock()
 
@@ -65,6 +69,25 @@ def local_check(schemas: SchemaSet, kind: str, params: dict[str, Any]) -> dict[s
     return error
 
 
+def wait_for(kind: str, params: dict[str, Any]) -> float:
+    """How long the tool waits for the answer of an operation (module docstring)."""
+    if kind != "mail.find":
+        return WAIT_SECONDS
+    extra = params.get("wait_seconds", 0)
+    return min(WAIT_SECONDS + (extra if isinstance(extra, int) else 0), MAIL_WAIT_SECONDS)
+
+
+def _ask(call: ToolCall, body: dict[str, Any]) -> dict[str, Any] | None:
+    left = wait_for(body["type"], body["params"])
+    pending_id = _forward.forward(call, "operation", {**body, "local_check": "passed"})
+    while True:
+        step = min(left, STEP_SECONDS)
+        answer = _forward.wait_answer(call, pending_id, step)
+        left -= step
+        if answer is not None or left <= 0:
+            return answer
+
+
 def request_operation(call: ToolCall) -> Any:
     now = clock.now()
     operation_id = uuid7(now)
@@ -80,7 +103,7 @@ def request_operation(call: ToolCall) -> Any:
     if error is not None:
         _forward.forward(call, "operation", {**body, "local_check": "rejected", "local_error": error})
         return {"operation_id": operation_id, "status": "rejected", "error": error}
-    answer = _forward.ask(call, "operation", {**body, "local_check": "passed"}, WAIT_SECONDS)
+    answer = _ask(call, body)
     if answer is None:
         return {"operation_id": operation_id, "status": "pending"}
     return _forward.outcome(call, answer, operation_id=operation_id)
@@ -89,7 +112,7 @@ def request_operation(call: ToolCall) -> Any:
 TOOL = Tool(
     name="request_operation",
     description="Request a platform operation (for example github.checkout, github.commit, github.create_pull_request, "
-    "subagent.request, human.question) with its parameters; returns the result, or status pending after 20 s (then "
-    "use get_operation).",
+    "subagent.request, human.question, mail.find) with its parameters; returns the result, or status pending after "
+    "20 s (then use get_operation); mail.find waits for its wait_seconds on the platform.",
     handler=request_operation,
 )

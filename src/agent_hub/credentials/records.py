@@ -17,7 +17,7 @@ only the metadata of 04-crypto.md section 7 (owner, kind, version, epoch). Every
    another record is `409 id_conflict`.
 
 **GitHub identities (ADR-078) and subscriptions (ADR-090).** An owner may hold up to `MAX_RECORDS[kind]` records of a
-kind in `MULTI_KINDS` (`github`, and for users `claude_subscription`); each other kind stays one record per owner. The
+kind in `MULTI_KINDS` (`github`, and for users `claude_subscription` and `mailbox`, ADR-099); each other kind stays one record per owner. The
 owner is a user (`owner_kind = user`, sealed under the user's `CK`) or an organization (`org`, a company record; never
 primary). A company record is sealed under the **org credential key** (the `cred` scope of the org, KM-35), whose only
 readers are the org's devices assigned to a workgroup: the admin who writes it creates the next epoch with every write
@@ -69,13 +69,16 @@ KINDS = credential_format.KINDS
 CRED = "cred"
 GITHUB = "github"
 SUBSCRIPTION = "claude_subscription"
-MULTI_KINDS = frozenset({GITHUB, SUBSCRIPTION})
+MAILBOX = "mailbox"
+MULTI_KINDS = frozenset({GITHUB, SUBSCRIPTION, MAILBOX})
 USER, ORG = "user", "org"
 MAX_GITHUB_RECORDS = 20
 """At most this many `github` records per owner (ADR-078 section 1)."""
 MAX_SUBSCRIPTIONS = 40
 """At most this many `claude_subscription` records per user (ADR-090 section 1)."""
-MAX_RECORDS = {GITHUB: MAX_GITHUB_RECORDS, SUBSCRIPTION: MAX_SUBSCRIPTIONS}
+MAX_MAILBOXES = 100
+"""At most this many `mailbox` records per user (ADR-099 section 2; a technical bound)."""
+MAX_RECORDS = {GITHUB: MAX_GITHUB_RECORDS, SUBSCRIPTION: MAX_SUBSCRIPTIONS, MAILBOX: MAX_MAILBOXES}
 _LEGACY = "owner_kind = 'user' AND is_primary"
 """The records the endpoints from before address: user-owned primary ones (every record of a single kind is)."""
 MAX_CT_CHARS = 87382
@@ -201,16 +204,17 @@ def _stored(connection: Connection, owner: UUID, kind: str, *, lock: bool = Fals
     return None if row is None else Stored(row[0], row[1], row[2], bytes(row[3]), bytes(row[4]))
 
 
-def _has_primary(connection: Connection, owner: UUID) -> bool:
+def _has_primary(connection: Connection, owner: UUID, kind: str) -> bool:
     row = connection.execute(
-        "SELECT 1 FROM hub.credential WHERE owner_id = %s AND kind = 'github' AND is_primary", (owner,)
+        "SELECT 1 FROM hub.credential WHERE owner_id = %s AND kind = %s AND is_primary", (owner, kind)
     ).fetchone()
     return row is not None
 
 
 def _new_primary(connection: Connection, owner: Owner, kind: str) -> bool:
-    """A new record of `put_identity` is primary: a user's first `github` record, never a subscription."""
-    return kind == GITHUB and owner.kind == USER and not _has_primary(connection, owner.id)
+    """A new record of `put_identity` is primary: a user's first `github` or `mailbox` record (the mailbox of the
+    automatic login, ADR-099 section 2), never a subscription."""
+    return kind in (GITHUB, MAILBOX) and owner.kind == USER and not _has_primary(connection, owner.id, kind)
 
 
 def _insert(

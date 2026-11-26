@@ -41,6 +41,8 @@ use `count_tokens`.
 
 `mailbox.check` (`{}`): IMAPS login with the owner's `mailbox` credential and `LIST` -> `{step:"done", valid}` (a
 refused login is not valid); a connection or TLS failure `upstream_unreachable`, a failed `LIST` `upstream_error`.
+With `{mailbox}` (ADR-099 section 9) the same check of that mailbox body, which the owner's client sealed into the
+request (any mailbox of the store, also before it is saved); a malformed body is `upstream_error`.
 """
 
 from __future__ import annotations
@@ -370,9 +372,15 @@ def imap_login(mailbox: Mailbox, factory: Callable[..., Any]) -> bool:
 async def mailbox_check(flow: Flow) -> None:
     opts = options(flow.context)
     try:
-        if flow.body:
+        if set(flow.body) - {"mailbox"}:
             raise Failed("upstream_error")
-        mailbox, _email = await _mailbox(flow)
+        if "mailbox" in flow.body:  # a mailbox of the store, sealed to this device with the request (ADR-099 §9)
+            given = mailbox_fields(flow.body["mailbox"]) if isinstance(flow.body["mailbox"], dict) else None
+            if given is None:
+                raise Failed("upstream_error")
+            mailbox, _email = given
+        else:
+            mailbox, _email = await _mailbox(flow)
         try:
             valid = await asyncio.to_thread(imap_login, mailbox, opts.imap_factory)
         except (OSError, imaplib.IMAP4.error):

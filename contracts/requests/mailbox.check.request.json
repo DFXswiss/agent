@@ -2,9 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/requests/mailbox.check.request.json",
   "title": "device request body mailbox.check",
-  "description": "no parameters",
+  "description": "without parameters: the user's primary mailbox (the mailbox of the automatic login); with mailbox: that mailbox body, sealed to the device like every request (a mailbox of the store before or after it is saved, ADR-099 section 9)",
   "type": "object",
-  "properties": {},
+  "properties": {
+    "mailbox": {
+      "$ref": "../credentials/mailbox.json"
+    }
+  },
   "required": [],
   "additionalProperties": false
 }
