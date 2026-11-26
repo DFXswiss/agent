@@ -24,6 +24,10 @@
               "request_operation",
               "get_operation",
               "list_operations",
+              "get_usage",
+              "list_audit",
+              "list_workgroup_operations",
+              "get_metrics",
               "get_subagent_result",
               "workvm_exec",
               "workvm_output",
@@ -66,8 +70,8 @@
         ],
         "additionalProperties": false
       },
-      "minItems": 12,
-      "maxItems": 12
+      "minItems": 16,
+      "maxItems": 16
     }
   },
   "required": [

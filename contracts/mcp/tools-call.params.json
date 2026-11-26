@@ -240,6 +240,90 @@
       "properties": {
         "name": {
           "type": "string",
+          "const": "get_usage"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_get_usage"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "list_audit"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_list_audit"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "list_workgroup_operations"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_list_workgroup_operations"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "const": "get_metrics"
+        },
+        "arguments": {
+          "$ref": "objects.json#/$defs/input_get_metrics"
+        },
+        "_meta": {
+          "type": "object",
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "name",
+        "arguments"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
           "const": "get_subagent_result"
         },
         "arguments": {

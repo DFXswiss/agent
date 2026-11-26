@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-workgroup-operations.response.json",
+  "title": "GET /v1/device/workgroups/{wg}/operations response",
+  "description": "Body of a successful response to GET /v1/device/workgroups/{wg}/operations (03-api.md section 6.1, ADR-095 section 4).",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "operation_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "task_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "session_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "type": {
+                "$ref": "../common.json#/$defs/operation_type"
+              },
+              "state": {
+                "$ref": "../common.json#/$defs/operation_state"
+              },
+              "error_code": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-z_]{1,64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "created_at": {
+                "$ref": "../common.json#/$defs/time"
+              },
+              "finished_at": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "operation_id",
+              "task_id",
+              "session_id",
+              "type",
+              "state",
+              "error_code",
+              "created_at",
+              "finished_at"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 200
+        },
+        "next_before": {
+          "$ref": "../common.json#/$defs/next_before"
+        }
+      },
+      "required": [
+        "operations",
+        "next_before"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "$ref": "../common.json#/$defs/operation_type"
+              },
+              "state": {
+                "$ref": "../common.json#/$defs/operation_state"
+              },
+              "error_code": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[a-z_]{1,64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "count": {
+                "$ref": "../common.json#/$defs/count"
+              }
+            },
+            "required": [
+              "type",
+              "state",
+              "error_code",
+              "count"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 200
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "groups",
+        "truncated"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

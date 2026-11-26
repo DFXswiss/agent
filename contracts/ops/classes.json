@@ -77,7 +77,11 @@
     "workvm_kill": "workvm.request",
     "workvm_output": "workvm.request",
     "workvm_status": "workvm.request",
-    "workvm_sync": "workvm.request"
+    "workvm_sync": "workvm.request",
+    "get_usage": "read",
+    "list_audit": "read",
+    "list_workgroup_operations": "read",
+    "get_metrics": "read"
   },
   "head_changing": [
     "github.commit",

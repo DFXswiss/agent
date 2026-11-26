@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-workgroup-usage.request.json",
+  "title": "GET /v1/device/workgroups/{wg}/usage request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "since": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "until": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "by": {
+      "type": "string",
+      "enum": [
+        "task",
+        "session"
+      ]
+    },
+    "before": {
+      "$ref": "../common.json#/$defs/q_before"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_list"
+    }
+  },
+  "required": [
+    "since"
+  ],
+  "additionalProperties": false
+}

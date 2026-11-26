@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-workgroup-audit.request.json",
+  "title": "GET /v1/device/workgroups/{wg}/audit request",
+  "description": "query parameters",
+  "type": "object",
+  "properties": {
+    "since": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "until": {
+      "$ref": "../common.json#/$defs/time"
+    },
+    "action": {
+      "type": "string",
+      "pattern": "^[a-z_]+(\\.[a-z_]+)*$",
+      "maxLength": 96
+    },
+    "task": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "session": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "group_by": {
+      "type": "string",
+      "const": "action"
+    },
+    "before": {
+      "$ref": "../common.json#/$defs/q_before"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_list"
+    }
+  },
+  "required": [],
+  "additionalProperties": false
+}

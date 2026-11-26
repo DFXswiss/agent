@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/read.session.list_audit.json",
+  "title": "audit detail read.session.list_audit",
+  "description": "detail of audit rows with action read.session.list_audit: session platform read reported by the runner (03-api.md section 10 platform.read). Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "result_count": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "read_wg_id": {
+      "description": "the workgroup read (ADR-089 section 4); null on the organization level or when the read stopped before a workgroup was chosen",
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "triggered_by": {
+      "description": "the instructing human of the read's turn (ADR-089 section 1); null when unknown",
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "result_count"
+  ],
+  "additionalProperties": false
+}

@@ -155,6 +155,17 @@
             }
           ],
           "description": "the newest task.agent_name event of the task (the main agent's name, ADR-095 section 2), null without one"
+        },
+        "analysis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/analysis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the scope and period of an analysis task (ADR-095 section 1), null for every other task"
         }
       },
       "required": [
@@ -2364,6 +2375,31 @@
         "number",
         "agent_path",
         "parent_session_id"
+      ],
+      "additionalProperties": false
+    },
+    "analysis": {
+      "type": "object",
+      "description": "the analysis of a task of the kind analysis (ADR-095 section 1)",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": [
+            "org",
+            "wg"
+          ]
+        },
+        "since": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "until": {
+          "$ref": "../common.json#/$defs/time"
+        }
+      },
+      "required": [
+        "scope",
+        "since",
+        "until"
       ],
       "additionalProperties": false
     }

@@ -78,6 +78,34 @@
       }
     },
     {
+      "name": "get_usage",
+      "description": "get_usage tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "list_audit",
+      "description": "list_audit tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "list_workgroup_operations",
+      "description": "list_workgroup_operations tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
+      "name": "get_metrics",
+      "description": "get_metrics tool.",
+      "inputSchema": {
+        "type": "object"
+      }
+    },
+    {
       "name": "get_subagent_result",
       "description": "get_subagent_result tool.",
       "inputSchema": {

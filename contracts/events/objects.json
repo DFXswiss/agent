@@ -1843,6 +1843,90 @@
           "properties": {
             "tool": {
               "type": "string",
+              "const": "get_usage"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_get_usage"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "list_audit"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_list_audit"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "list_workgroup_operations"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_list_workgroup_operations"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "const": "get_metrics"
+            },
+            "arguments": {
+              "$ref": "../mcp/objects.json#/$defs/input_get_metrics"
+            },
+            "result_count": {
+              "$ref": "../common.json#/$defs/count"
+            }
+          },
+          "required": [
+            "tool",
+            "arguments",
+            "result_count"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
               "const": "get_subagent_result"
             },
             "arguments": {

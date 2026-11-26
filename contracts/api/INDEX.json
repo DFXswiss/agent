@@ -1443,6 +1443,82 @@
     },
     {
       "method": "GET",
+      "path": "/v1/device/workgroups/{wg}/usage",
+      "name": "device-workgroup-usage",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:wg"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/device-workgroup-usage.request.json",
+      "response": "api/device-workgroup-usage.response.json",
+      "read_resource": "device.workgroup.usage",
+      "streaming": false,
+      "owner": "KOR-53"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/workgroups/{wg}/audit",
+      "name": "device-workgroup-audit",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:wg"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/device-workgroup-audit.request.json",
+      "response": "api/device-workgroup-audit.response.json",
+      "read_resource": "device.workgroup.audit",
+      "streaming": false,
+      "owner": "KOR-53"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/workgroups/{wg}/operations",
+      "name": "device-workgroup-operations",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:wg"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/device-workgroup-operations.request.json",
+      "response": "api/device-workgroup-operations.response.json",
+      "read_resource": "device.workgroup.operations",
+      "streaming": false,
+      "owner": "KOR-53"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/workgroups/{wg}/metrics",
+      "name": "device-workgroup-metrics",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:wg"
+      ],
+      "path_params": {
+        "wg": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/device-workgroup-metrics.request.json",
+      "response": "api/device-workgroup-metrics.response.json",
+      "read_resource": "device.workgroup.metrics",
+      "streaming": false,
+      "owner": "KOR-53"
+    },
+    {
+      "method": "GET",
       "path": "/v1/device/tasks/{task}",
       "name": "device-task-get",
       "section": "6.1",

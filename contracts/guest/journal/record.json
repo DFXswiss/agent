@@ -816,6 +816,90 @@
             },
             "tool": {
               "type": "string",
+              "const": "get_usage"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_get_usage"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "list_audit"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_list_audit"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "list_workgroup_operations"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_list_workgroup_operations"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
+              "const": "get_metrics"
+            },
+            "arguments": {
+              "$ref": "../../mcp/objects.json#/$defs/input_get_metrics"
+            }
+          },
+          "required": [
+            "pending_id",
+            "tool",
+            "arguments"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pending_id": {
+              "$ref": "../../common.json#/$defs/uuid"
+            },
+            "tool": {
+              "type": "string",
               "const": "get_subagent_result"
             },
             "arguments": {
@@ -918,6 +1002,10 @@
                     "request_operation",
                     "get_operation",
                     "list_operations",
+                    "get_usage",
+                    "list_audit",
+                    "list_workgroup_operations",
+                    "get_metrics",
                     "get_subagent_result",
                     "workvm_exec",
                     "workvm_output",
@@ -992,6 +1080,10 @@
                 "get_notifications",
                 "get_operation",
                 "list_operations",
+                "get_usage",
+                "list_audit",
+                "list_workgroup_operations",
+                "get_metrics",
                 "get_subagent_result"
               ]
             }

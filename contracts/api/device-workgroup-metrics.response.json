@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-workgroup-metrics.response.json",
+  "title": "GET /v1/device/workgroups/{wg}/metrics response",
+  "description": "Body of a successful response to GET /v1/device/workgroups/{wg}/metrics (03-api.md section 6.1, ADR-095 section 4).",
+  "type": "object",
+  "properties": {
+    "entity_kind": {
+      "type": "string",
+      "enum": [
+        "session",
+        "vm",
+        "workvm"
+      ]
+    },
+    "entity_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "$ref": "../common.json#/$defs/vm_id"
+        },
+        {
+          "$ref": "../common.json#/$defs/workvm_id"
+        }
+      ]
+    },
+    "metric": {
+      "type": "string",
+      "enum": [
+        "cpu_ratio",
+        "mem_used_bytes",
+        "mem_limit_bytes",
+        "disk_used_bytes",
+        "disk_limit_bytes",
+        "net_rx_bytes",
+        "net_tx_bytes",
+        "uptime_seconds",
+        "reachable",
+        "free_vm_slots",
+        "free_mem_bytes"
+      ]
+    },
+    "points": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "minItems": 2,
+        "maxItems": 2
+      },
+      "minItems": 0,
+      "maxItems": 1000
+    }
+  },
+  "required": [
+    "entity_kind",
+    "entity_id",
+    "metric",
+    "points"
+  ],
+  "additionalProperties": false
+}

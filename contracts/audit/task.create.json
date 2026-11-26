@@ -11,6 +11,14 @@
         "browser",
         "device"
       ]
+    },
+    "analysis": {
+      "type": "string",
+      "enum": [
+        "org",
+        "wg"
+      ],
+      "description": "the scope of an analysis task (ADR-095 section 1); absent for every other task"
     }
   },
   "required": [

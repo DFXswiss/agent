@@ -514,6 +514,22 @@
       "group": "read"
     },
     {
+      "action": "read.device.workgroup.audit",
+      "group": "read"
+    },
+    {
+      "action": "read.device.workgroup.metrics",
+      "group": "read"
+    },
+    {
+      "action": "read.device.workgroup.operations",
+      "group": "read"
+    },
+    {
+      "action": "read.device.workgroup.usage",
+      "group": "read"
+    },
+    {
       "action": "read.device.workgroup.tasks",
       "group": "read"
     },
@@ -799,6 +815,22 @@
     },
     {
       "action": "read.session.list_operations",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.get_usage",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.list_audit",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.list_workgroup_operations",
+      "group": "read_session"
+    },
+    {
+      "action": "read.session.get_metrics",
       "group": "read_session"
     },
     {

@@ -2719,6 +2719,784 @@
         "file"
       ],
       "additionalProperties": false
+    },
+    "input_get_usage": {
+      "type": "object",
+      "properties": {
+        "workgroup_id": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the workgroup to read (ADR-095 section 3, read scope of ADR-089); default: the session's workgroup"
+        },
+        "since": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "until": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "by": {
+          "type": "string",
+          "enum": [
+            "task",
+            "session"
+          ]
+        },
+        "before": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "required": [
+        "since"
+      ],
+      "additionalProperties": false
+    },
+    "output_get_usage": {
+      "type": "object",
+      "properties": {
+        "workgroup_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "since": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "until": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "by": {
+          "type": "string",
+          "enum": [
+            "task",
+            "session"
+          ]
+        },
+        "total": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "sessions": {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                "tasks": {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                "requests": {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                "input_tokens": {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                "output_tokens": {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                "cache_read_tokens": {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                "cache_write_tokens": {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                "cost_micro_usd": {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                "charged_micro_usd": {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                "runtime_ms": {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                "operations": {
+                  "$ref": "../common.json#/$defs/count"
+                },
+                "failed_operations": {
+                  "$ref": "../common.json#/$defs/count"
+                }
+              },
+              "required": [
+                "sessions",
+                "tasks",
+                "requests",
+                "input_tokens",
+                "output_tokens",
+                "cache_read_tokens",
+                "cache_write_tokens",
+                "cost_micro_usd",
+                "charged_micro_usd",
+                "runtime_ms",
+                "operations",
+                "failed_operations"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "description": "a task (by task: with `sessions`) or a session (by session: with the session fields) started in the period",
+            "properties": {
+              "task_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "created_at": {
+                "$ref": "../common.json#/$defs/time"
+              },
+              "sessions": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "requests": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "input_tokens": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "output_tokens": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "cache_read_tokens": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "cache_write_tokens": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "cost_micro_usd": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "charged_micro_usd": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "runtime_ms": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "operations": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "failed_operations": {
+                "$ref": "../common.json#/$defs/count"
+              },
+              "session_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "parent_session_id": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "depth": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "state": {
+                "$ref": "../common.json#/$defs/session_state"
+              },
+              "model_id": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/model_id"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "ended_at": {
+                "anyOf": [
+                  {
+                    "$ref": "../common.json#/$defs/time"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "task_id",
+              "created_at",
+              "requests",
+              "input_tokens",
+              "output_tokens",
+              "cache_read_tokens",
+              "cache_write_tokens",
+              "cost_micro_usd",
+              "charged_micro_usd",
+              "runtime_ms",
+              "operations",
+              "failed_operations"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "maxItems": 200
+        },
+        "next_before": {
+          "$ref": "../common.json#/$defs/next_before"
+        }
+      },
+      "required": [
+        "workgroup_id",
+        "since",
+        "until",
+        "by",
+        "total",
+        "rows",
+        "next_before"
+      ],
+      "additionalProperties": false
+    },
+    "input_list_audit": {
+      "type": "object",
+      "properties": {
+        "workgroup_id": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the workgroup to read (ADR-095 section 3, read scope of ADR-089); default: the session's workgroup"
+        },
+        "since": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "until": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "action": {
+          "type": "string",
+          "pattern": "^[a-z_]+(\\.[a-z_]+)*$",
+          "maxLength": 96
+        },
+        "task_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "session_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "group_by": {
+          "type": "string",
+          "const": "action"
+        },
+        "before": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "output_list_audit": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "rows": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "seq": {
+                    "$ref": "../common.json#/$defs/positive"
+                  },
+                  "at": {
+                    "$ref": "../common.json#/$defs/time"
+                  },
+                  "actor_kind": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "device",
+                      "session",
+                      "hub",
+                      "operator",
+                      "anonymous"
+                    ]
+                  },
+                  "actor_id": {
+                    "anyOf": [
+                      {
+                        "$ref": "../common.json#/$defs/uuid"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "action": {
+                    "type": "string",
+                    "pattern": "^[a-z_]+(\\.[a-z_]+)*$",
+                    "maxLength": 96
+                  },
+                  "result": {
+                    "type": "string",
+                    "enum": [
+                      "ok",
+                      "denied",
+                      "rejected",
+                      "duplicate",
+                      "failed"
+                    ]
+                  },
+                  "task_id": {
+                    "anyOf": [
+                      {
+                        "$ref": "../common.json#/$defs/uuid"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "session_id": {
+                    "anyOf": [
+                      {
+                        "$ref": "../common.json#/$defs/uuid"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "target_kind": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[a-z_]{1,32}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "target_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9_.:/@+=-]{1,128}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "detail": {
+                    "type": "object",
+                    "description": "flat tokens only (ADR-095 section 3)",
+                    "propertyNames": {
+                      "pattern": "^[a-z_]{1,64}$"
+                    },
+                    "additionalProperties": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "pattern": "^[A-Za-z0-9_.:/@+=-]{0,128}$"
+                        },
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "seq",
+                  "at",
+                  "actor_kind",
+                  "actor_id",
+                  "action",
+                  "result",
+                  "task_id",
+                  "session_id",
+                  "target_kind",
+                  "target_id",
+                  "detail"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0,
+              "maxItems": 200
+            },
+            "next_before": {
+              "$ref": "../common.json#/$defs/next_before"
+            }
+          },
+          "required": [
+            "rows",
+            "next_before"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "pattern": "^[a-z_]+(\\.[a-z_]+)*$",
+                    "maxLength": 96
+                  },
+                  "result": {
+                    "type": "string",
+                    "enum": [
+                      "ok",
+                      "denied",
+                      "rejected",
+                      "duplicate",
+                      "failed"
+                    ]
+                  },
+                  "count": {
+                    "$ref": "../common.json#/$defs/count"
+                  }
+                },
+                "required": [
+                  "action",
+                  "result",
+                  "count"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0,
+              "maxItems": 200
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "groups",
+            "truncated"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "input_list_workgroup_operations": {
+      "type": "object",
+      "properties": {
+        "workgroup_id": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the workgroup to read (ADR-095 section 3, read scope of ADR-089); default: the session's workgroup"
+        },
+        "since": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "until": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "type": {
+          "$ref": "../common.json#/$defs/operation_type"
+        },
+        "state": {
+          "$ref": "../common.json#/$defs/operation_state"
+        },
+        "group_by": {
+          "type": "string",
+          "const": "type"
+        },
+        "before": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "output_list_workgroup_operations": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "operations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "operation_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "task_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "session_id": {
+                    "$ref": "../common.json#/$defs/uuid"
+                  },
+                  "type": {
+                    "$ref": "../common.json#/$defs/operation_type"
+                  },
+                  "state": {
+                    "$ref": "../common.json#/$defs/operation_state"
+                  },
+                  "error_code": {
+                    "anyOf": [
+                      {
+                        "$ref": "../common.json#/$defs/operation_error_code"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "created_at": {
+                    "$ref": "../common.json#/$defs/time"
+                  },
+                  "finished_at": {
+                    "anyOf": [
+                      {
+                        "$ref": "../common.json#/$defs/time"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "operation_id",
+                  "task_id",
+                  "session_id",
+                  "type",
+                  "state",
+                  "error_code",
+                  "created_at",
+                  "finished_at"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0,
+              "maxItems": 200
+            },
+            "next_before": {
+              "$ref": "../common.json#/$defs/next_before"
+            }
+          },
+          "required": [
+            "operations",
+            "next_before"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "groups": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "$ref": "../common.json#/$defs/operation_type"
+                  },
+                  "state": {
+                    "$ref": "../common.json#/$defs/operation_state"
+                  },
+                  "error_code": {
+                    "anyOf": [
+                      {
+                        "$ref": "../common.json#/$defs/operation_error_code"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "count": {
+                    "$ref": "../common.json#/$defs/count"
+                  }
+                },
+                "required": [
+                  "type",
+                  "state",
+                  "error_code",
+                  "count"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 0,
+              "maxItems": 200
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "groups",
+            "truncated"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "input_get_metrics": {
+      "type": "object",
+      "properties": {
+        "workgroup_id": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the workgroup to read (ADR-095 section 3, read scope of ADR-089); default: the session's workgroup"
+        },
+        "entity_kind": {
+          "type": "string",
+          "enum": [
+            "session",
+            "vm",
+            "workvm"
+          ]
+        },
+        "entity_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "$ref": "../common.json#/$defs/vm_id"
+            },
+            {
+              "$ref": "../common.json#/$defs/workvm_id"
+            }
+          ]
+        },
+        "metric": {
+          "type": "string",
+          "enum": [
+            "cpu_ratio",
+            "mem_used_bytes",
+            "mem_limit_bytes",
+            "disk_used_bytes",
+            "disk_limit_bytes",
+            "net_rx_bytes",
+            "net_tx_bytes",
+            "uptime_seconds",
+            "reachable",
+            "free_vm_slots",
+            "free_mem_bytes"
+          ]
+        },
+        "since": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "until": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "step": {
+          "type": "integer",
+          "minimum": 15,
+          "maximum": 9999999
+        }
+      },
+      "required": [
+        "entity_kind",
+        "entity_id",
+        "metric",
+        "since",
+        "step"
+      ],
+      "additionalProperties": false
+    },
+    "output_get_metrics": {
+      "type": "object",
+      "properties": {
+        "entity_kind": {
+          "type": "string",
+          "enum": [
+            "session",
+            "vm",
+            "workvm"
+          ]
+        },
+        "entity_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "$ref": "../common.json#/$defs/vm_id"
+            },
+            {
+              "$ref": "../common.json#/$defs/workvm_id"
+            }
+          ]
+        },
+        "metric": {
+          "type": "string",
+          "enum": [
+            "cpu_ratio",
+            "mem_used_bytes",
+            "mem_limit_bytes",
+            "disk_used_bytes",
+            "disk_limit_bytes",
+            "net_rx_bytes",
+            "net_tx_bytes",
+            "uptime_seconds",
+            "reachable",
+            "free_vm_slots",
+            "free_mem_bytes"
+          ]
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "../common.json#/$defs/time"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "minItems": 0,
+          "maxItems": 1000
+        }
+      },
+      "required": [
+        "entity_kind",
+        "entity_id",
+        "metric",
+        "points"
+      ],
+      "additionalProperties": false
     }
   }
 }

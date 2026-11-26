@@ -130,6 +130,38 @@
       "via": "platform.query"
     },
     {
+      "tool": "get_usage",
+      "name": "mcp__platform__get_usage",
+      "input": "mcp/tools/get_usage.input.json",
+      "output": "mcp/tools/get_usage.output.json",
+      "read_audit": "read.session.get_usage",
+      "via": "platform.query"
+    },
+    {
+      "tool": "list_audit",
+      "name": "mcp__platform__list_audit",
+      "input": "mcp/tools/list_audit.input.json",
+      "output": "mcp/tools/list_audit.output.json",
+      "read_audit": "read.session.list_audit",
+      "via": "platform.query"
+    },
+    {
+      "tool": "list_workgroup_operations",
+      "name": "mcp__platform__list_workgroup_operations",
+      "input": "mcp/tools/list_workgroup_operations.input.json",
+      "output": "mcp/tools/list_workgroup_operations.output.json",
+      "read_audit": "read.session.list_workgroup_operations",
+      "via": "platform.query"
+    },
+    {
+      "tool": "get_metrics",
+      "name": "mcp__platform__get_metrics",
+      "input": "mcp/tools/get_metrics.input.json",
+      "output": "mcp/tools/get_metrics.output.json",
+      "read_audit": "read.session.get_metrics",
+      "via": "platform.query"
+    },
+    {
       "tool": "get_subagent_result",
       "name": "mcp__platform__get_subagent_result",
       "input": "mcp/tools/get_subagent_result.input.json",
