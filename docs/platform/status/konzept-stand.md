@@ -1,6 +1,10 @@
 # Stand von agent.dfx.swiss gegenüber KONZEPT.md
 
 - **Stand:** 2026-11-26, Integrationsstand `develop` Commit `232b3fa7ce`; Branches und offene PRs vom selben Abend.
+- **Nachtrag:** Nach diesem Stand kam `717982cf` auf `develop` (Branch `ad5f2026-kor-73`: Abos nebeneinander
+  anmelden, je mit eigenem Postfach und eigener Browser-Sandbox, Prüfung für Menschen durch den Inhaber,
+  Registrierung neuer Konten). Damit ist E-33 auf `develop` gebaut (nicht live) und E-39 für die Abo-Anmeldung
+  begonnen; Zählung und Tabellen unten bleiben beim Stand `232b3fa7ce`.
 - **Produktion** (2026-11-26, 17 Uhr, Angabe des Auftraggebers): Hub und Weboberfläche auf `develop`-Commit
   `9273856bb`, Runner und Gast auf Release 34 (`682fc189`). Was danach auf `develop` kam, ist noch nicht live
   ([Abschnitt 5](#5-produktionsstand)).
