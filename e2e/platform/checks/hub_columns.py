@@ -178,6 +178,7 @@ quota_snapshot: metrics | owner_id:uuid window:code used_percent:number resets_a
 subscription_quota: metrics | credential_id:uuid owner_id:uuid windows:json unreadable:flag fetched_at:time
   device_id:uuid
 subscription_use: credentials | credential_id:uuid owner_id:uuid pool:flag orgs:json set_at:time
+mailbox_use: credentials | credential_id:uuid owner_id:uuid wgs:json set_at:time
 quota_unreadable: metrics | owner_id:uuid since:time device_id:uuid
 quota_limit: metrics | owner_id:uuid at:time until:time readable:flag device_id:uuid fetched_at:time
 operator_quota: metrics | device_id:uuid at:time snapshot:json received_at:time

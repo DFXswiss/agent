@@ -665,6 +665,50 @@ def test_request_operation_without_an_answer_is_pending(
     assert "idempotency_key" not in record["body"]
 
 
+MAIL_RESULT = {
+    "mailbox": {"id": CHILD_ID, "name": "signup-1", "email": "signup-1@example.org"},
+    "messages": [],
+    "waited_seconds": 1,
+    "timed_out": True,
+}
+
+
+def test_request_operation_waits_for_mail_find_beyond_its_twenty_seconds(
+    mcp: McpClient, session: Session, fake_runner: Runner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ADR-099 section 5: the tool waits `wait_seconds` longer for `mail.find`, in steps of the control socket
+    monkeypatch.setattr(request_operation, "WAIT_SECONDS", 0.2)
+    monkeypatch.setattr(request_operation, "STEP_SECONDS", 0.2)
+
+    def late(kind: str, body: dict[str, Any], session_id: str) -> dict[str, Any]:
+        time.sleep(0.7)  # longer than the plain wait and than one step
+        return ok({"operation_id": body["operation_id"], "status": "succeeded", "result": MAIL_RESULT})
+
+    fake_runner(late)
+    params = {"mailbox": "signup-1", "wait_seconds": 2}
+    value = tool_json(mcp.tool("request_operation", {"type": "mail.find", "params": params}))
+    assert (value["status"], value["result"]) == ("succeeded", MAIL_RESULT)
+    assert request_operation.wait_for("mail.find", {"mailbox": "a"}) == 0.2
+    assert request_operation.wait_for("mail.find", {"mailbox": "a", "wait_seconds": 300}) == 300.2
+    monkeypatch.setattr(request_operation, "MAIL_WAIT_SECONDS", 1.0)
+    assert request_operation.wait_for("mail.find", {"mailbox": "a", "wait_seconds": 300}) == 1.0
+    assert request_operation.wait_for("github.comment", {"wait_seconds": 300}) == 0.2
+
+
+def test_request_operation_of_mail_find_without_an_answer_is_pending(
+    mcp: McpClient, session: Session, fake_runner: Runner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(request_operation, "WAIT_SECONDS", 0.2)
+    monkeypatch.setattr(request_operation, "STEP_SECONDS", 0.2)
+    fake_runner(lambda kind, body, session_id: None)
+    started = time.monotonic()
+    value = tool_json(
+        mcp.tool("request_operation", {"type": "mail.find", "params": {"mailbox": "a", "wait_seconds": 1}})
+    )
+    assert 1.1 <= time.monotonic() - started < 6
+    assert value["status"] == "pending"
+
+
 def test_request_operation_answer_for_another_operation_is_unavailable(
     mcp: McpClient, session: Session, fake_runner: Runner
 ) -> None:

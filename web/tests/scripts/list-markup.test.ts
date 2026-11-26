@@ -29,8 +29,10 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
   'src/ui/settings/SettingsScreen.tsx': { count: 1, reason: 'settings sections of the registry (a handful)' },
   'src/ui/screens/task/Tabs.tsx': { count: 1, reason: 'task tabs of the registry (a handful)' },
   'src/ui/screens/workgroups/WorkgroupsScreen.tsx': {
-    count: 2,
-    reason: 'the outdated VMs of one workgroup (a few) and their holds (at most 16 each, ADR-093)',
+    count: 3,
+    reason:
+      'the outdated VMs of one workgroup (a few), their holds and the sessions a switch continues without the state' +
+      ' of the old VM (at most 64 holds each, ADR-093 addendum HOT-24)',
   },
   'src/ui/screens/whiteboard/WhiteboardScreen.tsx': { count: 1, reason: 'the fixed whiteboard levels (org, group…)' },
   'src/ui/composer/Composer.tsx': { count: 1, reason: 'chips of the composer (fixed suggestions)' },
@@ -56,6 +58,19 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     reason: 'one credential per supported kind (closed list)',
   },
   'src/ui/settings/sections/credentials/Mailbox.tsx': { count: 1, reason: 'the fixed fields of the mailbox form' },
+  'src/ui/settings/sections/mailboxes/MailboxesView.tsx': {
+    count: 1,
+    reason: 'mailboxes of the user (at most 100, ADR-099 section 2)',
+  },
+  'src/ui/settings/sections/mailboxes/MailboxForm.tsx': { count: 1, reason: 'the fixed fields of the mailbox form' },
+  'src/ui/settings/sections/mailboxes/MailboxCard.tsx': {
+    count: 1,
+    reason: 'workgroups of one release (at most 50, ADR-099 section 3)',
+  },
+  'src/ui/settings/sections/mailboxes/Release.tsx': {
+    count: 1,
+    reason: "workgroups of the user's organizations with explicit access and the released ones (at most 50)",
+  },
   'src/ui/settings/sections/credentials/DevicePicker.tsx': {
     count: 1,
     reason: 'native <option>s of the devices of the account (one element each, no layout per row)',

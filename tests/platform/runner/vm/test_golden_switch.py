@@ -17,11 +17,11 @@ from agent_runner.reconcile.engine import Run
 from agent_runner.vm import reconcile as vm_reconcile
 from agent_runner.vm import records, tasks
 from agent_runner.vm.extensions import Retire, RetireHook, retire_hooks
-from agent_runner.vm.golden_switch import GoldenSwitch, judge, retry_delay, vm_ids
+from agent_runner.vm.golden_switch import judge, request_times, retry_delay, vm_ids
 from agent_runner.vm.lifecycle import VmManager
 from agent_runner.vm.records import VmRow
 
-from .guests import GOLDEN, ORG, WG_A, WG_B, Harness
+from .guests import GOLDEN, NOW, ORG, WG_A, WG_B, Harness
 from .test_lifecycle import settings, stop_vm_of
 
 
@@ -35,6 +35,7 @@ class Checkpoints:
         self.after_flush: dict[str, str | None] = {}
         self.flushed: list[tuple[str, str]] = []
         self.asked: list[list[str]] = []
+        self.times: dict[str, datetime | None] = {}
 
     async def flush(self, _context: Any, row: VmRow) -> None:
         state = self.harness.sql("SELECT state FROM runner.vm WHERE id = %s", (row.id,))[0]["state"]
@@ -48,8 +49,12 @@ class Checkpoints:
         self.asked.append(list(session_ids))
         return {sid: self.reasons.get(sid) for sid in session_ids}
 
+    async def fallbacks(self, _context: Any, _row: VmRow, session_ids: list[str]) -> Mapping[str, datetime | None]:
+        return {sid: self.times[sid] for sid in session_ids if sid in self.times}
+
     def retire(self) -> Retire:
-        return Retire("ctx", [RetireHook("test.ckpt", self.flush, self.pending, self.checkpoints)])
+        hook = RetireHook("test.ckpt", self.flush, self.pending, self.checkpoints, self.fallbacks)
+        return Retire("ctx", [hook])
 
 
 def outdated_stopped(harness: Harness, wg: str = WG_A) -> VmRow:
@@ -327,7 +332,7 @@ def test_a_failed_clone_keeps_the_old_vm_and_a_request_tries_again_at_once(harne
         failed = await switch.run_pass()
         waiting = await switch.run_pass()  # within the backoff
         failing[0] = False
-        switch.request([old.id, old.id])
+        await switch.request([old.id, old.id])
         return failed, waiting, await switch.run_pass()
 
     failed, waiting, again = harness.run(body)
@@ -348,11 +353,11 @@ def test_requested_vms_go_first_and_a_request_no_longer_listed_ends(harness: Har
     async def body(manager: VmManager) -> list[str]:
         manager.retire = Checkpoints(harness).retire()
         switch = manager.golden_switch
-        switch.request([max(first.id, second.id)])
+        await switch.request([max(first.id, second.id)])
         assert switch.requested == [max(first.id, second.id)]
-        switch.request([])
+        await switch.request([])
         assert switch.requested == []
-        switch.request([max(first.id, second.id)])
+        await switch.request([max(first.id, second.id)])
         found = await switch.run_pass()
         order.extend(found)
         return found
@@ -409,7 +414,7 @@ def test_an_unexpected_refusal_of_a_refresh_or_a_clone_is_a_failed_switch(harnes
         manager.restart_for_switch = refused  # type: ignore[method-assign]
         found = await manager.golden_switch.run_pass()  # the clone is refused
         hook.reasons[paused] = "checkpoint_due"
-        manager.golden_switch.request([old.id])
+        await manager.golden_switch.request([old.id])
         return found + await manager.golden_switch.run_pass()  # the refresh is refused
 
     assert harness.run(body) == []
@@ -475,7 +480,7 @@ def test_a_failed_delete_reuses_the_recorded_successor(harness: Harness) -> None
         first = await switch.run_pass()
         [successor] = harness.sql("SELECT new_vm_id FROM runner.golden_switch")
         await manager.stop_vm(successor["new_vm_id"])  # it went idle meanwhile: it is started again, not cloned
-        switch.request([old.id])
+        await switch.request([old.id])
         return first, await switch.run_pass()
 
     first, second = harness.run(body)
@@ -496,7 +501,7 @@ def test_refreshes_end_after_a_few_attempts_until_a_request(harness: Harness) ->
         for _ in range(6):
             await manager.golden_switch.run_pass()
             harness.now += timedelta(hours=2)
-        manager.golden_switch.request([old.id])
+        await manager.golden_switch.request([old.id])
         await manager.golden_switch.run_pass()
 
     harness.run(body)
@@ -588,41 +593,60 @@ def test_a_non_callable_checkpoints_hook_is_refused(monkeypatch: pytest.MonkeyPa
 def test_the_contexts_area_registers_its_checkpoint_judgement() -> None:
     (hook,) = [item for item in retire_hooks() if item.name == "contexts.checkpoint"]
     assert hook.checkpoints is not None
+    assert hook.fallbacks is not None
 
 
 def test_helpers() -> None:
     assert vm_ids(["vm-0000000a", "vm-x", 3, "vm-0000000b"]) == ["vm-0000000a", "vm-0000000b"]
     assert vm_ids({"vm-0000000a": 1}) == []
+    assert request_times({"vm-0000000a": "2026-11-21T12:00:00.000Z", "vm-0000000b": 3}) == {
+        "vm-0000000a": datetime(2026, 11, 21, 12, tzinfo=UTC)
+    }
+    assert request_times(["vm-0000000a"]) == {}
     assert [retry_delay(count) for count in (1, 2, 3, 5, 20)] == [300.0, 600.0, 1200.0, 3600.0, 3600.0]
 
 
 # -- the reconcile step `vm_switch` -------------------------------------------------------------------------------
 
 
-class _Woken:
-    def __init__(self) -> None:
-        self.woken = 0
-        self.golden_switch = GoldenSwitch(self)  # type: ignore[arg-type]
+def test_the_reconcile_step_hands_requests_to_the_switch(harness: Harness) -> None:
+    harness.add_golden()
 
-    def wake_refill(self) -> None:
-        self.woken += 1
+    async def body(manager: VmManager) -> None:
+        woken: list[int] = []
+        manager.wake_refill = lambda: woken.append(1)  # type: ignore[method-assign]
+        context = SimpleNamespace(**{tasks.MANAGER_KEY: manager})
+        switch = manager.golden_switch
 
+        async def run(desired: dict[str, Any] | None) -> None:
+            await vm_reconcile.step(Run(context=context, sync=None, book=None, desired=desired))  # type: ignore[arg-type]
 
-def test_the_reconcile_step_hands_requests_to_the_switch() -> None:
-    manager = _Woken()
-    context = SimpleNamespace(**{tasks.MANAGER_KEY: manager})
+        await run(None)  # no desired state (a device pending certification): nothing changes
+        assert (switch.hub_reads_status, switch.hub_reads_impossible, switch.requested) == (False, False, [])
+        await run({"sessions": []})  # an older hub
+        assert (switch.hub_reads_status, len(woken)) == (False, 0)
+        await run({"vm_switch": ["vm-0000000a", "bad"]})  # a hub of KOR-70: the runner's time of the request
+        assert (switch.hub_reads_status, switch.hub_reads_impossible) == (True, False)
+        assert switch.requested == ["vm-0000000a"]
+        assert len(woken) == 1
+        later = {"vm-0000000a": "2026-11-21T12:30:00.000Z", "vm-0000000b": "no time", "bad": "2026-11-21T12:30:00.000Z"}
+        hot24 = {"vm_switch": ["vm-0000000a"], "vm_switch_at": later, "vm_upgrade_version": 2}
+        await run(hot24)  # HOT-24: a newer time is a new request (a member confirmed again)
+        assert switch.hub_reads_impossible is True
+        assert len(woken) == 2
+        await run(hot24)  # the same request again: nothing new
+        await run({**hot24, "vm_switch_at": {"vm-0000000a": "2026-11-21T12:10:00.000Z"}})  # an older time: neither
+        harness.now += timedelta(hours=1)
+        await run({"vm_switch": ["vm-0000000a"]})  # no time (an older hub): never new again while listed
+        assert len(woken) == 2
+        assert harness.sql("SELECT vm_id, requested_at FROM runner.golden_switch_request") == [
+            {"vm_id": "vm-0000000a", "requested_at": datetime(2026, 11, 21, 12, 30, tzinfo=UTC)}
+        ]
+        await run({"vm_switch": [], "vm_switch_at": [], "vm_upgrade_version": True})
+        assert (switch.requested, switch.hub_reads_impossible) == ([], False)
+        assert harness.sql("SELECT * FROM runner.golden_switch_request") == []
 
-    def run(desired: dict[str, Any] | None) -> None:
-        asyncio.run(vm_reconcile.step(Run(context=context, sync=None, book=None, desired=desired)))  # type: ignore[arg-type]
-
-    run(None)  # no desired state (a device pending certification): nothing changes
-    assert (manager.golden_switch.hub_reads_status, manager.golden_switch.requested) == (False, [])
-    run({"sessions": []})  # an older hub
-    assert (manager.golden_switch.hub_reads_status, manager.woken) == (False, 0)
-    run({"vm_switch": ["vm-0000000a", "bad"]})
-    assert manager.golden_switch.hub_reads_status is True
-    assert manager.golden_switch.requested == ["vm-0000000a"]
-    assert manager.woken == 1
+    harness.run(body)
     assert [(step.order, step.name) for step in vm_reconcile.STEPS] == [(85, "vm_switch")]
 
 
@@ -634,7 +658,7 @@ def test_a_failed_delete_reuses_a_running_successor(harness: Harness) -> None:
     async def body(manager: VmManager) -> list[str]:
         manager.retire = Checkpoints(harness).retire()
         await manager.golden_switch.run_pass()
-        manager.golden_switch.request([old.id])
+        await manager.golden_switch.request([old.id])
         return await manager.golden_switch.run_pass()
 
     assert harness.run(body) == [old.id]
@@ -670,3 +694,270 @@ def test_a_vm_gone_meanwhile_is_forgotten_and_a_failure_on_a_deleted_vm_is_not_r
     harness.run(body)
     assert harness.sql("SELECT * FROM runner.golden_switch_hold WHERE vm_id = %s", (old.id,)) == []
     assert [line[1]["code"] for line in harness.logs if line[0] == "vm.golden_switch_failed"] == ["vm_start_failed"]
+
+
+# -- HOT-24: never savable sessions, no loop across restarts ------------------------------------------------------
+
+
+def hot24_pass(harness: Harness, hook: Checkpoints, *, requested: dict[str, datetime] | None = None) -> list[str]:
+    """One pass of a new daemon (a runner restart) talking to a hub of HOT-24."""
+
+    async def body(manager: VmManager) -> list[str]:
+        manager.retire = hook.retire()
+        switch = manager.golden_switch
+        switch.hub_reads_status = switch.hub_reads_impossible = True
+        if requested is not None:
+            await switch.request(list(requested), requested)
+        return await switch.run_pass()
+
+    return harness.run(body)
+
+
+def test_a_vm_held_by_a_never_savable_session_stays_and_is_never_started_or_stopped(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    paused = harness.session(old.id, WG_A, "suspended")
+    hook = Checkpoints(harness)
+    hook.reasons[paused] = "checkpoint_impossible"
+    hook.times[paused] = datetime(2026, 11, 20, 9, 30, tzinfo=UTC)
+    calls = len(harness.fake.ops())
+    for _ in range(3):  # three restarts, hours apart
+        assert hot24_pass(harness, hook) == []
+        harness.now += timedelta(hours=2)
+    assert "start" not in harness.fake.ops()[calls:]
+    assert hook.flushed == []
+    assert [item["id"] for item in harness.live()] == [old.id]
+    assert upgrades(harness, old.id)[-1]["holds"] == [
+        {
+            "reason": "checkpoint_impossible",
+            "session_id": paused,
+            "since": "2026-11-21T12:00:00.000Z",
+            "checkpoint_at": "2026-11-20T09:30:00.000Z",
+        }
+    ]
+    # without a checkpoint to continue from: no `checkpoint_at` (it would start fresh)
+    hook.times[paused] = None
+    hot24_pass(harness, hook)
+    assert "checkpoint_at" not in upgrades(harness, old.id)[-1]["holds"][0]
+    # a running VM with such a session (a start restarted it) is not stopped for the switch either
+    assert harness.run(lambda manager: manager.ensure_vm(ORG, WG_A)).id == old.id
+    assert hot24_pass(harness, hook) == []
+    assert hook.flushed == []
+    assert [item["state"] for item in harness.live()] == ["running"]
+
+
+def test_an_older_hub_hears_checkpoint_missing_and_a_request_moves_nothing(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    paused = harness.session(old.id, WG_A, "suspended")
+    hook = Checkpoints(harness)
+    hook.reasons[paused] = "checkpoint_impossible"
+    hook.times[paused] = datetime(2026, 11, 20, 9, 30, tzinfo=UTC)
+
+    async def body(manager: VmManager) -> list[str]:
+        manager.retire = hook.retire()
+        manager.golden_switch.hub_reads_status = True  # a hub of KOR-70: no `vm_upgrade_version`
+        await manager.golden_switch.run_pass()
+        harness.now += timedelta(minutes=5)
+        await manager.golden_switch.request([old.id])
+        return await manager.golden_switch.run_pass()
+
+    assert harness.run(body) == []
+    assert upgrades(harness, old.id)[-1]["holds"] == [
+        {"reason": "checkpoint_missing", "session_id": paused, "since": "2026-11-21T12:00:00.000Z"}
+    ]
+
+
+def test_a_request_by_hand_moves_the_sessions_whose_hold_the_member_saw(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    seen = harness.session(old.id, WG_A, "suspended")
+    hook = Checkpoints(harness)
+    hook.reasons[seen] = "checkpoint_impossible"
+    assert hot24_pass(harness, hook) == []  # reported at 12:00
+    # a later session that can never be saved either, first seen after the request: it holds the VM
+    harness.now += timedelta(minutes=10)
+    later = harness.session(old.id, WG_A, "suspended")
+    hook.reasons[later] = "checkpoint_impossible"
+    request = {old.id: NOW + timedelta(minutes=5)}
+    assert hot24_pass(harness, hook, requested=request) == []
+    holds = upgrades(harness, old.id)[-1]["holds"]  # what the request does not cover yet comes first
+    assert [(hold["session_id"], hold["since"]) for hold in holds] == [
+        (later, "2026-11-21T12:10:00.000Z"),
+        (seen, "2026-11-21T12:00:00.000Z"),
+    ]
+    # the same request after a restart is no new one: still held
+    assert hot24_pass(harness, hook, requested=request) == []
+    # the member asks again (a newer time): now both move, with the other holds still applying
+    harness.now += timedelta(minutes=10)
+    assert hot24_pass(harness, hook, requested={old.id: harness.now}) == [old.id]
+    [new] = harness.live()
+    assert new["golden_version"] == "g2"
+    assert hook.flushed == []  # never started for a refresh
+
+
+def test_a_request_never_moves_a_working_session_and_refreshes_first(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    impossible = harness.session(old.id, WG_A, "suspended")
+    missing = harness.session(old.id, WG_A, "suspended")
+    hook = Checkpoints(harness)
+    hook.reasons[impossible] = "checkpoint_impossible"
+    hook.reasons[missing] = "checkpoint_missing"
+    hook.after_flush[missing] = None
+    assert hot24_pass(harness, hook) == []  # the impossible hold: neither started nor switched
+    assert hook.flushed == []
+    working = harness.session(old.id, WG_A, "working")
+    harness.now += timedelta(minutes=1)
+    assert hot24_pass(harness, hook, requested={old.id: harness.now}) == []
+    assert hook.flushed == []  # a working session holds: no refresh either
+    harness.sql("UPDATE runner.session SET state = 'stopped' WHERE id = %s", (working,))
+    assert hot24_pass(harness, hook) == [old.id]  # started for the missing checkpoint, then switched
+    assert hook.flushed == [(old.id, "running")]
+
+
+def test_refresh_attempts_survive_restarts_and_a_vm_that_ran_gets_fresh_ones(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    paused = harness.session(old.id, WG_A, "suspended")
+    hook = Checkpoints(harness)
+    hook.reasons[paused] = "checkpoint_missing"  # dropped again and again
+    for _ in range(6):  # six restarts, each after the backoff
+        hot24_pass(harness, hook)
+        harness.now += timedelta(hours=2)
+    attempts = [line[1]["attempt"] for line in harness.logs if line[0] == "vm.golden_refresh"]
+    assert attempts == [1, 2, 3]
+    assert harness.sql("SELECT kind, count FROM runner.golden_switch_attempt") == [{"kind": "refresh", "count": 3}]
+    # the VM ran for its sessions (a start restarted it): fresh chances
+    assert harness.run(lambda manager: manager.ensure_vm(ORG, WG_A)).id == old.id
+    hot24_pass(harness, hook)  # stopped with its final checkpoints, still missing
+    harness.now += timedelta(hours=2)
+    hot24_pass(harness, hook)
+    attempts = [line[1]["attempt"] for line in harness.logs if line[0] == "vm.golden_refresh"]
+    assert attempts == [1, 2, 3, 1]
+
+
+def test_a_refresh_without_a_free_slot_counts_no_attempt(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    paused = harness.session(old.id, WG_A, "suspended")
+    harness.physical_mib = 32768 + 8192  # one slot
+
+    async def other(manager: VmManager) -> None:
+        await manager.ensure_vm(ORG, WG_B)  # takes the only slot
+
+    harness.run(other)
+    hook = Checkpoints(harness)
+    hook.reasons[paused] = "checkpoint_due"
+    hot24_pass(harness, hook)
+    assert harness.sql("SELECT * FROM runner.golden_switch_attempt") == []
+
+
+def test_attempts_of_vms_that_are_gone_are_pruned(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    harness.sql(
+        "INSERT INTO runner.golden_switch_attempt (vm_id, kind, count, reason, next_at) VALUES"
+        " ('vm-0000ffff', 'failure', 1, 'capacity', %s), (%s, 'refresh', 1, 'refresh', %s)",
+        (NOW, old.id, NOW),
+    )
+    harness.session(old.id, WG_A, "working")
+    hot24_pass(harness, Checkpoints(harness))
+    assert harness.sql("SELECT vm_id FROM runner.golden_switch_attempt") == [{"vm_id": old.id}]
+
+
+def test_a_start_replaces_a_requested_vm_whose_only_holds_the_request_covers(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    paused = harness.session(old.id, WG_A, "suspended")
+    hook = Checkpoints(harness)
+    hook.reasons[paused] = "checkpoint_impossible"
+    hot24_pass(harness, hook)  # reported
+
+    async def start(manager: VmManager) -> VmRow:
+        manager.retire = hook.retire()
+        switch = manager.golden_switch
+        switch.hub_reads_status = switch.hub_reads_impossible = True
+        held = await manager.ensure_vm(ORG, WG_A)  # not requested: the old VM is restarted
+        assert held.id == old.id
+        await manager._stop(held)
+        await switch.request([old.id], {old.id: NOW + timedelta(minutes=1)})
+        return await manager.ensure_vm(ORG, WG_A)
+
+    new = harness.run(start)
+    assert new.golden_version == "g2"
+    assert [item["id"] for item in harness.live()] == [new.id]
+
+
+def test_retire_fallbacks_take_the_first_answer() -> None:
+    logs: list[tuple[str, dict[str, Any]]] = []
+    at = datetime(2026, 11, 20, tzinfo=UTC)
+
+    async def flush(_context: Any, _row: Any) -> None:
+        return None
+
+    async def pending(_context: Any, _row: Any) -> bool:
+        return False
+
+    def hook(name: str, answer: Any) -> RetireHook:
+        async def fallbacks(_context: Any, _row: Any, _ids: list[str]) -> Mapping[str, datetime | None]:
+            if isinstance(answer, Exception):
+                raise answer
+            return dict(answer)
+
+        return RetireHook(name, flush, pending, None, fallbacks)
+
+    row = VmRow(**{**_row_fields(), "id": "vm-0000000a"})
+    hooks = [
+        RetireHook("a.none", flush, pending),
+        hook("b.boom", RuntimeError("boom")),
+        hook("c.first", {"s1": None}),
+        hook("d.second", {"s1": at, "s2": at}),
+    ]
+    retire = Retire("ctx", hooks, lambda name, fields: logs.append((name, fields)))
+    assert asyncio.run(retire.fallbacks(row, ["s1", "s2", "s3"])) == {"s1": None, "s2": at, "s3": None}
+    assert logs == [("vm.retire_failed", {"vm_id": "vm-0000000a", "hook": "b.boom", "error": "RuntimeError"})]
+
+
+def test_a_non_callable_fallbacks_hook_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def flush(_context: Any, _row: Any) -> None:
+        return None
+
+    async def pending(_context: Any, _row: Any) -> bool:
+        return False
+
+    bad = RetireHook("x.bad", flush, pending, None, "nope")  # type: ignore[arg-type]
+    monkeypatch.setattr("agent_runner.vm.extensions.registry.discover", lambda *_args: [("x", [bad])])
+    with pytest.raises(RunnerError, match="registry_invalid"):
+        retire_hooks()
+
+
+def test_a_hub_of_hot24_hears_up_to_64_holds_uncovered_first_and_requests_converge(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    hook = Checkpoints(harness)
+    sessions = sorted(harness.session(old.id, WG_A, "suspended") for _ in range(66))
+    for sid in sessions:
+        hook.reasons[sid] = "checkpoint_impossible"
+    assert hot24_pass(harness, hook) == []
+    shown = upgrades(harness, old.id)[-1]["holds"]
+    assert [hold["session_id"] for hold in shown] == sessions[:64]
+    # the request covers the 64 the member saw; the two others still hold and are now listed first
+    harness.now += timedelta(minutes=10)
+    assert hot24_pass(harness, hook, requested={old.id: NOW + timedelta(minutes=5)}) == []
+    shown = upgrades(harness, old.id)[-1]["holds"]
+    assert [hold["session_id"] for hold in shown[:2]] == sessions[64:]
+    assert len(shown) == 64
+    # asked again after seeing them: all move
+    harness.now += timedelta(minutes=10)
+    assert hot24_pass(harness, hook, requested={old.id: harness.now}) == [old.id]
+
+
+def test_holds_never_reported_are_not_covered_by_a_request(harness: Harness) -> None:
+    old = outdated_stopped(harness)
+    paused = harness.session(old.id, WG_A, "suspended")
+    hook = Checkpoints(harness)
+    hook.reasons[paused] = "checkpoint_impossible"
+
+    async def body(manager: VmManager) -> list[str]:
+        manager.retire = hook.retire()
+        switch = manager.golden_switch
+        switch.hub_reads_impossible = True  # but no status reaches the hub: the member saw nothing
+        await switch.run_pass()
+        harness.now += timedelta(minutes=5)
+        await switch.request([old.id], {old.id: harness.now})
+        return await switch.run_pass()
+
+    assert harness.run(body) == []
+    assert harness.sql("SELECT reported_at FROM runner.golden_switch_hold") == [{"reported_at": None}]

@@ -14,6 +14,14 @@ A session of the main orchestrator (a row in `runner.orchestrator`, 05-runner.md
 `mark_due`, `mark_periodic` and `mark_vm_due` leave it out, and `due` and `due_on_vm` never name it (also a checkpoint
 that was due before the session became the orchestrator).
 
+HOT-24 (ADR-093 addendum): a session *worked* when a prompt was accepted for it on this device (`runner.prompt_delivery`
+`accepted`, `_TURNS`). A request that ended for good is `drop_due` with an outcome: `dropped` (as before), `nothing`
+(no complete turn to save) or `impossible` (never savable on its VM, with `impossible_reason`, the turns at that
+moment, `impossible_turns`, and the VM, `impossible_vm_id`: on another VM the mark no longer counts). `mark_due`,
+`mark_periodic` and `mark_vm_due` leave out an `impossible` session until it worked again or moved (`_SETTLED`);
+`checkpoint_holds` lets a session that never worked or has `nothing` to save hold nothing and names an `impossible`
+one on its VM `checkpoint_impossible`; `fallback_times` gives the checkpoint such a session would continue from.
+
 Every function runs in the caller's transaction.
 """
 
@@ -70,6 +78,17 @@ OBJECT_COLUMNS = (
 
 _NOT_ORCHESTRATOR = "NOT EXISTS (SELECT 1 FROM runner.orchestrator o WHERE o.session_id = {column})"
 """The session `{column}` is not the main orchestrator (05-runner.md section 17.6)."""
+_TURNS = "(SELECT count(*) FROM runner.prompt_delivery d WHERE d.session_id = {column} AND d.state = 'accepted')"
+"""The prompts accepted for the session `{column}` on this device (HOT-24: a session with none never worked)."""
+_ON_VM = "(SELECT s.vm_id FROM runner.session s WHERE s.id = {column})"
+"""The VM the session `{column}` is on."""
+_SETTLED = (
+    "({row}.checkpoint_state IS DISTINCT FROM 'impossible' OR {row}.impossible_turns IS NULL"
+    " OR {row}.impossible_turns < " + _TURNS.format(column="{row}.session_id") + ""
+    " OR {row}.impossible_vm_id IS DISTINCT FROM " + _ON_VM.format(column="{row}.session_id") + ")"
+)
+"""The `context_session` row `{row}` is not a session that can never be checkpointed on its VM and has not worked
+since."""
 
 
 async def mark_due(
@@ -83,14 +102,16 @@ async def mark_due(
     forget: bool = False,
 ) -> None:
     """A checkpoint of the session is due (an earlier due time is kept, so a coalesced request is not delayed); with
-    `forget` the hash of the last archive is dropped, so an unchanged archive is taken as a new object again."""
+    `forget` the hash of the last archive is dropped, so an unchanged archive is taken as a new object again. A session
+    that can never be checkpointed stays as it is until it worked again (`_SETTLED`)."""
     await conn.execute(
         "INSERT INTO runner.context_session (session_id, task_id, org_id, wg_id, due_at)"
         " SELECT %s::uuid, %s::uuid, %s::uuid, %s::uuid, %s::timestamptz"
         f" WHERE {_NOT_ORCHESTRATOR.format(column='%s::uuid')}"
         " ON CONFLICT (session_id) DO UPDATE SET due_at = LEAST(runner.context_session.due_at, EXCLUDED.due_at),"
         " attempts = 0, next_at = NULL,"
-        " archive_sha256 = CASE WHEN %s THEN NULL ELSE runner.context_session.archive_sha256 END",
+        " archive_sha256 = CASE WHEN %s THEN NULL ELSE runner.context_session.archive_sha256 END"
+        f" WHERE {_SETTLED.format(row='runner.context_session')}",
         (session_id, task_id, org_id, wg_id, at, session_id, forget),
     )
 
@@ -109,7 +130,8 @@ async def mark_periodic(conn: AsyncConnection[Any], *, interval_s: float, at: da
     cur = await conn.execute(
         "UPDATE runner.context_session c SET due_at = %s FROM runner.session s WHERE s.id = c.session_id"
         " AND s.depth = 0 AND s.state = 'working' AND c.due_at IS NULL"
-        f" AND (c.last_at IS NULL OR c.last_at <= %s) AND {_NOT_ORCHESTRATOR.format(column='s.id')}",
+        f" AND (c.last_at IS NULL OR c.last_at <= %s) AND {_NOT_ORCHESTRATOR.format(column='s.id')}"
+        f" AND {_SETTLED.format(row='c')}",
         (at, at - timedelta(seconds=interval_s)),
     )
     return cur.rowcount
@@ -139,24 +161,28 @@ async def due(conn: AsyncConnection[Any], at: datetime, limit: int = 16) -> list
 
 
 async def mark_vm_due(conn: AsyncConnection[Any], vm_id: str, at: datetime) -> int:
-    """Every main session on the VM that has not ended becomes due (before the VM stops or goes away)."""
+    """Every main session on the VM that has not ended becomes due (before the VM stops or goes away), except one that
+    can never be checkpointed and has not worked since (`_SETTLED`)."""
     cur = await conn.execute(
         "INSERT INTO runner.context_session (session_id, task_id, org_id, wg_id, due_at)"
         " SELECT id, task_id, org_id, wg_id, %s FROM runner.session WHERE vm_id = %s AND depth = 0"
         " AND state NOT IN ('stopped', 'failed')"
         f" AND {_NOT_ORCHESTRATOR.format(column='runner.session.id')} ON CONFLICT (session_id) DO UPDATE"
-        " SET due_at = LEAST(COALESCE(runner.context_session.due_at, EXCLUDED.due_at), EXCLUDED.due_at)",
+        " SET due_at = LEAST(COALESCE(runner.context_session.due_at, EXCLUDED.due_at), EXCLUDED.due_at)"
+        f" WHERE {_SETTLED.format(row='runner.context_session')}",
         (at, vm_id),
     )
     return cur.rowcount
 
 
-async def due_on_vm(conn: AsyncConnection[Any], vm_id: str) -> list[DueSession]:
-    """Due checkpoints of the sessions on the VM, regardless of their backoff."""
+async def due_on_vm(conn: AsyncConnection[Any], vm_id: str, *, worked: bool = False) -> list[DueSession]:
+    """Due checkpoints of the sessions on the VM, regardless of their backoff; with `worked` only those of sessions
+    that worked (a session that never did has nothing to save, HOT-24)."""
     cursor = conn.cursor(row_factory=dict_row)
+    turns = f" AND {_TURNS.format(column='c.session_id')} > 0" if worked else ""
     await cursor.execute(
         f"SELECT {DUE_COLUMNS} FROM runner.context_session c JOIN runner.session s ON s.id = c.session_id"
-        f" WHERE s.vm_id = %s AND c.due_at IS NOT NULL AND {_NOT_ORCHESTRATOR.format(column='c.session_id')}"
+        f" WHERE s.vm_id = %s AND c.due_at IS NOT NULL AND {_NOT_ORCHESTRATOR.format(column='c.session_id')}{turns}"
         " ORDER BY c.due_at, c.session_id",
         (vm_id,),
     )
@@ -178,17 +204,45 @@ async def taken(
     that arrived meanwhile stays due."""
     await conn.execute(
         "UPDATE runner.context_session SET archive_sha256 = %s, checkpoint_state = %s, last_at = %s, attempts = 0,"
-        " next_at = NULL, due_at = CASE WHEN due_at <= %s THEN NULL ELSE due_at END WHERE session_id = %s",
+        " next_at = NULL, impossible_reason = NULL, impossible_turns = NULL, impossible_vm_id = NULL,"
+        " due_at = CASE WHEN due_at <= %s THEN NULL ELSE due_at END WHERE session_id = %s",
         (sha256, workspace, at, due_at, session_id),
     )
 
 
-async def drop_due(conn: AsyncConnection[Any], session_id: str, *, due_at: datetime, at: datetime) -> None:
-    """No checkpoint can be taken for this request (nothing to save, or it failed for good): `dropped`."""
+DROP_OUTCOMES = frozenset({"dropped", "nothing", "impossible"})
+
+
+async def drop_due(
+    conn: AsyncConnection[Any],
+    session_id: str,
+    *,
+    due_at: datetime,
+    at: datetime,
+    outcome: str = "dropped",
+    reason: str | None = None,
+) -> None:
+    """No checkpoint was taken for this request: `dropped` (the session or its VM is gone), `nothing` (no complete
+    turn to save) or `impossible` (never savable on this VM: `reason`, and the accepted prompts so far, HOT-24)."""
+    assert outcome in DROP_OUTCOMES
+    impossible = outcome == "impossible"
     await conn.execute(
-        "UPDATE runner.context_session SET last_at = %s, attempts = 0, next_at = NULL, checkpoint_state = 'dropped',"
+        "UPDATE runner.context_session SET last_at = %s, attempts = 0, next_at = NULL, checkpoint_state = %s,"
+        " impossible_reason = %s,"
+        f" impossible_turns = CASE WHEN %s THEN {_TURNS.format(column='%s::uuid')} END,"
+        f" impossible_vm_id = CASE WHEN %s THEN {_ON_VM.format(column='%s::uuid')} END,"
         " due_at = CASE WHEN due_at <= %s THEN NULL ELSE due_at END WHERE session_id = %s",
-        (at, due_at, session_id),
+        (
+            at,
+            outcome,
+            reason if impossible else None,
+            impossible,
+            session_id,
+            impossible,
+            session_id,
+            due_at,
+            session_id,
+        ),
     )
 
 
@@ -198,34 +252,62 @@ COMPLETE_STATES = frozenset({"full", "empty"})
 
 async def checkpoint_holds(conn: AsyncConnection[Any], session_ids: list[str]) -> dict[str, str | None]:
     """Per session: None when its newest checkpoint is complete (not due, taken with a complete workspace, its newest
-    object in the local cache and no restore from that object failed here before), else the hold reason
-    `checkpoint_due`, `checkpoint_missing` or `workspace_incomplete` (ADR-093 section 1). A session never checkpointed
-    here is `checkpoint_missing`."""
-    found: dict[str, str | None] = dict.fromkeys(session_ids, "checkpoint_missing")
+    object in the local cache and no restore from that object failed here before) or when it has nothing to save
+    (it never worked, or its newest request found no complete turn: `nothing`, HOT-24), else the hold reason
+    `checkpoint_due`, `checkpoint_missing`, `workspace_incomplete` (ADR-093 section 1) or `checkpoint_impossible`
+    (never savable on this VM, HOT-24). A session never checkpointed here is `checkpoint_missing` when it worked."""
     if not session_ids:
-        return found
+        return {}
     cursor = conn.cursor(row_factory=dict_row)
     await cursor.execute(
-        "SELECT c.session_id::text AS session_id, c.due_at IS NOT NULL AS due, c.archive_sha256, c.checkpoint_state,"
+        "SELECT ids.sid::text AS session_id, c.session_id IS NOT NULL AS known, c.due_at IS NOT NULL AS due,"
+        f" c.archive_sha256, c.checkpoint_state, {_TURNS.format(column='ids.sid')} AS turns,"
+        f" c.impossible_vm_id IS NOT DISTINCT FROM {_ON_VM.format(column='ids.sid')} AS here,"
         " EXISTS (SELECT 1 FROM (SELECT o.object_id FROM runner.context_object o WHERE o.session_id = c.session_id"
         " AND o.kind = 'context' ORDER BY o.created_at DESC, o.object_id DESC LIMIT 1) newest"
         " WHERE NOT EXISTS (SELECT 1 FROM runner.context_session f WHERE f.task_id = c.task_id"
         " AND f.restored_object_id = newest.object_id AND f.restore_failed)) AS cached"
-        " FROM runner.context_session c WHERE c.session_id = ANY(%s::uuid[])",
+        " FROM unnest(%s::uuid[]) ids(sid) LEFT JOIN runner.context_session c ON c.session_id = ids.sid",
         (session_ids,),
     )
+    found: dict[str, str | None] = {}
     for row in await cursor.fetchall():
-        state = row["checkpoint_state"]
-        if row["due"]:
-            reason: str | None = "checkpoint_due"
-        elif row["archive_sha256"] is None or state is None or state == "dropped" or not row["cached"]:
-            reason = "checkpoint_missing"
-        elif state not in COMPLETE_STATES:
-            reason = "workspace_incomplete"
-        else:
-            reason = None
-        found[row["session_id"]] = reason
-    return found
+        found[row["session_id"]] = _hold(row)
+    return {session_id: found[session_id] for session_id in session_ids}
+
+
+def _hold(row: Mapping[str, Any]) -> str | None:
+    """The hold reason of one row of `checkpoint_holds` (None: nothing holds)."""
+    state = row["checkpoint_state"]
+    if row["turns"] == 0 or (row["known"] and not row["due"] and state == "nothing"):
+        return None  # it never worked, or its newest request found no complete turn: nothing to save
+    if not row["known"]:
+        return "checkpoint_missing"
+    if row["due"]:
+        return "checkpoint_due"
+    if state == "impossible" and row["here"]:
+        return "checkpoint_impossible"  # on another VM (it moved) its guest may well export it: missing there
+    if row["archive_sha256"] is None or state is None or state == "dropped" or not row["cached"]:
+        return "checkpoint_missing"
+    return None if state in COMPLETE_STATES else "workspace_incomplete"
+
+
+async def fallback_times(conn: AsyncConnection[Any], session_ids: list[str]) -> dict[str, datetime | None]:
+    """Per session: when the checkpoint was taken that it would continue from after a move without its newest state -
+    the newest cached checkpoint of the session, else of its task (`contexts.restore` orders them the same way);
+    None when there is none (it starts fresh and reads the task's messages). HOT-24."""
+    if not session_ids:
+        return {}
+    cursor = conn.cursor(row_factory=dict_row)
+    await cursor.execute(
+        "SELECT ids.sid::text AS session_id, COALESCE((SELECT max(o.created_at) FROM runner.context_object o"
+        " WHERE o.session_id = ids.sid AND o.kind = 'context'), (SELECT max(o.created_at) FROM runner.context_object o"
+        " JOIN runner.session s ON s.task_id = o.task_id WHERE s.id = ids.sid AND o.kind = 'context')) AS at"
+        " FROM unnest(%s::uuid[]) ids(sid)",
+        (session_ids,),
+    )
+    found = {row["session_id"]: row["at"] for row in await cursor.fetchall()}
+    return {session_id: found[session_id] for session_id in session_ids}
 
 
 async def postpone(conn: AsyncConnection[Any], session_id: str, *, next_at: datetime) -> None:
@@ -329,6 +411,14 @@ async def insert_object(
             kind,
         ),
     )
+
+
+async def has_object(conn: AsyncConnection[Any], session_id: str) -> bool:
+    """Whether a checkpoint of the session is in the local cache."""
+    cur = await conn.execute(
+        "SELECT 1 FROM runner.context_object WHERE session_id = %s AND kind = 'context' LIMIT 1", (session_id,)
+    )
+    return await cur.fetchone() is not None
 
 
 async def get_object(conn: AsyncConnection[Any], object_id: str) -> StoredObject | None:

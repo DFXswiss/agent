@@ -94,11 +94,14 @@ def test_a_member_with_administration_rights_asks_for_the_switch(
     )
     assert (str(audit[0]), str(audit[2])) == (scene.admin.id, outbox.desk.wg)
     assert audit[1] == {"vm_id": vm, "device_id": scene.device.id, "requested": True}
-    assert desired(fleet, scene.device)["vm_switch"] == [vm]
+    state = desired(fleet, scene.device)
+    assert (state["vm_switch"], state["vm_switch_at"], state["vm_upgrade_version"]) == ([vm], {vm: first}, 2)
     assert desired(fleet, scene.other_device)["vm_switch"] == []
-    # asked again: the first time stays
+    # asked again: the newest time counts - it confirms the holds shown now (HOT-24)
     outbox.hub.clock.advance(5)
-    assert switch(outbox, scene.admin, vm).json()["requested_at"] == first
+    again = switch(outbox, scene.admin, vm).json()["requested_at"]
+    assert again > first
+    assert desired(fleet, scene.device)["vm_switch_at"] == {vm: again}
     # the VM is current: the request ends
     outbox.ok(outbox.vm(2, vm, state="stopped", upgrade=None))
     assert stored(outbox, vm)[2:] == (None, None)
@@ -152,10 +155,19 @@ def test_malformed_reports_are_rejected() -> None:
         "at": "2026-11-21T12:00:00.000Z",
     }
     VmStateBody.model_validate(base)
+    # HOT-24: a session that can never be checkpointed, with the checkpoint it would continue from
+    impossible = {"reason": "checkpoint_impossible", "session_id": SESSION, "since": "2026-11-21T12:00:00.000Z"}
+    for hold in (impossible, {**impossible, "checkpoint_at": "2026-11-20T09:30:00.000Z"}):
+        VmStateBody.model_validate(
+            {**base, "upgrade": {"golden_version": "g2", "golden_built_at": None, "state": "waiting",
+                                 "holds": [hold], "sessions": [SESSION]}}
+        )  # fmt: skip
     for bad in (
         {"replaced_by": None},
         {"upgrade": {"golden_version": "g2", "golden_built_at": None, "state": "waiting", "holds": [
             {"reason": "session_active", "session_id": None, "since": "2026-11-21T12:00:00.000Z"}], "sessions": []}},
+        {"upgrade": {"golden_version": "g2", "golden_built_at": None, "state": "waiting", "holds": [
+            {**impossible, "checkpoint_at": None}], "sessions": []}},
     ):  # fmt: skip
         try:
             VmStateBody.model_validate({**base, **bad})

@@ -15,7 +15,8 @@ answers with ``POST /v1/pending/{id}/answer``; the API process waits for the ans
   at once with that rejection (the runner answers no locally rejected request)
 * op ``pending.wait {pending_id, session_id, timeout <= 33} -> {state: "answered", answer} | {state: "waiting"}``;
   33 s is the longest MCP wait (``get_operation``/``get_subagent_result``: ``wait_seconds`` ≤ 30 plus the read margin,
-  GST-07; the work VM tools: ``wait_seconds`` ≤ 30 plus 5 s, KOR-29), below the 35 s limit of the ``/mcp`` route
+  GST-07; the work VM tools: ``wait_seconds`` ≤ 30 plus 5 s, KOR-29); a longer wait (``request_operation`` of
+  ``mail.find``, ADR-099 section 5) asks again for the same ``pending_id``
 """
 
 from __future__ import annotations

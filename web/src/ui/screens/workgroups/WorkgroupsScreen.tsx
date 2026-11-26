@@ -17,7 +17,14 @@ import {
   validChoice,
   type WorkgroupDevices,
 } from '../../../core/tasks/placement';
-import { type OutdatedVm, outdatedVms, requestVmSwitch, shortId, switchStatus } from '../../../core/tasks/vmswitch';
+import {
+  type OutdatedVm,
+  outdatedVms,
+  requestVmSwitch,
+  shortId,
+  switchStatus,
+  withoutState,
+} from '../../../core/tasks/vmswitch';
 import { formatEventTime, localTimeZone } from '../../../core/i18n';
 import { useNow } from '../../countdown/useNow';
 import { PlacementSelect, useWorkgroupDevices } from '../../composer/DeviceChoice';
@@ -337,6 +344,32 @@ function PlacementLine({ org, devices }: { readonly org: string; readonly device
   );
 }
 
+/** In the confirmation of "Switch now": the sessions that continue without the state of the old VM (HOT-24). */
+function WithoutStateList({ upgrade }: { readonly upgrade: OutdatedVm['upgrade'] }) {
+  const { t, locale } = useI18n();
+  const now = useNow(false);
+  const items = withoutState(upgrade);
+  if (items.length === 0) return null;
+  const time = (text: string) => formatEventTime(Date.parse(text), { locale, timeZone: localTimeZone(), now });
+  return (
+    <div className="text-amber-800" data-testid="workgroups.vm-switch.dialog.without">
+      <p>{t('workgroups.vm-switch.without')}</p>
+      <ul className="list-disc pl-5">
+        {items.map((item) => (
+          <li key={item.session_id} data-testid="workgroups.vm-switch.dialog.without.item">
+            {item.checkpoint_at === null
+              ? t('workgroups.vm-switch.without.fresh', { session: shortId(item.session_id) })
+              : t('workgroups.vm-switch.without.saved', {
+                  session: shortId(item.session_id),
+                  time: time(item.checkpoint_at),
+                })}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** The outdated VMs of a workgroup: why each waits, and "Switch now" (ADR-093). */
 function VmSwitchList(props: {
   readonly row: WorkgroupRow;
@@ -647,6 +680,7 @@ export function WorkgroupsScreen() {
                   ids: open.vm.upgrade.sessions.map(shortId).join(', '),
                 })}
           </p>
+          <WithoutStateList upgrade={open.vm.upgrade} />
         </ActionDialog>
       )}
       {open?.kind === 'rename' && (

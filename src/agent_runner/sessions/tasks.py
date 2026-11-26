@@ -1,5 +1,6 @@
 """Daemon task `guestlink` (05-runner.md section 1.1): after the startup reconciliation of the VM area the sessions
-whose VM is gone fail (`SessionService.vms_lost`, ADR-087 section 3.7), then the journal loops of the running VMs
+whose VM is gone fail (`SessionService.vms_lost`, ADR-087 section 3.7), those left working in a stopped VM are
+suspended (`SessionService.vms_stopped`, HOT-25), then the journal loops of the running VMs
 (`SessionService.run_journals`). The task ends at once on a device that is not enrolled.
 """
 
@@ -19,6 +20,7 @@ async def run_guestlink(context: Any) -> None:
         return
     await service.vms_ready()
     await service.vms_lost()
+    await service.vms_stopped()
     await service.run_journals(context.stopping)
 
 

@@ -45,6 +45,18 @@ SETTINGS = WorkgroupSettings(
     pr_draft_default=False,
 )
 VALID: dict[str, dict[str, Any]] = {
+    "mail.find": {
+        "mailbox": "signup-1",
+        "from": "anthropic.com",
+        "subject": "Sign in",
+        "since": "2026-11-26T10:00:00.000Z",
+        "until": "2026-11-26T11:00:00.000Z",
+        "folder": "all",
+        "limit": 1,
+        "body": True,
+        "id": "spam:42",
+        "wait_seconds": 300,
+    },
     "github.list_repositories": {},
     "github.checkout": {"repo": REPO, "ref": "v1.2.3"},
     "github.get_pull_request": {"repo": REPO, "number": 7},

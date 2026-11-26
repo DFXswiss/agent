@@ -7,7 +7,8 @@ twin of `web/src/core/tasks/vmswitch.ts`).
 - `wg vm-switch --wg W --vm V`: asks the device to switch now (`POST /v1/workgroups/{wg}/vms/{vm}/switch`, members with
   administration rights; the hub refuses others with `forbidden`). The answer is the preview and `requested`
   (false: the VM is current, nothing was asked). The device applies its own rules: never with a working session,
-  never without complete checkpoints.
+  never without complete checkpoints - except sessions it reported as never savable on that VM before the request
+  (`checkpoint_impossible`, HOT-24): they move and continue without the old VM's state (`checkpoint_at` or fresh).
 """
 
 from __future__ import annotations

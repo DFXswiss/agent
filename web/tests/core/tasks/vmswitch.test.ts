@@ -1,5 +1,6 @@
-// U-WEB-core-vm-switch (KOR-70, ADR-093 sections 3 and 5): the switch status of an outdated workgroup VM as
-// `GET /v1/workgroups/{wg}` reports it, the outdated VMs of the devices, the status in words and the request by hand.
+// U-WEB-core-vm-switch (KOR-70, ADR-093 sections 3 and 5; HOT-24): the switch status of an outdated workgroup VM as
+// `GET /v1/workgroups/{wg}` reports it, the outdated VMs of the devices, the status in words, the sessions a switch by
+// hand continues without the old VM's state and the request by hand.
 import { describe, expect, it } from 'vitest';
 import { actionErrorCode } from '../../../src/core/org/batch';
 import { HubError } from '../../../src/core/net/signedFetch';
@@ -12,6 +13,7 @@ import {
   switchStatus,
   upgradeOf,
   type VmUpgrade,
+  withoutState,
 } from '../../../src/core/tasks/vmswitch';
 import { taskWorld } from './world';
 
@@ -42,7 +44,7 @@ describe('upgradeOf', () => {
       golden_version: 'g2',
       golden_built_at: SINCE,
       state: 'waiting',
-      holds: [{ reason: 'session_active', session_id: S1, since: SINCE }],
+      holds: [{ reason: 'session_active', session_id: S1, since: SINCE, checkpoint_at: null }],
       sessions: [S2],
     });
     expect(
@@ -59,8 +61,8 @@ describe('upgradeOf', () => {
       state: 'switching',
       // a reason this client does not know still holds the VM
       holds: [
-        { reason: 'capacity', session_id: null, since: SINCE },
-        { reason: 'unknown', session_id: null, since: SINCE },
+        { reason: 'capacity', session_id: null, since: SINCE, checkpoint_at: null },
+        { reason: 'unknown', session_id: null, since: SINCE, checkpoint_at: null },
       ],
       sessions: [S1],
     });
@@ -87,6 +89,7 @@ describe('upgradeOf', () => {
       'checkpoint_due',
       'checkpoint_missing',
       'workspace_incomplete',
+      'checkpoint_impossible',
       'capacity',
       'switch_failed',
     ]);
@@ -128,6 +131,25 @@ describe('the outdated VMs of a workgroup', () => {
     expect(switchStatus({ ...upgrade, holds: [] })).toBe('moves');
     expect(switchStatus({ ...upgrade, state: 'switching' })).toBe('switching');
     expect(shortId(S1)).toBe('000000a1');
+  });
+});
+
+describe('sessions that continue without the state of the old VM (HOT-24)', () => {
+  it('are the never savable ones, with the save they continue from or fresh', () => {
+    const upgrade = upgradeOf({
+      ...UPGRADE,
+      holds: [
+        { reason: 'checkpoint_impossible', session_id: S1, since: SINCE, checkpoint_at: '2026-11-24T08:00:00.000Z' },
+        { reason: 'checkpoint_impossible', session_id: S2, since: SINCE, checkpoint_at: 7 },
+        { reason: 'checkpoint_impossible', since: SINCE },
+        { reason: 'session_active', session_id: S1, since: SINCE },
+      ],
+    }) as VmUpgrade;
+    expect(withoutState(upgrade)).toEqual([
+      { session_id: S1, checkpoint_at: '2026-11-24T08:00:00.000Z' },
+      { session_id: S2, checkpoint_at: null },
+    ]);
+    expect(withoutState(upgradeOf(UPGRADE) as VmUpgrade)).toEqual([]);
   });
 });
 

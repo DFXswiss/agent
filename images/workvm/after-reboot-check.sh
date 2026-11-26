@@ -5,13 +5,14 @@
 #
 #   after-reboot-check.sh [--accounts N] [--prefix PREFIX]
 #
-# Checks: the APFS volume `AgentWorkVM` is mounted at /var/agent-workvm (a custom mount point of `diskutil apfs
-# addVolume` may not persist across a restart - the open assumption of `accounts.py`), owned by root, the slot homes
+# Checks: the APFS volume `AgentWorkVM` is mounted at /var/agent-workvm (the custom mount point of `diskutil apfs
+# addVolume` does not persist across a restart; the /etc/fstab entry `workvm install` writes keeps it, HOT-25), owned
+# by root, the slot homes
 # and their Lima homes exist with their owners, `lima/_config` belongs to the slot account (0700), the image directory exists, the watcher's LaunchDaemon runs, its
 # state is `ok …`, our anchor is loaded and the first child of `com.apple`, and `anchor "com.apple/*"` is the first
 # anchor line of the main ruleset. One line per check `check=<name> result=pass|fail detail=...`; exit 0 only when
-# every check passed. When only the mount fails: `diskutil mount -mountPoint /var/agent-workvm AgentWorkVM` mounts it
-# by hand; report it, the installer then needs a persistent mount (an /etc/fstab entry by volume UUID).
+# every check passed. When only the mount fails: run `agent-runner workvm install` again as root; it mounts the volume
+# back and writes the /etc/fstab entry (an installation before HOT-25 has none).
 set -u
 PATH=/usr/bin:/bin:/usr/sbin:/sbin
 export PATH

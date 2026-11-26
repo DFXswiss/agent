@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/mailbox-delete.request.json",
+  "title": "DELETE /v1/mailboxes/{id} request",
+  "description": "No query parameters; hard delete of an own mailbox record and its release mirror (03-api.md section 4.8, ADR-099).",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

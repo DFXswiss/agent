@@ -364,6 +364,11 @@ bearing on keys).
 | [E-29](KONZEPT.md#e-29) | GitHub with every repository the account can reach (the token stays a `github` credential under the user's `CK`). | none | – |
 | [E-30](KONZEPT.md#e-30) | Overview of all own subscriptions (readings only; the hub sees numbers and times, no address or name). | none | – |
 | [E-31](KONZEPT.md#e-31) | Every subscription is a `claude_subscription` record under the user's `CK`, logged in and renewed by an eligible device; its use is sealed in the record (ADR-090). | none | – |
+| [E-32](KONZEPT.md#e-32) | Working modes chosen per session or task, nothing on the user's computer; the keys a mode needs are decided with that mode (KOR-72). | none | – |
+| [E-33](KONZEPT.md#e-33) | Platform operations in parallel, each in its own isolated environment; a mailbox credential belongs to its subscription (KOR-73 decides its keys). | none | – |
+| [E-34](KONZEPT.md#e-34) | Self-hosted CI runs through the platform (concept): CI VMs (concept) hold no scope key and no device key; placement of the CI app key is open (spec/16 D-4; recommendation: never in a VM or at the hub). | decision needed | KM-37 |
+| [E-35](KONZEPT.md#e-35) | One shared capacity: the rule itself names no key; with [E-36](KONZEPT.md#e-36) a pool device holds the keys of the workgroups it serves while CI VMs run on it (data access of the device, as for idea 35). | decision needed | [§6](#6-where-plaintext-lies) |
+| [E-36](KONZEPT.md#e-36) | CI jobs, also with foreign PR code, share the devices with the work VMs (no own CI device): a pool device holds the plaintext and keys of the workgroups it serves while CI VMs run on it; the separating measures (gate U, spec/16 D-7, D-20) stay a recommendation. | decision needed | [§6](#6-where-plaintext-lies) |
 | [A1](KONZEPT.md#a-1) | Subagents have the parent's rights and no keys. | carried | [§1](#1-principals) |
 | [A2](KONZEPT.md#a-2) | Conflict fix by merge commit. | none | – |
 | [A3](KONZEPT.md#a-3) | The hardening is built: the agent has its own identity as a sub-principal and is rotated out on revocation (ADR-082); the rekey of the user's identity for copies made before is a decision of the owner. | decision needed | KM-28, KM-30, KM-39 |
@@ -382,6 +387,8 @@ bearing on keys).
 | [A16](KONZEPT.md#a-16) | Workflow files are not blocked. | none | – |
 | [A17](KONZEPT.md#a-17) | Protected branches. | none | – |
 | [A18](KONZEPT.md#a-18) | Blocked attempts are logged. | none | – |
+| [A20](KONZEPT.md#a-20) | One throw-away VM per CI job; no bearing of its own on keys (the keys around CI VMs: row E-34). | none | – |
+| [A21](KONZEPT.md#a-21) | That the runner runs on the same devices as the work VMs is decided by [E-36](KONZEPT.md#e-36); that it is a VM stays interpretation [A20](KONZEPT.md#a-20). The pool device holds the keys of the workgroups it serves while CI VMs run on it. | decision needed | [§6](#6-where-plaintext-lies) |
 
 ## 11. Gaps and the requirements on the follow-up packages
 

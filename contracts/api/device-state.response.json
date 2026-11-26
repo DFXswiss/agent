@@ -797,6 +797,23 @@
           "minItems": 0,
           "maxItems": 1000
         },
+        "vm_switch_at": {
+          "type": "object",
+          "description": "the time of the newest request of each VM of vm_switch (HOT-24): a switch by hand moves a session that can never be checkpointed on its VM (hold checkpoint_impossible) only when the device had reported that hold before this time",
+          "propertyNames": {
+            "$ref": "../common.json#/$defs/vm_id"
+          },
+          "additionalProperties": {
+            "$ref": "../common.json#/$defs/time"
+          },
+          "maxProperties": 1000
+        },
+        "vm_upgrade_version": {
+          "type": "integer",
+          "description": "the version of vm_state.upgrade this hub reads: 2 adds the hold reason checkpoint_impossible and the hold field checkpoint_at (ADR-093 addendum HOT-24); absent: version 1 (KOR-70), and the runner reports such a hold as checkpoint_missing",
+          "minimum": 1,
+          "maximum": 1000
+        },
         "vm_switch": {
           "type": "array",
           "description": "live workgroup VMs of this device a member with administration rights asked to switch to the newest golden now (POST /v1/workgroups/{wg}/vms/{vm}/switch, ADR-093 section 5); a hub that sends the field also reads upgrade and replaced_by of vm_state",

@@ -3972,11 +3972,12 @@
         },
         "holds": {
           "type": "array",
+          "description": "at most 16 to a hub without vm_upgrade_version, at most 64 to a hub of vm_upgrade_version 2 (HOT-24)",
           "items": {
             "$ref": "#/$defs/vm_upgrade_hold"
           },
           "minItems": 0,
-          "maxItems": 16
+          "maxItems": 64
         },
         "sessions": {
           "type": "array",
@@ -3998,7 +3999,7 @@
     },
     "vm_upgrade_hold": {
       "type": "object",
-      "description": "one cause that keeps an outdated workgroup VM on its golden (ADR-093 section 1): session_active (a session that is not paused), subagent (a child session that has not ended), checkpoint_due, checkpoint_missing, workspace_incomplete (a paused session's newest checkpoint is due, missing or left part of the workspace out), capacity (no free slot for the new VM), switch_failed (the last attempt failed); session_id names the session; since is when the device first saw the cause",
+      "description": "one cause that keeps an outdated workgroup VM on its golden (ADR-093 section 1): session_active (a session that is not paused), subagent (a child session that has not ended), checkpoint_due, checkpoint_missing, workspace_incomplete (a paused session's newest checkpoint is due, missing or left part of the workspace out), checkpoint_impossible (a paused session that worked can never be checkpointed on this VM, e.g. its guest has no export route; only a switch by hand moves the VM, ADR-093 addendum HOT-24), capacity (no free slot for the new VM), switch_failed (the last attempt failed); session_id names the session; since is when the device first saw the cause; checkpoint_at (checkpoint_impossible only) is when the checkpoint was taken that the session would continue from after a switch by hand, absent when it would start fresh",
       "properties": {
         "reason": {
           "type": "string",
@@ -4008,6 +4009,7 @@
             "checkpoint_due",
             "checkpoint_missing",
             "workspace_incomplete",
+            "checkpoint_impossible",
             "capacity",
             "switch_failed"
           ]
@@ -4016,6 +4018,9 @@
           "$ref": "#/$defs/uuid"
         },
         "since": {
+          "$ref": "#/$defs/time"
+        },
+        "checkpoint_at": {
           "$ref": "#/$defs/time"
         }
       },

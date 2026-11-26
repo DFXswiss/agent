@@ -275,7 +275,7 @@ row adds `R-` rows with their tests and replaces the row here.
 
 Younger than the concept; where they contradict it, the rule holds. Wording, date and reference in
 [`KONZEPT.md`](../KONZEPT.md#teil-b--regeln-und-entscheide-des-auftraggebers); a new rule is entered there first. The
-interpretations A1–A18 (part C) have no rows of their own; the rows above and below cite them where they apply.
+interpretations A1–A21 (part C) have no rows of their own; the rows above and below cite them where they apply.
 
 | ID | Ref | Rule (short) | Status | Where |
 |---|---|---|---|---|
@@ -310,6 +310,11 @@ interpretations A1–A18 (part C) have no rows of their own; the rows above and 
 | E-29 | [E-29](../KONZEPT.md#e-29) | GitHub works for every customer with every repository their GitHub account can access (own account, own or third-party organization, fork). | gebaut | [ADR-077](../adr/077-github-every-repository.md) |
 | E-30 | [E-30](../KONZEPT.md#e-30) | A user sees on the home page, without choosing an organization, the remaining quota of every own model subscription (per provider a collapsible line with reset, bar and share; per subscription the source and time of its reading; nothing twice) and a page with all of them; measured centrally, visible to the owner only. | gebaut | [ADR-091](../adr/091-subscriptions-at-a-glance.md) on the readings of [ADR-090](../adr/090-every-subscription-logged-in-centrally.md) |
 | E-31 | [E-31](../KONZEPT.md#e-31) | Every Claude subscription has its own login on a platform device, is measured and renewed there, never copied to a computer of the user, and serves only the sessions its owner switches on (default: measure only). | gebaut | [ADR-090](../adr/090-every-subscription-logged-in-centrally.md) |
+| E-32 | [E-32](../KONZEPT.md#e-32) | Nothing runs on the user's computer except at most a Claude session that steers agent.dfx.swiss; everything local today (the `agent` tool with ledger, coordinator, A38, AI accounts, `knock` and dashboard, the legacy hub, the tooling that builds, checks, merges and releases the platform) becomes a working mode of the platform that is chosen per session or task – by a sentence in the prompt, in the web client or with the agent tool – never forced and never on by default, and is then carried out completely; the accesses these need (Apple signing, server access, mailboxes, subscriptions) move along without asking, services on the computer that do not come from this repository stay out. | offen | [ADR-098](../adr/098-working-modes.md) (KOR-72; build packages in its §9) |
+| E-33 | [E-33](../KONZEPT.md#e-33) | Independent work the platform does for a user runs at the same time, each in its own isolated environment – sessions, test runs and browsers as well as platform operations such as logging in several subscriptions; nothing forces them into a queue: what an operation needs belongs to it (every subscription has its own mailbox). | offen | KOR-73 |
+| E-34 | [E-34](../KONZEPT.md#e-34) | All self-hosted GitHub Actions runs of the DFX organisations run through agent.dfx.swiss. | offen | concept [16-ci-runners.md](16-ci-runners.md), decisions open (§13 there); note: one VM per job is interpretation [A20](../KONZEPT.md#a-20); host-bound jobs are not covered by it and are an open deviation (decision D-1 there, [KONZEPT part D](../KONZEPT.md#d-offen)) |
+| E-35 | [E-35](../KONZEPT.md#e-35) | One shared capacity: no own machines for self-hosted runners next to the platform; the operator's whole server capacity belongs to agent.dfx.swiss, and a runner is obtained through the platform. | offen | concept [16-ci-runners.md](16-ci-runners.md) (§6.6 there); note: that the runner runs on the same devices as the work VMs is decided by [E-36](../KONZEPT.md#e-36); that it is a VM stays interpretation [A20](../KONZEPT.md#a-20) (summed up in [A21](../KONZEPT.md#a-21)); host-bound jobs: decision D-1 there, [KONZEPT part D](../KONZEPT.md#d-offen) |
+| E-36 | [E-36](../KONZEPT.md#e-36) | CI jobs, also with foreign PR code, run on the same devices as the work VMs of the workgroups; there is no own CI device, not even inside the platform. | offen | concept [16-ci-runners.md](16-ci-runners.md) (§6.6, §9 there); gate U stays a recommendation (decisions D-7, D-20 there) |
 
 ## R-P Assignment guardrails (`PROJECT.md`)
 
@@ -351,7 +356,7 @@ interpretations A1–A18 (part C) have no rows of their own; the rows above and 
 | R-14 | 7 |
 | R-15 | 3 |
 | R-P | 13 |
-| **Total** | **153** (130 from Grundprinzip and §1–§12 and idea 26); R-16 and R-E are tracked separately (24 rows each) |
+| **Total** | **153** (130 from Grundprinzip and §1–§12 and idea 26); R-16 (24 rows) and R-E (36 rows) are tracked separately |
 
 Every row of R-0 to R-13 names at least one `E2E-*` test; R-14, R-15 and R-P rows name the test or gate that
 proves the decision. Every milestone of `09-milestones.md` lists the R-IDs that must be green at its exit; the
