@@ -82,6 +82,7 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | token endpoint of the renewal of further subscriptions (§10.6, ADR-092); loopback `http` only in test mode |
 | `CLAUDE_OAUTH_CLIENT_ID` | `9d1c250a-e61b-44d9-88ed-5944d1962f5e` | client ID of that renewal (the pinned Claude Code's) |
 | `LOGIN_AUTOMATION` | `on` for platform devices (platform install profile), `off` for org devices | `on` enables §11.3 (needs the `login` extra; the platform install profile includes it) |
+| `LOGIN_SANDBOX` | `vm` | where §11.3 drives its browser (ADR-098 §3): `vm` – a login VM per login (the work VMs, scope `login`); `process` – a Chromium process of the device per login (devices without work VMs, the hermetic end-to-end topology) |
 | `GOLDEN_TEMPLATE` | `images/golden.yaml` of the checkout | the build also reads `images/`, `src/agent_guest/` and `contracts/` next to the template; missing → `golden_source_missing` (KOR-03) |
 | `TEST_MODE` | `0` | allows loopback HTTP and double upstreams; MUST be `0` in production (doctor warns) |
 
@@ -1043,7 +1044,9 @@ platform budget counts the pending cost (§10.2), every pending item besides the
 ### 11.1 Device request handling
 
 `request` hint → fetch, verify (§2.4), decrypt, process by kind; respond with encrypted, signed responses
-(`seq` 1..n). Expiry 15 min; at most one active request of each kind per user per device.
+(`seq` 1..n). Expiry 15 min; at most one active request of each kind and slot per user per device (KOR-73, ADR-098
+§2: the slot of `claude.login` is the `subscription_id` of the decrypted body, so logins of different subscriptions run
+side by side; at most 40 slots per user and kind, a further root is `busy`).
 
 ### 11.2 `claude.login` – setup-token relay (default)
 
@@ -1097,12 +1100,34 @@ golden's Claude Code pin; a pin change re-checks them (`runbooks/claude-code-upg
 
 ### 11.3 `claude.login` – mailbox automation (`LOGIN_AUTOMATION=on`; default on platform devices, off on org devices)
 
-Requires the owner's `mailbox` credential. Same PTY start; instead of step 3 the runner opens the authorize URL in
-headless Chromium (Playwright for Python), enters the email, polls IMAP with the logic of
-`agent_cli.account_login.newest_magic_link` (INBOX + junk, sender filter, ≤ 1 MiB, newest first, poll 5 s,
-≤ 10 min), opens the magic link, clicks authorize, reads the code and types it. Any unexpected page state →
-fall back to §11.2 step 3 with `{step:"authorize", url, automation:"failed"}` (the web shows `login_automation_failed`). Hermetic tests only (login-CLI
-double + auth-page double + mail double); live tests of logins are forbidden.
+KOR-73, ADR-098. Same PTY start; instead of step 3 the runner drives the provider's pages itself:
+
+- **Mailbox:** the own `mailbox` of the further subscription's record (`subscription_id`), else the owner's single
+  `mailbox` credential (`credential_missing` without either). Address: the request's `email`, else the record's,
+  else the mailbox's own. A login keeps the record's `mailbox` (with name, note and use).
+- **Sandbox** (`LOGIN_SANDBOX`): every login its own browser – a login VM (`WorkVms.obtain_login`, scope `login`:
+  warm pool and capacity queue, no organization or owner limit, not billed, deleted with the login `login_ended`)
+  driven through `workvm-browser call`, or with `process` a headless Chromium process with its own profile below the
+  login's working directory. Without a sandbox: `no_sandbox`.
+- **Pages** are recognised by structure and address (`login/pages.py`, never the double's markers): `challenge`,
+  `email`, `check_email` (link or code from the mail), `register`, `authorize`, `code`; each is handled once, then the
+  runner waits `page_timeout` for another page (`unknown_page` otherwise).
+- **Mail:** INBOX + spam folder, sender filter, ≤ 1 MiB, newest first, poll 5 s, ≤ 10 min; the sign-in link
+  (`https://` only), else – when the page has a code input – the six-digit code of the mail.
+- **Registration:** `account {name, birth_date?, consents?}` of the root (never stored or logged): name and date of
+  birth are filled, only boxes whose consent was given are ticked (`account_missing`, `consent_missing` otherwise).
+- **Check for humans** (never circumvented): responses `verify {frame, image}` – the sandbox's picture, sealed to the
+  requester – every 2 s when it changed and after each click, at most 80 per login; a follow-up `{click: {x, y}}`
+  (fractions of the picture) of the user's own identity is clicked at that viewport point (an agent's click is
+  ignored, `click_refused`); when the check is gone: progress `verified`; `{relay: true}`, no click within 180 s or
+  the pictures used up: `human_check`. Without `extended` in the root the check gives up at once.
+- Progress `browser_started`, `email_entered`, `magic_link_received`, `mail_code_received`, `registered`,
+  `verified`, `authorized`; the last three, `mail_code_received` and the `reason` only for a root with `extended`.
+
+Any failure falls back to §11.2 step 3 with `{step:"authorize", url, automation:"failed", reason?}` (the web shows
+`login_automation_failed`); follow-ups `{click}`/`{relay}` that arrive while the runner waits for the code are passed
+over. `mailbox.check {subscription_id}` checks the subscription's own mailbox. Hermetic tests only (login-CLI double
++ auth-page double + mail double); live tests of logins are forbidden.
 
 ### 11.4 GitHub connect (ADR-015)
 

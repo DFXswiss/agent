@@ -958,6 +958,28 @@ not open). The page "My subscriptions" (KOR-68) opens the same dialogs at "Add s
 further subscription that is not logged in. A login is started once per attempt; closing the dialog while it starts
 sends nothing more.
 
+**Subscriptions side by side (KOR-73, [ADR-098](../adr/098-parallel-subscription-logins.md)).** When the preselected
+device announced `subscriptions.parallel` (`subscriptionDevices().parallel`; otherwise everything above stays):
+- "Add a subscription" also takes the subscription's **own mailbox** (IMAP host, port 993, user, password, address –
+  `MailboxFields`), the address to sign in with, the **organizations** that may use it (`use.orgs`, E-31) and, with a
+  mailbox, the data of a **new account** (full name, date of birth, and three consents – terms, minimum age, product
+  e-mails – each unticked and worded as given by the account holder, the person whose address it is). The record is
+  written first (`PUT /v1/subscriptions/{id}`, `expected_version` 0, no token, `kind` `oauth_login`, with the mirror of
+  the use), then `claude.login` goes out with `extended: true` and the subscription as plaintext `slot`; with a mailbox
+  it is automatic and may carry `account`.
+- "Add several subscriptions" (`AddSeveral`, shown only with such a device): rows (label, address, own mailbox, new
+  account) and one choice of organizations for all; "Log them all in" starts every login at once
+  (`addSubscriptions`, one record, request and slot each) and shows the progress of each subscription in its row
+  (stages, the check for humans, link and code, done or failed; "again" restarts that row's login).
+- **Check for humans** (`HumanCheck`): a `verify` response shows the newest picture of the login sandbox; the owner's
+  click into it goes out as the follow-up `{click: {x, y}}` (fractions of the picture), "Sign in myself in my own
+  browser" sends `{relay: true}`. The text says the owner does the check and the platform only carries the click. A
+  fallback names its `reason`.
+- The subscription card shows the address of the own mailbox (never its password) and offers "Mailbox": set or
+  replace it (the password is entered anew), remove it, and "Check mailbox" (`mailbox.check {subscription_id}`). "Log
+  in now/again" of a subscription with its own mailbox is automatic and goes only to such a device
+  (`no_device_available` otherwise).
+
 ### 8.3 Connected agents (KOR-24, `11-agent-access.md`)
 
 - `/settings` → "Connected agents": `GET /v1/me/agents`, each with name and computer (opened from the sealed label),
