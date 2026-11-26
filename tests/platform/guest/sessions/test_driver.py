@@ -149,3 +149,13 @@ def test_a_rights_profile_shortens_the_tool_list(driver: ClaudeCodeDriver) -> No
     assert argv[argv.index("--disallowedTools") + 1] == (
         "Bash,Agent,Task,WebFetch,NotebookEdit,Skill,mcp__platform__browser_click,mcp__platform__workvm_exec"
     )
+
+
+@pytest.mark.parametrize("access", ["subscription", "platform"])
+def test_a_profile_without_web_search_withholds_it_once(driver: ClaudeCodeDriver, access: str) -> None:
+    """ADR-095 section 2: ``WebSearch`` among the profile's hidden tools is neither offered nor listed twice."""
+    argv = driver.argv(Launch(SID, HARNESS, access=access, disallowed=("WebSearch", "mcp__platform__workvm_exec")))
+    assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep,Edit,Write"
+    assert argv[argv.index("--disallowedTools") + 1] == (
+        "Bash,Agent,Task,WebFetch,NotebookEdit,Skill,WebSearch,mcp__platform__workvm_exec"
+    )

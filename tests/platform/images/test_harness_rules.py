@@ -155,6 +155,22 @@ MANDATORY = [
     "need a decision in that commit",
     "Do not merge or close the pull request unless your instruction asks for it",
     "never look for another way",
+    # ADR-095 sections 5 and 7: the fixed brief of the process analysis
+    "## Process analysis",
+    "The prompt names the scope (the organization or one workgroup) and the period; take both from it.",
+    "`get_usage`, `list_workgroup_operations` and `list_audit` - first with `group_by`",
+    "`get_metrics`, `list_workgroups`, `list_tasks` and `get_task`",
+    "Answer with a report in exactly these six sections, in this order: Efficiency, Token usage, Repetitions,"
+    " Subagents, Workflows, Resources.",
+    "Each proposal names its evidence - a task, operation or session ID, or a figure from a tool - and the expected"
+    " effect.",
+    "Say where data are missing",
+    "Change nothing.",
+    "never look for a way around it.",
+    "Write in the language of the prompt.",
+    "For this task's own workgroup you may name tasks, sessions and operations by their IDs.",
+    "For every other workgroup name only the workgroup and its totals (counts, sums, shares): no task, session,"
+    " operation or person IDs, no audit rows, no titles and no content.",
 ]
 FORBIDDEN = [
     "say so in your answer",
@@ -232,6 +248,10 @@ def test_names_every_tool_of_the_platform_api(text: str) -> None:
         "get_notifications",
         "get_operation",
         "list_operations",
+        "get_usage",
+        "list_audit",
+        "list_workgroup_operations",
+        "get_metrics",
         "get_subagent_result",
         "workvm_exec",
         "workvm_output",

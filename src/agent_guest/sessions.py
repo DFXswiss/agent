@@ -10,7 +10,8 @@
 * the session token: 32 random bytes b64u; only its SHA-256 goes into the journal database and the session cache
   (``State.save_session``); the token itself stays in memory until the unit gets it as environment (through the
   root-only launch file and ``systemd-run``'s environment, never on a command line)
-* the harness file ``/run/agent-guest/harness/<id>.md`` (``harness.py``)
+* the harness file ``/run/agent-guest/harness/<id>.md`` (``harness.py``; the name of the start's ``profile`` decides
+  about its block ``## Process analysis``, ADR-095)
 * journal ``session.state sandbox_ready`` with ``harness_version``
 
 The agent starts (``SessionManager.start``, 05 section 6.1 step 5) once the runner provisioned the model credential:
@@ -399,7 +400,7 @@ class SessionManager:
             raise SessionError("request_invalid")
 
     def _facts(self, data: Mapping[str, Any], restarted: bool) -> harness.SessionFacts:
-        limits = data["limits"]
+        limits, profile = data["limits"], data.get("profile")
         return harness.SessionFacts(
             session_id=data["session_id"],
             task_id=data["task_id"],
@@ -411,6 +412,7 @@ class SessionManager:
             tasks_max=limits["tasks_max"],
             runtime_max_sec=limits["runtime_max_sec"],
             restarted=restarted,
+            profile_name=None if profile is None else profile.get("name"),
         )
 
     def _fact_lines(self, data: Mapping[str, Any]) -> list[str]:

@@ -78,6 +78,29 @@ def test_subagent_default_model_and_restart_notice() -> None:
     assert f'`mcp__platform__get_task_messages` with `{{"task_id":"{TASK}"}}`' in notice
 
 
+def test_the_main_session_of_an_analysis_is_told_to_follow_the_brief() -> None:
+    """ADR-095 section 1: the block follows the tool list (before a restart notice) for depth 0 and the profile
+    ``analysis`` only; it is no fact line, so it never changes a session notice."""
+    text = harness.render(RULES, facts(profile_name="analysis", restarted=True), CONTEXT)
+    block = text.split("## Platform tools\n\n", 1)[1].split("\n\n## Process analysis\n\n", 1)[1]
+    assert block.startswith(harness.ANALYSIS_BRIEF + "\n\n## Restarted session\n\n")
+    assert 'the section "Process analysis" of the rules' in harness.ANALYSIS_BRIEF
+    assert harness.fact_lines(facts(profile_name="analysis"), CONTEXT) == harness.fact_lines(facts(), CONTEXT)
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{}, {"profile_name": "read_only"}, {"profile_name": "analysis", "parent_session_id": PARENT, "depth": 1}],
+)
+def test_no_brief_for_other_profiles_and_for_subagents_of_an_analysis(changes: dict[str, Any]) -> None:
+    assert "## Process analysis" not in harness.render(RULES, facts(**changes), CONTEXT)
+
+
+def test_the_rules_of_the_image_have_the_section_of_the_brief(repo_root: Path) -> None:
+    rules = harness.load_rules(str(repo_root / "images" / "harness" / "RULES.md"))
+    assert "\n## Process analysis\n" in rules.text
+
+
 @pytest.mark.parametrize("context", ["", "  \n ", "a\x00b", "x" * (harness.MAX_CONTEXT_CHARS + 1)])
 def test_unusable_context_is_refused(context: str) -> None:
     with pytest.raises(harness.HarnessError):

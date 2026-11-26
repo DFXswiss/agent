@@ -21,13 +21,18 @@ The context block has a fixed structure (decisions/GST-02.md):
    of this module
 3. ``## Session``: what the guest knows itself (session and task ID, parent session and depth, model, resource limits)
 4. ``## Platform tools``: every MCP tool of 03-api.md section 8.1 with one example call
-5. ``## Restarted session`` (only for a restarted session): read the history with ``get_task_messages`` - written
+5. ``## Process analysis`` (only for a main session, depth 0, whose rights profile is ``analysis``; ADR-095 section 1):
+   this session is the process analysis of its task and follows the section "Process analysis" of the rules. Its
+   subagents carry the profile's name but get no such block. The block is not a fact line: the profile of an
+   analysis task never changes, so it never needs a notice
+6. ``## Restarted session`` (only for a restarted session): read the history with ``get_task_messages`` - written
    into the file of a session started with ``--resume``, which Claude Code does not read (see below); a resumed
    session learns what changed from the session notice
 
 Interface:
 
-* ``SessionFacts`` - the guest-side facts of block 3 and 5
+* ``SessionFacts`` - the guest-side facts of blocks 3, 5 and 6 (``profile_name``: the name of the session's rights
+  profile, None without one)
 * ``load_rules(path=RULES_FILE) -> Rules`` - text and ``harness_version``
 * ``render(rules, facts, context_markdown) -> str``
 * ``context_markdown(org, workgroup, task, owner, rights, limits, github=None) -> str`` - block 2 in its documented
@@ -67,6 +72,13 @@ FACTS_HEADING = "Current facts of this session (they replace the ones in your in
 CHANGED_SENTENCE = "Facts of this session changed since your instructions were written."
 """The sentence of a notice that has changed facts but no sentence of its own."""
 
+ANALYSIS_PROFILE = "analysis"
+"""The built-in rights profile of a process analysis (ADR-095 section 2)."""
+ANALYSIS_BRIEF = (
+    'This session is the process analysis of its task. Follow the section "Process analysis" of the rules: read with'
+    " the platform tools, answer with the report of six sections and change nothing."
+)
+
 TOOLS: tuple[tuple[str, str, dict[str, Any]], ...] = (
     (
         "get_context",
@@ -92,6 +104,32 @@ TOOLS: tuple[tuple[str, str, dict[str, Any]], ...] = (
     ),
     ("get_operation", "the state of an operation", {"operation_id": "<operation id>", "wait_seconds": 10}),
     ("list_operations", "the operations of this task", {"limit": 20}),
+    (
+        "get_usage",
+        "requests, tokens, cost and runtime per task or session of a workgroup in a period",
+        {"since": "2026-01-01T00:00:00.000Z", "by": "session", "limit": 50},
+    ),
+    (
+        "list_audit",
+        "the audit rows of a workgroup, or their counts per action with `group_by`",
+        {"since": "2026-01-01T00:00:00.000Z", "group_by": "action"},
+    ),
+    (
+        "list_workgroup_operations",
+        "the operations of every task of a workgroup, or their counts per type with `group_by`",
+        {"since": "2026-01-01T00:00:00.000Z", "group_by": "type"},
+    ),
+    (
+        "get_metrics",
+        "the monitoring series of a session, workgroup VM or work VM",
+        {
+            "entity_kind": "session",
+            "entity_id": "<session id>",
+            "metric": "cpu_ratio",
+            "since": "2026-01-01T00:00:00.000Z",
+            "step": 300,
+        },
+    ),
     ("get_subagent_result", "the result of a subagent session you requested", {"session_id": "<session id>"}),
     (
         "workvm_exec",
@@ -155,6 +193,7 @@ class SessionFacts:
     tasks_max: int
     runtime_max_sec: int
     restarted: bool = False
+    profile_name: str | None = None
 
 
 def load_rules(path: str = RULES_FILE) -> Rules:
@@ -199,6 +238,8 @@ def render(rules: Rules, facts: SessionFacts, context_markdown: str) -> str:
     lines += _session_block(facts)
     lines += ["", "## Platform tools", ""]
     lines += [f"- {purpose}: {_example(name, arguments)}" for name, purpose, arguments in TOOLS]
+    if facts.profile_name == ANALYSIS_PROFILE and facts.depth == 0:
+        lines += ["", "## Process analysis", "", ANALYSIS_BRIEF]
     if facts.restarted:
         example = _example("get_task_messages", {"task_id": facts.task_id})
         lines += [

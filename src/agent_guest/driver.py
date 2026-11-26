@@ -14,7 +14,8 @@ Interface:
 Web search (13-work-vm.md section 13.7): Claude Code's own ``WebSearch`` runs at the model provider. The managed
 settings (shared by every session of the VM) allow it; the command line offers it (``--tools``) only to a session whose
 model access is in ``policy.WEB_SEARCH_ACCESS`` and lists it in ``--disallowedTools`` for every other access, and the
-PreToolUse policy allows it by the same access (rule 1b).
+PreToolUse policy allows it by the same access (rule 1b). A rights profile may withhold it as well
+(``profiles.disallowed_tools``, ADR-095 section 2): then it is neither offered nor listed twice.
 
 The command line never carries a prompt (HOT-09): Claude Code would start the turn at once, while its MCP servers
 still connect in the background, so the turn would run without the platform tools. Every first prompt is delivered
@@ -62,7 +63,7 @@ class Launch:
     mcp_configs: tuple[str, ...] = ()
     """Further ``--mcp-config`` files after the platform's (absolute paths of the image)."""
     disallowed: tuple[str, ...] = ()
-    """Platform tools the session's rights profile does not offer (``profiles.disallowed_tools``, ADR-094)."""
+    """Tools the session's rights profile does not offer (``profiles.disallowed_tools``, ADR-094, ADR-095)."""
 
 
 class AgentDriver(Protocol):
@@ -97,7 +98,8 @@ class ClaudeCodeDriver:
         """The command line of 05 section 4.1, without a prompt (module docstring)."""
         if not _ID_RE.fullmatch(launch.session_id):
             raise DriverError("session id")
-        web_search = launch.access in WEB_SEARCH_ACCESS
+        web_search = launch.access in WEB_SEARCH_ACCESS and WEB_SEARCH_TOOL not in launch.disallowed
+        disallowed = [tool for tool in launch.disallowed if tool != WEB_SEARCH_TOOL]
         args = [
             self.binary,
             "--restricted",
@@ -108,7 +110,7 @@ class ClaudeCodeDriver:
             "--tools",
             f"{TOOLS},{WEB_SEARCH_TOOL}" if web_search else TOOLS,
             "--disallowedTools",
-            ",".join([DISALLOWED_TOOLS, *([] if web_search else [WEB_SEARCH_TOOL]), *launch.disallowed]),
+            ",".join([DISALLOWED_TOOLS, *([] if web_search else [WEB_SEARCH_TOOL]), *disallowed]),
             "--permission-mode",
             "dontAsk",
             "--disable-slash-commands",

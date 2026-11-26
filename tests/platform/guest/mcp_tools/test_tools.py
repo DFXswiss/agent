@@ -18,13 +18,16 @@ from typing import Any
 
 import pytest
 
+from agent_guest import mcp as mcp_core
 from agent_guest import policy
+from agent_guest.api_routes import mcp as mcp_routes
 from agent_guest.apisock import ApiClient, ApiSockError
 from agent_guest.control import ControlContext
 from agent_guest.mcp import Tool, ToolCall, ToolError, load_tools
 from agent_guest.mcp_tools import _forward, request_operation
 from agent_guest.sandbox import settings
 from agent_guest.schema import SchemaSet
+from agent_guest.server import ApiHttpServer
 from agent_guest.state import Session
 from tests.platform.guest.conftest import SESSION_ID, SESSION_TOKEN, ControlClient
 from tests.platform.guest.mcp.conftest import McpClient
@@ -46,6 +49,11 @@ READ_TOOLS = (
     "get_task_messages",
     "get_whiteboard",
     "list_operations",
+    # ADR-095 section 3 (KOR-53)
+    "get_usage",
+    "list_audit",
+    "list_workgroup_operations",
+    "get_metrics",
 )
 WAITING_TOOLS = ("get_operation", "get_subagent_result")
 QUERY_TOOLS = READ_TOOLS + WAITING_TOOLS
@@ -71,6 +79,7 @@ PACKAGE_TOOLS = (*QUERY_TOOLS, "request_operation", *WORKVM_TOOLS, *BROWSER_TOOL
 IDENTITY = {"get_task": ("task_id", "id"), "get_operation": ("operation_id",), "get_subagent_result": ("session_id",)}
 CHILD_ID = "01a1ee56-5e00-7028-8f1b-340691d99f28"
 TASK_ID = "01a1ee56-5e00-7003-8f1b-340691d99f12"
+SINCE = "2026-11-19T00:00:00.000Z"
 UUID7 = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 COMMENT = {"repo": "example-org/example-repo", "number": 12, "body": "LGTM"}
 COMMENT_RESULT = {
@@ -111,6 +120,13 @@ def wait_for(condition: Callable[[], bool], limit: float = 5.0) -> None:
     while not condition():
         assert time.monotonic() < deadline, "condition not reached"
         time.sleep(0.01)
+
+
+@pytest.fixture
+def many_reads(api_server: ApiHttpServer) -> None:
+    """A read limit above the number of calls of the tests that go through every contract fixture at once (the
+    fixtures of all tools together are more than one burst of ``mcp.READ_BURST``)."""
+    mcp_routes.server_for(api_server.context).limiter = mcp_core.ReadLimiter(burst=100_000)
 
 
 @pytest.fixture
@@ -171,6 +187,7 @@ def test_every_tool_has_contract_fixtures(contracts_dir: Path) -> None:
                 assert contract_fixtures(contracts_dir, f"{tool}.{kind}", validity), (tool, kind, validity)
 
 
+@pytest.mark.usefixtures("many_reads")
 def test_invalid_arguments_are_params_invalid_and_not_forwarded(
     mcp: McpClient, session: Session, context: ControlContext, contracts_dir: Path, fake_runner: Runner
 ) -> None:
@@ -190,6 +207,14 @@ def test_invalid_arguments_are_params_invalid_and_not_forwarded(
         ("get_whiteboard", "org-with-workgroup", {"level": "org", "workgroup_id": TASK_ID}),
         ("get_whiteboard", "task-with-workgroup", {"level": "task", "task_id": TASK_ID, "workgroup_id": TASK_ID}),
         ("list_members", "org-with-workgroup", {"scope": "org", "workgroup_id": TASK_ID}),
+        # ADR-095 section 3
+        ("list_audit", "group-by-type", {"group_by": "type"}),
+        ("list_workgroup_operations", "group-by-action", {"group_by": "action"}),
+        (
+            "get_metrics",
+            "step-10",
+            {"entity_kind": "vm", "entity_id": TASK_ID, "metric": "cpu_ratio", "since": SINCE, "step": 10},
+        ),
     ]
     assert len(cases) >= len(PACKAGE_TOOLS)
     for tool, stem, document in cases + extra:
@@ -201,6 +226,7 @@ def test_invalid_arguments_are_params_invalid_and_not_forwarded(
     assert runner.seen == []
 
 
+@pytest.mark.usefixtures("many_reads")
 def test_valid_arguments_are_forwarded_and_answered(
     *,
     mcp: McpClient,
@@ -237,6 +263,63 @@ def test_valid_arguments_are_forwarded_and_answered(
     assert len(runner.seen) == len(records)
 
 
+# ADR-095 section 3: the four workgroup reads, with arguments and answers of their own (also without fixtures).
+WORKGROUP_ID = "01a1ee56-5e00-7003-8f1b-340691d99f31"
+WORKGROUP_READS: tuple[tuple[str, dict[str, Any], dict[str, Any]], ...] = (
+    (
+        "get_usage",
+        {"workgroup_id": WORKGROUP_ID, "since": SINCE, "by": "session", "limit": 200},
+        {
+            "workgroup_id": WORKGROUP_ID,
+            "since": SINCE,
+            "until": SINCE,
+            "by": "session",
+            "total": None,
+            "rows": [],
+            "next_before": None,
+        },
+    ),
+    (
+        "list_audit",
+        {"workgroup_id": WORKGROUP_ID, "since": SINCE, "action": "operation", "group_by": "action"},
+        {"groups": [{"action": "operation.request", "result": "denied", "count": 3}], "truncated": False},
+    ),
+    (
+        "list_workgroup_operations",
+        {"workgroup_id": WORKGROUP_ID, "state": "failed", "group_by": "type"},
+        {"groups": [{"type": "github.push", "state": "failed", "error_code": None, "count": 2}], "truncated": False},
+    ),
+    (
+        "get_metrics",
+        {"entity_kind": "session", "entity_id": CHILD_ID, "metric": "cpu_ratio", "since": SINCE, "step": 300},
+        {"entity_kind": "session", "entity_id": CHILD_ID, "metric": "cpu_ratio", "points": [[SINCE, 0.5]]},
+    ),
+)
+
+
+def test_the_workgroup_reads_are_listed_forwarded_and_journaled(
+    *, mcp: McpClient, session: Session, context: ControlContext, schemas: SchemaSet, fake_runner: Runner
+) -> None:
+    listed = {tool["name"]: tool for tool in mcp.call("tools/list").json()["result"]["tools"]}
+    answers = {tool: result for tool, _, result in WORKGROUP_READS}
+    fake_runner(lambda kind, body, session_id: ok(answers[body["tool"]]))
+    for tool, arguments, result in WORKGROUP_READS:
+        assert schemas.errors(f"mcp/tools/{tool}.input.json", arguments) == [], tool
+        assert schemas.errors(f"mcp/tools/{tool}.output.json", result) == [], tool
+        assert "workgroup_id" in listed[tool]["description"]
+        assert "workgroup_id" in listed[tool]["inputSchema"]["properties"]
+        reply = mcp.tool(tool, arguments)
+        assert (reply["isError"], tool_json(reply)) == (False, result), tool
+    records = forwarded(context)
+    assert [(record["kind"], record["body"]["tool"], record["body"]["arguments"]) for record in records] == [
+        ("platform.query", tool, arguments) for tool, arguments, _ in WORKGROUP_READS
+    ]
+    for record in records:
+        assert record["session_id"] == SESSION_ID
+        assert schemas.errors("guest/journal/platform.query.json", record["body"]) == []
+
+
+@pytest.mark.usefixtures("many_reads")
 def test_every_valid_output_fixture_passes_and_every_invalid_one_is_refused(
     mcp: McpClient, session: Session, contracts_dir: Path, schemas: SchemaSet, fake_runner: Runner
 ) -> None:
@@ -329,6 +412,14 @@ def test_unanswered_reads_time_out_after_the_handler_limit(
             "get_whiteboard": {"level": "org"},
             "get_operation": {"operation_id": CHILD_ID},
             "get_subagent_result": {"session_id": CHILD_ID},
+            "get_usage": {"since": SINCE},
+            "get_metrics": {
+                "entity_kind": "session",
+                "entity_id": CHILD_ID,
+                "metric": "cpu_ratio",
+                "since": SINCE,
+                "step": 60,
+            },
         }.get(tool, {})
         started = time.monotonic()
         result = mcp.tool(tool, arguments)

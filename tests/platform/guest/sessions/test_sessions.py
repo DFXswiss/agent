@@ -248,6 +248,37 @@ def test_subagent_session_and_subscription_access(
         assert db.execute("SELECT COUNT(*) FROM prompt_registry").fetchone()[0] == 0
 
 
+ANALYSIS = {"name": "analysis", "operations": ["human.question", "subagent.request"], "reads": "all"}
+
+
+@pytest.mark.parametrize(("depth", "brief"), [(0, True), (1, False)])
+def test_an_analysis_session_gets_the_brief_and_no_web_search(
+    manager: sessions.SessionManager, session_paths: sessions.Paths, depth: int, brief: bool
+) -> None:
+    """ADR-095 sections 1 and 2: the main session of the profile ``analysis`` is told to follow the brief, its
+    subagents are not; neither is offered the model's own web search, also with a subscription access."""
+    body = request(
+        parent_session_id=PARENT if depth else None,
+        depth=depth,
+        model={"access": "subscription", "model_id": None, "env": {}},
+        profile=ANALYSIS,
+    )
+    manager.create(body)
+    text = Path(session_paths.harness_file(SESSION)).read_text()
+    assert ("## Process analysis" in text) is brief
+    assert manager.start(SESSION)
+    argv = launch(session_paths)["argv"]
+    assert argv[argv.index("--tools") + 1] == "Read,Glob,Grep,Edit,Write"
+    disallowed = argv[argv.index("--disallowedTools") + 1].split(",")
+    assert disallowed.count("WebSearch") == 1
+    assert "mcp__platform__workvm_exec" in disallowed
+
+
+def test_another_profile_gets_no_brief(manager: sessions.SessionManager, session_paths: sessions.Paths) -> None:
+    manager.create(request(profile={**ANALYSIS, "name": "read_only"}))
+    assert "## Process analysis" not in Path(session_paths.harness_file(SESSION)).read_text()
+
+
 def test_repeated_request_is_answered_again_and_a_different_one_conflicts(
     manager: sessions.SessionManager, context: ControlContext, fake_system: FakeSystem
 ) -> None:

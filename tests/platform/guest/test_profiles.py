@@ -39,6 +39,17 @@ def test_the_tools_a_profile_does_not_offer() -> None:
     assert "mcp__platform__get_task" not in everything
 
 
+def test_the_analysis_is_not_offered_web_search() -> None:
+    """ADR-095 section 2: the profile ``analysis`` hides the model's own web search besides the tools of its types;
+    a profile without the name keeps it."""
+    analysis = {"name": "analysis", "operations": ["human.question", "subagent.request"], "reads": "workgroup"}
+    hidden = profiles.disallowed_tools(analysis)
+    assert hidden[0] == "WebSearch"
+    assert hidden[1:] == profiles.disallowed_tools({**analysis, "name": "read_only"})
+    assert "WebSearch" not in profiles.disallowed_tools(READ_ONLY)
+    assert profiles.disallowed_tools({"operations": []}) == profiles.disallowed_tools({**analysis, "name": "x"})
+
+
 def test_refusal() -> None:
     assert profiles.refusal(READ_ONLY, "github.get_issue") is None
     refused = profiles.refusal(READ_ONLY, "github.push")

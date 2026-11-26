@@ -199,6 +199,18 @@ def test_tools_list_dereferences_the_input_schema(mcp: McpClient, session: Sessi
     assert mcp.call("tools/list", {"page": 2}).json()["error"]["code"] == -32602
 
 
+def test_tools_list_names_exactly_the_tools_of_the_contract(
+    mcp: McpClient, session: Session, contracts_dir: Path
+) -> None:
+    """The listed tools are the enum of ``tools-list.result.json``, the workgroup reads of ADR-095 section 3
+    included."""
+    document = json.loads((contracts_dir / "mcp" / "tools-list.result.json").read_text(encoding="utf-8"))
+    names = document["properties"]["tools"]["items"]["properties"]["name"]["enum"]
+    listed = [tool["name"] for tool in mcp.call("tools/list").json()["result"]["tools"]]
+    assert set(listed) == set(names)
+    assert {"get_usage", "list_audit", "list_workgroup_operations", "get_metrics"} <= set(listed)
+
+
 def tools_ready_records(context: ControlContext) -> list[tuple[str | None, dict[str, Any]]]:
     records = context.journal.read(0, 100)[0]
     return [(record["session_id"], record["body"]) for record in records if record["kind"] == "session.tools_ready"]
