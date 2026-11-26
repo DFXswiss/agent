@@ -129,6 +129,17 @@ against a closed schema and treats any other answer as `unavailable`.
   (`WORKVM_VOLUME_QUOTA_GIB`) so work VMs can never fill the device's main volume. `_config/` of each Lima home
   belongs to the slot account (0700) like in any Lima home: Lima writes `_config/networks.yaml` at the first start
   (decision HOT-18, replacing the root-owned `_config` of KOR-29 M3).
+- The mount point of `addVolume` does not survive a restart (the volume then hangs under `/Volumes/AgentWorkVM`).
+  `workvm install` therefore writes `/etc/fstab` `UUID=<volume UUID> /var/agent-workvm apfs rw` and, when the volume
+  hangs elsewhere, mounts it back (`diskutil mount -mountPoint`); it never adds a second volume. Running `install`
+  again is the update step of an existing installation; `uninstall` removes the entry with the volume (HOT-25). The
+  daemon (unprivileged) offers no work VM while `/var/agent-workvm` is not a mount point and logs `runner.workvm
+  volume_missing` at the start; `doctor` fails `workvm_volume` `not_mounted` (warn `fstab_missing` without the
+  entry); `workvm status` prints `runner.workvm.volume name=AgentWorkVM mountpoint=<where it hangs|-> ok=yes|no`.
+- A slot whose home is missing has no Lima home and therefore no instance: the runner then lists no instance there
+  and counts a deletion as done, so a work VM left from before the restart is marked deleted and the daemon task never
+  fails on it in a loop; a slot whose `limactl list` fails is logged (`list_failed slot=<n>`) and skipped by the
+  reconciliation and the sweep.
 - The runner runs `limactl` for a slot only as `sudo -n -u <account> /usr/local/libexec/agent-runner-workvm-limactl
   …`: the root-owned wrapper refuses every other account and sets `HOME`, `LIMA_HOME` and `PATH` itself;
   `/etc/sudoers.d/agent-runner-workvm` allows exactly that wrapper as the slot accounts and, as root, the five

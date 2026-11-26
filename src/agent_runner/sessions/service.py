@@ -22,11 +22,12 @@ of `sessions.extensions`.
   working for ever. `idle` and `suspended` sessions run nothing and are left alone (their next prompt resumes them on
   another VM with the context restore, ADR-072).
 - `vms_stopped()` (task `guestlink` after `vms_lost`, and at the end of every `reconcile`; HOT-25): a main session
-  still `working` or `idle` in a VM whose row is `stopped` (the device restarted - a power cut - while it worked; the
-  VM reconciliation found the instance stopped, so no agent process of it runs) becomes `suspended` with the reason
-  `device_restart`. Like any paused session its next prompt, or one that already waits, resumes it from its
-  transcript on that VM (restarted) or from its newest context checkpoint on another (`prompts.resume`); left
-  `working` it would never get a prompt again. Sessions with a start or stop task are left to it.
+  still `agent_starting`, `prompt_delivering`, `working` or `idle` in a VM whose row is `stopped` (the device
+  restarted - a power cut - while it ran; the VM reconciliation found the instance stopped, so no agent process of it
+  runs) becomes `suspended` with the reason `device_restart`. Like any paused session its next prompt, or one that
+  already waits, resumes it from its transcript on that VM (restarted) or from its newest context checkpoint on
+  another (`prompts.resume`); left `working` it would never get a prompt again. Sessions with a start or stop task are
+  left to it.
 - `run_journals(stopping)` (task `guestlink`): one journal loop (`consume.VmJournal`) per running VM, started when a
   VM becomes running (at the latest after `POLL_S`, at once for a session start) and cancelled when it no longer
   runs; a loop that fails is restarted with backoff (1 s doubling to 30 s).
@@ -66,8 +67,9 @@ OWNER_REFUSED = "owner_not_member"
 INTERRUPTED = frozenset({"requested", "vm_assigning", "vm_ready", "sandbox_ready"})
 RESTING = frozenset({"idle", "suspended"})
 """Session states that run nothing in their VM (`vms_lost` leaves them alone)."""
-STRANDED = frozenset({"working", "idle"})
-"""States of a main session that need its agent process: in a `stopped` VM they are suspended (`vms_stopped`)."""
+STRANDED = frozenset({"agent_starting", "prompt_delivering", "working", "idle"})
+"""States of a main session that need its agent process: in a `stopped` VM they are suspended (`vms_stopped`). The
+earlier start states are `INTERRUPTED` (failed `device_shutdown`)."""
 DEVICE_RESTART = "device_restart"
 NO_LOCAL = frozenset({"requested", "stopped", "failed"})
 """Desired states for which a missing local session is expected: not started yet (`requested`, started by
@@ -251,7 +253,7 @@ class SessionService:
         return len(lost)
 
     async def vms_stopped(self) -> int:
-        """Suspend the main sessions left working or idle in a stopped VM (module docstring); their number."""
+        """Suspend the main sessions left running in a stopped VM (module docstring); their number."""
         env = self.env
         suspended: list[str] = []
         async with env.transaction() as conn:

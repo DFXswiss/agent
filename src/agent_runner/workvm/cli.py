@@ -11,7 +11,9 @@
 | `workvm image list` | one fact per row of `runner.workvm_image` |
 
 `install` (root) builds everything from the pure functions of `accounts` and `firewall`: the APFS volume
-`accounts.VOLUME_NAME` at `accounts.HOME_ROOT` (skipped when that path is already a mount point), the slot group and
+`accounts.VOLUME_NAME` at `accounts.HOME_ROOT` (skipped when that path is already a mount point or the volume exists
+elsewhere), its `/etc/fstab` entry and its mount point (`volume.repair`, HOT-25; `uninstall` removes the entry with
+the volume), the slot group and
 the slot accounts `<prefix>wvm00` ... (when present, only their `lima/_config` is given back to them; new IDs are
 the smallest free UID/GID from `dscl`), the `limactl` wrapper (0755), the sudoers rule (0440, checked by `visudo`
 before it is written) and the host filter (`firewall.install_plan` / `firewall.apply`: anchor files, the root egress
@@ -25,7 +27,8 @@ Every written file belongs to root:wheel. One fact per step: `runner.workvm.inst
 `render`, `check` and `status` read the slot UIDs with `/usr/bin/id -u`; `check` and `status` read the filter through
 `sudo -n` (the exact read commands of the sudoers rule) unless run as root and print
 `runner.workvm.firewall ok=yes|no internet=yes|no egress=<utunN|->` plus `runner.workvm.firewall.problem code=<code>`
-per problem. `status` prints `runner.workvm.status slots=<n> self=yes|no accounts=<present> missing=<missing>` first;
+per problem. `status` prints `runner.workvm.status slots=<n> self=yes|no accounts=<present> missing=<missing>` first,
+then (with slot accounts) `runner.workvm.volume name=<name> mountpoint=<where it hangs|-> ok=yes|no`;
 in self mode (TEST_MODE, no host filter) and without slots it prints no boundary.
 
 `image build` needs configured slots. It builds from `WORKVM_TEMPLATE` (default `images/workvm.yaml`) in the

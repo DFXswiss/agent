@@ -284,6 +284,7 @@ def test_sessions_left_working_in_a_stopped_vm_are_suspended(rig: Rig) -> None:
         async with env.pool.connection() as conn:
             await conn.execute("UPDATE runner.session SET state = 'working' WHERE id = ANY(%s)", (ids,))
             await conn.execute("UPDATE runner.session SET state = 'idle' WHERE id = %s", (ids[1],))
+            await conn.execute("UPDATE runner.session SET state = 'prompt_delivering' WHERE id = %s", (ids[6],))
             await conn.execute("UPDATE runner.session SET state = 'suspended' WHERE id = %s", (ids[2],))
             await conn.execute("UPDATE runner.session SET vm_id = NULL WHERE id = %s", (ids[3],))
             await conn.execute("UPDATE runner.session SET vm_id = 'vm-0000ffff' WHERE id = %s", (ids[4],))

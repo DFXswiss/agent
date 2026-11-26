@@ -550,7 +550,9 @@ be `last+1` (`409 origin_seq_gap` with `detail.expected`; a runner that no longe
 prunes acknowledged items after 1 h, the hub was restored from an older export – confirms the hub's position with
 `GET /v1/device/state`, renumbers its remaining items to follow it and reports the lost ones as `runner.alert`
 `outbox_items_lost`, `05-runner.md` §2.3, KOR-10); an already stored `origin_seq` with identical body →
-`replayed`; different body → `409 origin_seq_conflict` (fatal for the runner: stops syncing, raises an alert),
+`replayed`; different body → `409 origin_seq_conflict` (fatal for the runner: stops syncing, raises an alert;
+except a short lost tail after a power cut, which the runner repairs by taking the hub's position and reporting
+`runner.alert` `outbox_conflict_recovered`, `05-runner.md` §2.3, HOT-25),
 except that an item never stored before may be resent with new bytes after `reseal`. An `event` item whose only
 failure is E6 (`epoch_stale`) gets `status:"reseal"`; processing of the batch stops there (`acked_through` =
 previous item) and the runner re-seals it with the current epoch.

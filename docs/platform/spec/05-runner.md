@@ -36,7 +36,7 @@ document differ, this document wins; §4.6 lists the spike defects that MUST NOT
 | `agent-runner enroll --hub URL (--code CODE \| --code-file PATH) [--platform]` | §2.1; `--code-file` reads the code from a file (at most 4 KiB), so it never appears in an argv (§16) |
 | `agent-runner run` | foreground daemon (development, tests, launchd target) |
 | `agent-runner status [--json]` | identity, hub connection, outbox backlog, VMs, sessions, pool, capacity |
-| `agent-runner doctor` | checks: Lima ≥ 2.3, vz available, golden ready, Landlock ABI in golden (from build record), PostgreSQL, login command on the host (`login_cli`: `LOGIN_ARGV[0]` resolved like §11.2; for the default command its `--version`, with a time limit and the login's allow-list env, equals the golden's Claude Code pin, else warn `version_mismatch`; missing or not executable: fail `login_cli_missing`; details in `runbooks/runner-installation.md` §4), hub reachability and pinned key, textfile dir writable, the operator's subscriptions (`operator_subscriptions`: ok `off`/`usable` with the count of usable token files, warn `files_ignored`/`none_usable`/`dir_unusable`; no file name or organization; ADR-052), clock skew < 5 s against hub time, the operator's GitHub token file (`operator_github`: ok `off`/`usable`, warn with the reason; §11.4) |
+| `agent-runner doctor` | checks: Lima ≥ 2.3, vz available, golden ready, Landlock ABI in golden (from build record), PostgreSQL, login command on the host (`login_cli`: `LOGIN_ARGV[0]` resolved like §11.2; for the default command its `--version`, with a time limit and the login's allow-list env, equals the golden's Claude Code pin, else warn `version_mismatch`; missing or not executable: fail `login_cli_missing`; details in `runbooks/runner-installation.md` §4), hub reachability and pinned key, textfile dir writable, the operator's subscriptions (`operator_subscriptions`: ok `off`/`usable` with the count of usable token files, warn `files_ignored`/`none_usable`/`dir_unusable`; no file name or organization; ADR-052), clock skew < 5 s against hub time, the operator's GitHub token file (`operator_github`: ok `off`/`usable`, warn with the reason; §11.4), the volume of the work VM slot homes (`workvm_volume`: ok `off`/`self`/`mounted`, fail `not_mounted`, warn `fstab_missing`; `13-work-vm.md` §6.1, HOT-25) |
 | `agent-runner image build [--claude-version V]` / `image list` / `image retire VERSION` | §3.1 |
 | `agent-runner pool status` | pool VMs and refill state |
 | `agent-runner service install` / `service uninstall` | §1.1 |
@@ -91,6 +91,14 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
   `agent_cli.keys.create_key`), `pg/` (own PostgreSQL cluster managed like `agent_cli.pg`: `initdb --auth=trust`,
   `127.0.0.1` only, own port file, `LC_ALL=C`), `golden/` build records, `log/`, `tmp/` (0700; per-operation
   scratch, wiped at start).
+- Durable commits (HOT-25): a commit may already be on its way to the hub (outbox), so a power cut must not take it.
+  On macOS `fsync` does not empty the drive's write cache (only `F_FULLFSYNC`), and PostgreSQL's default
+  `wal_sync_method` there loses the last commits in a power cut. Every start of the store checks
+  `wal_sync_method = fsync_writethrough` and sets it when it differs (`ALTER SYSTEM`, one restart of the cluster), so
+  new and existing installations run with it after their next start; a value that does not hold stops the daemon
+  (`store_not_durable`). Other systems keep PostgreSQL's default. Cost measured on a runner device (Apple silicon,
+  internal SSD): one writer 0.10 → 3.8–4.8 ms per commit (≈ 9 600 → 210–260 commits/s), eight writers ≈ 16 000 →
+  ≈ 1 100 commits/s through group commit.
 - Schema `runner` (`02-data-model.md` §4). Scope keys are stored encrypted with the storage key and decrypted
   only into memory.
 
@@ -156,8 +164,16 @@ Triggers: every WebSocket hint, every 30 s, after reconnect. Steps (each idempot
   position (`GET /v1/device/state`: `active`, `last_origin_seq == expected − 1`), renumbers its stored items gaplessly
   from `expected` (sealed bytes kept, `04-crypto.md` §5.12), reports the loss (log and audit `runner.alert`
   `{alert:"outbox_items_lost",value:<count>}`) and keeps pushing; unconfirmed → retried (KOR-10). `409
-  origin_seq_conflict` is fatal: stop the `sync` task, keep sessions running, write `runner.alert
-  origin_seq_conflict` to the log and the metrics (`agent_runner_device_sync_fatal 1`), require operator action
+  origin_seq_conflict` after a power cut that cost the store its newest commits (the hub holds items the store lost,
+  and the store gave their numbers to new items) is repaired once per process (HOT-25): when no push of this process
+  was answered yet, the first item after `pushed_origin_seq` is `pushed_origin_seq + 1`, `GET /v1/device/state`
+  (`active`) puts the hub at or past that item and at most 500 items ahead of `pushed_origin_seq`, the runner moves its
+  unacknowledged items behind the hub's position (sealed bytes kept), takes it as `pushed_origin_seq`, reports the
+  lost items (log and audit `runner.alert {alert:"outbox_conflict_recovered",value:<count>}`) and keeps pushing; an
+  unconfirmed position is retried. Every other conflict is real – two devices with one identity (it comes after
+  answered pushes, or again), a store restored from an old backup (far behind) – and fatal: stop the `sync` task,
+  keep sessions running, log `runner.sync conflict_fatal reason=after_answer|not_contiguous|hub_behind|too_far` and
+  `runner.alert origin_seq_conflict`, set the metric (`agent_runner_device_sync_fatal 1`), require operator action
   (`agent-runner doctor` explains). `status:"rejected"` items are logged and skipped.
 - Retention (task `retention`, KOR-03): acknowledged outbox items older than 1 h are deleted (a prefix only; the item
   with the highest `origin_seq` always stays; nothing while the hub's position is unknown); `prompt_event` rows whose
@@ -659,6 +675,11 @@ processed (a child: its inherited stamp), for a work VM the acting user when it 
   `suspended`. Next prompt → `resuming` → start with `--resume <claude_session_id>` → deliver. When the workgroup's
   VM is no longer the session's VM (deleted, replaced, another VM), the session moves to it and is restored from its
   newest checkpoint (§6.6) instead of failing `vm_start_failed`.
+- Device restart (HOT-25): a main session still `agent_starting`, `prompt_delivering`, `working` or `idle` in a VM
+  whose row is `stopped` (the VM
+  reconciliation found the instance stopped after the restart, so no agent process of it runs) becomes `suspended`
+  with the reason `device_restart` – after the VM reconciliation at the start and in every reconcile. Its next prompt,
+  or one that already waits, resumes it like any suspended session (its VM is started again, `--resume`).
 - Task closed → all sessions `stopping` → `stopped`; directories kept 7 days, then deleted by control.
 - Failure reasons: the closed list `contracts/enums/session-failure-reasons.json` (`03-api.md` §11):
   `model_access_unavailable`, `vm_start_failed`, `guest_unreachable`, `sandbox_failed`, `agent_start_failed`,
