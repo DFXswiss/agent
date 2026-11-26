@@ -67,6 +67,8 @@ so none takes the sign-in mail of another (ADR-098 section 2)."""
 def mail_lock(mailbox: Mailbox) -> asyncio.Lock:
     key = (id(asyncio.get_running_loop()), mailbox.host.lower(), mailbox.port, mailbox.user.lower())
     return _MAIL_LOCKS.setdefault(key, asyncio.Lock())
+
+
 TRANSIENT = frozenset({"unknown"})
 
 Progress = Callable[[str], Awaitable[None]]
