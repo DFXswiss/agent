@@ -37,7 +37,7 @@ from typing import Any
 
 import psycopg
 
-from agent_runner import service
+from agent_runner import admission, service
 from agent_runner.config import Config
 from agent_runner.doctor import checks
 from agent_runner.errors import RunnerError
@@ -72,8 +72,8 @@ WORKVM_SLOTS = (
     "SELECT (SELECT count(*) FROM (SELECT slot FROM runner.workvm WHERE state = ANY(%s)"
     " UNION SELECT slot FROM runner.workvm_pool) AS held),"
     " (SELECT count(*) FROM runner.workvm WHERE state = 'stopped'),"
-    " (SELECT count(*) FROM runner.workvm_wait),"
-    " (SELECT COALESCE(EXTRACT(EPOCH FROM now() - min(since)), 0)::bigint FROM runner.workvm_wait),"
+    " (SELECT count(*) FROM runner.workvm_wait WHERE kind = 'work'),"
+    " (SELECT COALESCE(EXTRACT(EPOCH FROM now() - min(since)), 0)::bigint FROM runner.workvm_wait WHERE kind = 'work'),"
     " (SELECT COALESCE(sum(memory_mib), 0) FROM runner.workvm WHERE state = ANY(%s))"
     " + (SELECT COALESCE(sum(memory_mib), 0) FROM runner.workvm_pool),"
     " (SELECT COALESCE(sum(disk_gib), 0) FROM runner.workvm WHERE state <> 'deleted')"
@@ -81,6 +81,16 @@ WORKVM_SLOTS = (
 )
 """Work VM slots held (a VM that is not stopped, a pool entry), stopped VMs, waiting requests, the age of the oldest in
 seconds, the RAM (MiB) and the disk (GiB) work VMs and their pool hold (ADR-059 addendum 4, `workvm.records`)."""
+ADMISSION = (
+    "SELECT kind, (CASE kind WHEN 'session' THEN (SELECT count(*) FROM runner.vm WHERE state = ANY(%s))"
+    " WHEN 'work' THEN (SELECT count(*) FROM runner.workvm WHERE state = ANY(%s)) ELSE 0 END),"
+    " (SELECT count(*) FROM runner.workvm_wait w WHERE w.kind = k.kind AND (w.until IS NULL OR w.until > now()))"
+    " FROM unnest(%s::text[]) AS k(kind)"
+)
+"""Per kind of the device's admission (05-runner.md section 3.8): the active instances (workgroup VMs that hold a slot,
+work VMs that are not stopped; CI is not built) and the waiting requests (the mirror `runner.workvm_wait`)."""
+ACTIVE_VM_STATES = ["assigning", "running", "stopping"]
+ACTIVE_WORKVM_STATES = ["starting", "running", "stopping", "deleting"]
 
 
 def _rows(dsn: str | None) -> dict[str, Any]:
@@ -93,6 +103,7 @@ def _rows(dsn: str | None) -> dict[str, Any]:
         "vms": [],
         "sessions": [],
         "workvm": None,
+        "kinds": [],
     }
     if dsn is None:
         return empty
@@ -119,6 +130,7 @@ def _rows(dsn: str | None) -> dict[str, Any]:
             ).fetchall()
             states = list(SLOT_STATES)
             slots = conn.execute(WORKVM_SLOTS, (states, states)).fetchone()
+            kinds = conn.execute(ADMISSION, (ACTIVE_VM_STATES, ACTIVE_WORKVM_STATES, list(admission.KINDS))).fetchall()
     except psycopg.Error:
         raise RunnerError("store_unavailable") from None
     assert row is not None
@@ -133,6 +145,7 @@ def _rows(dsn: str | None) -> dict[str, Any]:
         "vms": vms,
         "sessions": sessions,
         "workvm": tuple(int(value) for value in slots),
+        "kinds": [(str(kind), int(active), int(waiting)) for kind, active, waiting in kinds],
     }
 
 
@@ -212,6 +225,8 @@ def cmd_status(_args: argparse.Namespace, ctx: Any) -> int:
     )
     if found["workvm"] is not None:
         _workvm_fact(out, config, found["workvm"], physical, sum(memory for state, memory in slots if state in held))
+    for kind, active, waiting in found["kinds"]:  # fewest active first (05-runner.md section 3.8)
+        out.fact("status.admission", {"kind": kind, "active": active, "waiting": waiting})
     return EXIT_OK
 
 

@@ -511,21 +511,35 @@ def test_the_slot_accounts_follow_the_ram() -> None:
     assert accounts.slot_count(16384, reserve) == 1  # a small machine still has one
 
 
-def test_a_waiting_session_holds_back_new_work_vms(world: World) -> None:
-    """Rank (05 section 3.8): while a session refused for lack of capacity waits for its next attempt, no new work VM
-    starts - also with RAM to spare; once the session started, the work VM goes."""
+def test_a_waiting_session_with_fewer_active_gets_the_room_first(world: World) -> None:
+    """Fewest active first (05 section 3.8): a session refused for lack of capacity keeps its place while the hub
+    retries it; with room for one VM only and fewer active sessions than work VMs, no new work VM takes that room. With
+    room for both, or once the session started, the work VM goes."""
     from agent_runner.admission import SESSION  # noqa: PLC0415
 
-    world.settings = dataclasses.replace(world.settings, queue_seconds=4)
+    world.settings = dataclasses.replace(world.settings, queue_seconds=4, slots=4)
+    world.free_mib = 8192  # room for one VM
 
     async def body(vms: WorkVms) -> list[Any]:
-        vms.deps.admission.refused(SESSION)
+        sessions_active = 0
+
+        async def sessions() -> int:
+            return sessions_active
+
+        vms.deps.admission.counters[SESSION] = sessions
+        await vms.request(of(TASK_B), {})  # one work VM is active now
+        await vms.deps.admission.refused(SESSION, 8192)
         with pytest.raises(OperationFailed) as held:
             await vms.request(of(TASK), {})
-        vms.deps.admission.started(SESSION)
-        return [held.value.code, (await vms.request(of(TASK), {}))["created"]]
+        world.free_mib = 2 * 8192
+        both = (await vms.request(of(TASK), {}))["created"]
+        world.free_mib = 8192
+        sessions_active = 5  # more sessions are active than work VMs: the work request goes first now
+        third = (await vms.request(of(TASK_C), {}))["created"]
+        await vms.deps.admission.started(SESSION)
+        return [held.value.code, both, third, await vms.deps.admission.waiting()]
 
-    assert world.run(body) == ["timeout", True]
+    assert world.run(body) == ["timeout", True, True, {}]
 
 
 def test_work_vms_give_way_to_workgroup_vms_only_when_idle(world: World) -> None:
@@ -593,7 +607,15 @@ def test_the_slot_state_and_its_metrics(world: World) -> None:
 
     state, measured = world.run(body)
     assert state == SlotState(
-        total=3, held=1, free=2, stopped=1, waiting=1, memory_free_mib=1_000_000, cpu_load=0.0, disk_used_gib=100
+        total=3,
+        held=1,
+        free=2,
+        stopped=1,
+        waiting=1,
+        memory_free_mib=1_000_000,
+        cpu_load=0.0,
+        disk_used_gib=100,
+        kinds={"session": (0, 0), "work": (1, 0), "ci": (0, 0)},
     )
     assert measured == state
 
@@ -611,6 +633,9 @@ def test_the_slot_metrics_are_rendered_only_with_work_vms() -> None:
     assert f"agent_runner_workvm_memory_free_bytes {16384 * 1024 * 1024}" in with_slots
     assert "agent_runner_workvm_cpu_load_ratio 0.25" in with_slots
     assert f"agent_runner_workvm_disk_used_bytes {150 * 1024**3}" in with_slots
+    # the device's admission: active instances and waiting requests per kind (05 section 3.8)
+    assert 'agent_runner_admission_active{kind="work"} 2' in with_slots
+    assert 'agent_runner_admission_waiting{kind="session"} 0' in with_slots
     without = textfile.render(textfile.metrics_of(dataclasses.replace(sample.snapshot(1.0), workvm_slots=None)))
     assert "agent_runner_workvm_" not in without
 

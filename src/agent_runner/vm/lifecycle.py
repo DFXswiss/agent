@@ -63,7 +63,7 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import timedelta
 
-from agent_runner.admission import SESSION
+from agent_runner.admission import SESSION, Demand
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink import cursor
 from agent_runner.guestlink.client import GuestClient, Health
@@ -99,6 +99,8 @@ class VmManager:
         self.reserved = 0
         # the workgroup VMs admitted and still in flight count for every kind (the device's one admission)
         env.admission.pending = lambda: (self.pool.filling + self.reserved) * env.settings.memory_mib
+        env.admission.counters[SESSION] = self.active
+        env.admission.store = env.db
         self._locks: dict[str, asyncio.Lock] = {}
         self._reconciled = asyncio.Event()
         self._refill_wanted = asyncio.Event()
@@ -399,14 +401,18 @@ class VmManager:
             release()
 
     async def _free_slot(self, wg_id: str | None, *, evict: bool = True) -> None:
-        """The device's one admission for a workgroup VM (rank `SESSION`, 05-runner.md section 3.8): a refusal holds
-        back new VMs of lower ranks while the hub places the session again."""
+        """The device's one admission for a workgroup VM (kind `SESSION`, 05-runner.md section 3.8): a refusal keeps
+        the session's place (its age) while the hub places its next attempt, here or on another device."""
         try:
             await self._take_slot(wg_id, evict=evict)
         except RunnerError:
-            self.env.admission.refused(SESSION)
+            await self.env.admission.refused(SESSION, self.env.settings.memory_mib)
             raise
-        self.env.admission.started(SESSION)
+        await self.env.admission.started(SESSION)
+
+    async def active(self) -> int:
+        """Workgroup VMs that hold a slot (a pool entry is not active: it is speculative)."""
+        return len(await records.live(self.env.db, "assigning", "running", "stopping"))
 
     async def _take_slot(self, wg_id: str | None, *, evict: bool) -> None:
         env = self.env
@@ -416,6 +422,11 @@ class VmManager:
         if disk is not None and disk < env.settings.disk_gib * 1024:
             raise RunnerError("capacity_exhausted", "disk")
         capacity = await self.capacity()
+        # fewest active first: waiting requests of another kind that go first keep the RAM they need
+        demand = Demand(SESSION, env.settings.memory_mib)
+        ahead = await env.admission.ahead_mib(demand, env.admission.hold(SESSION))
+        if ahead and capacity.budget_mib - capacity.used_mib - ahead < demand.memory_mib:
+            raise RunnerError("capacity_exhausted", "turn")
         if capacity.slots_free > 0:
             if capacity.slots_free_now == 0:  # the work VM pool holds the room: it gives way (ADR-059 addendum 4)
                 released = await env.reclaim(env.settings.memory_mib)
@@ -425,7 +436,7 @@ class VmManager:
             if await env.delete(candidate, expect=("pool",)) is not None:
                 env.log("vm.slot_from_pool", {"vm_id": candidate.id})
                 return
-        # sessions rank before work VMs: idle ones give way (running work is never ended)
+        # idle work VMs give way (stopped, disk kept); running work is never ended
         released = await env.reclaim(env.settings.memory_mib)
         if released >= env.settings.memory_mib:
             env.log("vm.slot_from_work_vms", {"released_mib": released})

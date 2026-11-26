@@ -110,6 +110,7 @@ def snapshot(wall: float, step: int = 0, capacity_low: bool = False) -> Snapshot
         memory_free_mib=0 if capacity_low else 16384,
         cpu_load=0.25,
         disk_used_gib=150,
+        kinds={"session": (1, 0), "work": (2, 0), "ci": (0, 0)},
     )
     return Snapshot(
         wall=wall, at=at, device=device, vms=(running, pool, stopped), sessions=sessions, workvm_slots=slots

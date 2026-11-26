@@ -60,7 +60,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
-from agent_runner.admission import WORK, Admission, Demand, Device
+from agent_runner.admission import WORK, Admission, Demand, Device, Ticket
 from agent_runner.credentials import acting
 from agent_runner.errors import RunnerError
 from agent_runner.operations.extensions import OperationFailed
@@ -172,6 +172,8 @@ class Waiter:
     slot: int | None = None
     workvm_id: str | None = None
     granted: bool = False
+    admit: Ticket | None = None
+    """Its place in the device's admission while it waits (fewest active first, then the older)."""
 
 
 @dataclass(frozen=True)
@@ -189,6 +191,8 @@ class SlotState:
     """The host's CPU load per core."""
     disk_used_gib: int = 0
     """Disk allocated to work VMs and pool entries (`WORKVM_DISK_QUOTA_GIB` bounds it when set)."""
+    kinds: Mapping[str, tuple[int, int]] = field(default_factory=dict)
+    """The device's admission: `{kind: (active instances, waiting requests)}` (05-runner.md section 3.8)."""
 
 
 class _Gone(Exception):
@@ -220,7 +224,8 @@ class Deps:
     hub_lease: Callable[[], bool] = field(default_factory=lambda: _always)
     """The runner's lease of the tools with internet egress (`sync.lease.held`, ADR-087 section 4)."""
     admission: Admission = field(default_factory=lambda: Admission(cpu_load=_idle_cpu))
-    """The device's one admission (`agent_runner.admission`): its transaction, the rank, CPU; default: idle CPU."""
+    """The device's one admission (`agent_runner.admission`): its transaction, the order of the kinds, CPU; default:
+    idle CPU."""
 
 
 def _tail(text: str, limit: int) -> str:
@@ -303,6 +308,12 @@ class WorkVms:
         """Set when a pool entry was assigned: the daemon task refills the pool at once (`tasks.py`)."""
         self.captures: dict[str, set[asyncio.Task[None]]] = {}
         """Running log captures per work VM (its teardown waits for them)."""
+        deps.admission.counters[WORK] = self.active
+        """The active work, browser and test VMs count for the order of the kinds in the device's admission."""
+
+    async def active(self) -> int:
+        """Work VMs that are not stopped (a pool entry is not active: it is speculative)."""
+        return len(await records.live(self.deps.db, "starting", "running", "stopping", "deleting"))
 
     # -- availability ------------------------------------------------------------------------------------------
 
@@ -404,7 +415,7 @@ class WorkVms:
                     return pooled
                 async with self.slot_lock:
                     slot = await self._free_slot()
-                    fits, free = await self._fits(memory_mib)
+                    fits, free = await self._fits(memory_mib, waiter.admit)
                     disk = await self._disk_fits(disk_gib)
                     if slot is not None and fits and disk:
                         row = build(slot)
@@ -416,7 +427,7 @@ class WorkVms:
                     continue
                 return None
 
-        vm = await self._queued(waiter, attempt)
+        vm = await self._queued(waiter, attempt, memory_mib)
         try:
             if vm.state == "starting":
                 vm = await self._boot(vm)
@@ -424,15 +435,18 @@ class WorkVms:
             await self._leave(waiter)
         return vm
 
-    async def _queued(self, waiter: Waiter, attempt: Callable[[], Awaitable[WorkVm | None]]) -> WorkVm:
+    async def _queued(self, waiter: Waiter, attempt: Callable[[], Awaitable[WorkVm | None]], memory_mib: int) -> WorkVm:
         """Wait in the queue until it is the waiter's turn (`_turn`) and `attempt` finds capacity, at most
         `WORKVM_QUEUE_SECONDS` (then `timeout`, retryable). The waiter stays in the queue, `granted`, until the caller
-        leaves it (`_leave`) once its VM runs; a time-out, a cancelled operation or a failing step leave it at once."""
+        leaves it (`_leave`) once its VM runs; a time-out, a cancelled operation or a failing step leave it at once.
+        Meanwhile it holds its place in the device's admission (`waiter.admit`): freed room goes to the kind with the
+        fewest active instances first, then to the older request."""
         self.queue.append(waiter)
         deadline = self.deps.now() + timedelta(seconds=self.deps.settings.queue_seconds)
         try:
             await records.wait_add(self.deps.db, waiter.ticket, waiter.slot, self.deps.now())
-            with self.deps.admission.waits(WORK):  # lower ranks (CI) do not start meanwhile
+            async with self.deps.admission.waits(WORK, memory_mib) as admit:
+                waiter.admit = admit
                 while True:
                     if await self._turn(waiter):
                         found = await attempt()
@@ -489,13 +503,13 @@ class WorkVms:
         await self.delete(stopped[0], reason="idle")
         return True
 
-    async def _fits(self, memory_mib: int) -> tuple[bool, int]:
-        """Whether the device's one admission admits a work, browser or test VM of `memory_mib` now (rank `WORK`: never
-        while a session waits; CPU; the RAM above `MEMORY_RESERVE_MIB` that every VM and every admitted workgroup VM in
-        flight leave), and that free RAM. The disk quota is `_disk_fits`; the slot accounts only isolate. Call it under
-        `slot_lock` (the admission's transaction)."""
+    async def _fits(self, memory_mib: int, own: Ticket | None = None) -> tuple[bool, int]:
+        """Whether the device's one admission admits a work, browser or test VM of `memory_mib` now (CPU; the RAM
+        above `MEMORY_RESERVE_MIB` that every VM and every admitted workgroup VM in flight leave, less what waiting
+        requests of other kinds that go first need - `own` is the request's place), and that free RAM. The disk quota is
+        `_disk_fits`; the slot accounts only isolate. Call it under `slot_lock` (the admission's transaction)."""
         room = await self.deps.free_memory_mib()
-        verdict = await self.deps.admission.judge(Demand(WORK, memory_mib), Device(free_mib=room))
+        verdict = await self.deps.admission.judge(Demand(WORK, memory_mib), Device(free_mib=room), own)
         return verdict.admitted, room
 
     async def _free_slot(self) -> int | None:
@@ -520,6 +534,7 @@ class WorkVms:
             memory_free_mib=max(0, await self.deps.free_memory_mib()),
             cpu_load=await self.deps.admission.cpu_load(),
             disk_used_gib=await records.disk_in_use(self.deps.db, SIZES[POOL_SIZE][2]),
+            kinds=await self.deps.admission.summary(),
         )
 
     def _row(
@@ -979,7 +994,7 @@ class WorkVms:
             return True
 
     async def give_way(self, need_mib: int) -> int:
-        """Sessions rank first (05-runner.md section 3.8): give back up to `need_mib` of RAM to a workgroup VM that
+        """Idle work VMs give way (05-runner.md section 3.8): give back up to `need_mib` of RAM to a workgroup VM that
         needs it - ready pool entries, then the idle task and session VMs (no job and no call in progress: stopped,
         reason `idle`, their disks stay and they start again when there is room), least recently used first. Running
         work is never ended: a VM with a job or a call in progress keeps running. Run and browser VMs belong to their
@@ -1037,7 +1052,7 @@ class WorkVms:
         async def attempt() -> WorkVm | None:
             while True:
                 async with self.slot_lock:
-                    enough, free = await self._fits(vm.memory_mib)
+                    enough, free = await self._fits(vm.memory_mib, waiter.admit)
                     fits = enough and vm.slot not in await records.used_slots(self.deps.db)
                     # one conditional update: `starting` when it fits, else unchanged; no row: it is not stopped now
                     current = await records.update(
@@ -1054,7 +1069,7 @@ class WorkVms:
                 return None
 
         try:
-            starting = await self._queued(waiter, attempt)
+            starting = await self._queued(waiter, attempt, vm.memory_mib)
         except _Gone:
             current = await records.get(self.deps.db, vm.id)
             return current if current is not None and current.state != "deleted" else None

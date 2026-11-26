@@ -7,12 +7,16 @@
 DROP INDEX runner.workvm_slot_live;
 CREATE UNIQUE INDEX workvm_slot_held ON runner.workvm (slot) WHERE state NOT IN ('deleted', 'stopped');
 
--- `workvm_wait`: the requests that wait for a slot now, in the order they came in (`seq`), so `agent-runner status`
--- shows them; `slot` is the slot a stopped VM waits for (its own), null for a new VM. The daemon's queue is the source;
--- the rows mirror it and are cleared at every start of the daemon (a waiting request does not survive a restart).
+-- `workvm_wait`: the requests that wait for the device's admission now (05-runner.md section 3.8), in the order they
+-- came in (`seq`), with their kind, so `agent-runner status` shows the queue per kind: work VMs (`slot`: the slot a
+-- stopped VM waits for, its own; null for a new VM) and the holds of sessions refused for lack of capacity (`until`:
+-- the hold ends then). The daemon is the source; the rows mirror it and are cleared at every start of the daemon (a
+-- waiting request does not survive a restart).
 CREATE TABLE runner.workvm_wait (
     ticket text PRIMARY KEY CHECK (ticket ~ '^[0-9a-f]{16}$'),
     seq bigserial NOT NULL UNIQUE,
+    kind text NOT NULL DEFAULT 'work' CHECK (kind IN ('session', 'work', 'ci')),
     slot integer CHECK (slot >= 0 AND slot < 100),
-    since timestamptz NOT NULL
+    since timestamptz NOT NULL,
+    until timestamptz
 );

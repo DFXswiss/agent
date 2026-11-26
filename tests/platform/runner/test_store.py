@@ -163,7 +163,7 @@ TABLES = {
     "workvm_image": ["name", "state", "built_at"],
     "workvm_pool": ["lima_name", "slot", "image", "memory_mib", "state", "created_at", "ready_at"],
     # 0038 (ADR-059 addendum 4): the requests that wait for a work VM slot
-    "workvm_wait": ["ticket", "seq", "slot", "since"],
+    "workvm_wait": ["ticket", "seq", "kind", "slot", "since", "until"],
     # 0006 (RUN-09): the last response number of a device request
     "device_request": ["id", "kind", "user_id", "state", "updated_at", "last_seq"],
     # 0002 (RUN-04): latest profile events for the harness context of a session; 0009 (KOR-03): keyed per scope

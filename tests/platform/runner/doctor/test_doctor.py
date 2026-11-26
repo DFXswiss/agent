@@ -748,6 +748,16 @@ def test_status_shows_the_work_vm_slots(case: Case, monkeypatch: pytest.MonkeyPa
                      "disk_quota_gib": "500"}  # fmt: skip
     assert 90 <= oldest < 150
     assert load >= 0
+    # the device's admission per kind: active instances and the queue (a session hold counts while it runs)
+    case.sql(
+        "INSERT INTO runner.workvm_wait (ticket, kind, since, until) VALUES ('00000000000000cc', 'session', now(),"
+        " now() + interval '60 s'), ('00000000000000ee', 'session', now(), now() - interval '1 s')"
+    )
+    kinds = {
+        fact["kind"]: (fact["active"], fact["waiting"])
+        for fact in lines(case.cli("status")[1], "runner.status.admission")
+    }
+    assert kinds == {"session": ("0", "1"), "work": ("1", "2"), "ci": ("0", "0")}
 
 
 def test_status_without_a_store_shows_no_work_vm_slots(case: Case) -> None:

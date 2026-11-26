@@ -27,7 +27,9 @@ deferred, ignored), `agent_runner_operator_subscription_sessions{file}` (the lab
 The work VM slots (ADR-059 addendum 4; only on a device with work VMs, `Snapshot.workvm_slots`):
 `agent_runner_workvm_slots{state}` (`held`, `free`), `agent_runner_workvm_requests_waiting`,
 `agent_runner_workvm_stopped` and the capacity that admits new work VMs: `agent_runner_workvm_memory_free_bytes`,
-`agent_runner_workvm_cpu_load_ratio`, `agent_runner_workvm_disk_used_bytes`.
+`agent_runner_workvm_cpu_load_ratio`, `agent_runner_workvm_disk_used_bytes`; the device's admission (05-runner.md
+section 3.8): `agent_runner_admission_active{kind}` and `agent_runner_admission_waiting{kind}` (`session`, `work`,
+`ci`).
 """
 
 from __future__ import annotations
@@ -174,14 +176,19 @@ def _workvm_slots(snapshot: Snapshot) -> list[Metric]:
     stopped.add((), slots.stopped)
     memory = _gauge(
         "agent_runner_workvm_memory_free_bytes",
-        "RAM a new work VM may use (above the reserve, less room for one more workgroup VM).",
+        "RAM a new work VM may use (above the reserve, less what every VM holds).",
     )
     memory.add((), slots.memory_free_mib * MIB)
     cpu = _gauge("agent_runner_workvm_cpu_load_ratio", "Host CPU load per core that admits new work VMs.")
     cpu.add((), round(slots.cpu_load, 3))
     disk = _gauge("agent_runner_workvm_disk_used_bytes", "Disk allocated to work VMs and their pool.")
     disk.add((), slots.disk_used_gib * 1024 * MIB)
-    return [held, waiting, stopped, memory, cpu, disk]
+    active = _gauge("agent_runner_admission_active", "Active instances per kind in the device's admission.")
+    queued = _gauge("agent_runner_admission_waiting", "Requests waiting per kind in the device's admission.")
+    for kind, (count, waits) in sorted(slots.kinds.items()):
+        active.add((("kind", kind),), count)
+        queued.add((("kind", kind),), waits)
+    return [held, waiting, stopped, memory, cpu, disk, active, queued]
 
 
 def _vms(snapshot: Snapshot) -> list[Metric]:

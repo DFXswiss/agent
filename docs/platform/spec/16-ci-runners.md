@@ -315,14 +315,15 @@ Every other value is **to be measured** and then set (D-10, D-22).
 **One admission per device.** Exactly one admission decides on a device for every kind of VM: workgroup VMs with
 their sessions, work, browser and test VMs, and later CI VMs ([05 §3.8](05-runner.md#38-device-admission),
 `agent_runner/admission.py`). It counts free RAM after `MEMORY_RESERVE_MIB`, the CPU load and the disk in one
-transaction. CI plugs into this admission as one more kind; there is no second mechanism. The agent kinds have no
-fixed number and no fixed share: what is free decides ([ADR-075](../adr/075-resource-choice.md) addendum 2). Only CI
-has upper bounds of its own (below).
+transaction. CI plugs into this admission as one more kind; there is no second mechanism. No kind has a fixed number
+or a fixed share, CI included: what is physically free decides ([ADR-075](../adr/075-resource-choice.md) addendum 2).
+The client (2026-11-26): "wenn es nur ci runnerbedarf gibt, dann darf es auch 100% sein, ich glaube wir haben das
+beste ergebnis wenn wir denen den vorrang geben die noch nicht viele plätze haben".
 
 | Resource | Budget of a device | Counted per VM |
 |---|---|---|
 | RAM | Physical RAM − `MEMORY_RESERVE_MIB` (as today) | Configured memory, from `starting` until the VM is stopped or deleted; warm pool entries count |
-| CPU | Host load per core below `CPU_LOAD_MAX_PERCENT` (as today, every kind); for CI in addition the cores × `MAX_SHARE` | Configured vCPUs (for the CI bound) |
+| CPU | Host load per core below `CPU_LOAD_MAX_PERCENT` (as today, every kind) | Configured vCPUs |
 | Disk | Volume quota per workload kind − reserve for image generations | Allocated disk or profile size, plus the pool entry reserve (`13-work-vm.md` §7) |
 | macOS VMs | 2 (§8.4) | 1 per macOS VM of any purpose; Linux VMs of any kind 0 [APPLE-FORUM] |
 | Slot accounts | Accounts installed per workload kind and class | 1 per VM that uses one |
@@ -332,45 +333,52 @@ has upper bounds of its own (below).
   **to be measured** (M-19, M-20).
 - All checks and the reservation are one transaction, so that two requests never take the same capacity.
 
-**Bounds of CI.** The admission can hold an upper bound per kind; for now only CI uses it, the agent kinds have none.
-All three are settings of the device:
-- `MAX_SHARE` – the share of the device's RAM budget and of its CPUs that CI VMs may hold together, so that CI
-  cannot fill a device; default **50 %** until D-10 and D-22 are measured.
-- `CI_ORG_SHARE` and `CI_CLASS_SHARE` – what one GitHub organisation or one class may hold of CI's part while another
-  waits (fairness, below).
-- A CI VM is not interrupted, so capacity it holds returns only at a job's end; that time is bounded by the
-  wall-clock limit of the job (§6.2).
-- A macOS VM reduces the Linux capacity of its device by its vCPUs, RAM and disk like any other VM.
+**No fixed shares.** `MIN_SHARE`, `MAX_SHARE`, `HEADROOM_INTERACTIVE`, `CI_ORG_SHARE` and `CI_CLASS_SHARE` do not
+exist. With only CI demand, CI may use a device up to 100 %; so may every other kind alone. A CI VM is not
+interrupted, so capacity it holds returns only at a job's end; that time is bounded by the wall-clock limit of the job
+(§6.2). A macOS VM reduces the Linux capacity of its device by its vCPUs, RAM and disk like any other VM.
 
-**Priority and displacement.** A rank instead of fixed shares: **sessions** (workgroup VMs) before **work, browser
-and test VMs** before **CI**.
+**Who goes first: the kind with the fewest active instances.** When room becomes free or several requests come at the
+same time, the waiting request of the kind with the fewest active instances **on this device** goes first; on a tie
+the older request. Kinds: sessions (workgroup VMs), work, browser and test VMs, later CI VMs. Example of the client:
+80 % of a device run CI, then a new Claude session and a new CI runner arrive - the session goes first. A new request
+may start only with the room that the waiting requests ahead of it leave (05 §3.8, reason `turn`); with room for all,
+all start.
 1. A running session, work VM job, test run or CI job is **never stopped silently** to make room. The existing stops
-   (idle stop, credit, boundary failure, closed task) keep their reasons and stay visible.
-2. A new request of a lower rank does not start while a request of a higher rank waits on the device (one refused for
-   lack of capacity counts as waiting until the hub places its next attempt, at most a short hold).
-3. What may give way to a higher rank, in this order: the warm pool entry of CI, other warm pool entries, idle agent
-   VMs under the existing idle rule ([05 §3.7](05-runner.md#37-work-vm-slots-adr-059-addendum-4)): stopped, disk kept, started again on
-   demand. Whether CI demand may trigger the last step: D-22.
+   (idle stop, credit, boundary failure, closed task) keep their reasons and stay visible. Only what is physically free
+   is admitted: RAM after the host reserve, CPU, disk, at most 2 macOS VMs per Mac.
+2. A session refused for lack of capacity keeps its place (its age) while the hub places its next attempt, at most a
+   short hold; if it fits on another device, the hub may place it there.
+3. What may give way, in this order: the warm pool entry of CI, other warm pool entries, idle agent VMs under the
+   existing idle rule ([05 §3.7](05-runner.md#37-work-vm-slots-adr-059-addendum-4)): stopped, disk kept, started
+   again on demand. Whether CI demand may trigger the last step: D-22.
 4. A request that does not fit **waits; the budget is not exceeded**. CI jobs wait at GitHub (at most 24 h, §3.1): the
    controller takes a job only for capacity it has reserved, because an untaken job is queued again after 60 s (§3.1).
    How the scale-set client limits the offered capacity is **to be measured** (M-8). Work VMs keep their queue
    (`13-work-vm.md` §7); sessions keep `capacity_exhausted` and the new placement by the hub, with the clear message
    of [E-02](../KONZEPT.md#e-02).
-5. Freed capacity goes to the waiting requests by rank (sessions, then work, browser and test VMs, then CI), within a
-   rank in arrival order. CI cannot starve the agent kinds (`MAX_SHARE`); the agent kinds take what is free.
+5. Freed capacity goes to the waiting request of the kind with the fewest active instances, then the older one;
+   within a kind its own queue keeps the arrival order.
 
 **Fairness.**
-- Between the GitHub organisations and between classes: `CI_ORG_SHARE` and `CI_CLASS_SHARE` limit what one of them
-  holds while another waits; within them FIFO with the oldest waiting age as alarm (§11.2). GitHub's own assignment
-  order inside a scale set is not controlled by the platform (§3.2).
-- Between organizations of the platform: CI of the operator must not use up the capacity that customers pay for;
-  the rank and CI's `MAX_SHARE` express that.
-- One wide workflow (matrix) counts as many jobs and is bounded by the same shares.
+- Between the GitHub organisations and between classes the same rule holds: the waiting job of the organisation or
+  class with the fewest active CI VMs on the device goes first, on a tie the older; the oldest waiting age is the
+  alarm (§11.2). GitHub's own assignment order inside a scale set is not controlled by the platform (§3.2).
+- Between organizations of the platform: CI of the operator cannot crowd out the capacity customers pay for, because
+  a kind with many active instances always goes after one with few.
+- One wide workflow (matrix) counts as many jobs and as many active instances.
+
+**Pool.** One warm VM per device in total (§6.2), not one per kind or class.
+
+**Visible.** `agent-runner status` (`runner.status.admission kind= active= waiting=`) and the metrics
+`agent_runner_admission_active{kind}` and `agent_runner_admission_waiting{kind}` show the active instances per kind
+and the queue.
 
 **Placement.** Deterministic, like [Idee 38](../KONZEPT.md#k-idee-38):
 1. Filter: device online and not draining; image of the profile present; class allowed (for class U as decided in D-7/D-20, §9.3);
    D-24 respected; macOS profile only with a macOS counter below 2 and a fitting host version (§10.2).
-2. Filter: CPU **and** RAM **and** disk of the profile fit within CI's shares, and no request of a higher rank waits.
+2. Filter: CPU **and** RAM **and** disk of the profile fit, after the room the waiting requests ahead of it need
+   (fewest active first).
 3. Order: for Linux jobs, devices without use for a macOS profile first, so that macOS-capable capacity stays free;
    then the most free capacity of the scarcest resource; then the smallest device ID. **Assumption:** this order is
    good enough; packing large profiles (fragmentation) is **to be measured** (M-20).

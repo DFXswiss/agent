@@ -124,15 +124,17 @@ resources, not by a fixed number (points 7-9):
    (ADR-075 addendum 2: an older `runner.env` that sets them starts, the values are ignored and named once). A device
    admits a new work, browser or test run VM as long as its free resources last - RAM above `MEMORY_RESERVE_MIB` that
    the workgroup VMs and the work VMs leave, the host's 1-minute load per core at most `CPU_LOAD_MAX_PERCENT` (default
-   85), the disk quota `WORKVM_DISK_QUOTA_GIB` - and no session waits on the device (point 8). Short of any of them
+   85), the disk quota `WORKVM_DISK_QUOTA_GIB` - and its turn has come (point 8). Short of any of them
    the request waits in the queue as before. The slot accounts stay - they are the isolation boundary of the host
    filter (one account, one pinned SSH port per VM) - but their number follows the RAM: as many as the RAM above the
    reserve could ever hold standard work VMs (at most 100, the accounts' port range), so they never limit before the
    resources do. A device offers work VMs once `agent-runner workvm install` created them.
-8. **One admission per device, sessions first.** The work VMs use the device's one admission (05-runner.md §3.8,
-   `agent_runner/admission.py`) that also admits the workgroup VMs and later CI VMs, in one transaction (one lock). Its
-   rank is: sessions before work, browser and test VMs before CI; a new request of a lower rank does not start while a
-   higher one waits. The running task and session VMs and the warm work VM pool count as *yielding* in the capacity
+8. **One admission per device, fewest active first.** The work VMs use the device's one admission (05-runner.md §3.8,
+   `agent_runner/admission.py`) that also admits the workgroup VMs and later CI VMs, in one transaction (one lock). No
+   kind has a rank or a fixed share (final rule of the client, 2026-11-26: "immer der von dem es am wenigsten aktive
+   gibt"): when room becomes free or requests compete, the waiting request of the kind with the fewest active instances
+   on the device goes first, on a tie the older one; a kind alone may use the whole device. The running task and
+   session VMs and the warm work VM pool count as *yielding* in the capacity
    report, so the hub's free workgroup slots (`vm_slots_free`) are not reduced by them and sessions are placed as if
    they were not there; when a workgroup VM then needs their RAM, the VM area asks for it
    (`<area>/capacity.py:RECLAIM`) and the work VMs give way at once - the pool first, then idle VMs (no job and no call

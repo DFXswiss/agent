@@ -2,8 +2,8 @@
 
 A work VM (docs/platform/spec/13-work-vm.md) holds host memory like a workgroup VM: the live work VMs that hold their
 RAM (`records.MEMORY_STATES`) and the warm pool entries count against the VM budget and are reported as
-`work_vms_running`. Sessions rank first in the device's one admission (05-runner.md section 3.8): the warm pool entries
-are reported as *yielding* (they take no workgroup slot, a workgroup VM gets their room at once), and `RECLAIM` gives a
+`work_vms_running`. What is speculative or idle gives way (05-runner.md section 3.8): the warm pool entries are
+reported as *yielding* (they take no workgroup slot, a workgroup VM gets their room at once), and `RECLAIM` gives a
 workgroup VM the room of the pool and of the idle task and session VMs (`WorkVms.give_way`). A work VM with running
 work keeps its RAM - running work is never ended - so it counts as held.
 """

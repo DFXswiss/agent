@@ -385,11 +385,11 @@ counts only while its VM is needed, and **the free resources, not a fixed number
   (checked at the first use, once per daemon). The former `WORKVM_SLOTS` and `WORKVM_MAX_PER_TASK`/`_OWNER`/`_ORG` are
   gone (§1.3).
 - **Admission** (`WorkVms._fits`, for every new or restarted work VM, browser VM, test run VM and the work VM pool): the
-  device admission (§3.8) with the rank `work`: the VM's RAM fits into the RAM above the reserve that the workgroup VMs
-  (also those being started) and the work VMs leave, the host's 1-minute load per core is at most
-  `CPU_LOAD_MAX_PERCENT`, the disk quota `WORKVM_DISK_QUOTA_GIB` holds, no session waits on the device, and a slot
-  account is free. Otherwise the request waits in the queue (below).
-- **Sessions first**: the running task and session work VMs and the work VM pool are reported as yielding
+  device admission (§3.8) as kind `work`: the VM's RAM fits into the RAM above the reserve that the workgroup VMs
+  (also those being started) and the work VMs leave, less what waiting requests of a kind with fewer active instances
+  (or of the same count and older) need, the host's 1-minute load per core is at most `CPU_LOAD_MAX_PERCENT`, the disk
+  quota `WORKVM_DISK_QUOTA_GIB` holds, and a slot account is free. Otherwise the request waits in the queue (below).
+- **Idle and speculative VMs give way**: the running task and session work VMs and the work VM pool are reported as yielding
   (`Usage.yielding_vms`/`yielding_mib`, `workvm/capacity.py:USAGE`): they take no workgroup slot (`vm_slots_free` of
   the capacity report is not reduced by them; `work_vms_running` still counts them). A workgroup VM start (§3.4
   `_free_slot`) whose slot is free only because of them asks the areas' `RECLAIM` for `VM_MEMORY_MIB`
@@ -453,26 +453,36 @@ counts only while its VM is needed, and **the free resources, not a fixed number
 
 ### 3.8 Device admission
 
-ADR-059 addendum 4, ADR-075 addendum 2, 16-ci-runners.md §6.6. One admission per device decides for every kind of VM whether it may start now (`agent_runner/admission.py`,
-`admission.of(context)`, one instance per daemon). There is no second mechanism and **no fixed number of what may run**
-for the kinds of agent: the free resources decide.
+ADR-059 addendum 4, ADR-075 addendum 2, 16-ci-runners.md §6.6. One admission per device decides for every kind of VM
+whether it may start now (`agent_runner/admission.py`, `admission.of(context)`, one instance per daemon). There is no
+second mechanism and **no fixed number and no fixed share of what may run**, for no kind: a kind alone on a device may
+use it up to 100 %.
 
-- **Kinds and rank**: `session` (workgroup VMs with their sessions) before `work` (work, browser and test run VMs)
-  before `ci` (later CI VMs, 16 §6.6). A new request of a lower rank does not start while one of a higher rank waits:
-  a work VM request waiting in the queue counts (`Admission.waits`), and so does a session the device refused for lack
-  of capacity, until the hub's next attempt comes back (at most `REFUSAL_HOLD_S`, 120 s) or a session VM starts.
+- **Fewest active first** (decision of the client, 2026-11-26: "immer der von dem es am wenigsten aktive gibt"): when
+  room becomes free or several requests come at the same time, the waiting request of the kind with the fewest active
+  instances on this device goes first, on a tie the older request. Kinds: `session` (workgroup VMs: active = those that
+  hold a slot), `work` (work, browser and test run VMs: active = not stopped), later `ci`; the areas register their
+  counts (`Admission.counters`). A request that waits holds a ticket (`Admission.waits`: kind, RAM, since): a work VM
+  request in its queue, and a session the device refused for lack of capacity as a hold that keeps the age of the
+  first refusal until the hub's next attempt starts here (`refused`/`started`, at most `REFUSAL_HOLD_S`, 120 s). A new
+  request may start only with the RAM the waiting requests ahead of it leave (`ahead_mib`, reason `turn`); with room
+  for all, all start. Within a kind its own queue keeps the order (work VMs FIFO); CI requests carry a group
+  (organisation, class) and the same rule holds between the groups.
 - **One transaction**: the workgroup VM area and the work VM area take the same lock (`Admission.lock`;
   `Pool.slot_lock` and `WorkVms.slot_lock` are this lock) from the check to the row that holds the capacity. RAM of
-  workgroup VMs being started or filled into the pool counts while they start (`Admission.pending`).
-- **Checks** (`Admission.judge`, reasons `rank`, `cpu`, `memory`, `disk`, `cap`, `macos`): the host's 1-minute load per
-  core is at most `CPU_LOAD_MAX_PERCENT` (default 85); the VM's RAM fits into the RAM above `MEMORY_RESERVE_MIB` that
-  the running VMs of every kind leave; the disk it needs is free; an upper bound of its kind holds (`Cap`: a share of
-  the RAM budget and of the CPUs; **only CI has one**, the kinds of agent have none); at most **2 macOS VMs per Mac**
-  (`MACOS_VMS_MAX`, Apple's licence, 16 §8.4) - the only fixed number.
-- **Running work is never ended** to make room. What gives way to a higher rank: warm pool entries, then idle work
-  VMs (§3.7, stopped with their disk, started again on demand).
-- A workgroup VM refused here fails its session with `capacity_exhausted` (`cpu`, `disk`, or no slot), the hub places
-  the next attempt; a work VM request waits in its queue (§3.7).
+  workgroup VMs being started or filled into the pool counts while they start (`Admission.pending`); the warm pool of
+  workgroup VMs fills only room no waiting request needs.
+- **Checks** (`Admission.judge`, reasons `cpu`, `memory`, `disk`, `macos`, `turn`): the host's 1-minute load per core
+  is at most `CPU_LOAD_MAX_PERCENT` (default 85); the VM's RAM fits into the RAM above `MEMORY_RESERVE_MIB` that the
+  running VMs of every kind leave; the disk it needs is free; at most **2 macOS VMs per Mac** (`MACOS_VMS_MAX`, Apple's
+  licence, 16 §8.4) - the only fixed number; then the turn (above).
+- **Running work is never ended** to make room. What gives way: warm pool entries, then idle work VMs (§3.7, stopped
+  with their disk, started again on demand).
+- A workgroup VM refused here fails its session with `capacity_exhausted` (`cpu`, `disk`, `turn` or no slot), the hub
+  places the next attempt - here or on another device where it fits; a work VM request waits in its queue (§3.7).
+- **Visible**: `agent-runner status` prints `runner.status.admission kind= active= waiting=` per kind (from the store:
+  the VM rows and the mirror `runner.workvm_wait`, which holds the work queue and the session holds with their kind),
+  the metrics `agent_runner_admission_active{kind}` and `agent_runner_admission_waiting{kind}` (08 §3).
 
 ## 4. Sandbox (two independent layers, ADR-008)
 

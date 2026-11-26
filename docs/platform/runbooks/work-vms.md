@@ -81,9 +81,9 @@ sudo AGENT_RUNNER=<path>/agent-runner images/workvm/host-rehearsal.sh \
    is a symbolic link; remove the link by hand and run it again.
 
 Sizing: a standard work VM holds 8 GiB RAM and up to 50 GiB disk, `large` 16 GiB/100 GiB. Work VMs share the RAM
-budget with the workgroup VMs through the device's one admission (05-runner.md §3.8): sessions come first - a new
-work VM does not start while a session waits on the device, and idle work VMs are stopped when a workgroup VM needs
-their RAM; running work is never ended for it. The CPU bound for every new VM is `AGENT_RUNNER_CPU_LOAD_MAX_PERCENT`
+budget with the workgroup VMs through the device's one admission (05-runner.md §3.8): the kind with the fewest active
+instances goes first (sessions or work VMs; `agent-runner status`: `runner.status.admission`), and idle work VMs are
+stopped when a workgroup VM needs their RAM; running work is never ended for it. The CPU bound for every new VM is `AGENT_RUNNER_CPU_LOAD_MAX_PERCENT`
 (default 85; it replaces `WORKVM_CPU_LOAD_MAX_PERCENT`). The disk quota is a physical bound of the volume: choose it
 for the disk the device can give work VMs (about 100 GiB each, stopped ones included).
 
@@ -107,7 +107,7 @@ for the disk the device can give work VMs (about 100 GiB each, stopped ones incl
 | Symptom | Meaning | Action |
 |---|---|---|
 | Sessions answer "not switched on … on this execution device" | not installed (no first slot account) | §3 |
-| Requests wait ("capacity queue") | RAM, CPU or disk short, or a session waits on the device (`agent-runner status`: `runner.status.workvm memory_free_mib cpu_load_pct disk_used_gib`) | by design; sessions come first |
+| Requests wait ("capacity queue") | RAM, CPU or disk short, or a request of a kind with fewer active instances waits (`agent-runner status`: `runner.status.workvm memory_free_mib cpu_load_pct disk_used_gib`, `runner.status.admission`) | by design; fewest active first |
 | Sessions answer "not ready right now" | no ready image, or the boundary check fails | `workvm status`; `workvm image list` |
 | `not_hooked` / state `unhooked` | something replaced the running main ruleset without Apple's `anchor "com.apple/*"` first | The watcher keeps the slot accounts stopped. Find what reloaded pf (the client's update, an admin), restore Apple's main ruleset, never with a hand-made rule. The watcher then opens by itself. |
 | `not_first` / state `unordered` | another child of `com.apple` sorts before ours | rename or remove that child; report it |

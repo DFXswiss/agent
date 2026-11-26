@@ -210,7 +210,7 @@ class VmEnv:
     """Whether a running VM's own free resources take one more session (`vm.room.checker`; default: yes)."""
     admission: Admission = field(default_factory=_admission)
     """The device's one admission (`agent_runner.admission`, shared with the work VMs): its transaction (`lock`, the
-    pool's slot lock), the rank, CPU; default: idle CPU."""
+    pool's slot lock), the order of the kinds (fewest active first), CPU; default: idle CPU."""
     # Host facts of the capacity report (None: unknown, the counter is left out).
     cpus: Callable[[], int | None] = _unknown
     disk_free_mib: Callable[[], int | None] = _unknown
@@ -499,8 +499,11 @@ class Pool:
         ready = len(await records.live(self.env.db, "pool"))
         wanted = self.env.settings.pool_size - ready - self.filling
         capacity = await self.env.capacity(self.filling + self._reserved())
-        # only room nobody holds: a warm VM is no reason to make work VMs give way (ADR-059 addendum 4)
-        return max(min(wanted, MAX_PARALLEL_FILLS - self.filling, capacity.slots_free_now), 0)
+        # only room nobody holds or waits for: a warm VM is no reason to make work VMs give way (ADR-059 addendum 4),
+        # and the waiting requests of the device's admission keep what they need (05-runner.md section 3.8)
+        waiting = sum(ticket.memory_mib for ticket in self.env.admission.live())
+        room = capacity.slots_free_now - -(-waiting // self.env.settings.memory_mib)
+        return max(min(wanted, MAX_PARALLEL_FILLS - self.filling, room), 0)
 
     async def purge(self, golden: GoldenRef | None) -> int:
         """Delete pool VMs of another golden (all when there is none or the pool is disabled)."""

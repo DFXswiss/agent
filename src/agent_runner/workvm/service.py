@@ -4,7 +4,8 @@
 workvm install` did not run: its first slot account is missing). Slots are the accounts `<prefix>wvm00 …`
 (`accounts.slot_accounts`; their number `accounts.slot_count`: the RAM decides, no setting, ADR-059 addendum 4), or
 the runner's own account in `TEST_MODE` with `WORKVM_SLOTS_SELF`. A new VM is admitted by the device's one admission
-(`agent_runner.admission.of(context)`, shared with the workgroup VMs: rank, CPU, the RAM above the reserve that every
+(`agent_runner.admission.of(context)`, shared with the workgroup VMs: fewest active first, CPU, the RAM above the
+reserve that every
 VM and every admitted workgroup VM in flight leave) and the disk quota. The boundary check (`boundary_ok`) renders the
 pf anchor for the slot accounts and compares it with the live filter (`firewall.check`, read through `sudo -n` with the
 exact read commands sudoers allows), cached for `BOUNDARY_TTL` seconds. The boundary holds whether or not the device's

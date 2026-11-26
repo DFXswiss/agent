@@ -50,8 +50,10 @@ counts as "no limit" (the behaviour before this ADR).
 > replaces the "optional upper bound" of the addendum above: "diese anderen deckel alle restlos entfernen, der platz
 > soll für das gebraucht werden was halt gebraucht wird". Only the physically free resources of a device decide -
 > RAM above `MEMORY_RESERVE_MIB`, disk and quota, CPU load (`CPU_LOAD_MAX_PERCENT`, `VM_LOAD_MAX_PERCENT`); when they do
-> not suffice, the request waits or the hub places it on another device, and sessions keep their rank before work VMs
-> (05-runner.md §3.8). Removed, setting, code and documentation:
+> not suffice, the request waits or the hub places it on another device. Between the kinds (sessions, work/browser/test
+> VMs, later CI) there is no rank and no share: the waiting request of the kind with the fewest active instances on the
+> device goes first, on a tie the older one (final rule of the client, 2026-11-26; 05-runner.md §3.8). Removed,
+> setting, code and documentation:
 >
 > | Former limit | Where |
 > |---|---|
@@ -69,8 +71,8 @@ counts as "no limit" (the behaviour before this ADR).
 > a VM's room by a `sessions_per_vm` an older runner reports. `wg_vm_limit` stays a known waiting reason of stored
 > tasks but is no longer given. Unchanged: the hub's rate limits, credit and budget, and the size and time limits of
 > single requests (subagent depth and total per task stay settings, ADR-088). The only fixed number of the device
-> admission is Apple's: at most 2 macOS VMs per Mac (16-ci-runners.md §8.4); CI VMs get bounds of their own
-> (16-ci-runners.md §6.6).
+> admission is Apple's: at most 2 macOS VMs per Mac (16-ci-runners.md §8.4); CI has no share of its own either
+> (16-ci-runners.md §6.6: `MIN_SHARE`, `MAX_SHARE`, `HEADROOM_INTERACTIVE`, `CI_ORG_SHARE`, `CI_CLASS_SHARE` dropped).
 
 ### 2. Capacity report (runner → hub, additive)
 The `capacity` object of the heartbeat gains optional counters: `cpus`, `memory_total_mib`, `disk_free_mib`,

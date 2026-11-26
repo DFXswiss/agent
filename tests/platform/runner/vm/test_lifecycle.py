@@ -382,13 +382,11 @@ def test_idle_work_vms_give_way_before_another_workgroup_is_stopped(harness: Har
 
 
 @pytest.mark.parametrize(("cpu", "disk", "reason"), [(0.99, None, "cpu"), (0.0, 1024, "disk")])
-def test_the_admission_refuses_a_workgroup_vm_without_cpu_or_disk_and_holds_back_lower_ranks(
+def test_the_admission_refuses_a_workgroup_vm_without_cpu_or_disk_and_keeps_its_place(
     harness: Harness, cpu: float, disk: int | None, reason: str
 ) -> None:
-    """The device's one admission (05 section 3.8): CPU and disk count for every kind; a refused session keeps new
-    work VMs from starting while the hub places it again."""
-    from agent_runner.admission import WORK  # noqa: PLC0415
-
+    """The device's one admission (05 section 3.8): CPU and disk count for every kind; a refused session keeps its
+    place (a hold) while the hub places it again."""
     harness.add_golden()
     harness.settings = settings(pool_size=0)
 
@@ -401,9 +399,37 @@ def test_the_admission_refuses_a_workgroup_vm_without_cpu_or_disk_and_holds_back
         manager.env.disk_free_mib = lambda: disk
         with pytest.raises(RunnerError) as caught:
             await manager.ensure_vm(ORG, WG_A)
-        return caught.value.name, manager.env.admission.ahead(WORK)
+        return caught.value.name, dict(await manager.env.admission.waiting())
 
-    assert harness.run(body) == (reason, "session")
+    assert harness.run(body) == (reason, {"session": 1})
+
+
+def test_a_waiting_work_vm_with_fewer_active_keeps_its_room_from_a_new_session(harness: Harness) -> None:
+    """Fewest active first (05 section 3.8): one workgroup VM runs and no work VM does; a work VM that waits keeps the
+    one place left from a new session (`turn`, the hub places it again); once it is gone the session starts. Nothing
+    running is stopped for it."""
+    from agent_runner.admission import WORK  # noqa: PLC0415
+
+    harness.add_golden()
+    harness.physical_mib = 32768 + 2 * 8192  # room for two VMs
+    harness.settings = settings(pool_size=0)
+    first = harness.run(ensure(wg=WG_A))
+    harness.session(first.id, WG_A, "working")
+
+    async def body(manager: VmManager) -> Any:
+        async with manager.env.admission.waits(WORK, 8192):
+            with pytest.raises(RunnerError) as caught:
+                await manager.ensure_vm(ORG, WG_B)
+        second = await manager.ensure_vm(ORG, WG_B)
+        running = await records.get(manager.env.db, first.id)
+        return (
+            caught.value.name,
+            second.wg_id,
+            running.state if running else None,
+            await manager.env.admission.waiting(),
+        )
+
+    assert harness.run(body) == ("turn", WG_B, "running", {})
 
 
 def test_capacity_exhausted(harness: Harness) -> None:
