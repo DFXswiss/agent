@@ -109,9 +109,18 @@ test('route:/o/:org/t/:task', async ({ volume }, info) => {
       const count = await page.locator(`[data-testid="chat.item"][data-kind="${kind}"]`).count();
       if (count > 0) shown.push(`chat:${kind}`);
     }
-    // a file group lists its files when opened
+    // a file group lists its files when opened; on slow devices the group may render a moment after the first
+    // window and the list may expand a moment after the click, so wait for both instead of checking once
     const group = page.getByTestId('chat.files.toggle').first();
-    if (await group.isVisible()) await group.click({ timeout: 10_000 }).catch(() => undefined);
+    const grouped = await group.waitFor({ timeout: 15_000 }).then(
+      () => true,
+      () => false,
+    );
+    if (grouped) await group.click({ timeout: 10_000 }).catch(() => undefined);
+    await expect
+      .poll(() => isShown(page, 'list:chat.files'), { timeout: 15_000 })
+      .toBe(true)
+      .catch(() => undefined);
     if (await isShown(page, 'list:chat.files')) shown.push('list:chat.files');
     if ((await page.getByTestId('chat.item.subagent').count()) > 0) shown.push('chat:subagent');
     ownTime = Date.now() - waited;
