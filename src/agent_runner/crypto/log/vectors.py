@@ -24,7 +24,7 @@ from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.log import catchup, events, platform, rotation, verify, wraps
 from agent_runner.crypto.log.batch import check_batch
 from agent_runner.crypto.log.entries import Head, check_extends, entry_hash, sign_log_entry, sign_platform_entry
-from agent_runner.crypto.log.state import OrgState
+from agent_runner.crypto.log.state import OrgState, SupportPerson
 from agent_runner.crypto.vectors import Section, fixed, fixed_id
 
 Json = dict[str, Any]
@@ -37,7 +37,7 @@ CAPACITY = {
     "vm_slots_free": 8,
     "pool_ready": 2,
 }
-NAMES = ("alice", "bob", "carol", "dave", "erin", "device", "dev2", "pdev", "pdev-new", "qdev", "hub")
+NAMES = ("alice", "bob", "carol", "dave", "erin", "device", "dev2", "pdev", "pdev-new", "qdev", "hub", "sam", "tom")
 AGENTS = ("bot", "bot2", "bot3", "bot4", "bot5", "bot6", "bot7")
 """Labels of agents (ADR-082); their identities are listed with the actors."""
 
@@ -355,6 +355,13 @@ def platform_builder() -> PlatformBuilder:
     log.add("platform_policy", name="open_platform_invites", on=True)  # 20
     log.add("org_operator_subscriptions", org=ORG, granted=False)  # 21
     log.add("platform_policy", name="open_platform_access", on=False)  # 22
+    # support persons (ADR-096): sam and tom certified and given the role, dave (certified at 13) as well; tom leaves
+    log.add("user_certify", user=pid("sam"), pub=pub("sam"))  # 23
+    log.add("role_grant", subject=pid("sam"), role="support")  # 24
+    log.add("user_certify", user=pid("tom"), pub=pub("tom"))  # 25
+    log.add("role_grant", subject=pid("tom"), role="support")  # 26
+    log.add("role_grant", subject=pid("dave"), role="support")  # 27
+    log.add("role_revoke", subject=pid("tom"), role="support")  # 28
     return log
 
 
@@ -368,7 +375,9 @@ ALICE_CERT_SEQ = 12
 DAVE_CERT_SEQ = 13
 BOB_CERT_SEQ = 14
 BOB_RENEWED_SEQ = 16
-PLATFORM_COUNT = 23
+PLATFORM_COUNT = 29
+PRE_SUPPORT_COUNT = 23
+"""The platform log before the first support role (ADR-096)."""
 INVITED = {"erin": ("erin-platform", ERIN_INVITE_SEQ)}
 """Labels registered through a platform invitation: their ID is derived from it (`identity.invited_user_id`)."""
 
@@ -585,6 +594,7 @@ class Context:
                 self.log(a),
                 a.get("excluded", []),
                 require_active=a.get("require_active", False),
+                roster=self.roster(a),
             ),
             "check_cred_wrap": lambda a: wraps.check_cred_wrap(
                 a["wrap"], a["wrapped_by"], self.logs_of(a), a["current_epoch"], a.get("excluded", [])
@@ -592,7 +602,11 @@ class Context:
             "cred_readers": lambda a: sorted(wraps.cred_readers([log.state for log in self.logs_of(a)], a["owner"])),
             "revoked_agents": lambda a: sorted(wraps.revoked_agents([log.state for log in self.logs_of(a)])),
             "check_event": lambda a: events.check_event(
-                a["event"], self.log(a), session_device=a.get("session_device"), excluded=a.get("excluded", [])
+                a["event"],
+                self.log(a),
+                session_device=a.get("session_device"),
+                excluded=a.get("excluded", []),
+                support=self.authors(a),
             ),
             "check_event_hub": lambda a: events.check_event_hub(
                 a["event"],
@@ -601,6 +615,7 @@ class Context:
                 rotated_at=parse_time(a["rotated_at"]) if a.get("rotated_at") else None,
                 session_device=a.get("session_device"),
                 excluded=a.get("excluded", []),
+                support=self.roster(a),
             ),
             "check_replay": lambda a: events.check_replay(a["stored"], a["incoming"]),
         }
@@ -616,6 +631,16 @@ class Context:
         if ref is None:
             return None
         return platform.verify_platform_log(self.logs[ref["name"]][: ref["count"]], ref["root"]).state
+
+    def roster(self, args: Json) -> dict[str, SupportPerson]:
+        """The support roster of the platform state of `args` (ADR-096), empty without one."""
+        found = self.platform(args)
+        return {} if found is None else found.support_roster()
+
+    def authors(self, args: Json) -> dict[str, SupportPerson]:
+        """The support authors (history) of the platform state of `args` (ADR-096), empty without one."""
+        found = self.platform(args)
+        return {} if found is None else found.support_authors()
 
     def log(self, args: Json) -> verify.VerifiedLog:
         """The verified membership log of `args`."""
@@ -646,6 +671,7 @@ class Context:
             now=parse_time(args["now"]),
             platform_access=args.get("platform_access", False),
             excluded=args.get("excluded", []),
+            roster=self.roster(args),
         )
 
     def run(self, op: str, args: Json) -> object:
@@ -717,6 +743,7 @@ def build_log() -> Json:
             "admit": admit.entries,
             "orgwide": orgwide.entries,
             "agents": agents.entries,
+            "support": support_builder().entries,
         }
     )
     founder = sig_pk("alice")
@@ -1124,6 +1151,8 @@ def build_log() -> Json:
     ]
     agents_valid, agents_invalid = _agent_log_part(ctx, agents)
     invalid += agents_invalid
+    support_valid, support_invalid = _support_log_part(ctx)
+    invalid += support_invalid
     return {
         "about": "Membership log of 04-crypto.md section 4.7: a valid chain with every entry type, its states, and "
         "one broken variant per rule L1-L10 (06-1) with the expected code. See README.md, 'Log vectors'.",
@@ -1138,6 +1167,7 @@ def build_log() -> Json:
             "admit": admit.entries,
             "orgwide": orgwide.entries,
             "agents": agents.entries,
+            "support": support_builder().entries,
         },
         "excluded": [
             {"platform": _platform_ref(), "log": _ref("main", 27), "excluded": []},
@@ -1168,6 +1198,7 @@ def build_log() -> Json:
         "lh": {"log": _ref("main", 27), "needs_refresh": [{"lh": 26, "refresh": False}, {"lh": 27, "refresh": True}]},
         "orgwide": _orgwide_valid(orgwide, plat),
         "agents_valid": agents_valid,
+        "support_valid": support_valid,
         "invalid": invalid,
     }
 
@@ -1758,6 +1789,7 @@ def build_platform_log() -> Json:
         neg("unknown_type", "verify_platform_log", args(1, _presign(first, type="device_delete")), "log_type"),
         neg("by_not_root", "verify_platform_log", args(1, _presign(first, by=pid("alice"))), "header_invalid"),
         neg("seq_conflict", "append_platform_log", {**args(3), "append": [plat.entries[4]]}, "seq_conflict"),
+        *_support_platform_negatives(ctx, plat),
     ]
     return {
         "about": "Platform log of 04-crypto.md section 4.8: every entry type, a decertification, the states, and one "
@@ -1765,7 +1797,7 @@ def build_platform_log() -> Json:
         "identities": {
             name: value
             for name, value in _identities().items()
-            if name in ("root", "pdev", "qdev", "hub", "alice", "bob", "dave", "erin")
+            if name in ("root", "pdev", "qdev", "hub", "alice", "bob", "dave", "erin", "sam", "tom")
         },
         "root": root,
         "logs": {"platform": plat.entries},
@@ -1861,6 +1893,7 @@ def build_rotation() -> Json:
         "orgwide": orgwide_builder().entries,
         "agents": agents.entries,
         "member_agent": member_agent_builder().entries,
+        "support": support_builder().entries,
     }
     ctx = Context(logs)
     plat_state = platform.verify_platform_log(plat.entries, sig_pk("root")).state
@@ -2117,6 +2150,9 @@ def build_rotation() -> Json:
         ),
     ]
     agent_batches, agent_invalid = _agent_rotation_part(ctx, agents, now)
+    support_batches, support_invalid = _support_rotation_part(ctx)
+    agent_batches += support_batches
+    agent_invalid += support_invalid
     return {
         "about": "Rotation obligation of 04-crypto.md section 4.7: R(before, after, subject) for every entry type and "
         "the edge cases, and append batches that must contain exactly R as rotate entries (section 5.10, "
@@ -2331,6 +2367,7 @@ def build_wraps() -> Json:
             "admit": admit.entries,
             "agents": agents.entries,
             "agents_other_org": other.entries,
+            "support": support_builder().entries,
         }
     )
     full = len(main.entries)
@@ -2565,6 +2602,7 @@ def build_wraps() -> Json:
     revocation, revocation_invalid = _revocation_part(ctx)
     agent_section["revocation"] = revocation
     agent_invalid += revocation_invalid
+    support_section, support_invalid = _support_wraps_part(ctx)
     return {
         "about": "Wrap rules W1-W3 of 04-crypto.md section 6.3 against the final state of the main log of log.json "
         "and, for admins without explicit workgroup access (ADR-058), the edge log of log-rotation.json; cred wraps, "
@@ -2583,6 +2621,7 @@ def build_wraps() -> Json:
             "agents_other_org": other.entries,
             "edge_agent": agent_section.pop("edge_agent"),
             **{name: log.entries for name, log in revocation_logs.items()},
+            "support": support_builder().entries,
         },
         "scope_keys": {
             f"{scope}/{scope_id}/{epoch}": b64u_encode(scope_key(scope, scope_id, epoch))
@@ -2605,7 +2644,8 @@ def build_wraps() -> Json:
             "plans": admin_plans,
         },
         "agents": agent_section,
-        "invalid": invalid + agent_invalid,
+        "support": support_section,
+        "invalid": invalid + agent_invalid + support_invalid,
     }
 
 
@@ -2845,7 +2885,9 @@ SESSION = pid("session")
 def build_events() -> Json:
     """The kind matrix and event checks E1-E9 for readers and the hub against the main log (section 6.4)."""
     main, plat, agents = main_builder(), platform_builder(), agents_builder()
-    ctx = Context({"main": main.entries, "platform": plat.entries, "agents": agents.entries})
+    ctx = Context(
+        {"main": main.entries, "platform": plat.entries, "agents": agents.entries, "support": support_builder().entries}
+    )
     full = len(main.entries)
 
     def ev(
@@ -3146,6 +3188,7 @@ def build_events() -> Json:
         ),
     ]
     agent_section, agent_invalid = _agent_events_part(ctx)
+    support_section, support_invalid = _support_events_part(ctx)
     return {
         "about": "Event rules E1-E9 of 04-crypto.md section 6.4 for readers and the hub against the main log of "
         "log.json, and the kind matrix of section 4.3 (CON-03, equal to contracts/enums/event-kinds.json). "
@@ -3153,14 +3196,20 @@ def build_events() -> Json:
         "identities": _identities(),
         "ids": {**_ids(), "task": TASK, "session": SESSION},
         "founder": sig_pk("alice"),
-        "logs": {"main": main.entries, "platform": plat.entries, "agents": agents.entries},
+        "logs": {
+            "main": main.entries,
+            "platform": plat.entries,
+            "agents": agents.entries,
+            "support": support_builder().entries,
+        },
         "matrix": events.matrix(),
         "grace_seconds": int(events.GRACE.total_seconds()),
         "valid": valid,
         "hub_valid": hub_valid,
         "replay": {"stored": reader_cases["settings"], "incoming": reader_cases["settings"], "replayed": True},
         "agents": agent_section,
-        "invalid": invalid + agent_invalid,
+        "support": support_section,
+        "invalid": invalid + agent_invalid + support_invalid,
     }
 
 
@@ -3280,3 +3329,408 @@ SECTIONS: tuple[Section, ...] = (
     Section("log-events", build_events),
     Section("platform-log", build_platform_log),
 )
+
+
+# --- Support (ADR-096): the release of workgroups to the support team, in every log vector file ---
+
+
+SUPPORT_ROLES_COUNT = PRE_SUPPORT_COUNT + 5
+"""The platform log with sam, tom and dave as support persons (before tom leaves)."""
+SUPPORT_LEFT_COUNT = PRE_SUPPORT_COUNT + 6
+"""The platform log after tom left support."""
+
+
+def support_builder() -> LogBuilder:
+    """A log with support releases: W1 released read, then write; the default workgroup released by bob (a writer
+    there) and revoked with its rotation; W2 released write and archived (support still reads it)."""
+    log = LogBuilder()
+    log.genesis()  # 0
+    log.add("wg_create", "alice", wg=W1, epoch=1)  # 1
+    log.invite_user("alice", "bob", wgs={W1: "read"})  # 2
+    log.accept("bob")  # 3
+    log.invite_user("alice", "dave", wgs={W1: "read"})  # 4 (dave is support as well)
+    log.accept("dave")  # 5
+    log.invite_device("alice", "device", [W1])  # 6
+    log.accept("device", "device")  # 7
+    log.add("support_grant", "alice", wg=W1, access="read")  # 8
+    log.add("support_grant", "alice", wg=W1, access="write")  # 9
+    log.add("support_grant", "bob", wg=W0, access="read")  # 10 (bob writes the default workgroup)
+    log.add("support_revoke", "bob", wg=W0)  # 11
+    log.add("rotate", "bob", scope="wg", scope_id=W0, epoch=2)  # 12 (R of 11)
+    log.add("wg_create", "alice", wg=W2, epoch=1)  # 13
+    log.add("support_grant", "alice", wg=W2, access="write")  # 14
+    log.add("wg_archive", "alice", wg=W2)  # 15
+    return log
+
+
+SUPPORT_COUNT = 16
+
+
+def _support_args(count: int = SUPPORT_COUNT, platform_count: int = SUPPORT_ROLES_COUNT, **extra: object) -> Json:
+    return {
+        "log": _ref("support", count),
+        "founder": sig_pk("alice"),
+        "platform": _platform_ref(platform_count),
+        **extra,
+    }
+
+
+def _support_log_part(ctx: Context) -> tuple[Json, list[Json]]:
+    """log.json: the valid support log (heads, projections) and the negatives of the release rules."""
+    support = support_builder()
+    verified = verify.verify_log(support.entries, sig_pk("alice"))
+    neg = ctx.negative
+
+    def broken(count: int, build: Callable[[LogBuilder], object]) -> Json:
+        prefix = LogBuilder(ORG, support.entries[:count])
+        build(prefix)
+        return _support_args(count, entries=prefix.entries[count:])
+
+    invalid = [
+        neg(
+            "support_grant_by_reader",
+            "verify_log",
+            broken(8, lambda b: b.add("support_grant", "bob", wg=W1, access="read")),
+            "log_rights",
+        ),
+        neg(
+            "support_grant_by_device",
+            "verify_log",
+            broken(8, lambda b: b.add("support_grant", "device", wg=W1, access="read")),
+            "log_rights",
+        ),
+        neg(
+            "support_grant_same_access",
+            "verify_log",
+            broken(10, lambda b: b.add("support_grant", "alice", wg=W1, access="write")),
+            "log_rights",
+        ),
+        neg(
+            "support_grant_archived_workgroup",
+            "verify_log",
+            broken(16, lambda b: b.add("support_grant", "alice", wg=W2, access="read")),
+            "log_rights",
+        ),
+        neg(
+            "support_grant_unknown_workgroup",
+            "verify_log",
+            broken(8, lambda b: b.add("support_grant", "alice", wg=pid("wg/unknown"), access="read")),
+            "log_rights",
+        ),
+        neg(
+            "support_grant_forged_by_hub",
+            "verify_log",
+            broken(8, lambda b: b.add("support_grant", "alice", signer="hub", wg=W1, access="read")),
+            "log_signature",
+        ),
+        neg(
+            "support_grant_access_admin",
+            "verify_log",
+            broken(8, lambda b: b.add("support_grant", "alice", wg=W1, access="admin")),
+            "header_invalid",
+        ),
+        neg(
+            "support_revoke_without_release",
+            "verify_log",
+            broken(12, lambda b: b.add("support_revoke", "alice", wg=W0)),
+            "log_rights",
+        ),
+        neg(
+            "support_revoke_by_reader",
+            "verify_log",
+            broken(10, lambda b: b.add("support_revoke", "bob", wg=W1)),
+            "log_rights",
+        ),
+    ]
+    section = {
+        "log": _ref("support", SUPPORT_COUNT),
+        "heads": [{"seq": s.seq, "hash": s.head} for s in verified.states],
+        "projections": [s.projection() for s in verified.states],
+    }
+    return section, invalid
+
+
+def _support_platform_negatives(ctx: Context, plat: PlatformBuilder) -> list[Json]:
+    """platform-log.json: a support role needs a valid certification of the person's keys (ADR-096)."""
+    neg = ctx.negative
+
+    def broken(count: int, build: Callable[[PlatformBuilder], object]) -> Json:
+        prefix = PlatformBuilder(plat.entries[:count])
+        build(prefix)
+        return {"log": _ref("platform", count), "entries": prefix.entries[count:], "root": sig_pk("root")}
+
+    return [
+        neg(
+            "support_role_without_certification",
+            "verify_platform_log",
+            broken(PRE_SUPPORT_COUNT, lambda b: b.add("role_grant", subject=pid("erin"), role="support")),
+            "log_rights",
+        ),
+        neg(
+            "support_role_after_decertification",
+            "verify_platform_log",
+            broken(16, lambda b: b.add("role_grant", subject=pid("bob"), role="support")),
+            "log_rights",
+        ),
+        neg(
+            "support_role_granted_twice",
+            "verify_platform_log",
+            broken(SUPPORT_ROLES_COUNT, lambda b: b.add("role_grant", subject=pid("sam"), role="support")),
+            "log_rights",
+        ),
+        neg(
+            "support_role_unknown",
+            "verify_platform_log",
+            broken(PRE_SUPPORT_COUNT, lambda b: b.add("role_grant", subject=pid("alice"), role="helpdesk")),
+            "header_invalid",
+        ),
+    ]
+
+
+def _support_rotation_part(ctx: Context) -> tuple[list[Json], list[Json]]:
+    """log-rotation.json: `support_revoke` owes the rotation of its workgroup, whoever is support."""
+    support = support_builder()
+
+    def batch(*build: Callable[[LogBuilder], object]) -> list[Json]:
+        prefix = LogBuilder(ORG, support.entries[:10])
+        for step in build:
+            step(prefix)
+        return prefix.entries[10:]
+
+    def revoke(b: LogBuilder) -> object:
+        return b.add("support_revoke", "alice", wg=W1)
+
+    def rotate(b: LogBuilder) -> object:
+        return b.add("rotate", "alice", scope="wg", scope_id=W1, epoch=2)
+
+    readers = ("alice", "bob", "dave", "device")
+    base = {**_support_args(10), "now": ts(200), "wrapped_by": pid("alice")}
+    revoked = batch(revoke, rotate)
+    valid = [
+        _batch_case(
+            ctx,
+            "support_revoke_with_rotation",
+            {**base, "append": revoked, "wraps": [make_wrap("alice", "wg", W1, 2, who) for who in readers]},
+        ),
+        _batch_case(
+            ctx,
+            "support_grant_with_wraps_to_support",
+            {
+                **_support_args(8),
+                "now": ts(200),
+                "wrapped_by": pid("alice"),
+                "append": [support.entries[8]],
+                "wraps": [make_wrap("alice", "wg", W1, 1, who) for who in ("sam", "tom")],
+            },
+        ),
+    ]
+    neg = ctx.negative
+    invalid = [
+        neg(
+            "support_revoke_without_rotation",
+            "check_batch",
+            {**base, "append": batch(revoke), "wraps": []},
+            "rotation_required",
+        ),
+        neg(
+            "support_revoke_new_epoch_wrapped_to_support",
+            "check_batch",
+            {
+                **base,
+                "append": revoked,
+                "wraps": [
+                    *(make_wrap("alice", "wg", W1, 2, who) for who in readers),
+                    make_wrap("alice", "wg", W1, 2, "sam"),
+                ],
+            },
+            "wrap_unauthorized",
+        ),
+    ]
+    return valid, invalid
+
+
+def _support_wraps_part(ctx: Context) -> tuple[Json, list[Json]]:
+    """log-wraps.json: wraps to the persons of the roster for a released workgroup, every epoch; catch-up."""
+
+    def args(
+        wrapper: str,
+        scope: str,
+        scope_id: str,
+        epoch: int,
+        recipient: str,
+        *,
+        count: int = SUPPORT_COUNT,
+        platform_count: int = SUPPORT_ROLES_COUNT,
+    ) -> Json:
+        wrapped = make_wrap(wrapper, scope, scope_id, epoch, recipient)
+        return {**_support_args(count, platform_count), "wrap": wrapped, "wrapped_by": pid(wrapper)}
+
+    valid = []
+    for name, case in (
+        ("support_person_reads_released_workgroup", args("alice", "wg", W1, 1, "sam")),
+        ("support_wrap_by_device", args("device", "wg", W1, 1, "tom")),
+        ("support_wrap_by_member_reader", args("bob", "wg", W1, 1, "sam")),
+        ("support_person_reads_archived_release", args("alice", "wg", W2, 1, "sam")),
+        ("support_author_also_member_reader", args("alice", "wg", W1, 1, "dave")),
+    ):
+        ctx.run("check_wrap", case)
+        valid.append({"name": name, "args": case})
+    neg = ctx.negative
+    invalid = [
+        neg(
+            "support_wrap_without_release",
+            "check_wrap",
+            args("alice", "wg", W1, 1, "sam", count=8),
+            "wrap_unauthorized",
+        ),
+        neg("support_wrap_after_revoke", "check_wrap", args("alice", "wg", W0, 1, "sam"), "wrap_unauthorized"),
+        neg("support_wrap_org_scope", "check_wrap", args("alice", "org", ORG, 1, "sam"), "wrap_unauthorized"),
+        neg(
+            "support_wrap_unknown_to_reader",
+            "check_wrap",
+            args("alice", "wg", W1, 1, "sam", platform_count=PRE_SUPPORT_COUNT),
+            "wrap_unauthorized",
+        ),
+        neg(
+            "support_wrap_after_role_end",
+            "check_wrap",
+            args("alice", "wg", W1, 1, "tom", platform_count=SUPPORT_LEFT_COUNT),
+            "wrap_unauthorized",
+        ),
+        neg("support_wrap_by_support", "check_wrap", args("sam", "wg", W1, 1, "tom"), "wrap_unauthorized"),
+        neg("support_wrap_epoch_in_future", "check_wrap", args("alice", "wg", W1, 2, "sam"), "wrap_unauthorized"),
+        neg("support_wrap_to_non_member", "check_wrap", args("alice", "wg", W1, 1, "erin"), "wrap_unauthorized"),
+    ]
+    plat_state = platform.verify_platform_log(platform_builder().entries[:SUPPORT_ROLES_COUNT], sig_pk("root")).state
+    log = verify.verify_log(support_builder().entries, sig_pk("alice"), platform=plat_state)
+    existing = [
+        wraps.WrapSlot("wg", W1, 1, pid("alice")),
+        wraps.WrapSlot("wg", W1, 1, pid("sam")),
+        wraps.WrapSlot("wg", W2, 1, pid("alice")),
+    ]
+    roster = plat_state.support_roster()
+    plans = [
+        {
+            "wrapper": pid(wrapper),
+            "excluded": [],
+            "missing": [slot.to_json() for slot in catchup.missing_wraps(log, pid(wrapper), existing, [], roster)],
+        }
+        for wrapper in ("alice", "device", "bob", "sam")
+    ]
+    section = {
+        "valid": valid,
+        "catch_up": {
+            "log": _ref("support", SUPPORT_COUNT),
+            "platform": _platform_ref(SUPPORT_ROLES_COUNT),
+            "existing": [slot.to_json() for slot in existing],
+            "plans": plans,
+        },
+    }
+    return section, invalid
+
+
+def _support_events_part(ctx: Context) -> tuple[Json, list[Json]]:
+    """log-events.json: support writes prompts and the workgroup whiteboard with a `write` release; `support.info` is
+    written by a principal that may release the workgroup."""
+
+    def ev(
+        author: str, kind: str, scope: str, scope_id: str, epoch: int, /, *, lh: int, label: str, **extra: str
+    ) -> Json:
+        return make_event(author, kind, scope=scope, scope_id=scope_id, epoch=epoch, lh=lh, label=label, **extra)
+
+    cases = {
+        "support_prompt": ev("sam", "prompt", "wg", W1, 1, lh=9, label="support-prompt", wg=W1, task=TASK),
+        "support_whiteboard": ev(
+            "tom", "whiteboard.entry", "wg", W1, 1, lh=10, label="support-wb", wg=W1, ref=pid("entry/support")
+        ),
+        "support_author_also_member": ev("dave", "prompt", "wg", W1, 1, lh=9, label="dave-prompt", wg=W1, task=TASK),
+        "support_info_by_admin": ev("alice", "support.info", "wg", W1, 1, lh=9, label="support-info", wg=W1),
+        "support_info_by_default_writer": ev("bob", "support.info", "wg", W0, 1, lh=10, label="info-bob", wg=W0),
+    }
+    valid = []
+    for name, sealed in cases.items():
+        args = _support_args(event=sealed)
+        ctx.run("check_event", args)
+        valid.append({"name": name, "args": args, "scope_key": b64u_encode(scope_key(*_scope_of(sealed)))})
+    # history: tom's event stays verifiable after tom left support
+    history = _support_args(platform_count=SUPPORT_LEFT_COUNT, event=cases["support_whiteboard"])
+    ctx.run("check_event", history)
+    valid.append(
+        {
+            "name": "support_event_after_role_end",
+            "args": history,
+            "scope_key": b64u_encode(scope_key(*_scope_of(cases["support_whiteboard"]))),
+        }
+    )
+    hub_args = _support_args(event=cases["support_prompt"], now=ts(200))
+    ctx.run("check_event_hub", hub_args)
+    neg = ctx.negative
+    invalid = [
+        neg(
+            "support_event_without_release",
+            "check_event",
+            _support_args(event=ev("sam", "prompt", "wg", W1, 1, lh=7, label="early", wg=W1, task=TASK)),
+            "author_not_writer",
+        ),
+        neg(
+            "support_event_read_release",
+            "check_event",
+            _support_args(event=ev("sam", "prompt", "wg", W1, 1, lh=8, label="read-only", wg=W1, task=TASK)),
+            "author_not_writer",
+        ),
+        neg(
+            "support_event_archived_workgroup",
+            "check_event",
+            _support_args(event=ev("sam", "prompt", "wg", W2, 1, lh=15, label="archived", wg=W2, task=TASK)),
+            "author_not_writer",
+        ),
+        neg(
+            "support_writes_support_info",
+            "check_event",
+            _support_args(event=ev("sam", "support.info", "wg", W1, 1, lh=9, label="sam-info", wg=W1)),
+            "kind_not_allowed",
+        ),
+        neg(
+            "support_writes_task_meta",
+            "check_event",
+            _support_args(event=ev("sam", "task.meta", "wg", W1, 1, lh=9, label="sam-task", wg=W1, task=TASK)),
+            "kind_not_allowed",
+        ),
+        neg(
+            "support_writes_settings",
+            "check_event",
+            _support_args(event=ev("sam", "settings.workgroup", "wg", W1, 1, lh=9, label="sam-settings", wg=W1)),
+            "kind_not_allowed",
+        ),
+        neg(
+            "support_writes_org_scope",
+            "check_event",
+            _support_args(event=ev("sam", "whiteboard.entry", "org", ORG, 1, lh=9, label="sam-org", ref=pid("e"))),
+            "kind_not_allowed",
+        ),
+        neg(
+            "support_event_unknown_to_reader",
+            "check_event",
+            _support_args(platform_count=PRE_SUPPORT_COUNT, event=cases["support_prompt"]),
+            "author_not_writer",
+        ),
+        neg(
+            "support_event_other_key",
+            "check_event",
+            _support_args(event=_resigned_event(cases["support_prompt"], "tom")),
+            "signature_invalid",
+        ),
+        neg(
+            "support_event_hub_after_role_end",
+            "check_event_hub",
+            _support_args(platform_count=SUPPORT_LEFT_COUNT, event=cases["support_whiteboard"], now=ts(200)),
+            "author_not_writer",
+        ),
+        neg(
+            "support_info_by_reader",
+            "check_event",
+            _support_args(event=ev("bob", "support.info", "wg", W1, 1, lh=9, label="bob-info", wg=W1)),
+            "author_not_writer",
+        ),
+    ]
+    return {"valid": valid, "hub_valid": [{"name": "support_prompt", "args": hub_args}]}, invalid

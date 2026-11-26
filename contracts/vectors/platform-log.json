@@ -56,6 +56,20 @@
       "kem_sk": "uFwJe8KcUWBbcpZFmyUjqBAjewsOaJHZ7WYhBbaQV80",
       "sig": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI",
       "sig_sk": "QFbowk9fpGVhWNcH--8__qxjTo7c1gXGrTqh-zNFZxw"
+    },
+    "sam": {
+      "id": "01a1ee56-5e00-7757-8a78-5d39593d3817",
+      "kem": "1pbN-JU3U4eQk18AMzQOXEf0GfodpuiTOzkvnX0Am18",
+      "kem_sk": "hrmfEa1t0_1CZVLW_7968ipZyGGUxirfkjGmRHuK810",
+      "sig": "MX8xlk9GMHsnWP6Sq4RCxd5w8YvGTNvRJwHro3jOgnk",
+      "sig_sk": "zpkyA5gepiRa7dOOqyT5MHifzKW5Kd58yjDnFJ7oJ00"
+    },
+    "tom": {
+      "id": "01a1ee56-5e00-7914-a63f-134e02e17b05",
+      "kem": "oUq-RQDpIl_uanSjojZE9oBtX0CzzyEqO4bCAdjJJn0",
+      "kem_sk": "QLJLxcIaQpqjk8LQW1Vytndxx4gi8j4sIHVl8DvDoPM",
+      "sig": "6WQkMZql0b1_evZBjI3UXLIw3Ry4fr6ENJJe-y4gLLk",
+      "sig_sk": "BdWQTdAsVqzHzzVIgGM2fsTvoqQrhXOOQ5hcP5P8Pkw"
     }
   },
   "invalid": [
@@ -922,6 +936,114 @@
       "error": "seq_conflict",
       "name": "seq_conflict",
       "op": "append_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "prev": "GO5QpmEklUAwB4Qvu_sju5Njm-rmTg95OtKSycmTJlM",
+              "role": "support",
+              "seq": 23,
+              "subject": "01a1ee56-5e00-76ac-a04d-12639e532939",
+              "ts": "2026-11-21T12:23:00.000Z",
+              "type": "role_grant",
+              "v": 1
+            },
+            "sig": "uXuWkApTcgEqepDw6izxc1knBJKMxfm0U7ZtFO01yuWnCUBc34w5P67trWVx_lkbbXrI2-xCPCu81eyvzEPHAw"
+          }
+        ],
+        "log": {
+          "count": 23,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "support_role_without_certification",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "prev": "2PxOoUXGtEVerqzxI6L1JnFKoHdDg5Q-o0oqzTu1qXw",
+              "role": "support",
+              "seq": 16,
+              "subject": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72",
+              "ts": "2026-11-21T12:16:00.000Z",
+              "type": "role_grant",
+              "v": 1
+            },
+            "sig": "YVgWRgubfSqO3QHh_ckb4a1aB7RBX2qsmD6z9nv9PdaxzwvX-0Wfh2YNXFHbvosa00HPxrrTB2HPxzzSHQ6RCg"
+          }
+        ],
+        "log": {
+          "count": 16,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "support_role_after_decertification",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "prev": "6zN2KJwAvknWxpBPvSNPxbdhJSjGKz3W4eBwTd5xKMo",
+              "role": "support",
+              "seq": 28,
+              "subject": "01a1ee56-5e00-7757-8a78-5d39593d3817",
+              "ts": "2026-11-21T12:28:00.000Z",
+              "type": "role_grant",
+              "v": 1
+            },
+            "sig": "h2BGwaiJjU1dMVgzCVp98qlxSvR67QN8VVKDWTTkz3ImltIRlLEf5dNvfuNtPf4-saQUTOhJj7v-aPcNSsyUBA"
+          }
+        ],
+        "log": {
+          "count": 28,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "log_rights",
+      "name": "support_role_granted_twice",
+      "op": "verify_platform_log"
+    },
+    {
+      "args": {
+        "entries": [
+          {
+            "body": {
+              "by": "platform-root",
+              "prev": "GO5QpmEklUAwB4Qvu_sju5Njm-rmTg95OtKSycmTJlM",
+              "role": "helpdesk",
+              "seq": 23,
+              "subject": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565",
+              "ts": "2026-11-21T12:23:00.000Z",
+              "type": "role_grant",
+              "v": 1
+            },
+            "sig": "RH3lbb3H5-2H8ikeMC7Xeiy_13QpISzdYkPzX6zkv0bYjvbbQ3SKJOwzYzjJ7onVOWjFNRumXsp9hkBUafoBBw"
+          }
+        ],
+        "log": {
+          "count": 23,
+          "name": "platform"
+        },
+        "root": "flreDWHapOqP0qAdJnkgS3gVEPg6X5d2wvpTGXopERI"
+      },
+      "error": "header_invalid",
+      "name": "support_role_unknown",
+      "op": "verify_platform_log"
     }
   ],
   "invite_codes": {
@@ -1275,6 +1397,90 @@
           "v": 1
         },
         "sig": "H5iBCpz2WFh1JIWUV89ojKfg27Zl_-jd3nZs-3ZW0Ajmwuz6ddQJajNOXmI1l9o4hBKGNbmWwutedwlTaN__Dw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "GO5QpmEklUAwB4Qvu_sju5Njm-rmTg95OtKSycmTJlM",
+          "pub": {
+            "kem": "1pbN-JU3U4eQk18AMzQOXEf0GfodpuiTOzkvnX0Am18",
+            "sig": "MX8xlk9GMHsnWP6Sq4RCxd5w8YvGTNvRJwHro3jOgnk"
+          },
+          "seq": 23,
+          "ts": "2026-11-21T12:23:00.000Z",
+          "type": "user_certify",
+          "user": "01a1ee56-5e00-7757-8a78-5d39593d3817",
+          "v": 1
+        },
+        "sig": "64S15YSdbFNz2NKa_V1YbkN1fI-ADucClfvItP-s4D93rlg1EEpzUxVTjx6-JsSIMFWz4xxNgjSzZvIWvN4BAg"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "SLX__Lt23aKSxHJh_rm340KaPvxYPOJlR32AvrojoQM",
+          "role": "support",
+          "seq": 24,
+          "subject": "01a1ee56-5e00-7757-8a78-5d39593d3817",
+          "ts": "2026-11-21T12:24:00.000Z",
+          "type": "role_grant",
+          "v": 1
+        },
+        "sig": "5Aaf0DMaY7BmVXfT4NUJrjvd8fj8NMdoQKpIf99euu3XWmymSPL0hO0pXbjwS_2URZL73NqKrENMRyEkPfspBA"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "9IxNhVivwC7JIZ49vUBZlWYEzzGCqxnxs5piigeU1T4",
+          "pub": {
+            "kem": "oUq-RQDpIl_uanSjojZE9oBtX0CzzyEqO4bCAdjJJn0",
+            "sig": "6WQkMZql0b1_evZBjI3UXLIw3Ry4fr6ENJJe-y4gLLk"
+          },
+          "seq": 25,
+          "ts": "2026-11-21T12:25:00.000Z",
+          "type": "user_certify",
+          "user": "01a1ee56-5e00-7914-a63f-134e02e17b05",
+          "v": 1
+        },
+        "sig": "G_9ClkgfotKh0VgWeuDtbNVM1oIpdpl6ezuzymuCBn9dh_HWDnJUMXHCLX1-thRUqBix_B_9F2kjVCnhtX1GBw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "K-U_X1rCPAn0l71ZEcIghb1XbmywKfYtNRXWUoncodM",
+          "role": "support",
+          "seq": 26,
+          "subject": "01a1ee56-5e00-7914-a63f-134e02e17b05",
+          "ts": "2026-11-21T12:26:00.000Z",
+          "type": "role_grant",
+          "v": 1
+        },
+        "sig": "hGyVNgZTJc3LJddVfVbp3Rqpcg2OfxDkYfIKeokQd80C0L2U9iG1s2J4G2F0vdhlOFPRhQ7T2qiuy1qHiWc3Dw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "ItgsT6BMqpxPZIqI9VQMsD7914TDJeseL-XSLf7aKns",
+          "role": "support",
+          "seq": 27,
+          "subject": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c",
+          "ts": "2026-11-21T12:27:00.000Z",
+          "type": "role_grant",
+          "v": 1
+        },
+        "sig": "APqwxLqZ-GFm8Q73CPxb9dYos6mwr-bR1qpnWsIkwUPRaxJZy0m_GTx17Ux5wGFvIyv7f0ZOSt-0fGqcYlr6Aw"
+      },
+      {
+        "body": {
+          "by": "platform-root",
+          "prev": "6zN2KJwAvknWxpBPvSNPxbdhJSjGKz3W4eBwTd5xKMo",
+          "role": "support",
+          "seq": 28,
+          "subject": "01a1ee56-5e00-7914-a63f-134e02e17b05",
+          "ts": "2026-11-21T12:28:00.000Z",
+          "type": "role_revoke",
+          "v": 1
+        },
+        "sig": "6Nuv1BJ7IkOlMQgSbY6XANXKkjNmXHTXzmQeDdu9ukc2veMSQ1Eg8iUhpWyd8LzHMKFt_fxROvbMBv34Ia0-Cg"
       }
     ]
   },
@@ -1372,10 +1578,34 @@
       {
         "hash": "GO5QpmEklUAwB4Qvu_sju5Njm-rmTg95OtKSycmTJlM",
         "seq": 22
+      },
+      {
+        "hash": "SLX__Lt23aKSxHJh_rm340KaPvxYPOJlR32AvrojoQM",
+        "seq": 23
+      },
+      {
+        "hash": "9IxNhVivwC7JIZ49vUBZlWYEzzGCqxnxs5piigeU1T4",
+        "seq": 24
+      },
+      {
+        "hash": "K-U_X1rCPAn0l71ZEcIghb1XbmywKfYtNRXWUoncodM",
+        "seq": 25
+      },
+      {
+        "hash": "ItgsT6BMqpxPZIqI9VQMsD7914TDJeseL-XSLf7aKns",
+        "seq": 26
+      },
+      {
+        "hash": "6zN2KJwAvknWxpBPvSNPxbdhJSjGKz3W4eBwTd5xKMo",
+        "seq": 27
+      },
+      {
+        "hash": "zsCWpUjXwKfKyhN-hdPDIuMBZ4q_QVGyAAeE4aOJm3M",
+        "seq": 28
       }
     ],
     "log": {
-      "count": 23,
+      "count": 29,
       "name": "platform"
     },
     "platform_access": [
@@ -2630,6 +2860,573 @@
             "certified": true,
             "certify_seq": 12,
             "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 16,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "SLX__Lt23aKSxHJh_rm340KaPvxYPOJlR32AvrojoQM",
+          "seq": 23
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "operator_subscriptions": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "policies": {
+          "open_platform_access": false,
+          "open_platform_invites": true
+        },
+        "roles": [
+          {
+            "role": "operator",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          }
+        ],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 23,
+            "user": "01a1ee56-5e00-7757-8a78-5d39593d3817"
+          },
+          {
+            "certified": true,
+            "certify_seq": 16,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "9IxNhVivwC7JIZ49vUBZlWYEzzGCqxnxs5piigeU1T4",
+          "seq": 24
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "operator_subscriptions": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "policies": {
+          "open_platform_access": false,
+          "open_platform_invites": true
+        },
+        "roles": [
+          {
+            "role": "operator",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "role": "support",
+            "user": "01a1ee56-5e00-7757-8a78-5d39593d3817"
+          }
+        ],
+        "support": [
+          "01a1ee56-5e00-7757-8a78-5d39593d3817"
+        ],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 23,
+            "user": "01a1ee56-5e00-7757-8a78-5d39593d3817"
+          },
+          {
+            "certified": true,
+            "certify_seq": 16,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "K-U_X1rCPAn0l71ZEcIghb1XbmywKfYtNRXWUoncodM",
+          "seq": 25
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "operator_subscriptions": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "policies": {
+          "open_platform_access": false,
+          "open_platform_invites": true
+        },
+        "roles": [
+          {
+            "role": "operator",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "role": "support",
+            "user": "01a1ee56-5e00-7757-8a78-5d39593d3817"
+          }
+        ],
+        "support": [
+          "01a1ee56-5e00-7757-8a78-5d39593d3817"
+        ],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 23,
+            "user": "01a1ee56-5e00-7757-8a78-5d39593d3817"
+          },
+          {
+            "certified": true,
+            "certify_seq": 25,
+            "user": "01a1ee56-5e00-7914-a63f-134e02e17b05"
+          },
+          {
+            "certified": true,
+            "certify_seq": 16,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "ItgsT6BMqpxPZIqI9VQMsD7914TDJeseL-XSLf7aKns",
+          "seq": 26
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "operator_subscriptions": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "policies": {
+          "open_platform_access": false,
+          "open_platform_invites": true
+        },
+        "roles": [
+          {
+            "role": "operator",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "role": "support",
+            "user": "01a1ee56-5e00-7757-8a78-5d39593d3817"
+          },
+          {
+            "role": "support",
+            "user": "01a1ee56-5e00-7914-a63f-134e02e17b05"
+          }
+        ],
+        "support": [
+          "01a1ee56-5e00-7757-8a78-5d39593d3817",
+          "01a1ee56-5e00-7914-a63f-134e02e17b05"
+        ],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 23,
+            "user": "01a1ee56-5e00-7757-8a78-5d39593d3817"
+          },
+          {
+            "certified": true,
+            "certify_seq": 25,
+            "user": "01a1ee56-5e00-7914-a63f-134e02e17b05"
+          },
+          {
+            "certified": true,
+            "certify_seq": 16,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "6zN2KJwAvknWxpBPvSNPxbdhJSjGKz3W4eBwTd5xKMo",
+          "seq": 27
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "operator_subscriptions": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "policies": {
+          "open_platform_access": false,
+          "open_platform_invites": true
+        },
+        "roles": [
+          {
+            "role": "operator",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "role": "support",
+            "user": "01a1ee56-5e00-7757-8a78-5d39593d3817"
+          },
+          {
+            "role": "support",
+            "user": "01a1ee56-5e00-7914-a63f-134e02e17b05"
+          },
+          {
+            "role": "support",
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ],
+        "support": [
+          "01a1ee56-5e00-7757-8a78-5d39593d3817",
+          "01a1ee56-5e00-7914-a63f-134e02e17b05",
+          "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+        ],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 23,
+            "user": "01a1ee56-5e00-7757-8a78-5d39593d3817"
+          },
+          {
+            "certified": true,
+            "certify_seq": 25,
+            "user": "01a1ee56-5e00-7914-a63f-134e02e17b05"
+          },
+          {
+            "certified": true,
+            "certify_seq": 16,
+            "user": "01a1ee56-5e00-7b5b-9b9e-ba62125b6a72"
+          },
+          {
+            "certified": true,
+            "certify_seq": 13,
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ]
+      },
+      {
+        "devices": [
+          {
+            "certify_seq": 2,
+            "device": "01a1ee56-5e00-73ca-a67e-25beb91e6d26",
+            "status": "certified"
+          },
+          {
+            "certify_seq": 7,
+            "device": "01a1ee56-5e00-7c4b-8bac-2b46352f14c7",
+            "status": "decertified"
+          }
+        ],
+        "head": {
+          "hash": "zsCWpUjXwKfKyhN-hdPDIuMBZ4q_QVGyAAeE4aOJm3M",
+          "seq": 28
+        },
+        "invites": [
+          {
+            "certified_seq": null,
+            "invite_id": "PNWAu3DbY5ciMOOedG-P6Q",
+            "kind": "user",
+            "seq": 3
+          },
+          {
+            "certified_seq": 7,
+            "invite_id": "XJVW9SWGOvYGkDK3ImckgA",
+            "kind": "device",
+            "seq": 6
+          },
+          {
+            "certified_seq": null,
+            "invite_id": "YAXnzqeBSNsOYgi5qe2eBg",
+            "kind": "user",
+            "seq": 11
+          },
+          {
+            "certified_seq": 2,
+            "invite_id": "nwSvrQ15piDJGNP1KXc-yA",
+            "kind": "device",
+            "seq": 1
+          }
+        ],
+        "operator_subscriptions": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "org_access": {
+          "01a1ee56-5e00-73e9-8b24-6445d80ea4cc": false
+        },
+        "policies": {
+          "open_platform_access": false,
+          "open_platform_invites": true
+        },
+        "roles": [
+          {
+            "role": "operator",
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "role": "support",
+            "user": "01a1ee56-5e00-7757-8a78-5d39593d3817"
+          },
+          {
+            "role": "support",
+            "user": "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+          }
+        ],
+        "support": [
+          "01a1ee56-5e00-7757-8a78-5d39593d3817",
+          "01a1ee56-5e00-7f5a-ba33-ddaeee08c60c"
+        ],
+        "users": [
+          {
+            "certified": true,
+            "certify_seq": 12,
+            "user": "01a1ee56-5e00-73dd-ae4f-2dc5614b7565"
+          },
+          {
+            "certified": true,
+            "certify_seq": 23,
+            "user": "01a1ee56-5e00-7757-8a78-5d39593d3817"
+          },
+          {
+            "certified": true,
+            "certify_seq": 25,
+            "user": "01a1ee56-5e00-7914-a63f-134e02e17b05"
           },
           {
             "certified": true,

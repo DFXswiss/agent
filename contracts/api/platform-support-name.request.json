@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/platform-support-name.request.json",
+  "title": "PUT /v1/platform/support/{user} request",
+  "description": "The display name of a support person, set by the operator (03-api.md section 4.13, ADR-096). The hub refuses control characters (400 request_invalid).",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "additionalProperties": false
+}

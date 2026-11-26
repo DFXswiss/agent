@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/support-releases.response.json",
+  "title": "GET /v1/support/releases response",
+  "description": "The active releases of workgroups to support, for an active support person (03-api.md section 4.13, ADR-096); newest first, at most 1000 (ADR-086 section 2).",
+  "type": "object",
+  "properties": {
+    "releases": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "properties": {
+          "org_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "wg_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "access": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write"
+            ]
+          },
+          "granted_seq": {
+            "$ref": "../common.json#/$defs/seq"
+          },
+          "granted_at": {
+            "$ref": "../common.json#/$defs/time"
+          }
+        },
+        "required": [
+          "org_id",
+          "wg_id",
+          "access",
+          "granted_seq",
+          "granted_at"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "truncated": {
+      "type": "boolean",
+      "description": "more than 1000 releases exist; the newest 1000 are listed"
+    }
+  },
+  "required": [
+    "releases",
+    "truncated"
+  ],
+  "additionalProperties": false
+}

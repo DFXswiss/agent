@@ -4,7 +4,9 @@
 // create; the browser creates and uploads (`POST /v1/wraps`) only those the verified log confirms (W1/W2, an epoch
 // `catchUpEpochs` gives, recipient entitled now, not withheld by the transition rule `compatSkip`, recipient key from
 // the verified log – never from the hub):
-// - `org`/`wg` slots with the scope keys the user holds (`catchUpWraps` of `core/log`);
+// - `org`/`wg` slots with the scope keys the user holds (`catchUpWraps` of `core/log`), including every epoch of a
+//   workgroup released to DFX support for every person of the support roster of the verified platform log (ADR-096:
+//   their keys come from that log's root certifications, never from the hub);
 // - the user's own `cred` slots (devices entitled to the user's `CK`, 04-crypto.md section 5.2a): `CK` is opened from
 //   the user's own self-wrap of the newest epoch (signature checked with the own identity); slots of another owner
 //   or another epoch, and recipients the verified logs do not entitle (`mayWrapCred` over every verified org of the

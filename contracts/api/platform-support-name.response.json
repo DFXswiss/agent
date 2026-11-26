@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/platform-support-name.response.json",
+  "title": "PUT /v1/platform/support/{user} response",
+  "description": "The stored name and whether the person is in the roster now.",
+  "type": "object",
+  "properties": {
+    "user_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "active": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "user_id",
+    "name",
+    "active"
+  ],
+  "additionalProperties": false
+}

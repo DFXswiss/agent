@@ -2,7 +2,8 @@
 // `agent-request-v1` with key ID `platform-root`), exactly what `agent-hub platform invite-user` does. The test
 // platform root key is public (seed SHA-256("agent.dfx.swiss test platform root key"), decision WEB-01 12), so the
 // suite derives its private key. Parallel workers append to the same platform log: a `seq_conflict` re-reads the
-// log and tries again.
+// log and tries again. A `peer_outdated` (an active device has not announced a feature yet) is tried again for a
+// short while: a device that another spec has just enrolled announces its features right after the enrollment.
 import { b64uEncode } from '../../src/core/encoding/b64u';
 import { utf8 } from '../../src/core/encoding/bytes';
 import { formatSeconds, formatTime } from '../../src/core/encoding/time';
@@ -13,6 +14,8 @@ import { buildPlatformEntries, entryHash, type Entry, type PlatformFields } from
 import { requestText, sha256Hex } from '../../src/core/net/responseCheck';
 
 const ROOT = 'platform-root';
+/** How long a `peer_outdated` refusal is tried again (a just enrolled device announces its features at once). */
+const OUTDATED_WAIT_MS = 5_000;
 const rootKey = async () => ed25519KeyPair(await sha256(utf8('agent.dfx.swiss test platform root key')));
 
 export async function rootRequest(origin: string, method: string, target: string, body?: unknown): Promise<Response> {
@@ -34,6 +37,7 @@ export async function rootRequest(origin: string, method: string, target: string
 /** Appends platform-log entries after the current head (the `root` entry first on an empty log). */
 export async function appendPlatform(origin: string, fields: readonly PlatformFields[]): Promise<void> {
   const key = await rootKey();
+  const outdatedUntil = Date.now() + OUTDATED_WAIT_MS;
   for (let attempt = 0; attempt < 20; attempt += 1) {
     const listing = (await (await rootRequest(origin, 'GET', '/v1/platform/enrollments')).json()) as { log: Entry[] };
     const log = listing.log;
@@ -43,6 +47,11 @@ export async function appendPlatform(origin: string, fields: readonly PlatformFi
     const response = await rootRequest(origin, 'POST', '/v1/platform/log', { expected_seq: log.length, entries });
     if (response.ok) return;
     const refusal = (await response.json()) as { error?: string };
+    if (refusal.error === 'peer_outdated' && Date.now() < outdatedUntil) {
+      attempt -= 1;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      continue;
+    }
     if (refusal.error !== 'seq_conflict') throw new Error(`platform log append refused: ${JSON.stringify(refusal)}`);
   }
   throw new Error('platform log append kept conflicting');

@@ -55,6 +55,9 @@ CATEGORIES: dict[str, str] = {
     "booked provider spend and the cost reported per session for the next booking",
     "shared": "Shared sessions (ADR-083): which person triggered an operation, a session and a consumption item, the "
     "daily consumption sum per person, which prompt came through the author's agent, withdrawal requests of prompts",
+    "support": "Support (ADR-096): which users hold the role support and the display names the operator set for "
+    "them, which workgroups are released to support with which access since when, the first access of a person per "
+    "release",
     "contexts": "Context checkpoints (ADR-072): IDs, epoch, chunk counts, sizes, digest and chunk hashes, the signed "
     "manifest, times; pull-request links: opaque tag, epoch, task and session or the user who linked it, the sealed "
     "body of fixed length (ADR-084); restore outcomes",
@@ -164,6 +167,9 @@ passkey: auth | credential_id:bytes user_id:uuid@ids public_key:bytes sign_count
 platform_entry: logs | seq:number entry_text:json entry_hash:code type:code subject_id:uuid received_at:time
 platform_policy: logs | name:code on:flag seq:number
 platform_role: logs | user_id:uuid role:code granted_seq:number revoked_seq:number
+support_access: support | wg_id:uuid user_id:uuid granted_seq:number first_at:time
+support_person: support | user_id:uuid active:flag name:operator changed_at:time
+support_release: support | wg_id:uuid org_id:uuid access:code granted_seq:number granted_at:time
 pr_link: contexts | wg_id:uuid@ids epoch:number tag:code task_id:uuid@ids session_id:uuid@ids created_at:time
   sealed:code@ciphertext linked_by:uuid@ids
 principal: ids | id:uuid kind:code created_at:time disabled_at:time

@@ -26,6 +26,9 @@ and the platform role `operator` (the hub refuses to append them while an active
 browser tools, the reach of reads) from the section `agent_profiles` of the device state. The hub refuses to assign a
 profile to a task while an active device assigned to a workgroup of the org has not announced it
 (`agent_hub.profiles.routes`, `409 peer_outdated`).
+`log.support` (ADR-096): the runner verifies the membership-log entries `support_grant`/`support_revoke` and the
+platform role `support` (the hub refuses to append them while an active device - of the org, or for the platform log
+of any kind - has not announced it: an older runner would stop at the unknown type or value).
 
 `prompt.withdraw` (KOR-46, ADR-083 section 3): the runner withdraws a pending prompt listed in `prompt_queue.withdrawn`
 of `GET /v1/device/state` and reports `session.prompt_withdrawn`. The hub refuses to request a withdrawal from a device
@@ -48,6 +51,8 @@ LOG_ORG_ASSIGN = "log.org_assign"
 LOG_POLICY = "log.policy"
 """The runner verifies the platform log with `platform_policy`, `org_operator_subscriptions` and the role `operator`
 (ADR-079)."""
+LOG_SUPPORT = "log.support"
+"""The runner verifies the support release (ADR-096): `support_grant`/`support_revoke` and the role `support`."""
 VM_CHOICE = "vm.choice"
 """The runner chooses the VM of each session and names it in `session_transition` (ADR-075 section 4)."""
 GITHUB_IDENTITIES = "github.identities"

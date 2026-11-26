@@ -118,6 +118,11 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | workgroups-grant | screens/workgroups | `wg grant` | done |
 | workgroups-ungrant | screens/workgroups | `wg ungrant` | done |
 | workgroups-archive | screens/workgroups | `wg archive` | done |
+| support-release-grant | screens/wg-settings (the release dialog: release the workgroup to DFX support for reading or writing, every held epoch wrapped to each person of the root-signed support roster and the `support.info` event with the names support needs; a second release with the other access changes it; ADR-096) | `wg support grant --wg --access` | done |
+| support-release-revoke | screens/wg-settings (end the release; the workgroup's key changes in the same batch, ADR-096 §3) | `wg support revoke --wg` | done |
+| support-release-list | screens/wg-settings (the active releases with access and since, and the current support persons by name and mark, ADR-096) | `wg support list --wg` | done |
+| support-area | screens/support (the support area of a support person: the releases given to support, ADR-096 §4) | (open: ADR-096 §6: decision of the owner – the agent of a support person is a sub-principal in that person's own organizations, not in the support roster; proposed: it may act as support under the same roster check, audited as "Support <Name> (Agent)", in a later package; until the owner decides, support acts only in person) | n/a |
+| support-read-write | screens/support (the support view of a released workgroup: its tasks and conversations, prompts with a write release; the workgroup whiteboard through `GET /v1/whiteboards` and `POST /v1/events`, ADR-096 §4) | (open: ADR-096 §6: decision of the owner – the agent of a support person is a sub-principal in that person's own organizations, not in the support roster; proposed: it may act as support under the same roster check, audited as "Support <Name> (Agent)", in a later package; until the owner decides, support acts only in person) | n/a |
 | wg-settings | screens/wg-settings | `repos list --wg`, `repos allow\|disallow --wg --repo`, `wg settings --wg --protected-branch --pr-draft-default` | done |
 | devices-list | screens/devices | `device list` (devices, VMs, sessions, limits) | done |
 | devices-assign | screens/devices | `device assign --wg\|--org` | done |
@@ -257,13 +262,15 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/orgs/{org}/audit/verify` | audit |
 | `GET /v1/orgs/{org}/billing` | settings-billing, credit-balance, consumption-per-person |
 | `GET /v1/orgs/{org}/quotas` | model-quotas, attention-quota-counter, subscriptions-list |
+| `GET /v1/orgs/{org}` | key-rotation |
 | `GET /v1/orgs/{org}/catch-up` | key-catch-up |
 | `GET /v1/orgs/{org}/devices` | devices-list, task-runtime |
 | `GET /v1/orgs/{org}/invites` | members-list, members-invite-revoke, members-invite-states |
 | `POST /v1/orgs/{org}/invites` | members-invite, devices-invite, devices-own-mac |
 | `POST /v1/orgs/{org}/invites/{invite}/revoke` | members-invite-revoke |
 | `GET /v1/orgs/{org}/log` | org-list, members-list |
-| `POST /v1/orgs/{org}/log` | org-join, members-role, members-remove, members-leave, key-rotation, workgroups-create, workgroups-grant, workgroups-ungrant, workgroups-archive, devices-assign, devices-unassign, devices-own-mac-remove |
+| `GET /v1/orgs/{org}/support` | support-release-list |
+| `POST /v1/orgs/{org}/log` | org-join, members-role, members-remove, members-leave, key-rotation, workgroups-create, workgroups-grant, workgroups-ungrant, workgroups-archive, support-release-grant, support-release-revoke, devices-assign, devices-unassign, devices-own-mac-remove |
 | `POST /v1/passkeys/login/begin` | login-unlock |
 | `POST /v1/passkeys/login/finish` | login-unlock |
 | `POST /v1/passkeys/register/begin` | register, passkey-add |
@@ -309,6 +316,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/workgroups/{wg}/pr-links` | pr-link-address |
 | `GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag}` | pr-view, pr-link-address, pr-unlink, pr-fix-conflicts |
 | `DELETE /v1/workgroups/{wg}/pr-links/{epoch}/{tag}` | pr-unlink |
+| `GET /v1/support/releases` | support-area, support-read-write |
 | `GET /v1/wraps` | task-view, credential-list, key-catch-up |
 | `POST /v1/wraps` | devices-assign, key-catch-up, org-join |
 | `GET /v1/workgroups/{wg}/agent-profiles` | agent-profiles, task-agent-profile |

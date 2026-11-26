@@ -48,7 +48,7 @@ from agent_runner.crypto.log.platform import (
     apply_platform,
     verify_platform_log,
 )
-from agent_runner.crypto.log.state import ORG, WG, OrgState, Principal
+from agent_runner.crypto.log.state import ORG, WG, OrgState, Principal, Roster
 from agent_runner.crypto.log.verify import VerifiedLog, apply, verify_log
 from agent_runner.sync import outbox
 
@@ -222,6 +222,21 @@ class OrgBook:
         if state is None or log is None:
             return frozenset()
         return state.excluded(log.state)
+
+    def support_authors(self) -> Roster:
+        """The support persons of the verified platform log, also former ones (ADR-096: authors of support events)."""
+        state = self.platform_state
+        return {} if state is None else state.support_authors()
+
+    def support_roster(self) -> Roster:
+        """The current support persons (ADR-096: recipients of the released workgroups' epochs in catch-up)."""
+        state = self.platform_state
+        return {} if state is None else state.support_roster()
+
+    def author_sig(self, org: str, lh: int, author: str) -> str:
+        """The signing key of an event author at `lh`: a principal of the org log, else a support person."""
+        found = self.logs[org].states[lh].principals.get(author)
+        return found.sig if found is not None else self.support_authors()[author].sig
 
     def assignments(self) -> list[tuple[str, str]]:
         """`(org, wg)` of every workgroup this device is assigned to in an acting org, sorted."""

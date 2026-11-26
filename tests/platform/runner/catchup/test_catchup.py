@@ -389,3 +389,20 @@ def test_a_single_refused_wrap_that_is_not_a_rule_error_propagates(rig: Rig) -> 
             assert calls == [1]
 
     asyncio.run(body())
+
+
+def test_support_persons_are_planned_with_keys_from_their_certification() -> None:
+    """ADR-096: every epoch of a released workgroup is planned for the persons of the support roster, wrapped to the
+    X25519 key of their root certification."""
+    support = VECTORS["support"]["catch_up"]
+    [vector] = [p for p in support["plans"] if label_of(p["wrapper"]) == "device"]
+    book = vector_book(vector["wrapper"], support["log"])
+    book.platform = verify_platform_log(VECTORS["logs"]["platform"][: support["platform"]["count"]], v.sig_pk("root"))
+    expected = [slot(item) for item in vector["missing"]]
+    tom = VECTORS["identities"]["tom"]
+    assert any(item.recipient == tom["id"] for item in expected)
+    held = {(s.scope, s.scope_id, s.epoch) for s in expected}
+    memory = plan.Memory(done={slot(item) for item in support["existing"]}, clock=lambda: 0.0)
+    assert plan.plan(book, held, memory) == expected
+    target = next(item for item in expected if item.recipient == tom["id"])
+    assert plan.recipient_kem(book, target) == tom["kem"]

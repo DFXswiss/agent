@@ -16,6 +16,8 @@ Every event is checked before anything acts on it, in this order:
    `log_fork` (the org is stopped, alerted and audited like in reconcile step 2);
 3. E3-E5 against the verified log at `lh` (`crypto.log.events.check_event`: kind for scope and author kind, author
    signature, the kind's right at `lh` - `wg:write` for prompts and settings), decertified platform devices excluded;
+   an author outside the org log is checked against the support persons of the verified platform log (ADR-096; a
+   refusal `author_not_writer` of such an author refreshes the platform log once and checks again);
 4. only for kinds a consumer is registered for: the scope key of the header's epoch (one wrap refresh per pull when
    it is missing). Still missing: if the log says the device held that epoch, the scope waits for the wrap (held,
    retried at the next pull); otherwise (an epoch before the device's assignment) the event is skipped with a log
@@ -289,10 +291,27 @@ class Inbox:
         log = book.log(org)
         # the org is acting (its scope was pulled) and a refresh that stopped it raised `_Stopped` above
         assert log is not None
+        return await self._check_event(run, conn, event, log, org=org, author=str(checked_header["author"]))
+
+    async def _check_event(
+        self, run: Run, conn: AsyncConnection[Any], event: object, log: VerifiedLog, *, org: str, author: str
+    ) -> tuple[dict[str, object], VerifiedLog] | _Rejected:
+        """Step 3; an author outside the org log may be a support person this copy of the platform log does not know
+        yet (ADR-096): a refusal `author_not_writer` refreshes the platform log once and checks again."""
+        book: OrgBook = run.book
         try:
-            checked, _rule = check_event(event, log, excluded=book.excluded(org))
+            checked, _rule = check_event(event, log, excluded=book.excluded(org), support=book.support_roster())
         except CryptoError as refused:
-            return _Rejected(refused.code)
+            if refused.code != "author_not_writer" or author in log.state.principals:
+                return _Rejected(refused.code)
+        else:
+            return checked, log
+        async with book.lock:
+            await logs.refresh_platform(run, conn)
+        try:
+            checked, _rule = check_event(event, log, excluded=book.excluded(org), support=book.support_roster())
+        except CryptoError as again:
+            return _Rejected(again.code)
         return checked, log
 
     async def _verify(
@@ -317,9 +336,9 @@ class Inbox:
         if key is None:
             self.line(f"key_missing scope={item.scope_id} seq={item.scope_seq} epoch={epoch}")
             return None
-        author = log.states[cast(int, header["lh"])].principals[str(header["author"])]
+        author_sig = run.book.author_sig(org, cast(int, header["lh"]), str(header["author"]))
         try:
-            body = parse_json(open_event(key, item.event, b64u_decode(author.sig)))
+            body = parse_json(open_event(key, item.event, b64u_decode(author_sig)))
         except CryptoError as refused:
             return _Rejected(refused.code)
         if not isinstance(body, dict):

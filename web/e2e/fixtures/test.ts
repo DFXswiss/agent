@@ -91,7 +91,8 @@ export const test = base.extend<Fixtures, { lane: string }>({
   // entered before any test or `beforeAll` of the worker (`browserName` only gives the required destructuring pattern)
   lane: [
     async ({ browserName: _browserName }, use, info) => {
-      await use(await enterLane(info.project.name));
+      // a platform E2E run (e2e/platform, `E2E_CONTROL_URL`) brings one hub of its own and no lanes of this suite
+      await use(process.env.E2E_CONTROL_URL ? 'platform' : await enterLane(info.project.name));
     },
     { scope: 'worker', auto: true, timeout: 26 * 60_000 },
   ],

@@ -298,7 +298,8 @@ def add_prompt(
         found = connection.execute("SELECT wg_id FROM hub.task WHERE id = %s", (task_id,)).fetchone()
         if found is None:
             raise HubError("not_found")
-        rights.require(connection, user, rights.TASK_WRITE, wg_id=found[0], write=True)
+        # a support person with a `write` release prompts in an existing task (ADR-096 section 4)
+        rights.require(connection, user, rights.TASK_WRITE, wg_id=found[0], write=True, support_write=True)
         check_event(event, "/event", "prompt", task_id, found[0])
         now = _prompt_time(connection, context, task_id)
         stored = append_events(

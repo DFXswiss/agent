@@ -3155,6 +3155,61 @@
       "read_resource": null,
       "streaming": false,
       "owner": "KOR-51"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/support/releases",
+      "name": "support-releases",
+      "section": "4.14",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/support-releases.request.json",
+      "response": "api/support-releases.response.json",
+      "read_resource": "support.releases",
+      "streaming": false,
+      "owner": "KOR-56"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/support",
+      "name": "org-support",
+      "section": "4.14",
+      "auth": "browser",
+      "rights": [
+        "org:member"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/org-support.request.json",
+      "response": "api/org-support.response.json",
+      "read_resource": "org.support",
+      "streaming": false,
+      "owner": "KOR-56"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/platform/support/{user}",
+      "name": "platform-support-name",
+      "section": "4.14",
+      "auth": "root",
+      "rights": [
+        "root"
+      ],
+      "path_params": {
+        "user": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/platform-support-name.request.json",
+      "response": "api/platform-support-name.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-56"
     }
   ]
 }

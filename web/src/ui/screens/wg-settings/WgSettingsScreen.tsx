@@ -6,7 +6,8 @@
 // user edited it, a newer event shows the concurrent-edit warning: show the newer settings, or save the own ones
 // anyway. Readers see the values without any control (06-web.md section 1). A workgroup the user cannot read is "not
 // found" (existence is not revealed). Below the form: the workgroup's default GitHub identity (`GithubDefault.tsx`,
-// ADR-078), editable by the organization's admins and the writers of the workgroup.
+// ADR-078), editable by the organization's admins and the writers of the workgroup, and for the same users the release
+// of the workgroup to DFX support (`SupportSection.tsx`, ADR-096).
 import { type FormEvent, useEffect, useId, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { WG } from '../../../core/log/state';
@@ -32,6 +33,7 @@ import { useDirectory, useOrgView } from '../tasks/hooks';
 import { GithubDefault } from './GithubDefault';
 import { MergeFields } from './MergeFields';
 import { ProfilesSection } from './ProfilesSection';
+import { SupportSection } from './SupportSection';
 
 interface Draft {
   readonly input: SettingsInput;
@@ -309,6 +311,7 @@ export function WgSettingsScreen() {
         editable={state.isAdmin(userId) || state.canWriteWg(userId, wg)}
       />
       <ProfilesSection org={org} wg={wg} writer={state.canWriteWg(userId, wg)} admin={state.isAdmin(userId)} />
+      {state.canRelease(userId, wg) && <SupportSection org={org} wg={wg} state={state} directory={directory} />}
     </main>
   );
 }

@@ -30,6 +30,7 @@ from agent_hub.log.state import ORG, WG
 from agent_hub.log.verify import VerifiedLog
 from agent_hub.log.wraps import CRED, WRAP_KEYS, WrapSlot, check_cred_wrap, check_wrap, cred_readers
 from agent_hub.orgs import logs
+from agent_hub.support import store as support
 
 Connection = psycopg.Connection[Any]
 
@@ -107,7 +108,8 @@ def check_one(connection: Connection, loaded: _Logs, wrap: object, wrapper: str)
     if org_id is None:
         fail("wrap_unauthorized")
     log = loaded.of(org_id)
-    return check_wrap(wrap, wrapper, log, loaded.excluded(log), require_active=True)
+    roster = support.roster(loaded.platform)  # support persons of a released workgroup (ADR-096)
+    return check_wrap(wrap, wrapper, log, loaded.excluded(log), require_active=True, roster=roster)
 
 
 def org_cred_readers(connection: Connection, org_id: UUID, root_key: bytes) -> frozenset[str]:

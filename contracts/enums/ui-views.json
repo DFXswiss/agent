@@ -69,7 +69,7 @@
     "login": ["/login"],
     "recover": ["/recover"],
     "connect": ["/connect"],
-    "other": ["/", "*"]
+    "other": ["/", "*", "/support", "/support/:org/:wg", "/support/:org/:wg/:task"]
   },
   "buckets_ms": [200, 500, 1000, 2000, 5000, 10000, 30000],
   "limits": {

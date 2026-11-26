@@ -22,5 +22,9 @@
   "give.label": "The person's name",
   "give.hint": "Every member sees this name until the person sets their own – which happens by itself as soon as they open the organization.",
   "give.confirm": "Save name",
-  "give.invalid": "Please enter a name of 1 to 80 characters."
+  "give.invalid": "Please enter a name of 1 to 80 characters.",
+  "support.named": "Support {name}",
+  "support.marked": "Support {mark}",
+  "support.full": "Support {name} {mark}",
+  "support.plain": "Support"
 }

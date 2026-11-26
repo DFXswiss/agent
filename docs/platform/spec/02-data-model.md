@@ -58,7 +58,10 @@ The community tables (`community_*`, migration 0014) are specified in `14-commun
 | `wg_device` [P] | (`wg_id`,`device_id`) PK, `assigned_seq`, `unassigned_seq` NULL | effective assignments: explicit and through the organization (ADR-075) |
 | `org_device` [P] **(new, ADR-075)** | (`org_id`,`device_id`) PK, `assigned_seq`, `unassigned_seq` NULL | assignments to the whole organization |
 | `wg_placement` **(new, ADR-075)** | `wg_id` PK, `device_id`, `vm_id` NULL, `set_by`, `set_at` | the workgroup's default device and VM for new tasks |
-| `platform_role` [P] | (`user_id`,`role`) PK, `granted_seq`, `revoked_seq` NULL | role `inviter` or `operator` (ADR-079) |
+| `platform_role` [P] | (`user_id`,`role`) PK, `granted_seq`, `revoked_seq` NULL | role `inviter`, `operator` (ADR-079) or `support` (ADR-096) |
+| `support_person` [P] | `user_id` PK, `active` (in the support roster of the verified platform log), `name` NULL (1–64, set by the operator), `changed_at` | ADR-096, hub migration 0038; rebuilt from the platform log, the name kept |
+| `support_release` [P] | `wg_id` PK, `org_id`, `access` CHECK in (`read`,`write`), `granted_seq`, `granted_at` | the active `support_grant` per workgroup (ADR-096), a projection of the membership log |
+| `support_access` | (`wg_id`,`user_id`,`granted_seq`) PK, `first_at` | the first access of a support person under a release (the notification `support.access` once) |
 | `platform_policy` [P] | `name` PK (`open_platform_access`, `open_platform_invites`), `on` bool, `seq` | the switches of the platform log (ADR-079, migration 0023); a switch without a row is off |
 | `scope_epoch` | (`scope`,`scope_id`,`epoch`) PK, `created_at`, `created_seq` NULL | scope ∈ `org`,`wg`,`cred`; current = max epoch |
 | `key_wrap` | (`scope`,`scope_id`,`epoch`,`recipient_id`) PK, `wrap` bytea, `wrapped_by`, `sig` bytea, `created_at` | insert-only by convention; `org`/`wg` wraps are deleted when the recipient is removed from the org, `cred` wraps are kept (the browser rotates `CK` away from holders it does not entitle, `06-web.md` §11 job 5, KOR-04) |
@@ -151,7 +154,7 @@ children numbered by `created_at`, `id`); the partial index `task_open_owner` (`
 |---|---|---|
 | `whiteboard_entry` [P] | `id` PK (= `ref`), `org_id`, `level` CHECK in (`org`,`workgroup`,`task`), `wg_id` NULL, `task_id` NULL, `author_id`, `created_event_id`, `latest_event_id`, `created_at`, `updated_at`, `deleted` bool, `notify` bool | projection of whiteboard events (history = the events) |
 | `session_ping` | `id` PK, `session_id`, `kind` CHECK in (`whiteboard.entry`,`subagent.finished`,`operation.finished`), `level` NULL, `ref`, `created_at`, `delivered_at` NULL | durable content-free pings; undelivered rows are returned in `GET /v1/device/state`; set delivered by the outbox audit item `ping.delivered`; the hub writes only `whiteboard.entry` rows (runner pings live in the runner's `ping` table, KOR-07) |
-| `notification` | `id` PK, `recipient_id`, `kind` CHECK in (`whiteboard.entry`,`task.idle`,`task.failed`,`task.attention`,`invite.accepted`,`rotation.required`,`agent.account_change`,`org.admitted`,`operator.request`,`device.needed`,`prompt.waiting_for_device`), `org_id` (NULL only for `agent.account_change` and `operator.request`, ADR-079), `wg_id` NULL, `task_id` NULL, `ref` NULL, `created_at`, `read_at` NULL | content-free |
+| `notification` | `id` PK, `recipient_id`, `kind` CHECK in (`whiteboard.entry`,`task.idle`,`task.failed`,`task.attention`,`invite.accepted`,`rotation.required`,`agent.account_change`,`org.admitted`,`operator.request`,`device.needed`,`prompt.waiting_for_device`,`support.release`,`support.access`,`support.people`), `org_id` (NULL only for `agent.account_change` and `operator.request`, ADR-079), `wg_id` NULL, `task_id` NULL, `ref` NULL, `created_at`, `read_at` NULL | content-free |
 
 ### 2.7 Credentials and device requests
 

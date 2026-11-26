@@ -511,3 +511,25 @@ def test_a_blocked_scope_does_not_starve_the_others(rig: Rig) -> None:
             assert await cursors(env) == {spec.org: 3}
 
     asyncio.run(body())
+
+
+def test_a_support_author_unknown_to_the_platform_copy_refreshes_it_once(rig: Rig) -> None:
+    """ADR-096: a prompt of a support person the device's platform log does not know yet is checked again after one
+    refresh of the platform log; an author that is neither a member nor support stays refused."""
+
+    async def body() -> None:
+        world, spec = one_org()
+        spec.log.add("support_grant", "alice", wg=spec.default_wg, access="write")  # 5
+        async with rig.env(world) as env:
+            recorder = Recorder()
+            inbox = await ready(env, recorder)
+            world.platform.add("user_certify", user=pid("sam"), pub=v.pub("sam"))  # 3
+            world.platform.add("role_grant", subject=pid("sam"), role="support")  # 4
+            world.add_event(spec.default_wg, 1, prompt(spec, "sam", label="support", lh=5))
+            world.add_event(spec.default_wg, 2, prompt(spec, "erin", label="stranger", lh=5))
+            assert await inbox.pull_all() == 2
+            assert [(event.author, event.body["text"]) for event in recorder.seen] == [(pid("sam"), "Grüße support")]
+            assert await rejections(env) == [(f"{spec.default_wg}:2", "author_not_writer")]
+            assert env.context.org_book.support_roster() == env.context.org_book.support_authors()
+
+    asyncio.run(body())

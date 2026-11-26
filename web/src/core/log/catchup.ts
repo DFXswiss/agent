@@ -7,7 +7,9 @@
 // reads a workgroup by inheritance gets every epoch of it (`catchUpEpochs`, ADR-058 section 2). The active agent of a
 // user (ADR-082 section 9.4) gets what its user gets, and in addition every slot its user has since its current
 // membership (`agentSlots`: also older epochs delivered on request or after a promotion, but none current before the
-// user's last `accept`/`admit`; for `cred` every CK epoch the owner has a wrap of).
+// user's last `accept`/`admit`; for `cred` every CK epoch the owner has a wrap of). A person of the support roster
+// (ADR-096) gets every epoch of every workgroup released to support (`supportSlots`), so a person that joins support
+// later receives the existing releases from any online holder.
 //
 // Transition rule (ADR-058 section 2, `compatSkip`): until every runner verifies ADR-058, the browser does not wrap a
 // `wg` key for a device when its own user reads that workgroup only by inheritance and did not create the epoch (an
@@ -17,7 +19,7 @@ import type { Identity } from '../crypto/keys';
 import type { Secret } from '../crypto/secret';
 import { signWrap, wrapKey } from '../crypto/wrap';
 import { excludedFor, type PlatformState } from './platform';
-import { DEVICE, epochKey, type OrgState, WG } from './state';
+import { DEVICE, epochKey, NO_ROSTER, type OrgState, type Roster, WG } from './state';
 import type { VerifiedLog } from './verify';
 import {
   compareSlots,
@@ -75,15 +77,30 @@ function joinedEpoch(log: VerifiedLog, user: string, scope: string, scopeId: str
 const uniqueSorted = (slots: Iterable<WrapSlot>): WrapSlot[] =>
   [...new Map([...slots].map((slot) => [slotKey(slot), slot])).values()].sort(compareSlots);
 
+/** Every epoch of every workgroup released to support, for every person of the roster (ADR-096). */
+export function supportSlots(state: OrgState, roster: Roster): WrapSlot[] {
+  return [...state.support.keys()].flatMap((wg) =>
+    [...roster.keys()].flatMap((recipient) =>
+      Array.from({ length: state.epoch(WG, wg) }, (_, index) => ({
+        scope: WG,
+        scope_id: wg,
+        epoch: index + 1,
+        recipient,
+      })),
+    ),
+  );
+}
+
 /**
- * Sorted `org`/`wg` slots (current epochs, `catchUpEpochs`, and the slots of agents, `agentSlots`) without a wrap that
- * `wrapper` may create.
+ * Sorted `org`/`wg` slots (current epochs, `catchUpEpochs`, the slots of agents, `agentSlots`, and every epoch of a
+ * released workgroup for the support persons of `roster`, `supportSlots`) without a wrap that `wrapper` may create.
  */
 export function missingWraps(
   log: VerifiedLog,
   wrapper: string,
   existing: Iterable<WrapSlot>,
   excluded: Iterable<string> = [],
+  roster: Roster = NO_ROSTER,
 ): WrapSlot[] {
   const known = [...existing];
   const have = new Set(known.map(slotKey));
@@ -99,8 +116,8 @@ export function missingWraps(
       })),
     ),
   );
-  return uniqueSorted([...slots, ...agentSlots(log, known)]).filter(
-    (slot) => !have.has(slotKey(slot)) && mayWrap(log, slot, wrapper, skip),
+  return uniqueSorted([...slots, ...agentSlots(log, known), ...supportSlots(state, roster)]).filter(
+    (slot) => !have.has(slotKey(slot)) && mayWrap(log, slot, wrapper, skip, roster),
   );
 }
 
@@ -145,8 +162,10 @@ const isSlot = (slot: unknown): slot is WrapSlot => {
  * user gets, or one its user held by the log (`epochHolders`) since its current membership (the hub's `agentSlots`
  * come from the user's wraps, which the client cannot see).
  */
-function confirmedEpoch(log: VerifiedLog, slot: WrapSlot): boolean {
+function confirmedEpoch(log: VerifiedLog, slot: WrapSlot, roster: Roster): boolean {
   const state = log.state;
+  // a support person gets every epoch of a released workgroup (`supportSlots`; `mayWrap` checks the range)
+  if (slot.scope === WG && state.supportReads(roster, slot.recipient, slot.scope_id)) return true;
   const own = (recipient: string) => catchUpEpochs(state, slot.scope, slot.scope_id, recipient).includes(slot.epoch);
   if (own(slot.recipient)) return true;
   const user = state.member(slot.recipient)?.parent ?? null;
@@ -158,7 +177,7 @@ function confirmedEpoch(log: VerifiedLog, slot: WrapSlot): boolean {
 /**
  * The slots of the hub's catch-up answer that the verified log confirms: well-formed, an epoch `confirmedEpoch` gives
  * the recipient (the current one; every epoch for an admin reading a workgroup by inheritance; for an agent the
- * epochs of its user), recipient entitled now, `wrapper` allowed (W1/W2) and not withheld by the transition rule
+ * epochs of its user; every epoch of a released workgroup for a person of `roster`, ADR-096), recipient entitled now, `wrapper` allowed (W1/W2) and not withheld by the transition rule
  * (`compatSkip`). Anything else is dropped (a malicious hub could ask for a wrap to an outsider or for history).
  * Sorted, without duplicates.
  */
@@ -167,24 +186,35 @@ export function confirmedSlots(
   wrapper: string,
   offered: Iterable<unknown>,
   excluded: Iterable<string> = [],
+  roster: Roster = NO_ROSTER,
 ): WrapSlot[] {
   const skip = [...excluded];
   const state = log.state;
   const unique = new Map([...offered].filter(isSlot).map((slot) => [slotKey(slot), slot]));
   return [...unique.values()]
     .filter(
-      (slot) => confirmedEpoch(log, slot) && mayWrap(log, slot, wrapper, skip) && !compatSkip(state, wrapper, slot),
+      (slot) =>
+        confirmedEpoch(log, slot, roster) &&
+        mayWrap(log, slot, wrapper, skip, roster) &&
+        !compatSkip(state, wrapper, slot),
     )
     .sort(compareSlots);
 }
 
-/** The X25519 key (b64u) of a principal from the verified states (null if no state knows it). */
-export function recipientKem(states: readonly OrgState[], principal: string): string | null {
+/**
+ * The X25519 key (b64u) of a principal from the verified states, else of a support person from the roster of the
+ * verified platform log (ADR-096; null if neither knows it).
+ */
+export function recipientKem(
+  states: readonly OrgState[],
+  principal: string,
+  roster: Roster = NO_ROSTER,
+): string | null {
   for (const state of states) {
     const found = state.principals.get(principal);
     if (found !== undefined) return found.kem;
   }
-  return null;
+  return roster.get(principal)?.kem ?? null;
 }
 
 /**
@@ -196,11 +226,12 @@ export async function buildWraps(
   slots: readonly WrapSlot[],
   keys: KeyRing,
   states: readonly OrgState[],
+  roster: Roster = NO_ROSTER,
 ): Promise<WrapRecord[]> {
   const out: WrapRecord[] = [];
   for (const slot of slots) {
     const key = keys(slot.scope, slot.scope_id, slot.epoch);
-    const kem = recipientKem(states, slot.recipient);
+    const kem = recipientKem(states, slot.recipient, roster);
     if (key === null || kem === null) continue;
     const wrap = await wrapKey(b64uDecode(kem), slot, key);
     const sig = await signWrap(wrapper.sig.privateKey, slot, wrap);
@@ -218,7 +249,8 @@ export async function buildWraps(
 
 /**
  * Catch-up job: the wraps to `POST /v1/wraps` for the hub's offer, after checking it against the verified log;
- * `platform` is the verified platform state (required once the org has platform devices, `excludedFor`).
+ * `platform` is the verified platform state (required once the org has platform devices, `excludedFor`; its support
+ * roster names the support persons and their keys, ADR-096).
  */
 export async function catchUpWraps(
   log: VerifiedLog,
@@ -229,5 +261,7 @@ export async function catchUpWraps(
   platform: PlatformState | null,
 ): Promise<WrapRecord[]> {
   const excluded = excludedFor(platform, log.state);
-  return await buildWraps(wrapper, confirmedSlots(log, wrapperId, offered, excluded), keys, [log.state]);
+  const roster = platform?.supportRoster() ?? NO_ROSTER;
+  const slots = confirmedSlots(log, wrapperId, offered, excluded, roster);
+  return await buildWraps(wrapper, slots, keys, [log.state], roster);
 }

@@ -20,6 +20,10 @@ holders' catch-up.
 With `held_only` the wraps for newly entitled principals cover only the current epochs the user holds (an assignment
 to the whole organization wraps `OK` and every `WK` the admin has; the remaining keys reach the device by catch-up,
 ADR-075 section 5); otherwise a missing key refuses the batch (`epoch_stale`).
+
+`support` is the support roster of the verified platform log (ADR-096): a `support_grant` of the batch wraps every
+epoch of its workgroup the user holds to every person of the roster that is no reader of it (with the keys of the
+person's root certification; epochs the user lacks follow by catch-up), and the check accepts those wraps.
 """
 
 from __future__ import annotations
@@ -39,7 +43,7 @@ from agent_runner.crypto.log.batch import check_batch
 from agent_runner.crypto.log.entries import VERSION, Head, entry_hash, sign_log_entry
 from agent_runner.crypto.log.platform import PlatformState
 from agent_runner.crypto.log.rotation import lost, self_owed
-from agent_runner.crypto.log.state import AGENT, ORG, WG, OrgState, Scope
+from agent_runner.crypto.log.state import AGENT, ORG, WG, OrgState, Roster, Scope
 from agent_runner.crypto.log.verify import VerifiedLog, append_entries
 from agent_runner.crypto.log.wraps import WrapSlot
 
@@ -127,6 +131,7 @@ def build_batch(
     held_only: bool = False,
     wrapper: str | None = None,
     agent_history: bool = False,
+    support: Roster | None = None,
 ) -> Built:
     """The batch of the module docstring; refusals are `CryptoError`s with the hub's codes."""
     founder = str(cast(Mapping[str, object], fields[0]["pub"])["sig"]) if log is None else log.state.founder
@@ -179,9 +184,35 @@ def build_batch(
                 continue
             fail("epoch_stale")
         wraps.append(make_wrap(identity, slot, _kem(state, slot.recipient), key))
+    people = support or {}
+    wraps += _support_wraps(state, fields=fields, people=people, ring=ring, identity=identity, skip=skip)
     wrapped_by = author if wrapper is None else wrapper
-    check_batch(log, entries, wraps, wrapped_by=wrapped_by, founder=founder, platform=platform, excluded=skip)
+    check_batch(
+        log, entries, wraps, wrapped_by=wrapped_by, founder=founder, platform=platform, excluded=skip, roster=people
+    )
     return Built(0 if head is None else head.seq + 1, entries, wraps, new_keys, after, tuple(required))
+
+
+def _support_wraps(
+    state: OrgState,
+    *,
+    fields: Sequence[Mapping[str, object]],
+    people: Roster,
+    ring: KeyRing,
+    identity: Identity,
+    skip: frozenset[str],
+) -> list[dict[str, object]]:
+    """For every `support_grant` of the batch: every held epoch of its workgroup to every person of the roster that is
+    no reader of it, sealed to the keys of the person's root certification."""
+    wraps: list[dict[str, object]] = []
+    for wg in sorted({cast(str, item["wg"]) for item in fields if item["type"] == "support_grant"}):
+        for person in sorted(set(people) - set(state.readers(WG, wg, skip))):
+            kem = b64u_decode(people[person].kem, 32)
+            for epoch in range(1, state.epoch(WG, wg) + 1):
+                key = ring.get((WG, wg, epoch))
+                if key is not None:
+                    wraps.append(make_wrap(identity, WrapSlot(WG, wg, epoch, person), kem, key))
+    return wraps
 
 
 def make_wrap(identity: Identity, slot: WrapSlot, recipient_kem: bytes, key: bytes) -> dict[str, object]:

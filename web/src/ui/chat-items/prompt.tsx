@@ -1,7 +1,7 @@
 // Chat item `prompt` (06-web.md section 5.2): a right-aligned bubble with the author's name (the verified author of the
-// event, named from the org's verified `member.profile`), plain text, `CLIP_CHARS` characters at a time (HOT-05). A
-// prompt the queue of the task names as withdrawn is marked "Withdrawn", "Being withdrawn" or "Could not be withdrawn"
-// (it had already reached the AI; ADR-083 section 3).
+// event, named from the org's verified `member.profile`; a person of DFX support as "Support <Name>", ADR-096), plain
+// text, `CLIP_CHARS` characters at a time (HOT-05). A prompt the queue of the task names as withdrawn is marked
+// "Withdrawn", "Being withdrawn" or "Could not be withdrawn" (it had already reached the AI; ADR-083 section 3).
 import { isRecord } from '../../core/registry';
 import type { TimelineItem } from '../../core/chat/timeline';
 import { selectWithdrawal } from '../../core/store/slices/queue';
@@ -13,6 +13,7 @@ import { useAppEnv } from '../shell/context';
 import { EventTime } from '../task-tabs/chat/EventTime';
 import { useClipped } from '../lists/Clipped';
 import { knownPersonName } from '../names/names';
+import { useAuthorOverride, useSupportLabel } from '../names/support';
 
 function Prompt({ item }: ChatItemProps) {
   const { at, author, body, eventId } = item as TimelineItem;
@@ -22,10 +23,13 @@ function Prompt({ item }: ChatItemProps) {
   const directory = useStore(selectDirectory(org), app.store);
   const me = useStore((state) => state.me.userId, app.store);
   const withdrawal = useStore(selectWithdrawal(eventId!), app.store);
+  // the support area names authors from `support.info`; a member sees a support person as "Support <Name>" (ADR-096)
+  const override = useAuthorOverride(author);
+  const support = useSupportLabel(org, author);
   const name =
     author === me
       ? t('task.chat.author.you')
-      : (knownPersonName(t, directory, author!) ?? t('task.chat.author.unknown'));
+      : (override ?? knownPersonName(t, directory, author!) ?? support ?? t('task.chat.author.unknown'));
   const { shown, more } = useClipped(isRecord(body) && typeof body.text === 'string' ? body.text : '', {
     controls: 'chat',
   });

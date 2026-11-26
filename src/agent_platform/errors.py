@@ -150,6 +150,10 @@ NEXT_FOR_REASON: dict[tuple[str, str], str] = {
         "The hub knows no account with this recovery code; check the code and the hub address (a code stops working "
         "once a new one is made)."
     ),
+    ("invalid_argument", "already_released"): (
+        "The workgroup is already released to DFX support with this access (`access`): see `wg support list`; "
+        "`wg support grant` with the other access changes it, `wg support revoke` ends it."
+    ),
     ("device_request_failed", "github_not_connected"): (
         "No GitHub connection may read this pull request: connect one with `agent-platform github connect --from-gh` "
         "or `agent-platform github connect --token -`, then run the command again."

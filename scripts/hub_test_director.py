@@ -132,6 +132,9 @@ def signed_headers(key_id: str, sign: Callable[[bytes], bytes], method: str, url
     return headers
 
 
+FEATURES = ("log.admit", "log.org_assign", "log.policy", "log.support", "vm.choice", "github.identities")
+
+
 class BusPublisher:
     """Publishes every frame and hint of this process on the hub's bus channel (like another hub process)."""
 
@@ -240,6 +243,10 @@ class Director:
             self.set_online(other, False)
             self.set_capacity(other, self.capacity(0, 0))
         self.set_capacity(device_id, self.capacity(free, pool_ready))
+        # what a current runner announces on its live channel (`agent_runner.sync.ws.FEATURES`): the hub holds back
+        # platform-log entries an older runner could not verify (ADR-060, ADR-079, ADR-096)
+        with self.pool.connection() as connection, connection.transaction():
+            connection.execute("UPDATE hub.device SET features = %s WHERE id = %s", (list(FEATURES), device_id))
         self.set_online(device_id, online)
         return device_id
 

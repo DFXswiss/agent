@@ -27,7 +27,7 @@ with access to the session's workgroup makes every read `forbidden`. A device th
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from agent_runner.crypto.log.state import READ, USER, OrgState
 from agent_runner.orgs.book import book_for
@@ -151,7 +151,10 @@ def read_scope(context: Any, session: LocalSession, actor_id: str | None, reach:
     owner = None if session.owner_id is None else state.member(session.owner_id)
     if owner is None or owner.kind != USER:
         raise NOT_MEMBER
-    if actor_id is not None and state.wg_access(actor_id, session.wg_id) is None:
+    # the instructing human still reads the session's workgroup: as a member, or as a support person of the verified
+    # platform log while the workgroup is released to support (ADR-096; it never reads further: `decide`)
+    reads = actor_id is None or state.wg_access(actor_id, session.wg_id) is not None
+    if not reads and not state.support_reads(book.support_roster(), cast(str, actor_id), session.wg_id):
         raise HUMAN_GONE
     return ReadScope(
         org_id=session.org_id,

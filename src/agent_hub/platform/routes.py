@@ -113,6 +113,7 @@ async def append_log(body: AppendRequest, context: Context) -> dict[str, Any]:
     for user, agent in result.revoked:
         close_keys(user, [agent_key_id(agent)])
     orchestrator.publish_hints(list(result.hints))
+    publish_rows(result.notices)
     return {"head": result.head.to_json()}
 
 

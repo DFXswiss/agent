@@ -5,8 +5,10 @@
   forbidden`), no `invite`/`invite_revoke` on this route, `expected_seq` (`409 seq_conflict`), `check_batch` with the
   receipt time, the org's platform access and the decertified platform devices excluded (the rotation obligation R and
   the distribution of every new epoch), the events of the batch checked with `check_event_hub` against the log after
-  it; on success the wraps of principals the batch removed are deleted for this org's scopes and the receipt time of
-  every new epoch is kept (E6);
+  it; wraps to the persons of the support roster of the platform log are accepted for a released workgroup
+  (ADR-096); on success the wraps of principals the batch removed are deleted for this org's scopes (and, after a
+  `support_revoke`, the workgroup's wraps to recipients outside the log), the receipt time of every new epoch is kept
+  (E6) and every event is stored in its own scope;
 - `POST /v1/orgs/{org}/invites/{id}/revoke` (`invite_revoke` with its invitation row, admin);
 - `GET /v1/orgs/{org}/devices` (`org:member`): the device members of the log with the presence of `Extra.online` and
   the VMs of `Extra.vms`;
@@ -108,6 +110,7 @@ def install(hub: HubFake) -> None:
             now=now,
             platform_access=found.platform_access or platform.platform_access(org, private=False),
             excluded=platform.excluded(found.log.state),
+            roster=platform.support_roster(),
         )
         times = dict(state.rotated_at)
         times |= {scope: now for entry in entries for scope in created_scopes(entry["body"])}
@@ -117,10 +120,13 @@ def install(hub: HubFake) -> None:
         state.rotated_at = times
         removed = {p.id for p in before.principals.values() if p.active and found.log.state.member(p.id) is None}
         hub.wraps[:] = [w for w in hub.wraps if not (w["recipient_id"] in removed and in_org(before, w))]
+        revoked = {entry["body"]["wg"] for entry in entries if entry["body"]["type"] == "support_revoke"}
+        principals = found.log.state.principals
+        hub.wraps[:] = [w for w in hub.wraps if not (w["scope_id"] in revoked and w["recipient_id"] not in principals)]
         for wrap in body["wraps"]:
             hub.wraps.append({**wrap, "wrapped_by": user, "created_at": now_ms_text()})
         for event in body["events"]:
-            hub.store_event(org, event)
+            hub.store_event(event["header"]["scope_id"], event)
         return 200, {"head": result.log.head.to_json()}
 
     def revoke(request: Request, body: Json, org: str, invite: str) -> tuple[int, Any]:

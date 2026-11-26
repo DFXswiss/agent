@@ -19,7 +19,8 @@ through a signed HTTP fetch by the hint handlers.
   for assignments to the whole organization, `vm.choice` for the VM of each session named in its transitions;
   KOR-65: the GitHub ways the web may offer for this device; ADR-078: `github.identities`, the hub stores GitHub
   identity choices and defaults only while every active device of the organization announced it; ADR-079:
-  `log.policy` for the switches, the operator-subscription list and the role `operator` of the platform log). A
+  `log.policy` for the switches, the operator-subscription list and the role `operator` of the platform log; ADR-096:
+  `log.support` for the support release and the role `support`). A
   header, not a query parameter: an older hub refuses unknown query parameters but ignores unknown headers.
 - Reconnect backoff 1 s doubling to 30 s with ±20 % jitter, reset after a connection that stayed up 30 s
   (legacy `cmd_sync` rule). Redirects are never followed; no proxy is used.
@@ -49,6 +50,7 @@ FEATURES = (
     "log.admit",
     "log.org_assign",
     "log.policy",
+    "log.support",
     "vm.choice",
     "github.ways",
     "github.identities",

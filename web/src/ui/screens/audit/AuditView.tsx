@@ -52,6 +52,9 @@ import { useAppEnv } from '../../shell/context';
 import { BUTTON, PRIMARY } from '../members/ActionDialog';
 import { useDirectory, useOrgView } from '../tasks/hooks';
 import { knownPersonName, NoName, personName } from '../../names/names';
+import { supportText } from '../../names/support';
+import { authorsOf, ensureMarks, supportName } from '../../../core/support/names';
+import { loadOrgSupport } from '../../../core/support/people';
 import {
   agentLabelsSelector,
   agentNamesSelector,
@@ -569,14 +572,24 @@ export function AuditView({
     if (tab !== null) params.set('tab', tab);
     setSearch(params);
   };
+  // persons of DFX support (ADR-096): "Support <Name> #XXXX", the support authors of the verified platform log
+  const support = useStore((s) => s.support, app.store);
+  const platform = useStore((s) => s.orgs.platform, app.store);
   const names = useMemo(
     () => ({
-      member: (id: string) => knownPersonName(t, directory, id) ?? null,
+      member: (id: string) => {
+        const known = knownPersonName(t, directory, id);
+        if (known !== undefined) return known;
+        const person = supportName(app.store.getState(), org, id);
+        return person === null ? null : supportText(t, person, true);
+      },
       device: (id: string) => labels.get(id) ?? null,
       wg: (id: string) => directory.workgroups.get(id) ?? null,
       person: (id: string) => personName(t, directory, id),
     }),
-    [directory, labels, t],
+    // `support` and `platform` change what `supportName` reads
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [app, org, directory, labels, t, support, platform],
   );
   const wgName = (id: string) => names.wg(id) ?? t('names.workgroup.unknown');
   const principals = state === null ? [] : [...state.principals.values()].filter((p) => p.removedSeq === null);
@@ -595,6 +608,16 @@ export function AuditView({
     .sort((a, b) => a.name.localeCompare(b.name));
   const admin = state !== null && userId !== null && state.isAdmin(userId);
   const rows = useMemo(() => visibleRows(view, filters), [view, query]); // eslint-disable-line react-hooks/exhaustive-deps -- `query` names the filters
+  useEffect(() => {
+    const people = rows.flatMap((row) =>
+      row.actor_kind === 'user' && row.actor_id !== null && authorsOf(platform?.state ?? null).has(row.actor_id)
+        ? [row.actor_id]
+        : [],
+    );
+    if (people.length === 0) return;
+    void ensureMarks(app.store, people);
+    if (app.store.getState().support.orgs[org] === undefined) void loadOrgSupport(app.tasks, org);
+  }, [app, org, rows, platform]);
   const loading = view.status === 'loading';
   const paging: ListPaging = {
     hasMore: canLoadMore(view, filters),

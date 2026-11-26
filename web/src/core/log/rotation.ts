@@ -11,7 +11,8 @@
 //    `OrgState.pending`, ADR-058 section 3). If R is not empty the batch MUST contain exactly one
 //    `rotate` per element of R and no other `rotate`, each after the last entry contributing to R
 //    (`rotation_required`);
-// 3. W3 for every wrap of the batch, created by `wrappedBy`, which must be active after the batch;
+// 3. W3 for every wrap of the batch, created by `wrappedBy`, which must be active after the batch (wraps to the
+//    support persons of `roster` for a released workgroup, ADR-096);
 // 4. distribution of every epoch the batch creates and that is current at its end (`genesis`, `wg_create`,
 //    `rotate`): a wrap for every entitled recipient (`rotation_required`);
 // 5. `admit` (ADR-060): wraps for the admitted user of the current org epoch and of the current epoch of the default
@@ -25,6 +26,9 @@
 // and 9.4), then runs `checkBatch` on
 // its own result. Wraps of epochs the batch does not create follow the transition rule `compatSkip`. It is a pure
 // function of the log: after `seq_conflict` the caller re-reads the log and builds again.
+//
+// `support_revoke {wg}` (ADR-096) always owes `(wg, wg)` (`lost`): the support persons are not in the org log, so R
+// does not depend on who is support at the moment; it is computed from the org log alone, the same in every verifier.
 import { formatTime } from '../encoding/time';
 import { fail } from '../crypto/errors';
 import type { Identity } from '../crypto/keys';
@@ -40,6 +44,7 @@ import {
   type OrgState,
   pairKey,
   requiredSet,
+  type Roster,
   type Scope,
   SELF_OWED,
   selfOwed,
@@ -98,6 +103,8 @@ export interface BatchOptions {
   readonly platformAccess?: boolean;
   /** The decertified platform devices (`PlatformState.excluded`). */
   readonly excluded?: Iterable<string>;
+  /** The support persons (ADR-096; `PlatformState.supportRoster`). */
+  readonly roster?: Roster;
 }
 
 /** Checks one batch; returns the new verified log. */
@@ -138,7 +145,7 @@ export async function checkBatch(
     }
   }
   const stored: WrapSlot[] = [];
-  for (const wrap of wraps) stored.push(await checkWrap(wrap, wrappedBy, after, skip, true));
+  for (const wrap of wraps) stored.push(await checkWrap(wrap, wrappedBy, after, skip, true, options.roster));
   const slots = new Set(stored.map(slotKey));
   const state = after.state;
   const created = new Set(bodies.flatMap((body) => createdScopes(body).map((scope) => pairKey(...scope))));

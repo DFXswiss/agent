@@ -22,5 +22,9 @@
   "give.label": "Name der Person",
   "give.hint": "Alle Mitglieder sehen diesen Namen, bis die Person ihren eigenen Namen setzt – das geschieht von selbst, sobald sie die Organisation öffnet.",
   "give.confirm": "Namen speichern",
-  "give.invalid": "Bitte einen Namen mit 1 bis 80 Zeichen eingeben."
+  "give.invalid": "Bitte einen Namen mit 1 bis 80 Zeichen eingeben.",
+  "support.named": "Support {name}",
+  "support.marked": "Support {mark}",
+  "support.full": "Support {name} {mark}",
+  "support.plain": "Support"
 }

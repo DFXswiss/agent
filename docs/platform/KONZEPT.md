@@ -913,7 +913,6 @@ Stand 2026-11-25. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |
 | [A10](#a-10) Subagenten | Ein Subagent endet nach einem Turn und bekommt keine Folge-Anweisung | KOR-45 |
 | [A11](#a-11) Lesen über Workgroups | Eine Session liest nur in ihrer eigenen Workgroup, andere sieht sie nur namentlich | KOR-45 |
-| [A12](#a-12) Support | Keine Support-Freigabe | KOR-56 |
 | [A13](#a-13) Default-Workgroup | Das Schreibrecht in der Default-Workgroup lässt sich nicht herabsetzen | KOR-55 |
 | [A18](#a-18) Blockierter Versuch | Ablehnungen durch den Kernel werden nicht je Session gezählt | KOR-60 |
 | Ideen 27–47, §16 | Stand je Idee in [spec/01-requirements.md](spec/01-requirements.md) Block R-16 | dort genannt |

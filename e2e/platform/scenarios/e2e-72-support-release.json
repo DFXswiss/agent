@@ -1,0 +1,37 @@
+{
+  "name": "e2e-72-support-release",
+  "description": "E2E-72 (KOR-56, ADR-096): Ada's task in her private organization, answered once; after Ada released the workgroup to DFX support with write, the support person's prompt reaches the same conversation and is answered.",
+  "steps": [
+    {
+      "id": "ada-first",
+      "expect": {
+        "user_text_contains": "E2E69-ADA kz69-prompt-a-r4t8",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The login page is checked kz69-answer-a-m3p6."
+          }
+        ]
+      }
+    },
+    {
+      "id": "support",
+      "expect": {
+        "user_text_contains": "E2E69-SUPPORT kz69-prompt-s-w2c9",
+        "has_tool_result": false,
+        "min_messages": 3
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Support's hint is applied kz69-answer-s-q7d1."
+          }
+        ]
+      }
+    }
+  ]
+}

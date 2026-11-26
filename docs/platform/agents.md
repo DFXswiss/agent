@@ -472,6 +472,9 @@ agent-platform wg grant --wg <wg_id> --user <user_id> [--access read] [--history
 agent-platform wg ungrant --wg <wg_id> --user <user_id>          # changes the workgroup's key
 agent-platform wg rename --wg <wg_id> --name "Research"
 agent-platform wg archive --wg <wg_id>
+agent-platform wg support grant --wg <wg_id> --access read      # release to DFX support (write: support may write)
+agent-platform wg support revoke --wg <wg_id>                   # ends the release; changes the workgroup's key
+agent-platform wg support list [--wg <wg_id>]                   # releases, since when, the support persons by name
 agent-platform wg settings --wg <wg_id> [--protected-branch main] [--pr-draft-default true]
 agent-platform wg settings --wg <wg_id> --merge-verdicts 1 --merge-checks-green true --separate-duties true
 agent-platform profile list --wg <wg_id>                         # roles and own profiles (voluntary restrictions)

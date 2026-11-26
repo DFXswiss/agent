@@ -432,7 +432,8 @@
       "type": "string",
       "enum": [
         "inviter",
-        "operator"
+        "operator",
+        "support"
       ]
     },
     "task_state": {
@@ -510,6 +511,7 @@
         "whiteboard.edit",
         "whiteboard.delete",
         "settings.workgroup",
+        "support.info",
         "task.meta",
         "task.agent_name",
         "prompt",
@@ -1002,6 +1004,7 @@
             "whiteboard.edit",
             "whiteboard.delete",
             "settings.workgroup",
+            "support.info",
             "task.meta",
             "task.agent_name",
             "prompt",
@@ -2199,6 +2202,12 @@
         },
         {
           "$ref": "#/$defs/log_body_agent_add"
+        },
+        {
+          "$ref": "#/$defs/log_body_support_grant"
+        },
+        {
+          "$ref": "#/$defs/log_body_support_revoke"
         }
       ]
     },
@@ -3776,6 +3785,112 @@
         "pub",
         "gen",
         "cert"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_support_grant": {
+      "type": "object",
+      "description": "body of a support_grant entry (ADR-096): releases the workgroup to the support team with read or write; by an admin or a user with write on the workgroup",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "support_grant"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid"
+        },
+        "access": {
+          "$ref": "#/$defs/wg_access"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "wg",
+        "access"
+      ],
+      "additionalProperties": false
+    },
+    "log_body_support_revoke": {
+      "type": "object",
+      "description": "body of a support_revoke entry (ADR-096): ends the release; owes the rotation of the workgroup",
+      "properties": {
+        "org": {
+          "$ref": "#/$defs/uuid"
+        },
+        "seq": {
+          "$ref": "#/$defs/seq"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/b64u_32"
+            },
+            {
+              "type": "string",
+              "const": ""
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "support_revoke"
+        },
+        "by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "ts": {
+          "$ref": "#/$defs/time"
+        },
+        "v": {
+          "type": "integer",
+          "const": 1
+        },
+        "wg": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "org",
+        "seq",
+        "prev",
+        "type",
+        "by",
+        "ts",
+        "v",
+        "wg"
       ],
       "additionalProperties": false
     },

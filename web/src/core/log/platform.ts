@@ -11,8 +11,8 @@
 // 5. type rules (`log_rights` unless stated): invitation IDs unique; `device_certify` names an open `device_invite`
 //    (`invite_not_in_log`, used once: `invite_consumed`) and carries valid `enroll_sig`/`inv_sig` over the
 //    enrollment text rebuilt from the entry (`log_accept`), and the device is not currently certified;
-//    `device_decertify` names a certified device; `role_grant`/`role_revoke` change the role; `user_certify` binds
-//    a user to its identity keys (ADR-060): the user has no valid certification and its ID was never certified as a
+//    `device_decertify` names a certified device; `role_grant`/`role_revoke` change the role (`role_grant support`
+//    only for a user with a valid certification, ADR-096); `user_certify` binds a user to its identity keys (ADR-060): the user has no valid certification and its ID was never certified as a
 //    device (and a device ID never as a user); `user_decertify` ends the user's valid certification;
 //    `platform_policy` sets a switch and `org_operator_subscriptions` an organization's use of the operator's
 //    subscriptions (ADR-079; the latest entry counts, any value is allowed).
@@ -20,6 +20,11 @@
 // the identity proof is `""`, or a `user_invite` for which `user` is the ID derived from the invitation
 // (`invitedUserId`) and whose `pk_inv` verifies the identity proof of `(user, pub)`. At the hub (`current`) a
 // certification must still be valid.
+// Support roster (ADR-096): a `role_grant support` binds the role to the certification valid at that entry
+// (`supportBound`). `supportRoster` = every user whose role is active and whose bound certification is still its
+// valid one, with the keys of that certification (wraps to support persons, the hub's checks at receipt); a later
+// `user_decertify` ends it, and a renewed certification needs a new grant. `supportAuthors` = every user that was ever
+// bound, with the keys of its latest bound certification (readers verifying the history of support events).
 // A certification is valid until a later `device_decertify` of the device (section 6.2). Validity is per
 // certification (`valid(seq)`): a device decertified and certified again with new keys does not make its old
 // certification, and the old keys an org learnt from it, valid again (`excluded`).
@@ -38,7 +43,17 @@ import {
   signatureValid,
   succeeds,
 } from './entries';
-import { compareText, type OrgState, pairKey, splitKey, withEntry, withoutEntry } from './state';
+import {
+  compareText,
+  type OrgState,
+  pairKey,
+  type Roster,
+  splitKey,
+  SUPPORT,
+  type SupportPerson,
+  withEntry,
+  withoutEntry,
+} from './state';
 
 export const CERTIFIED = 'certified';
 export const DECERTIFIED = 'decertified';
@@ -95,6 +110,8 @@ export interface PlatformStateFields {
   readonly policies: ReadonlyMap<string, boolean>;
   /** `org -> granted` of the latest `org_operator_subscriptions` of each organization (ADR-079 §2). */
   readonly operatorSubscriptions: ReadonlyMap<string, boolean>;
+  /** `user -> seq` of the certification its latest `role_grant support` was bound to (ADR-096). */
+  readonly supportBound: ReadonlyMap<string, number>;
 }
 
 /** The state after the platform-log entry `seq`. */
@@ -112,6 +129,7 @@ export class PlatformState implements PlatformStateFields {
   declare readonly userInvites: ReadonlyMap<number, string>;
   declare readonly policies: ReadonlyMap<string, boolean>;
   declare readonly operatorSubscriptions: ReadonlyMap<string, boolean>;
+  declare readonly supportBound: ReadonlyMap<string, number>;
 
   constructor(fields: PlatformStateFields) {
     Object.assign(this, fields);
@@ -185,6 +203,29 @@ export class PlatformState implements PlatformStateFields {
     return this.roles.has(pairKey(user, role));
   }
 
+  private person(user: string): SupportPerson {
+    const cert = this.userCertifications.get(this.supportBound.get(user)!)!;
+    return { id: user, kem: cert.kem, sig: cert.sig };
+  }
+
+  /** ADR-096: users with an active role `support` whose bound certification is still their valid one, with the keys
+   *  of that certification (by user ID). */
+  supportRoster(): Roster {
+    const users = [...this.roles.keys()]
+      .sort(compareText)
+      .map(splitKey)
+      .filter(([user, role]) => role === SUPPORT && this.userCertified(user))
+      .map(([user]) => user)
+      .filter((user) => this.users.get(user) === this.supportBound.get(user));
+    return new Map(users.map((user) => [user, this.person(user)]));
+  }
+
+  /** ADR-096: every user that was ever bound to the role `support`, with the keys of its latest bound certification
+   *  (the history of its events stays verifiable after it left support). By user ID. */
+  supportAuthors(): Roster {
+    return new Map([...this.supportBound.keys()].sort(compareText).map((user) => [user, this.person(user)]));
+  }
+
   /**
    * ADR-026, ADR-079 §3: a private org has platform access; any other org by its latest `org_platform_access`, and
    * without one by the switch `open_platform_access`.
@@ -230,6 +271,7 @@ export class PlatformState implements PlatformStateFields {
       users: [...this.users.entries()]
         .sort(([a], [b]) => compareText(a, b))
         .map(([user, seq]) => ({ user, certify_seq: seq, certified: this.userCertified(user) })),
+      ...(this.supportBound.size === 0 ? {} : { support: [...this.supportRoster().keys()] }),
     };
   }
 }
@@ -307,9 +349,17 @@ function decertify(state: PlatformState, body: Body, seq: number): PlatformState
 
 function role(state: PlatformState, body: Body, seq: number): PlatformState {
   const key = pairKey(body.subject as string, body.role as string);
+  const subject = body.subject as string;
   const grant = body.type === 'role_grant';
-  if (state.roles.has(key) === grant) fail('log_rights');
-  return state.with({ roles: grant ? withEntry(state.roles, key, seq) : withoutEntry(state.roles, key) });
+  const support = body.role === SUPPORT;
+  // a support person must have root-certified identity keys: they are the keys its wraps are sealed to (ADR-096)
+  if (state.roles.has(key) === grant || (grant && support && !state.userCertified(subject))) fail('log_rights');
+  const supportBound =
+    grant && support ? withEntry(state.supportBound, subject, state.users.get(subject)!) : state.supportBound;
+  return state.with({
+    roles: grant ? withEntry(state.roles, key, seq) : withoutEntry(state.roles, key),
+    supportBound,
+  });
 }
 
 function policy(state: PlatformState, body: Body): PlatformState {
@@ -389,6 +439,7 @@ export async function applyPlatform(
       userInvites: new Map(),
       policies: new Map(),
       operatorSubscriptions: new Map(),
+      supportBound: new Map(),
     });
   }
   return (await TRANSITIONS[body.type as string]!(state, body, seq)).with({ seq, head });

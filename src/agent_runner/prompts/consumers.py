@@ -5,7 +5,9 @@ key; the consumer additionally requires that the prompt addresses a task (header
 section 10) - otherwise it is refused and audited like every other failed inbound check - and keeps the event as
 received with the author's signing key from the verified log at `lh`, so it is opened again only into memory when it
 is delivered. Its acting author (`author_id`, HOT-14) is the author's user when a user's agent wrote it (ADR-082:
-`OrgState.acting`), so the agent's prompt uses its user's personal connections. A new prompt wakes the delivery.
+`OrgState.acting`), so the agent's prompt uses its user's personal connections; a support person's prompt (ADR-096)
+is kept with the key of its root certification and acts as that person (no personal connection of it in this
+organization). A new prompt wakes the delivery.
 """
 
 from __future__ import annotations
@@ -39,12 +41,11 @@ async def keep_prompt(context: Any, conn: AsyncConnection[Any], event: VerifiedE
     assert log is not None
     assert isinstance(lh, int)
     at = log.states[lh]
-    author = at.principals[event.author]
     stored = await queue.keep(
         conn,
         header=event.header,
         scope_seq=event.scope_seq,
-        author_sig=author.sig,
+        author_sig=book_for(context).author_sig(event.org_id, lh, event.author),
         sealed=event.sealed,
         author_id=at.acting(event.author),
     )

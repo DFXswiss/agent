@@ -152,6 +152,9 @@ const LOG_TYPE_FIELDS: Record<string, Record<string, Check>> = {
     role: oneOf('admin', 'member'),
     wgs: wgs(WG_ACCESS),
   },
+  // the release of a workgroup to the support team (ADR-096)
+  support_grant: { wg: F.uuid, access: WG_ACCESS },
+  support_revoke: { wg: F.uuid },
 };
 const INVITE_COMMON: Record<string, Check> = { invite_id: inviteId, pk_inv: key, kind: oneOf('user', 'device') };
 const INVITE_USER: Record<string, Check> = {
@@ -171,8 +174,9 @@ const PLATFORM_COMMON: Record<string, Check> = {
   ts: F.time,
   v: version,
 };
-/** Platform roles: `inviter` (ADR-026) and `operator` (receives the requests of ADR-079 §4). */
-export const PLATFORM_ROLES = ['inviter', 'operator'] as const;
+/** Platform roles: `inviter` (ADR-026), `operator` (receives the requests of ADR-079 §4) and `support` (reads and
+ *  writes the workgroups released to the support team, ADR-096). */
+export const PLATFORM_ROLES = ['inviter', 'operator', 'support'] as const;
 /** Switches of `platform_policy` (ADR-079 §2): off until an entry turns them on. */
 export const PLATFORM_POLICIES = ['open_platform_access', 'open_platform_invites'] as const;
 const PLATFORM_TYPE_FIELDS: Record<string, Record<string, Check>> = {
@@ -375,7 +379,9 @@ export type LogFields =
       by_id_sig: string;
       role: 'admin' | 'member';
       wgs: Record<string, 'read' | 'write'>;
-    };
+    }
+  | { type: 'support_grant'; wg: string; access: 'read' | 'write' }
+  | { type: 'support_revoke'; wg: string };
 
 /** Where the next entry goes: the org and the head it extends (`null` before genesis). */
 export interface Position {

@@ -22,10 +22,11 @@ export function useNames(rows: readonly NotificationRow[]): void {
   }, [app, rows]);
 }
 
-/** Notification ID → the names of its text for every row; recomputed only when the `events` or `agents` slice changed. */
+/** Notification ID → the names of its text for every row; recomputed only when the `events`, `agents` or `support`
+ *  slice changed. */
 export function namesSelector(rows: readonly NotificationRow[]): Selector<ReadonlyMap<string, Names>> {
   return cachedSelector(
-    (state) => [state.events, state.agents],
+    (state) => [state.events, state.agents, state.support],
     (state) => new Map(rows.map((row) => [row.notification_id, notificationNames(state, row)])),
   );
 }

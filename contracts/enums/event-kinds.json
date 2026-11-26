@@ -5,7 +5,8 @@
     "org_member_self": "author is an org member and ref == author",
     "wg_write": "author has write access to the workgroup",
     "device_assigned_wg": "author device is assigned to the workgroup",
-    "device_assigned_wg_session": "author device is assigned to the workgroup and the session runs on it"
+    "device_assigned_wg_session": "author device is assigned to the workgroup and the session runs on it",
+    "wg_release": "author is an admin of the org or has write access to the workgroup, which is not archived"
   },
   "notify_allowed": [
     "whiteboard.entry"
@@ -164,6 +165,21 @@
       "header": {
         "wg": "scope_id"
       }
+    },
+    {
+      "kind": "support.info",
+      "scope": "wg",
+      "authors": [
+        "user"
+      ],
+      "right": "wg_release",
+      "header": {
+        "wg": "scope_id",
+        "task": "empty",
+        "session": "empty",
+        "ref": "empty"
+      },
+      "note": "written by the releasing client with a support release"
     },
     {
       "kind": "task.meta",

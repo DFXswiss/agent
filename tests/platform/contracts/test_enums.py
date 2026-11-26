@@ -126,7 +126,7 @@ SPEC_AUDIT_FIXED = (
 SPEC_AUDIT_PATTERNS = {
     # 04-crypto.md section 4.7
     "log": "genesis invite invite_revoke accept role wg_create wg_archive grant ungrant device_assign device_unassign"
-    " device_assign_org device_unassign_org remove rotate admit agent_add",
+    " device_assign_org device_unassign_org remove rotate admit agent_add support_grant support_revoke",
     # 02-data-model.md section 2.4.1
     "session": "requested vm_assigning vm_ready sandbox_ready agent_starting prompt_delivering working idle suspended"
     " resuming stopping stopped failed",
@@ -175,6 +175,8 @@ KOR48_AUDIT = "pr.linked pr.unlinked"
 KOR58_AUDIT = "session.interrupted session.interruption_ended"
 KOR51_AUDIT = "agent_profile.set agent_profile.delete task.agent_profile"
 """Rights profiles (ADR-094): own profiles of an org or a workgroup, the profile of a task."""
+# ADR-096 (KOR-56): the support release
+KOR56_AUDIT = "support.people support.write support.name"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 03-api.md section 4.6.2, ADR-075 section 7: reasons of a waiting task beyond the session failure reasons
 SPEC_WAITING_REASONS = "no_device platform_access_required wg_vm_limit placement_full placement_offline keys_pending"
@@ -204,6 +206,7 @@ SPEC_EVENT_MATRIX = [
     ("whiteboard.edit", "wg", "user", "wg_write"),
     ("whiteboard.delete", "wg", "user", "wg_write"),
     ("settings.workgroup", "wg", "user", "wg_write"),
+    ("support.info", "wg", "user", "wg_release"),  # ADR-096 (contracts/changes/KOR-56.md)
     ("task.meta", "wg", "user", "wg_write"),
     ("task.meta", "wg", "device", "device_assigned_wg"),
     ("task.agent_name", "wg", "user", "wg_write"),
@@ -230,7 +233,8 @@ SPEC_EVENT_MATRIX = [
 # 03-api.md section 10 (event bodies): every kind.
 SPEC_EVENT_KINDS = (
     "org.profile wg.profile member.profile member.name device.profile task.meta task.agent_name prompt whiteboard.entry"
-    " whiteboard.edit whiteboard.delete settings.workgroup session.output session.tool session.hook session.file"
+    " whiteboard.edit whiteboard.delete settings.workgroup support.info session.output session.tool session.hook"
+    " session.file"
     " session.terminal session.status session.error operation.params operation.result platform.read workvm.run"
     " workvm.state test.run browser.action browser.state"
 )
@@ -305,7 +309,7 @@ def test_audit_actions(index: dict[str, Any]) -> None:
         assert re.fullmatch(r"[a-z_]+(\.[a-z_]+)+", row["action"]), row
     expected = set(SPEC_AUDIT_FIXED.split()) | set(DECIDED_AUDIT.split()) | set(KOR31_AUDIT.split())
     expected |= set(KOR47_AUDIT.split()) | set(KOR50_AUDIT.split()) | set(KOR48_AUDIT.split())
-    expected |= set(KOR58_AUDIT.split()) | set(KOR51_AUDIT.split())
+    expected |= set(KOR58_AUDIT.split()) | set(KOR51_AUDIT.split()) | set(KOR56_AUDIT.split())
     for prefix, values in SPEC_AUDIT_PATTERNS.items():
         expected |= {f"{prefix}.{value}" for value in values.split()}
     expected |= {f"read.{e['read_resource']}" for e in index["endpoints"] if e["read_resource"]}

@@ -98,6 +98,10 @@ RULES: tuple[TableRule, ...] = (
     TableRule("wg_placement", WG_ROWS),
     TableRule("platform_role", ALL_ROWS),
     TableRule("platform_policy", ALL_ROWS),  # the switches of the platform log (ADR-079)
+    # support (ADR-096): the roster with its names is hub-wide like the platform roles; releases belong to the org
+    TableRule("support_person", ALL_ROWS),
+    TableRule("support_release", ORG_ROWS),
+    TableRule("support_access", WG_ROWS),
     TableRule("scope_epoch", SCOPE_ROWS),
     TableRule("key_wrap", SCOPE_ROWS),
     TableRule("scope_head", "scope_id = %(org)s OR scope_id = ANY(%(wgs)s)"),

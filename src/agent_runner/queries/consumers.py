@@ -3,8 +3,9 @@
 The inbox already checked E1-E5 (author signature and right at `lh`: `wg:write` for prompts and workgroup or task
 whiteboards, org admin for org whiteboards and device profiles, the author device assigned for session outputs) and
 decrypted the event with a held scope key. The consumer keeps the event as received with the author's signing key
-from the verified log at `lh` (`projection.keep`); an event without the object it must name (a chat item without
-task, a whiteboard or profile event without `ref`) is ignored, like the hub projection ignores it.
+from the verified log at `lh`, or of its root certification for a support person (ADR-096; `projection.keep`); an
+event without the object it must name (a chat item without task, a whiteboard or profile event without `ref`) is
+ignored, like the hub projection ignores it.
 """
 
 from __future__ import annotations
@@ -21,7 +22,8 @@ from agent_runner.queries import projection
 async def keep_read_event(context: Any, conn: AsyncConnection[Any], event: VerifiedEvent) -> None:
     if not projection.keepable(event.header):
         return
-    log = book_for(context).log(event.org_id)
+    book = book_for(context)
+    log = book.log(event.org_id)
     lh = event.header["lh"]
     if log is None or not isinstance(lh, int) or lh > log.head.seq:
         return  # verified with the same book a moment ago; never block the scope for it
@@ -30,7 +32,7 @@ async def keep_read_event(context: Any, conn: AsyncConnection[Any], event: Verif
         header=event.header,
         scope_seq=event.scope_seq,
         received_at=event.received_at,
-        author_sig=log.states[lh].principals[event.author].sig,
+        author_sig=book.author_sig(event.org_id, lh, event.author),
         sealed=event.sealed,
     )
 

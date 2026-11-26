@@ -342,3 +342,103 @@ def test_agent_event_cases() -> None:
         assert "user" in rule.authors
     for case in data["agents"]["hub_valid"]:
         ctx.run("check_event_hub", case["args"])
+
+
+def test_support_log_valid_chain_and_projections() -> None:
+    """ADR-096: releases to support (read, write, revoked with rotation, archived) reproduce heads and projections."""
+    data = load("log")
+    ctx = context(data)
+    section = data["support_valid"]
+    log = ctx.log({**section, "founder": data["founder"]})
+    assert [{"seq": s.seq, "hash": s.head} for s in log.states] == section["heads"]
+    assert [s.projection() for s in log.states] == section["projections"]
+    final = log.state
+    assert final.support_release(log.state.default_wg) is None
+    assert {wg: access for wg, (access, _seq) in final.support.items()} == dict.fromkeys(final.support, "write")
+    assert "support" not in section["projections"][7]
+    assert section["projections"][8]["support"][0]["access"] == "read"
+
+
+def test_support_roster_and_authors_from_the_platform_log() -> None:
+    """ADR-096: the roster holds persons with an active role and their bound certification; the authors keep every
+    person ever bound (history), with the keys of that certification."""
+    data = load("log-wraps")
+    ctx = context(data)
+    ids = {name: who["id"] for name, who in data["identities"].items()}
+    full = ctx.platform(
+        {
+            "platform": {
+                "name": "platform",
+                "count": log_vectors.SUPPORT_ROLES_COUNT,
+                "root": data["identities"]["root"]["sig"],
+            }
+        }
+    )
+    left = ctx.platform(
+        {
+            "platform": {
+                "name": "platform",
+                "count": log_vectors.SUPPORT_LEFT_COUNT,
+                "root": data["identities"]["root"]["sig"],
+            }
+        }
+    )
+    assert full is not None
+    assert left is not None
+    assert sorted(full.support_roster()) == sorted([ids["sam"], ids["tom"], ids["dave"]])
+    assert sorted(left.support_roster()) == sorted([ids["sam"], ids["dave"]])
+    assert sorted(left.support_authors()) == sorted([ids["sam"], ids["tom"], ids["dave"]])
+    assert left.support_authors()[ids["tom"]].sig == data["identities"]["tom"]["sig"]
+    assert left.projection()["support"] == sorted([ids["sam"], ids["dave"]])
+    assert ctx.roster({}) == {}
+    assert ctx.authors({}) == {}
+
+
+def test_support_wrap_cases_and_catch_up() -> None:
+    data = load("log-wraps")
+    ctx = context(data)
+    section = data["support"]
+    for case in section["valid"]:
+        slot = cast(wraps.WrapSlot, ctx.run("check_wrap", case["args"]))
+        assert slot.recipient == case["args"]["wrap"]["recipient_id"]
+    plans = section["catch_up"]
+    args = {"log": plans["log"], "founder": data["founder"], "platform": plans["platform"]}
+    log = ctx.log(args)
+    roster = ctx.roster(args)
+    existing = [wraps.WrapSlot(s["scope"], s["scope_id"], s["epoch"], s["recipient_id"]) for s in plans["existing"]]
+    for plan in plans["plans"]:
+        missing = catchup.missing_wraps(log, plan["wrapper"], existing, plan["excluded"], roster)
+        assert [slot.to_json() for slot in missing] == plan["missing"]
+    # every roster person gets every epoch of every released workgroup, a support person wraps nothing
+    by_alice = {(s["scope_id"], s["recipient_id"]) for s in plans["plans"][0]["missing"]}
+    assert all(
+        (wg, person) in by_alice
+        for wg in log.state.support
+        for person in roster
+        if (wg, person) != (plans["existing"][1]["scope_id"], plans["existing"][1]["recipient_id"])
+    )
+    assert plans["plans"][3]["missing"] == []
+
+
+def test_support_rotation_batches() -> None:
+    data = load("log-rotation")
+    ctx = context(data)
+    cases = {case["name"]: case for case in data["batches"]}
+    revoked = cases["support_revoke_with_rotation"]
+    result = cast(BatchResult, ctx.run("check_batch", revoked["args"]))
+    assert rotation.as_json(result.required) == revoked["required"] != []
+    granted = cases["support_grant_with_wraps_to_support"]
+    result = cast(BatchResult, ctx.run("check_batch", granted["args"]))
+    assert len(result.wraps) == 2
+    assert granted["required"] == []
+
+
+def test_support_event_cases() -> None:
+    data = load("log-events")
+    ctx = context(data)
+    for case in data["support"]["valid"]:
+        header, _rule = cast(tuple[dict[str, Any], events.KindRule], ctx.run("check_event", case["args"]))
+        assert header["id"] == case["args"]["event"]["header"]["id"]
+    for case in data["support"]["hub_valid"]:
+        ctx.run("check_event_hub", case["args"])
+    assert {"prompt", "whiteboard.entry", "whiteboard.edit", "whiteboard.delete"} == events.SUPPORT_KINDS

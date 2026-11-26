@@ -24,6 +24,12 @@
 // what its user reads. An agent is active while it is not removed and its parent is an active member; `remove` of a
 // user removes its active agent at the same `seq` (`removedWithUser`); only such an agent may come back with its user.
 // Agents never count as admins (`admins`).
+//
+// Support (ADR-096): `support_grant`/`support_revoke` release a workgroup to the support team (`support`: `wg ->
+// [access, seq]`). Support persons are no principals of the org log; they come from the verified platform log as a
+// `Roster` (`PlatformState.supportRoster`, keys of their root certification). A person of the roster reads a released
+// workgroup (`supportReads`, every epoch) and writes it with a `write` release while it is writable (`supportWrites`);
+// never the org scope, never a credential scope.
 
 export const USER = 'user';
 export const DEVICE = 'device';
@@ -34,6 +40,21 @@ export const READ = 'read';
 export const WRITE = 'write';
 export const ORG = 'org';
 export const WG = 'wg';
+export const SUPPORT = 'support';
+
+/** A person of the support roster (ADR-096): a user with a valid platform role `support` and the identity keys of its
+ *  root certification. */
+export interface SupportPerson {
+  readonly id: string;
+  readonly kem: string;
+  readonly sig: string;
+}
+
+/** `user -> SupportPerson`: the support persons a verifier knows from its verified platform log. */
+export type Roster = ReadonlyMap<string, SupportPerson>;
+
+/** The empty roster (a verifier without one accepts no support recipient or author). */
+export const NO_ROSTER: Roster = new Map();
 
 // --- maps shared between states ---
 //
@@ -304,6 +325,8 @@ export interface OrgStateFields {
   /** `pairKey(scope, scope_id) -> user`: the rotation of a scope its agent read, owed by the user that removed or
    *  replaced that agent (ADR-082 section 4); the user or its active agent may rotate it without admin or write right. */
   readonly agentOwed: ReadonlyMap<string, string>;
+  /** `wg -> [access, seq]`: the active release of a workgroup to the support team (ADR-096). */
+  readonly support: ReadonlyMap<string, readonly [access: string, seq: number]>;
 }
 
 /** `device -> workgroups` of every key a store of assignments ever inserted, extended as the store grows. */
@@ -368,6 +391,7 @@ export class OrgState implements OrgStateFields {
   declare readonly epochAuthors: ReadonlyMap<string, string>;
   declare readonly pending: ReadonlySet<string>;
   declare readonly agentOwed: ReadonlyMap<string, string>;
+  declare readonly support: ReadonlyMap<string, readonly [access: string, seq: number]>;
 
   /** Every map of `fields` is kept as an immutable shared map (a plain map is copied, section "maps shared"). */
   constructor(fields: OrgStateFields) {
@@ -381,6 +405,7 @@ export class OrgState implements OrgStateFields {
       epochs: sharedMap(fields.epochs),
       epochAuthors: sharedMap(fields.epochAuthors),
       agentOwed: sharedMap(fields.agentOwed),
+      support: sharedMap(fields.support),
     });
     Object.freeze(this);
   }
@@ -492,6 +517,28 @@ export class OrgState implements OrgStateFields {
     return this.wgAccess(principal, wg) === WRITE && this.writable(wg);
   }
 
+  // --- support (ADR-096) ---
+
+  /** The access (`read`/`write`) of the active support release of the workgroup, else null. */
+  supportRelease(wg: string): string | null {
+    return this.support.get(wg)?.[0] ?? null;
+  }
+
+  /** Releasing a workgroup to support (and revoking it): an active admin or a user with effective `write`. */
+  canRelease(principal: string, wg: string): boolean {
+    return this.isAdmin(principal) || this.wgAccess(principal, wg) === WRITE;
+  }
+
+  /** A person of the roster reads a released workgroup. */
+  supportReads(roster: Roster, person: string, wg: string): boolean {
+    return roster.has(person) && this.supportRelease(wg) !== null;
+  }
+
+  /** A person of the roster writes a workgroup released with `write` that is not archived. */
+  supportWrites(roster: Roster, person: string, wg: string): boolean {
+    return roster.has(person) && this.supportRelease(wg) === WRITE && this.writable(wg);
+  }
+
   // --- scopes ---
 
   /** Read right on an `org` or `wg` scope (the entitlement to its key). */
@@ -590,6 +637,13 @@ export class OrgState implements OrgStateFields {
               .sort(([a], [b]) => compareScopes(splitKey(a), splitKey(b)))
               .map(([key, user]) => ({ scope: splitKey(key)[0], scope_id: splitKey(key)[1], user })),
           }),
+      ...(this.support.size === 0
+        ? {}
+        : {
+            support: [...this.support]
+              .sort(([a], [b]) => compareText(a, b))
+              .map(([wg, [access, seq]]) => ({ wg, access, seq })),
+          }),
     };
   }
 }
@@ -667,9 +721,12 @@ export function losers(before: OrgState, body: Readonly<Record<string, unknown>>
   return new Set(agent === null ? [subject] : [subject, agent.id]);
 }
 
-/** The union of R over `losers`. */
+/** The union of R over `losers`; a `support_revoke` adds its workgroup (ADR-096: the support persons are not in the
+ *  org log, so R does not depend on who is support at the moment). */
 export function lost(before: OrgState, after: OrgState, body: Readonly<Record<string, unknown>>): Set<string> {
-  return new Set([...losers(before, body)].flatMap((loser) => [...requiredSet(before, after, loser)]));
+  const found = new Set([...losers(before, body)].flatMap((loser) => [...requiredSet(before, after, loser)]));
+  if (body.type === 'support_revoke') found.add(pairKey(WG, String(body.wg)));
+  return found;
 }
 
 /** Entry types whose R is owed by the others when the subject is the author itself (or the user of the author). */

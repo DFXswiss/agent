@@ -22,6 +22,13 @@
 // | `model.switched` | "Task Y: model switched from A to B because A is used up until 14:05" (`ref` =
 //   `<from access>:<to access>:<until or empty>`, ADR-081 section 5; a malformed ref: "Task Y: model switched") |
 //   the task |
+// | `support.release` | "Workgroup X in Y was released to DFX support (read)" / "… (read and write)" / "The release of
+//   workgroup X in Y to DFX support was revoked" (`ref` = `grant:<access>` or `revoke`, ADR-096) | the workgroup's
+//   settings; for a support person (no member of the org) the support area |
+// | `support.access` | "Support <Name> opened workgroup X in Y for the first time" (`ref` = the person, named from
+//   `GET /v1/orgs/{org}/support`) | the workgroup's settings |
+// | `support.people` | "A person joined DFX support …" / "A person left DFX support …" (`ref` = `joined:<user>` or
+//   `left:<user>`) | the org's workgroups |
 //
 // The level of a whiteboard notification follows from the row: a task → task level, else a workgroup → workgroup
 // level, else the org level. Names that are not (yet) decrypted are replaced by neutral fallbacks, never by IDs of
@@ -99,6 +106,19 @@ export function switchedOf(row: Pick<NotificationRow, 'ref'>): ModelSwitched | n
   return Number.isFinite(until) ? { from, to, until } : null;
 }
 
+/** The `ref` of a `support.release` row: `grant:read`, `grant:write` or `revoke` (ADR-096). */
+export const RELEASE_REFS: Readonly<Record<string, string>> = {
+  'grant:read': 'read',
+  'grant:write': 'write',
+  revoke: 'revoke',
+};
+
+/** The change of a `support.people` row (`ref` = `joined:<user>` or `left:<user>`), null when malformed. */
+export function peopleChange(row: Pick<NotificationRow, 'ref'>): 'joined' | 'left' | null {
+  const [change = ''] = (row.ref ?? '').split(':');
+  return change === 'joined' || change === 'left' ? change : null;
+}
+
 /** The reasons of an `operator.request` (ADR-079 section 4). */
 export const OPERATOR_REASONS = ['credit_exhausted', 'platform_access_required'];
 
@@ -157,6 +177,14 @@ export function notificationMessage(row: NotificationRow, names: Names, fallback
     }
     case 'device.needed':
       return { key: 'notifications.text.device.needed', params: { wg, org } };
+    case 'support.release': {
+      const change = RELEASE_REFS[row.ref ?? ''] ?? 'unknown';
+      return { key: `notifications.text.support.release.${change}`, params: { wg, org } };
+    }
+    case 'support.access':
+      return { key: 'notifications.text.support.access', params: { subject, wg, org } };
+    case 'support.people':
+      return { key: `notifications.text.support.people.${peopleChange(row) ?? 'unknown'}`, params: { org } };
     case 'model.switched': {
       const switched = switchedOf(row);
       if (switched === null) return { key: 'notifications.text.model.switched', params: { task, org } };
@@ -169,11 +197,20 @@ export function notificationMessage(row: NotificationRow, names: Names, fallback
   }
 }
 
-/** Where a click leads (06-web.md section 6.2: "click marks read and navigates"). */
-export function notificationTarget(row: NotificationRow): string {
+/**
+ * Where a click leads (06-web.md section 6.2: "click marks read and navigates"); `member`: the user is a member of the
+ * row's organization (a support person is told of releases of organizations it does not belong to).
+ */
+export function notificationTarget(row: NotificationRow, member = true): string {
   if (row.org_id === null) return '/settings';
+  if (!member && row.kind.startsWith('support.')) return '/support';
   const org = `/o/${encodeURIComponent(row.org_id)}`;
   switch (row.kind) {
+    case 'support.release':
+    case 'support.access':
+      return row.wg_id === null ? `${org}/workgroups` : `${org}/w/${encodeURIComponent(row.wg_id)}/settings`;
+    case 'support.people':
+      return `${org}/workgroups`;
     case 'whiteboard.entry':
       if (row.task_id !== null && row.wg_id !== null) return boardPath(taskBoard(row.org_id, row.wg_id, row.task_id));
       if (row.wg_id !== null) return boardPath(wgBoard(row.org_id, row.wg_id));
@@ -210,17 +247,19 @@ function deviceLabel(state: StoreState, org: string, device: string): string | n
   return label;
 }
 
-const named = new WeakMap<object, WeakMap<object, WeakMap<NotificationRow, Names>>>();
+const named = new WeakMap<object, WeakMap<object, WeakMap<object, WeakMap<NotificationRow, Names>>>>();
 
 /**
  * The decrypted names a notification refers to (null where not read yet or not readable); the same object while the
- * `events` and `agents` slices and the row are unchanged (a stable selector for `useStore`).
+ * `events`, `agents` and `support` slices and the row are unchanged (a stable selector for `useStore`).
  */
 export function notificationNames(state: StoreState, row: NotificationRow): Names {
-  const byAgents = named.get(state.events) ?? new WeakMap<object, WeakMap<NotificationRow, Names>>();
+  const byAgents = named.get(state.events) ?? new WeakMap<object, WeakMap<object, WeakMap<NotificationRow, Names>>>();
   named.set(state.events, byAgents);
-  const byRow = byAgents.get(state.agents) ?? new WeakMap<NotificationRow, Names>();
-  byAgents.set(state.agents, byRow);
+  const bySupport = byAgents.get(state.agents) ?? new WeakMap<object, WeakMap<NotificationRow, Names>>();
+  byAgents.set(state.agents, bySupport);
+  const byRow = bySupport.get(state.support) ?? new WeakMap<NotificationRow, Names>();
+  bySupport.set(state.support, byRow);
   const known = byRow.get(row);
   if (known !== undefined) return known;
   const names = readNames(state, row);
@@ -245,7 +284,9 @@ function readNames(state: StoreState, row: NotificationRow): Names {
         ? (directory.members.get(row.ref) ?? deviceLabel(state, row.org_id, row.ref))
         : row.kind === 'org.admitted'
           ? (directory.members.get(row.ref) ?? null)
-          : null;
+          : row.kind === 'support.access'
+            ? (state.support.orgs[row.org_id]?.people[row.ref] ?? null)
+            : null;
   return {
     org: directory.orgName,
     wg: row.wg_id === null ? null : (directory.workgroups.get(row.wg_id) ?? null),

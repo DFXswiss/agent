@@ -14,6 +14,12 @@ transaction as the log entries, so a check inside an area's transaction sees the
 
 Decertified platform devices are refused by the signature gate before any right is asked (HUB-04); the projections keep
 their assignments until an admin unassigns them (04-crypto.md section 4.7).
+
+Support (ADR-096): an active support person (`agent_hub.support.store`) holds `wg:read`/`task:read` on a workgroup
+released to support, and - only where a route asks with `support_write` (prompts, the workgroup whiteboard) -
+`wg:write`/`task:write` with a `write` release on a workgroup that is not archived; `org:support` is an active release
+of some workgroup of the org (the org's log and its own wraps). Never `org:member`, `org:admin` or a device right. The
+first access of a person under a release is recorded and notified once (`note_access`).
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ from uuid import UUID
 import psycopg
 
 from agent_hub.errors import HubError
+from agent_hub.support import store as support
 
 Connection = psycopg.Connection[Any]
 ORG_MEMBER = "org:member"
@@ -34,7 +41,8 @@ TASK_READ = "task:read"
 TASK_WRITE = "task:write"
 DEVICE_ORG = "device:org"
 DEVICE_WG = "device:wg"
-ORG_RIGHTS = frozenset({ORG_MEMBER, ORG_ADMIN, DEVICE_ORG})
+ORG_SUPPORT = "org:support"
+ORG_RIGHTS = frozenset({ORG_MEMBER, ORG_ADMIN, DEVICE_ORG, ORG_SUPPORT})
 WG_RIGHTS = frozenset({WG_READ, WG_WRITE, TASK_READ, TASK_WRITE, DEVICE_WG})
 READ, WRITE = "read", "write"
 
@@ -83,6 +91,8 @@ def device_assigned(connection: Connection, wg_id: UUID | str, device_id: UUID |
 
 
 def _org_right(connection: Connection, principal: UUID | str, right: str, org: UUID | str) -> bool:
+    if right == ORG_SUPPORT:
+        return support.in_org(connection, org, principal)
     role = org_role(connection, org, principal)
     if right == ORG_ADMIN:
         return role == "admin"
@@ -91,13 +101,21 @@ def _org_right(connection: Connection, principal: UUID | str, right: str, org: U
     return role == "device"
 
 
-def _wg_right(connection: Connection, principal: UUID | str, right: str, wg: UUID | str) -> bool:
+def _wg_right(connection: Connection, principal: UUID | str, right: str, wg: UUID | str, support_write: bool) -> bool:
     if right == DEVICE_WG:
         return device_assigned(connection, wg, principal)
     access = wg_access(connection, wg, principal)
-    if right in (WG_READ, TASK_READ):
-        return access is not None
-    return access == WRITE and not wg_archived(connection, wg)
+    reading = right in (WG_READ, TASK_READ)
+    if reading and access is not None:
+        return True
+    if not reading and access == WRITE:
+        return not wg_archived(connection, wg)
+    # the support release (ADR-096): a member that is also support writes when either right allows it
+    released = support.release_access(connection, wg, principal) if reading or support_write else None
+    granted = released is not None and (reading or (released == WRITE and not wg_archived(connection, wg)))
+    if granted:
+        support.note_access(connection, wg, principal)
+    return granted
 
 
 def can(
@@ -107,12 +125,14 @@ def can(
     *,
     org_id: UUID | str | None = None,
     wg_id: UUID | str | None = None,
+    support_write: bool = False,
 ) -> bool:
-    """True if the principal holds the right on the org (org rights) or workgroup (workgroup rights)."""
+    """True if the principal holds the right on the org (org rights) or workgroup (workgroup rights); `support_write`:
+    a support person with a `write` release holds the write rights too (the route allows support writes)."""
     if right in ORG_RIGHTS and org_id is not None:
         return _org_right(connection, principal_id, right, org_id)
     if right in WG_RIGHTS and wg_id is not None:
-        return _wg_right(connection, principal_id, right, wg_id)
+        return _wg_right(connection, principal_id, right, wg_id, support_write)
     raise ValueError("unknown right or missing scope")
 
 
@@ -131,9 +151,10 @@ def require(
     org_id: UUID | str | None = None,
     wg_id: UUID | str | None = None,
     write: bool = False,
+    support_write: bool = False,
 ) -> None:
     """`can`, else `404 not_found` (reads, unknown scopes) or `403 forbidden` (writes on a known scope)."""
-    if can(connection, principal_id, right, org_id=org_id, wg_id=wg_id):
+    if can(connection, principal_id, right, org_id=org_id, wg_id=wg_id, support_write=support_write):
         return
     if write and _known(connection, org_id, wg_id):
         raise HubError("forbidden")

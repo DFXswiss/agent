@@ -165,7 +165,7 @@ def test_every_spa_route_serves_the_page(web: HubHarness, path: str) -> None:
 
 
 def test_spa_routes_are_the_routes_of_the_web_spec() -> None:
-    assert len(SPA_ROUTES) == 27
+    assert len(SPA_ROUTES) == 30  # 27 + the support area (ADR-096)
     assert "/subscriptions" in SPA_ROUTES
     assert "/invite" in SPA_ROUTES
     assert "/connect" in SPA_ROUTES

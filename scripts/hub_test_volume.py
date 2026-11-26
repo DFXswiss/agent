@@ -202,13 +202,19 @@ def insert_user(connection: Connection, actor: Actor, at: datetime) -> None:
     )
 
 
+FEATURES = ("log.admit", "log.org_assign", "log.policy", "log.support", "vm.choice", "github.identities")
+"""What the seeded devices announced, like a current runner (`agent_runner.sync.ws.FEATURES`): the volume specs
+append platform-log entries that wait for every active device's feature (ADR-060, ADR-096)."""
+
+
 def insert_org_device(connection: Connection, actor: Actor, org: str, at: datetime) -> None:
     """An org device principal with its own keys (enrolled, waiting for its `accept`)."""
     connection.execute("INSERT INTO hub.principal (id, kind, created_at) VALUES (%s, 'device', %s)", (actor.id, at))
     connection.execute(
         "INSERT INTO hub.device (id, kind, kem_pub, sig_pub, owner_org, state, enrolled_at, agent_version, os, arch,"
-        " capacity, updated_at) VALUES (%s, 'org', %s, %s, %s, 'active', %s, '0.1.0', 'linux', 'x86_64', %s, %s)",
-        (actor.id, actor.identity.kem_public(), actor.identity.sig_public(), org, at, Jsonb({}), at),
+        " capacity, updated_at, features)"
+        " VALUES (%s, 'org', %s, %s, %s, 'active', %s, '0.1.0', 'linux', 'x86_64', %s, %s, %s)",
+        (actor.id, actor.identity.kem_public(), actor.identity.sig_public(), org, at, Jsonb({}), at, list(FEATURES)),
     )
 
 

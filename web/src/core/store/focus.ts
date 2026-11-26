@@ -48,6 +48,8 @@ export const OTHER_KINDS: readonly string[] = [
   'settings.workgroup',
   // the name a person gives a main agent (ADR-095 section 2): one per renaming, never in masses
   'task.agent_name',
+  // the names a support person needs (ADR-096): one per release or change, never in masses
+  'support.info',
   'task.meta',
   'wg.profile',
   'whiteboard.delete',

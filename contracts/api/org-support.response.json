@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/org-support.response.json",
+  "title": "GET /v1/orgs/{org}/support response",
+  "description": "The organization's active releases to support and the current support persons with their display names (03-api.md section 4.13, ADR-096).",
+  "type": "object",
+  "properties": {
+    "releases": {
+      "type": "array",
+      "maxItems": 100000,
+      "items": {
+        "type": "object",
+        "properties": {
+          "wg_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "access": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write"
+            ]
+          },
+          "granted_seq": {
+            "$ref": "../common.json#/$defs/seq"
+          },
+          "granted_at": {
+            "$ref": "../common.json#/$defs/time"
+          }
+        },
+        "required": [
+          "wg_id",
+          "access",
+          "granted_seq",
+          "granted_at"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "people": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "properties": {
+          "user_id": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "user_id",
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "releases",
+    "people"
+  ],
+  "additionalProperties": false
+}

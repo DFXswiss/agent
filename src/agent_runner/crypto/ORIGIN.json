@@ -136,66 +136,66 @@
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/batch.py",
-      "sha256": "870d00dc424bfdeec41c33aafc5156b8c896a97cb2bf1bb816845618dd5266d7",
+      "sha256": "ab01e7f0f35744a1021efa3d78b7c843fa23fb89d79305e956dde7023b658cf7",
       "source": "src/agent_hub/log/batch.py"
     },
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/catchup.py",
-      "sha256": "1aa7f70dc1d83771920348fd8408b8fbf61b95b21a90dd78aad7b2000c102977",
+      "sha256": "5b52dafe0a0f1d16415f9be1d256c3912c96455516ef7ca2a965aa4cef050dc7",
       "source": "src/agent_hub/log/catchup.py"
     },
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/entries.py",
-      "sha256": "edb7fa6ed46ac99ead392c6b95aa7be6ed2c503526bae5c0f5f7daec8db87492",
+      "sha256": "e6f4bf152d266fc4efd34065a81f9d60d8f4883ae4977abecfdb675b6e3e443f",
       "source": "src/agent_hub/log/entries.py"
     },
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/events.py",
-      "sha256": "2ab122f1a609f1661b92b07302fc1a104fb4f16d4b412c55068d22d61b0e1a12",
+      "sha256": "62d6e4845853d2fa291fafb9ed2d6a233eedf17b7a27036ee5054f557b9ab8a1",
       "source": "src/agent_hub/log/events.py"
     },
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/platform.py",
-      "sha256": "b1ba3a830ebed77d0b5d0ecba879296c302e0a4c98c565ccd2fa084ad7ff0bcd",
+      "sha256": "e43911b9c614a7e0f62cc79a97f19c37f4a842cd19d210f06925957f8a43e812",
       "source": "src/agent_hub/log/platform.py"
     },
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/rotation.py",
-      "sha256": "ef603eb011c696727d255b80e84bcf06a5aa1040bed2afa59a129bf48c6e5bee",
+      "sha256": "1903b62366b28c98f2c806c9e4d23f99ea3b08086cfa4f0f70698be20916d836",
       "source": "src/agent_hub/log/rotation.py"
     },
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/state.py",
-      "sha256": "db9081ab3c5f40a66a38fa43e0e9f715164ef9061cf280c6628ce06e36e41df5",
+      "sha256": "6b27c9abc917075282ce1e61173a9a5f2824f2a74a8224f732ba94d24266ba45",
       "source": "src/agent_hub/log/state.py"
     },
     {
       "adaptations": [
         {
-          "copy": "from agent_hub.log import catchup, events, platform, rotation, verify, wraps\nfrom agent_hub.log.batch import check_batch\nfrom agent_hub.log.entries import Head, check_extends, entry_hash, sign_log_entry, sign_platform_entry\nfrom agent_hub.log.state import OrgState\nfrom agent_hub.crypto.vectors import Section, fixed, fixed_id\n",
-          "reference": "from agent_hub.crypto.vectors import Section, fixed, fixed_id\nfrom agent_hub.log import catchup, events, platform, rotation, verify, wraps\nfrom agent_hub.log.batch import check_batch\nfrom agent_hub.log.entries import Head, check_extends, entry_hash, sign_log_entry, sign_platform_entry\nfrom agent_hub.log.state import OrgState\n"
+          "copy": "from agent_hub.log import catchup, events, platform, rotation, verify, wraps\nfrom agent_hub.log.batch import check_batch\nfrom agent_hub.log.entries import Head, check_extends, entry_hash, sign_log_entry, sign_platform_entry\nfrom agent_hub.log.state import OrgState, SupportPerson\nfrom agent_hub.crypto.vectors import Section, fixed, fixed_id\n",
+          "reference": "from agent_hub.crypto.vectors import Section, fixed, fixed_id\nfrom agent_hub.log import catchup, events, platform, rotation, verify, wraps\nfrom agent_hub.log.batch import check_batch\nfrom agent_hub.log.entries import Head, check_extends, entry_hash, sign_log_entry, sign_platform_entry\nfrom agent_hub.log.state import OrgState, SupportPerson\n"
         }
       ],
       "copy": "src/agent_runner/crypto/log/vectors.py",
-      "sha256": "a47ff3a4e58fa9db4762966640aae3727c976106f5aa2042c2a7f8d63c3f7c22",
+      "sha256": "863c87cd058d4b2523d35dc7b51129a6097761a73a03b0d3b1e82960808d8c36",
       "source": "src/agent_hub/log/vectors.py"
     },
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/verify.py",
-      "sha256": "6f01b66f83897c638cc78a60774e92fc5418b6af65d7ece6ac4bba7d01262753",
+      "sha256": "e1294ee0f0add9b15e38f4dc8ee2204b1d74ad909b1b2ec0562cdda992c74130",
       "source": "src/agent_hub/log/verify.py"
     },
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/log/wraps.py",
-      "sha256": "4c19a6ca0e17159ca5eb61a3956a1f53513e141e345b096cb5b56718712680bd",
+      "sha256": "a8cce7b018edbb8673dd1be6e22e0b87ad0a365832f0006ab6723299509ebb19",
       "source": "src/agent_hub/log/wraps.py"
     },
     {
@@ -283,8 +283,8 @@
     },
     {
       "copy": "tests/platform/runner/crypto/log/test_entries.py",
-      "copy_sha256": "047dd9968f474665ba5940cca2d24d5b718ca55aad8cd2c8e9ed5ba89e41e0fe",
-      "sha256": "720b688140c0fa14611b433579911f61a93843ebf290d2cad25e8cc101618a64",
+      "copy_sha256": "41639e2ea91aa1111ac1ae1f24ce66b36ce977db4763c8a4c0bed04341e864bc",
+      "sha256": "9cee4d9853c98a22ccaffe058d5cd75ef635a0d9ccb826bfaadc95d58e31948b",
       "source": "tests/platform/hub/log/test_entries.py"
     },
     {
@@ -295,8 +295,8 @@
     },
     {
       "copy": "tests/platform/runner/crypto/log/test_platform.py",
-      "copy_sha256": "f598ce6cc8b500429e0f5b8c524c7163c07719a20b5f67c2f3bb749e67ef4e2f",
-      "sha256": "0adbdc2b82b88188fb18b8f7d6fbb16e01792ba5c13e7b091b74030949dbfb9d",
+      "copy_sha256": "d7307072c1e5b7f8645c31a9c92070b149ceb32063533e1c36093466ec632723",
+      "sha256": "d0fabf7810d29358a2bb255563627d2ed71d907a6a928c7a81f63ea8c623d29b",
       "source": "tests/platform/hub/log/test_platform.py"
     },
     {
@@ -307,8 +307,8 @@
     },
     {
       "copy": "tests/platform/runner/crypto/log/test_vectors_log.py",
-      "copy_sha256": "820c42d4e58ac19afe5e10d7ec4892fbfc8ce376c8817ea161afe2324ba51fdb",
-      "sha256": "7cc4608b3ae76fd2c4fb28347095e40c5fbfcc2f33f63415f70fea32f2f36953",
+      "copy_sha256": "b5ed2fcefb1c6686001f7f409e6474879bb336adf74aca098152fc86a02fb794",
+      "sha256": "c0dcc09982fad525ed3e7d17d26fbc9bea30b57789bcbf2e057e0cb200fdfba7",
       "source": "tests/platform/hub/log/test_vectors_log.py"
     },
     {

@@ -22,6 +22,10 @@ export const NOTIFICATION_KINDS = [
   'operator.request',
   'device.needed',
   'model.switched',
+  // DFX support (ADR-096 section 5): a release, a person's first access, a person joining or leaving support
+  'support.release',
+  'support.access',
+  'support.people',
 ] as const;
 
 /** The account-level kind (no org): an account-changing action of one of the user's agents (11-agent-access.md

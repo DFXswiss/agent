@@ -431,6 +431,22 @@ is the intersection of the task's snapshot and every snapshot along its chain of
 `profile` of its own keeps it in `session.agent_profile`): the types all allow, the narrowest reach. Task and session
 rows carry `agent_profile` (null without). The device state carries the section `agent_profiles` (§6.1).
 
+### 4.14 Support **(new, ADR-096)**
+
+| Method and path | Auth, right | Answer |
+|---|---|---|
+| `GET /v1/support/releases` | browser, `user` (an active support person) | `{releases: [{org_id, wg_id, access, granted_seq, granted_at}]}`, newest first; `404 not_found` for every other user |
+| `GET /v1/orgs/{org}/support` | browser, `org:member` | `{releases: [{wg_id, access, granted_seq, granted_at}], people: [{user_id, name}]}` (the current roster) |
+| `PUT /v1/platform/support/{user}` | root | body `{name}` (1–64 characters, no control characters); `{user_id, name, active}`; `404 not_found` for a user that never held the role; audit `support.name` without the name |
+
+Releases go through `POST /v1/orgs/{org}/log` (entries `support_grant`/`support_revoke` with wraps and the
+`support.info` event in `events`). A support person holds `wg:read`/`task:read` on a released workgroup and – on
+`POST /v1/tasks/{task}/prompts` and the workgroup whiteboard kinds of `POST /v1/events` only – the write rights under a
+`write` release; `GET /v1/orgs/{org}/log` is open to it with the right `org:support` (an active release in the org).
+Every other route answers as for an outsider (`404`/`403`). The browser live channel stays members-only: the support
+view reads by polling, each read recorded in the read log. Notifications `support.release`, `support.access`,
+`support.people` (02-data-model.md §2.6).
+
 ## 5. Browser live channel
 
 `GET /v1/stream` (signed, read with `fetch` streaming; `Accept: text/event-stream`). Query: `org=<id>` (one

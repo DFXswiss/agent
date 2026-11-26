@@ -46,5 +46,13 @@
   "access.subscription": "Claude subscription",
   "access.operator": "operator subscription",
   "access.api_key": "API key",
-  "access.platform": "DFX access over OpenRouter"
+  "access.platform": "DFX access over OpenRouter",
+  "text.support.release.read": "Workgroup “{wg}” in “{org}” was released to DFX support (read)",
+  "text.support.release.write": "Workgroup “{wg}” in “{org}” was released to DFX support (read and write)",
+  "text.support.release.revoke": "The release of workgroup “{wg}” in “{org}” to DFX support was revoked",
+  "text.support.release.unknown": "The release of workgroup “{wg}” in “{org}” to DFX support changed",
+  "text.support.access": "{subject} of DFX support opened workgroup “{wg}” in “{org}” for the first time",
+  "text.support.people.joined": "A person joined DFX support: it can read the released workgroups of “{org}”",
+  "text.support.people.left": "A person left DFX support: the released workgroups of “{org}” get new keys",
+  "text.support.people.unknown": "The people of DFX support changed"
 }

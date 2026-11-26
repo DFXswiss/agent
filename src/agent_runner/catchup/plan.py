@@ -22,6 +22,10 @@ copied `crypto.log.catchup` adds it, also for older epochs of slots this daemon 
 revoked in any acting org (`revoked_agents`: superseded or removed other than with its user) is excluded like a
 decertified device, also in a log where it is still active (the user's clients remove it there).
 
+Support (ADR-096): the persons of the support roster of the verified platform log are recipients of every epoch of a
+workgroup released to support (the copied `crypto.log.catchup` adds them, `support_slots`); their X25519 key comes
+from their root certification, never from the hub.
+
 A slot is planned only when the device holds the key of that epoch. The device does not see which wraps the hub
 already stores for others: slots uploaded once (stored or ignored as existing) are remembered per daemon (`done`), so
 every slot is sent at most once per daemon; slots the hub refused are skipped until a verified log head changes or
@@ -101,7 +105,8 @@ def plan(book: OrgBook, held: Iterable[Slot], memory: Memory, limit: int | None 
     logs = [book.logs[org] for org in acting]
     revoked = revoked_agents(log.state for log in logs)
     for org in acting:
-        for slot in missing_wraps(book.logs[org], book.device_id, skip, book.excluded(org) | revoked):
+        roster = book.support_roster()
+        for slot in missing_wraps(book.logs[org], book.device_id, skip, book.excluded(org) | revoked, roster):
             if (slot.scope, slot.scope_id, slot.epoch) in holding:
                 chosen.add(slot)
     excluded = revoked.union(*(book.excluded(org) for org in acting))
@@ -123,7 +128,7 @@ def recipient_kem(book: OrgBook, slot: WrapSlot) -> str:
         principal = book.logs[org].state.principals.get(slot.recipient)
         if principal is not None:
             return principal.kem
-    raise KeyError(slot.recipient)
+    return book.support_roster()[slot.recipient].kem
 
 
 def memory_for(context: Any) -> Memory:

@@ -16,12 +16,15 @@
 // The epoch must exist: `1 <= e <= current`. The wrapper's signature (section 4.2) is checked first
 // (`signature_invalid`) under its key from an org in which it is active (else, for older wraps, from any org that
 // knows it); an unknown wrapper is `wrap_unauthorized`, and with `requireActive` (hub) also a removed one.
+// Support (ADR-096): a person of the verifier's support roster is entitled to every epoch `1 <= e <= current` of a
+// workgroup released to support (`OrgState.supportReads`); the wrapper is a holder of that epoch from the org (support
+// persons never wrap). The roster is empty by default, so a verifier without it accepts no support recipient.
 import { b64uDecode } from '../encoding/b64u';
 import { fail } from '../crypto/errors';
 import * as F from '../crypto/fields';
 import { verifyWrap } from '../crypto/wrap';
 import { refusalCode } from './entries';
-import { AGENT, compareText, DEVICE, ORG, type OrgState, type Principal, WG } from './state';
+import { AGENT, compareText, DEVICE, NO_ROSTER, ORG, type OrgState, type Principal, type Roster, WG } from './state';
 import type { VerifiedLog } from './verify';
 
 export const CRED = 'cred';
@@ -126,20 +129,25 @@ export function credDevice(state: OrgState, owner: string, principal: string): b
   return state.org === owner ? wgs.length > 0 : wgs.some((wg) => state.explicitAccess(owner, wg) !== null);
 }
 
-/** W1/W2 for an `org` or `wg` scope of this log. */
-export function mayWrap(log: VerifiedLog, slot: WrapSlot, wrappedBy: string, excluded: Iterable<string> = []): boolean {
+/** W1/W2 for an `org` or `wg` scope of this log; `roster` the support persons (ADR-096). */
+export function mayWrap(
+  log: VerifiedLog,
+  slot: WrapSlot,
+  wrappedBy: string,
+  excluded: Iterable<string> = [],
+  roster: Roster = NO_ROSTER,
+): boolean {
   const state = log.state;
   if (!(slot.scope === ORG || slot.scope === WG)) return false;
   if (!(slot.epoch >= 1 && slot.epoch <= state.epoch(slot.scope, slot.scope_id))) return false;
   // `state.readers(…).includes(p)`, without listing and sorting every reader per slot
   const skip = new Set(excluded);
   const reader = (principal: string) => !skip.has(principal) && state.canRead(principal, slot.scope, slot.scope_id);
-  if (!reader(slot.recipient)) return false;
-  return (
-    wrappedBy === slot.recipient ||
-    reader(wrappedBy) ||
-    log.epochHolders(slot.scope, slot.scope_id, slot.epoch).has(wrappedBy)
-  );
+  const member = reader(slot.recipient);
+  if (!member && !(slot.scope === WG && state.supportReads(roster, slot.recipient, slot.scope_id))) return false;
+  // W1 only for a reader of the log: a support person never wraps, not even for itself
+  if (member && wrappedBy === slot.recipient) return true;
+  return reader(wrappedBy) || log.epochHolders(slot.scope, slot.scope_id, slot.epoch).has(wrappedBy);
 }
 
 /**
@@ -197,7 +205,7 @@ async function slotAndSignature(
 /**
  * W3 for an `org`/`wg` wrap `{scope, scope_id, epoch, recipient_id, wrap, sig}` created by `wrappedBy`. The hub
  * passes `requireActive` (a removed principal stores no wraps); recipients re-checking stored wraps leave it false,
- * so a wrap stays valid after its wrapper was removed.
+ * so a wrap stays valid after its wrapper was removed. `roster`: the support persons (ADR-096).
  */
 export async function checkWrap(
   wrap: unknown,
@@ -205,10 +213,11 @@ export async function checkWrap(
   log: VerifiedLog,
   excluded: Iterable<string> = [],
   requireActive = false,
+  roster: Roster = NO_ROSTER,
 ): Promise<WrapSlot> {
   const skip = [...excluded];
   const slot = await slotAndSignature(wrap, wrappedBy, [log.state], requireActive);
-  if (!mayWrap(log, slot, wrappedBy, skip)) fail('wrap_unauthorized');
+  if (!mayWrap(log, slot, wrappedBy, skip, roster)) fail('wrap_unauthorized');
   return slot;
 }
 

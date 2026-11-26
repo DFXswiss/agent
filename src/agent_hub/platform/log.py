@@ -6,7 +6,11 @@ log. `append` runs under the advisory lock `PLATFORM_LOG_LOCK` (one appender at 
 against the stored head (`409 seq_conflict` with `detail.expected_seq`), verifies the batch with P1-P4 and the type
 rules of `agent_hub.log.platform` on top of the verified stored log, applies the hub's own rules (invitation lifetimes
 of ADR-005, known organizations, unique invitation IDs across platform and org invitations, device IDs), inserts the
-rows and updates the projections (`agent_hub.platform.projection`) and the audit chain in the same transaction.
+rows and updates the projections (`agent_hub.platform.projection`) and the audit chain in the same transaction. The
+support roster (ADR-096) is projected from the verified state after the batch (`agent_hub.support.store.sync_people`);
+when a person joined or left, the admins of every org with an active release are notified (`support.people`, also an
+audit row of that org), and the rotations the releases now owe are added to those orgs' `rotation_pending` under their
+row locks, in org order.
 
 Stored entries were verified when they were appended; the verified state is rebuilt from them on demand and kept in
 a small cache keyed by the head hash (a hash chain names the whole log, so equal heads mean equal logs).
@@ -30,11 +34,15 @@ from agent_hub.audit.invites import audit_invite_use
 from agent_hub.config import LIMITS
 from agent_hub.crypto.encoding import b64u_encode, canonical, parse_time
 from agent_hub.crypto.errors import CryptoError
-from agent_hub.device.features import LOG_ADMIT, LOG_POLICY, outdated_devices
+from agent_hub.device.features import LOG_ADMIT, LOG_POLICY, LOG_SUPPORT, outdated_devices
 from agent_hub.errors import ERROR_STATUSES, HubError
 from agent_hub.log.entries import Head, entry_hash
 from agent_hub.log.platform import PlatformState, VerifiedPlatformLog, append_platform, apply_platform
+from agent_hub.notifications.rules import Notification
+from agent_hub.orgs import logs as org_logs
 from agent_hub.platform import projection
+from agent_hub.support import notify as support_notify
+from agent_hub.support import store as support
 
 PLATFORM_LOG_LOCK = 742180102
 """Advisory lock of platform-log appends (next to the migration lock 742180100 and the audit lock 742180101)."""
@@ -55,6 +63,8 @@ class AppendResult:
     """`(user, agent)` of the session orchestrators on a decertified device (ADR-082 section 9.6)."""
     hints: tuple[tuple[UUID, UUID], ...] = field(default=())
     """`(device, session)` of those orchestrators: the hint `session.orchestrator` after the commit."""
+    notices: tuple[Notification, ...] = field(default=())
+    """`support.people` rows to publish after the commit (ADR-096)."""
 
 
 class _Cache:
@@ -86,6 +96,8 @@ CACHE = _Cache()
 USER_TYPES = frozenset({"user_certify", "user_decertify"})
 ROLE_TYPES = frozenset({"role_grant", "role_revoke"})
 OPERATOR_ROLE = "operator"
+SUPPORT_ROLE = "support"
+"""ADR-096: a role value an older runner does not know; it waits for the runners' feature `log.support`."""
 POLICY_TYPES = frozenset({"platform_policy", "org_operator_subscriptions"})
 """ADR-079: entries an older runner does not know; like `USER_TYPES` they wait for the runners' feature `log.policy`
 (also a `role_grant` / `role_revoke` of the new role `operator`)."""
@@ -176,6 +188,8 @@ def _check_hub_rules(connection: psycopg.Connection[Any], body: dict[str, object
         _require_feature(connection, LOG_ADMIT, "platform")
     elif kind in POLICY_TYPES or (kind in ROLE_TYPES and body["role"] == OPERATOR_ROLE):
         _require_feature(connection, LOG_POLICY, None)
+    elif kind in ROLE_TYPES and body["role"] == SUPPORT_ROLE:
+        _require_feature(connection, LOG_SUPPORT, None)
 
 
 def _require_feature(connection: psycopg.Connection[Any], feature: str, kind: str | None) -> None:
@@ -241,13 +255,47 @@ def append(
     final = VerifiedPlatformLog(tuple(stored_list), tuple(states))
     # Cached before the commit: harmless, a cache hit needs the stored head to equal the cached one.
     CACHE.put(final)
+    notices = _support_changes(connection, final.state, now)
     return AppendResult(
         head=final.state.head_value(),
         appended=tuple(appended),
         decertified=tuple(decertified),
         revoked=tuple(revoked),
         hints=tuple(orchestrator.session_hints(connection, [agent for _user, agent in revoked])),
+        notices=tuple(notices),
     )
+
+
+def _support_changes(connection: psycopg.Connection[Any], state: PlatformState, now: datetime) -> list[Notification]:
+    """ADR-096: project the roster; on a change notify and audit the orgs with a release and mark their owed
+    rotations."""
+    joined, left = support.sync_people(connection, state, now)
+    if not joined and not left:
+        return []
+    roster = support.roster(state)
+    orgs = connection.execute("SELECT DISTINCT org_id FROM hub.support_release ORDER BY org_id").fetchall()
+    for found in orgs:
+        org = org_logs.org_row(connection, UUID(str(found[0])), lock=True)
+        if org is None:  # a release row without its org (a damaged table): nothing to rotate
+            continue
+        log = org_logs.verified_log(connection, org, state)
+        support.merge_pending(connection, org.id, support.owed(connection, log.state, roster))
+        for change, users in (("joined", joined), ("left", left)):
+            for user in users:
+                append_audit(
+                    connection,
+                    AuditRow(
+                        at=now,
+                        actor_kind="operator",
+                        action="support.people",
+                        result="ok",
+                        org_id=org.id,
+                        target_kind="user",
+                        target_id=user,
+                        detail={"change": change},
+                    ),
+                )
+    return support_notify.people_notices(connection, joined, left, now)
 
 
 def _audit(connection: psycopg.Connection[Any], body: dict[str, object], seq: int, now: datetime) -> None:

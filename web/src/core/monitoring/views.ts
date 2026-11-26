@@ -37,7 +37,8 @@ export const VIEW_PATTERNS = {
   login: ['/login'],
   recover: ['/recover'],
   connect: ['/connect'],
-  other: ['/', '*'],
+  // the support area of DFX support persons (ADR-096) is reported as `other`: a view type of its own would need the hub
+  other: ['/', '*', '/support', '/support/:org/:wg', '/support/:org/:wg/:task'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type ViewName = keyof typeof VIEW_PATTERNS;

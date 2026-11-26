@@ -105,6 +105,48 @@ describe('platform switches and operator subscriptions (ADR-079)', () => {
   });
 });
 
+describe('support roster (ADR-096)', () => {
+  it('binds the role to the certification valid at the grant', async () => {
+    const plat = await platformWith([]);
+    const root = await ed25519KeyPair(await seed('platform root'));
+    let log = await appendPlatform(null, plat.entries, plat.root);
+    const add = async (...list: { type: string; [key: string]: unknown }[]) => {
+      log = await appendPlatform(
+        log,
+        await buildPlatformEntries(log.state.headValue(), root.privateKey, list),
+        plat.root,
+      );
+      return log.state;
+    };
+    expect(Object.hasOwn(log.state.projection(), 'support')).toBe(false);
+    const grantAlice = await buildPlatformEntries(log.state.headValue(), root.privateKey, [
+      { type: 'role_grant', subject: alice.id, role: 'support' },
+    ]);
+    // the role needs root-certified identity keys
+    expect(await code(appendPlatform(log, grantAlice, plat.root))).toBe('log_rights');
+    const granted = await add(
+      { type: 'user_certify', user: bob.id, pub: bob.identity.public() },
+      { type: 'role_grant', subject: bob.id, role: 'support' },
+    );
+    expect(granted.supportRoster().get(bob.id)).toEqual({ id: bob.id, ...bob.identity.public() });
+    expect(granted.projection().support).toEqual([bob.id]);
+    // a decertified person leaves the roster, its history stays verifiable
+    const left = await add({ type: 'user_decertify', user: bob.id });
+    expect(left.supportRoster().has(bob.id)).toBe(false);
+    expect(left.supportAuthors().has(bob.id)).toBe(true);
+    expect(left.projection().support).toEqual([]);
+    // a renewed certification needs a new grant
+    const renewed = await add({ type: 'user_certify', user: bob.id, pub: bob.identity.public() });
+    expect(renewed.supportRoster().has(bob.id)).toBe(false);
+    const again = await add(
+      { type: 'role_revoke', subject: bob.id, role: 'support' },
+      { type: 'role_grant', subject: bob.id, role: 'support' },
+    );
+    expect(again.supportRoster().get(bob.id)?.sig).toBe(bob.identity.public().sig);
+    expect(again.supportBound.get(bob.id)).toBe(again.seq - 2);
+  });
+});
+
 describe('platform devices in an org', () => {
   it('keeps the certification of an assigned platform device and refuses another one', async () => {
     const plat = await platformWith([pdev]);

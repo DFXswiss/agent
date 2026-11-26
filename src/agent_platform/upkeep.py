@@ -10,16 +10,19 @@ every ten minutes. The tool has no background of its own besides `claude watch`,
   the agent's own `agent_add` where its user is a member and it is missing (`selfadd`);
   for every org of the user whose verified log owes a batch the user may send (`membership.owed_planner`: for an admin
   the unassignment of decertified platform devices; the rotation of every scope a member left by itself, `pending`,
-  for an admin or a writer of the workgroup) the pending-rotation job `membership.rotate_pending`; then the
+  and of every released workgroup the hub flags after a person left support, ADR-096, for an admin or a writer of the
+  workgroup) the pending-rotation job `membership.rotate_pending`; then the
   credential-key check `credkey.rotate_if_owed`. Sealing never uses an epoch whose rotation is still owed
   (`rotation_pending`, `orgs.seal_epoch`), so when the user may not rotate or the rotation fails, nothing new is
   written that a member who left could read.
 - `follow_up`, after such a command succeeded: catch-up wrapping (`keywraps.org_catch_up`) of every org of the user,
-  so members and devices that are entitled now get their keys (the user's `CK` for newly entitled devices included).
+  so members and devices that are entitled now get their keys (the user's `CK` for newly entitled devices included,
+  and every epoch of a released workgroup for the persons of the support roster, ADR-096).
 - `sync` (both): `status` and every round of `claude watch` (which the background service runs).
 
 When nothing is owed nothing is sent; the reads are those that find it out (the user's orgs, their verified logs, the
-wraps; the platform log only for an admin of an org with platform devices; one `GET /v1/orgs/{org}/catch-up` per org).
+wraps; the platform log only for an admin of an org with platform devices or for an org with a support release; one
+`GET /v1/orgs/{org}/catch-up` per org, and `GET /v1/orgs/{org}` for an org with a support release).
 A failing step never fails the command: the result gets `upkeep` only when a step did something or failed, with
 `removed_agents` (`{org_id, agent_id, changed, seq, rotated}`), `agent_added` (`{org_id, seq}`), `rotated` (`{org_id,
 scope, scope_id, epoch}`), `unassigned_devices`, `credentials` (the check's result when it rotated, is blocked or
@@ -61,7 +64,7 @@ def owes(account: Account, org: str) -> bool:
     devices = any(principal.platform_seq is not None for principal in state.principals.values())
     admin = state.is_admin(account.user_id)
     platform = account.platform() if account.platform_root and admin and devices else None
-    return membership.owed_planner(platform)(log, account.user_id) is not None
+    return membership.owed_planner(platform, membership.flagged(account, org))(log, account.user_id) is not None
 
 
 def prepare(account: Account, report: Report) -> None:

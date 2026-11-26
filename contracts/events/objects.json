@@ -2474,6 +2474,40 @@
         "name"
       ],
       "additionalProperties": false
+    },
+    "body_support_info": {
+      "type": "object",
+      "description": "The names a support person needs to read a released workgroup without the org key (ADR-096 section 4): the organization, the workgroup and the readers of the workgroup by user ID; written by the releasing client, the newest counts.",
+      "properties": {
+        "org_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "wg_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "members": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "maxProperties": 1000
+        }
+      },
+      "required": [
+        "org_name",
+        "wg_name",
+        "members"
+      ],
+      "additionalProperties": false
     }
   }
 }

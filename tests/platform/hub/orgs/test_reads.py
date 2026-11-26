@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -142,7 +142,7 @@ def test_rights_api(world: World) -> None:
             (device, rights.DEVICE_WG, {"wg_id": draft.default_wg}, False),
         ]
         for actor, right, scope, expected in expectations:
-            assert rights.can(connection, actor.id, right, **scope) is expected, (right, scope)
+            assert rights.can(connection, actor.id, right, **cast(dict[str, Any], scope)) is expected, (right, scope)
         with pytest.raises(ValueError, match="unknown right"):
             rights.can(connection, admin.id, "org:owner", org_id=draft.id)
         with pytest.raises(ValueError, match="missing scope"):

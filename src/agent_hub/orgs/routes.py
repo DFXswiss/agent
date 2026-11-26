@@ -87,7 +87,10 @@ def publish_append(result: AppendResult) -> None:
         publish(Audience("device", UUID(device)), "log", {"org_id": str(result.org_id), "seq": head.seq})
     state = result.log.state
     for recipient in sorted({slot.recipient for slot in result.batch.wraps}):
-        principal = state.principals[recipient]
+        principal = state.principals.get(recipient)
+        if principal is None:  # a support person (ADR-096): a user outside the org log
+            publish(Audience("user", UUID(recipient)), "wraps", {})
+            continue
         kind: AudienceKind = "device" if principal.kind == DEVICE else "user"
         # an agent receives on its user's channel (ADR-082)
         publish(Audience(kind, UUID(principal.parent or recipient)), "wraps", {})
@@ -127,8 +130,10 @@ async def post_orgs(context: Context, principal: CurrentPrincipal, body: CreateO
 def org_view(context: HubContext, org_id: UUID, user: UUID) -> dict[str, Any]:
     """The body of `GET /v1/orgs/{org}` from the projections."""
     with context.pool.connection() as connection:
-        rights.require(connection, user, rights.ORG_MEMBER, org_id=org_id)
-        org = cast(logs.OrgRow, logs.org_row(connection, org_id))  # an active member implies the org
+        if not rights.can(connection, user, rights.ORG_MEMBER, org_id=org_id):
+            # a support person verifies a released workgroup against the org's log (ADR-096 section 4)
+            rights.require(connection, user, rights.ORG_SUPPORT, org_id=org_id)
+        org = cast(logs.OrgRow, logs.org_row(connection, org_id))  # a member or a release implies the org
         devices: dict[UUID, list[str]] = {}
         for wg_id, device_id in connection.execute(
             "SELECT d.wg_id, d.device_id FROM hub.wg_device d JOIN hub.wg w ON w.id = d.wg_id"
@@ -200,8 +205,10 @@ def log_page(context: HubContext, org_id: UUID, user: UUID, after: int, limit: i
     reads would otherwise serve entries beyond the head, which the browser refuses as a broken chain)."""
     with context.pool.connection() as connection, connection.transaction():
         connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-        rights.require(connection, user, rights.ORG_MEMBER, org_id=org_id)
-        org = cast(logs.OrgRow, logs.org_row(connection, org_id))  # an active member implies the org
+        if not rights.can(connection, user, rights.ORG_MEMBER, org_id=org_id):
+            # a support person verifies a released workgroup against the org's log (ADR-096 section 4)
+            rights.require(connection, user, rights.ORG_SUPPORT, org_id=org_id)
+        org = cast(logs.OrgRow, logs.org_row(connection, org_id))  # a member or a release implies the org
         found = logs.entries(connection, org_id, after, limit + 1)
     page = found[:limit]
     items = [{"seq": entry["body"]["seq"], "entry": entry} for entry in page]

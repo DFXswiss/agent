@@ -47,7 +47,7 @@ function isPage(value: unknown): value is LogPage {
 
 /** All entries after `after` (from `seq` 0 for null) and the head of the last page. */
 export async function fetchLog(
-  context: JobContext,
+  context: Pick<JobContext, 'client'>,
   path: string,
   after: number | null,
 ): Promise<{ entries: unknown[]; head: Head | null }> {

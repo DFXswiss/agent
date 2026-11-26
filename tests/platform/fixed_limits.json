@@ -485,6 +485,9 @@
   "src/agent_hub/subscriptions/routes.py": {
    "MAX_SAFE_INTEGER": "integer"
   },
+  "src/agent_hub/support/routes.py": {
+   "RELEASES_MAX": "page"
+  },
   "src/agent_hub/tasks/queue.py": {
    "QUEUE_MAX": "open",
    "WITHDRAWALS_MAX": "open"
@@ -1404,6 +1407,10 @@
    "/properties/operator/properties/subscriptions/maxItems": "answer",
    "/properties/own/properties/windows/maxItems": "answer"
   },
+  "contracts/api/org-support.response.json": {
+   "/properties/people/maxItems": "answer",
+   "/properties/releases/maxItems": "answer"
+  },
   "contracts/api/orgs-attention.response.json": {
    "/properties/items/maxItems": "answer"
   },
@@ -1453,6 +1460,9 @@
   },
   "contracts/api/subscriptions-list.response.json": {
    "/properties/subscriptions/maxItems": "open"
+  },
+  "contracts/api/support-releases.response.json": {
+   "/properties/releases/maxItems": "page"
   },
   "contracts/api/task-charges.response.json": {
    "/properties/people/maxItems": "answer",
@@ -1601,6 +1611,7 @@
    "/properties/imap_port/maximum": "integer"
   },
   "contracts/events/objects.json": {
+   "/$defs/body_support_info/properties/members/maxProperties": "size",
    "/$defs/body_browser_action/properties/image/anyOf/0/properties/height/maximum": "size",
    "/$defs/body_browser_action/properties/image/anyOf/0/properties/width/maximum": "size",
    "/$defs/body_browser_action/properties/tab/maximum": "integer",

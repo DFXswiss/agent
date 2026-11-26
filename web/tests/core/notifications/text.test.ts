@@ -378,3 +378,54 @@ describe('model switches (ADR-081 section 5)', () => {
     expect(notificationTarget(switched(null))).toBe(`/o/${ORG}/t/${TASK}`);
   });
 });
+
+describe('DFX support (ADR-096)', () => {
+  const row = (kind: string, ref: string | null, wg: string | null = WG) =>
+    notification('n1', { kind, ref, wg_id: wg });
+
+  it('names releases, a first access and changes of the support persons', () => {
+    const message = (kind: string, ref: string | null, names: Names = NAMES) =>
+      notificationMessage(row(kind, ref), names, FALLBACK);
+    for (const [ref, change] of [
+      ['grant:read', 'read'],
+      ['grant:write', 'write'],
+      ['revoke', 'revoke'],
+      ['grant:admin', 'unknown'],
+    ]) {
+      expect(message('support.release', ref!)).toEqual({
+        key: `notifications.text.support.release.${change}`,
+        params: { wg: 'Research', org: 'Acme' },
+      });
+    }
+    expect(message('support.release', null).key).toBe('notifications.text.support.release.unknown');
+    expect(message('support.access', USER, NONE)).toEqual({
+      key: 'notifications.text.support.access',
+      params: { subject: 'Someone', wg: 'a workgroup', org: 'an organization' },
+    });
+    expect(message('support.people', `joined:${USER}`).key).toBe('notifications.text.support.people.joined');
+    expect(message('support.people', `left:${USER}`).key).toBe('notifications.text.support.people.left');
+    expect(message('support.people', 'moved').key).toBe('notifications.text.support.people.unknown');
+    expect(message('support.people', null).key).toBe('notifications.text.support.people.unknown');
+  });
+
+  it('leads members to the workgroup settings and a support person to the support area', () => {
+    expect(notificationTarget(row('support.release', 'revoke'))).toBe(`/o/${ORG}/w/${WG}/settings`);
+    expect(notificationTarget(row('support.access', USER))).toBe(`/o/${ORG}/w/${WG}/settings`);
+    expect(notificationTarget(row('support.access', USER, null))).toBe(`/o/${ORG}/workgroups`);
+    expect(notificationTarget(row('support.people', `left:${USER}`, null))).toBe(`/o/${ORG}/workgroups`);
+    expect(notificationTarget(row('support.release', 'grant:read'), false)).toBe('/support');
+    expect(notificationTarget(row('task.idle', null), false)).toBe(`/o/${ORG}`);
+  });
+
+  it('names the support person of a first access from the support list of the organization', () => {
+    const store = createStore();
+    const names = () => notificationNames(store.getState(), row('support.access', USER));
+    expect(names().subject).toBeNull();
+    store.update('support', (support) => ({
+      ...support,
+      orgs: { [ORG]: { status: 'ready', code: null, releases: [], people: { [USER]: 'Sam' } } },
+    }));
+    expect(names().subject).toBe('Sam');
+    expect(notificationNames(store.getState(), row('support.people', `left:${USER}`)).subject).toBeNull();
+  });
+});

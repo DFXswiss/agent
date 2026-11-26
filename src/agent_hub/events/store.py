@@ -20,7 +20,9 @@ Per event, in order (the first failing check gives the code, 03-api.md section 1
    active principal at `lh` and not a decertified platform device, E3 kind/scope/author matrix and header rules, E8
    size, E4 signature, E5 right at `lh` **and** at receipt, E6 current epoch or the previous one within 600 s after
    the rotation (receipt time of the newest `scope_epoch` row; never for removed authors), E7 the session of a session
-   kind runs on the author device (`hub.session`, rows of the tasks area: same session, task and workgroup).
+   kind runs on the author device (`hub.session`, rows of the tasks area: same session, task and workgroup). A person
+   of the support roster of the verified platform log (ADR-096) may author the support kinds of a workgroup released
+   with `write`; its event is stored with author kind `user` and audited as `support.write`.
 
 Then storage: the org rows of the call are held `FOR SHARE` in sorted order, the `scope_head` rows of its scopes
 are created if missing and locked in sorted order (no deadlock between two calls that touch the same scopes), E9 is
@@ -58,13 +60,22 @@ from agent_hub.crypto.errors import CryptoError
 from agent_hub.errors import ERROR_STATUSES, HubError
 from agent_hub.events import hooks
 from agent_hub.events import notify as event_notify
-from agent_hub.log.events import DEVICE_ASSIGNED_WG_SESSION, KIND_RULES, NOTIFY_ALLOWED, check_event_hub, check_replay
+from agent_hub.log.events import (
+    DEVICE_ASSIGNED_WG_SESSION,
+    KIND_RULES,
+    NOTIFY_ALLOWED,
+    SUPPORT_KINDS,
+    check_event_hub,
+    check_replay,
+)
 from agent_hub.log.platform import PlatformState
 from agent_hub.log.state import AGENT, DEVICE, USER
 from agent_hub.log.verify import VerifiedLog
 from agent_hub.orgs import logs
+from agent_hub.support import store as support
 
 Connection = psycopg.Connection[Any]
+WG_SCOPE = "wg"
 EVENT_KEYS = frozenset({"header", "ct", "sig"})
 SESSION_KINDS = frozenset(rule.kind for rule in KIND_RULES if rule.right == DEVICE_ASSIGNED_WG_SESSION)
 """The device-authored session kinds (right `device_assigned_wg_session`, E7)."""
@@ -111,6 +122,8 @@ class _Checked:
     devices: frozenset[str]
     actor_id: str
     """The audit actor: the author, or the user of an agent author (ADR-082)."""
+    support: bool = False
+    """The author is a support person, no principal of the org (ADR-096)."""
 
 
 def hub_error(error: CryptoError) -> HubError:
@@ -194,6 +207,10 @@ class _Logs:
             self._excluded[org] = frozenset() if platform is None else platform.excluded(log.state)
         return log, self._excluded[org]
 
+    def platform(self) -> PlatformState | None:
+        """The verified platform state (support roster, decertified devices)."""
+        return self._platform()
+
     def _platform(self) -> PlatformState | None:
         return logs.platform_state(self._connection, self._root_key)
 
@@ -215,6 +232,7 @@ def _check(
     log, excluded = registry.log(_org_of(header))
     scope, scope_id = cast(str, header["scope"]), cast(str, header["scope_id"])
     device = session_device(connection, header) if header["kind"] in SESSION_KINDS else None
+    roster = support.roster(registry.platform())
     check_event_hub(
         event,
         log,
@@ -222,20 +240,29 @@ def _check(
         rotated_at=rotated_at(connection, scope, scope_id),
         session_device=device,
         excluded=excluded,
+        support=roster,
     )
     author = cast(str, header["author"])
     readers = log.state.readers(scope, scope_id, excluded)
     devices = frozenset(p for p in readers if p != author and log.state.principals[p].kind == DEVICE)
-    principal = log.state.principals[author]
+    principal = log.state.member(author)
     return _Checked(
         index=index,
         header=header,
         event=cast(dict[str, Any], event),
         log=log,
-        author_kind=principal.kind,
+        author_kind=USER if principal is None else principal.kind,
         notify=notify,
         devices=devices,
-        actor_id=principal.parent or author,
+        actor_id=author if principal is None else principal.parent or author,
+        # written under the support release (ADR-096): no principal, or a member without the write right itself
+        support=principal is None
+        or (
+            principal.kind != DEVICE
+            and scope == WG_SCOPE
+            and header["kind"] in SUPPORT_KINDS
+            and not log.state.can_write_wg(author, scope_id)
+        ),
     )
 
 
@@ -318,7 +345,7 @@ def _store(connection: Connection, item: _Checked, *, now: datetime, origin_seq:
                 at=now,
                 actor_kind=USER if item.author_kind == AGENT else item.author_kind,
                 actor_id=UUID(item.actor_id),
-                action="event.append",
+                action="support.write" if item.support else "event.append",
                 result="ok",
                 org_id=UUID(cast(str, header["org"])),
                 wg_id=None if wg is None else UUID(wg),

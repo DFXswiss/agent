@@ -960,6 +960,34 @@
     {
       "action": "read.workgroup.agent_profiles",
       "group": "read"
+    },
+    {
+      "action": "log.support_grant",
+      "group": "log"
+    },
+    {
+      "action": "log.support_revoke",
+      "group": "log"
+    },
+    {
+      "action": "support.people",
+      "group": "support"
+    },
+    {
+      "action": "support.write",
+      "group": "support"
+    },
+    {
+      "action": "support.name",
+      "group": "support"
+    },
+    {
+      "action": "read.support.releases",
+      "group": "read"
+    },
+    {
+      "action": "read.org.support",
+      "group": "read"
     }
   ]
 }

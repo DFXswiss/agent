@@ -110,9 +110,13 @@ BATCHES = ROTATION["batches"] + ROTATION["invalid"]
 
 @pytest.mark.parametrize("vector", BATCHES, ids=[vector["name"] for vector in BATCHES])
 def test_rotation_batch_vectors(vector_hub: HubHarness, vector: Json) -> None:
-    _platform(vector_hub, {"name": "platform", "count": 11})
     args = vector["args"]
+    # the support batches name the platform log with the support roster (ADR-096)
+    _platform(vector_hub, args.get("platform", {"name": "platform", "count": 11}))
     _seed(vector_hub, args["log"]["count"], private=True, log=ROTATION["logs"][args["log"]["name"]])
+    with vector_hub.pool.connection() as connection, connection.transaction():
+        # current runners: the devices announced the support release (ADR-096, `log.support`)
+        connection.execute("UPDATE hub.device SET features = array_append(features, 'log.support')")
     now = parse_time(args["now"])
     if vector["name"] in ONE_APPENDER:
         assert {entry["body"]["by"] for entry in args["append"]} != {args["wrapped_by"]}

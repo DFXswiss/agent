@@ -11,13 +11,16 @@ the head the batch produces; the new keys of scopes the user still reads are kep
 
 The pending-rotation job of the browser (`rotate_pending`, `org rotate`): an admin unassigns platform devices whose
 certification ended (verified platform log) plus R; then one `rotate` for every scope of the log's `pending` (a member
-left by itself) that the user may rotate (org: admin; workgroup: admin or writer). The browser runs it whenever a log
-changes; the tool runs it before every writing command (`upkeep.prepare`), after each of its membership changes and
-on `org rotate`. The credential-key check of the browser's re-wrap job (`credkey.rotate_if_owed`) runs before every
-writing command as well and after every change that can take a device's eligibility away (`member remove`,
-`wg ungrant`, `device unassign`, `org leave`). A failure of these follow-ups does not undo the change: it is reported
-in the result (`error` and its fields). `wg grant` follows the web's `grantPlan`: not on the default or an archived
-workgroup (`invalid_argument`, `reason: forbidden`), nothing to do when the member has exactly that access.
+left by itself) that the user may rotate (org: admin; workgroup: admin or writer), and for every workgroup released to
+support (ADR-096 section 3) that the hub lists in `rotation_pending` of `GET /v1/orgs/{org}` because a person left
+support (`flagged`, read only for an org with an active release; rotated once per epoch the hub named it in). The
+browser runs it whenever a log changes; the tool runs it before every writing command (`upkeep.prepare`), after each of
+its membership changes and on `org rotate`. The credential-key check of the browser's re-wrap job
+(`credkey.rotate_if_owed`) runs before every writing command as well and after every change that can take a device's
+eligibility away (`member remove`, `wg ungrant`, `device unassign`, `org leave`). A failure of these follow-ups does not
+undo the change: it is reported in the result (`error` and its fields). `wg grant` follows the web's `grantPlan`: not on
+the default or an archived workgroup (`invalid_argument`, `reason: forbidden`), nothing to do when the member has
+exactly that access.
 """
 
 from __future__ import annotations
@@ -31,12 +34,13 @@ from agent_platform.account import Account, unverified
 from agent_platform.batch import Built, build_batch
 from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
+from agent_platform.eventio import rows_of
 from agent_platform.hub import segment
 from agent_platform.orgs import crypto_refusal, find_org, now_text, require_head, with_retry
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.ids import is_uuid7
 from agent_runner.crypto.log.platform import PlatformState
-from agent_runner.crypto.log.state import ADMIN, MEMBER, ORG, USER, WRITE, OrgState
+from agent_runner.crypto.log.state import ADMIN, MEMBER, ORG, USER, WG, WRITE, OrgState, Roster, Scope
 from agent_runner.crypto.log.verify import VerifiedLog
 
 Fields = list[dict[str, object]]
@@ -69,9 +73,16 @@ def platform_for(account: Account, state: OrgState, fields: Sequence[dict[str, o
 
 
 def submit(
-    account: Account, org: str, planner: Planner, events_of: EventsOf | None = None, *, history: bool = False
+    account: Account,
+    org: str,
+    planner: Planner,
+    events_of: EventsOf | None = None,
+    *,
+    history: bool = False,
+    support: Roster | None = None,
 ) -> Built | None:
-    """The append flow of the module docstring; None when the planner finds nothing to do."""
+    """The append flow of the module docstring; None when the planner finds nothing to do. `support`: the support
+    roster for the wraps of a `support_grant` (`batch.build_batch`)."""
 
     def attempt() -> Built | None:
         log = account.org_log(org)
@@ -89,6 +100,7 @@ def submit(
                 held=account.keys(org),
                 platform=platform_for(account, log.state, fields),
                 history=history,
+                support=support,
             )
         except CryptoError as error:
             raise crypto_refusal(error) from None
@@ -126,8 +138,21 @@ def follow_up(work: Callable[[], dict[str, Any]]) -> dict[str, Any]:
 # --- the pending-rotation job ---
 
 
-def owed_planner(platform: PlatformState | None) -> Planner:
-    """The next batch the user owes (`jobs/rotation.ts` `owedPlanner`), or None."""
+def flagged(account: Account, org: str) -> dict[Scope, int]:
+    """The released workgroups the hub lists in `rotation_pending` (a person left support, ADR-096 section 3) with
+    their current epoch; nothing is read for an org without an active release."""
+    state = account.org_log(org).state
+    if not state.support:
+        return {}
+    answer = account.call("GET", f"/v1/orgs/{segment(org)}")
+    named = {str(item.get("scope_id")) for item in rows_of(answer, "rotation_pending") if item.get("scope") == WG}
+    return {(WG, wg): state.epoch(WG, wg) for wg in sorted(named) if wg in state.support}
+
+
+def owed_planner(platform: PlatformState | None, marked: dict[Scope, int] | None = None) -> Planner:
+    """The next batch the user owes (`jobs/rotation.ts` `owedPlanner`), or None; `marked` the released workgroups
+    the hub flagged (`flagged`), owed while their epoch is still the one the hub named."""
+    hub_marked = marked or {}
 
     def plan(log: VerifiedLog, me: str) -> Fields | None:
         state = log.state
@@ -141,7 +166,9 @@ def owed_planner(platform: PlatformState | None) -> Planner:
                 return unassign
         rotate: Fields = [
             {"type": "rotate", "scope": scope, "scope_id": scope_id, "epoch": state.epoch(scope, scope_id) + 1}
-            for scope, scope_id in sorted(state.pending)
+            for scope, scope_id in sorted(
+                state.pending | {scope for scope, epoch in hub_marked.items() if state.epoch(*scope) == epoch}
+            )
             if (
                 state.is_admin(me)
                 if scope == ORG
@@ -156,7 +183,7 @@ def owed_planner(platform: PlatformState | None) -> Planner:
 def rotate_pending(account: Account, org: str) -> dict[str, Any]:
     """Up to `MAX_PENDING_BATCHES` owed batches of `org`: the scopes rotated and the devices unassigned."""
     platform = account.platform() if account.platform_root else None
-    planner = owed_planner(platform)
+    planner = owed_planner(platform, flagged(account, org))
     scopes: list[dict[str, object]] = []
     devices: set[str] = set()
     batches = 0

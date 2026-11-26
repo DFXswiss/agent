@@ -39,7 +39,7 @@ whoever can open it; *entitled* = the verified log makes a principal a reader of
 | **Platform root** (operator) | compiled public key | Ed25519 platform root, offline | root-signed platform-log entries and operator requests | yes |
 | **Hub** | its response key | Ed25519 response key (signs responses only) | – | yes |
 | **Invitation holder** (transient) | `invite_id` | none: the 16-byte code derives `package_key` and `sk_inv` | proof of the code at registration, accept or enrollment | yes |
-| **Support person** ([idea 29](KONZEPT.md#k-idee-29)) | – | – | – | [gap KOR-56](#kor-56--support-as-a-principal) |
+| **Support person** ([idea 29](KONZEPT.md#k-idee-29), [ADR-096](adr/096-support-release.md)) | user ID with the root-signed platform role `support`, bound to the root certification of its identity keys (`user_certify`) | its user identity (passkey, PRF) | its own identity, in person only (its agent is no support principal) | yes |
 | **Community member** ([E-20](KONZEPT.md#e-20)) | the user | the user identity; community key `CMK_e` | the user's identity | designed in KOR-26 (not on `develop`) |
 
 A **subagent** is a platform session like its parent ([A1](KONZEPT.md#a-1)): same workgroup, same device, same rights,
@@ -55,10 +55,11 @@ identity (its prompt is an event signed by itself); the session reads with the r
 | Recovery code, `KEK_rec` | the user (written down); browser at use | – | hub (only `recovery_id`) |
 | User identity (private) | browser memory after unlock; the agent of an account without a person (it is the account's holder) | hub: only sealed bundle slots (passkey, recovery); **a remembered browser**: IndexedDB under a non-extractable key; **the agent tool of an account without a person**: its state holds the sealed identity and the handover secret next to the agent key | device, VM, the agent of a person (since ADR-082; agents paired before are converted and delete their copy) |
 | Browser session key | browser | IndexedDB, non-extractable | anywhere else |
+| Support person's wraps of a released `WK_e` ([ADR-096](adr/096-support-release.md)) | the person (its own identity) | wraps at the hub, sealed to the key of its root certification | `OK`, any `CK`, an unreleased workgroup |
 | Device identity, storage key | the runner of that device | `keys/device.key` 0600; storage key derived, memory only | hub (public keys only), VM |
 | Agent key | the agent tool on the user's computer | login keychain or 0600 file | hub (public keys only) |
 | `OK_e` | org members; devices assigned to any workgroup of the org ([ADR-007](adr/007-devices-receive-org-key.md)) | wraps at the hub; runner storage-key encrypted | hub in clear, VM |
-| `WK_e` | members of the workgroup; **every org admin** (inherited read, [ADR-058](adr/058-admins-read-every-workgroup.md)); devices assigned to the workgroup | as above | hub in clear, VM |
+| `WK_e` | members of the workgroup; **every org admin** (inherited read, [ADR-058](adr/058-admins-read-every-workgroup.md)); devices assigned to the workgroup; **every support person while the workgroup is released to support** (every epoch, [ADR-096](adr/096-support-release.md)) | as above | hub in clear, VM |
 | `CK_e` (per user) | the user; devices assigned to a workgroup in which the user has **explicit** access, in orgs the user joined by its own entry ([ADR-060](adr/060-direct-admission-of-existing-accounts.md)) | as above | hub in clear, VM; admins of other users |
 | Derived keys `k_event`, `k_cred`, `dk_e` (and, with KOR-33, `k_ctx`, `pk_e`) | whoever holds the scope key | transient | hub |
 | Platform root (private) | operator, offline | operator file | hub, devices, browsers (public key compiled in) |
@@ -71,7 +72,7 @@ identity (its prompt is an event signed by itself); the session reads with the r
 | Scope | Key | Protects | Readers (entitlement) | Writers |
 |---|---|---|---|---|
 | Organization | `OK_e` | org profile, workgroup names, member and device profiles, org whiteboard | members; devices assigned to ≥ 1 workgroup | admins (member: its own profile) |
-| Workgroup | `WK_e` | prompts, session output, tool and file events, terminal, task titles, workgroup and task whiteboards, operation parameters and results, workgroup settings, platform reads | explicit read/write members, members on the default workgroup, every admin (read), assigned devices | explicit `write` members; assigned devices for device kinds |
+| Workgroup | `WK_e` | prompts, session output, tool and file events, terminal, task titles, workgroup and task whiteboards, operation parameters and results, workgroup settings, platform reads, the names a support person needs (`support.info`) | explicit read/write members, members on the default workgroup, every admin (read), assigned devices, the support roster while released (ADR-096) | explicit `write` members; assigned devices for device kinds; support persons under a `write` release for prompts and the workgroup whiteboard |
 | Credentials | `CK_e` of one user | that user's credential records (GitHub, API key, Claude subscription, mailbox) | the owner; devices assigned to a workgroup with the owner's explicit access, in consented orgs | the owner; an eligible device acting on the owner's device request |
 | Dedupe | `dk_e` from `WK_e` | operation fingerprints (opaque tags) | `WK_e` holders | assigned devices |
 | Context objects (KOR-33, not on `develop`) | `k_ctx` from `WK_e`, per object | session context checkpoints, PR → task tags | `WK_e` holders (a restoring device must be assigned to the workgroup) | the authoring device |
@@ -98,6 +99,7 @@ workgroup → task, [Grundprinzip](KONZEPT.md#k-gp)).
 | "Remember this browser" | the browser profile: a local copy of the identity | IndexedDB, never sent |
 | Platform session started | nothing: the device decrypts and gives the VM plaintext of its own workgroup only | runner |
 | Community (KOR-26) | every user: `CMK_e` | anonymous key request served by any holder |
+| `support_grant {wg, access}` ([ADR-096](adr/096-support-release.md)) | every person of the support roster: every epoch of that `WK` (never `OK`, never `CK`); a person who joins support later gets the existing releases | the releasing batch (wraps of every epoch the releasing client holds), then catch-up from any holder (browsers, devices, agents) |
 
 **Catch-up** ([04 §5.11](spec/04-crypto.md#511-catch-up-wrapping)) is what makes all of this work without anybody
 online: every holder (browser on sync, device on reconcile) wraps for every entitled recipient that has no wrap yet,
@@ -135,7 +137,8 @@ last sentence) – the client says so where it matters.
 | Admitted without consent ([ADR-060](adr/060-direct-admission-of-existing-accounts.md)) | – (no device of that org was due for the user's `CK`) | – | – |
 | Platform root lost or compromised | no rotation path: a new root needs a new build and new certifications ([ADR-023](adr/023-platform-root-key.md), runbook `platform-root-key.md`) | operator | a compromised root can certify devices and identities until the new build is everywhere |
 | Hub response key replaced | org devices take it from the next invitation package; platform devices pinned it on first use from `/v1/config` | operator | – ([gap KOR-55](#kor-55--trust-anchor-of-the-runner) point 4) |
-| Support release revoked | [gap KOR-56](#kor-56--support-as-a-principal) | | |
+| Support release revoked (`support_revoke`, [ADR-096](adr/096-support-release.md)) | that `WK` (always, computed from the org log alone) | the revoking admin or writer, same batch | everything read and every epoch it held |
+| Person leaves support (`role_revoke support`, `user_decertify`) | every released `WK` whose current epoch was wrapped to the person (`rotation_pending`, derived by the hub from its stored wraps) | the next admin or writer client in the background; the hub refuses the person at once | as above; a hub that withholds the role end and still serves the person is the residual of ADR-096 §3 (as for decertified devices) |
 
 Old epochs are never deleted and never re-encrypted: a removed principal with a copy of the hub's ciphertexts can
 open what it could open before, never what is written after the rotation.
@@ -256,7 +259,7 @@ test of a rule that only one component enforces, as `path::test name`. `gap KOR-
 | KM-30 | Revoking or replacing the agent rotates it out: its removal (or its replacement by a higher generation) puts every scope it read into R of the same batch, a removed, replaced or superseded agent is no recipient of any scope or of `CK`, and the user's client rotates `CK` afterwards. An agent that held the user's identity before its conversion keeps that copy (no rekey, [ADR-082](adr/082-agent-own-identity.md) §5). | all | `log-rotation.json#agent_removed_by_user_without_rotation`; `log-rotation.json#agent_replaced_by_higher_gen`; `log-wraps.json#wrap_to_removed_agent`; `log-wraps.json#wrap_to_replaced_agent`; `log-wraps.json#cred_superseded_agent_is_no_reader` |
 | KM-31 | A platform device trusts an org (founder, platform access) only on evidence it verifies itself against the root key. | runner | gap KOR-55 |
 | KM-32 | Write access to the default workgroup can be reduced to read by an admin (R stays empty: the member still reads; E5 refuses its writes); new members still start with write. | – | gap KOR-55 |
-| KM-33 | A support person reads or writes a workgroup only through an explicit, revocable release of that workgroup to support in the log plus a valid root-signed support role; revocation rotates. | – | gap KOR-56 |
+| KM-33 | A support person reads or writes a workgroup only through an explicit, revocable release of that workgroup to support in the log plus a valid root-signed support role bound to its root certification; the release is given only by an admin or a writer, support never receives `OK` or `CK`, writes only prompts and the workgroup whiteboard under a `write` release, and revocation rotates. | all | `log.json#support_grant_by_reader`; `log.json#support_grant_forged_by_hub`; `platform-log.json#support_role_without_certification`; `log-wraps.json#support_wrap_without_release`; `log-wraps.json#support_wrap_org_scope`; `log-wraps.json#support_wrap_unknown_to_reader`; `log-wraps.json#support_wrap_after_role_end`; `log-wraps.json#support_person_reads_released_workgroup`; `log-rotation.json#support_revoke_without_rotation`; `log-rotation.json#support_revoke_new_epoch_wrapped_to_support`; `log-events.json#support_event_read_release`; `log-events.json#support_writes_support_info`; `log-events.json#support_event_hub_after_role_end`; test:`tests/platform/hub/support/test_support.py::test_revocation_rotates_and_shuts_the_person_out` |
 | KM-34 | A session reads across workgroups only within owner ∩ instructing human and only with keys its device already holds by assignment ([§8](#8-reading-across-workgroups)). | runner | test:`tests/platform/runner/queries/test_cross_workgroup.py::test_the_decision_table`; test:`tests/platform/runner/queries/test_cross_workgroup.py::test_member_b_cannot_read_through_a_session_of_a_what_only_a_reads`; test:`tests/platform/runner/queries/test_cross_workgroup.py::test_the_human_captured_when_the_read_arrived_is_used` |
 | KM-35 | Credentials owned by an organization (a company identity) are readable by the devices that run its tasks, never by every member: the organization's `cred` scope has its assigned member devices as its only readers; an admin wraps each epoch without being a reader ([ADR-078](adr/078-github-identities.md)). | all | `log-wraps.json#cred_org_admin_for_device`; `log-wraps.json#cred_org_device_for_device`; `log-wraps.json#cred_org_admin_is_no_recipient`; `log-wraps.json#cred_org_member_is_no_wrapper`; `log-wraps.json#cred_org_removed_admin_is_no_wrapper` |
 | KM-36 | The hub never holds a scope key, private key, PRF output, code or credential value; a full flow leaves no canary in its database or logs. | hub | test:`e2e/platform/specs/e2e-09-zero-knowledge.spec.ts::the hub sees no confidential content over the full flows`; test:`tests/platform/hub/requests/test_devices_and_zero_knowledge.py::test_canaries_never_reach_hub_storage` |
@@ -311,8 +314,8 @@ bearing on keys).
 | [Idea 26](KONZEPT.md#k-idee-26) | Subagents are platform sessions: no keys, rights of the parent ([A1](KONZEPT.md#a-1)). | carried | [§1](#1-principals) |
 | [Idea 27](KONZEPT.md#k-idee-27) | Test VMs hold no keys; results stored as workgroup content. | carried | KM-37 |
 | [Idea 28](KONZEPT.md#k-idee-28) | Browser VMs hold no keys. | carried | KM-37 |
-| [Idea 29](KONZEPT.md#k-idee-29) | Support release with cryptographic rights and revocation. | gap → KOR-56 | KM-33 |
-| [Idea 30](KONZEPT.md#k-idee-30) | Encryption by default, passkey the only visible release, admins read every workgroup, inheritance and distribution described; revocation of the agent's identity copy and of support still open; read plaintext stays. | gap → KOR-57, KOR-56 | KM-11, KM-30, KM-33, [§5](#5-revocation-and-rotation-case-by-case) |
+| [Idea 29](KONZEPT.md#k-idee-29) | Support release with cryptographic rights and revocation. | carried | KM-33 |
+| [Idea 30](KONZEPT.md#k-idee-30) | Encryption by default, passkey the only visible release, admins read every workgroup, inheritance and distribution described; revocation of the agent and of support built; read plaintext stays. | carried | KM-11, KM-30, KM-33, [§5](#5-revocation-and-rotation-case-by-case) |
 | [Idea 31](KONZEPT.md#k-idee-31) | Humans, main agents and subagents distinguishable: humans and devices are principals with keys, main agents and subagents are platform sessions without keys; names and GitHub mapping are not keys (KOR-52, KOR-47). | carried | [§1](#1-principals) |
 | [Idea 32](KONZEPT.md#k-idee-32) | Autonomous-first: catch-up needs no human online. | carried | [§4](#4-who-receives-which-scope-when) |
 | [Idea 33](KONZEPT.md#k-idee-33) | Analysis session reads authorised logs: a platform session, same rules. | carried | KM-23 |
@@ -372,7 +375,7 @@ bearing on keys).
 | [A9](KONZEPT.md#a-9) | One throw-away VM per test run. | none | – |
 | [A10](KONZEPT.md#a-10) | Subagents continue: still platform sessions without keys. | carried | KM-23 |
 | [A11](KONZEPT.md#a-11) | Reading across workgroups within owner ∩ instructing human. | carried | [§8](#8-reading-across-workgroups), KM-34 |
-| [A12](KONZEPT.md#a-12) | Support is its own principal with a platform role; the device is not support. | gap → KOR-56 | KM-33 |
+| [A12](KONZEPT.md#a-12) | Support is its own principal with a platform role; the device is not support. | carried | KM-33 |
 | [A13](KONZEPT.md#a-13) | Default-workgroup write is a default an admin can lower to read (no rotation: the member still reads). | gap → KOR-55 | KM-32 |
 | [A14](KONZEPT.md#a-14) | No fixed limits. | none | – |
 | [A15](KONZEPT.md#a-15) | The instructing human's own credentials are usable on the session's device: a writer of the workgroup has explicit access, so the device is eligible for that human's `CK` – except in an org that admitted the human without consent (then E-05: the connection is asked for). | carried | KM-13, KM-15 |
@@ -408,6 +411,12 @@ vectors (in all three verifiers) or tests and sets the concordance row to "carri
    the platform log or state the residual risk in [04 §9](spec/04-crypto.md#9-threat-model).
 
 ### KOR-56 – Support as a principal
+
+**Status (KOR-56, [ADR-096](adr/096-support-release.md)):** built – points 1–6 with KM-33. Decisions where this
+section left a choice: releases by an admin or a writer of the workgroup; names through a `support.info` event under
+`WK` (no `OK`); support writes prompts and the workgroup whiteboard only; a person's role end owes the rotation of the
+released workgroups whose current epoch it held (derived by the hub, residual stated in ADR-096 §3).
+
 
 1. **Principal** (KM-33): a support person is a user identity (passkey, PRF) with a root-signed platform role
    `support` in the platform log (not a hub table: the runner and every browser must verify it).

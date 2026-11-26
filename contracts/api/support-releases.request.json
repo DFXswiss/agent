@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/support-releases.request.json",
+  "title": "GET /v1/support/releases request",
+  "description": "query parameters (ADR-096, KOR-56)",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

@@ -72,6 +72,8 @@ describe('helpers', () => {
     expect(needsUnlock('/settingsx')).toBe(false);
     expect(needsUnlock('/notifications')).toBe(true);
     expect(needsUnlock('/platform/invites')).toBe(true);
+    expect(needsUnlock('/support')).toBe(true);
+    expect(needsUnlock('/support/o/w')).toBe(true);
     expect(needsUnlock('/login')).toBe(false);
     expect(loginTarget('/o/x', '?a=1')).toBe('/login?next=%2Fo%2Fx%3Fa%3D1');
     expect(safeNext('/o/x')).toBe('/o/x');

@@ -6,6 +6,10 @@ user may create. Only what the verified logs confirm is wrapped: `org`/`wg` slot
 recipient is entitled now and that the user may wrap (W1/W2), with the scope key the user holds; the user's own `cred`
 slots of the newest `CK` epoch for devices the verified logs entitle to it. Recipient keys come from the verified log,
 never from the hub. The wraps go out in one `POST /v1/wraps`; nothing is sent when nothing is left.
+
+Support (ADR-096): for an org with an active release, the persons of the support roster of the verified platform log
+(`support_roster`) are recipients of every epoch of a released workgroup the user holds (W2 with the roster), sealed to
+the keys of their root certification, so a person that joined support later gets the existing releases.
 """
 
 from __future__ import annotations
@@ -20,7 +24,7 @@ from agent_platform.eventio import rows_of, uuid_argument
 from agent_platform.hub import segment
 from agent_platform.reader import excluded
 from agent_runner.crypto.encoding import b64u_decode
-from agent_runner.crypto.log.state import ORG, WG, OrgState
+from agent_runner.crypto.log.state import ORG, WG, OrgState, Roster
 from agent_runner.crypto.log.verify import VerifiedLog
 from agent_runner.crypto.log.wraps import CRED, WrapSlot, may_wrap, may_wrap_cred
 
@@ -65,18 +69,39 @@ def _cred_wraps(account: Account, mine: list[WrapSlot]) -> list[dict[str, object
     ]
 
 
+def support_roster(account: Account, state: OrgState) -> Roster:
+    """The support roster of the verified platform log for an org with an active release (empty otherwise or without
+    a platform root key)."""
+    if not state.support or not account.platform_root:
+        return {}
+    return account.platform().support_roster()
+
+
+def _recipient_kem(state: OrgState, roster: Roster, slot: WrapSlot) -> bytes:
+    """A reader's key from the log; a support person's from its root certification."""
+    if slot.recipient in state.readers(slot.scope, slot.scope_id):
+        return _kem([state], slot.recipient)
+    return b64u_decode(roster[slot.recipient].kem, 32)
+
+
 def org_catch_up(account: Account, org: str) -> dict[str, Any]:
     log = account.org_log(uuid_argument(org))
     slots = offered(account.call("GET", f"/v1/orgs/{segment(org)}/catch-up"))
     skip = excluded(account, log)
     ring = account.keys(org)
     state = log.state
+    roster = support_roster(account, state)
     wraps = []
-    scoped = [s for s in slots if s.scope in (ORG, WG) and s.epoch == state.epoch(s.scope, s.scope_id)]
+    scoped = [
+        s
+        for s in slots
+        if s.scope in (ORG, WG)
+        and (s.epoch == state.epoch(s.scope, s.scope_id) or (s.scope_id in state.support and s.recipient in roster))
+    ]
     for slot in scoped:
         key = ring.get((slot.scope, slot.scope_id, slot.epoch))
-        if key is not None and may_wrap(log, slot, account.actor, skip):
-            wraps.append(make_wrap(account.signer, slot, _kem([state], slot.recipient), key))
+        if key is not None and may_wrap(log, slot, account.actor, skip, roster):
+            wraps.append(make_wrap(account.signer, slot, _recipient_kem(state, roster, slot), key))
     mine = [slot for slot in slots if slot.scope == CRED and slot.scope_id == account.user_id]
     if mine:
         wraps += _cred_wraps(account, mine)

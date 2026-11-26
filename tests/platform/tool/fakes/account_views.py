@@ -17,8 +17,9 @@ section 4):
 - `GET /v1/me/agents`, `DELETE /v1/me/agents/{id}` (`404` unknown or foreign), `DELETE /v1/me/agents`;
 - `POST|GET /v1/platform/invites`, `POST /v1/platform/invites/{id}/revoke` (platform role `inviter` from the platform
   log, else `403 forbidden`; expiry in the future and at most 30 days, `pk_inv` an Ed25519 key);
-- `GET /v1/orgs/{org}/catch-up` (`missing_wraps` of the copy for the caller and its own `cred` slots), and
-  `POST /v1/wraps` with `org`/`wg` wraps (W3 against the org's log) besides `cred` wraps.
+- `GET /v1/orgs/{org}/catch-up` (`missing_wraps` of the copy for the caller and its own `cred` slots, with the
+  support roster of the platform log), and `POST /v1/wraps` with `org`/`wg` wraps (W3 against the org's log and the
+  roster) besides `cred` wraps.
 """
 
 from __future__ import annotations
@@ -336,7 +337,7 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
         log = hub.orgs[org].log
         have = [WrapSlot(w["scope"], w["scope_id"], w["epoch"], w["recipient_id"]) for w in hub.wraps]
         skip = hub.platform_state().excluded(log.state)
-        slots = missing_wraps(log, user, have, skip)
+        slots = missing_wraps(log, user, have, skip, hub.platform_state().support_roster())
         logs = [o.log for o in hub.orgs.values() if o.log.state.member(user) is not None]
         epoch = hub.users[user].cred_epoch
         slots += missing_cred_wraps(logs, user, user, current_epoch=epoch, existing=have, excluded=skip)
@@ -352,7 +353,9 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
                 continue
             org = wrap["scope_id"] if wrap["scope"] == "org" else hub.org_of_wg(wrap["scope_id"])
             log = hub.orgs[cast(str, org)].log
-            check_wrap(wrap, user, log, platform.excluded(log.state), require_active=True)
+            check_wrap(
+                wrap, user, log, platform.excluded(log.state), require_active=True, roster=platform.support_roster()
+            )
         for wrap in body["wraps"]:
             hub.wraps.append({**wrap, "wrapped_by": user, "created_at": now_ms_text()})
         return 200, {"stored": len(body["wraps"]), "ignored": 0}

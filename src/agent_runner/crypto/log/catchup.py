@@ -8,8 +8,9 @@ but have no wrap yet, restricted to the wraps it may create (W1/W2). Older epoch
 (`catch_up_epochs`, ADR-058 section 2: an admin reads the whole workgroup, its history included). The active agent of a
 user (ADR-082 section 9.4) gets what its user gets, and in addition every slot its user has since its current
 membership (`agent_slots`: also older epochs delivered on request or after a promotion, but none current before the
-user's last `accept`/`admit`). The hub answers the endpoint with the same function
-for the calling principal.
+user's last `accept`/`admit`). A person of the support roster (ADR-096) gets every epoch of every workgroup released
+to support (`support_slots`), so a person that joins support later receives the existing releases from any online
+holder. The hub answers the endpoint with the same function for the calling principal.
 """
 
 from __future__ import annotations
@@ -17,16 +18,21 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from itertools import chain
 
-from agent_runner.crypto.log.state import WG, OrgState
+from agent_runner.crypto.log.state import WG, OrgState, Roster
 from agent_runner.crypto.log.verify import VerifiedLog
 from agent_runner.crypto.log.wraps import CRED, WrapSlot, cred_readers, may_wrap, may_wrap_cred
 
 
 def missing_wraps(
-    log: VerifiedLog, wrapper: str, existing: Iterable[WrapSlot], excluded: Iterable[str] = ()
+    log: VerifiedLog,
+    wrapper: str,
+    existing: Iterable[WrapSlot],
+    excluded: Iterable[str] = (),
+    roster: Roster | None = None,
 ) -> list[WrapSlot]:
-    """Sorted `org`/`wg` slots of the current epochs without a wrap that `wrapper` may create."""
-    have, skip = set(existing), frozenset(excluded)
+    """Sorted `org`/`wg` slots of the current epochs without a wrap that `wrapper` may create (and every epoch of a
+    released workgroup for the support persons of `roster`)."""
+    have, skip, people = set(existing), frozenset(excluded), roster or {}
     state = log.state
     slots = (
         WrapSlot(scope, scope_id, epoch, recipient)
@@ -34,8 +40,18 @@ def missing_wraps(
         for recipient in state.readers(scope, scope_id, skip)
         for epoch in catch_up_epochs(state, scope, scope_id, recipient)
     )
-    candidates = set(chain(slots, agent_slots(log, have)))
-    return sorted(slot for slot in candidates if slot not in have and may_wrap(log, slot, wrapper, skip))
+    candidates = set(chain(slots, agent_slots(log, have), support_slots(state, people)))
+    return sorted(slot for slot in candidates if slot not in have and may_wrap(log, slot, wrapper, skip, people))
+
+
+def support_slots(state: OrgState, roster: Roster) -> set[WrapSlot]:
+    """Every epoch of every workgroup released to support, for every person of the roster (ADR-096)."""
+    return {
+        WrapSlot(WG, wg, epoch, person)
+        for wg in state.support
+        for person in roster
+        for epoch in range(1, state.epoch(WG, wg) + 1)
+    }
 
 
 def agent_slots(log: VerifiedLog, existing: Iterable[WrapSlot]) -> set[WrapSlot]:

@@ -1081,7 +1081,10 @@ load; the confirmation of a pairing, the revocation, the job `agents` and the co
 lazily; raised to 221 KiB by KOR-48: the error texts of six new operation codes, the navigation entry and the request
 kind of the pull-request view (its other texts load with its code, area `pulls`; decisions/KOR-48.md); the orchestrator
 dialog of KOR-57 stage b adds its texts in both languages (the catalogs stay in the first load, HOT-16 point 8) while its
-code loads lazily. The guard runs in every package's gates (`npm run
+code loads lazily. Raised to 224 KiB by KOR-56 (ADR-096): every client verifies support releases, support authors
+and wraps to support persons in the membership and platform logs at sign-in, and the background jobs offer the support
+slots in catch-up and rotate released workgroups after a person left support – about 2.6 KiB gzip in the first load
+together with the packages merged at the same time; the support area, the release dialog and their texts load lazily. The guard runs in every package's gates (`npm run
 build:check`, the build tests and the E2E budget test), so growth of the first load is seen deterministically where it
 is caused, not later as a narrow timing failure. It is raised only together with a reason in this section. The first
 load is three scripts: the framework, the app modules imported statically from the entry (chunk group `$initial`) and
@@ -1152,6 +1155,24 @@ Firefox also that a changed lazy chunk or stylesheet is refused (§10.2, automat
 
 The community screen (`/community`), its navigation entry with the unread badge, the settings section "Account" and
 the background job are specified in `14-community.md` §6 (KOR-26, ADR-069).
+
+### 12.8a Support release (ADR-096, KOR-56)
+
+- **Workgroup settings, section "Support"** (admins and writers of the workgroup, `OrgState.canRelease`): whether the
+  workgroup is released to DFX support (read or write, since when), the current support persons by name
+  (`GET /v1/orgs/{org}/support`), and before a release the texts of ADR-096 §5: what support then sees (every task,
+  conversation and the whiteboard, also earlier ones, and technical IDs of the members; with write: writing in
+  existing tasks), that what support read stays read after a revocation (idea 30), and that tasks on DFX devices are
+  processed there in clear independently of this release (A7). Release, change read ↔ write, revoke – each one
+  batch (`support_grant` with the wraps of every epoch the browser holds to every person of the roster of the
+  verified platform log and the `support.info` event; `support_revoke` with `rotate` and the wraps of the new epoch).
+- **Support area** (`/support`, only for a person of the support roster of the verified platform log): the releases
+  (`GET /v1/support/releases`) with the names of `support.info`, a read-only workgroup view (tasks, conversation)
+  and, with a write release, the composer of an existing task. The view refreshes by polling (no org live channel).
+- **Members see support:** support authors as "Support <Name>", support persons in the audit view as
+  "Support <Name> #XXXX", the notifications `support.release`, `support.access`, `support.people`.
+- **Background jobs** (§11): catch-up offers the support slots of released workgroups (keys from the verified platform
+  log); the owed-rotation job rotates released workgroups the hub lists in `rotation_pending` after a person left.
 
 ### 12.9 UI health (early warning, ADR-086 §5)
 

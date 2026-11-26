@@ -36,6 +36,11 @@ itself (`rotation.self_owed`). When a user (or its agent) removes its agent, or 
 that agent is owed by the user (`OrgState.agent_owed`): the user or its active agent may `rotate` those scopes
 without the admin or write right; a `rotate` clears the scope from `agent_owed` and from `pending`.
 
+Support (ADR-096): `support_grant {wg, access}` by an active admin or a user with effective `write` on the workgroup
+(`OrgState.can_release`, an agent with its user's rights), the workgroup writable and the access different from the
+active release; `support_revoke {wg}` by the same principals while a release is active (archived workgroups
+included). Both `log_rights` otherwise. The revocation owes the rotation of the workgroup (`rotation.lost`).
+
 `now` (hub receipt time) switches on the checks that only the hub can make at append time: invitation expiry and,
 for `device_assign` of a platform device, that the org has platform access (ADR-026, the hub answers
 `platform_access_denied` before; here `log_rights` as backstop) and that the certification named by `platform_seq`
@@ -313,6 +318,18 @@ def _grant(state: OrgState, body: Body) -> OrgState:
     return replace(state, access={**state.access, (subject, wg): cast(str, body["access"])})
 
 
+def _support_grant(state: OrgState, body: Body, seq: int) -> OrgState:
+    wg, by, access = cast(str, body["wg"]), cast(str, body["by"]), cast(str, body["access"])
+    _rights(state.writable(wg) and state.can_release(by, wg) and state.support_release(wg) != access)
+    return replace(state, support={**state.support, wg: (access, seq)})
+
+
+def _support_revoke(state: OrgState, body: Body) -> OrgState:
+    wg, by = cast(str, body["wg"]), cast(str, body["by"])
+    _rights(wg in state.support and state.can_release(by, wg))
+    return replace(state, support={key: value for key, value in state.support.items() if key != wg})
+
+
 def _ungrant(state: OrgState, body: Body) -> OrgState:
     key = (cast(str, body["subject"]), cast(str, body["wg"]))
     _rights(state.member(key[0]) is not None and key in state.access)
@@ -471,6 +488,8 @@ _ADMIN_ONLY: dict[str, Transition] = {
 _OTHERS: dict[str, Transition] = {
     "remove": lambda state, body, seq, _c: _remove(state, body, seq),
     "rotate": lambda state, body, _s, _c: _rotate(state, body),
+    "support_grant": lambda state, body, seq, _c: _support_grant(state, body, seq),
+    "support_revoke": lambda state, body, _s, _c: _support_revoke(state, body),
 }
 
 

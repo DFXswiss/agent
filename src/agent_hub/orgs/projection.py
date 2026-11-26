@@ -15,11 +15,13 @@
   assigned to the organization has a row for every workgroup, also for one created later) with
   `assigned_seq`/`unassigned_seq`;
 - `org_device`: the assignments of devices to the whole organization (`device_assign_org`, ADR-075);
-- `scope_epoch`: every new epoch of an `org`/`wg` scope with `created_seq` and the receipt time.
+- `scope_epoch`: every new epoch of an `org`/`wg` scope with `created_seq` and the receipt time;
+- `support_release`: the active release of each workgroup to support (ADR-096, `agent_hub.support.store`).
 
 The incremental path (`agent_hub.orgs.append`) and the rebuild (`rebuild_org`) both fold `project_entry` over the
 entries, so a rebuild equals the incremental state by construction (and by test). `org` itself carries the head,
-`platform_access` (from the platform log, ADR-026) and `rotation_pending` (`pending_rotation`).
+`platform_access` (from the platform log, ADR-026) and `rotation_pending` (`pending_rotation`, plus the rotations a
+support release owes after a person left support, `agent_hub.support.store.owed`).
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ from agent_hub.log import rotation
 from agent_hub.log.platform import PlatformState
 from agent_hub.log.state import DEVICE, USER, OrgState, Scope
 from agent_hub.log.verify import VerifiedLog
+from agent_hub.support import store as support
 
 Connection = psycopg.Connection[Any]
 
@@ -179,6 +182,7 @@ def project_entry(
     _devices(connection, before, after, seq)
     _org_devices(connection, org, before, after, seq)
     _epochs(connection, before, after, seq, at)
+    support.project_release(connection, org, before, after, at)
 
 
 def pending_rotation(state: OrgState, platform: PlatformState | None) -> list[Scope]:
@@ -210,10 +214,11 @@ def update_org(
     connection: Connection, org: UUID, log: VerifiedLog, platform: PlatformState | None, platform_access: bool
 ) -> None:
     """Head, platform access and pending rotations of the org after its log changed."""
+    owed = pending_rotation(log.state, platform) + support.owed(connection, log.state, support.roster(platform))
     connection.execute(
         "UPDATE hub.org SET log_head_seq = %s, log_head_hash = %s, platform_access = %s, rotation_pending = %s"
         " WHERE id = %s",
-        (log.head.seq, log.head.hash, platform_access, pending_json(pending_rotation(log.state, platform)), org),
+        (log.head.seq, log.head.hash, platform_access, pending_json(sorted(set(owed))), org),
     )
 
 
@@ -234,6 +239,7 @@ def clear_org(connection: Connection, org: UUID, wgs: Iterable[str] = ()) -> Non
     connection.execute("DELETE FROM hub.org_device WHERE org_id = %s", (org,))
     connection.execute("DELETE FROM hub.wg WHERE org_id = %s OR id = ANY(%s::uuid[])", (org, ids))
     connection.execute("DELETE FROM hub.org_member WHERE org_id = %s", (org,))
+    support.clear_releases(connection, org)
 
 
 def project_log(

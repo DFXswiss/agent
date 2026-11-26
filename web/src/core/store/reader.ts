@@ -1,6 +1,7 @@
 // The reader of 04-crypto.md section 5.12 for events arriving from the live channel or from pulls: every event enters
 // the store at once as `pending` and is then checked against the org's verified log (header, author signature, the
-// author's right at `lh`, decertified platform devices excluded) and opened with the scope key of its epoch.
+// author's right at `lh`, decertified platform devices excluded, persons of DFX support from the support authors of the
+// verified platform log, ADR-096) and opened with the scope key of its epoch.
 // An event with `lh` beyond the verified head first triggers the log job (L10); if the refreshed log still does not
 // reach `lh`, the org is blocked (`log_fork`). The same job runs first when the org has platform devices but the
 // platform log is not verified yet (a member who just accepted holds the org's log before its first log job ran):
@@ -23,6 +24,7 @@ import { checkEvent } from '../log/events';
 import { excludedFor } from '../log/platform';
 import { epochKey } from '../log/state';
 import { checkLh } from '../jobs/log-verify';
+import { authorsOf } from '../support/names';
 import type { JobRunner } from '../jobs';
 import type { StoredEvent, Timers } from '../net/sse';
 import { noteSkipped, skips } from './focus';
@@ -231,7 +233,11 @@ export class EventReader {
     if (found.log === null) return entry;
     try {
       const platform = this.#store.getState().orgs.platform?.state ?? null;
-      const checked = await checkEvent(entry.event, found.log, { excluded: excludedFor(platform, found.log.state) });
+      // events of DFX support persons are checked against the support authors of the platform log (ADR-096)
+      const checked = await checkEvent(entry.event, found.log, {
+        excluded: excludedFor(platform, found.log.state),
+        support: authorsOf(platform),
+      });
       const { header } = checked;
       const key = found.keys.get(epochKey(header.scope as string, header.scope_id as string, header.epoch as number));
       if (key === undefined) return { ...entry, status: 'locked', code: null, header, body: null };

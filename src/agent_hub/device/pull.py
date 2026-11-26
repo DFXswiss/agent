@@ -8,7 +8,7 @@ known or not, is `404 not_found`. Without a cursor the pull covers every scope t
 What a scope returns:
 
 - workgroup scope: every kind except the watched kinds (`agent_hub.events.watched`: terminal output and the browser
-  record are read only by browsers, ADR-016, ADR-085);
+  record are read only by browsers, ADR-016, ADR-085) and `support.info` (ADR-096);
 - org scope: `org.profile`, `wg.profile`, `member.profile`, `device.profile` and the org-level whiteboard kinds.
 
 `kinds` narrows this further (an unknown kind is `400 request_invalid`; a watched kind is never returned). The
@@ -36,7 +36,8 @@ from agent_hub.log.state import ORG
 Connection = psycopg.Connection[Any]
 PAGE_DEFAULT = 200
 PAGE_MAX = 1000
-WG_KINDS = frozenset(rule.kind for rule in KIND_RULES if rule.scope != ORG) - watched.KINDS
+WG_KINDS = frozenset(rule.kind for rule in KIND_RULES if rule.scope != ORG) - watched.KINDS - {"support.info"}
+"""Every workgroup kind but the watched ones and `support.info` (names for support persons only, ADR-096)."""
 ORG_KINDS = frozenset(
     {
         "org.profile",

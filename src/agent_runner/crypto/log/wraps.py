@@ -16,6 +16,10 @@ ADR-078) has devices as its only readers: every active device assigned to a work
 not even an admin). An active admin of the org may additionally wrap it (the admin creates each epoch with the
 company record it seals and wraps it to the reader devices, but never receives it).
 
+Support (ADR-096): a person of the verifier's support roster is entitled to every epoch `1 <= e <= current` of a
+workgroup released to support (`OrgState.support_reads`); the wrapper is a holder of that epoch from the org (support
+persons never wrap). The roster is empty by default, so a verifier without it accepts no support recipient.
+
 - W1: a principal may wrap a scope epoch for itself if it holds the key (it is entitled now; e.g. the self-wrap of
   the package keys after `accept`, section 5.2).
 - W2: a holder may wrap for any principal that is entitled now. A holder of `(scope, scope_id, e)` is the creator
@@ -38,7 +42,7 @@ from typing import cast
 from agent_runner.crypto import wrap as wrap_format
 from agent_runner.crypto.encoding import b64u_decode, require_keys
 from agent_runner.crypto.errors import fail
-from agent_runner.crypto.log.state import DEVICE, ORG, WG, OrgState
+from agent_runner.crypto.log.state import DEVICE, ORG, WG, OrgState, Roster
 from agent_runner.crypto.log.verify import VerifiedLog
 
 CRED = "cred"
@@ -107,16 +111,21 @@ def cred_readers(states: Iterable[OrgState], owner: str, excluded: Iterable[str]
     return frozenset(found)
 
 
-def may_wrap(log: VerifiedLog, slot: WrapSlot, wrapped_by: str, excluded: Iterable[str] = ()) -> bool:
-    """W1/W2 for an `org` or `wg` scope of this log."""
+def may_wrap(
+    log: VerifiedLog, slot: WrapSlot, wrapped_by: str, excluded: Iterable[str] = (), roster: Roster | None = None
+) -> bool:
+    """W1/W2 for an `org` or `wg` scope of this log; `roster` the support persons (ADR-096)."""
     state = log.state
     if slot.scope not in (ORG, WG) or not 1 <= slot.epoch <= state.epoch(slot.scope, slot.scope_id):
         return False
     readers = state.readers(slot.scope, slot.scope_id, excluded)
-    if slot.recipient not in readers:
+    member = slot.recipient in readers
+    if not member and not (slot.scope == WG and state.support_reads(roster or {}, slot.recipient, slot.scope_id)):
         return False
-    holders = log.epoch_holders(slot.scope, slot.scope_id, slot.epoch) | set(readers)
-    return wrapped_by == slot.recipient or wrapped_by in holders
+    # W1 only for a reader of the log: a support person never wraps, not even for itself
+    if member and wrapped_by == slot.recipient:
+        return True
+    return wrapped_by in log.epoch_holders(slot.scope, slot.scope_id, slot.epoch) | set(readers)
 
 
 def may_wrap_cred(
@@ -168,14 +177,20 @@ def _slot_and_signature(wrap: object, wrapped_by: str, states: Sequence[OrgState
 
 
 def check_wrap(
-    wrap: object, wrapped_by: str, log: VerifiedLog, excluded: Iterable[str] = (), *, require_active: bool = False
+    wrap: object,
+    wrapped_by: str,
+    log: VerifiedLog,
+    excluded: Iterable[str] = (),
+    *,
+    require_active: bool = False,
+    roster: Roster | None = None,
 ) -> WrapSlot:
     """W3 for an `org`/`wg` wrap `{scope, scope_id, epoch, recipient_id, wrap, sig}` created by `wrapped_by`.
 
     The hub passes `require_active=True` (a removed principal stores no wraps); recipients re-checking stored wraps
-    leave it False, so a wrap stays valid after its wrapper was removed."""
+    leave it False, so a wrap stays valid after its wrapper was removed. `roster`: the support persons (ADR-096)."""
     slot = _slot_and_signature(wrap, wrapped_by, [log.state], require_active)
-    if not may_wrap(log, slot, wrapped_by, excluded):
+    if not may_wrap(log, slot, wrapped_by, excluded, roster):
         fail("wrap_unauthorized")
     return slot
 

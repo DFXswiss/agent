@@ -30,6 +30,7 @@ from agent_platform import (
     security,
     sessions,
     subscriptions,
+    support,
     testruns,
     vmswitch,
     wgsettings,
@@ -63,4 +64,5 @@ MODULES: tuple[Callable[[Any], None], ...] = (
     vmswitch.register,
     profiles.register,
     mainagents.register,
+    support.register,
 )

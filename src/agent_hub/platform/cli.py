@@ -23,8 +23,11 @@ Commands (entries they append):
 - `invite-device [--expires-hours H]`: `device_invite` with `pk_inv`; prints the code;
 - `certify-pending [--device ID ...]`: one `device_certify` per verified pending enrollment (or the named devices);
 - `grant-org-access --org ID [--revoke]`: `org_platform_access` (ADR-026);
-- `grant-role inviter|operator --user ID`, `revoke-role inviter|operator --user ID`: `role_grant`, `role_revoke`
-  (`operator`: receives the requests of ADR-079 §4);
+- `grant-role inviter|operator|support --user ID [--name NAME]`, `revoke-role inviter|operator|support --user ID`:
+  `role_grant`, `role_revoke` (`operator`: receives the requests of ADR-079 §4; `support`: reads and writes the
+  workgroups released to support, ADR-096 - the account must be certified first (`certify-user`), and `--name` then
+  sets the display name the organizations see, `PUT /v1/platform/support/{user}`);
+- `support-name --user ID --name NAME` (ADR-096): sets the display name of a support person only;
 - `set-policy NAME on|off` (ADR-079): `platform_policy` - `open_platform_access` (organizations without an
   `org_platform_access` of their own use platform devices), `open_platform_invites` (every user may invite);
 - `grant-operator-subscriptions --org ID [--revoke]` (ADR-079): `org_operator_subscriptions` (the organization's
@@ -496,6 +499,26 @@ def show_settings(operator: Operator, out: TextIO) -> None:
         print(f"org {org} operator subscriptions {'granted' if granted else 'revoked'}", file=out)
 
 
+def roles(operator: Operator, args: argparse.Namespace, out: TextIO) -> None:
+    """`grant-role`, `revoke-role` and `support-name` (module docstring)."""
+    if args.platform_command == "support-name":
+        support_name(operator, args.user, args.name, out)
+        return
+    kind = "role_grant" if args.platform_command == "grant-role" else "role_revoke"
+    if args.name is not None and (kind != "role_grant" or args.role != "support"):
+        raise UsageError("--name only with grant-role support")
+    simple(operator, {"type": kind, "subject": args.user, "role": args.role}, out)
+    if args.name is not None:
+        support_name(operator, args.user, args.name, out)
+
+
+def support_name(operator: Operator, user: str, name: str, out: TextIO) -> None:
+    """Set the display name of a support person (ADR-096)."""
+    found = operator.request("PUT", f"/v1/platform/support/{user}", {"name": name})
+    state = "in the roster" if found["active"] is True else "not in the roster"
+    print(f"support person {user} is named {found['name']} ({state})", file=out)
+
+
 def simple(operator: Operator, body: dict[str, Any], out: TextIO) -> None:
     """Append one entry and print its type and `seq`."""
     done = operator.append(lambda _log, _pending: [body])
@@ -552,9 +575,8 @@ def dispatch(args: argparse.Namespace, http: httpx.Client | None, clock: Clock, 
         simple(operator, {"type": "platform_policy", "name": args.name, "on": args.value == "on"}, out)
     elif command == "grant-operator-subscriptions":
         simple(operator, {"type": "org_operator_subscriptions", "org": args.org, "granted": not args.revoke}, out)
-    elif command in ("grant-role", "revoke-role"):
-        kind = "role_grant" if command == "grant-role" else "role_revoke"
-        simple(operator, {"type": kind, "subject": args.user, "role": args.role}, out)
+    elif command in ("grant-role", "revoke-role", "support-name"):
+        roles(operator, args, out)
     else:
         simple(operator, {"type": "device_decertify", "device": args.device}, out)
     return EXIT_OK
@@ -612,6 +634,10 @@ def register(subparsers: argparse._SubParsersAction[Any]) -> None:
         role = command(name, f"{name.split('-')[0]} a platform role")
         role.add_argument("role", choices=list(PLATFORM_ROLES))
         role.add_argument("--user", type=uuid_text, required=True)
+        role.add_argument("--name", default=None, help="grant-role support: the display name (ADR-096)")
+    named = command("support-name", "set the display name of a support person (ADR-096)")
+    named.add_argument("--user", type=uuid_text, required=True)
+    named.add_argument("--name", required=True)
     command("waiting", "list the organizations and workgroups whose tasks wait for the operator (device, credit)")
     command("settings", "print the switches and the operator-subscription list of the verified platform log")
     policy = command("set-policy", "turn a switch of the platform log on or off (ADR-079)")

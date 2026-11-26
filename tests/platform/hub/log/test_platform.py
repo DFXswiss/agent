@@ -19,6 +19,7 @@ from agent_hub.log.vectors import (
     PDEV_RECERT_SEQ,
     PDEV_SEQ,
     PLATFORM_COUNT,
+    PRE_SUPPORT_COUNT,
     W1,
     LogBuilder,
     PlatformBuilder,
@@ -145,7 +146,13 @@ def test_user_certifications(plat: PlatformBuilder) -> None:
     assert state.projection()["users"] == [
         {"user": user, "certify_seq": seq, "certified": True}
         for user, seq in sorted(
-            {pid("alice"): ALICE_CERT_SEQ, pid("dave"): DAVE_CERT_SEQ, pid("bob"): BOB_RENEWED_SEQ}.items()
+            {
+                pid("alice"): ALICE_CERT_SEQ,
+                pid("dave"): DAVE_CERT_SEQ,
+                pid("bob"): BOB_RENEWED_SEQ,
+                pid("sam"): PRE_SUPPORT_COUNT,
+                pid("tom"): PRE_SUPPORT_COUNT + 2,
+            }.items()
         )
     ]
     again = PlatformBuilder(plat.entries)
@@ -193,3 +200,20 @@ def test_users_and_devices_never_share_an_id(plat: PlatformBuilder) -> None:
     never_certified.add("user_decertify", user=pid("carol"))
     with pytest.raises(CryptoError, match="log_rights"):
         platform.verify_platform_log(never_certified.entries, ROOT)
+
+
+def test_support_role_is_bound_to_the_certification_valid_at_the_grant(plat: PlatformBuilder) -> None:
+    """ADR-096: a decertified person leaves the roster; a renewed certification needs a new grant."""
+    log = PlatformBuilder(plat.entries)
+    log.add("user_decertify", user=pid("sam"))
+    left = platform.verify_platform_log(log.entries, ROOT).state
+    assert pid("sam") not in left.support_roster()
+    assert pid("sam") in left.support_authors()
+    log.add("user_certify", user=pid("sam"), pub=pub("sam"))
+    renewed = platform.verify_platform_log(log.entries, ROOT).state
+    assert pid("sam") not in renewed.support_roster()
+    log.add("role_revoke", subject=pid("sam"), role="support")
+    log.add("role_grant", subject=pid("sam"), role="support")
+    again = platform.verify_platform_log(log.entries, ROOT).state
+    assert again.support_roster()[pid("sam")].sig == sig_pk("sam")
+    assert again.support_bound[pid("sam")] == len(log.entries) - 3

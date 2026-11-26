@@ -491,3 +491,26 @@ def test_a_child_reads_with_the_human_of_the_instruction_it_works_on(rig: Rig) -
         assert await k.error(child, "list_tasks", {"workgroup_id": WG_ONE}) == "not_found"
 
     run(rig, body)
+
+
+def test_a_support_person_instructs_reads_only_the_released_workgroup(rig: Rig) -> None:
+    """ADR-096: a support person of the verified platform log instructs a session of a workgroup released to support:
+    the session reads that workgroup (owner ∩ support), never another; without the release every read is forbidden."""
+    from agent_runner.crypto.log import vectors as v  # noqa: PLC0415 - only this test needs the vector identities
+
+    sam = pid("sam")
+
+    async def body(k: RKit) -> None:
+        await k.pull()
+        k.env.world.platform.add("user_certify", user=sam, pub=v.pub("sam"))
+        k.env.world.platform.add("role_grant", subject=sam, role="support")
+        await k.extend()
+        sid = await k.session(1)
+        await k.instruct(sid, sam)
+        answer = await k.read(sid, "list_tasks", {})
+        assert answer["error"] == {"error": "forbidden", "message": HUMAN_GONE_TEXT}
+        await k.extend(lambda log: log.add("support_grant", "alice", wg=WG, access="write"))
+        assert (await k.read(sid, "list_tasks", {}))["status"] == "ok"
+        assert (await k.read(sid, "list_tasks", {"workgroup_id": WG_ONE}))["status"] == "error"
+
+    run(rig, body)

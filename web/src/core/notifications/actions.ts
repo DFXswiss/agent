@@ -28,6 +28,7 @@ import { orgEntry } from '../store/slices/orgs';
 import { PROFILE_KINDS } from '../tasks/directory';
 import { pullOnce, type TasksContext } from '../tasks/pull';
 import { sendErrorCode } from '../tasks/send';
+import { loadOrgSupport } from '../support/people';
 
 export const PAGE_SIZE = 50;
 
@@ -81,6 +82,10 @@ export async function pullNames(context: TasksContext, rows: readonly Notificati
     if (log === null || userId === null) continue;
     quiet(pullOnce(context, row.org_id, row.org_id, { kinds: PROFILE_KINDS }));
     if (row.kind === 'invite.accepted') quiet(pullOnce(context, row.org_id, row.org_id, { kinds: ['device.profile'] }));
+    // the name of the support person of a first access (ADR-096), once per org
+    if (row.kind === 'support.access' && context.store.getState().support.orgs[row.org_id] === undefined) {
+      quiet(loadOrgSupport(context, row.org_id).then(() => 0));
+    }
     if (row.task_id !== null && row.wg_id !== null && log.state.canRead(userId, WG, row.wg_id)) {
       quiet(pullOnce(context, row.org_id, row.wg_id, { kinds: ['task.meta'], task: row.task_id }));
     }

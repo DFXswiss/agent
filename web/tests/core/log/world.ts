@@ -71,6 +71,7 @@ export function keySource(prefix: string): () => Secret {
 /** The platform root and a platform log with certified devices (`certify` names), built through the builders. */
 export async function platformWith(
   devices: readonly Actor[],
+  support: { readonly people?: readonly Actor[]; readonly former?: readonly Actor[] } = {},
 ): Promise<{ root: string; entries: Entry[]; state: PlatformState; seqs: Map<string, number> }> {
   const rootPair = await ed25519KeyPair(await seed('platform root'));
   const root = b64uEncode(rootPair.publicKey);
@@ -113,6 +114,12 @@ export async function platformWith(
       capacity: body.capacity,
     });
   }
+  // persons of DFX support (ADR-096): certified identity, then the role; a former one loses it again
+  for (const person of [...(support.people ?? []), ...(support.former ?? [])]) {
+    list.push({ type: 'user_certify', user: person.id, pub: person.identity.public() });
+    list.push({ type: 'role_grant', subject: person.id, role: 'support' });
+  }
+  for (const person of support.former ?? []) list.push({ type: 'role_revoke', subject: person.id, role: 'support' });
   const entries = await buildPlatformEntries(null, rootPair.privateKey, list, TS);
   return { root, entries, state: (await verifyPlatformLog(entries, root)).state, seqs };
 }

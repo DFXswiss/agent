@@ -25,6 +25,7 @@ import psycopg
 from agent_hub.log.catchup import missing_cred_wraps, missing_wraps
 from agent_hub.log.wraps import CRED, WrapSlot
 from agent_hub.orgs import logs
+from agent_hub.support import store as support
 from agent_hub.wraps.rules import cred_epoch
 
 Connection = psycopg.Connection[Any]
@@ -56,7 +57,9 @@ def catch_up(
     log = logs.verified_log(connection, org, platform)
     excluded = frozenset() if platform is None else platform.excluded(log.state)
     state = log.state
-    found = missing_wraps(log, caller, _existing(connection, org.id, sorted(state.workgroups)), excluded)
+    existing = _existing(connection, org.id, sorted(state.workgroups))
+    # the support persons are recipients of every epoch of a released workgroup (ADR-096)
+    found = missing_wraps(log, caller, existing, excluded, support.roster(platform))
     epoch = cred_epoch(connection, owner)
     if epoch is not None:
         member_logs = [logs.verified_log(connection, row, platform) for row in logs.member_orgs(connection, owner)]

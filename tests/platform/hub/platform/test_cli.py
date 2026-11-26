@@ -717,3 +717,28 @@ def test_a_refused_later_page_is_reported(
         "",
         "agent-hub platform: refused: request_invalid\n",
     )
+
+
+def test_the_support_role_with_a_name(run: Callable[..., tuple[int, str, str]], hub: HubHarness) -> None:
+    """ADR-096: `grant-role support --name` appends the role and names the person; `support-name` renames it;
+    `--name` only with `grant-role support`; `revoke-role support` ends the role (the name stays)."""
+    user, _pub = _account(hub)
+    assert run("certify-user", "--user", user)[0] == 0
+    code, out, err = run("grant-role", "support", "--user", user, "--name", "Sam")
+    assert (code, err) == (0, "")
+    assert out.splitlines()[-1] == f"support person {user} is named Sam (in the roster)"
+    assert (
+        run("support-name", "--user", user, "--name", "Sam S")[1]
+        == f"support person {user} is named Sam S (in the roster)\n"
+    )
+    assert run("grant-role", "inviter", "--user", user, "--name", "X") == (
+        2,
+        "",
+        "agent-hub platform: --name only with grant-role support\n",
+    )
+    assert run("revoke-role", "support", "--user", user, "--name", "X")[0] == 2
+    assert run("revoke-role", "support", "--user", user)[0] == 0
+    assert (
+        run("support-name", "--user", user, "--name", "Sam")[1]
+        == f"support person {user} is named Sam (not in the roster)\n"
+    )

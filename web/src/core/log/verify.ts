@@ -29,6 +29,11 @@
 //    adds the agent by the same rule; the entry's `sig` is then made by the agent's key.
 //    Every right of an agent author resolves through `OrgState.acting`; "self" rules (leaving, self-demotion) compare
 //    `acting(by)` with the subject. `remove` of a user removes its active agent at the same `seq`.
+//    Support (ADR-096): `support_grant {wg, access}` by an active admin or a user with effective `write` on the
+//    workgroup (`OrgState.canRelease`, an agent with its user's rights), the workgroup writable and the access
+//    different from the active release; `support_revoke {wg}` by the same principals while a release is active
+//    (archived workgroups included). Both `log_rights` otherwise. The revocation owes the rotation of the workgroup
+//    (`rotation.lost`).
 // `now` (hub receipt time, unix ms) switches on the checks only the hub can make at append time (invitation expiry,
 // platform access and a still valid certification for `device_assign` of a platform device). A reader replaying
 // the log checks neither. L9 is `checkExtends` (stored heads, `refreshLog`), L10 `needsRefresh`/`requireLh`.
@@ -218,6 +223,7 @@ async function genesis(body: Body, entry: Body, founder: string): Promise<OrgSta
     ]),
     pending: new Set(),
     agentOwed: new Map(),
+    support: new Map(),
   });
   return member === undefined ? state : addAgent(state, joiningAgent(body, member), 0);
 }
@@ -350,6 +356,19 @@ function grant(state: OrgState, body: Body): OrgState {
       state.access.get(pairKey(subject, wg)) !== body.access,
   );
   return state.with({ access: withEntry(state.access, pairKey(subject, wg), body.access as string) });
+}
+
+function supportGrant(state: OrgState, body: Body, seq: number): OrgState {
+  const wg = body.wg as string;
+  const access = body.access as string;
+  rights(state.writable(wg) && state.canRelease(body.by as string, wg) && state.supportRelease(wg) !== access);
+  return state.with({ support: withEntry(state.support, wg, [access, seq] as const) });
+}
+
+function supportRevoke(state: OrgState, body: Body): OrgState {
+  const wg = body.wg as string;
+  rights(state.support.has(wg) && state.canRelease(body.by as string, wg));
+  return state.with({ support: withoutEntry(state.support, wg) });
 }
 
 function ungrant(state: OrgState, body: Body): OrgState {
@@ -546,6 +565,8 @@ const OTHERS: Record<string, Transition> = {
   remove: (state, body, seq) => remove(state, body, seq),
   rotate: (state, body) => rotate(state, body),
   agent_add: (state, body, seq) => agentAdd(state, body, seq),
+  support_grant: (state, body, seq) => supportGrant(state, body, seq),
+  support_revoke: (state, body) => supportRevoke(state, body),
 };
 
 function applyType(state: OrgState, body: Body, seq: number, ctx: Context): OrgState | Promise<OrgState> {

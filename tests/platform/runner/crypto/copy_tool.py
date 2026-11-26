@@ -82,11 +82,11 @@ SOURCE_ADAPTATIONS: dict[str, list[tuple[str, str]]] = {
             "from agent_hub.log import catchup, events, platform, rotation, verify, wraps\n"
             "from agent_hub.log.batch import check_batch\n"
             "from agent_hub.log.entries import Head, check_extends, entry_hash, sign_log_entry, sign_platform_entry\n"
-            "from agent_hub.log.state import OrgState\n",
+            "from agent_hub.log.state import OrgState, SupportPerson\n",
             "from agent_hub.log import catchup, events, platform, rotation, verify, wraps\n"
             "from agent_hub.log.batch import check_batch\n"
             "from agent_hub.log.entries import Head, check_extends, entry_hash, sign_log_entry, sign_platform_entry\n"
-            "from agent_hub.log.state import OrgState\n"
+            "from agent_hub.log.state import OrgState, SupportPerson\n"
             "from agent_hub.crypto.vectors import Section, fixed, fixed_id\n",
         ),
     ],

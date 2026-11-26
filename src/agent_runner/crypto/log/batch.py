@@ -14,7 +14,8 @@ sections 4.7 and 5.10): entries, the rotation obligation and the wraps.
    MUST contain exactly one `rotate` per element of R and no other `rotate`, each after the last entry that
    contributes to R (`rotation_required`);
 3. W3 for every wrap of the batch, created by the appending principal `wrapped_by`, which must be active after the
-   batch (`signature_invalid`, `wrap_unauthorized`), checked against the state after the batch;
+   batch (`signature_invalid`, `wrap_unauthorized`), checked against the state after the batch (wraps to the support
+   persons of `roster` for a released workgroup, ADR-096);
 4. distribution of every epoch the batch creates and that is current at its end (`genesis`, `wg_create`, `rotate`):
    a wrap for every entitled recipient (`rotation_required`);
 5. `admit` (ADR-060): wraps for the admitted user of the current org epoch and of the current epoch of the default
@@ -34,7 +35,7 @@ from typing import cast
 from agent_runner.crypto.errors import fail
 from agent_runner.crypto.log.platform import PlatformState
 from agent_runner.crypto.log.rotation import lost, self_owed
-from agent_runner.crypto.log.state import ORG, WG, Scope
+from agent_runner.crypto.log.state import ORG, WG, Roster, Scope
 from agent_runner.crypto.log.verify import VerifiedLog, append_entries
 from agent_runner.crypto.log.wraps import WrapSlot, check_wrap
 
@@ -70,10 +71,11 @@ def check_batch(
     now: datetime | None = None,
     platform_access: bool = False,
     excluded: Iterable[str] = (),
+    roster: Roster | None = None,
 ) -> BatchResult:
     """Check one batch; returns the new verified log. `founder` is needed only for a new org (`log` None),
     `platform_access` is the org's flag (ADR-026) for `device_assign` with `platform_seq`, `excluded` the decertified
-    platform devices (`PlatformState.excluded`)."""
+    platform devices (`PlatformState.excluded`), `roster` the support persons (ADR-096)."""
     skip = frozenset(excluded)
     after = append_entries(log, entries, founder=founder, platform=platform, now=now, platform_access=platform_access)
     first = len(after.entries) - len(entries)
@@ -95,7 +97,7 @@ def check_batch(
         scopes = [scope for _, scope in rotates]
         if len(scopes) != len(required) or set(scopes) != required or any(i < last_trigger for i, _ in rotates):
             fail("rotation_required")
-    stored = tuple(check_wrap(wrap, wrapped_by, after, skip, require_active=True) for wrap in wraps)
+    stored = tuple(check_wrap(wrap, wrapped_by, after, skip, require_active=True, roster=roster) for wrap in wraps)
     slots = set(stored)
     state = after.state
     for scope in {scope for body in bodies for scope in _created_scopes(body)}:

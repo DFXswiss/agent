@@ -12,7 +12,8 @@ Every entry is signed by the platform root (label `platform-log\\0`); the root p
 5. type rules (`log_rights` unless stated): invitation IDs unique; `device_certify` names an open `device_invite`
    (`invite_not_in_log`, used once: `invite_consumed`) and carries valid `enroll_sig`/`inv_sig` over the
    enrollment text rebuilt from the entry (`log_accept`), and the device is not currently certified;
-   `device_decertify` names a certified device; `role_grant`/`role_revoke` change the role; `user_certify` binds a
+   `device_decertify` names a certified device; `role_grant`/`role_revoke` change the role (`role_grant support`
+   only for a user with a valid certification, ADR-096); `user_certify` binds a
    user to its identity keys (ADR-060): the user has no valid certification and its ID was never certified as a
    device (and a device ID never as a user); `user_decertify` ends the user's valid certification;
    `platform_policy` sets a switch and `org_operator_subscriptions` an organization's use of the operator's
@@ -22,6 +23,12 @@ Identity anchors of users (ADR-060, `identity_anchored`): the entry `seq` is a `
 the identity proof is `""`, or a `user_invite` for which `user` is the ID derived from the invitation
 (`identity.invited_user_id`) and whose `pk_inv` verifies the identity proof of `(user, pub)`. At the hub (`current`)
 a certification must still be valid.
+
+Support roster (ADR-096): a `role_grant support` binds the role to the certification valid at that entry
+(`support_bound`). `support_roster` = every user whose role is active and whose bound certification is still its valid
+one, with the keys of that certification (wraps to support persons, the hub's checks at receipt); a later
+`user_decertify` ends it, and a renewed certification needs a new grant. `support_authors` = every user that was ever
+bound, with the keys of its latest bound certification (readers verifying the history of support events).
 
 A certification is valid until a later `device_decertify` of the device (section 6.2). Validity is per certification
 (`valid(seq)`): a device that is decertified and certified again with new keys does not make its old certification,
@@ -39,7 +46,7 @@ from agent_runner.crypto.encoding import b64u_decode
 from agent_runner.crypto.errors import CryptoError, fail
 from agent_runner.crypto.identity import identity_valid, invited_user_id
 from agent_runner.crypto.log.entries import Head, check_platform_entry, entry_hash, platform_text, signature_valid
-from agent_runner.crypto.log.state import OrgState
+from agent_runner.crypto.log.state import OrgState, SupportPerson
 
 CERTIFIED = "certified"
 DECERTIFIED = "decertified"
@@ -105,6 +112,8 @@ class PlatformState:
     """`name -> on` of the latest `platform_policy` of each switch (ADR-079 §2; a switch without one is off)."""
     operator_subscriptions: Mapping[str, bool] = field(default_factory=dict)
     """`org -> granted` of the latest `org_operator_subscriptions` of each organization (ADR-079 §2)."""
+    support_bound: Mapping[str, int] = field(default_factory=dict)
+    """`user -> seq` of the certification its latest `role_grant support` was bound to (ADR-096)."""
 
     def identity_anchored(
         self, seq: int, user: str, pub: Mapping[str, str], id_sig: object, *, current: bool = False
@@ -154,6 +163,24 @@ class PlatformState:
         """Platform role (e.g. `inviter`)."""
         return (user, role) in self.roles
 
+    def _person(self, user: str) -> SupportPerson:
+        cert = self.user_certifications[self.support_bound[user]]
+        return SupportPerson(user, cert.kem, cert.sig)
+
+    def support_roster(self) -> dict[str, SupportPerson]:
+        """ADR-096: users with an active role `support` whose bound certification is still their valid one, with the
+        keys of that certification."""
+        return {
+            user: self._person(user)
+            for user, role in sorted(self.roles)
+            if role == "support" and self.user_certified(user) and self.users[user] == self.support_bound[user]
+        }
+
+    def support_authors(self) -> dict[str, SupportPerson]:
+        """ADR-096: every user that was ever bound to the role `support`, with the keys of its latest bound
+        certification (the history of its events stays verifiable after it left support)."""
+        return {user: self._person(user) for user in sorted(self.support_bound)}
+
     def platform_access(self, org: str, private: bool) -> bool:
         """ADR-026, ADR-079 §3: a private org has platform access; any other org by its latest `org_platform_access`,
         and without one by the switch `open_platform_access`."""
@@ -191,6 +218,7 @@ class PlatformState:
                 {"user": user, "certify_seq": seq, "certified": self.user_certified(user)}
                 for user, seq in sorted(self.users.items())
             ],
+            **({"support": sorted(self.support_roster())} if self.support_bound else {}),
         }
 
 
@@ -272,10 +300,13 @@ def _decertify(state: PlatformState, body: dict[str, object], seq: int) -> Platf
 def _role(state: PlatformState, body: dict[str, object], seq: int) -> PlatformState:
     key = (cast(str, body["subject"]), cast(str, body["role"]))
     grant = body["type"] == "role_grant"
-    if (key in state.roles) == grant:
+    support = key[1] == "support"
+    # a support person must have root-certified identity keys: they are the keys its wraps are sealed to (ADR-096)
+    if (key in state.roles) == grant or (grant and support and not state.user_certified(key[0])):
         fail("log_rights")
     roles = {k: v for k, v in state.roles.items() if k != key}
-    return replace(state, roles={**roles, key: seq} if grant else roles)
+    bound = {**state.support_bound, key[0]: state.users[key[0]]} if grant and support else state.support_bound
+    return replace(state, roles={**roles, key: seq} if grant else roles, support_bound=bound)
 
 
 def _org_access(state: PlatformState, body: dict[str, object], _seq: int) -> PlatformState:

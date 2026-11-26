@@ -46,5 +46,13 @@
   "access.subscription": "Claude-Abo",
   "access.operator": "Betreiber-Abo",
   "access.api_key": "API-Key",
-  "access.platform": "DFX-Zugang über OpenRouter"
+  "access.platform": "DFX-Zugang über OpenRouter",
+  "text.support.release.read": "Workgroup „{wg}“ in „{org}“ wurde für den DFX-Support freigegeben (Lesen)",
+  "text.support.release.write": "Workgroup „{wg}“ in „{org}“ wurde für den DFX-Support freigegeben (Lesen und Schreiben)",
+  "text.support.release.revoke": "Die Freigabe von Workgroup „{wg}“ in „{org}“ für den DFX-Support wurde widerrufen",
+  "text.support.release.unknown": "Die Freigabe von Workgroup „{wg}“ in „{org}“ für den DFX-Support hat sich geändert",
+  "text.support.access": "{subject} vom DFX-Support hat Workgroup „{wg}“ in „{org}“ zum ersten Mal geöffnet",
+  "text.support.people.joined": "Eine Person ist neu im DFX-Support: Sie kann die freigegebenen Workgroups von „{org}“ lesen",
+  "text.support.people.left": "Eine Person hat den DFX-Support verlassen: Die freigegebenen Workgroups von „{org}“ erhalten neue Schlüssel",
+  "text.support.people.unknown": "Die Personen des DFX-Supports haben sich geändert"
 }

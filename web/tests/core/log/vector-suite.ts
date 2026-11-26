@@ -13,6 +13,7 @@ import * as catchup from '../../../src/core/log/catchup';
 import * as events from '../../../src/core/log/events';
 import * as platform from '../../../src/core/log/platform';
 import * as rotation from '../../../src/core/log/rotation';
+import { NO_ROSTER, type Roster } from '../../../src/core/log/state';
 import * as verify from '../../../src/core/log/verify';
 import * as wraps from '../../../src/core/log/wraps';
 import { Mismatch, type Outcome, runChecks, same, VECTOR_FILES } from '../crypto/vector-suite';
@@ -49,9 +50,17 @@ export class LogContext {
           now: parseTime(a.now),
           platformAccess: a.platform_access ?? false,
           excluded: a.excluded ?? [],
+          roster: await this.roster(a),
         }),
       check_wrap: async (a) =>
-        wraps.checkWrap(a.wrap, a.wrapped_by, await this.log(a), a.excluded ?? [], a.require_active ?? false),
+        wraps.checkWrap(
+          a.wrap,
+          a.wrapped_by,
+          await this.log(a),
+          a.excluded ?? [],
+          a.require_active ?? false,
+          await this.roster(a),
+        ),
       check_cred_wrap: async (a) =>
         wraps.checkCredWrap(a.wrap, a.wrapped_by, await this.logsOf(a), a.current_epoch, a.excluded ?? []),
       cred_readers: async (a) =>
@@ -66,6 +75,7 @@ export class LogContext {
         events.checkEvent(a.event, await this.log(a), {
           sessionDevice: a.session_device ?? null,
           excluded: a.excluded ?? [],
+          support: await this.authors(a),
         }),
       check_event_hub: async (a) =>
         events.checkEventHub(
@@ -75,6 +85,7 @@ export class LogContext {
           time(a.rotated_at),
           a.session_device ?? null,
           a.excluded ?? [],
+          await this.roster(a),
         ),
       check_replay: async (a) => events.checkReplay(a.stored, a.incoming),
     };
@@ -90,6 +101,16 @@ export class LogContext {
     const ref = args.platform;
     if (!ref) return null;
     return (await platform.verifyPlatformLog(this.logs[ref.name]!.slice(0, ref.count), ref.root)).state;
+  }
+
+  /** The support roster of the platform state of `args` (ADR-096), empty without one. */
+  async roster(args: Any): Promise<Roster> {
+    return (await this.platform(args))?.supportRoster() ?? NO_ROSTER;
+  }
+
+  /** The support authors (history) of the platform state of `args` (ADR-096), empty without one. */
+  async authors(args: Any): Promise<Roster> {
+    return (await this.platform(args))?.supportAuthors() ?? NO_ROSTER;
   }
 
   /** The verified membership log of `args`. */
@@ -178,7 +199,27 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
       data.agents_valid.projections,
       'agents projections',
     );
-    const all = [...log.entries, ...admitted.entries, ...orgwide.entries, ...agents.entries];
+    // ADR-096: releases to support (read, write, revoked with rotation, archived)
+    const support = await ctx.log({ ...data.support_valid, founder: data.founder });
+    same(
+      support.states.map((s) => ({ seq: s.seq, hash: s.head })),
+      data.support_valid.heads,
+      'support heads',
+    );
+    same(
+      support.states.map((s) => s.projection()),
+      data.support_valid.projections,
+      'support projections',
+    );
+    same(support.state.supportRelease(support.state.defaultWg), null, 'support release of the default workgroup');
+    same(
+      [...support.state.support.values()].map(([access]) => access),
+      [...support.state.support.keys()].map(() => 'write'),
+      'support releases at the head',
+    );
+    same(Object.hasOwn(data.support_valid.projections[7], 'support'), false, 'no release yet');
+    same(data.support_valid.projections[8].support[0].access, 'read', 'first release');
+    const all = [...log.entries, ...admitted.entries, ...orgwide.entries, ...agents.entries, ...support.entries];
     const types = new Set(all.map((entry) => entry.body.type));
     same([...types].sort(), [...LOG_TYPES].sort(), 'every entry type');
     // ADR-075: a device assigned to the organization reads every workgroup, also a later one; ending the
@@ -256,12 +297,18 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
     ]) {
       same(seen.has(type), true, `rotation case ${type}`);
     }
+    const results = new Map<string, rotation.BatchResult>();
     for (const item of data.batches) {
       const result = (await ctx.ops.check_batch!(item.args)) as rotation.BatchResult;
       same(rotation.asJson(result.required), item.required, 'batch R');
       same(rotation.asJson(result.log.state.pending), item.pending, 'batch pending');
       same(result.log.head, item.head, 'batch head');
+      results.set(item.name, result);
     }
+    // ADR-096: a revocation owes the rotation of the workgroup; a grant wraps to the support persons
+    same(results.get('support_revoke_with_rotation')!.required.size > 0, true, 'support revoke R');
+    same(results.get('support_grant_with_wraps_to_support')!.wraps.length, 2, 'support grant wraps');
+    same(results.get('support_grant_with_wraps_to_support')!.required.size, 0, 'support grant R');
   },
   'log-wraps': async (data) => {
     const ctx = new LogContext(data.logs);
@@ -337,6 +384,24 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
       const confirmed = catchup.confirmedSlots(rejoinLog, plan.wrapper, missing, plan.excluded);
       same(confirmed.map(wraps.slotJson), plan.missing, `rejoin catch-up confirmed ${plan.wrapper}`);
     }
+    // ADR-096: wraps to the support persons of a released workgroup, every epoch; catch-up with the roster
+    for (const item of data.support.valid) {
+      const slot = (await ctx.ops.check_wrap!(item.args)) as wraps.WrapSlot;
+      same(slot.recipient, item.args.wrap.recipient_id, `support wrap ${item.name}`);
+      await opens(item.args.wrap);
+    }
+    const plans = data.support.catch_up;
+    const supportArgs = { log: plans.log, founder: data.founder, platform: plans.platform };
+    const supportLog = await ctx.log(supportArgs);
+    const roster = await ctx.roster(supportArgs);
+    const supportExisting = slots(plans.existing);
+    for (const plan of plans.plans) {
+      const missing = catchup.missingWraps(supportLog, plan.wrapper, supportExisting, plan.excluded, roster);
+      same(missing.map(wraps.slotJson), plan.missing, `support catch-up ${plan.wrapper}`);
+    }
+    same(plans.plans[3].missing, [], 'a support person wraps nothing');
+    same((await ctx.roster({})).size, 0, 'no roster without a platform state');
+    same((await ctx.authors({})).size, 0, 'no authors without a platform state');
   },
   'log-events': async (data) => {
     const ctx = new LogContext(data.logs);
@@ -359,6 +424,22 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
       same(opened.checked.header.id, item.args.event.header.id, `agent event ${item.name}`);
     }
     for (const item of data.agents.hub_valid) await ctx.ops.check_event_hub!(item.args);
+    // ADR-096: events of support persons in a workgroup released to support
+    for (const item of data.support.valid) {
+      const log = await ctx.log(item.args);
+      const opened = await events.openCheckedEvent(item.args.event, log, Secret.of(b64uDecode(item.scope_key)), {
+        sessionDevice: item.args.session_device ?? null,
+        excluded: item.args.excluded ?? [],
+        support: await ctx.authors(item.args),
+      });
+      same(opened.checked.header.id, item.args.event.header.id, `support event ${item.name}`);
+    }
+    for (const item of data.support.hub_valid) await ctx.ops.check_event_hub!(item.args);
+    same(
+      [...events.SUPPORT_KINDS].sort(),
+      ['prompt', 'whiteboard.delete', 'whiteboard.edit', 'whiteboard.entry'],
+      'support kinds',
+    );
     same(events.checkReplay(data.replay.stored, data.replay.incoming), data.replay.replayed, 'replay');
     same(data.grace_seconds * 1000, events.GRACE_MS, 'grace');
     same(events.matrix(), data.matrix, 'CON-03 matrix (vector)');

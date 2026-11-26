@@ -11,10 +11,14 @@
    platform_access_denied`, ADR-026; the hub reads the access from the verified platform log);
 4. L1-L8 before every entry against the hub's own verified log, the rotation obligation (the hub computes R itself,
    `409 rotation_required`) and W3 for every wrap plus the distribution of every new epoch (`agent_hub.log.batch`),
-   with `now` (invitation expiry, certification validity) and the decertified platform devices excluded;
+   with `now` (invitation expiry, certification validity), the decertified platform devices excluded and the support
+   roster of the verified platform log (wraps to support persons, ADR-096; read after the org row lock, so a
+   platform-log append that ends a role is ordered against the batch);
 5. `accept` of a user: `pub` is the appender's registered identity (`log_accept`) and the invitation is not bound to
    another registered user (`409 invite_registered`, 04-crypto.md section 5.2a); the invitation (of a user or a device)
-   is marked used, its package deleted and the use audited (`invite.use`); `admit` and `device_assign`: the hub checks
+   is marked used, its package deleted and the use audited (`invite.use`); `support_grant`/`support_revoke` (ADR-096):
+   the org's admins, the releasing user and (for a grant) the support persons are notified (`support.release`), and a
+   revocation deletes the workgroup's wraps of support persons; `admit` and `device_assign`: the hub checks
    of `agent_hub.orgs.admit` (registered identity, `409 peer_outdated`), and each admitted user is notified
    (`org.admitted`);
 6. storage: the entries (`membership_entry`), the projections (`agent_hub.orgs.projection`), the wraps, the deletion
@@ -52,7 +56,7 @@ from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.audit.invites import audit_invite_use
 from agent_hub.crypto.encoding import b64u_decode, canonical
 from agent_hub.crypto.errors import CryptoError
-from agent_hub.device.features import LOG_ORG_ASSIGN, outdated_devices
+from agent_hub.device.features import LOG_ORG_ASSIGN, LOG_SUPPORT, outdated_devices
 from agent_hub.errors import ERROR_STATUSES, HubError
 from agent_hub.events.store import StoredEvent, append_events
 from agent_hub.log.batch import BatchResult, check_batch
@@ -63,6 +67,8 @@ from agent_hub.log.verify import VerifiedLog
 from agent_hub.notifications.rules import Notification
 from agent_hub.orgs import logs, projection
 from agent_hub.orgs.admit import MAX_DETAIL_DEVICES, admitted_notices, check_admits
+from agent_hub.support import notify as support_notify
+from agent_hub.support import store as support
 
 Connection = psycopg.Connection[Any]
 Body = dict[str, Any]
@@ -163,7 +169,7 @@ def _target(body: Body) -> tuple[str | None, str | None, str | None, str | None]
         return body.get("wg"), body["device"], "device", body["device"]
     if kind == "rotate":
         return (body["scope_id"] if body["scope"] == WG else None), None, "scope", body["scope_id"]
-    if kind in ("wg_create", "wg_archive"):
+    if kind in ("wg_create", "wg_archive", "support_grant", "support_revoke"):
         return body["wg"], None, "wg", body["wg"]
     if kind in ("invite", "invite_revoke", "accept"):
         return None, None, "invite", body["invite_id"]
@@ -304,6 +310,26 @@ def require_org_assign_feature(
         raise HubError("peer_outdated", detail={"devices": outdated[:MAX_DETAIL_DEVICES]})
 
 
+SUPPORT_TYPES = frozenset({"support_grant", "support_revoke"})
+
+
+def require_support_feature(
+    connection: Connection, before: VerifiedLog, after: VerifiedLog, bodies: Sequence[Body]
+) -> None:
+    """ADR-096: `409 peer_outdated` (with `detail.devices`) for a batch with a support entry while an active device of
+    the org has not announced `log.support`, and for a batch that adds a device (other than by its own `accept`) to an
+    org whose log already holds one: an older runner would stop at the unknown entry type."""
+    if not any(cast(Body, entry["body"])["type"] in SUPPORT_TYPES for entry in after.entries):
+        return
+    accepted = {str(body["subject"]) for body in bodies if body["type"] == "accept" and body.get("kind") == DEVICE}
+    devices = members(after.state)[1] - accepted
+    if not any(body["type"] in SUPPORT_TYPES for body in bodies):
+        devices -= members(before.state)[1]
+    outdated = outdated_devices(connection, devices, LOG_SUPPORT)
+    if outdated:
+        raise HubError("peer_outdated", detail={"devices": outdated[:MAX_DETAIL_DEVICES]})
+
+
 def check(
     log: VerifiedLog | None,
     entries: Sequence[object],
@@ -328,6 +354,7 @@ def check(
             now=now,
             platform_access=access,
             excluded=excluded,
+            roster=support.roster(platform),
         )
     except CryptoError as error:
         raise hub_error(error) from None
@@ -377,11 +404,16 @@ def append_batch(
     after = batch.log
     bodies = [cast(Body, entry["body"]) for entry in after.entries[log.head.seq + 1 :]]
     require_org_assign_feature(connection, log.state, after.state, bodies)
+    require_support_feature(connection, log, after, bodies)
     _accepts(connection, org_id, bodies, appender, now)
     excluded = frozenset() if platform is None else platform.excluded(after.state)
     admits = check_admits(connection, after, bodies, excluded)
     persist_range(connection, org_id, batch, first=log.head.seq + 1, wraps=wraps, appender=appender, now=now)
     notices: list[Notification] = admitted_notices(connection, org_id, admits, now)
+    notices += support_notify.release_notices(connection, org_id, bodies, UUID(appender.actor_id), now)
+    for body in bodies:
+        if body["type"] == "support_revoke":
+            support.drop_wraps(connection, after.state, str(body["wg"]))
     if appender.actor_kind == "user" and any(body["type"] in ROLE_CHANGES for body in bodies):
         # an agent's role change or removal: the user is told (ADR-056 §5; nothing for a browser session), live after
         # the commit (`publish_append`)

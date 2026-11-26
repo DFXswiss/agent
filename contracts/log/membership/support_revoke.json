@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/log/membership/support_revoke.json",
+  "title": "membership-log entry support_revoke",
+  "description": "Membership-log entry of type support_revoke (04-crypto.md section 4.7, ADR-096): body signed with P||'log\\0' by `by`.",
+  "type": "object",
+  "properties": {
+    "body": {
+      "$ref": "../../common.json#/$defs/log_body_support_revoke"
+    },
+    "sig": {
+      "$ref": "../../common.json#/$defs/b64u_64"
+    }
+  },
+  "required": [
+    "body",
+    "sig"
+  ],
+  "additionalProperties": false
+}

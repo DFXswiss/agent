@@ -212,6 +212,10 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     "wg_placement": [("wg_id", U), ("device_id", U), ("vm_id", T), ("set_by", U), ("set_at", TS)],
     "platform_role": [("user_id", U), ("role", T), ("granted_seq", INT), ("revoked_seq", INT)],
     "platform_policy": [("name", T), ("on", BOOL), ("seq", INT)],  # 0023 (ADR-079)
+    # support (KOR-56, ADR-096, migration 0038)
+    "support_person": [("user_id", U), ("active", BOOL), ("name", T), ("changed_at", TS)],
+    "support_release": [("wg_id", U), ("org_id", U), ("access", T), ("granted_seq", INT), ("granted_at", TS)],
+    "support_access": [("wg_id", U), ("user_id", U), ("granted_seq", INT), ("first_at", TS)],
     "scope_epoch": [("scope", T), ("scope_id", U), ("epoch", INT), ("created_at", TS), ("created_seq", INT)],
     "key_wrap": [
         ("scope", T),
@@ -806,6 +810,7 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "wg_device": ("wg_id", "device_id"),
     "org_device": ("org_id", "device_id"),
     "platform_role": ("user_id", "role"),
+    "support_access": ("wg_id", "user_id", "granted_seq"),  # KOR-56, migration 0038
     "scope_epoch": ("scope", "scope_id", "epoch"),
     "key_wrap": ("scope", "scope_id", "epoch", "recipient_id"),
     "event": ("scope_id", "scope_seq"),
@@ -1041,6 +1046,8 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
             ["received", "rejected", "accepted", "duplicate", "denied", "executing", "succeeded", "failed", "expired"],
         ),
         ("whiteboard_entry", "level", ["org", "workgroup", "task"]),
+        ("platform_role", "role", ["inviter", "operator", "support"]),
+        ("support_release", "access", ["read", "write"]),
         ("task_attention", "category", ["needs_decision", "blocked", "working", "done"]),
         ("task_attention", "ref_kind", ["operation", "session"]),
         ("session_ping", "kind", ["whiteboard.entry", "subagent.finished", "operation.finished"]),
@@ -1060,6 +1067,9 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
                 "device.needed",
                 "model.switched",
                 "prompt.waiting_for_device",
+                "support.release",
+                "support.access",
+                "support.people",
             ],
         ),
         (

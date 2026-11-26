@@ -26,6 +26,12 @@ generation). `acting(p)` is the parent of an agent, else `p`; every right of an 
 exactly what the user reads. An agent never has a role, explicit access or assignments of its own and never counts as
 an admin (`admins`). `remove` of a user removes its active agent at the same `seq` (`removed_with_user`); only such an
 agent may come back with its user.
+
+Support (ADR-096): `support_grant`/`support_revoke` release a workgroup to the support team (`support`: `wg -> (access,
+seq)`). Support persons are no principals of the org log; they come from the verified platform log as a `Roster`
+(`PlatformState.support_roster`, keys of their root certification). A person of the roster reads a released workgroup
+(`support_reads`, every epoch) and writes it with a `write` release while it is writable (`support_writes`); never the
+org scope, never a credential scope.
 """
 
 from __future__ import annotations
@@ -43,8 +49,23 @@ WRITE = "write"
 ORG = "org"
 WG = "wg"
 
+SUPPORT = "support"
 Scope = tuple[str, str]
 """`(scope, scope_id)` with scope `org` or `wg`."""
+
+
+@dataclass(frozen=True)
+class SupportPerson:
+    """A person of the support roster (ADR-096): a user with a valid platform role `support` and the identity keys of
+    its root certification."""
+
+    id: str
+    kem: str
+    sig: str
+
+
+Roster = Mapping[str, SupportPerson]
+"""`user -> SupportPerson`: the support persons a verifier knows from its verified platform log."""
 
 
 @dataclass(frozen=True)
@@ -135,6 +156,8 @@ class OrgState:
     agent_owed: Mapping[Scope, str] = field(default_factory=dict)
     """`scope -> user`: the rotation of a scope its agent read, owed by the user that removed or replaced that agent
     (ADR-082 section 4); the user or its active agent may rotate it even without the admin or write right."""
+    support: Mapping[str, tuple[str, int]] = field(default_factory=dict)
+    """`wg -> (access, seq)`: the active release of a workgroup to the support team (ADR-096)."""
 
     # --- principals and roles ---
 
@@ -215,6 +238,25 @@ class OrgState:
     def can_write_wg(self, principal: str, wg: str) -> bool:
         """`wg:write` of a user: write access and the workgroup not archived."""
         return self.wg_access(principal, wg) == WRITE and self.writable(wg)
+
+    # --- support (ADR-096) ---
+
+    def support_release(self, wg: str) -> str | None:
+        """The access (`read`/`write`) of the active support release of the workgroup, else None."""
+        found = self.support.get(wg)
+        return None if found is None else found[0]
+
+    def can_release(self, principal: str, wg: str) -> bool:
+        """Releasing a workgroup to support (and revoking it): an active admin or a user with effective `write`."""
+        return self.is_admin(principal) or self.wg_access(principal, wg) == WRITE
+
+    def support_reads(self, roster: Roster, person: str, wg: str) -> bool:
+        """A person of the roster reads a released workgroup."""
+        return person in roster and self.support_release(wg) is not None
+
+    def support_writes(self, roster: Roster, person: str, wg: str) -> bool:
+        """A person of the roster writes a workgroup released with `write` that is not archived."""
+        return person in roster and self.support_release(wg) == WRITE and self.writable(wg)
 
     # --- scopes ---
 
@@ -304,4 +346,9 @@ class OrgState:
             ],
             "pending_rotation": [{"scope": s, "scope_id": i} for s, i in sorted(self.pending)],
             **({"agent_owed": owed} if owed else {}),
+            **(
+                {"support": [{"wg": wg, "access": a, "seq": seq} for wg, (a, seq) in sorted(self.support.items())]}
+                if self.support
+                else {}
+            ),
         }

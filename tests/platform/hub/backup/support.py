@@ -106,6 +106,15 @@ class Estate:
         # a device of the org given to the whole organization (ADR-075): rows in `org_device`
         scene.draft.add("device_assign_org", scene.admin, device=scene.other_device.id)
         scene.draft.append(scene.admin)
+        # a support person and a release of the workgroup (ADR-096): rows in every support table
+        person = scene.stranger  # exported with its own org, so every table restores completely
+        with hub.pool.connection() as connection, connection.transaction():
+            connection.execute("UPDATE hub.device SET features = features || ARRAY['log.admit', 'log.support']")
+        platform.append("user_certify", user=person.id, pub=person.pub)
+        platform.append("role_grant", subject=person.id, role="support")
+        scene.draft.add("support_grant", scene.admin, wg=scene.wg, access="read")
+        scene.draft.append(scene.admin, scene.draft.wraps(scene.admin, "wg", scene.wg, 1, [person]))
+        assert person.browser.get(f"/v1/workgroups/{scene.wg}/tasks").status_code == 200
         task, session = scene.start_session()
         estate = cls(hub, scene, board, platform, enrolled.device_id, task, session)
         estate._events()

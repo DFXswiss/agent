@@ -957,7 +957,10 @@
             "operator.request",
             "device.needed",
             "model.switched",
-            "prompt.waiting_for_device"
+            "prompt.waiting_for_device",
+            "support.release",
+            "support.access",
+            "support.people"
           ]
         },
         "org_id": {

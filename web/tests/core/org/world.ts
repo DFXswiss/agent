@@ -22,7 +22,7 @@ import type { StoredEvent } from '../../../src/core/net/sse';
 import { type Actor, actors, platformWith, T0, World } from '../log/world';
 import { FakeClient } from '../tasks/world';
 
-export type ActorName = 'ada' | 'bob' | 'cy' | 'dev1' | 'dev2' | 'pdev';
+export type ActorName = 'ada' | 'bob' | 'cy' | 'dev1' | 'dev2' | 'pdev' | 'sam' | 'tom';
 
 export interface StoredInvite {
   invite_id: string;
@@ -86,6 +86,7 @@ export class OrgHub {
         now: this.now,
         platformAccess: this.platformAccess,
         excluded: platform === null ? [] : platform.excluded(this.world.log!.state),
+        roster: platform?.supportRoster() ?? new Map(),
       });
     } catch (error) {
       if (error instanceof CryptoError) throw new HubError(error.code, 400);
@@ -126,22 +127,37 @@ export interface OrgWorld {
 }
 
 export interface OrgWorldOptions {
-  /** Act as this actor (default `ada`, the founder and admin). */
-  readonly as?: 'ada' | 'bob' | 'cy';
+  /** Act as this actor (default `ada`, the founder and admin; `sam`/`tom`: persons of DFX support). */
+  readonly as?: 'ada' | 'bob' | 'cy' | 'sam' | 'tom';
   readonly private?: boolean;
   /** Org setup after genesis, before the store is filled. */
   readonly setup?: (world: World, actors: Readonly<Record<ActorName, Actor>>) => Promise<void>;
   /** Platform devices certified in the platform log. */
   readonly platformDevices?: readonly string[];
   readonly noPlatform?: boolean;
+  /** Persons of DFX support in the platform log (ADR-096), and persons that left it again. */
+  readonly support?: readonly ActorName[];
+  readonly formerSupport?: readonly ActorName[];
 }
 
-/** ada (founder, admin), bob, cy (users), dev1, dev2 (devices). */
+/** ada (founder, admin), bob, cy (users), dev1, dev2 (devices), sam, tom (users outside the org, for DFX support). */
 export async function orgWorld(options: OrgWorldOptions = {}): Promise<OrgWorld> {
-  const [ada, bob, cy, dev1, dev2, pdev] = await actors('ada', 'bob', 'cy', 'dev1', 'dev2', 'pdev');
-  const all = { ada, bob, cy, dev1, dev2, pdev };
+  const [ada, bob, cy, dev1, dev2, pdev, sam, tom] = await actors(
+    'ada',
+    'bob',
+    'cy',
+    'dev1',
+    'dev2',
+    'pdev',
+    'sam',
+    'tom',
+  );
+  const all = { ada, bob, cy, dev1, dev2, pdev, sam, tom };
   const certified = (options.platformDevices ?? []).map((name) => all[name as keyof typeof all]);
-  const platformLog = await platformWith(certified);
+  const platformLog = await platformWith(certified, {
+    people: (options.support ?? []).map((name) => all[name]),
+    former: (options.formerSupport ?? []).map((name) => all[name]),
+  });
   const world = await World.create(ada, { private: options.private ?? false });
   world.platform = platformLog.state;
   const verified = options.noPlatform ? null : await verifyPlatformLog(platformLog.entries, platformLog.root);
@@ -219,7 +235,8 @@ export async function orgWorld(options: OrgWorldOptions = {}): Promise<OrgWorld>
     }));
     const platform = hub.platform?.state ?? null;
     const excluded = platform === null ? [] : platform.excluded(world.log!.state);
-    return { missing: missingWraps(world.log!, me.id, existing, excluded).map(slotJson) };
+    const roster = platform?.supportRoster();
+    return { missing: missingWraps(world.log!, me.id, existing, excluded, roster).map(slotJson) };
   });
   client.on('POST /v1/wraps', async (raw) => {
     const body = raw as { wraps: WrapRecord[] };

@@ -1,0 +1,38 @@
+{
+  "description": "Endpoints added by KOR-56: the support release (docs/platform/spec/03-api.md section 4.14, ADR-096).",
+  "rights": [
+    "user",
+    "org:member",
+    "root"
+  ],
+  "auth": [
+    "browser",
+    "root"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/support/releases",
+      "rights": [
+        "user"
+      ],
+      "section": "4.14"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/support",
+      "rights": [
+        "org:member"
+      ],
+      "section": "4.14"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/platform/support/{user}",
+      "rights": [
+        "root"
+      ],
+      "section": "4.14"
+    }
+  ]
+}

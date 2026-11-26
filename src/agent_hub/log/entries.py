@@ -183,6 +183,9 @@ _LOG_TYPES: dict[str, dict[str, Check]] = {
         "wgs": _wgs(_WG_ACCESS),
     },
     "agent_add": {"subject": fields.uuid, "user": fields.uuid, "pub": _pub, "gen": _gen, "cert": _sig},
+    # the release of a workgroup to the support team (ADR-096)
+    "support_grant": {"wg": fields.uuid, "access": _WG_ACCESS},
+    "support_revoke": {"wg": fields.uuid},
 }
 _INVITE_COMMON: dict[str, Check] = {"invite_id": _invite_id, "pk_inv": _key, "kind": _one_of("user", "device")}
 _INVITE_USER: dict[str, Check] = {
@@ -194,8 +197,9 @@ _INVITE_USER: dict[str, Check] = {
 _INVITE_DEVICE: dict[str, Check] = {**_INVITE_COMMON, "wgs": _wgs(_one_of("device")), "expires": fields.time}
 
 # Platform log (contracts/common.json platform_body_*).
-PLATFORM_ROLES = ("inviter", "operator")
-"""Platform roles: `inviter` creates platform invitations (ADR-026), `operator` receives the requests of ADR-079 §4."""
+PLATFORM_ROLES = ("inviter", "operator", "support")
+"""Platform roles: `inviter` creates platform invitations (ADR-026), `operator` receives the requests of ADR-079 §4,
+`support` reads and writes the workgroups released to the support team (ADR-096)."""
 PLATFORM_POLICIES = ("open_platform_access", "open_platform_invites")
 """Switches of `platform_policy` (ADR-079 §2): off until an entry turns them on."""
 _PLATFORM_ROLE = _one_of(*PLATFORM_ROLES)

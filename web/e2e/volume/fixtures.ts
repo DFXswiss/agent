@@ -19,6 +19,8 @@ export interface VolumeUser {
   readonly userId: string;
   readonly data: VolumeData;
   readonly violations: CspViolation[];
+  /** The recovery code of the user (specs that act through the API open its identity with it). */
+  readonly recoveryCode: string;
   /** Opens `path` with a page load and the unlock; returns the moment of the unlock gesture (the user's action). */
   open(path: string, unlock?: boolean): Promise<number>;
 }
@@ -127,6 +129,7 @@ export const test = base.extend<{ volume: VolumeUser }, { lane: string; volumeUs
         userId: user.userId,
         data,
         violations,
+        recoveryCode: onboarded.recoveryCode,
         open,
       });
       await context.close();

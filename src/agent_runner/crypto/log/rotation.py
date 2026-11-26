@@ -12,6 +12,9 @@ and an `agent_add` of a higher generation removes the user's previous agent. `lo
 of their R, and `self_owed` says when that R is owed by the others (`OrgState.pending`) instead of the batch: a
 principal that leaves (`remove` by the subject itself, or of a user by its own agent) or an admin that demotes itself
 (`role` by the user or its agent).
+
+`support_revoke {wg}` (ADR-096) always owes `(wg, wg)`: the support persons are not in the org log, so R does not
+depend on who is support at the moment; it is computed from the org log alone, the same in every verifier.
 """
 
 from __future__ import annotations
@@ -47,8 +50,11 @@ def losers(before: OrgState, body: Mapping[str, object]) -> frozenset[str]:
 
 
 def lost(before: OrgState, after: OrgState, body: Mapping[str, object]) -> frozenset[Scope]:
-    """The union of R over `losers`."""
-    return frozenset(scope for loser in losers(before, body) for scope in required_set(before, after, loser))
+    """The union of R over `losers`; a `support_revoke` adds its workgroup (ADR-096)."""
+    found = {scope for loser in losers(before, body) for scope in required_set(before, after, loser)}
+    if body["type"] == "support_revoke":
+        found.add((WG, str(body["wg"])))
+    return frozenset(found)
 
 
 def self_owed(before: OrgState, body: Mapping[str, object]) -> bool:

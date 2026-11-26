@@ -35,7 +35,7 @@ SPEC_SSE_FRAMES = (
 # 04-crypto.md section 4.7 (membership-log entry types) and section 4.8 (platform-log entry types).
 SPEC_MEMBERSHIP_TYPES = (
     "genesis invite invite_revoke accept role wg_create wg_archive grant ungrant device_assign device_unassign"
-    " device_assign_org device_unassign_org remove rotate admit agent_add"
+    " device_assign_org device_unassign_org remove rotate admit agent_add support_grant support_revoke"
 )
 SPEC_PLATFORM_TYPES = (
     "root device_invite device_certify device_decertify role_grant role_revoke user_invite org_platform_access"
@@ -175,7 +175,8 @@ def test_event_kinds_table(contracts: Contracts) -> None:
         assert row["max_ct_bytes"] == limits.get(row["kind"], limits["default_ct_bytes"]), row
         # devices pull every kind but the watched kinds and the admin-given names (ADR-073: the sessions name members
         # from their own profiles; 13-work-vm.md section 13.6: the watched kinds)
-        assert row["device_pull"] is (row["kind"] not in {"session.terminal", "browser.action", "member.name"}), row
+        not_pulled = {"session.terminal", "browser.action", "member.name", "support.info"}  # support.info: ADR-096
+        assert row["device_pull"] is (row["kind"] not in not_pulled), row
         assert row["body"] == f"events/{row['kind']}.json"
         assert row["body"] in contracts.schemas
     bodies = schema_names("events") - {"events/objects.json", "events/kinds.json"}

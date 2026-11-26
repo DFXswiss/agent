@@ -14,6 +14,13 @@
 // Every function takes the clock as a parameter (`now`, `rotatedAt`, unix ms).
 // An agent author (ADR-082) is a user for E3 and has its user's rights for E5 (`OrgState.acting`); its
 // `member.profile` is its user's (`ref` = the acting user).
+// Support (ADR-096): an author that is no principal of the org but a person of the `support` roster passed in
+// (readers: `PlatformState.supportAuthors`, the hub: `supportRoster`) has the author kind `support`; E3 treats it as
+// a user for the workgroup kinds of `SUPPORT_KINDS` only (`prompt`, workgroup whiteboard; `kind_not_allowed`
+// otherwise), E5 needs a `write` release of the workgroup at `lh` (and at the hub at receipt). A member of the org
+// that is also a support person writes if either its member right or the release allows it (the org log first, then
+// the roster). `support.info` (the names a support person needs, sealed under the workgroup key) is written by a
+// principal that may release the workgroup (`wg_release`).
 import { canonical } from '../encoding/json';
 import { equalBytes } from '../encoding/bytes';
 import { isUuid7 } from '../encoding/ids';
@@ -22,7 +29,7 @@ import { fail } from '../crypto/errors';
 import * as eventFormat from '../crypto/event';
 import * as F from '../crypto/fields';
 import type { Secret } from '../crypto/secret';
-import { AGENT, DEVICE, type OrgState, type Principal, USER } from './state';
+import { AGENT, DEVICE, NO_ROSTER, type OrgState, PLAIN, type Principal, type Roster, SUPPORT, USER } from './state';
 import type { VerifiedLog } from './verify';
 
 /** E6: the previous epoch is accepted this long (ms) after the rotation (not for removed authors). */
@@ -33,14 +40,24 @@ export const ORG_MEMBER_SELF = 'org_member_self';
 export const WG_WRITE = 'wg_write';
 export const DEVICE_ASSIGNED_WG = 'device_assigned_wg';
 export const DEVICE_ASSIGNED_WG_SESSION = 'device_assigned_wg_session';
+export const WG_RELEASE = 'wg_release';
 export const RIGHTS: Readonly<Record<string, string>> = {
   [ORG_ADMIN]: 'author is an admin of the org',
   [ORG_MEMBER_SELF]: 'author is an org member and ref == author',
   [WG_WRITE]: 'author has write access to the workgroup',
   [DEVICE_ASSIGNED_WG]: 'author device is assigned to the workgroup',
   [DEVICE_ASSIGNED_WG_SESSION]: 'author device is assigned to the workgroup and the session runs on it',
+  [WG_RELEASE]: 'author is an admin of the org or has write access to the workgroup, which is not archived',
 };
 export const NOTIFY_ALLOWED: readonly string[] = ['whiteboard.entry'];
+/** What a support person writes with a `write` release (ADR-096 section 4): prompts into existing tasks and the
+ *  workgroup whiteboard - no task, no workgroup settings. */
+export const SUPPORT_KINDS: ReadonlySet<string> = new Set([
+  'prompt',
+  'whiteboard.entry',
+  'whiteboard.edit',
+  'whiteboard.delete',
+]);
 export const SIZE_LIMITS: Readonly<Record<string, number>> = {
   default_ct_bytes: eventFormat.MAX_CT_BYTES,
   'session.terminal': eventFormat.MAX_TERMINAL_CT_BYTES,
@@ -90,6 +107,15 @@ export const KIND_RULES: readonly KindRule[] = [
     rule(kind, 'wg', [USER], WG_WRITE, WG_ENTRY, WG_LEVEL),
   ]),
   rule('settings.workgroup', 'wg', [USER], WG_WRITE, { wg: 'scope_id' }),
+  // the names a support person needs (org, workgroup, members), sealed under the workgroup key (ADR-096)
+  rule(
+    'support.info',
+    'wg',
+    [USER],
+    WG_RELEASE,
+    { wg: 'scope_id', task: 'empty', session: 'empty', ref: 'empty' },
+    'written by the releasing client with a support release',
+  ),
   rule('task.meta', 'wg', [USER], WG_WRITE, WG_TASK),
   rule('task.meta', 'wg', [DEVICE], DEVICE_ASSIGNED_WG, WG_TASK, 'only as result of the operation task.set_title'),
   // the name a person gives the main agent of a task (ADR-095 section 2)
@@ -163,8 +189,8 @@ export function checkHeaderRules(kind: KindRule, header: F.Fields, state: OrgSta
   }
 }
 
-/** E5: the right of the rule for the header's author in `state`. */
-export function hasRight(kind: KindRule, state: OrgState, header: F.Fields): boolean {
+/** E5: the right of the rule for the header's author in `state`; `support` the roster of support authors. */
+export function hasRight(kind: KindRule, state: OrgState, header: F.Fields, support: Roster = NO_ROSTER): boolean {
   const author = header.author as string;
   const scopeId = header.scope_id as string;
   switch (kind.right) {
@@ -173,15 +199,50 @@ export function hasRight(kind: KindRule, state: OrgState, header: F.Fields): boo
     case ORG_MEMBER_SELF:
       return state.member(author) !== null && header.ref === state.acting(author);
     case WG_WRITE:
-      return state.canWriteWg(author, scopeId);
+      // the member right first, then the support release (a member that is also support, ADR-096)
+      return (
+        state.canWriteWg(author, scopeId) ||
+        (SUPPORT_KINDS.has(header.kind as string) && state.supportWrites(support, author, scopeId))
+      );
+    case WG_RELEASE:
+      return state.writable(scopeId) && state.canRelease(author, scopeId);
     default: // device_assigned_wg, device_assigned_wg_session
       return state.assigned(author, scopeId) && state.writable(scopeId);
   }
 }
 
-function eventAuthor(state: OrgState, header: F.Fields, excluded: ReadonlySet<string>): Principal {
-  const found = state.member(header.author as string);
+function eventAuthor(state: OrgState, header: F.Fields, excluded: ReadonlySet<string>, support: Roster): Principal {
+  const author = header.author as string;
+  let found = state.member(author);
+  const person = support.get(author);
+  if (found === null && person !== undefined) {
+    // a support person (ADR-096): no principal of the org, keys from the root certification
+    found = {
+      ...PLAIN,
+      id: author,
+      kind: SUPPORT,
+      role: SUPPORT,
+      kem: person.kem,
+      sig: person.sig,
+      joinedSeq: 0,
+      removedSeq: null,
+      platformSeq: null,
+      consented: true,
+    };
+  }
   if (found === null || excluded.has(found.id)) fail('author_not_writer');
+  return found;
+}
+
+/** E3 for the author's kind: an agent as a user; a support person as a user for workgroup writes only. */
+function eventRule(header: F.Fields, author: Principal): KindRule {
+  const kind = header.kind as string;
+  const found = kindRule(
+    kind,
+    header.scope as string,
+    author.kind === AGENT || author.kind === SUPPORT ? USER : author.kind,
+  );
+  if (author.kind === SUPPORT && (found.scope !== 'wg' || !SUPPORT_KINDS.has(kind))) fail('kind_not_allowed');
   return found;
 }
 
@@ -192,10 +253,12 @@ export interface CheckedEvent {
   readonly authorSig: string;
 }
 
-/** Reader options: the device the header's session runs on (E7, when known) and the excluded platform devices. */
+/** Reader options: the device the header's session runs on (E7, when known), the excluded platform devices and the
+ *  support authors of the reader's platform log (`PlatformState.supportAuthors`, ADR-096). */
 export interface ReaderOptions {
   readonly sessionDevice?: string | null;
   readonly excluded?: Iterable<string>;
+  readonly support?: Roster;
 }
 
 /** Reader checks (steps 1-6, and E7 when the reader knows the session's device). */
@@ -205,11 +268,12 @@ export async function checkEvent(event: unknown, log: VerifiedLog, options: Read
   const header = eventFormat.checkHeader(data.header);
   if (header.org !== log.state.org) fail('header_invalid');
   const state = log.stateAt(header.lh as number);
-  const author = eventAuthor(state, header, skip);
-  const found = kindRule(header.kind as string, header.scope as string, author.kind === AGENT ? USER : author.kind);
+  const support = options.support ?? NO_ROSTER;
+  const author = eventAuthor(state, header, skip, support);
+  const found = eventRule(header, author);
   checkHeaderRules(found, header, state);
   await eventFormat.verifyEvent(event, b64uDecode(author.sig));
-  if (!hasRight(found, state, header)) fail('author_not_writer');
+  if (!hasRight(found, state, header, support)) fail('author_not_writer');
   const sessionDevice = options.sessionDevice ?? null;
   if (found.right === DEVICE_ASSIGNED_WG_SESSION && sessionDevice !== null && sessionDevice !== header.author) {
     fail('author_not_writer');
@@ -231,7 +295,8 @@ export async function openCheckedEvent(
 
 /**
  * E6 (the grace rule): the current epoch, or the previous one within `GRACE_MS` after the rotation at `rotatedAt`
- * if the author is entitled to the new epoch as well and not excluded (`epoch_stale`).
+ * if the author is entitled to the new epoch as well and not excluded (`epoch_stale`; a support author: by the
+ * release, ADR-096).
  */
 export function checkEpoch(
   state: OrgState,
@@ -239,6 +304,7 @@ export function checkEpoch(
   now: number,
   rotatedAt: number | null,
   excluded: Iterable<string> = [],
+  support: Roster = NO_ROSTER,
 ): void {
   const scope = header.scope as string;
   const scopeId = header.scope_id as string;
@@ -248,7 +314,7 @@ export function checkEpoch(
     header.epoch === current - 1 &&
     rotatedAt !== null &&
     now - rotatedAt <= GRACE_MS &&
-    state.canRead(author, scope, scopeId) &&
+    (state.canRead(author, scope, scopeId) || state.supportReads(support, author, scopeId)) &&
     !new Set(excluded).has(author);
   if (header.epoch !== current && !inGrace) fail('epoch_stale');
 }
@@ -256,7 +322,8 @@ export function checkEpoch(
 /**
  * The hub's checks: reader checks, E5 at receipt, E6, E7. `rotatedAt` is the receipt time of the entry that created
  * the scope's current epoch; `sessionDevice` the device the header's session runs on (null if unknown, which fails
- * E7 for session kinds). Clients use it to predict the hub's answer (e.g. before sending an outbox item).
+ * E7 for session kinds); `support` the current support roster (ADR-096: a person that left support writes nothing
+ * new). Clients use it to predict the hub's answer (e.g. before sending an outbox item).
  */
 export async function checkEventHub(
   event: unknown,
@@ -265,12 +332,15 @@ export async function checkEventHub(
   rotatedAt: number | null,
   sessionDevice: string | null,
   excluded: Iterable<string> = [],
+  support: Roster = NO_ROSTER,
 ): Promise<F.Fields> {
   const skip = [...excluded];
-  const { header, rule: found } = await checkEvent(event, log, { excluded: skip });
+  const { header, rule: found } = await checkEvent(event, log, { excluded: skip, support });
   const state = log.state;
-  if (state.member(header.author as string) === null || !hasRight(found, state, header)) fail('author_not_writer');
-  checkEpoch(state, header, now, rotatedAt, skip);
+  const author = header.author as string;
+  if ((state.member(author) === null && !support.has(author)) || !hasRight(found, state, header, support))
+    fail('author_not_writer');
+  checkEpoch(state, header, now, rotatedAt, skip, support);
   if (found.right === DEVICE_ASSIGNED_WG_SESSION && sessionDevice !== header.author) fail('author_not_writer');
   return header;
 }

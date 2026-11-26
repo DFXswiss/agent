@@ -232,6 +232,8 @@ Entry hash = `b64u(SHA-256(canonical(entry)))` (whole entry including signatures
 | `remove` | `subject` (user, device or agent) | admin, or `subject == by` (leave), or for an agent: its user or the user's agent (`acting(by)` is the parent); at least one admin must remain; removing a user removes its agent at the same `seq` (ADR-082) |
 | `agent_add` **(new, ADR-082)** | `subject` (agent ID), `user`, `pub{kem,sig}`, `gen`, `cert` | the user or the agent itself (`by == subject`, signed with `pub.sig`); `user` an active user; `cert = Ed25519_user(P‖"agent-cert\0"‖canonical({agent,gen,pub,user,v:1}))` valid under the user's key; `subject` never a principal of the org except the same agent returning with its user and its own `gen`; `gen` greater than every other agent generation of that user in the log; an active agent of the user with a lower `gen` is removed by this entry (its R owed in the batch); otherwise `log_agent` |
 | `rotate` | `scope` org\|wg, `scope_id`, `epoch` (= current + 1) | org: admin; wg: admin or wg writer |
+| `support_grant` **(new, ADR-096)** | `wg`, `access` read\|write | an admin or a user with effective `write` on `wg` (`acting(by)`); `wg` exists and is not archived; `access` differs from the active release (a new grant changes read ↔ write) |
+| `support_revoke` **(new, ADR-096)** | `wg` | an admin or a user with effective `write` on `wg`; an active release of `wg` (archived workgroups included); R = {(`wg`, `wg`)} always |
 | `admit` **(new, ADR-060)** | `subject`, `pub{kem,sig}`, `platform_seq`, `id_sig` (`""` or 64-byte b64u), `by_platform_seq`, `by_id_sig` (`""` or 64-byte b64u), `role` admin\|member, `wgs{wg: read\|write}` | admin; every `wgs` workgroup writable and not the default one (`log_rights`); then (`log_admit`) `subject` not an active principal (a former **user** with the same keys may be admitted again) and two identity anchors in the platform log (§4.8): the subject's `pub` at `platform_seq` with `id_sig`, and the admitting admin's keys (state before the entry) at `by_platform_seq` with `by_id_sig`; no platform state: `log_admit`. Effect as `accept` of a user invitation with `role` and `wgs`, but the principal has **not consented** (below). At the hub additionally: `pub` is the subject's registered identity of an active user, certifications still valid (`log_admit`), the batch wraps the current org epoch and default-workgroup epoch for the subject (`log_admit`), every active device of the org announced `log.admit` (`409 peer_outdated`) |
 
 **Consent (ADR-060):** a user that joined by its own signed entry (`genesis`, `accept`) has consented; a user that
@@ -245,6 +247,15 @@ agent's key and adds the agent with the `agent_add` rule. An agent principal has
 user's `cred` scope, and never has a role, access or assignment of its own. `revoked_agents(states)` – superseded by a
 higher generation in any log, or removed other than with its user – are no credential readers, and an org whose user
 entry was signed by such an agent gives no consent.
+
+**Support (ADR-096):** a person of the **support roster** of the verifier's platform state (§4.8) reads every epoch
+of a workgroup with an active release (W2 recipient, §6.3; wrapped by a holder of the org, never by support) and, under
+a `write` release of a writable workgroup, authors `prompt` and the workgroup whiteboard kinds (E3 author kind
+`support`, E5 the release at `lh`; §6.4). Support persons are no principals of the org log: never the org scope, never
+a `cred` scope, never a member right. `support_revoke` owes the rotation of its workgroup in the same batch; the
+batch rule "every reader of a new epoch has a wrap" covers the org log's readers only (support persons get new epochs
+by catch-up). The event kind `support.info` (right `wg_release`: an admin or a writer, the workgroup writable) carries
+the names a support person needs, sealed under `WK`.
 
 Derived rights: org member ⇒ read on org scope and **write on the default workgroup** (not reducible in v1);
 admin ⇒ org write (management, org whiteboard, profiles) **and read on every workgroup of the org** (inherited read,
@@ -288,7 +299,11 @@ for an ID that was ever certified as a user), `user_decertify` (`user`; ends the
 `platform_policy` (`name` ∈ `open_platform_access`, `open_platform_invites`, `on` bool; a switch, off without an
 entry) and `org_operator_subscriptions` (`org`, `granted` bool; the organization uses the operator's subscriptions);
 for both the latest entry counts. Platform access of an org (ADR-026): private, else its latest `org_platform_access`,
-else the switch `open_platform_access`.
+else the switch `open_platform_access`. **Role `support` (ADR-096):** `role_grant support` is refused (`log_rights`) for
+a user without a valid `user_certify` and binds the role to that certification; the **support roster** is every user
+whose role is active and whose bound certification is still its valid one, with the keys of that certification
+(`support_roster`); the **support authors** are every user ever bound, with the keys of its latest bound certification
+(`support_authors`, readers of the history of support events).
 **Identity anchor (ADR-060):** the platform entry at `seq` anchors `(user, pub)` with the proof `p` if it is a
 `user_certify` of exactly `(user, pub)` and `p == ""` (at the hub: not decertified), or a `user_invite` for which `user`
 is the invited user ID (§3) and `p` is a valid `id_sig` of `(user, pub)` under its `pk_inv`. A proof made with one code
@@ -623,7 +638,9 @@ W1 a principal may wrap a scope epoch for itself if it holds the key. W2 a holde
 that the verified log entitles to that scope at that epoch (members of the scope, every org admin for a `wg` scope;
 devices assigned; for `cred` scope: the owner and devices assigned to any workgroup in which the owner is an explicit
 member, in orgs in which the owner has consented, §4.7). Holders are the creator of the epoch and every principal that could read the scope while the epoch was
-current (so an admin holds what it read by inheritance). W3 the hub stores a
+current (so an admin holds what it read by inheritance). Support (ADR-096): a person of the verifier's support roster is
+also a W2 recipient of every epoch of a workgroup with an active release, wrapped by a holder of the org (W1 only for
+readers of the org log: support never wraps). W3 the hub stores a
 wrap only if W1/W2 hold for `wrapped_by` according to its own log state; recipients re-check W1/W2 and ignore
 wraps that violate them (`wrap_unauthorized`).
 
@@ -636,6 +653,9 @@ when the author is entitled to the new epoch as well (in-flight outbox items, op
 author is never covered by the grace period – readers accept any epoch they hold a key for; E7 for device-authored session kinds
 the session belongs to the author device (hub); E8 sizes: `ct` ≤ 256 KiB decoded (terminal chunks ≤ 64 KiB);
 E9 `id` unique (same `id` + identical bytes → idempotent success; different bytes → `event_conflict`).
+Support authors (ADR-096): an author outside the org log is looked up in the support authors of the reader's platform
+state (the hub: its current roster); E3 allows such an author only `prompt` and the workgroup whiteboard kinds, E5
+needs a `write` release at `lh` (hub: also at receipt); a member that is also support writes when either right holds.
 
 ## 7. What the hub sees in plaintext (exhaustive)
 
@@ -662,6 +682,7 @@ E9 `id` unique (same `id` + identical bytes → idempotent success; different by
 | Session reads (ADR-089 §4): which session read which workgroup, task or level, when, with which result, on the instruction of which person (`read.session.<tool>` audit with `read_wg_id`, `triggered_by`; IDs only); the subagent limits of the hub (operator settings, ADR-088) | audit of reads ([§8 point 6](../KONZEPT.md#k-8-b6)), check H4 |
 | Device request kind `github.pull_status` (KOR-48, ADR-084 §2): which user asked which device for a fresh read of pull-request states, when; the body (organization, workgroup, task, repositories, numbers) and the answer are HPKE end to end | routing of device requests |
 | Rights profiles (ADR-094): names of the own profiles of an organization or workgroup, the operation types they allow, their read reach, who changed them and when; the profile snapshot of a task or a child session (name, types, reach); the profile name a subagent request names (`child_profile`) | checks H2b of the hub, the device state, the session tree |
+| Support (ADR-096): which users hold the role `support` and the display names the operator set for them, which workgroups are released to support with which access since when and by whom, the first access of a person per release, every read and write of a support person as audit metadata | rights, notifications, the organization's audit |
 | Community metadata of `14-community.md` §2.3 (message IDs, authors, times, sizes, tombstones, key epochs and checks, key requests, members, read positions, mutes, moderators) | community (ADR-069); names and texts are ciphertext under the community key |
 
 Not visible: everything listed as confidential in `00-overview.md` §3, invitation and recovery codes, PRF
@@ -692,6 +713,7 @@ Log: `seq_conflict`, `log_empty`, `log_chain`, `log_genesis`, `log_accept`, `log
 | Compromised Claude Code session | Two sandbox layers (`05-runner.md` §4); no credentials, keys or network in the sandbox | Session can corrupt its own workspace and produce misleading output |
 | Compromised guest agent or VM | VM holds only its workgroup's plaintext and the in-memory model credential of running sessions; no device/scope keys; host only initiates connections | That workgroup's data and the provider credential in use |
 | Compromised runner device | per §5 the user trusts the device with plaintext | All workgroups assigned to the device; mitigated by assigning devices per workgroup and by decertification + rotation |
+| Support person, the hub or a former support person (ADR-096) | release only by a signed entry of an admin or writer; wraps only to the root-certified keys of the current roster for a released workgroup, never `OK`/`CK`; support writes only prompts and the whiteboard under a `write` release; revocation rotates in the same batch; a role end makes the hub refuse the person at once and owes the rotation of the workgroups whose current epoch it held | what support read stays read; a hub that withholds a role end from clients and still serves the former person keeps it reading until the next rotation (as for decertified devices, hardening with KOR-55); support sees the org log's IDs and public keys |
 | Community (`14-community.md`, ADR-069) | messages end-to-end encrypted under the community key, signed by the author; authors pinned on first sight | Not confidential: every user (and an active hub, which can obtain the key like a new user) reads them; an active hub serving other author keys can forge messages for readers who have not pinned that author yet |
 | Replay of signed requests | time window 120 s + nonce store (reused `agent-request-v1` rules) | – |
 | Malicious org member with write access | rights enforced at hub and verified by every reader; full audit | Abuse within granted rights |
@@ -711,7 +733,7 @@ repo asserts the vector file is current (`test_vectors_file_is_current`).
 ## 11. Key model
 
 The closed description over every principal – user, browser session, execution device, the user's agent, platform
-session, VMs, platform root, hub, and the planned support principal – is [`../key-model.md`](../key-model.md)
+session, VMs, platform root, hub, and the support principal (ADR-096) – is [`../key-model.md`](../key-model.md)
 (KOR-54): keys per principal, scopes, the entitlement per log entry and how each key arrives (package, batch,
 catch-up), revocation and rotation case by case with what a revoked principal keeps, where plaintext lies, and the
 rules `KM-NN` with the vectors of §10 that pin each of them. Its concordance maps every place of the concept to these

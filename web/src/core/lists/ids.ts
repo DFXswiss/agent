@@ -27,6 +27,9 @@ export const LIST_IDS = [
   'community.messages',
   'pulls',
   'task.pulls',
+  // the support area (ADR-096): the releases of a support person, the tasks of a released workgroup
+  'support.releases',
+  'support.tasks',
 ] as const;
 
 export type ListId = (typeof LIST_IDS)[number];
