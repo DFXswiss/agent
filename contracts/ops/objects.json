@@ -1329,6 +1329,9 @@
           "$ref": "#/$defs/result_task_set_title"
         },
         {
+          "$ref": "#/$defs/result_task_mode"
+        },
+        {
           "$ref": "#/$defs/result_workvm_request"
         },
         {
@@ -2140,6 +2143,46 @@
       },
       "required": [
         "question"
+      ],
+      "additionalProperties": false
+    },
+    "params_task_mode": {
+      "type": "object",
+      "description": "task.mode (KOR-75, ADR-098 section 3): a session switches a working mode of its task on (only with quote, a verbatim part of the verified instruction of its current turn; whitespace and case are folded) or off (no quote needed); sealed in operation.params",
+      "properties": {
+        "mode": {
+          "$ref": "../common.json#/$defs/mode_name"
+        },
+        "on": {
+          "type": "boolean"
+        },
+        "quote": {
+          "type": "string",
+          "description": "the words of the person's instruction that ask for the mode, 3-1000 characters",
+          "minLength": 3,
+          "maxLength": 1000
+        }
+      },
+      "required": [
+        "mode",
+        "on"
+      ],
+      "additionalProperties": false
+    },
+    "result_task_mode": {
+      "type": "object",
+      "description": "the mode's state for the task after the operation",
+      "properties": {
+        "mode": {
+          "$ref": "../common.json#/$defs/mode_name"
+        },
+        "on": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "mode",
+        "on"
       ],
       "additionalProperties": false
     },

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-task-mode-put.response.json",
+  "title": "PUT /v1/device/tasks/{task}/modes/{mode} response",
+  "description": "The mode as it is on for the task, or null when it is off.",
+  "type": "object",
+  "properties": {
+    "mode": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/task_mode"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "mode"
+  ],
+  "additionalProperties": false
+}

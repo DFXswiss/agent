@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-task-mode-driver-put.request.json",
+  "title": "PUT /v1/device/tasks/{task}/modes/{mode}/driver request",
+  "description": "The state of the mode's driver on this device (ADR-098 section 4; KOR-75): metadata only. Accepted from a device assigned to the task's workgroup while the mode is on; a report older than the stored one is ignored.",
+  "type": "object",
+  "properties": {
+    "driver": {
+      "$ref": "../common.json#/$defs/mode_driver_state"
+    }
+  },
+  "required": [
+    "driver"
+  ],
+  "additionalProperties": false
+}

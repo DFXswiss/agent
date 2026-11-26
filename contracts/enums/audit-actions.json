@@ -990,6 +990,14 @@
       "group": "task"
     },
     {
+      "action": "task.mode_on",
+      "group": "task"
+    },
+    {
+      "action": "task.mode_off",
+      "group": "task"
+    },
+    {
       "action": "read.workgroup.agent_profiles",
       "group": "read"
     },

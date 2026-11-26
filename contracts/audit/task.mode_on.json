@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/task.mode_on.json",
+  "title": "audit detail task.mode_on",
+  "description": "detail of audit rows with action task.mode_on: a working mode was switched on for a task (target the task; actor the person who chose it, through their browser, their agent or the device that checked their instruction; ADR-098 section 3). Metadata only (02-data-model.md section 2.9); every value is flat.",
+  "type": "object",
+  "properties": {
+    "mode": {
+      "$ref": "../common.json#/$defs/mode_name"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "way": {
+      "$ref": "../common.json#/$defs/mode_way"
+    },
+    "chosen_by": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "operation_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "origin_task": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "mode",
+    "version",
+    "way",
+    "chosen_by",
+    "operation_id",
+    "origin_task"
+  ],
+  "additionalProperties": false
+}

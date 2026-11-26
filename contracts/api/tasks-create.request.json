@@ -38,6 +38,14 @@
       "$ref": "../common.json#/$defs/uuid",
       "description": "the GitHub identity of the task (ADR-078 section 3); optional"
     },
+    "modes": {
+      "type": "array",
+      "description": "working modes the creating person chooses for the new task (ADR-098 section 3, way web or tool; an agent of a session passes on modes of its own task, way inherited); optional, nothing is chosen without it",
+      "items": {
+        "$ref": "../common.json#/$defs/mode_name"
+      },
+      "maxItems": 16
+    },
     "analysis": {
       "type": "object",
       "description": "a task of the kind analysis (ADR-097 section 1): its scope and period (default the last 7 days)",

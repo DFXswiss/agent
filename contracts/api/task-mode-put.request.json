@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-mode-put.request.json",
+  "title": "PUT /v1/tasks/{task}/modes/{mode} request",
+  "description": "Switch a working mode on for the task (writers of the workgroup, ADR-098 section 3): a person in the browser (way web) or the person's agent outside the platform (way tool). An agent whose pairing belongs to a session is refused (403 mode_needs_instruction) unless it passes on a mode of its own task that has passes_on to a task it created (way inherited). A mode that needs another that is off is 409 mode_needs. No settings in catalogue v1.",
+  "type": "object",
+  "properties": {},
+  "additionalProperties": false
+}

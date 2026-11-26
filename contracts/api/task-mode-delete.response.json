@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-mode-delete.response.json",
+  "title": "DELETE /v1/tasks/{task}/modes/{mode} response",
+  "description": "Empty object: the mode is off for the task (also when it was off already). Every writer of the workgroup and every agent of such a writer may switch a mode off (ADR-098 section 3).",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

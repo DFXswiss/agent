@@ -1,0 +1,54 @@
+{
+  "description": "Endpoints of working modes (ADR-098, KOR-75): the catalogue, switching a mode of a task on and off, and the outcome of a task.mode operation reported by the device.",
+  "rights": [
+    "user",
+    "wg:write",
+    "device:wg"
+  ],
+  "auth": [
+    "browser",
+    "device"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/modes",
+      "rights": [
+        "user"
+      ],
+      "section": "4.15"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/tasks/{task}/modes/{mode}",
+      "rights": [
+        "wg:write"
+      ],
+      "section": "4.15"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/tasks/{task}/modes/{mode}",
+      "rights": [
+        "wg:write"
+      ],
+      "section": "4.15"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/device/tasks/{task}/modes/{mode}",
+      "rights": [
+        "device:wg"
+      ],
+      "section": "6.1"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/device/tasks/{task}/modes/{mode}/driver",
+      "rights": [
+        "device:wg"
+      ],
+      "section": "6.1"
+    }
+  ]
+}

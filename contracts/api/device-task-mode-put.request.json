@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-task-mode-put.request.json",
+  "title": "PUT /v1/device/tasks/{task}/modes/{mode} request",
+  "description": "The outcome of an operation task.mode that this device executes (ADR-098 section 3, way sentence): on or off. The quote was checked on the device and stays sealed in the operation's parameters; the hub accepts the outcome only for an executing task.mode operation of this task on this device and takes the chooser from the operation's triggered_by (a writer of the workgroup for on).",
+  "type": "object",
+  "properties": {
+    "on": {
+      "type": "boolean"
+    },
+    "operation_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "on",
+    "operation_id"
+  ],
+  "additionalProperties": false
+}

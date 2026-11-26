@@ -4077,6 +4077,148 @@
         "org",
         "wg"
       ]
+    },
+    "mode_name": {
+      "type": "string",
+      "description": "name of a working mode of the catalogue contracts/modes (ADR-098 section 1); a stable identifier",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$"
+    },
+    "mode_way": {
+      "type": "string",
+      "description": "how a working mode was chosen (ADR-098 section 3): web (a person in the browser), tool (a person's agent outside the platform), sentence (task.mode with a quote of the person's instruction), inherited (passed on by a session of a task that has the mode)",
+      "enum": [
+        "web",
+        "tool",
+        "sentence",
+        "inherited"
+      ]
+    },
+    "task_mode": {
+      "type": "object",
+      "description": "a working mode that is on for a task (hub.task_mode, ADR-098 section 3): name, catalogue version, who chose it, how and when; metadata only",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/mode_name"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "chosen_by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "way": {
+          "$ref": "#/$defs/mode_way"
+        },
+        "origin_task": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "changed_at": {
+          "$ref": "#/$defs/time"
+        }
+      },
+      "required": [
+        "mode",
+        "version",
+        "chosen_by",
+        "way",
+        "origin_task",
+        "changed_at"
+      ],
+      "additionalProperties": false
+    },
+    "mode_driver_state": {
+      "type": "object",
+      "description": "the state of a mode's driver as its device reports it (ADR-098 section 4): metadata only - the name of the current step, counters and the time of the next step; content travels in sealed events",
+      "properties": {
+        "step": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,31}$"
+        },
+        "counters": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,31}$"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "maxProperties": 16
+        },
+        "next_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "at": {
+          "$ref": "#/$defs/time"
+        }
+      },
+      "required": [
+        "step",
+        "counters",
+        "next_at",
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "device_task_mode": {
+      "type": "object",
+      "description": "a working mode that is on for a task, as the device state carries it (KOR-75): the record and the driver state last reported (null before the first report)",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/mode_name"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "chosen_by": {
+          "$ref": "#/$defs/uuid"
+        },
+        "way": {
+          "$ref": "#/$defs/mode_way"
+        },
+        "changed_at": {
+          "$ref": "#/$defs/time"
+        },
+        "driver": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/mode_driver_state"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "mode",
+        "version",
+        "chosen_by",
+        "way",
+        "changed_at",
+        "driver"
+      ],
+      "additionalProperties": false
     }
   }
 }

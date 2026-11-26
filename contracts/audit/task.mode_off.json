@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/task.mode_off.json",
+  "title": "audit detail task.mode_off",
+  "description": "detail of audit rows with action task.mode_off: a working mode was switched off for a task (target the task; ADR-098 section 3). reason: person (a writer or their agent), session (task.mode off asked by a session; operation_id names it), chooser_left (the person who chose it lost write access to the workgroup). Metadata only; every value is flat.",
+  "type": "object",
+  "properties": {
+    "mode": {
+      "$ref": "../common.json#/$defs/mode_name"
+    },
+    "reason": {
+      "type": "string",
+      "enum": [
+        "person",
+        "session",
+        "chooser_left"
+      ]
+    },
+    "chosen_by": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "operation_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "mode",
+    "reason",
+    "chosen_by",
+    "operation_id"
+  ],
+  "additionalProperties": false
+}
