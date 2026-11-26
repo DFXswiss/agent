@@ -265,6 +265,8 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'task.close',
   'task.create',
   'task.github_identity',
+  'task.mode_off',
+  'task.mode_on',
   'task.model_consent',
   'task.placement',
   'vm.switch_requested',

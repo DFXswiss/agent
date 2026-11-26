@@ -1762,5 +1762,41 @@
       "body": "Das Gerät, auf dem dies lief, ist ausgefallen. Die Aufgabe läuft vom letzten gesicherten Stand aus weiter, sobald das Gerät zurück ist oder ein anderes passendes Gerät sie übernehmen kann.",
       "action": "Nichts zu tun – die Aufgabe geht von selbst weiter. Ist sie an dieses Gerät gebunden, lass die Plattform automatisch eines wählen."
     }
+  },
+  "mode_needs": {
+    "en": {
+      "title": "This working mode needs another one",
+      "body": "A working mode that needs another one can only be switched on together with it.",
+      "action": "Switch on the needed working modes as well."
+    },
+    "de": {
+      "title": "Diese Arbeitsweise braucht eine andere",
+      "body": "Eine Arbeitsweise, die eine andere braucht, kann nur zusammen mit ihr eingeschaltet werden.",
+      "action": "Schalte die benötigten Arbeitsweisen mit ein."
+    }
+  },
+  "mode_needs_instruction": {
+    "en": {
+      "title": "Only an instruction can switch this on",
+      "body": "An agent that works in a session switches on a working mode only when a person's instruction asks for it.",
+      "action": "Ask for the working mode in your instruction to the task."
+    },
+    "de": {
+      "title": "Nur eine Anweisung kann das einschalten",
+      "body": "Ein Agent, der in einer Session arbeitet, schaltet eine Arbeitsweise nur ein, wenn die Anweisung einer Person das verlangt.",
+      "action": "Verlange die Arbeitsweise in deiner Anweisung an die Aufgabe."
+    }
+  },
+  "mode_not_instructed": {
+    "en": {
+      "title": "Not asked for by a person",
+      "body": "Only a person's instruction can switch on a working mode; the session quoted none.",
+      "action": "Name the working mode in your instruction, or switch it on on the task page."
+    },
+    "de": {
+      "title": "Von keiner Person verlangt",
+      "body": "Nur die Anweisung einer Person kann eine Arbeitsweise einschalten; die Session hat keine zitiert.",
+      "action": "Nenne die Arbeitsweise in deiner Anweisung oder schalte sie auf der Aufgabenseite ein."
+    }
   }
 }

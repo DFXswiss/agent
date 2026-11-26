@@ -35,6 +35,8 @@ export interface TaskRow {
   readonly name_event_id?: string | null;
   /** Scope and period of an analysis task (ADR-097 section 1; `core/analysis/`); null or absent for any other. */
   readonly analysis?: unknown;
+  /** The working modes that are on (`task_mode` list, ADR-098 section 3; `core/modes/`); absent before KOR-75. */
+  readonly modes?: unknown;
 }
 
 /** The fields of `session_row` the client uses (the row is kept as received). */

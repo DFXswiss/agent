@@ -5,7 +5,8 @@
 //    request (same IDs, same bytes), which the hub answers `replayed` (03-api.md section 1). An optional GitHub
 //    identity chosen for the task goes along as `github_identity` (ADR-078 section 3; without it: automatic). An
 //    analysis task (ADR-097, `core/analysis/`) brings its fixed `title` instead of the derived one and its plaintext
-//    `analysis` (scope and period) for the body.
+//    `analysis` (scope and period) for the body. The working modes the person chose go along as `modes` (ADR-098
+//    section 3); the field is left out when none was chosen.
 // 2. `ensureDevice` (step 1 of the first-task flow): if the workgroup has no assigned device, an admin of an org with
 //    platform access (ADR-026; in a private org the single member is the admin) assigns the first platform candidate
 //    that the verified platform log certifies with the same keys (`GET …/device-candidates`, compiled root key): one
@@ -176,6 +177,8 @@ export interface PreparedTask {
     readonly github_identity?: string;
     /** Scope and period of an analysis task (ADR-097 section 1); absent for every other task. */
     readonly analysis?: TaskAnalysis;
+    /** The working modes the person chose (ADR-098 section 3); absent when none was chosen (never on by default). */
+    readonly modes?: readonly string[];
   };
 }
 
@@ -194,6 +197,7 @@ export async function prepareTask(
     readonly githubIdentity?: string;
     readonly title?: string;
     readonly analysis?: TaskAnalysis;
+    readonly modes?: readonly string[];
   },
 ): Promise<PreparedTask> {
   const { userId, log } = writer(context.store, input.org);
@@ -222,6 +226,7 @@ export async function prepareTask(
       }),
       ...(input.githubIdentity !== undefined && { github_identity: input.githubIdentity }),
       ...(input.analysis !== undefined && { analysis: input.analysis }),
+      ...(input.modes !== undefined && input.modes.length > 0 && { modes: [...input.modes] }),
     },
   };
 }
