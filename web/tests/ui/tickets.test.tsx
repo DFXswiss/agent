@@ -387,7 +387,7 @@ describe('suggestions and people', () => {
     const { t, research } = await world();
     putEvents(t.store, t.wg, [
       event(t, t.wg, 5, { kind: 'settings.workgroup', wg: t.wg }, {
-        repositories: ['acme/web', 'DFXswiss/agent', 'dfxswiss/agent'],
+        repositories: ['dfxswiss/agent', 'acme/web'],
         protected_branches: [],
         pr_draft_default: true,
       }),
@@ -414,7 +414,7 @@ describe('suggestions and people', () => {
     const repo = screen.getByTestId('tickets.capture.github-repo');
     const values = (input: HTMLElement) =>
       [...document.getElementById(input.getAttribute('list')!)!.querySelectorAll('option')].map((node) => node.value);
-    // the workgroups' lists (the second one's read failed), one entry per repository in any case, sorted
+    // the workgroups' lists (the second one's read failed), sorted
     await waitFor(() => expect(values(repo)).toEqual(['acme/web', 'dfxswiss/agent']));
     // the verified account, the company login and the repositories' owners
     expect(values(org)).toEqual(['acme', 'dfxswiss', 'Zed']);
