@@ -3,6 +3,7 @@
 import { isAnalysis } from '../../core/analysis/analysis';
 import type { TaskRow } from '../../core/store/slices/tasks';
 import { useI18n } from '../i18n';
+import '../../core/i18n/lazy/analysis';
 
 export function AnalysisBadge({ row, testId }: { readonly row: TaskRow; readonly testId: string }) {
   const { t } = useI18n();

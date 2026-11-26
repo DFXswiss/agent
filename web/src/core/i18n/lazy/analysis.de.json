@@ -27,5 +27,6 @@
   "adopt.saving": "Wird übernommen…",
   "adopt.done": "Ins Whiteboard übernommen.",
   "adopt.open": "Whiteboard öffnen",
-  "adopt.failed": "Nicht übernommen: {reason}"
+  "adopt.failed": "Nicht übernommen: {reason}",
+  "orchestrator": "Eine Session einer Analyse-Aufgabe kann nicht dein Hauptorchestrator werden: Sie liest nur."
 }

@@ -867,7 +867,10 @@
   "src/agent_runner/queries/analysis_api.py": {
    "COUNT_MAX": "integer",
    "DEFAULT_LIMIT": "page",
+   "MAX_ACTION": "size",
+   "MAX_ACTION_SEGMENTS": "structure",
    "MAX_DAYS": "page",
+   "MAX_DETAIL_KEYS": "size",
    "MAX_GROUPS": "page",
    "MAX_LIMIT": "page",
    "MAX_POINTS": "page",

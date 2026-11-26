@@ -15,6 +15,7 @@ import { useI18n } from '../i18n';
 import { Sheet } from '../responsive/Sheet';
 import { useOrgView } from '../screens/tasks/hooks';
 import { useAppEnv } from '../shell/context';
+import '../../core/i18n/lazy/analysis';
 
 const BUTTON = 'min-h-11 rounded border border-gray-300 px-3 text-sm';
 

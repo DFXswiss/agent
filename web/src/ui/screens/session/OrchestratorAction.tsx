@@ -13,10 +13,21 @@ import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import OrchestratorDialog from './OrchestratorDialog';
+import '../../../core/i18n/lazy/analysis';
 
 /** The session states in which the session's VM runs and can draw the keys. */
 export const RUNNING: readonly string[] = ['working', 'idle'];
 const BUTTON = 'min-h-11 self-start rounded border border-gray-900 px-4';
+
+/** Why a session of an analysis task cannot become the main orchestrator (ADR-097 section 2). */
+function AnalysisReason() {
+  const { t } = useI18n();
+  return (
+    <p className="text-sm text-gray-700" data-testid="orchestrator.analysis">
+      {t('analysis.orchestrator')}
+    </p>
+  );
+}
 
 export function OrchestratorAction({ entry, depth }: { readonly entry: SessionEntry; readonly depth: number }) {
   const { app } = useAppEnv();
@@ -38,13 +49,8 @@ export function OrchestratorAction({ entry, depth }: { readonly entry: SessionEn
     };
   }, [app, session, offered, open]);
   if (!offered || view === null) return null;
-  if (view.reason === 'analysis') {
-    return (
-      <p className="text-sm text-gray-700" data-testid="orchestrator.analysis">
-        {t('session.orchestrator.reason.analysis')}
-      </p>
-    );
-  }
+  // no braces: only Vitest reaches this return (merged coverage, decision WEB-03 18 c)
+  if (view.reason === 'analysis') return <AnalysisReason />;
   if (!view.available) return null;
   if (view.pairing?.state === 'active') {
     return (

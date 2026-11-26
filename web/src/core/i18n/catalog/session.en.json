@@ -31,6 +31,5 @@
   "orchestrator.outcome.connected": "This session is now your main orchestrator.",
   "orchestrator.outcome.failed": "The session did not complete the connection. Try again.",
   "orchestrator.this": "This session",
-  "orchestrator.label": "A session on DFX hardware",
-  "orchestrator.reason.analysis": "A session of an analysis task cannot become your main orchestrator: it only reads."
+  "orchestrator.label": "A session on DFX hardware"
 }

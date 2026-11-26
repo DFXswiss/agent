@@ -27,5 +27,6 @@
   "adopt.saving": "Adopting…",
   "adopt.done": "Adopted into the whiteboard.",
   "adopt.open": "Open whiteboard",
-  "adopt.failed": "Not adopted: {reason}"
+  "adopt.failed": "Not adopted: {reason}",
+  "orchestrator": "A session of an analysis task cannot become your main orchestrator: it only reads."
 }
