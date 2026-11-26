@@ -282,7 +282,8 @@ A CI job is no user request and belongs to no workgroup ([Grundprinzip](../KONZE
 workgroup ([§3 Punkt 5](../KONZEPT.md#k-3-b5)). Options: an infrastructure workload without task, or a technical
 organisation/workgroup – decision D-12. An own product next to the platform is excluded by
 [E-31](../KONZEPT.md#e-31). Job audit: which record a job leaves
-([§10 Punkt 8](../KONZEPT.md#k-10-b8), [§11](../KONZEPT.md#k-11)); [E-09](../KONZEPT.md#e-09) (no monitoring inside
+([§6 Punkt 4](../KONZEPT.md#k-6-b4): every action with actor, time, task, session and workgroup – a CI job has none of
+them; [§11](../KONZEPT.md#k-11); blocked attempts: [§10 Punkt 8](../KONZEPT.md#k-10-b8)); [E-09](../KONZEPT.md#e-09) (no monitoring inside
 the work VM) is not carried over unchecked.
 
 ### 6.5 Trust boundaries
@@ -390,8 +391,8 @@ unchecked. If the budget is exceeded in operation, admission stops **new** CI VM
 | large | 8 / 16 GiB / 100 GiB | same |
 | xlarge | 16 / 32 GiB / 200 GiB | same |
 
-- The heaviest documented test run fits no current profile (maximum 32 GiB; its budget: [OPS]). Larger profile,
-  splitting the job, or keeping the current host: decision D-11.
+- The heaviest documented test run fits no current profile (maximum 32 GiB; its budget: [OPS]). Larger profile
+  or splitting the job: decision D-11; keeping the current host is excluded by [E-31](../KONZEPT.md#e-31).
 - The current large script-test job uses 16 workers and has its host to itself [OPS]; a 16-CPU VM does not reproduce
   that 1:1. **To be measured:** M-5.
 
@@ -846,7 +847,7 @@ for them:
 | b | Reduce its runner slots while stages 3 to 6 move its jobs; no label served by old and new runners except on purpose (§11.3) | Slots back |
 | c | Remove the runner services, their accounts, caches and credentials; only the deploy runner of §1.3 stays until D-1 is decided (open deviation). Check for class H (§5): its group admits only the one repository and the protected workflow refs, no workflow with a PR trigger, and a test PR with a changed `runs-on` does not reach it | Reinstall the services |
 | d | Operating system to the required version (§10.2); the device is set up anew before it holds workgroup plaintext (recommendation); then work boundary and CI slot accounts installed | – |
-| e | Enroll and certify as execution device; first without workgroups, with class B/T load; then M-19 and M-20 with agent VMs of a test workgroup | Decertify |
+| e | Enroll and certify as execution device only after D-1 is decided; if D-1 does not allow a deploy runner on an execution device, it is removed first (pull deployment, D-1 (c)); first without workgroups, with class B/T load; then M-19 and M-20 with agent VMs of a test workgroup | Decertify |
 | f | Both workloads within the shares; class U as decided in D-7/D-20 (recommendation: only after gate U on this device) | Share of the kind to 0 |
 
 The last machine outside the pool is gone when every label of the inventory is served by the pool or listed as

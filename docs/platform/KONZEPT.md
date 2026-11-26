@@ -806,8 +806,9 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   Workgroup); [§3 Punkt 5](#k-3-b5) (VM je Workgroup, nach [A19](#a-19) je Job); [§5](#k-5) (der Hub sieht keine
   Inhalte);
   [§9 Punkt 5](#k-9-b5), [§10 Punkt 3](#k-10-b3) und [§10 Punkt 6](#k-10-b6) (git und freie Shell sind
-  Claude-Sessions verboten, ein CI-Gast braucht sie); [§10 Punkt 8](#k-10-b8) und [§11](#k-11) (Audit je
-  Operation); [E-10](#e-10) (Ausgang), [E-11](#e-11) (Freigaben), [E-25](#e-25) (Härtung nur auf Bestellung);
+  Claude-Sessions verboten, ein CI-Gast braucht sie); [§6 Punkt 4](#k-6-b4) und [§11](#k-11) (Audit je
+  Aktion mit Akteur, Zeitpunkt, Task, Session und Workgroup; ein CI-Job hat keine davon); [§10 Punkt 8](#k-10-b8)
+  (Protokollierung blockierter Versuche); [E-10](#e-10) (Ausgang), [E-11](#e-11) (Freigaben), [E-25](#e-25) (Härtung nur auf Bestellung);
   [A16](#a-16) (Workflows); [Idee 46](#k-idee-46) und [Idee 47](#k-idee-47) (Abrechnung).
 - **Umsetzung:** offen – Konzept [spec/16-ci-runners.md](spec/16-ci-runners.md); Entscheide offen.
 
