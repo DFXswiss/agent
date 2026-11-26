@@ -377,7 +377,9 @@ def test_renewal_needs_a_session(browser: FakeBrowser) -> None:
     assert (response.status_code, response.json()) == (401, {"error": "signature_missing"})
 
 
-def test_renewal_refuses_a_session_ended_after_the_gate_and_an_agent(browser: FakeBrowser, account: Account) -> None:
+def test_renewal_refuses_a_session_ended_after_the_gate_and_leaves_an_agent_unchanged(
+    browser: FakeBrowser, account: Account
+) -> None:
     hub = browser.hub
     session = browser.login(account)
     context: HubContext = hub.app.state.hub
@@ -387,9 +389,10 @@ def test_renewal_refuses_a_session_ended_after_the_gate_and_an_agent(browser: Fa
     principal = Principal(kind="session", key_id=session.key_id, principal_id=user, actor_kind="user")
     with pytest.raises(HubError, match="key_revoked"):
         renew_session(context, principal)
+    # an agent's key does not expire: its key ID and no end, nothing written
     agent = Principal(kind="agent", key_id="agent." + "0" * 32, principal_id=user, actor_kind="user")
-    with pytest.raises(HubError, match="forbidden"):
-        renew_session(context, agent)
+    assert renew_session(context, agent) == {"key_id": "agent." + "0" * 32, "expires_at": None}
+    assert rows(hub, "SELECT count(*) FROM hub.audit WHERE action = 'auth.session_renew'") == [(0,)]
 
 
 @pytest.mark.parametrize(

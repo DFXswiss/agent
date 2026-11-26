@@ -8,7 +8,8 @@ is revoked (`agent_hub.agents.revocation`, decisions KOR-24).
 gate refused it otherwise: expired → `session_expired`, ended, passkey removed or user disabled → `key_revoked`), and
 the hub moves `expires_at` of that same session to `SESSION_RENEW_SECONDS` from its clock (never earlier than it was).
 The key, its statement and `created_at` stay; the passkey certificate of the login keeps its 12 h bound. Audited as
-`auth.session_renew`. An agent has no browser session to renew (`403 forbidden`).
+`auth.session_renew`. An agent has no browser session to renew and a key that does not expire: it gets its key ID
+with `expires_at` null, nothing changes (the same answer status as a browser, `agent_hub.agents.scope`).
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from uuid import UUID
 
 from agent_hub.agents.revocation import revoke_agents
 from agent_hub.audit.chain import AuditRow, append_audit
+from agent_hub.audit.recorder import unchanged
 from agent_hub.auth.keys import Principal
 from agent_hub.crypto.encoding import format_time
 from agent_hub.db.pool import transaction
@@ -64,10 +66,13 @@ def end_session(context: HubContext, principal: Principal) -> dict[str, Any]:
 
 def renew_session(context: HubContext, principal: Principal) -> dict[str, Any]:
     """Renew the caller's browser session: `expires_at` becomes now + `SESSION_RENEW_SECONDS` (or stays, if later).
-    A session ended between the gate and this update is `401 key_revoked`."""
-    if principal.kind != "session":
-        raise HubError("forbidden")
+    A session ended between the gate and this update is `401 key_revoked`. An agent (admitted to every browser route,
+    `agent_hub.agents.scope`) has no browser session and a key that does not expire: nothing changes, the answer is
+    its key ID with `expires_at` null."""
     key_id = cast(str, principal.key_id)
+    if principal.kind != "session":
+        unchanged()
+        return {"key_id": key_id, "expires_at": None}
     now = context.clock()
     with transaction(context.pool) as connection:
         row = connection.execute(

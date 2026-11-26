@@ -49,8 +49,9 @@ applied by the hub (the passkey certificate keeps its 12 h bound).
   with the session key. The gate has already refused an expired (`session_expired`), ended, passkey-removed or
   user-disabled (`key_revoked`) key. The hub moves `expires_at` of **that** `browser_session` row to its clock plus
   `SESSION_RENEW_SECONDS` = 30 days (never earlier than before; a row ended between the gate and the update is
-  `key_revoked`); key, statement, `created_at` and `pairing_id` stay. An agent key is `403 forbidden` (it has no browser
-  session and does not expire). Every renewal is audited as `auth.session_renew` (detail `key_id`; every write leaves
+  `key_revoked`); key, statement, `created_at` and `pairing_id` stay. An agent is admitted like on every browser route
+  (ADR-056 §4, `agent_hub.agents.scope`): it has no browser session and its key does not expire, so it gets its key ID
+  with `expires_at` null and nothing changes. Every renewal is audited as `auth.session_renew` (detail `key_id`; every write leaves
   its own row, ADR-063 section 1) – at most one row per browser and hour.
 - Why the same key and not a new one: a renewal that certifies a new session key would need a second key in the
   browser, a hand-over between the tabs that still sign with the old one and a grace period for the old key at the
