@@ -144,7 +144,11 @@ test('one subscription with its own mailbox and a new account is written first a
   await page.getByTestId('subadd.account.consent.terms').check();
   await page.getByTestId('subadd.account.consent.age').check();
   await page.getByTestId(`subadd.orgs.${user.org}`).check();
+  const posted = page.waitForResponse(
+    (response) => response.url().endsWith('/v1/device-requests') && response.request().method() === 'POST',
+  );
   await page.getByTestId('subadd.start').click();
+  await posted;
   const started = await answer(user.device, [{ body: { step: 'progress', stage: 'registered' } }]);
   expect(started.body).toMatchObject({
     mode: 'automatic',
