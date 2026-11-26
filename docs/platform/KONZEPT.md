@@ -766,10 +766,17 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   Wochenkontingent aller seiner Claude-Abos) · „nein, ich will es im agent dashboard“ · „wir haben im agent repo
   einmal ein schönes dashboard gebaut extra dafür, das will ich! und zwar zentral, und zwar für alle meine abos! ich
   will nichts local laufen lassen, soll alles zentral“ · „wie entsteht der balken oben mit den 99% ? ist das korrekt
-  berechnet?“ (2026-11-26 09:10, zur Zeile je Anbieter, die das vollste Konto zeigte)
+  berechnet?“ (2026-11-26 09:10, zur Zeile je Anbieter, die das vollste Konto zeigte) · „bist du sicher dass die
+  anzeige stimmt? … ist doch voll ausgebraucht“ (2026-11-26, zu einem Abo mit vollem 5-Stunden-Fenster, das grün
+  erschien) · „die implementierung … scheint mir mangelhaft zu sein und nicht der vorgabe die wir gesetzt haben zu
+  entsprechen“ (2026-11-26)
 - **Bezug:** ergänzt [§4 Punkt 4](#k-4-b4) und [§7](#k-7); die zentrale Anmeldung und Messung regelt [E-31](#e-31).
 - **Umsetzung:** gebaut – [ADR-091](adr/091-subscriptions-at-a-glance.md) (KOR-68: Karte auf der Startseite, Seite
   „Meine Abos“) auf den Messungen von [ADR-090](adr/090-every-subscription-logged-in-centrally.md) (KOR-69).
+  Korrigiert 2026-11-26 ([ADR-091](adr/091-subscriptions-at-a-glance.md) §3): überall das verbleibende Kontingent
+  („frei“) statt des verbrauchten, je Abo alle Fenster mit Balken und Reset, das bindende Fenster hervorgehoben und
+  ein Abo ohne Rest darin als „gerade nicht nutzbar bis …“ markiert, je Anbieter „jetzt nutzbar: X von N“ und die
+  nächste Freigabe.
 
 <a id="e-31"></a>
 

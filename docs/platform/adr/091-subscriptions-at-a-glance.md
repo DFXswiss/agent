@@ -1,6 +1,6 @@
 # ADR-091: Every subscription at a glance – home card and page "My subscriptions"
 
-Status: Accepted (2026-11-25)
+Status: Accepted (2026-11-25); §3 corrected 2026-11-26 (what is left, all windows per subscription)
 
 Implements [E-30](../KONZEPT.md#e-30) on the readings of [ADR-090](090-every-subscription-logged-in-centrally.md)
 (KOR-69, [E-31](../KONZEPT.md#e-31)) and of the operator's token files
@@ -30,25 +30,33 @@ operator's token files are not records and appear only in `GET /v1/orgs/{org}/qu
    new table, and the files are being replaced by records.
 2. **Providers are drivers.** Rows are grouped by provider; a provider is one entry of a list (display name per ID,
    `claude` and `openai` today) and an unknown ID shows itself, so a further provider needs no change of the view.
-3. **Figures.** Percentages are the used share as measured; bars are coloured by what is left – amber from 70 % used
-   (30 % left), red from 90 % used (10 % left). The line of a provider shows the total of all its accounts, never its
-   fullest account: each window (5 hours, week, week per model, fullest window) counts the accounts that have a reading
-   of it – its used share is their mean, every account weighted equally (an account without that window does not
-   count), its time the one to the next reset among them. The headline is the total of the week (else the fullest
-   total window), the detail windows are the totals of each window; the line says that it stands for all accounts
-   ("all 9", with one account "1 account"), so it is not taken for an account of the same name, and how many accounts
-   can be used now ("usable now: 3 of 9": logged in, readable and below 100 % in their binding window). Below, every
-   account keeps its own bar, of the window that binds it now: the fuller of the 5-hour window and the week (the week
-   on a tie; with only one of them that one; with neither the fullest window, as for a token file), with its used
-   share, its colour and its time to the reset, named next to it ("5h", "Week"); the other one of the two stays as a
-   small second value ("Week: 13%"). An account whose 5 hours are used up is thus shown as used up even when its week
-   is nearly free. The table keeps every window. "sort by used" orders the providers by the headline total. Nothing missing is shown as 0 %. A
-   measurement older than 60 minutes is marked old; the headline is old when one of the readings it counts is. Times
-   to the reset read as the local dashboard's (`5 d 19 h`, `3 h 12 min`, `4 min`, `<1 min`, due); ages as
-   `N s/min/h/d ago`. (Until 2026-11-26 the headline was the week of the most-used account and the windows the highest
-   use across the accounts: with nine subscriptions it read 99 % while about a fifth of the weekly quota was left.
-   Until 2026-11-26 the bar of an account showed its week, so an account with 5 hours at 100 % and the week at 13 %
-   looked green and free while it could not be used.)
+3. **Figures: what is left.** E-30 asks for the remaining quota, so every figure – shares, bars, the table – is what
+   is LEFT of a window ("82% free"): 100 % less the used share the devices measure, never below 0 %. Bars are filled
+   as far as something is left and coloured by it – amber at 30 % left or less, red at 10 % or less.
+   - **Provider line.** The total of all its accounts, never its fullest account: each window (5 hours, week, week per
+     model, fullest window) counts the accounts that have a reading of it – what is left is the mean of their shares
+     left, every account weighted equally (an account without that window does not count), its time the one to the
+     next reset among them. The headline is the total of the week (else the fullest total window), the detail windows
+     are the totals of each window. The line says that it stands for all accounts ("all 9", with one account "1
+     account"), so it is not taken for an account of the same name, how many accounts can be used now ("usable now: 3
+     of 9": logged in, readable and with something left in their binding window) and, when an account waits for one,
+     the next release ("next release 14:05 (in 1 h 30 min)": the earliest reset of the binding window of an account
+     with nothing left in it).
+   - **Every subscription** shows the source and time of its measurement and ALL its windows (5 hours, week, week per
+     model; a token file only its fullest), each with share left, bar and time to its reset. The window that binds it
+     now is marked ("binding"): of the 5-hour window and the week the one with the least left (the week on a tie; with
+     only one of them that one; with neither the window with the least left). A week per model binds only that model,
+     never the subscription. With nothing left in its binding window the subscription is marked "not usable now until
+     14:05 (in 1 h 30 min)" – also when its week is nearly free.
+   - **Table.** Per subscription the share left ("Free") and the reset of every window.
+   - "least free first" orders the providers by what is left of their headline. Nothing missing is shown as 0 %. A
+     measurement older than 60 minutes is marked old; the headline is old when one of the readings it counts is. Times
+     to the reset read as the local dashboard's (`5 d 19 h`, `3 h 12 min`, `4 min`, `<1 min`, due); ages as
+     `N s/min/h/d ago`; a release time as the time of day, with the date when it is not today.
+   - History (2026-11-26): the headline was first the week of the most-used account and the windows the highest use
+     across the accounts – with nine subscriptions it read 99 % while about a fifth of the weekly quota was left. Then
+     the figures were the used share and each account showed one bar, its week, so an account with 5 hours at 100 % and
+     the week at 13 % looked green and free while it could not be used. Both did not meet E-30 and were corrected.
 4. **Where.** A card on the home page (the situation view of the landing organization, which needs no choice since
    KOR-68 stage 0), collapsed and opened per provider, with a link to the page `/subscriptions` (both switches, the
    table) and from the settings. The card and the page load lazily; the first load of the app does not grow. Without

@@ -1,21 +1,25 @@
-// The provider rows of "My subscriptions" (KOR-68, after the page "Subscriptions" of the local dashboard): per provider
-// a line with the time to the reset, a bar and the used share of the week as the total of all its accounts ("all 9",
-// `totalWindows`: the mean of the accounts that measured it, the next reset of them – never the fullest account) and
-// how many accounts are usable now; opened, the 5-hour window, the week and the week per model as such totals, then
-// every account with the bar of the window that binds it now (`bindingOf`: the fuller of 5 hours and week, named next
-// to it, the other one as a small second value) and the age of its measurement, and the age of the provider's newest
-// read. Nothing missing is shown as 0 %. Used by the
-// card of the home page and by the full page.
+// The provider rows of "My subscriptions" (rule E-30, KOR-68, ADR-091 section 3, after the page "Subscriptions" of the
+// local dashboard). Everything shows what is LEFT ("free"), coloured by it. Per provider a line with the time to the
+// reset, a bar and the share left of the week as the total of all its accounts ("all 9", `totalWindows`: the mean of
+// the accounts that measured it, the next reset of them – never the fullest account), how many accounts are usable
+// now and the next release; opened, the 5-hour window, the week and the week per model as such totals, then every
+// account with the source and age of its measurement and ALL its windows, each with share left, bar and time to the
+// reset – the window that binds it now (`bindingOf`) marked, an account with nothing left in it marked "not usable
+// now until …" –, and the age of the provider's newest read. Nothing missing is shown as 0 %. Used by the card of the
+// home page and by the full page.
 import { useState } from 'react';
+import { formatClock, localTimeZone } from '../../core/i18n/format';
 import {
   ageParts,
   bindingOf,
+  exhaustedBy,
+  freeLevel,
+  freeOf,
   FULLEST,
   type ProviderGroup,
   type QuotaWindow,
   type SubscriptionRow,
   untilParts,
-  usedLevel,
 } from '../../core/subscriptions/subscriptions';
 import { useI18n } from '../i18n';
 import '../../core/i18n/lazy/subscriptions';
@@ -26,17 +30,19 @@ export const OLD_MS = 60 * 60 * 1000;
 export const TICK_MS = 30_000;
 
 const LEVEL_CLASS = { ok: 'bg-green-600', warn: 'bg-amber-500', low: 'bg-red-600' } as const;
-// One line: name | time to the reset | bar | percent. On a phone the bar takes a second row of its own below the
+// One line: name | time to the reset | bar | share left. On a phone the bar takes a second row of its own below the
 // three texts, so nothing is squeezed and nothing overflows; from `sm` on the four sit in one row, the columns of every
 // line aligned.
 const GRID =
-  'grid grid-cols-[minmax(0,1fr)_auto_3.5rem] items-center gap-x-2 gap-y-1 sm:grid-cols-[minmax(7rem,14rem)_6.5rem_minmax(4rem,1fr)_4rem] sm:gap-x-3';
+  'grid grid-cols-[minmax(0,1fr)_auto_5.5rem] items-center gap-x-2 gap-y-1 sm:grid-cols-[minmax(7rem,14rem)_6.5rem_minmax(4rem,1fr)_5.5rem] sm:gap-x-3';
 /** Lines inside an opened provider start where the name of the provider starts (after the triangle). */
 const INDENT = 'pl-5';
-/** The text that stands in place of reset, bar and percent. */
+/** The windows of an account sit below its name. */
+const WINDOW_INDENT = 'pl-9';
+/** The text that stands in place of reset, bar and share. */
 const NONE = 'col-span-2 text-sm text-gray-700 sm:col-span-3';
 const RESET = 'text-sm whitespace-nowrap text-gray-600';
-const USED = 'text-right text-sm tabular-nums';
+const FREE = 'text-right text-sm whitespace-nowrap tabular-nums';
 
 /** Texts of the area with the time to a reset, the age of a read and the name of a window. */
 export function useTexts() {
@@ -46,6 +52,9 @@ export function useTexts() {
     const parts = untilParts(at, now);
     return t(`subscriptions.until.${parts.kind}`, { a: parts.a, b: parts.b });
   };
+  /** A release time: the time of day (with the date when it is not today) and the time until it. */
+  const release = (key: string, at: number, now: number): string =>
+    t(key, { at: formatClock(at, { locale, timeZone: localTimeZone(), now }), in: until(at, now) });
   const age = (at: number, now: number): string => {
     const parts = ageParts(at, now);
     return t(`subscriptions.age.${parts.unit}`, { n: parts.value });
@@ -58,127 +67,171 @@ export function useTexts() {
         : t(`subscriptions.window.${window}`);
   const rowName = (row: SubscriptionRow): string =>
     row.name ?? (row.primary ? t('subscriptions.own') : (row.email ?? t('subscriptions.unnamed')));
-  return { t, locale, until, age, windowName, rowName };
+  /** A share left as text: "82% free". */
+  const freeText = (free: number): string => t('subscriptions.free', { p: percent(free) });
+  return { t, locale, until, release, age, windowName, rowName, freeText };
 }
 
-export const percent = (used: number): string => `${Math.round(used * 10) / 10}%`;
+export const percent = (share: number): string => `${Math.round(share * 10) / 10}%`;
 
+/** A bar of the share LEFT: filled as far as something is left, coloured by it. */
 export function Bar({
-  used,
+  free,
   label,
   testId,
-  window,
 }: {
-  readonly used: number;
+  readonly free: number;
   readonly label: string;
   readonly testId: string;
-  /** The window the bar shows, as `data-window`. */
-  readonly window?: string;
 }) {
-  const level = usedLevel(used);
+  const { freeText } = useTexts();
+  const level = freeLevel(free);
+  const shown = Math.min(Math.max(free, 0), 100);
   return (
     <span
       role="meter"
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-valuenow={Math.min(Math.round(used), 100)}
+      aria-valuenow={Math.round(shown)}
+      aria-valuetext={freeText(free)}
       aria-label={label}
       className="order-last col-span-3 block h-2.5 w-full overflow-hidden rounded bg-gray-200 sm:order-none sm:col-span-1"
       data-testid={testId}
       data-level={level}
-      data-window={window}
     >
-      <span className={`block h-full ${LEVEL_CLASS[level]}`} style={{ width: `${Math.min(used, 100)}%` }} />
+      <span className={`block h-full ${LEVEL_CLASS[level]}`} style={{ width: `${shown}%` }} />
     </span>
   );
 }
 
+/** A total window of the provider. */
 function Line({
   name,
-  window,
+  free,
+  resetsAt,
   now,
   testId,
 }: {
   readonly name: string;
-  readonly window: QuotaWindow;
+  readonly free: number;
+  readonly resetsAt: number | null;
   readonly now: number;
   readonly testId: string;
 }) {
-  const { until } = useTexts();
+  const { until, freeText } = useTexts();
   return (
     <div className={`${GRID} py-0.5`} data-testid={testId}>
       <span className={`${INDENT} truncate text-sm`}>{name}</span>
-      <span className={RESET}>{until(window.resetsAt, now)}</span>
-      <Bar used={window.usedPercent} label={name} testId={`${testId}.bar`} />
-      <span className={USED}>{percent(window.usedPercent)}</span>
+      <span className={RESET}>{until(resetsAt, now)}</span>
+      <Bar free={free} label={name} testId={`${testId}.bar`} />
+      <span className={FREE}>{freeText(free)}</span>
+    </div>
+  );
+}
+
+/** One window of an account; the binding one marked (and red-tinted when nothing is left in it). */
+function AccountWindow({
+  account,
+  window,
+  binding,
+  now,
+}: {
+  readonly account: string;
+  readonly window: QuotaWindow;
+  readonly binding: boolean;
+  readonly now: number;
+}) {
+  const { t, until, windowName, freeText } = useTexts();
+  const free = freeOf(window.usedPercent);
+  const name = windowName(window.window);
+  const tint = binding ? (free === 0 ? 'bg-red-50' : 'bg-gray-50') : '';
+  return (
+    <div
+      className={`${GRID} rounded py-0.5 ${tint}`}
+      data-testid="subscriptions.account.window"
+      data-window={window.window}
+      data-binding={binding ? 'yes' : 'no'}
+    >
+      <span className={`${WINDOW_INDENT} flex min-w-0 items-center gap-2 text-sm`}>
+        <span className={`truncate ${binding ? 'font-semibold' : ''}`}>{name}</span>
+        {binding && (
+          <span
+            className="shrink-0 rounded bg-gray-200 px-1 text-xs text-gray-800"
+            data-testid="subscriptions.account.binding"
+          >
+            {t('subscriptions.binding')}
+          </span>
+        )}
+      </span>
+      <span className={RESET} data-testid="subscriptions.account.reset">
+        {until(window.resetsAt, now)}
+      </span>
+      <Bar free={free} label={`${account} – ${name}`} testId="subscriptions.account.bar" />
+      <span className={`${FREE} ${binding ? 'font-semibold' : ''}`} data-testid="subscriptions.account.free">
+        {freeText(free)}
+      </span>
     </div>
   );
 }
 
 function Account({ row, now }: { readonly row: SubscriptionRow; readonly now: number }) {
-  const { t, age, until, rowName, windowName } = useTexts();
-  const found = bindingOf(row);
-  const head = found?.binding ?? null;
+  const { t, age, release, rowName } = useTexts();
+  // the window that binds the account now (none without a reading)
+  const binding = bindingOf(row)?.binding.window ?? null;
+  const exhausted = exhaustedBy(row);
+  const windows = row.reading?.windows ?? [];
   const read = row.reading?.fetchedAt ?? null;
   const name = rowName(row);
   const old = read !== null && now - read > OLD_MS;
   return (
-    <li className={`${GRID} py-1`} data-testid="subscriptions.account" data-key={row.key} data-status={row.status}>
-      <span className={`${INDENT} min-w-0 text-sm [overflow-wrap:anywhere]`}>
-        <span className="font-medium">{name}</span>
-        {row.email !== null && <span className="text-gray-600"> {row.email}</span>}
-        {read !== null && (
-          <span
-            className={`block ${old ? 'font-semibold text-red-800' : 'text-gray-600'}`}
-            data-testid="subscriptions.account.age"
-            data-old={old ? 'yes' : 'no'}
-          >
-            {t('subscriptions.recorded', { age: age(read, now) })}
-            {row.source === 'operator' ? ` · ${t('subscriptions.by.file')}` : ` · ${t('subscriptions.by.device')}`}
-          </span>
-        )}
-        {found?.other != null && (
-          <span
-            className="block text-gray-600"
-            data-testid="subscriptions.account.other"
-            data-window={found.other.window}
-          >
-            {t('subscriptions.other', {
-              window: windowName(found.other.window),
-              used: percent(found.other.usedPercent),
-            })}
-          </span>
-        )}
-      </span>
-      {head === null ? (
-        <span className={NONE} data-testid="subscriptions.account.none">
-          {row.status === 'logged_in' || row.status === 'measured'
-            ? t('subscriptions.not-measured')
-            : t(`subscriptions.status.${row.status}`, { code: row.code ?? '' })}
-        </span>
-      ) : (
-        <>
-          <span className={RESET} data-testid="subscriptions.account.reset">
-            {until(head.resetsAt, now)}
-          </span>
-          <Bar
-            used={head.usedPercent}
-            label={`${name} – ${windowName(head.window)}`}
-            testId="subscriptions.account.bar"
-            window={head.window}
-          />
-          <span className={`${USED} flex flex-col items-end leading-tight`}>
-            <span data-testid="subscriptions.account.used">{percent(head.usedPercent)}</span>
+    <li
+      className="flex flex-col py-1"
+      data-testid="subscriptions.account"
+      data-key={row.key}
+      data-status={row.status}
+      data-exhausted={exhausted === null ? 'no' : 'yes'}
+    >
+      <div className={`${GRID}`}>
+        <span
+          className={`${INDENT} min-w-0 text-sm [overflow-wrap:anywhere] ${windows.length === 0 ? '' : 'col-span-full'}`}
+        >
+          <span className="font-medium">{name}</span>
+          {row.email !== null && <span className="text-gray-600"> {row.email}</span>}
+          {read !== null && (
             <span
-              className="text-xs whitespace-nowrap text-gray-600"
-              data-testid="subscriptions.account.window"
-              data-window={head.window}
+              className={`block ${old ? 'font-semibold text-red-800' : 'text-gray-600'}`}
+              data-testid="subscriptions.account.age"
+              data-old={old ? 'yes' : 'no'}
             >
-              {windowName(head.window)}
+              {t('subscriptions.recorded', { age: age(read, now) })}
+              {row.source === 'operator' ? ` · ${t('subscriptions.by.file')}` : ` · ${t('subscriptions.by.device')}`}
             </span>
+          )}
+          {exhausted !== null && (
+            <span className="block font-semibold text-red-800" data-testid="subscriptions.account.blocked">
+              {exhausted.resetsAt === null
+                ? t('subscriptions.blocked.open')
+                : release('subscriptions.blocked', exhausted.resetsAt, now)}
+            </span>
+          )}
+        </span>
+        {windows.length === 0 && (
+          <span className={NONE} data-testid="subscriptions.account.none">
+            {row.status === 'logged_in' || row.status === 'measured'
+              ? t('subscriptions.not-measured')
+              : t(`subscriptions.status.${row.status}`, { code: row.code ?? '' })}
           </span>
-        </>
-      )}
+        )}
+      </div>
+      {windows.map((window) => (
+        <AccountWindow
+          key={window.window}
+          account={name}
+          window={window}
+          binding={window.window === binding}
+          now={now}
+        />
+      ))}
     </li>
   );
 }
@@ -192,7 +245,7 @@ function Provider({
   readonly now: number;
   readonly detailed: boolean;
 }) {
-  const { t, age, until, windowName } = useTexts();
+  const { t, age, until, release, windowName, freeText } = useTexts();
   const [open, setOpen] = useState(false);
   const shown = detailed || open;
   const measured = group.rows.some((row) => row.reading !== null);
@@ -229,6 +282,11 @@ function Provider({
           >
             {t('subscriptions.usable', { n: group.usable, total: group.rows.length })}
           </span>
+          {group.nextRelease !== null && (
+            <span className="shrink-0 text-xs text-gray-600" data-testid="subscriptions.provider.release">
+              {release('subscriptions.next-release', group.nextRelease, now)}
+            </span>
+          )}
           {group.headlineAt !== null && now - group.headlineAt > OLD_MS && (
             <span className="shrink-0 text-xs font-semibold text-red-800" data-testid="subscriptions.provider.old">
               {t('subscriptions.old', { age: age(group.headlineAt, now) })}
@@ -245,12 +303,12 @@ function Provider({
               {until(group.headline.resetsAt, now)}
             </span>
             <Bar
-              used={group.headline.usedPercent}
+              free={group.headline.freePercent}
               label={`${group.name} – ${total}`}
               testId="subscriptions.provider.bar"
             />
-            <span className={`${USED} font-semibold`} data-testid="subscriptions.provider.used">
-              {percent(group.headline.usedPercent)}
+            <span className={`${FREE} font-semibold`} data-testid="subscriptions.provider.free">
+              {freeText(group.headline.freePercent)}
             </span>
           </>
         )}
@@ -261,13 +319,14 @@ function Provider({
             <Line
               key={window.window}
               name={windowName(window.window)}
-              window={window}
+              free={window.freePercent}
+              resetsAt={window.resetsAt}
               now={now}
               testId={`subscriptions.window.${window.window}`}
             />
           ))}
           <h3 className={`${INDENT} pt-3 pb-1 text-sm font-semibold`}>{t('subscriptions.accounts')}</h3>
-          <ul className="flex flex-col">
+          <ul className="flex flex-col divide-y divide-gray-100">
             {group.rows.map((row) => (
               <Account key={row.key} row={row} now={now} />
             ))}

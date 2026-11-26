@@ -16,16 +16,16 @@
 // - `providerGroups` groups the rows by provider (`PROVIDERS`; an unknown provider ID shows itself, so a further
 //   provider needs no change here) and shows the total of all its accounts, never the fullest account (`totalWindows`,
 //   ADR-091 section 3): each window (5 hours, week, week per model, fullest) counts the accounts that measured it – the
-//   used share is their mean, every account weighted equally (an account without that window does not count), the
+//   share left is their mean, every account weighted equally (an account without that window does not count), the
 //   reset the next one of them. The headline is the total of the week (else the fullest total window), with how many
-//   accounts are usable now ("usable now: X of N", `usableNow`); the details are the total windows, then every account
-//   with its own bar. "sort by used" orders the providers by that headline.
-// - Each account's bar shows the window that binds it now (`bindingOf`): the fuller of the 5-hour window and the week
-//   (the week on a tie), so an account whose 5 hours are used up is not shown as free; the other one stays as a small
-//   second value.
+//   accounts are usable now ("usable now: X of N", `usableNow`) and the next release (`nextRelease`); the details are
+//   the total windows, then every account with all its windows. "sort by used" puts the least left first.
+// - Of each account, the window that binds it now (`bindingOf`: the one of 5 hours and week with the least left, the
+//   week on a tie) is marked; with nothing left in it the account is "not usable now until …" (`exhaustedBy`).
 //
-// Percentages are the used share as measured; the bars are coloured by what is left (from 70 % used amber = 30 %
-// left, from 90 % red = 10 % left). Nothing missing is shown as 0 %. The page is the owner's own: nobody else reads it.
+// The readings carry the used share; the view shows what is left (`freeOf`: 100 % less the used share, at least 0 %)
+// and colours it by that (30 % left or less amber, 10 % or less red, `freeLevel`). Nothing missing is shown as 0 %.
+// The page is the owner's own: nobody else reads it.
 import { parseJson } from '../encoding/json';
 import { openCredential, verifyCredential } from '../crypto/credential';
 import type { Fields } from '../crypto/fields';
@@ -338,45 +338,64 @@ function headlineIn<T extends QuotaWindow>(windows: readonly T[]): T | null {
   );
 }
 
+/** The share of a window that is left: 100 % less the used share, never below 0 % (a reading may exceed 100 %). */
+export const freeOf = (usedPercent: number): number => Math.max(0, 100 - usedPercent);
+
 /** The window that binds one account now and the other one of 5 hours and week (null when it has only one). */
 export interface Binding {
   readonly binding: QuotaWindow;
   readonly other: QuotaWindow | null;
 }
 
-/** The window that binds an account now (ADR-091 section 3): the fuller of the 5-hour window and the week, the week
- *  on a tie; with only one of them that one; with neither (a token file gives only its fullest window) its fullest
- *  window. `other` is the other one of 5 hours and week, so no value is lost. Null when nothing is measured. */
+/** The window that binds an account now (ADR-091 section 3): the one of the 5-hour window and the week with the least
+ *  left, the week on a tie; with only one of them that one; with neither (a token file gives only its fullest window)
+ *  the window with the least left. A week per model binds only that model, never the account. `other` is the other
+ *  one of 5 hours and week. Null when nothing is measured. */
 export function bindingOf(row: SubscriptionRow): Binding | null {
   const windows = row.reading?.windows ?? [];
   const five = windows.find((window) => window.window === 'five_hour') ?? null;
   const week = windows.find((window) => window.window === 'seven_day') ?? null;
   if (five !== null && week !== null)
-    return five.usedPercent > week.usedPercent ? { binding: five, other: week } : { binding: week, other: five };
+    return freeOf(five.usedPercent) < freeOf(week.usedPercent)
+      ? { binding: five, other: week }
+      : { binding: week, other: five };
   const single = week ?? five ?? [...windows].sort((a, b) => b.usedPercent - a.usedPercent)[0] ?? null;
   return single === null ? null : { binding: single, other: null };
 }
 
-/** Whether an account can be used now: it is logged in and readable, and its binding window is below 100 %. */
+/** Whether an account can be used now: it is logged in and readable, and its binding window has something left. */
 export function usableNow(row: SubscriptionRow): boolean {
   if (row.status !== 'logged_in' && row.status !== 'measured') return false;
   const found = bindingOf(row);
-  return found !== null && found.binding.usedPercent < 100;
+  return found !== null && freeOf(found.binding.usedPercent) > 0;
+}
+
+/** The binding window of an account that is logged in and readable but has nothing left in it ("not usable now
+ *  until …", its `resetsAt`), else null. */
+export function exhaustedBy(row: SubscriptionRow): QuotaWindow | null {
+  if (row.status !== 'logged_in' && row.status !== 'measured') return null;
+  const found = bindingOf(row);
+  return found !== null && freeOf(found.binding.usedPercent) === 0 ? found.binding : null;
 }
 
 /** One window as the total of the accounts that measured it. */
 export interface TotalWindow extends QuotaWindow {
+  /** The mean share left of the accounts that measured it (each account's share left is at least 0 %). */
+  readonly freePercent: number;
   /** How many accounts measured this window (at least 1). */
   readonly accounts: number;
   /** Unix ms of the oldest reading among them. */
   readonly measuredAt: number;
 }
 
-/** Each window as the total of the accounts that measured it (module comment), ordered: the used share is their
- *  mean, every account weighted equally – an account without the window does not count –, the reset the next one of
- *  them (null when none of them knows it). Nothing measured gives no window. */
+/** Each window as the total of the accounts that measured it (module comment), ordered: the used share and the share
+ *  left are their means, every account weighted equally – an account without the window does not count –, the reset
+ *  the next one of them (null when none of them knows it). Nothing measured gives no window. */
 export function totalWindows(rows: readonly SubscriptionRow[]): TotalWindow[] {
-  const sums = new Map<string, { used: number; accounts: number; resetsAt: number | null; measuredAt: number }>();
+  const sums = new Map<
+    string,
+    { used: number; free: number; accounts: number; resetsAt: number | null; measuredAt: number }
+  >();
   for (const row of rows) {
     if (row.reading === null) continue;
     const seen = new Set<string>();
@@ -388,6 +407,7 @@ export function totalWindows(rows: readonly SubscriptionRow[]): TotalWindow[] {
       const resets = [known?.resetsAt ?? null, window.resetsAt].filter((at) => at !== null);
       sums.set(window.window, {
         used: (known?.used ?? 0) + window.usedPercent,
+        free: (known?.free ?? 0) + freeOf(window.usedPercent),
         accounts: (known?.accounts ?? 0) + 1,
         resetsAt: resets.length === 0 ? null : Math.min(...resets),
         measuredAt: Math.min(known?.measuredAt ?? Infinity, row.reading.fetchedAt),
@@ -398,6 +418,7 @@ export function totalWindows(rows: readonly SubscriptionRow[]): TotalWindow[] {
     [...sums.entries()].map(([window, sum]) => ({
       window,
       usedPercent: sum.used / sum.accounts,
+      freePercent: sum.free / sum.accounts,
       resetsAt: sum.resetsAt,
       accounts: sum.accounts,
       measuredAt: sum.measuredAt,
@@ -417,12 +438,15 @@ export interface ProviderGroup {
   readonly rows: readonly SubscriptionRow[];
   /** How many of its accounts can be used now (`usableNow`). */
   readonly usable: number;
+  /** Unix ms of the next release: the earliest reset of the binding window of an account with nothing left in it
+   *  (`exhaustedBy`); null when no account waits for one or none of their resets is known. */
+  readonly nextRelease: number | null;
   /** Unix ms of the newest read of any account, null when none was read. */
   readonly newest: number | null;
 }
 
-/** The rows grouped by provider with their totals; providers by ID, or with `sortByUsed` by the used share of the
- *  headline total (descending, unknown last). */
+/** The rows grouped by provider with their totals; providers by ID, or with `sortByUsed` by the share left of the
+ *  headline total (least left first, unknown last). */
 export function providerGroups(rows: readonly SubscriptionRow[], sortByUsed = false): ProviderGroup[] {
   const groups = new Map<string, SubscriptionRow[]>();
   for (const row of rows) groups.set(row.provider, [...(groups.get(row.provider) ?? []), row]);
@@ -430,6 +454,10 @@ export function providerGroups(rows: readonly SubscriptionRow[], sortByUsed = fa
     const windows = totalWindows(members);
     const headline = headlineIn(windows);
     const reads = members.flatMap((row) => (row.reading === null ? [] : [row.reading.fetchedAt]));
+    const releases = members.flatMap((row) => {
+      const at = exhaustedBy(row)?.resetsAt ?? null;
+      return at === null ? [] : [at];
+    });
     return {
       provider,
       name: providerName(provider),
@@ -438,19 +466,19 @@ export function providerGroups(rows: readonly SubscriptionRow[], sortByUsed = fa
       windows,
       rows: members,
       usable: members.filter(usableNow).length,
+      nextRelease: releases.length === 0 ? null : Math.min(...releases),
       newest: reads.length === 0 ? null : Math.max(...reads),
     };
   });
   const byId = (a: ProviderGroup, b: ProviderGroup) =>
     Number(a.provider > b.provider) - Number(a.provider < b.provider);
-  const used = (group: ProviderGroup) => group.headline?.usedPercent ?? -1;
-  return made.sort(sortByUsed ? (a, b) => used(b) - used(a) || byId(a, b) : byId);
+  const free = (group: ProviderGroup) => group.headline?.freePercent ?? Infinity;
+  return made.sort(sortByUsed ? (a, b) => free(a) - free(b) || byId(a, b) : byId);
 }
 
-/** `ok`, `warn` (from 70 % used, 30 % left) or `low` (from 90 % used, 10 % left). */
-export const usedLevel = (usedPercent: number): 'ok' | 'warn' | 'low' =>
-  usedPercent >= 90 ? 'low' : usedPercent >= 70 ? 'warn' : 'ok';
-
+/** By what is left: `ok`, `warn` (30 % left or less, from 70 % used) or `low` (10 % left or less, from 90 % used). */
+export const freeLevel = (freePercent: number): 'ok' | 'warn' | 'low' =>
+  freePercent <= 10 ? 'low' : freePercent <= 30 ? 'warn' : 'ok';
 /** The time until `at` as the local dashboard writes it: days and hours, hours and minutes, minutes, below a
  *  minute, or due. */
 export function untilParts(
