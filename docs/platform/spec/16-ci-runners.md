@@ -203,7 +203,8 @@ shared pool of [E-31](../KONZEPT.md#e-31) with [A20](../KONZEPT.md#a-20) (§6.6)
 
 - Egress is in addition to the runner minimum set of §9.4; all egress values are subject to D-8. Class B: the guard
   installs Python with `actions/setup-python` and PyYAML with pip (`.github/actions/a38-guard/action.yml:51,64`).
-- Class P: until stage 7 (§12) these jobs stay on the manual way of that stage, never on the host of a pool device.
+- Class P: recommendation: until stage 7 these jobs run manually (the way back of stage 7), never on the host of a
+  pool device; current state: [OPS].
 - Class H on a pool device: the deploy runner is persistent and runs on the host, and neither a label nor a changed
   `runs-on` in a PR may reach it; hence the own group. If D-9 gives no groups, the recommendation for pool devices is
   the signed pull deployment (D-1 (c)) instead of a deploy runner. Both stay open (D-1, D-9).
@@ -600,7 +601,8 @@ The recommendation flips (research 2 §7):
   operator accepted this for work VMs on 2026-11-24.
 - Consequence for class U: foreign PR code would run on the devices that hold workgroup plaintext
   ([E-31](../KONZEPT.md#e-31)), as far as it runs self-hosted ([E-30](../KONZEPT.md#e-30); public fork PRs: D-6).
-  The research's way out, an own CI device separated from workgroup plaintext, is rejected by E-31 (D-5). What that
+  The research's way out, an own CI device separated from workgroup plaintext, is rejected by E-31 with A20
+  (interpretation; D-5). What that
   separation would have given can only come from the boundary of the VM. **Gate U** (recommendation, not decided: D-7,
   D-20) – class U should run on a pool device only after all of:
   1. a boundary by **interface** instead of the per-account filter with its known limit, built for the CI VMs of the
@@ -739,7 +741,7 @@ operator's machines become pool devices at which time is D-25:
 - A failing device takes agent VMs and CI VMs together; how much free capacity the rest of the pool keeps for that is
   a parameter (`POOL_FAILURE_RESERVE`, D-22).
 - The research's argument for an own CI device (separation from workgroup plaintext, research 1) is rejected by
-  [E-31](../KONZEPT.md#e-31); the recommendation in its place is gate U (§9.3; open, D-7, D-20).
+  [E-31](../KONZEPT.md#e-31) with [A20](../KONZEPT.md#a-20) (interpretation; D-5); the recommendation in its place is gate U (§9.3; open, D-7, D-20).
 
 ## 11. Operations
 
@@ -869,7 +871,7 @@ else is open. The tendency is the factual assessment of the research reports, no
 |---|---|---|---|
 | D-1 | Scope, and host-bound jobs (§1.3; not covered by [A19](../KONZEPT.md#a-19); open deviation, [KONZEPT part D](../KONZEPT.md#d-offen)) | (a) Linux, not host-bound only; (b) plus macOS VMs. Host-bound jobs: (c) signed pull deployment without an Actions runner; (d) minimal deploy runner per device outside the platform as an exception to [E-30](../KONZEPT.md#e-30) and [E-31](../KONZEPT.md#e-31), class H (§5); (e) another way the client names. Whether such jobs may run outside the platform at all is part of this decision | (a) first, (b) after the spike; host-bound jobs: no choice made, all of (c)–(e) open; on pool devices without runner groups (D-9) §5 recommends (c) rather than (d) |
 | D-2 | Trigger | (a) `actions/scaleset`; (b) webhook + JIT; (c) polling + JIT; (d) fixed JIT stock | (a) |
-| D-3 | Location of the controller | (a) inside `agent-runner`; (b) sidecar with its own account; (c) separate host (not as a machine outside the pool, E-31); (d) hub with KONZEPT change | (b) |
+| D-3 | Location of the controller | (a) inside `agent-runner`; (b) sidecar with its own account; (c) separate host (not as a machine outside the platform (E-31)); (d) hub with KONZEPT change | (b) |
 | D-4 | Owner of the CI app and of the key that creates JIT runners, and where that key lies | operator; separate service account; external signer | separate from the user app ([ADR-015](../adr/015-github-app-device-flow-rest-only.md)); key never in VM or hub |
 | D-5 | Hardware | Were: (a) share the productive runner device; (b) idle runner device as own CI host; (c) repurpose the current macOS CI hosts; (d) mixed | **Decided by [E-31](../KONZEPT.md#e-31) (2026-11-25) and [A20](../KONZEPT.md#a-20): one shared pool.** The research's tendency to an own CI host (separation from workgroup plaintext) is rejected; reason: E-31 and A20. What follows for class U is open (D-7, D-20; recommendation: gate U, §9.3). Shares: D-22 |
 | D-6 | Public fork PRs (Linux and macOS) and who approves | (a) not self-hosted; (b) only after A38 approval in U; (c) all in U | open; the service never approves itself |
@@ -877,7 +879,7 @@ else is open. The tendency is the factual assessment of the research reports, no
 | D-8 | Egress: rule on outgoing addresses and destination list (only free Cloudflare plans, [E-10](../KONZEPT.md#e-10); §9.4) | (a) adopt E-10's rule on outgoing addresses; (b) own CI rule – must work without a paid plan; (c) domain allow-list through a proxy – must work without a paid plan | open |
 | D-9 | GitHub plan | (a) Team for runner groups; (b) Free with repository runners – cannot meet §5 within one repository: then a repository may carry only one class, otherwise (b) is not viable; (c) Enterprise | open |
 | D-10 | CPU and runtime invariant | (a) no overcommit; (b) measured quota per class; does the 20 % invariant apply to VM pools? Which CPU ratio holds for agent VMs on the same device? | open, after M-5/M-9/M-19 |
-| D-11 | Heavy jobs | (a) larger profile; (b) split jobs; (c) keep the current large host – excluded by E-31 as a machine outside the pool | open between (a) and (b) |
+| D-11 | Heavy jobs | (a) larger profile; (b) split jobs; (c) keep the current large host – excluded as a machine outside the platform (E-31) | open between (a) and (b) |
 | D-12 | Model in KONZEPT | (a) infrastructure workload without task; (b) technical organisation/workgroup; (c) own product next to the platform – **excluded by [E-31](../KONZEPT.md#e-31)**; plus the CI-guest clarification of §7.3 and the job audit of §6.4 | open |
 | D-13 | Billing | (a) internal exemption; (b) internal cost centre | open |
 | D-14 | Upgrade | (a) drain; (b) VM takeover | open |
