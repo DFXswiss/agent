@@ -12,14 +12,17 @@ of their data, Mac OS X provides the F_FULLFSYNC fcntl"). PostgreSQL's default `
 Reliability": "On macOS, write caching can be prevented by setting wal_sync_method to fsync_writethrough"; the value
 calls `F_FULLFSYNC` and, as `pg_fsync` follows it, flushes data files at checkpoints the same way). `start_store`
 therefore checks the setting at **every** start: a cluster whose value differs from `durable_wal_sync_method()` gets
-it through `ALTER SYSTEM` (kept in `postgresql.auto.conf`) and is restarted once, so new installations and existing
-ones (after an update, which restarts the daemon) both run with it; a value that does not hold after the restart is
-`store_not_durable`. Other systems keep PostgreSQL's default (`fdatasync` on Linux reaches the medium).
+it through `ALTER SYSTEM` (kept in `postgresql.auto.conf`) and `pg_reload_conf()` (the setting takes a reload, no
+restart: a command that opens the store while the daemon runs never stops the daemon's cluster), so new installations
+and existing ones (after an update, which restarts the daemon) both run with it; a value that does not hold within
+`DURABLE_WAIT_S` is `store_not_durable`. Other systems keep PostgreSQL's default (`fdatasync` on Linux reaches the
+medium).
 """
 
 from __future__ import annotations
 
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,12 +35,19 @@ from agent_runner.errors import RunnerError
 
 DATABASE = "agent_runner"
 WAL_SYNC_METHOD = "wal_sync_method"
+DURABLE_WAIT_S = 5.0
+DURABLE_POLL_S = 0.05
 DARWIN_WAL_SYNC_METHOD = "fsync_writethrough"
 
 
 def durable_wal_sync_method(platform: str = sys.platform) -> str | None:
     """The `wal_sync_method` the store needs on `platform`; None where PostgreSQL's default is durable."""
     return DARWIN_WAL_SYNC_METHOD if platform == "darwin" else None
+
+
+def reload_config(admin: str) -> None:
+    with psycopg.connect(admin, autocommit=True) as conn:
+        conn.execute("SELECT pg_reload_conf()")
 
 
 @dataclass(frozen=True)
@@ -51,6 +61,8 @@ class ClusterTools:
     wal_sync_method: str | None = None
     """The required `wal_sync_method` (module docstring); None leaves the server's value (tools of a test that hand
     out a shared server). The daemon's tools are `device_tools()`."""
+    reload: Callable[[str], None] = reload_config
+    durable_wait_s: float = DURABLE_WAIT_S
 
 
 def device_tools() -> ClusterTools:
@@ -59,28 +71,30 @@ def device_tools() -> ClusterTools:
 
 
 def _setting(admin: str, name: str) -> str:
+    """The value a new backend sees (each call connects anew: a reloaded file reaches new backends first)."""
     with psycopg.connect(admin, autocommit=True) as conn:
         row = conn.execute("SELECT current_setting(%s)", (name,)).fetchone()
     assert row is not None
     return str(row[0])
 
 
-def ensure_durable(pg_dir: Path, admin: str, tools: ClusterTools) -> tuple[str, str]:
-    """Make the running cluster use `tools.wal_sync_method`; returns the admin DSN after it and `ok` (nothing to do),
-    `set` (changed and restarted) or `default` (no requirement on this system). `store_not_durable` when the value
-    does not hold after the restart."""
+def ensure_durable(admin: str, tools: ClusterTools) -> str:
+    """Make the running cluster use `tools.wal_sync_method`; `ok` (nothing to do), `set` (changed and reloaded) or
+    `default` (no requirement on this system). `store_not_durable` when the value does not hold in time."""
     wanted = tools.wal_sync_method
     if wanted is None:
-        return admin, "default"
+        return "default"
     if _setting(admin, WAL_SYNC_METHOD) == wanted:
-        return admin, "ok"
+        return "ok"
     with psycopg.connect(admin, autocommit=True) as conn:
         conn.execute(sql.SQL("ALTER SYSTEM SET wal_sync_method = {}").format(sql.Literal(wanted)))
-    tools.stop(pg_dir)
-    admin = tools.ensure(pg_dir)
-    if _setting(admin, WAL_SYNC_METHOD) != wanted:
-        raise RunnerError("store_not_durable")
-    return admin, "set"
+    tools.reload(admin)
+    deadline = time.monotonic() + tools.durable_wait_s
+    while _setting(admin, WAL_SYNC_METHOD) != wanted:
+        if time.monotonic() >= deadline:
+            raise RunnerError("store_not_durable")
+        time.sleep(DURABLE_POLL_S)
+    return "set"
 
 
 def start_store(pg_dir: Path, tools: ClusterTools | None = None) -> str:
@@ -92,7 +106,8 @@ def start_store(pg_dir: Path, tools: ClusterTools | None = None) -> str:
     """
     used = tools or device_tools()
     try:
-        admin, _state = ensure_durable(pg_dir, used.ensure(pg_dir), used)
+        admin = used.ensure(pg_dir)
+        ensure_durable(admin, used)
         return used.create_database(admin, DATABASE)
     except (pg.PgError, OSError, psycopg.Error):
         raise RunnerError("store_unavailable") from None

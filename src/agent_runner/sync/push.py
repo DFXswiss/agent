@@ -31,13 +31,19 @@ Answer handling:
   `GET /v1/device/state` confirms the position, the stored items from there on are renumbered to follow it and the
   pruned ones are reported lost (`outbox.realign`); pushing goes on. Unconfirmed, the push is retried.
 - `409 origin_seq_conflict` after a power cut that cost the store its newest commits (HOT-25: the hub has items the
-  store lost, and the store numbered new items the same) is repaired once per process: when no push of this process
-  was answered yet, `GET /v1/device/state` confirms that the hub is at or past the first item of the batch, the first
-  item after `pushed_origin_seq` is `pushed_origin_seq + 1` and the hub is at most `LOSS_LIMIT` items ahead, the
-  runner takes the hub's position (`outbox.adopt_after_loss`: its unacknowledged items move behind it, audit
-  `runner.alert` `outbox_conflict_recovered` with the number of lost items, log `runner.alert
-  outbox_conflict_recovered pushed=P hub=L lost=N`) and pushes on. Every other conflict is real (two devices with one
-  identity: it comes again or after answered pushes; a store from an old backup: far behind) and fatal:
+  store lost, and the store numbered new items the same) is repaired once per process. The hub does not name the
+  disputed item, and the store may still hold some items the hub has (identical, answered `replayed`): a conflict on
+  a batch of several items therefore switches to single items (`conflict_probe`; `replayed` answers advance
+  `pushed_origin_seq` and keep the repair possible) until a single item meets the conflict, which is then the
+  disputed one; a `replayed` answer names the hub's position as `acked_through`, which may lie beyond the batch, so
+  only the batch counts as acknowledged. When no push of this process was answered with anything but `replayed` yet,
+  the disputed item is
+  `pushed_origin_seq + 1`, and `GET /v1/device/state` confirms that the hub is at or past it and at most `LOSS_LIMIT`
+  items ahead of `pushed_origin_seq`, the runner takes the hub's position (`outbox.adopt_after_loss`: its
+  unacknowledged items move behind it, audit `runner.alert` `outbox_conflict_recovered` with the number of lost
+  items, log `runner.alert outbox_conflict_recovered pushed=P hub=L lost=N`) and pushes on. Every other conflict is
+  real (two devices with one identity: it comes again or after answered pushes; a store from an old backup: far
+  behind) and fatal:
   `sync_fatal` is persisted, `runner.sync conflict_fatal reason=<why>` and `runner.alert origin_seq_conflict` are
   logged, the metric flag `fatal` is set and `SyncFatal` stops the `sync` task (sessions keep running; an operator
   clears it).
@@ -174,6 +180,8 @@ class Pusher:
         self.fatal: str | None = None
         # an `origin_seq_conflict` may be repaired only before the first answered push of this process, and once
         self.conflict_repairable = True
+        # after a conflict on a batch of several items: push single items until one meets it (module docstring)
+        self.probe = False
         self.wake = asyncio.Event()
         self.lock = asyncio.Lock()
         self._last_start: float | None = None
@@ -255,7 +263,7 @@ class Pusher:
     async def _walk(self, conn: Any, pushed: int) -> _Batch:
         """Seal and size one batch after `pushed`; stops at the first event that cannot be sealed."""
         batch = _Batch()
-        items = await outbox.load_batch(conn, self.storage_key, pushed, self.max_items)
+        items = await outbox.load_batch(conn, self.storage_key, pushed, 1 if self.probe else self.max_items)
         size = _ENVELOPE_BYTES
         for item in items:
             body = await self._wire_body(conn, item, batch)
@@ -269,6 +277,7 @@ class Pusher:
             size += grow
         if not items:
             batch.waiting = "idle"
+            self.probe = False
         return batch
 
     async def _prepare(self) -> tuple[int, _Batch]:
@@ -362,8 +371,14 @@ class Pusher:
             self.log.flush()
         return PushOutcome(more=True)
 
-    async def _conflict(self, pushed: int, first: int) -> PushOutcome:
-        """`origin_seq_conflict` for the batch starting at `first`: repaired when it is a lost tail, else fatal."""
+    async def _conflict(self, pushed: int, batch: _Batch) -> PushOutcome:
+        """`origin_seq_conflict` for `batch`: narrowed to a single item, repaired when it is a lost tail, else fatal."""
+        first = batch.wire[0]["origin_seq"]
+        if self.conflict_repairable and first == pushed + 1 and len(batch.wire) > 1:
+            self.probe = True
+            self.line(f"conflict_probe pushed={pushed} items={len(batch.wire)}")
+            return PushOutcome(more=True)
+        self.probe = False
         reason, hub_last = await self._conflict_reason(pushed, first)
         if reason is None:
             async with self.pool.connection() as conn:
@@ -419,7 +434,7 @@ class Pusher:
                 answer = await self._post({"items": batch.wire})
             except HubRefusal as refusal:
                 if refusal.code == CONFLICT:
-                    return await self._conflict(pushed, batch.wire[0]["origin_seq"])
+                    return await self._conflict(pushed, batch)
                 if refusal.code == GAP:
                     return await self._gap(refusal, pushed)
                 raise
@@ -478,12 +493,17 @@ class Pusher:
         return requests[0].result()  # raises the first request's error
 
     async def _apply(self, answer: dict[str, object], pushed: int, batch: _Batch) -> PushOutcome:
-        self.conflict_repairable = False
         first, last = batch.wire[0]["origin_seq"], batch.wire[-1]["origin_seq"]
         acked = _int(answer.get("acked_through"))
         results = answer.get("results")
-        if acked is None or not pushed <= acked <= last or not isinstance(results, list):
+        if acked is None or acked < pushed or not isinstance(results, list):
             raise HubTransportError("response_invalid")
+        replayed = bool(results) and all(isinstance(r, dict) and r.get("status") == "replayed" for r in results)
+        if acked > last and not replayed:
+            raise HubTransportError("response_invalid")
+        # a batch the hub had already: it names its own position, which may lie beyond what the store still holds after
+        # a power cut (HOT-25); only the batch counts as acknowledged
+        acked = min(acked, last)
         resealed = False
         for result in results:
             seq = _int(result.get("origin_seq")) if isinstance(result, dict) else None
@@ -501,6 +521,9 @@ class Pusher:
                 self.reseal[seq] = batch.epochs[seq]
                 resealed = True
                 self.line(f"reseal origin_seq={seq} epoch={batch.epochs[seq]}")
+        if not replayed:
+            # the hub stored something of this process: a later conflict is real; single items end
+            self.conflict_repairable = self.probe = False
         async with self.pool.connection() as conn:
             await outbox.acknowledge(conn, acked)
         more = resealed or (acked > pushed and batch.waiting is None)

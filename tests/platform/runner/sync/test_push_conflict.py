@@ -43,11 +43,13 @@ def restart(env: Env, max_items: int = 500) -> Pusher:
     return fresh
 
 
-async def power_cut(env: Env, keep: int) -> None:
-    """The store loses every item after `keep` and the acknowledgement of them; the hub keeps them."""
+async def power_cut(env: Env, keep: int, acked: int | None = None) -> None:
+    """The store loses every item after `keep` and every acknowledgement after `acked` (default: `keep`); the hub
+    keeps them."""
     async with env.pool.connection() as conn, conn.transaction():
         await conn.execute("DELETE FROM runner.outbox WHERE origin_seq > %s", (keep,))
-        await outbox.set_state(conn, outbox.PUSHED, str(keep))
+        await conn.execute("UPDATE runner.outbox SET pushed_at = NULL WHERE origin_seq > %s", (acked or keep,))
+        await outbox.set_state(conn, outbox.PUSHED, str(keep if acked is None else acked))
 
 
 async def state(env: Env) -> tuple[int | None, str | None]:
@@ -75,6 +77,8 @@ def test_a_store_that_lost_its_last_items_takes_the_hub_position_and_pushes_on(h
             await env.enqueue("audit", AUDIT)
             await env.enqueue("event", scope.draft("nach dem Ausfall"))
             await env.enqueue("metrics", METRICS)
+            assert await pusher.push_once() == PushOutcome(more=True)  # three items: narrowed to single items
+            assert "runner.sync conflict_probe pushed=2 items=3\n" in env.log()
             assert await pusher.push_once() == PushOutcome(more=True)
             assert "runner.alert outbox_conflict_recovered pushed=2 hub=4 lost=2\n" in env.log()
             assert await state(env) == (4, None)
@@ -236,5 +240,91 @@ def test_adopt_after_loss_only_moves_a_lost_tail(harness: Harness) -> None:
                 assert await outbox.first_origin_seq(conn) == 7
                 assert await outbox.last_origin_seq(conn) == 8  # the item and the alert
                 assert await outbox.pushed_origin_seq(conn) == 6
+
+    run(body)
+
+
+def test_a_lost_tail_behind_items_the_hub_has_moves_only_the_new_items(harness: Harness) -> None:
+    """Review HOT-25: items 3 and 4 left together and were acknowledged together; the power cut took item 4 and the
+    acknowledgement but kept item 3, which the hub has with the same bytes. The batch [3, 4] meets the conflict without
+    naming the item; single items find it: 3 is `replayed`, 4 is the disputed one. Only the new item moves (by one),
+    nothing reaches the hub twice."""
+
+    async def body() -> None:
+        async with harness.env() as env:
+            await adopt(env)
+            await enqueue_many(env, "metrics", [METRICS] * 4)
+            await env.sync.pusher.drain()
+            await power_cut(env, keep=3, acked=2)
+            pusher = restart(env)
+            await env.enqueue("audit", AUDIT)
+            await pusher.drain()
+            assert "runner.sync conflict_probe pushed=2 items=2\n" in env.log()
+            assert "runner.alert outbox_conflict_recovered pushed=3 hub=4 lost=1\n" in env.log()
+            items = env.hub.items()
+            assert [i["item_kind"] for i in items] == ["metrics"] * 4 + ["audit", "audit"]
+            assert items[5]["body"]["detail"] == {"alert": "outbox_conflict_recovered", "value": 1}
+            assert await state(env) == (6, None)
+
+    run(body)
+
+
+def test_single_items_end_when_the_hub_stores_one_or_nothing_is_left(harness: Harness) -> None:
+    """A conflict on a batch that no single item meets again (the hub stores the first one): the single pushes end, and
+    a later conflict of this process is real."""
+
+    async def body() -> None:
+        async with harness.env() as env:
+            await adopt(env)
+            await enqueue_many(env, "metrics", [METRICS] * 2)
+            pusher = env.sync.pusher
+            env.hub.scripted.append((409, {"error": "origin_seq_conflict"}, {}))
+            assert await pusher.push_once() == PushOutcome(more=True)
+            assert pusher.probe is True
+            assert (await pusher.push_once()).acked_through == 1  # one item, stored
+            assert (pusher.probe, pusher.conflict_repairable) == (False, False)
+            await pusher.drain()
+            pusher.probe = True
+            assert await pusher.push_once() == PushOutcome(waiting="idle")
+            assert pusher.probe is False
+
+    run(body)
+
+
+def test_a_replayed_batch_counts_only_up_to_its_end_and_a_later_item_repairs(harness: Harness) -> None:
+    """The store kept item 3 but lost item 4 and the acknowledgements: resending 3 is `replayed` with the hub's
+    position 4 as `acked_through`, beyond the batch. Only 3 counts (no endless `response_invalid`), the repair stays
+    possible, and the next item meets the conflict at 4 and is moved."""
+
+    async def body() -> None:
+        async with harness.env() as env:
+            await adopt(env)
+            await enqueue_many(env, "metrics", [METRICS] * 4)
+            await env.sync.pusher.drain()
+            await power_cut(env, keep=3, acked=2)
+            pusher = restart(env)
+            assert await pusher.drain() == PushOutcome(waiting="idle")
+            assert await state(env) == (3, None)
+            assert pusher.conflict_repairable is True
+            await env.enqueue("audit", AUDIT)
+            await pusher.drain()
+            assert "runner.alert outbox_conflict_recovered pushed=3 hub=4 lost=1\n" in env.log()
+            assert await state(env) == (6, None)
+
+    run(body)
+
+
+def test_an_answer_beyond_the_batch_that_stored_something_is_invalid(harness: Harness) -> None:
+    async def body() -> None:
+        async with harness.env() as env:
+            await adopt(env)
+            await env.enqueue("metrics", METRICS)
+            answer = {"acked_through": 2, "results": [{"origin_seq": 1, "status": "ok"}]}
+            env.hub.scripted.append((200, answer, {}))
+            with pytest.raises(HubTransportError, match="response_invalid"):
+                await env.sync.pusher.push_once()
+            env.hub.scripted.append((200, {"acked_through": 2, "results": []}, {}))
+            with pytest.raises(HubTransportError, match="response_invalid"):
+                await env.sync.pusher.push_once()
 
     run(body)

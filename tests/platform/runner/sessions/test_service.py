@@ -274,8 +274,10 @@ def test_sessions_whose_vm_is_gone_after_the_vm_reconciliation_fail_once(rig: Ri
 
 def test_sessions_left_working_in_a_stopped_vm_are_suspended(rig: Rig) -> None:
     """HOT-25: after a power cut the VM reconciliation finds the instance stopped while the store still says
-    `working`. Such a main session is suspended (`device_restart`), so its next prompt resumes it; at the start and in
-    every reconcile."""
+    `working`. Such a main session is suspended (`device_restart`; a working one through `idle`, the only way the hub
+    leads to `suspended`), so its next prompt resumes it; a start cut off after `agent_starting` fails
+    `device_shutdown`. At the start and in every reconcile."""
+    from agent_hub.sessions.derive import ALLOWED, step  # noqa: PLC0415 - the hub's state machine decides
 
     async def body(env: Any) -> None:
         found = await kit(env)
@@ -289,22 +291,32 @@ def test_sessions_left_working_in_a_stopped_vm_are_suspended(rig: Rig) -> None:
             await conn.execute("UPDATE runner.session SET vm_id = NULL WHERE id = %s", (ids[3],))
             await conn.execute("UPDATE runner.session SET vm_id = 'vm-0000ffff' WHERE id = %s", (ids[4],))
             await conn.execute("UPDATE runner.session SET depth = 1 WHERE id = %s", (ids[5],))
+        before = {sid: len(await found.transitions(sid)) for sid in ids}
         assert await svc.vms_stopped() == 0  # every VM still runs
         async with env.pool.connection() as conn:
             await conn.execute("UPDATE runner.vm SET state = 'stopped' WHERE id = 'vm-00000001'")
         svc.tasks[ids[6]] = asyncio.ensure_future(asyncio.sleep(0))  # a stop of it runs: left to it
         assert await svc.vms_stopped() == 2
+        lines = "\n".join(found.lines)
+        assert (await found.transitions(ids[0]))[before[ids[0]] :] == [
+            ("idle", "device_restart"),
+            ("suspended", "device_restart"),
+        ]
+        assert (await found.transitions(ids[1]))[before[ids[1]] :] == [("suspended", "device_restart")]
         for sid in ids[:2]:
             assert (await found.stored(sid)).state == "suspended"
-            assert (await found.transitions(sid))[-1] == ("suspended", "device_restart")
-            assert f"vm_stopped session_id={sid} state=suspended reason=device_restart" in "\n".join(found.lines)
+            assert f"vm_stopped session_id={sid} state=suspended reason=device_restart" in lines
         for sid in ids[2:]:
-            assert ("suspended", "device_restart") not in await found.transitions(sid)
+            assert len(await found.transitions(sid)) == before[sid]
         await svc.tasks.pop(ids[6])
-        # every reconcile looks again
+        # every reconcile looks again; a start state ends like an interrupted start
         await svc.reconcile([desired(7)], Book((ORG, WG)))
-        assert (await found.transitions(ids[6]))[-1] == ("suspended", "device_restart")
+        assert (await found.transitions(ids[6]))[before[ids[6]] :] == [("failed", "device_shutdown")]
+        assert f"vm_stopped session_id={ids[6]} state=failed reason=device_shutdown" in "\n".join(found.lines)
         assert await svc.vms_stopped() == 0
+        # each reported step is one the hub's state machine takes
+        for current, new in (("working", "idle"), ("idle", "suspended"), ("prompt_delivering", "failed")):
+            assert step(current, new) == ALLOWED
 
     run(rig, body)
 
@@ -313,25 +325,32 @@ def test_a_session_stopped_while_the_stopped_vms_are_looked_at_is_left_stopping(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The listing does not lock: a stop that commits between it and the transition wins (the locked row is
-    `stopping`, which may only end)."""
+    `stopping`, which may only end, or `stopped`, which is final)."""
 
     async def body(env: Any) -> None:
         found = await kit(env)
         svc = make_service(found)
-        sid = await start_one(found, svc)
+        sid, starting = await start_one(found, svc), await start_one(found, svc, 2)
         async with env.pool.connection() as conn:
             await conn.execute("UPDATE runner.session SET state = 'working' WHERE id = %s", (sid,))
+            await conn.execute("UPDATE runner.session SET state = 'prompt_delivering' WHERE id = %s", (starting,))
             await conn.execute("UPDATE runner.vm SET state = 'stopped'")
         real_get = vm_records.get
 
+        stopped: list[str] = []
+
         async def get_while_stopping(db: Any, vm_id: str) -> Any:
-            async with env.pool.connection() as other:
-                await other.execute("UPDATE runner.session SET state = 'stopping' WHERE id = %s", (sid,))
+            if not stopped:  # once, before the first transition takes a row lock
+                stopped.append(vm_id)
+                async with env.pool.connection() as other:
+                    await other.execute("UPDATE runner.session SET state = 'stopping' WHERE id = %s", (sid,))
+                    await other.execute("UPDATE runner.session SET state = 'stopped' WHERE id = %s", (starting,))
             return await real_get(db, vm_id)
 
         monkeypatch.setattr(vm_records, "get", get_while_stopping)
         assert await svc.vms_stopped() == 0
         assert (await found.stored(sid)).state == "stopping"
+        assert (await found.stored(starting)).state == "stopped"
 
     run(rig, body)
 

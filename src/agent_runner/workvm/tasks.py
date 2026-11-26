@@ -32,7 +32,7 @@ async def run_workvm(context: Any) -> None:
     workvms = workvms_for(context)
     if workvms is None:
         return
-    workvms.check_volume()
+    await workvms.check_volume()
     left = await workvms.left_over()
     await runs_of(context, workvms).reconcile()
     await workvms.reconcile(left)

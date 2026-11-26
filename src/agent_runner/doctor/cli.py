@@ -237,7 +237,7 @@ def cmd_doctor(args: argparse.Namespace, ctx: Any) -> int:
         checks.check_operator_subscriptions(config),
         checks.check_operator_github(config),
         checks.check_test_mode(config.test_mode),
-        checks.check_workvm_volume(config, options.is_mount, options.fstab),
+        checks.check_workvm_volume(config, options.volume, options.fstab),
         *checks.check_sync(facts),
     ]
     return _report(ctx, found)

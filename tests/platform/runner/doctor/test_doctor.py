@@ -757,46 +757,63 @@ def test_the_operator_subscriptions_are_counted_without_names(tmp_path: Path) ->
 
 
 def test_the_volume_of_the_work_vm_slots_must_hang_at_its_mount_point() -> None:
-    """HOT-25: after a restart without the fstab entry the volume hangs under /Volumes; doctor names it."""
+    """HOT-25: after a restart without the fstab entry the volume hangs under /Volumes; doctor names it, and warns while
+    the entry for this volume's UUID is missing."""
     from types import SimpleNamespace  # noqa: PLC0415
     from typing import cast  # noqa: PLC0415
 
     from agent_runner.config import Config  # noqa: PLC0415
+    from agent_runner.errors import RunnerError  # noqa: PLC0415
+    from agent_runner.workvm.volume import Volume  # noqa: PLC0415
+
+    uuid = "0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D"
+    entry = f"UUID={uuid} /var/agent-workvm apfs rw\n"
 
     def config(slots: int, self_mode: bool = False) -> Config:
         return cast(Config, SimpleNamespace(workvm_slots=slots, workvm_slots_self=self_mode))
 
-    seen: list[str] = []
+    def check(found: Volume | Exception | None, fstab: str | None = entry, slots: int = 2) -> checks.Check:
+        def find() -> Volume | None:
+            if isinstance(found, Exception):
+                raise found
+            return found
 
-    def mounted(path: str) -> bool:
-        seen.append(path)
-        return True
+        return checks.check_workvm_volume(config(slots), find, lambda: fstab)
 
-    entry = "UUID=0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D /var/agent-workvm apfs rw\n"
+    here = Volume("disk3s7", uuid, "/private/var/agent-workvm")
 
-    def check(slots: int, is_mount: Any, fstab: str, self_mode: bool = False) -> checks.Check:
-        return checks.check_workvm_volume(config(slots, self_mode), is_mount, lambda: fstab)
+    def result(found: Volume | Exception | None, fstab: str | None = entry) -> tuple[str, str, object]:
+        done = check(found, fstab)
+        return done.result, done.detail, done.value
 
-    assert check(0, mounted, "") == checks.Check("workvm_volume", "ok", "off")
-    assert check(2, mounted, "", self_mode=True) == checks.Check("workvm_volume", "ok", "self")
-    assert seen == []
-    assert check(2, mounted, entry) == checks.Check("workvm_volume", "ok", "mounted", "/var/agent-workvm")
-    assert check(2, mounted, "# /var/agent-workvm\n") == checks.Check(
-        "workvm_volume", "warn", "fstab_missing", "/var/agent-workvm"
+    assert check(None, slots=0) == checks.Check("workvm_volume", "ok", "off")
+    assert checks.check_workvm_volume(config(2, True), lambda: None, lambda: "") == checks.Check(
+        "workvm_volume", "ok", "self"
     )
-    assert check(2, lambda _p: False, entry) == checks.Check(
-        "workvm_volume", "fail", "not_mounted", "/var/agent-workvm"
-    )
-    assert seen == ["/var/agent-workvm", "/var/agent-workvm"]
+    assert result(here) == ("ok", "mounted", "/var/agent-workvm")
+    assert result(RunnerError("workvm_volume", "diskutil")) == ("fail", "unreadable", None)
+    assert result(None) == ("fail", "missing", "AgentWorkVM")
+    assert result(Volume("disk3s7", uuid, "/Volumes/AgentWorkVM")) == ("fail", "not_mounted", "/Volumes/AgentWorkVM")
+    assert result(Volume("disk3s7", uuid, "")) == ("fail", "not_mounted", "-")
+    assert result(here, "") == ("warn", "fstab_missing", "/var/agent-workvm")
+    assert result(here, "UUID=OTHER /var/agent-workvm apfs rw\n") == ("warn", "fstab_missing", "/var/agent-workvm")
+    assert result(here, None) == ("warn", "fstab_unreadable", "/etc/fstab")
     options = checks.DoctorOptions()
-    assert options.is_mount("/")
-    assert isinstance(options.fstab(), str)
+    found = options.volume()
+    assert found is None or isinstance(found, Volume)
+    assert isinstance(options.fstab(), str | None)
 
 
-def test_a_missing_fstab_reads_as_empty(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_the_fstab_reads_as_empty_when_missing_and_as_none_when_unreadable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     from agent_runner.workvm import volume  # noqa: PLC0415
 
     monkeypatch.setattr(volume, "FSTAB", str(tmp_path / "fstab"))
     assert checks.read_fstab() == ""
     (tmp_path / "fstab").write_text("x\n")
     assert checks.read_fstab() == "x\n"
+    (tmp_path / "fstab").write_bytes(b"\xff\xfe")
+    assert checks.read_fstab() is None
+    monkeypatch.setattr(volume, "FSTAB", str(tmp_path))
+    assert checks.read_fstab() is None

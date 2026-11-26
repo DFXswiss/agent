@@ -94,8 +94,9 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 - Durable commits (HOT-25): a commit may already be on its way to the hub (outbox), so a power cut must not take it.
   On macOS `fsync` does not empty the drive's write cache (only `F_FULLFSYNC`), and PostgreSQL's default
   `wal_sync_method` there loses the last commits in a power cut. Every start of the store checks
-  `wal_sync_method = fsync_writethrough` and sets it when it differs (`ALTER SYSTEM`, one restart of the cluster), so
-  new and existing installations run with it after their next start; a value that does not hold stops the daemon
+  `wal_sync_method = fsync_writethrough` and sets it when it differs (`ALTER SYSTEM` and a reload, no restart: a
+  command that opens the store beside the running daemon never stops its cluster), so new and existing installations
+  run with it after their next start; a value that does not hold stops the daemon
   (`store_not_durable`). Other systems keep PostgreSQL's default. Cost measured on a runner device (Apple silicon,
   internal SSD): one writer 0.10 → 3.8–4.8 ms per commit (≈ 9 600 → 210–260 commits/s), eight writers ≈ 16 000 →
   ≈ 1 100 commits/s through group commit.
@@ -165,9 +166,12 @@ Triggers: every WebSocket hint, every 30 s, after reconnect. Steps (each idempot
   from `expected` (sealed bytes kept, `04-crypto.md` §5.12), reports the loss (log and audit `runner.alert`
   `{alert:"outbox_items_lost",value:<count>}`) and keeps pushing; unconfirmed → retried (KOR-10). `409
   origin_seq_conflict` after a power cut that cost the store its newest commits (the hub holds items the store lost,
-  and the store gave their numbers to new items) is repaired once per process (HOT-25): when no push of this process
-  was answered yet, the first item after `pushed_origin_seq` is `pushed_origin_seq + 1`, `GET /v1/device/state`
-  (`active`) puts the hub at or past that item and at most 500 items ahead of `pushed_origin_seq`, the runner moves its
+  and the store gave their numbers to new items) is repaired once per process (HOT-25). The hub does not name the
+  disputed item and the store may still hold items the hub has (`replayed`; their `acked_through` is the hub's
+  position, beyond the batch, and only the batch counts): a conflict on several items is narrowed by pushing single
+  items until one meets it. When no push of this process stored anything yet, that item is `pushed_origin_seq + 1`,
+  and `GET /v1/device/state` (`active`) puts the hub at or past it and at most 500 items ahead of
+  `pushed_origin_seq`, the runner moves its
   unacknowledged items behind the hub's position (sealed bytes kept), takes it as `pushed_origin_seq`, reports the
   lost items (log and audit `runner.alert {alert:"outbox_conflict_recovered",value:<count>}`) and keeps pushing; an
   unconfirmed position is retried. Every other conflict is real – two devices with one identity (it comes after
@@ -675,11 +679,12 @@ processed (a child: its inherited stamp), for a work VM the acting user when it 
   `suspended`. Next prompt → `resuming` → start with `--resume <claude_session_id>` → deliver. When the workgroup's
   VM is no longer the session's VM (deleted, replaced, another VM), the session moves to it and is restored from its
   newest checkpoint (§6.6) instead of failing `vm_start_failed`.
-- Device restart (HOT-25): a main session still `agent_starting`, `prompt_delivering`, `working` or `idle` in a VM
-  whose row is `stopped` (the VM
+- Device restart (HOT-25): a main session still `working` or `idle` in a VM whose row is `stopped` (the VM
   reconciliation found the instance stopped after the restart, so no agent process of it runs) becomes `suspended`
-  with the reason `device_restart` – after the VM reconciliation at the start and in every reconcile. Its next prompt,
-  or one that already waits, resumes it like any suspended session (its VM is started again, `--resume`).
+  with the reason `device_restart` (a `working` one through `idle`, the only way the hub's state machine leads to
+  `suspended`); one in `agent_starting` or `prompt_delivering` fails `device_shutdown` like an interrupted start –
+  after the VM reconciliation at the start and in every reconcile. The next prompt of a suspended one, or one that
+  already waits, resumes it like any suspended session (its VM is started again, `--resume`).
 - Task closed → all sessions `stopping` → `stopped`; directories kept 7 days, then deleted by control.
 - Failure reasons: the closed list `contracts/enums/session-failure-reasons.json` (`03-api.md` §11):
   `model_access_unavailable`, `vm_start_failed`, `guest_unreachable`, `sandbox_failed`, `agent_start_failed`,

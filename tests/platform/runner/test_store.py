@@ -792,17 +792,6 @@ def test_the_durable_wal_sync_method_of_each_system() -> None:
     assert Host().cluster == device_tools()
 
 
-class CountingTools:
-    """The real cluster helpers, counting the restarts."""
-
-    def __init__(self) -> None:
-        self.stops = 0
-
-    def stop(self, path: Path) -> None:
-        self.stops += 1
-        pg.stop_cluster(path)
-
-
 def _wal_sync_method(dsn: str) -> str:
     with psycopg.connect(dsn) as conn:
         row = conn.execute("SHOW wal_sync_method").fetchone()
@@ -811,34 +800,36 @@ def _wal_sync_method(dsn: str) -> str:
 
 
 def test_every_start_checks_and_sets_the_wal_sync_method(tmp_path: Path) -> None:
-    """A real cluster: the first start sets the value (ALTER SYSTEM, one restart), later starts only check it - so an
-    existing installation gets it at its next start. `fsync` stands in for the macOS value: valid on every system and
-    never PostgreSQL's default."""
+    """A real cluster: the first start sets the value (ALTER SYSTEM and a reload, no restart: the port and every open
+    connection stay), later starts only check it - so an existing installation gets it at its next start. `fsync`
+    stands in for the macOS value: valid on every system and never PostgreSQL's default."""
     pg_dir = tmp_path / "pg"
-    counting = CountingTools()
-    tools = ClusterTools(stop=counting.stop, wal_sync_method="fsync")
+    tools = ClusterTools(wal_sync_method="fsync")
     try:
-        dsn = start_store(pg_dir, tools)
-        assert counting.stops == 1
+        admin = pg.ensure_cluster(pg_dir)
+        with psycopg.connect(admin) as open_before:
+            dsn = start_store(pg_dir, tools)
+            assert open_before.execute("SELECT 1").fetchone() == (1,)  # not restarted
         assert _wal_sync_method(dsn) == "fsync"
         auto = (pg_dir / "data" / "postgresql.auto.conf").read_text(encoding="utf-8")
         assert "wal_sync_method = 'fsync'" in auto
         assert start_store(pg_dir, tools) == dsn
-        assert counting.stops == 1  # already set: no restart
-        admin = pg.ensure_cluster(pg_dir)
-        assert ensure_durable(pg_dir, admin, tools) == (admin, "ok")
-        assert ensure_durable(pg_dir, admin, ClusterTools(wal_sync_method=None)) == (admin, "default")
+        assert ensure_durable(admin, tools) == "ok"
+        assert ensure_durable(admin, ClusterTools(wal_sync_method=None)) == "default"
+        assert ensure_durable(admin, ClusterTools(wal_sync_method="open_sync")) == "set"
     finally:
         stop_store(pg_dir)
 
 
 def test_a_value_that_does_not_hold_is_store_not_durable(tmp_path: Path) -> None:
-    """When the restart does not happen (here: a stop that does nothing), the server still runs with its old value:
-    the daemon refuses to start instead of running without durable commits."""
+    """When the reload does not happen (here: a reload that does nothing), new backends still see the old value: the
+    daemon refuses to start instead of running without durable commits."""
     pg_dir = tmp_path / "pg"
     admin = pg.ensure_cluster(pg_dir)
     try:
-        tools = ClusterTools(ensure=lambda _p: admin, stop=lambda _p: None, wal_sync_method="fsync")
+        tools = ClusterTools(
+            ensure=lambda _p: admin, reload=lambda _admin: None, wal_sync_method="fsync", durable_wait_s=0.2
+        )
         with pytest.raises(RunnerError) as caught:
             start_store(pg_dir, tools)
         assert caught.value.code == "store_not_durable"

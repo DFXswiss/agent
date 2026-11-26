@@ -134,3 +134,17 @@ def test_a_failed_unmount_stops_the_repair() -> None:
         volume.repair(run, lambda _p: ENTRY + "\n", lambda *_a: None)
     assert (caught.value.code, caught.value.name) == ("workvm_volume", "mount")
     assert run.calls[-1] == (DISKUTIL, "unmount", "disk3s7")
+
+
+def test_in_place_names_the_volume_at_its_mount_point() -> None:
+    assert volume.in_place(Diskutil(listing(ours(MountPoint=HOME_ROOT)))) is True
+    assert volume.in_place(Diskutil(listing(ours(MountPoint="/Volumes/AgentWorkVM")))) is False
+    assert volume.in_place(Diskutil(listing())) is False
+    assert volume.in_place(Diskutil("", code=1)) is False
+
+
+def test_run_command_never_raises(tmp_path: Any) -> None:
+    done = volume.run_command(["/bin/echo", "ok"], 10.0)
+    assert (done.returncode, done.stdout) == (0, "ok\n")
+    missing = volume.run_command([str(tmp_path / "missing")], 10.0)
+    assert (missing.returncode, missing.stdout) == (1, "")

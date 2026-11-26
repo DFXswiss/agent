@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 import subprocess
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -46,7 +45,7 @@ from agent_runner.sync.http import HubClient, HubTransportError
 from agent_runner.vm import records as vm_records
 from agent_runner.vm.capacity import physical_memory_mib
 from agent_runner.vm.lima import Lima
-from agent_runner.workvm import accounts, firewall, records
+from agent_runner.workvm import accounts, firewall, records, volume
 from agent_runner.workvm.browser import Browsers, BrowserSettings
 from agent_runner.workvm.browser_live import Link, LiveStreams, spawn_process
 from agent_runner.workvm.jobs import WorkVmError
@@ -60,6 +59,7 @@ RUNS_ATTRIBUTE = "_testruns"
 BROWSERS_ATTRIBUTE = "_browsers"
 MIB = 1024 * 1024
 BOUNDARY_TTL = 60.0
+VOLUME_TTL = 60.0
 IMAGES_DIR = Path("/var/agent-workvm/images")
 BANDWIDTH_MBIT = 500
 
@@ -290,9 +290,23 @@ def default_template() -> Path:
     return Path(__file__).resolve().parents[3] / "images" / "workvm.yaml"
 
 
-def volume_mounted(path: str = accounts.HOME_ROOT) -> bool:
-    """The volume of the slot homes hangs at its mount point (HOT-25)."""
-    return os.path.ismount(path)
+class VolumeCheck:
+    """The cached check that the volume of the slot homes hangs at its mount point (`volume.in_place`, HOT-25)."""
+
+    def __init__(self, self_mode: bool, run: Any = volume.run_command, ttl: float = VOLUME_TTL) -> None:
+        self.self_mode = self_mode
+        self.run = run
+        self.ttl = ttl
+        self.checked_at = -ttl
+        self.ok = False
+
+    async def __call__(self) -> bool:
+        if self.self_mode:
+            return True
+        if time.monotonic() - self.checked_at >= self.ttl:
+            self.ok = await asyncio.to_thread(volume.in_place, self.run)
+            self.checked_at = time.monotonic()
+        return self.ok
 
 
 def workvms_for(context: Any) -> WorkVms | None:
@@ -381,7 +395,7 @@ def workvms_for(context: Any) -> WorkVms | None:
         ),
         capture=Capturer(context, shell_for),
         hub_lease=lambda: lease.held(runtime_client(context), service.env.desired),
-        volume_ok=lambda: config.workvm_slots_self or volume_mounted(),
+        volume_ok=VolumeCheck(config.workvm_slots_self),
     )
     return install(context, WorkVms(deps))
 

@@ -11,8 +11,10 @@ every work VM call fails (observed after a power cut). The fix is an `/etc/fstab
 `HOME_ROOT` (unmounted from wherever it hangs and mounted there with `diskutil mount -mountPoint`). It returns None
 when the volume does not exist. `workvm install` runs it after the volume step, so running `install` again on an
 existing device - the update step of the work VM installation (runbook `work-vms.md`) - adds the entry and mounts the
-volume back. The unprivileged daemon cannot mount anything or write `/etc/fstab`: it checks the mount point, offers no
-work VM while it is wrong, and `doctor` reports it (check `workvm_volume`: fail `not_mounted`, warn `fstab_missing`).
+volume back. The unprivileged daemon cannot mount anything or write `/etc/fstab`: it checks that the volume of that
+name hangs at the mount point (`in_place`, through `diskutil list`, which needs no root), offers no work VM while it
+does not, and `doctor` reports it (check `workvm_volume`: fail `missing`/`not_mounted`/`unreadable`, warn
+`fstab_missing` when the entry for this volume's UUID is not the only one for the mount point).
 
 macOS facts (verified = read in the man pages of macOS 27 or run on the build device; assumed = not run):
 - verified (diskutil(8), DEVICES): a device is a disk identifier, device node, mount point or UUID - not a volume
@@ -30,7 +32,8 @@ from __future__ import annotations
 
 import plistlib
 import re
-from collections.abc import Callable
+import subprocess
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from xml.parsers.expat import ExpatError
 
@@ -62,15 +65,26 @@ class Repair:
     """`ok` or `remounted`."""
 
 
-def has_entry(text: str, mountpoint: str = HOME_ROOT) -> bool:
-    """True when `text` (an fstab) has an entry for `mountpoint` (`doctor`; the UUID is not readable without the
-    volume listing)."""
-    return any(_names(line, "", mountpoint) for line in text.splitlines())
-
-
 def same_place(mountpoint: str, wanted: str = HOME_ROOT) -> bool:
     """True when `mountpoint` is `wanted`, also through the `/private` of `/var`."""
     return mountpoint in (wanted, f"/private{wanted}")
+
+
+def run_command(argv: Sequence[str], timeout: float) -> subprocess.CompletedProcess[str]:
+    """`diskutil` for the unprivileged checks (daemon, `doctor`); a failure to run is a failed command."""
+    try:
+        return subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return subprocess.CompletedProcess(list(argv), 1, "", "")
+
+
+def in_place(run: Run = run_command) -> bool:
+    """True when the volume of the slot homes exists and hangs at `HOME_ROOT` (identified by its name)."""
+    try:
+        found = find(run)
+    except RunnerError:
+        return False
+    return found is not None and same_place(found.mountpoint)
 
 
 def find(run: Run, name: str = VOLUME_NAME) -> Volume | None:

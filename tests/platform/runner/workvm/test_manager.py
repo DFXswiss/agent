@@ -1326,12 +1326,15 @@ def test_a_work_vm_whose_slot_home_is_gone_counts_as_deleted(world: World) -> No
 
 
 def test_no_work_vm_is_offered_while_the_volume_is_missing(world: World) -> None:
+    async def missing() -> bool:
+        return False
+
     async def body(vms: WorkVms) -> tuple[str | None, bool, str | None, bool]:
-        assert vms.check_volume() is True  # the default: mounted
-        vms.deps.volume_ok = lambda: False
-        missing = await vms.available(), vms.check_volume()
+        assert await vms.check_volume() is True  # the default: in place
+        vms.deps.volume_ok = missing
+        gone = await vms.available(), await vms.check_volume()
         vms.deps.settings = replace(vms.deps.settings, slots=0)
-        return (*missing, await vms.available(), vms.check_volume())
+        return (*gone, await vms.available(), await vms.check_volume())
 
     assert world.run(body) == (None, False, None, True)
     assert world.logs.count("runner.workvm volume_missing") == 1

@@ -20,7 +20,7 @@ class FakeWorkVms:
         self.calls: list[str] = []
         self.pool_wanted = asyncio.Event()
 
-    def check_volume(self) -> bool:
+    async def check_volume(self) -> bool:
         self.calls.append("check_volume")
         return True
 

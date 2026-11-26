@@ -175,7 +175,7 @@ class Deps:
     """Stores the output of a final job (`vm, identity, job_id, output_bytes`) as a log; returns its `log_ref`."""
     hub_lease: Callable[[], bool] = field(default_factory=lambda: _always)
     """The runner's lease of the tools with internet egress (`sync.lease.held`, ADR-087 section 4)."""
-    volume_ok: Callable[[], bool] = field(default_factory=lambda: _always)
+    volume_ok: Callable[[], Awaitable[bool]] = field(default_factory=lambda: _in_place)
     """The volume of the slot homes hangs at its mount point (HOT-25; always in self mode)."""
 
 
@@ -233,6 +233,10 @@ def _never(_org_id: str) -> bool:
     return False
 
 
+async def _in_place() -> bool:
+    return True
+
+
 def _always() -> bool:
     return True
 
@@ -258,14 +262,14 @@ class WorkVms:
         if self.deps.settings.slots == 0:
             return None
         image = await records.ready_image(self.deps.db)
-        if image is None or not self.deps.volume_ok() or not await self.deps.boundary_ok():
+        if image is None or not await self.deps.volume_ok() or not await self.deps.boundary_ok():
             return None
         return image
 
-    def check_volume(self) -> bool:
-        """Log once at the start of the task when the volume of the slot homes is not mounted (HOT-25): no work VM is
-        offered until it is; `doctor` names it (`workvm_volume`)."""
-        if self.deps.settings.slots == 0 or self.deps.volume_ok():
+    async def check_volume(self) -> bool:
+        """Log once at the start of the task when the volume of the slot homes does not hang at its mount point
+        (HOT-25): no work VM is offered until it does; `doctor` names it (`workvm_volume`)."""
+        if self.deps.settings.slots == 0 or await self.deps.volume_ok():
             return True
         self.deps.log("runner.workvm volume_missing")
         return False

@@ -133,9 +133,10 @@ against a closed schema and treats any other answer as `unavailable`.
   `workvm install` therefore writes `/etc/fstab` `UUID=<volume UUID> /var/agent-workvm apfs rw` and, when the volume
   hangs elsewhere, mounts it back (`diskutil mount -mountPoint`); it never adds a second volume. Running `install`
   again is the update step of an existing installation; `uninstall` removes the entry with the volume (HOT-25). The
-  daemon (unprivileged) offers no work VM while `/var/agent-workvm` is not a mount point and logs `runner.workvm
-  volume_missing` at the start; `doctor` fails `workvm_volume` `not_mounted` (warn `fstab_missing` without the
-  entry); `workvm status` prints `runner.workvm.volume name=AgentWorkVM mountpoint=<where it hangs|-> ok=yes|no`.
+  daemon (unprivileged) offers no work VM while the volume `AgentWorkVM` (found by name in `diskutil list`, checked
+  at most once a minute) does not hang at `/var/agent-workvm` and logs `runner.workvm volume_missing` at the start;
+  `doctor` fails `workvm_volume` `missing`/`not_mounted`/`unreadable` (warn `fstab_missing` while the entry for this
+  volume's UUID is not the only one for the path); `workvm status` prints `runner.workvm.volume name=AgentWorkVM mountpoint=<where it hangs|-> ok=yes|no`.
 - A slot whose home is missing has no Lima home and therefore no instance: the runner then lists no instance there
   and counts a deletion as done, so a work VM left from before the restart is marked deleted and the daemon task never
   fails on it in a loop; a slot whose `limactl list` fails is logged (`list_failed slot=<n>`) and skipped by the
