@@ -94,12 +94,55 @@ Status: Accepted (2026-11-25)
   call, no consumption. Setup-token records stay as they were ("not readable").
 - Sessions (shared subscriptions, ADR-090 §3) get only `token`, the access token – never the refresh token. A renewal
   is a new record version: every device that uses the subscription re-reads it (`credentials` hint) and provisions the
-  bound sessions anew before the old token expires, without an interruption (as for a renewed token file).
+  bound sessions anew before the old token expires (as for a renewed token file). "Without an interruption" did not
+  hold: the provider revokes the former access token with the renewal itself, not at its expiry – see §5.
 
 ### 4. Tool and overview
 `agent-platform subscriptions list` shows `expires_at`, `plan` (`subscription_type`, `rate_limit_tier`) and the
 status `relogin` (with `next`: `subscriptions login --id …`) for a record the device could not renew; `not_readable`
 also names `next`. The web overview (KOR-68) shows a record without token as "not logged in" with "Log in now".
+
+### 5. Addendum (HOT-26): a session survives the renewal of its access
+**Finding.** A regular renewal of a subscription (three hours before expiry) ended the running turn of a session on
+it within seconds: "OAuth token revoked · Please run /login", and a prompt that waited met the same fate. The runner
+provisioned the new token right after (`credential_renewed`), but the session stood still until a person wrote
+"continue". The provider revokes the former access token **at the moment of the renewal**, so every renewal hits
+every session that still holds the former token – on the measuring device and elsewhere, for the full logins of §2 as
+for the operator's token files that are replaced from outside.
+
+**Decision.** A refused access is one more cause of the existing fallback flow (ADR-081 §4, step `model_fallback`),
+not a second mechanism (05-runner §10.7):
+- **Detect.** The gateway's `usage` record with status `401` of a main session on a subscription (own or operator
+  pool) marks the session refused (`model.revocation`, daemon memory: time, provisioning stamp, access label – never a
+  token) and holds its prompts at once (`billing.pause.deferred`), so a waiting prompt does not run into the dead
+  token. A later `2xx` of the session ends the mark (Claude Code retried successfully).
+- **Continue.** Once the turn has ended (`idle`) and the credit allows it, the step renews the session's provisioning
+  by the existing rules (`model.gateways.refresh`: the renewed record or file of the same subscription; a file refused
+  outside the 60 s grace is blocked and the session moves to another usable file of the pool, ADR-052) and, as soon as
+  a valid access is there – a provisioning other than the refused one, or one that arrived at most 60 s before the
+  refusal – hands the session one fixed sentence ("The platform renewed this session's model access; the last request
+  was refused with the former access. Continue the interrupted work.", stable prompt ID per refusal and try). The
+  held prompts follow in their order. No person is needed; the session is never suspended for it.
+- **Bounded.** At most 3 continuations without a successful answer in between; no valid access within 300 s; or the
+  session ended: the refusal is given up, the error stays visible as before and the held prompts are delivered.
+- **Told.** The runner writes the audit `session.model_switched` with the new cause `renewed` (metadata only: access
+  before and after – often the same –, the model, `until: null`), only towards a hub with `model_fallback.api >= 2`;
+  the task shows the quiet line "Zugang erneuert – weiter (…)". The hub creates no notification for it.
+- **New access first, where possible.** On the device that renews (the measuring device of §2) the new access token
+  goes to the sessions first: right after the answer is stored (§2 "crash-safe order"), before the hub write, the
+  pool's entry `sub-<id>` takes the new token with the identity of the coming record version and the sessions bound to
+  it are provisioned at once (`model.gateways.hand_over`). The time in which a request can still carry the former
+  token shrinks to the time of the exchange and one provisioning.
+
+**What cannot be done.** The former token cannot stay valid until the sessions have the new one: the provider revokes
+it with the exchange, and the exchange alone yields the new token. Requests that are in flight at that moment, and
+every session on another device (it learns of the new version through the `credentials` hint and the next refresh of
+the pool, seconds later), can still be refused – the continuation above is the net for them. The same holds for a
+token file the operator replaces from outside (the runner sees the file only after the replacement) and for the
+owner's own subscription. The marks live in memory only: a daemon restarted between refusal and continuation leaves
+the session as before HOT-26 (the error is visible, the next prompt is delivered); writing them to
+`runner.model_pause` would replace the row of a quota pause of the same session and lose its `released` cause.
+Subagent sessions are not continued (their one turn ends with the error, like a used-up access ends them).
 
 ## Consequences
 - The refresh token lies, sealed, in the record at the hub (like every credential, readable only with the owner's

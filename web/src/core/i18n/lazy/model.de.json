@@ -81,6 +81,7 @@
   "switch.cause.exhausted.until": "erschöpft bis {time}",
   "switch.cause.unusable": "bisheriger Zugang nicht nutzbar",
   "switch.cause.released": "Abo wieder frei",
+  "switch.renewed": "Zugang erneuert – weiter ({access})",
   "consent": "Mit DFX-Zugang weiterarbeiten",
   "consent.always": "Immer so",
   "consent.hint": "Der DFX-Zugang wird nach Verbrauch vom Guthaben der Organization abgerechnet. Ohne Antwort geht die Aufgabe von selbst mit deinem Abo weiter, sobald es wieder frei ist.",

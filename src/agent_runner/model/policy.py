@@ -4,7 +4,8 @@ sections 1, 5 and 6).
 - `api(desired)`: the hub accepts the new items and fields of ADR-081 (`model_fallback.api >= 1`): the outbox item
   `operator_quota`, `limited` of `quota`, `wait_until`/`dfx_choice` of `session_transition`, the session failure reason
   `model_quota_exhausted` and the audit action `session.model_switched`. An older hub has no `model_fallback`; the
-  runner then sends none of them (the hub would refuse them).
+  runner then sends none of them (the hub would refuse them). `renewed_api(desired)` (`api >= 2`, HOT-26): the hub
+  also accepts the cause `renewed` of `session.model_switched` (a refused access continued on its renewal).
 - `settings(desired, session_id)`: the owner's fallback settings (`fallback.own_to_dfx`, default off;
   `fallback.operator_to_platform`, default on) and the task's consent (`model_consent`, default false) delivered with
   the session's entry of `sessions`. A missing or malformed value means the default (an older hub delivers none).
@@ -29,10 +30,19 @@ class Settings:
         return self.own_to_dfx or self.consent
 
 
-def api(desired: Mapping[str, Any] | None) -> bool:
+RENEWED_API = 2
+"""`model_fallback.api` of a hub that also accepts the cause `renewed` of `session.model_switched` (HOT-26)."""
+
+
+def api(desired: Mapping[str, Any] | None, version: int = 1) -> bool:
     found = None if desired is None else desired.get("model_fallback")
     value = found.get("api") if isinstance(found, Mapping) else None
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 1
+    return isinstance(value, int) and not isinstance(value, bool) and value >= version
+
+
+def renewed_api(desired: Mapping[str, Any] | None) -> bool:
+    """The hub accepts the cause `renewed` of `session.model_switched` (`model_fallback.api >= 2`, HOT-26)."""
+    return api(desired, RENEWED_API)
 
 
 def entry(desired: Mapping[str, Any] | None, session_id: str) -> Mapping[str, Any] | None:

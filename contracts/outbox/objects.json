@@ -2725,7 +2725,8 @@
                   "enum": [
                     "exhausted",
                     "unusable",
-                    "released"
+                    "released",
+                    "renewed"
                   ]
                 },
                 "until": {

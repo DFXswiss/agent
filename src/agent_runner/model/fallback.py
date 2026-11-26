@@ -33,8 +33,19 @@ suspended until its next prompt, which is then delivered. **Credit first**: whil
 (`billing.pause.credit_holds`) nothing is continued here. **No flapping**: a running session is never moved back;
 the next resume or start resolves anew.
 
-The sentences have a stable prompt ID per pause (`prompt_id`), so a repeated hand-over is the same prompt for the
-guest; they carry no user text.
+**Refused access** (HOT-26, `renew`; ADR-092 section 5, ADR-081 section 4 point 7): a main session whose access the
+provider refused (`401` after a renewal revoked the former token, `model.revocation`) holds its prompts from that
+record on. Once its turn has ended (`idle`) and the credit allows it, the run renews its provisioning
+(`model.gateways.refresh`: the renewed record or file of the same subscription, else another usable file of the
+operator's pool by the rules of ADR-052) and, as soon as a valid access is there (`revocation.renewed`), hands it the
+renewal sentence (`RENEWED`) - no person needs to write anything; the held prompts follow it in their order. Towards a
+hub with `model_fallback.api >= 2` the audit `session.model_switched` with the cause `renewed` (metadata only) gives
+the task its quiet line. After `revocation.MAX_TRIES` continuations without a successful answer, without a valid access
+within `revocation.WAIT_S`, or when the session ended, the refusal is given up: the error stays visible as before and
+the held prompts are delivered. The session is never suspended for it and no `runner.model_pause` row is written.
+
+The sentences have a stable prompt ID per pause (`prompt_id`; a refusal: its time), so a repeated hand-over is the same
+prompt for the guest; they carry no user text.
 """
 
 from __future__ import annotations
@@ -48,7 +59,7 @@ from agent_runner.billing import pause as credit
 from agent_runner.crypto.ids import uuid7
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestError
-from agent_runner.model import access, exhaustion, limits, operator, pauses, policy
+from agent_runner.model import access, exhaustion, gateways, limits, operator, pauses, policy, revocation
 from agent_runner.model.access import Resolved, Wait
 from agent_runner.prompts.resume import RESUMED, RETRY, desired_of, vm_running
 from agent_runner.sessions import records
@@ -75,6 +86,11 @@ SWITCHED = (
     " {time}. Continue the interrupted work."
 )
 AVAILABLE = "The model quota is available again. Continue the interrupted work."
+RENEWED = (
+    "The platform renewed this session's model access; the last request was refused with the former access."
+    " Continue the interrupted work."
+)
+RENEWED_CAUSE = "renewed"
 LOCK = "_model_fallback_lock"
 
 
@@ -281,6 +297,77 @@ async def _follow(env: SessionEnv, session_id: str, pause: pauses.Pause, outcome
         await pauses.report(conn, env, session_id, outcome.until, outcome.choice)
 
 
+async def renew(deliverer: Any, session: LocalSession) -> bool:
+    """A main session whose access the provider refused (module docstring: refused access); True while it holds its
+    prompts."""
+    env: SessionEnv = deliverer.env
+    context = env.context
+    found = revocation.revocations(context)
+    refused = found.refused[session.id]
+    tries = found.tries.get(session.id, 0)
+    if tries >= revocation.MAX_TRIES:
+        return _give_up(env, session.id, "tries")
+    if session.state == "idle" and not await credit.credit_holds(env, session):
+        await gateways.refresh(env, session)
+        stamp = access.provisions(context).stamps.get(session.id)
+        if revocation.renewed(context, session.id, refused, stamp):
+            return await _renewed(deliverer, session.id, refused, tries)
+    if env.clock() - refused.at >= revocation.WAIT_S:
+        return _give_up(env, session.id, "no_access")
+    return True
+
+
+def _give_up(env: SessionEnv, session_id: str, reason: str) -> bool:
+    revocation.settle(env.context, session_id, continued=False)
+    _line(env, f"access_renewal_given_up session_id={session_id} reason={reason}")
+    return False
+
+
+async def _renewed(deliverer: Any, session_id: str, refused: revocation.Refusal, tries: int) -> bool:
+    """Continue the refused session on its valid access: the renewal sentence (its prompt ID stable per refusal and
+    try), then the audit line; True while it must be tried again (it is no longer idle, its VM or guest cannot be
+    reached now)."""
+    env: SessionEnv = deliverer.env
+    async with deliverer.lock(session_id):
+        async with env.transaction() as conn:
+            current = await records.get(conn, session_id)
+        assert current is not None  # listed by this run; only this device ends it
+        row = await vm_running(env, current) if current.state == "idle" else None
+        if row is None:
+            return True
+        target, _key = await label_of(env, current)
+        try:
+            async with await env.client(row) as guest:
+                prompt = prompt_id(f"{session_id}:renewed:{tries}", refused.paused_at)
+                await guest.register_prompt(session_id, prompt, RENEWED)
+        except (GuestError, RunnerError) as exc:
+            _line(env, f"model_continue_failed session_id={session_id} code={exc.code}")
+            return True
+    revocation.settle(env.context, session_id, continued=True)
+    _line(env, f"model_continued session_id={session_id} from={refused.label} to={target} cause={RENEWED_CAUSE}")
+    if policy.renewed_api(env.desired):
+        detail = {
+            "from_access": access.KIND_OF[refused.label],
+            "to_access": access.KIND_OF[target],
+            "from_model": current.model_id,
+            "to_model": current.model_id,
+            "cause": RENEWED_CAUSE,
+            "until": None,
+        }
+        audit = {
+            "action": "session.model_switched",
+            "result": "ok",
+            "task_id": current.task_id,
+            "session_id": session_id,
+            "target_kind": "session",
+            "target_id": session_id,
+            "detail": detail,
+        }
+        async with env.transaction() as conn:
+            await env.outbox.enqueue(conn, "audit", audit)
+    return False
+
+
 def run_lock(context: Any) -> asyncio.Lock:
     """One run at a time per daemon: the reconcile step and the daemon task never overlap."""
     found = getattr(context, LOCK, None)
@@ -314,11 +401,15 @@ async def _run(deliverer: Any, env: SessionEnv, context: Any) -> None:
     live = {session.id for session in local}
     for session_id in [sid for sid in open_pauses if sid not in live]:
         await _end(env, session_id)
+    revocation.prune(context, live)
+    refused = revocation.revocations(context).refused
     for session in local:
         found = open_pauses.get(session.id)
         try:
             if found is not None:
                 held = await carry_on(deliverer, session, found)
+            elif session.id in refused:
+                held = await renew(deliverer, session)
             elif session.state in RUNNING:
                 held = await check(deliverer, session)
             else:

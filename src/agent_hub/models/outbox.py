@@ -13,7 +13,8 @@ handlers claimed with `BASE_KINDS`, ADR-037).
   nothing. A change derives the task again (its attention record shows `quota_wait` / `quota_choice` while its main
   session waits).
 - `audit` (an extension after the outbox area's handler): a stored `session.model_switched` notifies the task's
-  owner (`agent_hub.notifications.rules.switch_rule`, published after the commit).
+  owner (`agent_hub.notifications.rules.switch_rule`, published after the commit) - except the cause `renewed`
+  (HOT-26: a refused access continued on its renewal; the task's line is enough, nobody needs to act).
 - `usage` (an extension after the usage and billing handlers): the provider cost of a request an **org device** made
   on DFX access (`access_origin: platform`) is the weight of its session in the next booking of the device's key
   (`agent_hub.models.dfx.record_cost`; only while the device holds a live key of the session's org). Platform devices
@@ -34,6 +35,7 @@ from agent_hub.outbox.base import Handler, ItemContext, moment, session_on_devic
 from agent_hub.outbox.bodies import AuditBody, DfxKeyStateBody, OperatorQuotaBody, SessionWaitBody, UsageBody
 from agent_hub.sessions.taskstate import Actor, TaskRow, lock_task, refresh_task
 
+RENEWED = "renewed"
 UPSERT_SNAPSHOT = (
     "INSERT INTO hub.operator_quota (device_id, at, snapshot, received_at) VALUES (%s, %s, %s, %s)"
     " ON CONFLICT (device_id) DO UPDATE SET at = EXCLUDED.at, snapshot = EXCLUDED.snapshot,"
@@ -74,7 +76,7 @@ def key_cost(item: ItemContext, body: UsageBody) -> None:
 
 def switch_notice(item: ItemContext, body: AuditBody) -> None:
     """Notify the owner of the task of a model switch (module docstring)."""
-    if body.action != "session.model_switched" or body.session_id is None:
+    if body.action != "session.model_switched" or body.session_id is None or body.detail.get("cause") == RENEWED:
         return
     row = item.connection.execute("SELECT task_id FROM hub.session WHERE id = %s", (body.session_id,)).fetchone()
     task = cast(tuple[UUID], row)[0]  # the base handler checked that the session runs on this device

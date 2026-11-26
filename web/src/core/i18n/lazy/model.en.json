@@ -81,6 +81,7 @@
   "switch.cause.exhausted.until": "used up until {time}",
   "switch.cause.unusable": "former access could not be used",
   "switch.cause.released": "subscription free again",
+  "switch.renewed": "Access renewed – continuing ({access})",
   "consent": "Continue with DFX access",
   "consent.always": "Always",
   "consent.hint": "DFX access is charged by use to the organization's credit. Without an answer the task continues by itself on your subscription once it is free again.",

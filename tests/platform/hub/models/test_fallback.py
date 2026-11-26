@@ -177,6 +177,17 @@ def test_a_model_switch_is_audited_for_the_session(keys: Keys, published: Memory
     assert keys.status("audit", {**body, "detail": released}, keys.device) == ("ok", None)
     refs = keys.rows("SELECT ref FROM hub.notification WHERE kind = 'model.switched' ORDER BY created_at")
     assert refs[-1] == ("platform:subscription:",)
+    # a refused access continued on its renewal (HOT-26): audited, the task's quiet line, no notification
+    renewed = {
+        **detail,
+        "to_access": "subscription",
+        "to_model": "claude-sonnet-5-5",
+        "cause": "renewed",
+        "until": None,
+    }
+    assert keys.status("audit", {**body, "detail": renewed}, keys.device) == ("ok", None)
+    assert keys.rows("SELECT detail FROM hub.audit WHERE action = 'session.model_switched'")[-1] == (renewed,)
+    assert keys.rows("SELECT count(*) FROM hub.notification WHERE kind = 'model.switched'") == [(2,)]
     # an owner who no longer reads the workgroup is not notified; a row without a session names no task
     keys.execute(
         "UPDATE hub.wg_access SET revoked_seq = granted_seq + 100 WHERE wg_id = %s AND user_id = %s", wg, writer.id

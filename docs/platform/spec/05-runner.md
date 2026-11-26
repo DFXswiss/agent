@@ -942,7 +942,10 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   `invalid_grant` → the next version without `token` and `refresh_token`, with `relogin: "renewal_refused"` (only
   while the record still holds the refused refresh token); any other failure → again after 60 s. Rows of owners the
   device no longer measures are still written (the hub accepts the device that wrote the stored version). Setup-token
-  records are never renewed. Neither request nor answer is logged.
+  records are never renewed. Neither request nor answer is logged. The provider revokes the former access token with
+  the exchange (HOT-26, ADR-092 §5): right after the row is stored and before the write, the new token becomes the
+  pool's entry `sub-<id>` (identity of the coming version) and the sessions of this device bound to it are provisioned
+  at once (`model.gateways.hand_over`; a failure only logs `runner.renewal hand_over_failed`).
 - Platform key: `GET <openrouter>/api/v1/key` every 900 s → `spend_snapshot` → device metrics
   (`agent_runner_device_model_spend_*`), operators only.
 - Tokens are never logged, never written to disk outside the encrypted credential record (and its sealed pending
@@ -992,9 +995,25 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   work." or "The model quota is available again. Continue the interrupted work."). A subagent session is moved in
   place but never paused (`model_quota_exhausted`). A running session is never moved back; a credit pause comes
   first. Every switch writes the outbox audit `session.model_switched` `{from_access, to_access, from_model, to_model,
-  cause: exhausted|unusable|released, until}`; the access values are `subscription`, `operator` (an operator
+  cause: exhausted|unusable|released|renewed, until}`; the access values are `subscription`, `operator` (an operator
   subscription), `api_key` and `platform`. The hub tells the task's owner with the notification `model.switched`
-  (`ref` = `<from>:<to>:<until or empty>`).
+  (`ref` = `<from>:<to>:<until or empty>`), except for the cause `renewed`.
+- **Refused access** (HOT-26, ADR-092 §5, `model/revocation.py`). A gateway `usage` record with status `401` of a main
+  session on a `subscription` access (own or operator pool) marks the session refused – in the daemon's memory: time,
+  provisioning stamp, access label, never a token; log `runner.model access_refused session_id=… access=…` – and holds
+  its prompts from that record on (`billing.pause.deferred`). A `2xx` of the session ends the mark
+  (`access_answered`). The step `model_fallback` carries the mark on: while the turn runs nothing happens; once the
+  session is `idle` and its credit allows it, the run renews the provisioning (`model.gateways.refresh`: the renewed
+  record or file of the same subscription, else – a file refused after the 60 s grace is blocked – another usable file
+  of the pool) and, when a valid access is there (a stamp other than the refused one, or a provisioning at most 60 s
+  before the refusal), registers the sentence "The platform renewed this session's model access; the last request was
+  refused with the former access. Continue the interrupted work." (prompt ID stable per refusal and try; log
+  `model_continued … cause=renewed`); the held prompts follow. Towards a hub with `model_fallback.api >= 2` it writes
+  the outbox audit `session.model_switched` with `cause: renewed`, `until: null` and the session's model on both
+  sides. Given up (`access_renewal_given_up reason=tries|no_access`, the error stays visible and the prompts are
+  delivered) after 3 continuations without a successful answer or without a valid access within 300 s; the marks of
+  ended sessions are dropped. A restart of the daemon drops the marks (the session stays as it is). Subagent sessions
+  and `api_key`/`platform` sessions are not marked. No `runner.model_pause` row, no suspension.
 
 ### 10.8 Quotas of the operator's subscriptions (ADR-081 section 6)
 

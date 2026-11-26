@@ -12,7 +12,9 @@ reconcile step `model_fallback` (`model.fallback`):
 it, `resumed_at` = the pause ended (an ended pause is never continued again; a new pause of the same session replaces
 it). `held(context, session_id)`: the session's prompts wait (`billing.pause.deferred`). The set `holding(context)` is
 computed by each (serialized) run of the step and replaced as a whole; a wait recorded by a start or resume meanwhile
-(`pend`, `model.access.hold`) stays held until a run has seen its row, so a concurrent run cannot undo it.
+(`pend`, `model.access.hold`) stays held until a run has seen its row, so a concurrent run cannot undo it. A session
+whose access the provider refused (`refused`, HOT-26: kept in memory by `model.revocation`, never a row here) is held
+from the `usage` record on until the step carried the refusal on.
 
 `report(conn, env, session_id, until, choice)`: towards a hub with `model_fallback.api` the outbox item `session_wait`
 `{session_id, wait_until, dfx_choice, at}` whenever the wait of a session starts or changes, and with `wait_until:
@@ -40,6 +42,8 @@ class Holding:
     sessions: set[str] = field(default_factory=set)
     pending: set[str] = field(default_factory=set)
     reported: dict[str, tuple[float | None, bool]] = field(default_factory=dict)
+    refused: set[str] = field(default_factory=set)
+    """Sessions whose access the provider refused (`model.revocation`), held until the refusal is carried on."""
 
 
 def state_of(context: Any) -> Holding:
@@ -61,7 +65,7 @@ def held(context: Any, session_id: str) -> bool:
     if context is None:
         return False
     found = state_of(context)
-    return session_id in found.sessions or session_id in found.pending
+    return session_id in found.sessions or session_id in found.pending or session_id in found.refused
 
 
 def pend(context: Any, session_id: str) -> None:

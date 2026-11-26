@@ -1,5 +1,6 @@
 // The newest model switch of a task (ADR-081 section 5): when the platform moves a session to another model access
-// (its access was used up, could not be used or was released again), the runner writes the audit row
+// (its access was used up, could not be used or was released again) or continues a session whose access the provider
+// refused once it was renewed (`renewed`, HOT-26), the runner writes the audit row
 // `session.model_switched` with the access kinds and models before and after, the cause and the release time of the
 // used-up access – metadata only. The task view shows the newest one as a line ("Model switched: … → …"). The rows come
 // from the organization's audit filtered by the action and the task (`GET /v1/orgs/{org}/audit`, members see the rows
@@ -29,7 +30,7 @@ export interface ModelSwitch {
 /** The access kinds of a switch (`model_access` and `operator`, an operator subscription). */
 export const SWITCH_ACCESSES: readonly string[] = ['subscription', 'operator', 'api_key', 'platform'];
 /** The causes of a switch. */
-export const SWITCH_CAUSES: readonly string[] = ['exhausted', 'unusable', 'released'];
+export const SWITCH_CAUSES: readonly string[] = ['exhausted', 'unusable', 'released', 'renewed'];
 
 const text = (value: unknown): value is string => typeof value === 'string' && value !== '';
 const oneOf = (list: readonly string[], value: unknown): value is string => list.includes(value as string);

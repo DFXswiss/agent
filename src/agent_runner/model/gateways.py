@@ -36,6 +36,11 @@ A session's gateway holds the credential it was provisioned with at the start (`
   usable the gateway keeps what it holds. A file deferred by a `429` keeps its sessions. When the organization is no
   longer approved the access is withdrawn. The owner's record does not matter for a bound session (a purge of it does
   not withdraw it).
+- **Refused access** (HOT-26): every provisioning of a running session (renewal, reprovisioning) is noted for
+  `model.revocation`, so a session whose access the provider refused (`401`) is continued once it holds a valid one.
+- **Hand-over of a renewal** (`hand_over`, HOT-26, ADR-092 section 5): a renewal on this device puts the new token of
+  a shared subscription into the pool and provisions the sessions bound to it at once, before the hub has the new
+  record version.
 - **Budget refusal of new work** (`platform_budget_spent`): the organization's daily platform budget is spent; used by
   the pre-check of `subagent.request` (operation code `budget_exceeded`); new platform sessions are refused by
   `model.access` (session reason `budget_exceeded`).
@@ -54,7 +59,7 @@ from typing import Any
 from agent_runner.credentials import cache
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestError, GuestRefused
-from agent_runner.model import access, operator, provision
+from agent_runner.model import access, operator, provision, revocation
 from agent_runner.model.access import Stamp, provisions
 from agent_runner.orgs.db import session as store_session
 from agent_runner.sessions import records
@@ -217,6 +222,7 @@ async def _renew(env: SessionEnv, session: LocalSession, stamp: Stamp, body: dic
         stamps[session.id] = stamp
         if stamp.operator is not None:
             operator.delivered(env.context, session.id)
+        revocation.provisioned(env.context, session.id, env.clock())
         _line(env, f"credential_renewed session_id={session.id} access={stamp.access}")
 
 
@@ -279,6 +285,23 @@ def subscribe(context: Any) -> None:
 
     cache.subscribe(context, listener)
     found.subscribed = True
+
+
+async def hand_over(context: Any, record_id: str, version: int, token: str) -> None:
+    """A renewal of this device (`quota.renewal`, module docstring): the new token of the shared subscription
+    `sub-<record_id>` becomes the pool's entry with the identity of the record version that will hold it, and the
+    sessions bound to it are provisioned at once. Without a pool, without that entry, with a token the pool would not
+    take, or without the session area nothing happens: the pool reads the record once the hub has it."""
+    pool = operator.pool_for(context)
+    service = running_service(context)
+    name = operator.SHARED_PREFIX + record_id
+    if pool is None or service is None or name not in pool.shared or operator.parse_token(token.encode()) is None:
+        return
+    pool.shared[name] = operator.Entry((0, 0, version, 0), token, None)
+    env = service.env
+    for session in await live_sessions(env, set(service.tasks), RENEWED):
+        if pool.bindings.get(session.id) == name:
+            await refresh(env, session)
 
 
 def platform_budget_spent(context: Any, org_id: str) -> bool:
@@ -367,4 +390,5 @@ async def reprovision(env: SessionEnv, session_id: str) -> None:
             if stamp.operator is not None:
                 operator.delivered(env.context, session_id)
             reprovisions(env.context).done_at[session_id] = env.clock()
+            revocation.provisioned(env.context, session_id, env.clock())
             _line(env, f"credential_reprovisioned session_id={session_id} access={stamp.access}")

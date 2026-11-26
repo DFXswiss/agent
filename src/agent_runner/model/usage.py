@@ -32,7 +32,9 @@ For a session bound to a token file of the operator's subscriptions the record's
 (`model.operator.observed`: `401`/`403` block the file the session was provisioned from, `429` defers it; KOR-23).
 The status of every session on an access that can run out (the owner's own subscription, an operator file, the DFX
 key of an org device) is handed to `model.exhaustion.observe` (KOR-50, ADR-081 section 2: a `429` starts the check
-whether the access is used up, a `402` of the DFX key marks it, a success ends a streak).
+whether the access is used up, a `402` of the DFX key marks it, a success ends a streak). The status of a main session
+on a `subscription` access also goes to `model.revocation.observe` (HOT-26: a `401` marks the access refused and holds
+the session's prompts until the step `model_fallback` continued it; a success ends the mark).
 
 A `provider` outside the catalog allow-list (the gateway flags `provider_outside_allowlist`) also writes the audit
 `model.provider_outside_allowlist` (metadata: provider and model), a fact line and counts it in the daemon counter
@@ -56,7 +58,7 @@ from psycopg import AsyncConnection
 from agent_runner.billing import state as billing
 from agent_runner.credentials import acting
 from agent_runner.guestlink.client import JournalRecord
-from agent_runner.model import access, exhaustion, merge, operator
+from agent_runner.model import access, exhaustion, merge, operator, revocation
 from agent_runner.prompts import hub_queue
 from agent_runner.sessions.journal import MAX_COUNT, JournalRecordInvalid
 from agent_runner.sessions.records import LocalSession
@@ -167,6 +169,8 @@ async def handle(journal: Any, conn: AsyncConnection[Any], record: JournalRecord
         stamp = access.provisions(context).stamps.get(session.id) if context is not None else None
         provisioned = stamp.operator[1] if stamp is not None and stamp.operator is not None else None
         bound = await operator.observed(context, session.id, body.get("status"), provisioned)
+        label = access.OPERATOR if bound is not None else "subscription"
+        revocation.observe(journal.env, session, body.get("status"), stamp, label)
     key = exhaustion.access_key(journal.env, session, None if bound is None else bound[0])
     exhaustion.observe(journal.env, body.get("status"), key, True if bound is None else bound[1])
     provider = item["last_provider"]

@@ -108,11 +108,20 @@ Reconcile step `model_fallback` (after `billing`, on every desired state and eve
    confirmation (§2).
 6. **Credit first**: a session paused for credit (ADR-062 §6) and for model quota keeps both records; it is resumed
    only when neither holds, and its wait shows the credit reason first.
+7. **Refused access** (HOT-26, ADR-092 §5): a main session whose subscription access the provider refused (`401`, a
+   renewal revoked the former token) holds its prompts; after its turn ended it is continued by itself on the renewed
+   access of the same subscription or on another usable file of the pool (point 1), with the renewal sentence (§5).
+   At most 3 tries without a successful answer, at most 300 s without a valid access; then the error stays visible.
 
 ### 5. The human and the session are told
 - **Session**: one sentence as the continuation prompt, `"The platform switched this session's model access from
   <from> to <to> because <from> is used up until <time>. Continue the interrupted work."` or, without a change,
-  `"The model quota is available again. Continue the interrupted work."` (no user text; stable prompt ID per pause).
+  `"The model quota is available again. Continue the interrupted work."` (no user text; stable prompt ID per pause);
+  after a refused access (§4 point 7) `"The platform renewed this session's model access; the last request was
+  refused with the former access. Continue the interrupted work."`.
+- **Refused access**: the continuation writes `session.model_switched` with the cause `renewed` (towards a hub with
+  `model_fallback.api >= 2`); the task view shows the quiet line "Zugang erneuert – weiter (…)", without a
+  notification.
 - **Human**: every switch writes the audit row `session.model_switched` (from/to access and model, cause, until;
   metadata only) and an in-app notification to the task's owner ("Modell gewechselt: … → …"); the task view shows the
   line. A wait is the attention record of the task (ADR-076): `working/quota_wait` "Wartet auf Modellkontingent –
@@ -136,7 +145,8 @@ Reconcile step `model_fallback` (after `billing`, on every desired state and eve
   a summary (`usable`, `exhausted`, `next_release`). "Not readable" is shown honestly with the last observed limit
   time. The web shows it in the organization settings ("Modellzugang und Kontingente") and as a counter in the
   situation view; the CLI has `agent-platform quotas --org ORG` (E-04, `agent-parity.md`).
-- The runner sends the new fields and items only to a hub whose device state carries `model_fallback: {api: 1}`.
+- The runner sends the new fields and items only to a hub whose device state carries `model_fallback: {api: 1}`;
+  the cause `renewed` of `session.model_switched` (§4 point 7) only with `api: 2` or later (HOT-26).
 
 ### 7. DFX model access on own hardware (idea 46 case 3)
 Two variants were weighed:
