@@ -276,20 +276,23 @@ The home of an organization shows where people are needed, across all workgroups
   KOR-50, [ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md) §6).
 - **My subscriptions** (KOR-68, [ADR-091](../adr/091-subscriptions-at-a-glance.md), rule E-30): below the counters a
   card with every subscription of the user, measured centrally – per provider a collapsible line with the time to
-  the reset, a bar and the used share of the week of its most-used account; opened, the 5-hour window, the week and
-  the week per model at the highest use of the accounts, every account with its own bar and the age of its reading,
-  and the age of the provider's newest read; amber from 70 % used, red from 90 %, a reading older than 60 minutes
-  marked old. Data: `GET /v1/me/subscriptions` and every record opened in the browser (name, note, address, logged in
-  or not, use; ADR-090), for the platform role `operator` also the token-file subscriptions of `GET
+  the reset, a bar and the used share of the week as the total of all its accounts, never its fullest account (named
+  as such: "all 9", with one account "1 account"); opened, the 5-hour window, the week and the week per model as
+  totals, every account with its own bar and the age of its reading, and the age of the provider's newest read. A
+  total counts the accounts that have a reading of that window: the used share is their mean, every account weighted
+  equally (an account without the window does not count), the time the one to the next reset among them; without a
+  week the headline is the fullest total window (ADR-091 §3). Amber from 70 % used, red from 90 %, a reading older
+  than 60 minutes marked old. Data: `GET /v1/me/subscriptions` and every record opened in the browser (name, note,
+  address, logged in or not, use; ADR-090), for the platform role `operator` also the token-file subscriptions of `GET
   /v1/orgs/{org}/quotas` of the granted organizations (an organization whose answer fails is left out; a token file
   named like an own record, ignoring case, is not listed again – the record's row stays, with the file's reading when it
   has none); refreshed every minute. Every account names the source of its reading (device or token file); a closed
-  provider line whose headline reading is older than 60 minutes is marked old. Without any subscription the card leads
-  to "Add subscription". The card links the page `/subscriptions`: the same provider lines with "detailed" (opens
-  all; the user's own choices come back when it is switched off) and "sort by used", and a table with provider,
-  account, name, status (logged in, not logged in with "Log in now", not readable, cannot be opened), note, use,
-  listed (record or token file), plan, used and reset per window, measuring device, checked (time of the reading) and
-  changed (time of the record). The card, the page and their texts load lazily. The settings link the page.
+  provider line one of whose counted headline readings is older than 60 minutes is marked old. Without any subscription
+  the card leads to "Add subscription". The card links the page `/subscriptions`: the same provider lines with
+  "detailed" (opens all; the user's own choices come back when it is switched off) and "sort by used" (providers by
+  their headline total), and a table with provider, account, name, status (logged in, not logged in with "Log in now",
+  not readable, cannot be opened), note, use, listed (record or token file), plan, used and reset per window, measuring
+  device, checked (time of the reading) and changed (time of the record). The card, the page and their texts load lazily. The settings link the page.
 - **Groups** in this order: "Needs your decision" (`needs_decision`, longest waiting first), "Stuck" (`blocked`),
   "Running" (`working`), "Recently finished" (`done`, last 7 days, with the link to the default workgroup's task
   list); the last three newest first. Each group is a windowed list paged by the hub (50 per page; at most 50 entries

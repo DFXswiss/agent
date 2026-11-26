@@ -196,21 +196,25 @@ describe('the card of the home page', () => {
     expect(screen.queryByTestId('subscriptions.card')).toBeNull();
   });
 
-  it('shows the provider row with the week of the most-used account and opens it', async () => {
+  it('shows the provider row with the week as the total of all accounts and opens it', async () => {
     const t = await fullWorld();
     mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/');
     const provider = await screen.findByTestId('subscriptions.provider');
     expect(provider).toHaveAttribute('data-provider', 'claude');
     expect(within(provider).getByTestId('subscriptions.provider.summary')).toHaveTextContent('Claude');
-    expect(within(provider).getByTestId('subscriptions.provider.used')).toHaveTextContent('95%');
+    // seven records and two token files: the line stands for all of them
+    expect(within(provider).getByTestId('subscriptions.provider.total')).toHaveTextContent('all 9');
+    // the week of the three accounts that measured it: (95 + 50 + 10) / 3, the next reset of them
+    expect(within(provider).getByTestId('subscriptions.provider.used')).toHaveTextContent('51.7%');
     expect(within(provider).getByTestId('subscriptions.provider.reset')).toHaveTextContent('<1 min');
-    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('data-level', 'low');
+    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('data-level', 'ok');
+    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-label', 'Claude – all 9');
     expect(screen.queryByTestId('subscriptions.provider.details')).toBeNull();
     toggle(provider, true);
     const details = await screen.findByTestId('subscriptions.provider.details');
-    expect(within(details).getByTestId('subscriptions.window.five_hour')).toHaveTextContent('5hdue72%');
-    expect(within(details).getByTestId('subscriptions.window.five_hour.bar')).toHaveAttribute('data-level', 'warn');
-    expect(within(details).getByTestId('subscriptions.window.seven_day')).toHaveTextContent('Week<1 min95%');
+    expect(within(details).getByTestId('subscriptions.window.five_hour')).toHaveTextContent('5hdue46%');
+    expect(within(details).getByTestId('subscriptions.window.five_hour.bar')).toHaveAttribute('data-level', 'ok');
+    expect(within(details).getByTestId('subscriptions.window.seven_day')).toHaveTextContent('Week<1 min51.7%');
     expect(within(details).getByTestId('subscriptions.window.weekly:opus')).toHaveTextContent('Week opus75%');
     expect(within(details).getByTestId('subscriptions.window.fullest')).toHaveTextContent('fullest window3 h 0 min40%');
     expect(within(details).getByTestId('subscriptions.provider.recorded')).toHaveTextContent('measured 5 min ago');
@@ -239,7 +243,7 @@ describe('the review of KOR-68', () => {
     t.client.on(LIST, () => ({
       subscriptions: [
         item(1, { reading: measured([win('seven_day', 130, NOW + 3600_000)], { fetched_at: OLD }) }),
-        item(2, { reading: measured([win('seven_day', 20, null)], { device_id: null }) }),
+        item(2, { reading: measured([win('seven_day', 90, null)], { device_id: null }) }),
       ],
     }));
     await serveRecord(t, 1, { ...SUBSCRIPTION, name: 'One' });
@@ -247,7 +251,9 @@ describe('the review of KOR-68', () => {
     await operator(t, [operatorSub('file', 10, FRESH)]);
     mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/');
     const provider = await screen.findByTestId('subscriptions.provider');
+    // the total counts an old reading: the line is marked old; (130 + 90) / 2 = 110 % is capped
     expect(within(provider).getByTestId('subscriptions.provider.old')).toHaveTextContent('old (2 h ago)');
+    expect(within(provider).getByTestId('subscriptions.provider.used')).toHaveTextContent('110%');
     expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-valuenow', '100');
     toggle(provider, true);
     const ages = (await screen.findAllByTestId('subscriptions.account.age')).map((found) => found.textContent);

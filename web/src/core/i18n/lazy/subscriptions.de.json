@@ -11,6 +11,8 @@
   "detailed": "ausführlich",
   "sort": "nach Verbrauch sortieren",
   "accounts": "Konten",
+  "total.one": "1 Konto",
+  "total.many": "alle {n}",
   "own": "eigene Sessions",
   "fullest": "höchstes Fenster",
   "status.logged_in": "angemeldet",

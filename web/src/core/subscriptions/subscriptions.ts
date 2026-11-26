@@ -14,8 +14,11 @@
 //   the file's reading when the record has none.
 //   The hub gives only their fullest window.
 // - `providerGroups` groups the rows by provider (`PROVIDERS`; an unknown provider ID shows itself, so a further
-//   provider needs no change here): the headline is the week of the most-used account (else its fullest window), the
-//   details the 5-hour window, the week and the week per model at the highest use of the accounts, then the accounts.
+//   provider needs no change here) and shows the total of all its accounts, never the fullest account (`totalWindows`,
+//   ADR-091 section 3): each window (5 hours, week, week per model, fullest) counts the accounts that measured it – the
+//   used share is their mean, every account weighted equally (an account without that window does not count), the
+//   reset the next one of them. The headline is the total of the week (else the fullest total window); the details are
+//   the total windows, then every account with its own bar. "sort by used" orders the providers by that headline.
 //
 // Percentages are the used share as measured; the bars are coloured by what is left (from 70 % used amber = 30 %
 // left, from 90 % red = 10 % left). Nothing missing is shown as 0 %. The page is the owner's own: nobody else reads it.
@@ -107,7 +110,7 @@ function quotaWindow(value: unknown): QuotaWindow | null {
 const windowRank = (window: string): number => (window === 'five_hour' ? 0 : window === 'seven_day' ? 1 : 2);
 
 /** Windows in the order 5 hours, week, week per model (by model). */
-export function ordered(windows: readonly QuotaWindow[]): QuotaWindow[] {
+export function ordered<T extends QuotaWindow>(windows: readonly T[]): T[] {
   return [...windows].sort(
     (a, b) => windowRank(a.window) - windowRank(b.window) || Number(a.window > b.window) - Number(a.window < b.window),
   );
@@ -322,9 +325,8 @@ export async function loadSubscriptions(context: LoadContext): Promise<Subscript
 
 // --- providers ---
 
-/** The headline window of one row: its week, else its fullest window. */
-export function headlineOf(row: SubscriptionRow): QuotaWindow | null {
-  const windows = row.reading?.windows ?? [];
+/** The headline of a list of windows: the week, else the fullest window. */
+function headlineIn<T extends QuotaWindow>(windows: readonly T[]): T | null {
   return (
     windows.find((window) => window.window === 'seven_day') ??
     [...windows].sort((a, b) => b.usedPercent - a.usedPercent)[0] ??
@@ -332,43 +334,79 @@ export function headlineOf(row: SubscriptionRow): QuotaWindow | null {
   );
 }
 
+/** The headline window of one row: its week, else its fullest window. */
+export const headlineOf = (row: SubscriptionRow): QuotaWindow | null => headlineIn(row.reading?.windows ?? []);
+
+/** One window as the total of the accounts that measured it. */
+export interface TotalWindow extends QuotaWindow {
+  /** How many accounts measured this window (at least 1). */
+  readonly accounts: number;
+  /** Unix ms of the oldest reading among them. */
+  readonly measuredAt: number;
+}
+
+/** Each window as the total of the accounts that measured it (module comment), ordered: the used share is their
+ *  mean, every account weighted equally – an account without the window does not count –, the reset the next one of
+ *  them (null when none of them knows it). Nothing measured gives no window. */
+export function totalWindows(rows: readonly SubscriptionRow[]): TotalWindow[] {
+  const sums = new Map<string, { used: number; accounts: number; resetsAt: number | null; measuredAt: number }>();
+  for (const row of rows) {
+    if (row.reading === null) continue;
+    const seen = new Set<string>();
+    for (const window of row.reading.windows) {
+      // one value per account and window: a repeated window of the same reading does not weigh twice
+      if (seen.has(window.window)) continue;
+      seen.add(window.window);
+      const known = sums.get(window.window);
+      const resets = [known?.resetsAt ?? null, window.resetsAt].filter((at) => at !== null);
+      sums.set(window.window, {
+        used: (known?.used ?? 0) + window.usedPercent,
+        accounts: (known?.accounts ?? 0) + 1,
+        resetsAt: resets.length === 0 ? null : Math.min(...resets),
+        measuredAt: Math.min(known?.measuredAt ?? Infinity, row.reading.fetchedAt),
+      });
+    }
+  }
+  return ordered(
+    [...sums.entries()].map(([window, sum]) => ({
+      window,
+      usedPercent: sum.used / sum.accounts,
+      resetsAt: sum.resetsAt,
+      accounts: sum.accounts,
+      measuredAt: sum.measuredAt,
+    })),
+  );
+}
+
 export interface ProviderGroup {
   readonly provider: string;
   readonly name: string;
-  /** The headline of the most-used account; null when nothing is measured. */
-  readonly headline: QuotaWindow | null;
-  /** Unix ms of the reading the headline comes from, null without a headline. */
+  /** The total of the week of all accounts (else the fullest total window); null when nothing is measured. */
+  readonly headline: TotalWindow | null;
+  /** Unix ms of the oldest reading the headline counts, null without a headline. */
   readonly headlineAt: number | null;
-  /** Each window at the highest use of the accounts, ordered. */
-  readonly windows: readonly QuotaWindow[];
+  /** Each window as the total of the accounts that measured it, ordered. */
+  readonly windows: readonly TotalWindow[];
   readonly rows: readonly SubscriptionRow[];
   /** Unix ms of the newest read of any account, null when none was read. */
   readonly newest: number | null;
 }
 
-/** The rows grouped by provider; providers by ID, or with `sortByUsed` by headline use (descending, unknown last). */
+/** The rows grouped by provider with their totals; providers by ID, or with `sortByUsed` by the used share of the
+ *  headline total (descending, unknown last). */
 export function providerGroups(rows: readonly SubscriptionRow[], sortByUsed = false): ProviderGroup[] {
   const groups = new Map<string, SubscriptionRow[]>();
   for (const row of rows) groups.set(row.provider, [...(groups.get(row.provider) ?? []), row]);
   const made = [...groups.entries()].map(([provider, members]): ProviderGroup => {
-    const highest = new Map<string, QuotaWindow>();
-    for (const window of members.flatMap((row) => row.reading?.windows ?? [])) {
-      const known = highest.get(window.window);
-      if (known === undefined || known.usedPercent < window.usedPercent) highest.set(window.window, window);
-    }
-    const heads = members
-      .flatMap((row) => {
-        const window = headlineOf(row);
-        return window === null ? [] : [{ window, at: row.reading!.fetchedAt }];
-      })
-      .sort((a, b) => b.window.usedPercent - a.window.usedPercent);
+    const windows = totalWindows(members);
+    const headline = headlineIn(windows);
     const reads = members.flatMap((row) => (row.reading === null ? [] : [row.reading.fetchedAt]));
     return {
       provider,
       name: providerName(provider),
-      headline: heads[0]?.window ?? null,
-      headlineAt: heads[0]?.at ?? null,
-      windows: ordered([...highest.values()]),
+      headline,
+      headlineAt: headline?.measuredAt ?? null,
+      windows,
       rows: members,
       newest: reads.length === 0 ? null : Math.max(...reads),
     };
