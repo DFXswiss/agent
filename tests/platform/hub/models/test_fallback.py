@@ -186,7 +186,8 @@ def test_a_model_switch_is_audited_for_the_session(keys: Keys, published: Memory
         "until": None,
     }
     assert keys.status("audit", {**body, "detail": renewed}, keys.device) == ("ok", None)
-    assert keys.rows("SELECT detail FROM hub.audit WHERE action = 'session.model_switched'")[-1] == (renewed,)
+    stored = "SELECT detail FROM hub.audit WHERE action = 'session.model_switched' AND detail->>'cause' = 'renewed'"
+    assert keys.rows(stored) == [(renewed,)]
     assert keys.rows("SELECT count(*) FROM hub.notification WHERE kind = 'model.switched'") == [(2,)]
     # an owner who no longer reads the workgroup is not notified; a row without a session names no task
     keys.execute(
