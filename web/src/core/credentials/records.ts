@@ -96,7 +96,6 @@ export const isMailboxBody = (value: unknown): value is MailboxBody =>
   isRecord(value) &&
   // name, purpose and release of KOR-74 are checked in full by `core/credentials/mailboxes.ts` (ADR-099 section 2)
   Object.keys(value).every((key) => MAILBOX_KEYS.includes(key)) &&
-  MAILBOX_KEYS.slice(0, 5).every((key) => key in value) &&
   typeof value.imap_host === 'string' &&
   HOST_RE.test(value.imap_host) &&
   Number.isSafeInteger(value.imap_port) &&

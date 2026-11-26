@@ -1123,7 +1123,9 @@ dialog of KOR-57 stage b adds its texts in both languages (the catalogs stay in 
 code loads lazily. Raised to 224 KiB by KOR-56 (ADR-096): every client verifies support releases, support authors
 and wraps to support persons in the membership and platform logs at sign-in, and the background jobs offer the support
 slots in catch-up and rotate released workgroups after a person left support – about 2.6 KiB gzip in the first load
-together with the packages merged at the same time; the support area, the release dialog and their texts load lazily. The guard runs in every package's gates (`npm run
+together with the packages merged at the same time; the support area, the release dialog and their texts load lazily.
+Raised to 225 KiB by KOR-74 (ADR-099): the settings entry "Mailboxes" and the mailbox fields of the credential
+reader (about 0.2 KiB gzip); the section's view, its core module and its texts (area `mailbox`) load lazily. The guard runs in every package's gates (`npm run
 build:check`, the build tests and the E2E budget test), so growth of the first load is seen deterministically where it
 is caused, not later as a narrow timing failure. It is raised only together with a reason in this section. The first
 load is three scripts: the framework, the app modules imported statically from the entry (chunk group `$initial`) and

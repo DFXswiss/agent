@@ -11,8 +11,8 @@ const MailboxesView = lazy(() => import('./MailboxesView'));
 export function LazyMailboxesSection() {
   const { t } = useI18n();
   return (
-    <ChunkBoundary fallback={<p data-testid="mailboxes.unavailable">{t('mailboxes.unavailable')}</p>}>
-      <Suspense fallback={<p data-testid="mailboxes.loading">{t('mailboxes.loading')}</p>}>
+    <ChunkBoundary fallback={<p data-testid="mailboxes.unavailable">{t('app.screen-unavailable.title')}</p>}>
+      <Suspense fallback={<p data-testid="mailboxes.loading">{t('app.loading')}</p>}>
         <MailboxesView />
       </Suspense>
     </ChunkBoundary>
