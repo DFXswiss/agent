@@ -814,7 +814,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   (Oberfläche und Werkzeug können dasselbe) und [E-27](#e-27) (ein KI-Agent kann alles). Eine Sitzung führt selbst
   nichts aus, alles läuft über Plattform-Operationen ([§10 Punkt 3](#k-10-b3)). Der delegierte Hauptorchestrator ist
   [Idee 34](#k-idee-34).
-- **Umsetzung:** offen – Bestand, Zielbild und Paketplan in KOR-72.
+- **Umsetzung:** offen – Zielbild, Wahl und Abbaupfad [ADR-098](adr/098-working-modes.md) (KOR-72); gebaut wird in
+  den dort in §9 genannten Paketen.
 
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
@@ -945,4 +946,5 @@ Stand 2026-11-25. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [A11](#a-11) Lesen über Workgroups | Eine Session liest nur in ihrer eigenen Workgroup, andere sieht sie nur namentlich | KOR-45 |
 | [A13](#a-13) Default-Workgroup | Das Schreibrecht in der Default-Workgroup lässt sich nicht herabsetzen | KOR-55 |
 | [A18](#a-18) Blockierter Versuch | Ablehnungen durch den Kernel werden nicht je Session gezählt | KOR-60 |
+| [E-32](#e-32) Arbeitsweisen | Werkzeug `agent`, alter Hub und die Werkzeuge, mit denen die Plattform gebaut wird, laufen lokal; es gibt keine wählbare Arbeitsweise | Pakete nach [ADR-098](adr/098-working-modes.md) §9 |
 | Ideen 27–47, §16 | Stand je Idee in [spec/01-requirements.md](spec/01-requirements.md) Block R-16 | dort genannt |
