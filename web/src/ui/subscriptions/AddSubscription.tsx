@@ -65,7 +65,7 @@ export function addInput(
     mode,
     create,
     ...(mode === 'automatic' && email.trim() !== '' && { email }),
-    ...(mode === 'automatic' && account !== undefined && { account }),
+    ...(account !== undefined && { account }),
   };
 }
 

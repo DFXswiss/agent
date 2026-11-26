@@ -71,8 +71,10 @@ export function SubscriptionMailbox({
     setCheck(null);
     try {
       const found = await subscriptionDevices(app.tasks);
-      if (found.preselected === null || !found.parallel) return setFailure('no_device_available');
-      setCheck(await startCheck(app.tasks, found.preselected, 'mailbox', id));
+      // `parallel` names a preselected device that reads the subscription's own mailbox
+      const device = found.parallel ? found.preselected : null;
+      if (device === null) return setFailure('no_device_available');
+      setCheck(await startCheck(app.tasks, device, 'mailbox', id));
     } catch (error) {
       setFailure(requestErrorCode(error));
     }
@@ -84,7 +86,7 @@ export function SubscriptionMailbox({
       <button
         type="button"
         className={PRIMARY}
-        disabled={mailbox === null || mailbox === undefined}
+        disabled={!mailbox}
         onClick={() => void write(mailbox as Mailbox)}
         data-testid="submailbox.save"
       >
