@@ -169,3 +169,114 @@ No VM with a running session is ever switched; nothing is deleted before the new
   completely or the session ends (visible as `workspace_incomplete`).
 - E2E-69 (T1): a VM on an old golden with two paused sessions whose files changed is switched; both continue on the
   new VM with their files.
+
+## Addendum HOT-24 (2026-11-26): nothing to save, never savable, no loop
+
+### Finding
+After release 34 three workgroup VMs had stood still on goldens of 2026-11-23 and 2026-11-24 since KOR-70, each held
+by `checkpoint_missing`. Every export for their sessions ended `checkpoint_dropped … export_refused error=not_found`.
+Checked in the code:
+
+- The route `POST /v1/sessions/{id}/context/export` came with KOR-33 (`69173353b`). The guest version 0.2.0 came with
+  `db40d8bc8`, which does not contain that commit: 0.2.0 exists with and without the route. A guest without the
+  route answers like for an unknown session: `http.server` turns an unknown path into `404` and the guest's
+  `send_error` names it `not_found` (`agent_guest.routing`); the export route itself answers `not_found` for an
+  unknown session.
+- `Checkpointer._drop` wrote only `checkpoint_state = 'dropped'` and a log line; `store.mark_vm_due` made the session
+  due again at every `flush_vm`; `checkpoint_holds` judged `dropped` as `checkpoint_missing`, which a fresh checkpoint
+  is supposed to end (`REFRESHABLE`).
+- `GoldenSwitch._refreshes` counted the starts for fresh checkpoints in memory only: after every runner restart (every
+  release) three more starts and stops of each such VM, each ending `checkpoint_dropped`, `vm_flushed`.
+- `VmManager._from_stopped` restarts a held stopped VM for a new session: a new task of such a workgroup ran on the
+  old guest.
+- A session that never completed a turn has nothing to save (the guest refuses its export `state_conflict`, the
+  runner refuses its archive `context_incomplete`), but it held its VM like any other.
+- A moved session without any checkpoint (`prompts.resume` on another VM, `contexts.restore.amend`) takes the
+  existing path of a session without checkpoint: `context_missing`, a fresh conversation told to read the task's
+  messages, audited `session.context_fallback`. That path works for these sessions unchanged.
+
+### Decision
+1. **Nothing to save holds nothing.** A paused main session holds its VM only when it has *worked*: some prompt was
+   accepted for it on this device (`runner.prompt_delivery` in state `accepted`; `prompt_accepted` is what makes a
+   session `working`, the guest accepts only prompts the runner registered, initial prompts included, and the rows are
+   never deleted - after a store wipe `adopt_delivered` restores them -, so this holds for sessions from before this
+   addendum too). A request that ends because the guest refuses `state_conflict` or because the archive is
+   `context_incomplete`, for a session that never had a checkpoint here (no archive hash and no cached object of it),
+   is stored as `checkpoint_state = 'nothing'` and holds nothing either while no new request is due. Such sessions
+   move with the VM (`sessions`); their next prompt starts them on the new VM by the existing rule for a session
+   without checkpoint (`contexts.restore`: `context_missing`, a fresh conversation that reads the task's messages,
+   audited). A due checkpoint of a session that never worked keeps no stopped VM from being replaced (`vm_pending`).
+2. **Never savable is remembered.** An export refused `not_found` or `size_exceeded` ends the request
+   `checkpoint_state = 'impossible'` with the reason (`impossible_reason` `export_refused:<error>`), the number of
+   accepted prompts at that moment (`impossible_turns`) and the VM (`impossible_vm_id`; migration
+   `0037_checkpoint_impossible`); the judgement is `checkpoint_impossible` while the session is on that VM - after a
+   move its new guest may well export it, so there the mark no longer counts (independent review). Both refusals stay as long as the guest stays: `not_found` from the running guest of the
+   session's own VM means the guest does not know the session or has no export route (it keeps its sessions in its
+   state database), and a transcript over its limit only grows. *Why not the guest version:* 0.2.0 exists with and
+   without the route; a version rule would be wrong in one direction or the other. The guest's own answer for this
+   session is the evidence. *Not* impossible (design review): the guest's `unavailable` (a passing fault, now
+   postponed like an unreachable guest), attempts that ran out (unreachable guest, missing epoch key: passing causes),
+   other refusals and refused archives - they stay `dropped` (`checkpoint_missing`); the bounded, persisted refreshes
+   of point 3 keep them from looping. This narrows the package's example "aufgebrauchte Versuche" on purpose: a
+   passing fault must not freeze the last turn of a session that worked.
+3. **No loop.**
+   - `mark_due`, `mark_periodic`, `mark_vm_due` (so `flush_vm`) and therefore `due_on_vm` leave out a session whose
+     state is `impossible` while it has no more accepted prompts than `impossible_turns` and is still on that VM: once
+     it works again or moved, its next pause makes it due again, and a successful checkpoint replaces `impossible`.
+   - A VM with a `checkpoint_impossible` hold is neither started for fresh checkpoints nor stopped for a switch: a
+     fresh checkpoint cannot end that hold. Only a stopped VM whose holds are all `checkpoint_due`/`checkpoint_missing`
+     is started for them.
+   - The counters of the switch survive restarts: `runner.golden_switch_attempt (vm_id, kind refresh|failure, count,
+     reason, next_at)` and the requests by hand taken over, `runner.golden_switch_request (vm_id, requested_at)`, so
+     a desired state after a restart is no new request; a request without a time (a hub before this addendum) is
+     stored once and never new again while it is listed. A start without a free slot counts no attempt (it was not
+     tried); the refresh attempts start again when a request is new or newer, or when the VM ran for its sessions
+     (new work may have changed what is due).
+4. **The VM stays unless a member asks, and a request covers only what the member saw.** Without a request a VM held
+   by `checkpoint_impossible` stays as it is (KOR-70 goal 2), and `_from_stopped` restarts it for a new session as
+   before (the package excludes changes to the choice of a VM). A request by hand (`vm_switch`, command and button)
+   covers the `checkpoint_impossible` holds the device had *reported* to a hub of `vm_upgrade_version` 2 before the
+   time of the request: the hub sends that time (`vm_switch_at`, the newest `POST .../switch`, which now sets
+   `switch_requested_at` to its own time instead of keeping the first), the runner compares it with the time it
+   first reported the hold to such a hub (`runner.golden_switch_hold.reported_at`, set only for the holds the status
+   listed). Such a hub gets up to 64 holds (`vm_upgrade.holds`, before 16 - the incident's VM had 30 such sessions),
+   those a request does not cover yet first, so a VM with even more converges with further requests. A session that
+   becomes impossible after the request (e.g. a new task that ran on the old guest meanwhile), or one never listed,
+   holds the VM until a member asks again - the confirmation always named the sessions it moves (design and
+   independent review). The hub's and the device's clocks differ by the usual skew; a hold reported in the seconds
+   around a click may need one more request. All other
+   holds still apply: a working session or a child is never moved; due or missing checkpoints are refreshed first.
+   The covered sessions continue without the state of the old VM: from the newest checkpoint the device has of them
+   or of their task, else as a fresh conversation that reads the task's messages - the existing restore rules.
+   A request covers nothing with a hub below `vm_upgrade_version` 2: such a hub cannot show the hold and its
+   consequence before the member confirms.
+5. **Visible.** The hold reason `checkpoint_impossible` (`session_id`, `since`) carries the optional `checkpoint_at`:
+   the time of the checkpoint the session would continue from (the newest cached one of the session, else of its
+   task; absent: it starts fresh), answered by the contexts area through the new optional retire hook
+   `fallbacks(context, row, session_ids)`. Compatibility: the hub's desired state names `vm_upgrade_version: 2`
+   (always); a runner sends the new reason and field only to such a hub and reports `checkpoint_missing` without
+   `checkpoint_at` to an older one, which refuses unknown values. The web shows the hold in German and English
+   (what is missing, that the VM stays, what a switch means), and the confirmation of "Switch now" lists the sessions
+   that continue without the old VM's state, with their checkpoint time or "fresh". The CLI preview prints the same
+   status (`upgrade.holds[].checkpoint_at`).
+6. **Tests** (goal 4): units for the judgement with the new outcomes, the classification of export refusals, no
+   renewed due state (`mark_due`, `mark_periodic`, `mark_vm_due`), the persisted counters across a new
+   `GoldenSwitch` (a runner restart); integration with the runner's PostgreSQL: a stopped VM on an old golden with a
+   never used paused session switches in the next pass and the session resumes on the new VM without checkpoint; a
+   VM with a never savable session stays, is not started after a restart, and a request by hand moves it; the hub's
+   `vm_switch_at` and `vm_upgrade_version`; web: the hold text and the confirmation.
+
+### Consequences
+- The VM with only a session that never worked moves in the first pass after the update.
+- The VMs whose sessions worked but whose guest has no export route are started at most `MAX_REFRESHES` times once
+  more (their `dropped` rows from before cannot tell why they were dropped); the first refused export makes each
+  session `impossible`, and from then on the VM is neither started nor stopped for the switch, also after restarts.
+  It stays on its golden, visibly, until a member switches it by hand.
+- A session that is moved by hand loses what its old VM held since its last saved checkpoint (or everything when
+  there is none); the confirmation says so before.
+- Remaining risks: (a) a new task of a workgroup whose stopped VM is held by `checkpoint_impossible` still starts on
+  that VM and its old guest (the package excludes changes to the choice of a VM, `_choose`; the hold is visible and a
+  switch by hand ends it); its work cannot be checkpointed there either and becomes `checkpoint_impossible` itself.
+  (b) A guest fault that the guest reports as `state_conflict` (no Claude session ID recorded, unreadable transcript
+  directory) for a session that never had a checkpoint counts as `nothing` - the package's rule; such a session then
+  continues fresh after a switch, like one whose first turn never completed.

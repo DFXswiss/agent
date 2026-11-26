@@ -255,7 +255,10 @@ usage deltas of a session merged over 10 s before they become one outbox item `u
 when each was handed over, accepted and its turn ended, no text, ADR-088 §1; KOR-70: `golden_switch` – a workgroup VM
 replaced by one of a newer golden while sessions on it were paused, `golden_switch_hold` – since when a cause holds
 an outdated VM, and the column `context_session.checkpoint_state` – what the newest checkpoint request ended with,
-ADR-093) and added columns are listed in
+ADR-093; HOT-24: `golden_switch_attempt` – the switch's starts for fresh checkpoints and failed attempts,
+`golden_switch_request` – the switch requests it took over, both kept across restarts, and the columns
+`context_session.impossible_reason`/`impossible_turns` – a session that can never be checkpointed on its VM, ADR-093
+addendum HOT-24) and added columns are listed in
 [`../spec-deviations.md`](../spec-deviations.md#02-data-model).
 
 ## 5. Guest journal (SQLite, `/var/lib/agent-guest/journal.db`, owner root (the `agent-guest-control` process), 0600; the unprivileged `agent-guest-api` process writes only through `api.sock`)

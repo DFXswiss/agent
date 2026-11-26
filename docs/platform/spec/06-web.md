@@ -799,6 +799,16 @@ members, self-wrap + wraps for those members, every other admin and chosen devic
 event); the note says "Every admin of the organization can read it. You can write." (ADR-058), rename
 (`wg.profile`), archive (not the default workgroup).
 
+Per workgroup, every VM its device reports outdated (`vms[].upgrade`, ADR-093 §3): "a new version is available",
+"moves as soon as its sessions are paused", "is switching" or one line per hold with its time; admins get "Switch now"
+with the preview as confirmation (the paused sessions that move along). HOT-24: the hold `checkpoint_impossible`
+reads "Session … cannot be saved on this VM: its guest refuses to export the conversation and files, for example
+because it is older (since …).
+Without a switch by hand the VM stays on its version; a switch continues the session without the state of this VM."
+(`de`: "Sitzung … lässt sich auf dieser VM nicht sichern …"), and the confirmation lists those sessions under
+"Continue without the state of this VM (what happened there since their last save is lost)": each "from its save of
+…" (`checkpoint_at`) or "fresh – it reads the messages of its task".
+
 ### 7.3 Devices (`/o/:org/devices`)
 
 - List (windowed, §7.1; newest device first): label (decrypted `device.profile`), kind (platform/org), online state,

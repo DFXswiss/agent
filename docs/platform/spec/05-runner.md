@@ -316,19 +316,27 @@ A live workgroup VM (`running` or `stopped`) whose golden is not the newest `rea
 move** when every session on it that is not `stopped`/`failed` is a main session in `suspended` whose newest context
 checkpoint is complete: not due, taken with workspace state `full` or `empty` (`runner.context_session.
 checkpoint_state`, written with every taken or identical checkpoint, `dropped` when a request ended without one), its
-newest object in the local cache and no failed restore from that object (retire hook `checkpoints`, §6.6).
+newest object in the local cache and no failed restore from that object (retire hook `checkpoints`, §6.6) – or that
+has nothing to save (HOT-24): it never worked (no prompt accepted for it on this device, `runner.prompt_delivery`) or
+its newest request found no complete turn and it never had a checkpoint (`nothing`: guest `state_conflict`, archive
+`context_incomplete`).
 Otherwise it is *held*; each cause is reported with `since` (persisted, `runner.golden_switch_hold`):
 `session_active` (a session that is not paused, also the main orchestrator, which is never suspended), `subagent` (a
 child that has not ended: it has its own workspace and no checkpoint), `checkpoint_due`, `checkpoint_missing`,
-`workspace_incomplete` (above `CONTEXT_WORKSPACE_MIB` or 100 000 entries, or entries left out), `capacity`,
+`workspace_incomplete` (above `CONTEXT_WORKSPACE_MIB` or 100 000 entries, or entries left out),
+`checkpoint_impossible` (HOT-24: the guest refused the export `not_found` – also a guest without the export route –
+or `size_exceeded`; stored as `impossible` with `impossible_reason` and the accepted prompts at that moment; no request
+makes the session due again until it worked again; with `checkpoint_at`, the save it would continue from), `capacity`,
 `switch_failed`.
 
 Task `vm-pool` runs the switch after every refill (60 s and after every assignment), requested VMs first, each under
 its workgroup's lock (a session start waits meanwhile and then chooses the new VM):
 
-1. a hold by a session or an incomplete workspace: nothing happens;
+1. a hold by a session, an incomplete workspace or `checkpoint_impossible`: nothing happens – the VM is neither started
+   nor stopped for the switch;
 2. a stopped VM held only by due or missing checkpoints is started to take them (when a slot is free without
-   stopping another workgroup's VM; attempts 5 min apart, doubling, at most 1 h);
+   stopping another workgroup's VM; attempts 5 min apart, doubling, at most 3 until a new request by hand or until
+   the VM ran for its sessions; kept across restarts in `runner.golden_switch_attempt`, HOT-24);
 3. a running VM is stopped – the retire hooks take the final checkpoints of its sessions – and judged again; a hold
    then leaves it stopped as it is;
 4. a pool VM of the newest golden, else a clone (no other workgroup's VM is stopped for it), is assigned and
@@ -341,7 +349,12 @@ were carried over" and the audit `session.context_restored` carries `moved: gold
 `vm_state` (`upgrade`, `null` once current) whenever it changes, only to a hub whose desired state names `vm_switch`
 (an older hub refuses unknown fields). The desired state's `vm_switch` lists the VMs a member with administration
 rights asked to switch now (`POST /v1/workgroups/{wg}/vms/{vm}/switch`); reconcile step `vm_switch` (order 85) hands
-them to the switch, which applies the same rules.
+them to the switch, which applies the same rules – with one exception (HOT-24): a request covers the
+`checkpoint_impossible` holds the device had reported before the time of the request (`vm_switch_at`, only from a hub
+with `vm_upgrade_version` ≥ 2); those sessions move and continue without the state of the old VM (from the newest
+checkpoint of the session or its task, else fresh). The requests taken over are kept in
+`runner.golden_switch_request`, so a request still listed after a restart is no new one. Without a request such a VM
+stays as it is, and a start of the workgroup restarts it (§3.3 step 4).
 
 ## 4. Sandbox (two independent layers, ADR-008)
 
