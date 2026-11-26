@@ -8,12 +8,15 @@
 - its **sealed** release `use.wgs` names the session's workgroup (the mirror only finds candidates: a hub that names
   more allows nothing);
 - its owner has explicit `read` or `write` access to that workgroup on the verified membership log now (an owner who
-  left the workgroup or the organization ends the release at once).
+  left the workgroup or the organization ends the release at once);
+- its version is not older than the newest this device verified of it (`runner.mailbox_seen`, kept per record): a
+  hub that serves an older version that still released the workgroup is refused (no rollback).
 
 A record that fails any of these is left out silently (it is not this session's mailbox); a hub that cannot be reached
 fails the operation `hub_unreachable` (retryable). `choose(found, wanted)` picks the mailbox by its ID or its name
-(`not_found` naming the released ones, E-05; two released mailboxes of one name: the newest change wins, the ID is
-always unique). The opened body lives only in the returned `Mailbox` for the operation and is never logged.
+(`not_found` naming the released ones, E-05; two released mailboxes of one name are `not_found` naming their IDs,
+so the hub's order never decides). The opened body lives only in the returned `Mailbox` for the operation and is
+never logged.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from agent_runner.credentials.cache import CredentialUnavailable
 from agent_runner.mail.reader import Server
 from agent_runner.operations.extensions import OperationFailed
 from agent_runner.orgs.book import book_for
+from agent_runner.orgs.db import session as session_of
 from agent_runner.sessions.records import LocalSession
 from agent_runner.sync.http import HubRefusal, HubTransportError
 
@@ -84,18 +88,39 @@ async def released(context: Any, session: LocalSession) -> list[Mailbox]:
         except CredentialUnavailable:
             continue
         header = item["record"]["header"]
-        mailbox = _mailbox(record_id, owner, body, session.wg_id) if header.get("id") == record_id else None
+        current = header.get("id") == record_id and await _newest(context, record_id, owner, int(header["version"]))
+        mailbox = _mailbox(record_id, owner, body, session.wg_id) if current else None
         body.clear()
         if mailbox is not None:
             found.append(mailbox)
     return found
 
 
+SEEN = (
+    "INSERT INTO runner.mailbox_seen (id, owner_id, version) VALUES (%s, %s, %s)"
+    " ON CONFLICT (id) DO UPDATE SET version = GREATEST(runner.mailbox_seen.version, EXCLUDED.version)"
+    " RETURNING version"
+)
+
+
+async def _newest(context: Any, record_id: str, owner: str, version: int) -> bool:
+    """Record `version` as seen; False when this device verified a newer version of the record before."""
+    async with session_of(context.pool) as conn, conn.transaction():
+        cursor = await conn.execute(SEEN, (record_id, owner, version))
+        row = await cursor.fetchone()
+    return row is not None and int(row[0]) == version
+
+
 def choose(found: list[Mailbox], wanted: str) -> Mailbox:
     """The released mailbox with the ID or name `wanted` (module docstring)."""
-    for mailbox in found:
-        if wanted in (mailbox.id, mailbox.name):
-            return mailbox
+    matching = [mailbox for mailbox in found if wanted in (mailbox.id, mailbox.name)]
+    if len(matching) == 1:
+        return matching[0]
+    if matching:
+        ids = ", ".join(sorted(mailbox.id for mailbox in matching))
+        raise OperationFailed(
+            "not_found", message=f"Several mailboxes named {wanted} are released here; name one by its ID: {ids}."
+        )
     names = sorted({mailbox.name or mailbox.id for mailbox in found})
     here = f" Released here: {', '.join(names)}." if names else " No mailbox is released here."
     raise OperationFailed(

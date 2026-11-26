@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import ssl
 import threading
 import time
 from collections.abc import Awaitable, Callable
@@ -236,3 +237,72 @@ def test_the_answer_stays_within_its_bound(monkeypatch: pytest.MonkeyPatch) -> N
     assert answer["messages"][2]["text_truncated"] is True
     assert answer["messages"][0]["date"] is None
     assert executors.query({"wait_seconds": 0}, datetime.now(UTC)).since is None
+    only_links = reader.Message("inbox", 5, "a", "b", "c", None, 1, text="", links=["https://example.com/" + "z" * 900])
+    monkeypatch.setattr(executors, "MAX_ANSWER_BYTES", 400)
+    assert executors.answer(box, [only_links], 0, False)["messages"][0]["links"] == []
+
+
+def test_an_older_version_and_a_name_used_twice_are_refused(store_dsn: str, mail: Callable[[], MailDouble]) -> None:
+    double = _double(mail, "v@example.org")
+
+    async def body(env: Env, hub: MailboxHub, op_env: OpEnv) -> None:
+        released = mailbox_body(double, "v@example.org", name="v", wgs=[WG])
+        record_id = hub.add(released, version=2)
+        assert (await _find(env, op_env, {"mailbox": "v"}))["mailbox"]["id"] == record_id
+        hub.add(released, record_id=record_id, version=1)  # the hub serves an older version again
+        assert (await _fails(env, op_env, {"mailbox": "v"})).code == "not_found"
+        hub.add(released, record_id=record_id, version=3)
+        other = hub.add(released)
+        twice = await _fails(env, op_env, {"mailbox": "v"})
+        assert twice.code == "not_found"
+        assert (
+            f"Several mailboxes named v are released here; name one by its ID: {', '.join(sorted([record_id, other]))}."
+            == twice.message
+        )
+        assert (await _find(env, op_env, {"mailbox": other}))["mailbox"]["id"] == other
+
+    run(store_dsn, body)
+
+
+def test_tls_and_unexpected_failures_are_audited(
+    store_dsn: str, mail: Callable[[], MailDouble], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    double = _double(mail, "t@example.org")
+
+    async def body(env: Env, hub: MailboxHub, op_env: OpEnv) -> None:
+        hub.add(mailbox_body(double, "t@example.org", name="t", wgs=[WG]))
+
+        def untrusted(*_args: Any, **_kwargs: Any) -> Any:
+            raise ssl.SSLCertVerificationError("certificate verify failed")
+
+        def broken(*_args: Any, **_kwargs: Any) -> Any:
+            raise ValueError("odd")
+
+        monkeypatch.setattr(executors, "imap_factory", untrusted)
+        tls = await _fails(env, op_env, {"mailbox": "t"})
+        assert (tls.code, tls.retryable, tls.message) == ("upstream_error", False, executors.TLS)
+        monkeypatch.setattr(executors, "imap_factory", broken)
+        odd = await _fails(env, op_env, {"mailbox": "t"})
+        assert (odd.code, odd.message) == ("upstream_error", executors.BROKEN)
+        assert [row["detail"]["result"] for row in op_env.audits()] == ["upstream_error", "upstream_error"]
+
+    run(store_dsn, body)
+
+
+def test_a_mail_the_parsers_refuse_keeps_its_headers(
+    store_dsn: str, mail: Callable[[], MailDouble], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    double = _double(mail, "p@example.org")
+    _send(double, "p@example.org", text="hello")
+
+    def refuse(_raw: bytes) -> tuple[str, list[str]]:
+        raise ValueError("bad mail")
+
+    monkeypatch.setattr(reader, "_read", refuse)
+
+    async def body(env: Env, hub: MailboxHub, op_env: OpEnv) -> None:
+        hub.add(mailbox_body(double, "p@example.org", name="p", wgs=[WG]))
+        (message,) = (await _find(env, op_env, {"mailbox": "p", "body": True}))["messages"]
+        assert (message["text"], message["links"], message["text_truncated"]) == ("", [], True)
+
+    run(store_dsn, body)

@@ -256,7 +256,11 @@ def _bodies(conn: Any, messages: list[Message]) -> None:
             continue
         data = _ok(conn.uid("FETCH", str(message.uid), f"(UID BODY.PEEK[]<0.{MAX_BODY_BYTES + 1}>)"))
         raw = next((literal for _meta, literal in _fetched(data)), b"")
-        text, links = _read(raw)
+        try:
+            text, links = _read(raw)
+        except Exception:  # a mail that the parsers refuse keeps its headers (never fails the look)
+            message.text, message.links, message.text_truncated = "", [], True
+            continue
         message.text, message.links = text[:MAX_TEXT], links
         message.text_truncated = len(text) > MAX_TEXT
 

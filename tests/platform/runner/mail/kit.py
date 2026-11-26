@@ -83,9 +83,19 @@ class MailboxHub:
         self.hub.check("api/device-mailboxes-list.response.json", answer)
         return 200, answer
 
-    def add(self, body: Json, *, owner: str = ALICE, author: str = "alice", mirror: list[str] | None = None) -> str:
-        record_id = uuid7()
-        record = make_record(body, owner=owner, kind=KIND, author=author, record_id=record_id)
+    def add(
+        self,
+        body: Json,
+        *,
+        owner: str = ALICE,
+        author: str = "alice",
+        mirror: list[str] | None = None,
+        record_id: str | None = None,
+        version: int = 1,
+    ) -> str:
+        record_id = record_id or uuid7()
+        self.served = [item for item in self.served if item[0] != record_id]
+        record = make_record(body, owner=owner, kind=KIND, author=author, record_id=record_id, version=version)
         wgs = mirror if mirror is not None else list(body.get("use", {}).get("wgs", []))
         self.served.insert(0, (record_id, owner, wgs, record))
         return record_id

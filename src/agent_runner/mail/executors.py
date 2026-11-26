@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import ssl
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -35,6 +36,8 @@ REFUSED = "The mailbox server refused the sign-in; its owner checks the mailbox 
 COMMAND = "The mailbox server refused a command; try again later."
 SLOW = "The mailbox server did not answer in time; try again later."
 GONE = "There is no such mail in this mailbox anymore."
+TLS = "The mailbox server's certificate was not accepted; its owner checks the IMAP host in the settings."
+BROKEN = "The mailbox could not be read; try again later."
 imap_factory: reader.ImapFactory | None = None
 """Tests replace the IMAP connection factory (None: `imaplib.IMAP4_SSL`)."""
 
@@ -102,7 +105,7 @@ def answer(mailbox: mailboxes.Mailbox, found: list[reader.Message], waited: int,
     for item in reversed(messages):
         if len(json.dumps(result).encode()) <= MAX_ANSWER_BYTES:
             break
-        if item.get("text"):
+        if item.get("text") or item.get("links"):
             item["text"], item["links"], item["text_truncated"] = "", [], True
     return result
 
@@ -151,9 +154,15 @@ async def find(ctx: OperationContext) -> dict[str, Any]:
     except reader.Refused as refused:
         outcome = "upstream_error"
         failure = OperationFailed("upstream_error", message=REFUSED if refused.step == "login" else COMMAND)
+    except ssl.SSLError:
+        outcome = "upstream_error"
+        failure = OperationFailed("upstream_error", message=TLS)
     except (TimeoutError, OSError):
         outcome = "timeout"
         failure = OperationFailed("timeout", retryable=True, message=SLOW)
+    except Exception:
+        outcome = "upstream_error"
+        failure = OperationFailed("upstream_error", message=BROKEN)
     if failure is None and look.uid is not None and not found:
         outcome, failure = "not_found", OperationFailed("not_found", message=GONE)
     waited = min(int(env.clock() - start), 330)

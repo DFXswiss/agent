@@ -1352,7 +1352,8 @@ A new need of sessions is checked against this rule before a VM tool is offered 
   folder, count, waited_seconds, timed_out, result}` after every look that reached the mailbox - never an address,
   subject, text, link or the password. The password lives only in the opened body for the operation and is cleared
   after it; it is never logged.
-- Any number of `mail.find` run at once (each in its own thread and connection); no VM, slot or queue.
+- Many `mail.find` run at once, each in its own thread and connection (bounded by the runner's worker threads); no
+  VM, slot or queue.
 
 ## 13. Subagents (ADR-088, ADR-038)
 

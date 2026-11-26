@@ -34,3 +34,16 @@ Package: sessions read mailboxes through the platform, without a VM and without 
    released workgroups instead.
 10. **`docs/platform/AGENTS.md`** named in the package text is the agent guide `docs/platform/agents.md` (and its copy
     `src/agent_platform/guide.md`).
+11. **No rollback of a release** (review finding): the runner keeps the newest verified version of every mailbox
+    record it used (`runner.mailbox_seen`, IDs and versions only) and refuses an older one. A deleted record that a
+    dishonest hub keeps serving cannot be told apart from a living one (true for every credential); the clients end a
+    release by a new version, and the documentation says so.
+12. **Failures that are not the network** (review findings): a refused TLS certificate is `upstream_error` without a
+    retry (the remedy is the host, not waiting); any other failure of a look is `upstream_error` and audited; a mail
+    the parsers refuse keeps its headers (`text_truncated`) instead of failing every later `mail.find`. A name used by
+    two released mailboxes is refused with their IDs, so the hub's order never chooses.
+13. **`traceability.json`** gets the row `E2E-74` like the scenario packages before it (the traceability test needs
+    every scenario there; the merge tool joins the appended rows). Milestone 3 like the other platform scenarios.
+14. **Rights profiles** need no test of their own for `mail.find`: the type is in `classes.json` (class `read`) and
+    the generic checks of ADR-094 in guest, runner and hub refuse every type outside a profile; the contract tests
+    keep `classes.json`, the hub's copy and `INDEX.json` equal.

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from typing import Any
 
 from agent_guest.clock import Clock, SystemClock, iso_ms, uuid7
@@ -35,7 +36,8 @@ from agent_guest.schema import SchemaSet, pointers
 
 WAIT_SECONDS = 20.0
 MAIL_WAIT_SECONDS = 320.0
-STEP_SECONDS = 30.0
+STEP_SECONDS = 25.0
+"""One wait of the control socket (`journal.MAX_WAIT_SECONDS`)."""
 MAX_POINTER_LENGTH = 256
 clock: Clock = SystemClock()
 
@@ -77,13 +79,12 @@ def wait_for(kind: str, params: dict[str, Any]) -> float:
 
 
 def _ask(call: ToolCall, body: dict[str, Any]) -> dict[str, Any] | None:
-    left = wait_for(body["type"], body["params"])
+    deadline = time.monotonic() + wait_for(body["type"], body["params"])
     pending_id = _forward.forward(call, "operation", {**body, "local_check": "passed"})
     while True:
-        step = min(left, STEP_SECONDS)
+        step = min(max(deadline - time.monotonic(), 0.0), STEP_SECONDS)
         answer = _forward.wait_answer(call, pending_id, step)
-        left -= step
-        if answer is not None or left <= 0:
+        if answer is not None or time.monotonic() >= deadline:
             return answer
 
 

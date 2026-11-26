@@ -99,8 +99,8 @@ of sessions is first checked against this rule (05-runner.md §12.2).
   folder, bodies only of mails up to 1 MiB (`text_truncated` for a larger one, its headers still listed), the text
   and link bounds of §4 and an answer of at most 200 KiB (texts of the oldest mails in the answer are left out until
   it fits). TLS always (implicit TLS on the mailbox's port; the device's trust store).
-- Parallel: every `mail.find` is its own connection in its own thread; any number of sessions read any number of
-  mailboxes at once, bounded only by the device's operation pipeline – no VM, no slot, no queue.
+- Parallel: every `mail.find` is its own connection in its own thread; many sessions read many mailboxes at
+  once, bounded only by the runner's worker threads – no VM, no slot, no queue.
 
 ### 7. Audit and records – never the content
 - The hub records the operation like every operation (`operation.received`/`accepted`/…, type, session, task, the
@@ -118,11 +118,12 @@ profile leaves it out to forbid mailboxes.
 ### 9. People and agents (E-04)
 - Web: the settings section **Mailboxes** lists every own mailbox (name, address, purpose, released workgroups,
   "login" for the primary one), adds and changes one (password write-only), checks it on a device (`mailbox.check`
-  with `mailbox_id`) and releases it to workgroups; deleting asks once.
+  with the mailbox body, sealed to the device) and releases it to workgroups; deleting asks once.
 - Agent tool: `agent-platform mailbox list|add|change|release|check|delete` (password from standard input).
 - Sessions: `request_operation {type: "mail.find", …}`; the agent guide says: "Read a mailbox: the operation
   mail.find, never a VM".
-- `mailbox.check` takes an optional `mailbox_id` (without it: the primary mailbox, as before).
+- `mailbox.check` takes an optional `mailbox` (a mailbox body sealed to the device with the request; without it:
+  the primary mailbox, as before).
 
 ## Consequences
 - The hub learns how many mailboxes a member keeps, which workgroups each is released to and when a session read
