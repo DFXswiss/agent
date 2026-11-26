@@ -59,6 +59,9 @@ Builds on [ADR-089](089-sessions-read-like-their-human.md) (sessions read like t
 - Enforcement is ADR-094's, three times: the hub (H2b, `rights_denied`, audited), the runner (pre-check, `rejected`,
   audited) and the guest (local refusal, work VM and browser tools not offered). Subagents of the analysis are
   bounded by it (intersection along the chain).
+- **The marker survives narrowing.** A narrowed analysis task and a child an analysis session starts with a profile of
+  its own keep a snapshot named `analysis` (the narrower types and reach, the name forced), so the guest's checks
+  keyed on the name (no web search, brief only at depth 0) hold along the whole chain.
 - **The profile of an analysis task is never widened or cleared**: `PUT /v1/tasks/{task}/agent-profile` on a task
   with `analysis` accepts only a profile within the analysis snapshot (its types a subset, its reach no wider – a
   voluntary further restriction, E-11) and answers anything else `403 forbidden` with detail `{"reason":
@@ -92,15 +95,18 @@ view, and a figure that is not of a workgroup cannot be bound to the intersectio
 | `list_workgroup_operations` | `{workgroup_id?, since?, until?, type?, state?, group_by?: "type", before?, limit? ≤ 200}` | `{operations:[{operation_id, task_id, session_id, type, state, error_code, created_at, finished_at}], next_before}` – operations of every task of the workgroup, newest first; with `group_by` instead `{groups:[{type, state, error_code, count}], truncated}` |
 | `get_metrics` | `{workgroup_id?, entity_kind: "session"\|"vm"\|"workvm", entity_id, metric, since, until?, step}` | `{entity_kind, entity_id, metric, points:[[ts, value]]}` – the monitoring series of a session, workgroup VM or work VM of the workgroup (the rules of `GET /v1/monitoring/series`: metrics, steps, rollups, at most 1000 points) |
 
-- Every page is bounded (default 50, at most 200) with an opaque cursor; a period is at most 92 days. Large audits are
+- Every page is bounded (default 50, at most 200) with an opaque cursor; a period is at most 92 days (without `since`
+  the last 92 days). Large audits are
   read page by page (E-19); the counts of `group_by` let the model see patterns over a whole period without paging
   through it (per workgroup, so the intersection of rights still holds); a list never cuts silently.
 - The answer comes from new hub device routes with right `device:wg` (§4); the runner checks every row of the answer
   (organization and workgroup match, the contract's form) and drops the rest, as for tasks (ADR-089 §2: a hub cannot
-  widen a read). An audit row's `detail` reaches the model only as flat tokens: keys `[a-z_]{1,64}`, values integers,
-  booleans, null or strings of the token alphabet `[A-Za-z0-9_.:/@+=-]` (at most 128 characters); anything else is
-  dropped, and so is a `target_id` outside that alphabet – a hub cannot hand free text to the model through the
-  audit.
+  widen a read). An audit row's `detail` reaches the model only as at most 16 flat tokens: keys `[a-z_]{1,32}`,
+  values integers, booleans, null or strings of `[A-Za-z0-9_.:/+=-]` (at most 64 characters); anything else is
+  dropped, a `target_id` outside the token alphabet becomes null, an action of more than 64 characters or 4 segments
+  drops the row – a hub cannot hand sentences to the model through the audit (single words remain possible, as in
+  every metadata field). Nothing is cut silently: an unknown error code becomes null, dropped or cut groups set
+  `truncated`.
 - **Audit.** Every call is a `read.session.<tool>` audit row with `read_wg_id` and `triggered_by` and a `platform.read`
   event (03-api.md §8), the refusals included; the hub writes its read log `read.device.workgroup.<resource>` for each
   device route. So the read log names who read what and on whose instruction.
@@ -156,15 +162,20 @@ matched by its current workgroup.
 - A session reads only what both the person who pressed the button (the task owner) and the instructing person may
   read, on a device assigned to that workgroup (ADR-089). A workgroup without that right is absent from every answer;
   one the device does not serve answers `unavailable` with the remedy (E-05).
-- The tools return metadata only (IDs, numbers, states, times, audit codes). Titles and chat of other workgroups are
-  readable through the existing tools under the same rule; the brief tells the session not to need them.
+- The tools return metadata only (IDs, numbers, states, times, audit codes). **Outside its own workgroup a session
+  with the profile `analysis` reads only figures**: `get_usage`, `list_workgroup_operations`, `get_metrics`,
+  `list_workgroups` and `list_audit` with `group_by`; titles, chat, whiteboards, member lists and audit rows of other
+  workgroups are refused `forbidden` by the runner (an ordinary session keeps ADR-089's reads; this is a property of
+  the analysis role, which nobody needs to set, so E-11 is not touched).
 - **The report lands in the task's workgroup** and is readable there by every reader (ADR-089 §5, like a person
   copying a figure). Scope `wg` reads only its own workgroup (reach `workgroup`), so nothing crosses. For scope `org`
   the brief keeps other workgroups to their names and totals (§5), and the dialog says, before the start, "Der
   Bericht ist für alle Mitglieder der Workgroup <name> sichtbar und kann Summen aller Workgroups enthalten, die du
   lesen kannst." and lets the person choose a smaller workgroup; the agent tool's answer names the same. The brief is
-  an instruction to the model, not a technical boundary: the technical boundary is what the session may read
-  (owner ∩ instructing human); what it writes into its own workgroup follows ADR-089 §5.
+  an instruction to the model; the technical boundaries are what the session may read (owner ∩ instructing human,
+  figures only outside the own workgroup); what it writes into its own workgroup follows ADR-089 §5. Residual: a
+  workgroup VM's samples follow the VM's current workgroup, so samples from before a reassignment are figures the new
+  workgroup's readers can see (VMs are reassigned only when the pool hands them over; the samples carry no content).
 
 ## Consequences
 - One click gives a report with evidence; nothing changes without a person.

@@ -76,6 +76,8 @@ def test_period_defaults_and_bounds() -> None:
     assert optimize.period(1, None, None) == ("2026-11-25T10:00:00.123Z", NOW_TEXT)
     assert optimize.period(92, None, "2026-11-01T00:00:00Z") == ("2026-08-01T00:00:00.000Z", "2026-11-01T00:00:00.000Z")
     # a time zone is converted, sub-milliseconds are cut
+    # an end in the future is the hub's to judge (its clock, not this computer's)
+    assert optimize.period(1, None, "2026-11-26T11:00:00Z")[1] == "2026-11-26T11:00:00.000Z"
     assert optimize.period(None, "2026-11-20T12:00:00.987654+02:00", "2026-11-26T10:01:00.123Z") == (
         "2026-11-20T10:00:00.987Z",
         "2026-11-26T10:01:00.123Z",
@@ -87,7 +89,6 @@ def test_period_defaults_and_bounds() -> None:
         (None, "2026-11-26T10:00:00.123Z", None),  # since == until
         (None, "2026-11-27T00:00:00Z", "2026-11-26T00:00:00Z"),
         (None, "2026-08-01T00:00:00Z", "2026-11-01T00:00:00.001Z"),  # over 92 days
-        (None, None, "2026-11-26T10:01:00.124Z"),  # more than a minute ahead
     ):
         with pytest.raises(PlatformError) as caught:
             optimize.period(days, since, until)
@@ -187,7 +188,6 @@ def test_invalid_arguments(tool: Tool, hub: HubFake, account: User) -> None:
         (("--org", org, "--in", foreign), "wg_not_in_org"),
         (("--org", org, "--days", "93"), "period_invalid"),
         (("--org", org, "--days", "2", "--since", "2026-11-20T00:00:00Z"), "period_invalid"),
-        (("--org", org, "--until", "2026-11-26T11:00:00Z"), "period_invalid"),
         (("--wg", research, "--since", "now"), "time_invalid"),
     ]
     for argv, reason in refusals:

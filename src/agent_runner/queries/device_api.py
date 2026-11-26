@@ -6,7 +6,8 @@ owner, times; 04-crypto.md section 7) but titles only as `task.meta` events, so 
 verified events (`sessions.profiles`). A hub answer is still only metadata of a party that must not widen the read
 scope: every row of a task list must belong to the session's org and the listed workgroup, a single task must belong
 to the session's org and to a workgroup the session may read (`ReadScope.readable`, ADR-089; any other is `not_found`
-"There is no such task you can read.", whatever the reason), and rows or fields that do not have the form of the
+"There is no such task you can read.", whatever the reason, except the `forbidden` of a process analysis that reads
+other workgroups only as figures, `rights.FiguresOnly`), and rows or fields that do not have the form of the
 contract are dropped (lists) or make the read `unavailable` (a single task). A refusal `403`/`404` is "no such task"
 (`None`); an unreachable hub or any other refusal is `unavailable`. The hub names the workgroup of a task, but the
 reads take content only from events sealed in that workgroup's scope, so a hub that names a wrong workgroup yields no
@@ -25,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlencode
 
-from agent_runner.queries.rights import ReadRefused, ReadScope
+from agent_runner.queries.rights import FiguresOnly, ReadRefused, ReadScope
 from agent_runner.sync.http import HubRefusal, HubTransportError
 from agent_runner.sync.runtime import runtime
 
@@ -214,6 +215,8 @@ async def task(context: Any, scope: ReadScope, task_id: str) -> TaskDetail | Non
     if wg_id != scope.wg_id:
         try:
             scope.readable(wg_id)
+        except FiguresOnly:
+            raise
         except ReadRefused:
             # a task of a workgroup the session may not read (or this device cannot): the same answer as no task
             raise TASK_NOT_FOUND.at(wg_id) if wg_id in scope.state.workgroups else TASK_NOT_FOUND from None

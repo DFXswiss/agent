@@ -27,7 +27,7 @@ async def get_metrics(call: QueryCall) -> QueryOutcome:
             raise common.PARAMS_INVALID
         scope = common.scope_of(call)
         scope.require_workgroup()
-        wg_id = await common.workgroup(call, scope, found)
+        wg_id = await common.workgroup(call, scope, found, figures=True)
         query = {
             "entity_kind": kind,
             "entity_id": entity_id,

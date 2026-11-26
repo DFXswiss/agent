@@ -5,7 +5,8 @@
 workgroup), checks each request against `api/device-workgroup-<resource>.request.json` and each answer against the
 response contract (violations fail the rig), answers `404 not_found` for a workgroup the device is not assigned to,
 and sends `raw[resource]` unchecked (a hub that breaks the contract). The transport failure of `TaskHub.unreachable`
-covers these routes too. `queries` keeps `(wg, resource, query)` of every request.
+covers these routes too; `missing` makes the routes answer as a hub without them that answers `404` without its error
+body (the client's `response_invalid` with status 404). `queries` keeps `(wg, resource, query)` of every request.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from agent_runner.queries.analysis_api import FIGURES
 from agent_runner.sessions.records import time_text
+from agent_runner.sync.http import HubTransportError
 
 from ..reconcile.rig import Env
 from .kit import ALICE, ORG, TASK, TASK_B, WG, WG_ONE
@@ -143,6 +145,7 @@ class AnalysisHub:
     )
     raw: dict[str, tuple[int, Json]] = field(default_factory=dict)
     queries: list[tuple[str, str, dict[str, str]]] = field(default_factory=list)
+    missing: bool = False
 
     def install(self) -> None:
         hub = self.env.hub
@@ -166,6 +169,15 @@ class AnalysisHub:
             return 200, answer
 
         hub.route = route  # type: ignore[method-assign]
+        client = self.env.sync.client
+        send = client.request
+
+        async def request(method: str, target: str, body: object | None = None) -> dict[str, object]:
+            if self.missing and _ROUTE.fullmatch(urlsplit(target).path):
+                raise HubTransportError("response_invalid", status=404)
+            return await send(method, target, body)
+
+        client.request = request  # type: ignore[method-assign]
 
     def last(self) -> tuple[str, str, dict[str, str]]:
         return self.queries[-1]

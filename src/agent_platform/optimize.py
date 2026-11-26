@@ -6,8 +6,9 @@
   until}`. Scope `org` (`--org`) puts the task into the organization's default workgroup or into `--in WG` of that
   organization; scope `wg` (`--wg`) into WG itself. The period is `--since`/`--until` (ISO-8601 with a time zone) or
   the `--days` (1-92, default 7) before `--until` (default now); both times go to the hub and into the prompt as
-  ISO-8601 UTC with milliseconds, so the session reads the same period the hub keeps. The period must be ordered, at
-  most 92 days long and end at most one minute after now (the hub's rule, checked here before anything is sealed).
+  ISO-8601 UTC with milliseconds, so the session reads the same period the hub keeps. The period must be ordered and
+  at most 92 days long (checked here before anything is sealed); that it ends at most one minute after now is the
+  hub's rule against its own clock (`400 request_invalid`), not checked against this computer's clock.
   The answer is the one of `task create` plus `analysis`, and for scope `org` a `notice`: the report is visible to
   every member of the task's workgroup and may hold totals of every workgroup the user can read (section 7).
 - `optimize adopt --task T [--level workgroup|org] [--notify]` writes the newest output of an analysis task (a task
@@ -52,7 +53,6 @@ SCOPES = {
 }
 DAYS_DEFAULT = 7
 DAYS_MAX = 92
-AHEAD = timedelta(minutes=1)
 LEVELS = ("workgroup", "org")
 NOTICE_WG = (
     "The report is visible to all members of the workgroup {name} and may contain totals of all workgroups you can "
@@ -96,7 +96,7 @@ def period(days: int | None, since: str | None, until: str | None) -> tuple[str,
     current = _ms(now())
     end = current if until is None else parse_time(until)
     start = end - timedelta(days=days or DAYS_DEFAULT) if since is None else parse_time(since)
-    if not start < end or end - start > timedelta(days=DAYS_MAX) or end > current + AHEAD:
+    if not start < end or end - start > timedelta(days=DAYS_MAX):
         raise PlatformError("invalid_argument", reason="period_invalid")
     return iso(start), iso(end)
 

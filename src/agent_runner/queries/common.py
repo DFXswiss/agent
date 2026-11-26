@@ -10,7 +10,8 @@
 - `scope_of(call)`: the read scope of the call (`rights.read_scope` with the instructing human captured on arrival).
 - `workgroup(call, scope, found)`: the workgroup a read selects with its optional `workgroup_id` argument (default:
   the session's workgroup) after `ReadScope.readable`; a workgroup this device does not serve is refused with its
-  name (`NotServed`).
+  name (`NotServed`). `figures=True` for the reads of figures (ADR-095), which a session of the profile `analysis`
+  may make in another workgroup (`rights.FiguresOnly`).
 - `known_task(context, scope, task_id)`: the task with its readable workgroup, as the hub says (`device_api.task`;
   `not_found` otherwise), within the reach of the session's rights profile (`ReadScope.outside_reach`, ADR-094); a
   task ID named only by events is not enough (the hub projects task whiteboards of existing tasks only).
@@ -48,13 +49,13 @@ async def answered(read: Callable[[], Awaitable[QueryOutcome]]) -> QueryOutcome:
 
 
 def scope_of(call: QueryCall) -> ReadScope:
-    return read_scope(call.context, call.session, call.actor_id, call.reach)
+    return read_scope(call.context, call.session, call.actor_id, call.reach, call.profile)
 
 
-async def workgroup(call: QueryCall, scope: ReadScope, found: Mapping[str, Any]) -> str:
+async def workgroup(call: QueryCall, scope: ReadScope, found: Mapping[str, Any], *, figures: bool = False) -> str:
     wg_id = uuid_argument(found, WORKGROUP_ID) if WORKGROUP_ID in found else scope.wg_id
     try:
-        scope.readable(wg_id)
+        scope.readable(wg_id, figures=figures)
     except NotServed:
         async with store(call.context) as (conn, key):
             name = await profiles.name(conn, key, "wg.profile", scope.org_id, wg_id)

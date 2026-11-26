@@ -29,7 +29,7 @@ async def list_workgroup_operations(call: QueryCall) -> QueryOutcome:
         limit = common.integer(found, "limit", 1, analysis_api.MAX_LIMIT, analysis_api.DEFAULT_LIMIT)
         scope = common.scope_of(call)
         scope.require_workgroup()
-        wg_id = await common.workgroup(call, scope, found)
+        wg_id = await common.workgroup(call, scope, found, figures=True)
         result = await analysis_api.operations(call.context, wg_id, query=query, grouped=grouped, limit=limit)
         count = len(result["groups"] if grouped else result["operations"])
         return common.ok(result, count, target_kind="workgroup", target_id=wg_id, read_wg_id=wg_id)

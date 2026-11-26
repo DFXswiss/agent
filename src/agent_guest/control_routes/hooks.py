@@ -16,7 +16,9 @@ made here:
   the call is denied with ``question_passed`` and journaled as rule 1 (no ``hook.denied`` audit: the operation is the
   record). A subagent's call is denied by rule 2 as before.
   Rule 1b (13-work-vm.md section 13.7): ``WebSearch`` is allowed when the model access of the session's current start
-  (``session_access``, recorded in the session's meta file) is in ``WEB_SEARCH_ACCESS``; else it is denied by rule 2.
+  (``session_access``, recorded in the session's meta file) is in ``WEB_SEARCH_ACCESS`` and the rights profile of that
+  start (``session_profile``) does not withhold it (``profiles.disallowed_tools``: the profile ``analysis``, ADR-095
+  section 2); else it is denied by rule 2 (``tool_forbidden``), journaled and audited like every denial.
 * op ``hook.post_tool_use {session_id, body}`` - journals ``session.tool`` for ``Write``/``Edit`` (05 section 5.5);
   other tools come from the transcript (GST-05)
 * op ``file.changed {session_id, path}`` - the file hint ``file_changed(session, path)`` of PostToolUse
@@ -32,7 +34,7 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-from agent_guest import sessions
+from agent_guest import profiles, sessions
 from agent_guest.clock import iso_ms, uuid7
 from agent_guest.control import ControlContext
 from agent_guest.journal import JournalError
@@ -105,6 +107,18 @@ def session_access(context: ControlContext, session_id: str) -> str | None:
     return sessions.manager(context).access(session_id)
 
 
+def session_profile(context: ControlContext, session_id: str) -> dict[str, Any] | None:
+    """The rights profile of the session's current start, None without one."""
+    return sessions.manager(context).profile(session_id)
+
+
+def _web_search(context: ControlContext, session_id: str) -> bool:
+    """Rule 1b: the access offers ``WebSearch`` and the profile does not withhold it."""
+    return session_access(context, session_id) in WEB_SEARCH_ACCESS and WEB_SEARCH_TOOL not in (
+        profiles.disallowed_tools(session_profile(context, session_id))
+    )
+
+
 def _question(args: dict[str, Any], tool_name: object) -> str | None:
     if "question" not in args:
         return None
@@ -146,7 +160,7 @@ def pre_tool_use(context: ControlContext, args: dict[str, Any]) -> dict[str, Any
     question = _question(args, tool_name)
     session = _session(context, args["session_id"])
     ask = question is not None and session_depth(context, session.id) == 0
-    web_search = tool_name == WEB_SEARCH_TOOL and session_access(context, session.id) in WEB_SEARCH_ACCESS
+    web_search = tool_name == WEB_SEARCH_TOOL and _web_search(context, session.id)
     decision = Policy(session.workspace, harness_path(session.id)).evaluate(
         tool_name, tool_input, ask=ask, web_search=web_search
     )

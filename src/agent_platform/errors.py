@@ -156,7 +156,7 @@ NEXT_FOR_REASON: dict[tuple[str, str], str] = {
     ),
     ("invalid_argument", "period_invalid"): (
         "The period of an analysis is `--days` (1-92) or `--since`, with an optional `--until`: ISO-8601 times with a "
-        "time zone, `since` before `until`, at most 92 days, ending at most one minute from now."
+        "time zone, `since` before `until`, at most 92 days."
     ),
     ("invalid_argument", "not_analysis"): (
         "This task is no analysis task: `optimize adopt` takes the output of a task started with "

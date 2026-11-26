@@ -11,15 +11,24 @@ and the hub's device routes `GET /v1/device/workgroups/{wg}/usage|audit|operatio
 - **Answers.** The tool checked that the session may read the workgroup (`common.workgroup`, ADR-089). The hub's
   answer still cannot widen the read (ADR-089 section 2): every row is checked against the tool's output contract and
   a row that does not match is dropped; an audit row must belong to the session's organization and to the read
-  workgroup. An audit row's `detail` reaches the model only as flat tokens (ADR-095 section 3): keys `DETAIL_KEY_RE`,
-  values integers, booleans, null or strings of `TOKEN_RE`; any other entry is dropped, and a `target_id` outside
-  `TARGET_ID_RE` becomes null, so a hub cannot hand free text to the model through the audit. Lists are cut to the
-  asked `limit` (then without a cursor: the rest is not reachable through the hub's cursor), groups to `MAX_GROUPS`
-  (then `truncated`), series to `MAX_POINTS`. A usage or metrics frame that is not the one asked for (another
-  workgroup, grouping, period or entity) makes the read `unavailable`.
-- **Refusals.** `403`/`404` on a list is a workgroup without rows (the device's assignment may lag behind the log);
-  on metrics it is `not_found` (the entity is not of the workgroup). An unreachable hub and any other refusal are
-  `unavailable`. Every refusal names the read workgroup (audited `read_wg_id`).
+  workgroup. Unknown operation error codes and a usage row's `model_id` outside the runner's model-ID form
+  (`MODEL_ID_RE`, as `model/catalog.py`) become null instead.
+- **No free text through the audit** (ADR-095 section 3). An audit row's `action` has at most `MAX_ACTION` characters
+  and `MAX_ACTION_SEGMENTS` dotted segments, else the row (or group) is dropped. Its `detail` reaches the model only as
+  flat tokens: keys `DETAIL_KEY_RE`, values integers, booleans, null or strings of `TOKEN_RE` (no `@`, so no
+  addresses; short, so no sentences); other entries are dropped and of the rest the first `MAX_DETAIL_KEYS` by key
+  order are kept. A `target_id` outside `TARGET_ID_RE` becomes null.
+- **No silent cut.** Groups are `truncated` whenever the hub says so or any group was dropped or cut to `MAX_GROUPS`. A
+  hub answering more rows than asked (or more points than the period has) breaks the contract and the read is
+  `unavailable`: the hub's cursor marks its own last row, so keeping it after cutting the page would skip the cut rows,
+  and dropping it would end the paging early - both a silent cut. A usage or metrics frame that is not the one asked
+  for (another workgroup, grouping, period or entity) is `unavailable` too.
+- **Refusals.** A hub refusal `403`/`404 not_found` on a list is a workgroup without rows (the device's assignment may
+  lag behind the log); on metrics it is `not_found` (the entity is not of the workgroup). A `404` without the hub's
+  error body is a hub without the route (`NO_ROUTE`, an update is needed). The hub's own router answers an unknown
+  route with the same `{"error": "not_found"}` as the routes do, so an older hub that answers so cannot be told apart
+  from a workgroup without rows. An unreachable hub and any other refusal are `unavailable`. Every refusal names the
+  read workgroup (audited `read_wg_id`).
 """
 
 from __future__ import annotations
@@ -48,6 +57,7 @@ from agent_runner.sync.runtime import runtime
 
 Json = dict[str, Any]
 Check = Callable[[object], bool]
+Fix = Callable[[object], object]
 DEFAULT_LIMIT, MAX_LIMIT = 50, 200
 MAX_GROUPS = 200
 MAX_POINTS = 1000
@@ -56,12 +66,18 @@ MIN_STEP, MAX_STEP = 15, 9999999
 COUNT_MAX = 9007199254740991
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 """`common.json#/$defs/uuid` (UUIDv7)."""
-ACTION_RE = re.compile(r"(?=.{1,96}$)[a-z_]+(\.[a-z_]+)*")
+ACTION_ARGUMENT_RE = re.compile(r"(?=.{1,96}$)[a-z_]+(\.[a-z_]+)*")
+"""The `action` argument of `list_audit` (its input contract)."""
+MAX_ACTION, MAX_ACTION_SEGMENTS = 64, 4
+ACTION_RE = re.compile(r"(?=.{1,64}$)[a-z_]+(\.[a-z_]+){0,3}")
+"""An audit action the model sees: at most `MAX_ACTION` characters and `MAX_ACTION_SEGMENTS` segments."""
 TARGET_KIND_RE = re.compile(r"[a-z_]{1,32}")
 TARGET_ID_RE = re.compile(r"[A-Za-z0-9_.:/@+=-]{1,128}")
-DETAIL_KEY_RE = re.compile(r"[a-z_]{1,64}")
-TOKEN_RE = re.compile(r"[A-Za-z0-9_.:/@+=-]{0,128}")
+MAX_DETAIL_KEYS = 16
+DETAIL_KEY_RE = re.compile(r"[a-z_]{1,32}")
+TOKEN_RE = re.compile(r"[A-Za-z0-9_.:/+=-]{0,64}")
 MODEL_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}")
+"""The runner's model-ID form (`model/catalog.py`, `common.json#/$defs/model_id`)."""
 ENTITY_ID_RES = {
     "session": UUID_RE,
     "vm": re.compile(r"vm-[0-9a-f]{8}"),
@@ -116,6 +132,8 @@ POINTERS = {
 }
 """The hub's query parameter pointers and the tool arguments they come from."""
 HUB_INVALID = ReadRefused("unavailable", "The platform answered with data of another read.")
+TOO_MANY = ReadRefused("unavailable", "The platform answered with more than this read asked for.")
+NO_ROUTE = ReadRefused("unavailable", "The platform does not offer this read yet; it needs an update.")
 NO_ENTITY = ReadRefused("not_found", "There is no such session or VM of this workgroup you can read.")
 
 
@@ -209,13 +227,25 @@ def _number(value: object) -> bool:
     return value is None or (isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value))
 
 
-def checked(value: object, checks: Mapping[str, Check]) -> Json | None:
-    """The fields `checks` of a row that has each of them in the contract's form, else None (other fields dropped)."""
+def _anything(_value: object) -> bool:
+    return True
+
+
+def _known_or_null(check: Check) -> Fix:
+    return lambda value: value if check(value) else None
+
+
+def checked(value: object, checks: Mapping[str, Check], fixes: Mapping[str, Fix] | None = None) -> Json | None:
+    """The fields `checks` of a row that has each of them in the contract's form, else None (other fields dropped);
+    `fixes` replace the values of some fields (an unknown value by null)."""
     if not isinstance(value, Mapping) or not all(
         name in value and check(value[name]) for name, check in checks.items()
     ):
         return None
-    return {name: value[name] for name in checks}
+    row = {name: value[name] for name in checks}
+    for name, fix in (fixes or {}).items():
+        row[name] = fix(row[name])
+    return row
 
 
 FIGURE_CHECKS: dict[str, Check] = dict.fromkeys(FIGURES, _count)
@@ -228,12 +258,13 @@ USAGE_CHECKS: dict[str, dict[str, Check]] = {
         "parent_session_id": _or_null(_uuid),
         "depth": _count,
         "state": one_of(SESSION_STATES),
-        "model_id": _or_null(pattern(MODEL_ID_RE)),
+        "model_id": _anything,
         "created_at": _time,
         "ended_at": _or_null(_time),
         **FIGURE_CHECKS,
     },
 }
+USAGE_FIXES: dict[str, dict[str, Fix]] = {"task": {}, "session": {"model_id": _known_or_null(pattern(MODEL_ID_RE))}}
 AUDIT_CHECKS: dict[str, Check] = {
     "seq": _positive,
     "at": _time,
@@ -252,16 +283,17 @@ OPERATION_CHECKS: dict[str, Check] = {
     "session_id": _uuid,
     "type": pattern(OPERATION_TYPE_RE),
     "state": one_of(OPERATION_STATES),
-    "error_code": _or_null(one_of(ERROR_CODES)),
+    "error_code": _anything,
     "created_at": _time,
     "finished_at": _or_null(_time),
 }
 OPERATION_GROUP_CHECKS: dict[str, Check] = {
     "type": pattern(OPERATION_TYPE_RE),
     "state": one_of(OPERATION_STATES),
-    "error_code": _or_null(one_of(ERROR_CODES)),
+    "error_code": _anything,
     "count": _count,
 }
+OPERATION_FIXES: dict[str, Fix] = {"error_code": _known_or_null(one_of(ERROR_CODES))}
 
 
 def audit_row(value: object, org_id: str, wg_id: str) -> Json | None:
@@ -272,7 +304,8 @@ def audit_row(value: object, org_id: str, wg_id: str) -> Json | None:
     if row is None or not isinstance(detail, Mapping):
         return None
     row["target_id"] = target if isinstance(target, str) and TARGET_ID_RE.fullmatch(target) else None
-    row["detail"] = {key: item for key, item in detail.items() if DETAIL_KEY_RE.fullmatch(key) and _token(item)}
+    tokens = sorted((key, item) for key, item in detail.items() if DETAIL_KEY_RE.fullmatch(key) and _token(item))
+    row["detail"] = dict(tokens[:MAX_DETAIL_KEYS])
     return row
 
 
@@ -281,18 +314,19 @@ def _listed(answer: Mapping[str, Any], key: str) -> list[Any]:
     return found if isinstance(found, list) else []
 
 
-def _page(answer: Mapping[str, Any], key: str, row: Callable[[object], Json | None], limit: int) -> Json:
-    rows = [found for found in map(row, _listed(answer, key)) if found is not None]
-    if len(rows) > limit:
-        # a hub answering more rows than asked: the rest is not reachable through its cursor, so none is given
-        return {key: rows[:limit], "next_before": None}
+def _page(answer: Mapping[str, Any], key: str, row: Callable[[object], Json | None], limit: int, wg_id: str) -> Json:
+    listed = _listed(answer, key)
+    if len(listed) > limit:
+        raise TOO_MANY.at(wg_id)
+    rows = [found for found in map(row, listed) if found is not None]
     following = answer.get("next_before")
     return {key: rows, "next_before": following if pattern(BEFORE_RE)(following) else None}
 
 
-def _groups(answer: Mapping[str, Any], checks: Mapping[str, Check]) -> Json:
-    groups = [found for found in (checked(item, checks) for item in _listed(answer, "groups")) if found is not None]
-    truncated = len(groups) > MAX_GROUPS or answer.get("truncated") is not False
+def _groups(answer: Mapping[str, Any], checks: Mapping[str, Check], fixes: Mapping[str, Fix] | None = None) -> Json:
+    listed = _listed(answer, "groups")
+    groups = [found for found in (checked(item, checks, fixes) for item in listed) if found is not None]
+    truncated = len(listed) > MAX_GROUPS or len(groups) < len(listed) or answer.get("truncated") is not False
     return {"groups": groups[:MAX_GROUPS], "truncated": truncated}
 
 
@@ -311,8 +345,8 @@ async def _fetch(context: Any, wg_id: str, resource: str, query: Mapping[str, st
         if exc.status == 400 and exc.code == "request_invalid":
             raise refused_arguments(exc.detail).at(wg_id) from None
         raise HUB_UNAVAILABLE.at(wg_id) from None
-    except HubTransportError:
-        raise HUB_UNAVAILABLE.at(wg_id) from None
+    except HubTransportError as exc:
+        raise (NO_ROUTE if exc.status == 404 else HUB_UNAVAILABLE).at(wg_id) from None
 
 
 def refused_arguments(detail: Mapping[str, object]) -> ReadRefused:
@@ -351,7 +385,7 @@ async def usage(
     if frame != (wg_id, by, since) or not _time(hub_until) or until not in (None, hub_until):
         raise HUB_INVALID.at(wg_id)
     total = None if before is not None else checked(answer.get("total"), TOTAL_CHECKS)
-    page = _page(answer, "rows", lambda value: checked(value, USAGE_CHECKS[by]), limit)
+    page = _page(answer, "rows", lambda value: checked(value, USAGE_CHECKS[by], USAGE_FIXES[by]), limit, wg_id)
     return {"workgroup_id": wg_id, "since": since, "until": hub_until, "by": by, "total": total, **page}
 
 
@@ -370,7 +404,7 @@ async def audit(
     )
     if grouped:
         return _groups(answer or {"truncated": False}, AUDIT_GROUP_CHECKS)
-    return _page(answer or {}, "rows", lambda value: audit_row(value, org_id, wg_id), limit)
+    return _page(answer or {}, "rows", lambda value: audit_row(value, org_id, wg_id), limit, wg_id)
 
 
 async def operations(context: Any, wg_id: str, *, query: Mapping[str, str | None], grouped: bool, limit: int) -> Json:
@@ -379,8 +413,9 @@ async def operations(context: Any, wg_id: str, *, query: Mapping[str, str | None
         context, wg_id, "operations", {**query, "group_by": "type" if grouped else None, "limit": str(limit)}
     )
     if grouped:
-        return _groups(answer or {"truncated": False}, OPERATION_GROUP_CHECKS)
-    return _page(answer or {}, "operations", lambda value: checked(value, OPERATION_CHECKS), limit)
+        return _groups(answer or {"truncated": False}, OPERATION_GROUP_CHECKS, OPERATION_FIXES)
+    row = lambda value: checked(value, OPERATION_CHECKS, OPERATION_FIXES)  # noqa: E731
+    return _page(answer or {}, "operations", row, limit, wg_id)
 
 
 def point(value: object) -> bool:
@@ -396,5 +431,8 @@ async def metrics(context: Any, wg_id: str, *, query: Mapping[str, str | None]) 
     asked = (query["entity_kind"], query["entity_id"], query["metric"])
     if (answer.get("entity_kind"), answer.get("entity_id"), answer.get("metric")) != asked:
         raise HUB_INVALID.at(wg_id)
-    found = [list(item) for item in _listed(answer, "points") if point(item)]
-    return {"entity_kind": asked[0], "entity_id": asked[1], "metric": asked[2], "points": found[:MAX_POINTS]}
+    listed = _listed(answer, "points")
+    if len(listed) > MAX_POINTS:
+        raise TOO_MANY.at(wg_id)
+    found = [list(item) for item in listed if point(item)]
+    return {"entity_kind": asked[0], "entity_id": asked[1], "metric": asked[2], "points": found}

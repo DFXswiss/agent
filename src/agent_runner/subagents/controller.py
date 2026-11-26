@@ -533,8 +533,8 @@ class Subagents:
             else:
                 checked: Mapping[str, Any] | None = None
                 try:
-                    reach = await profile_check.reach(self.env.db, session.id, session.parent_id)
-                    call = QueryCall(self.env.context, session, tool_name, arguments, actor_id, reach)
+                    reach, profile = await profile_check.read_profile(self.env.db, session.id, session.parent_id)
+                    call = QueryCall(self.env.context, session, tool_name, arguments, actor_id, reach, profile)
                     refused = profile_check.read_refusal(reach, tool_name, arguments)
                     outcome = refused if refused is not None else await self.tools[tool_name](call)
                 except Exception as exc:

@@ -47,3 +47,12 @@ five low findings; all worked into the ADR or answered below).
     update).
 13. **Error codes.** The widening of an analysis profile is `403 forbidden` (a right the person does not have on this
     task) with `detail.reason` `analysis`, not a new code; the error detail's `reason` list gained `analysis`.
+14. **Review of the code (fresh context).** Worked in: figures only outside the own workgroup for the `analysis` role
+    (the package's biggest risk, now technical, not only the brief); the analysis name kept when an analysis task is
+    narrowed or starts a child with its own profile; tighter audit tokens; unknown error codes kept as null and
+    `truncated` on every cut; reads without `since` limited to 92 days; usage by task aggregates only the page's
+    tasks; a hub that answers more than asked makes the read `unavailable` (cutting would lose rows silently); the web search also refused by the guest's hook for
+    `analysis`; the agent tool leaves the "not in the future" check to the hub. Recorded, not changed: workgroup VM
+    samples follow the VM's current workgroup (ADR-095 §7); an older hub answers an unknown route with the same
+    `404 not_found` as a route, so a new runner in front of an old hub reads empty lists – the rollout is hub first
+    (ADR-095), and an analysis task cannot be created on an old hub at all.

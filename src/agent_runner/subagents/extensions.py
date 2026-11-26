@@ -43,6 +43,9 @@ class QueryCall:
     actor_id: str | None = None
     reach: str = "all"
     """The reach of the session's reads by its rights profile (`all`, `workgroup`, `task`; ADR-094 section 3)."""
+    profile: str | None = None
+    """The name of the session's effective rights profile (None without one); `analysis` reads other workgroups only
+    as figures (ADR-095 section 7, `queries.rights.FiguresOnly`)."""
 
 
 @dataclass(frozen=True)

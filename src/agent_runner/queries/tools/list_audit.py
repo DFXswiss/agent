@@ -25,7 +25,7 @@ async def list_audit(call: QueryCall) -> QueryOutcome:
         query = {
             "since": since,
             "until": until,
-            "action": analysis_api.optional(found, "action", analysis_api.pattern(analysis_api.ACTION_RE)),
+            "action": analysis_api.optional(found, "action", analysis_api.pattern(analysis_api.ACTION_ARGUMENT_RE)),
             "task": analysis_api.optional(found, "task_id", UUID),
             "session": analysis_api.optional(found, "session_id", UUID),
             "before": analysis_api.cursor(found),
@@ -34,7 +34,7 @@ async def list_audit(call: QueryCall) -> QueryOutcome:
         limit = common.integer(found, "limit", 1, analysis_api.MAX_LIMIT, analysis_api.DEFAULT_LIMIT)
         scope = common.scope_of(call)
         scope.require_workgroup()
-        wg_id = await common.workgroup(call, scope, found)
+        wg_id = await common.workgroup(call, scope, found, figures=grouped)
         result = await analysis_api.audit(call.context, scope.org_id, wg_id, query=query, grouped=grouped, limit=limit)
         count = len(result["groups"] if grouped else result["rows"])
         return common.ok(result, count, target_kind="workgroup", target_id=wg_id, read_wg_id=wg_id)

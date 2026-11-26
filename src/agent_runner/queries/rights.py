@@ -74,6 +74,22 @@ UNKNOWN_HUMAN = ReadRefused(
     " give the instruction.",
 )
 NO_WORKGROUP = ReadRefused("not_found", "There is no such workgroup you can read.")
+ANALYSIS_PROFILE = "analysis"
+
+
+class FiguresOnly(ReadRefused):
+    """A session with the profile `analysis` reads another workgroup only as figures (ADR-095 section 7): usage,
+    operations, metrics, audit counts and workgroup names, never tasks, chat, whiteboards, members or audit rows."""
+
+    def __init__(self, wg_id: str) -> None:
+        super().__init__(
+            "forbidden",
+            "A process analysis reads other workgroups only as figures; use get_usage, list_workgroup_operations,"
+            " get_metrics or list_audit with group_by there, or start an ordinary task to read its content.",
+            wg_id=wg_id,
+        )
+
+
 REACH_SENTENCE = (
     "This session's rights profile reads only its own {reach}; ask the session that started you or a person."
 )
@@ -115,6 +131,8 @@ class ReadScope:
     reach: str = "all"
     """The reach of the session's rights profile (ADR-094 section 3): `workgroup` and `task` read no other workgroup,
     `task` no other task (`outside_reach`)."""
+    figures_only: bool = False
+    """The session's profile is `analysis`: another workgroup is readable only by the figure reads (`FiguresOnly`)."""
 
     def outside_reach(self, wg_id: str, task_id: str | None = None) -> None:
         """`ReadRefused` forbidden for a workgroup or task beyond the profile's reach."""
@@ -127,10 +145,11 @@ class ReadScope:
         """The owner's access to the session's workgroup (`ReadRefused` forbidden without)."""
         return self.readable(self.wg_id)
 
-    def readable(self, wg_id: str) -> str:
-        """The session's access to workgroup `wg_id` (`decide`), within the profile's reach."""
+    def readable(self, wg_id: str, *, figures: bool = False) -> str:
+        """The session's access to workgroup `wg_id` (`decide`), within the profile's reach; for a session of the
+        profile `analysis` another workgroup only for a read of figures (`figures`, else `FiguresOnly`)."""
         self.outside_reach(wg_id)
-        return decide(
+        access = decide(
             self.state,
             device_id=self.device_id,
             own_wg=self.wg_id,
@@ -138,9 +157,14 @@ class ReadScope:
             actor_id=self.actor_id,
             wg_id=wg_id,
         )
+        if self.figures_only and not figures and wg_id != self.wg_id:
+            raise FiguresOnly(wg_id)
+        return access
 
 
-def read_scope(context: Any, session: LocalSession, actor_id: str | None, reach: str = "all") -> ReadScope:
+def read_scope(
+    context: Any, session: LocalSession, actor_id: str | None, reach: str = "all", profile: str | None = None
+) -> ReadScope:
     """The read scope of `session` now for a read instructed by `actor_id` (module docstring); `ReadRefused` when the
     session may read nothing."""
     book = book_for(context)
@@ -167,4 +191,5 @@ def read_scope(context: Any, session: LocalSession, actor_id: str | None, reach:
         actor_id=actor_id,
         task_id=session.task_id,
         reach=reach,
+        figures_only=profile == ANALYSIS_PROFILE,
     )

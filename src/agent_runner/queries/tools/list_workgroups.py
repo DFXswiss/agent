@@ -2,7 +2,8 @@
 workgroups the session cannot read (names are organization metadata every member sees) - with `my_access`, the
 **session's** access: the task owner's explicit `read`/`write` for the session's own workgroup, `read` for another
 workgroup the session may read (`ReadScope.readable`: owner and instructing human, served by this device), null
-otherwise (no new field, so older guests keep validating the result).
+otherwise (no new field, so older guests keep validating the result). Names are figures: a process analysis
+(`rights.FiguresOnly`) sees the same access.
 
 Organization level: the owner must be an active member. Archived workgroups are left out (they take no tasks; one is
 still readable by its ID). The default workgroup comes first, the others by name. Names come from the verified
@@ -20,7 +21,7 @@ from agent_runner.subagents.extensions import QueryCall, QueryOutcome
 def my_access(scope: ReadScope, wg_id: str) -> str | None:
     """The session's access to the workgroup, None when it may not read it."""
     try:
-        return scope.readable(wg_id)
+        return scope.readable(wg_id, figures=True)
     except ReadRefused:
         return None
 

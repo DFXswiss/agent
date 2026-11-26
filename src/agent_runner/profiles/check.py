@@ -8,9 +8,10 @@
 - `tool(conn, session, tool)`: a work VM or browser tool (`model.tool_type`) needs the type it stands for;
   the sentence of a refusal, None when allowed.
 - `reach(db, session_id, parent_id)`: the reach of the session's reads (`all` without a profile); the read tools apply
-  it to every workgroup and task they read (`queries.rights.ReadScope.outside_reach`). `read_refusal(reach, tool,
-  arguments)` refuses at once what reads beyond the reach as a whole: the members of the whole organization for reach
-  `workgroup` and `task`, `list_tasks`, the workgroup-wide reads of ADR-095 (`WORKGROUP_WIDE`: usage, audit,
+  it to every workgroup and task they read (`queries.rights.ReadScope.outside_reach`); `read_profile` adds the
+  profile's name (`analysis` reads other workgroups only as figures, `queries.rights.FiguresOnly`). `read_refusal(reach,
+  tool, arguments)` refuses at once what reads beyond the reach as a whole: the members of the whole organization for
+  reach `workgroup` and `task`, `list_tasks`, the workgroup-wide reads of ADR-095 (`WORKGROUP_WIDE`: usage, audit,
   operations and metrics of a workgroup) and the organization and workgroup whiteboards for reach `task`. The names of
   the organization's workgroups (`list_workgroups`) stay readable: they are organization metadata every member sees.
 """
@@ -69,8 +70,14 @@ async def tool(conn: AsyncConnection[Any], session: Any, name: str) -> str | Non
 
 
 async def reach(db: Any, session_id: str, parent_id: str | None) -> str:
+    return (await read_profile(db, session_id, parent_id))[0]
+
+
+async def read_profile(db: Any, session_id: str, parent_id: str | None) -> tuple[str, str | None]:
+    """The reach of the session's reads and the name of its effective profile (None without one)."""
     async with store_session(db) as conn:
-        return model.reach(await state.effective(conn, session_id, parent_id))
+        profile = await state.effective(conn, session_id, parent_id)
+    return model.reach(profile), None if profile is None else profile.name
 
 
 def read_refusal(reach: str, tool: str, arguments: Mapping[str, Any]) -> QueryOutcome | None:

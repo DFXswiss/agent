@@ -24,7 +24,7 @@ async def get_usage(call: QueryCall) -> QueryOutcome:
         limit = common.integer(found, "limit", 1, analysis_api.MAX_LIMIT, analysis_api.DEFAULT_LIMIT)
         scope = common.scope_of(call)
         scope.require_workgroup()
-        wg_id = await common.workgroup(call, scope, found)
+        wg_id = await common.workgroup(call, scope, found, figures=True)
         result = await analysis_api.usage(
             call.context, wg_id, since=since, until=until, by=by, before=before, limit=limit
         )
