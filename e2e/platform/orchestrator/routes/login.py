@@ -8,8 +8,8 @@
   `AGENT_RUNNER_LOGIN_ARGV` = the login-CLI double (`setup-token` against the auth page, trusting the CA),
   `AGENT_RUNNER_LOGIN_AUTOMATION=on`, `AGENT_RUNNER_LOGIN_SANDBOX=process` and `SSL_CERT_FILE` = the CA (IMAPS and
   the page pin of the automation); running runners are restarted with the same home. Then it adds the mailbox account
-  (if given) and loads the auth page's scenario (`seed`: the tokens it issues; `junk`: the magic-link mail lands in `Junk`; `fault`: a page or mail
-  failure). Answers `{pages, imaps: {host, port}, restarted}`.
+  (if given) and loads the auth page's scenario (`seed`: the tokens it issues; `junk`: the magic-link mail lands in
+  `Junk`; `fault`: a page or mail failure). Answers `{pages, imaps: {host, port}, restarted}`.
 - `POST /login/magic-link` (`{"user", "password", "folder": "INBOX" | "Junk"}`): the newest magic link in a folder of
   the mail double, read over IMAP like a person reading their mail (the password reaches the reader through its
   environment). Answers `{messages, link}` (`link` null when there is none). For the manual relay of a spec: the
