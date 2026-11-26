@@ -42,6 +42,8 @@ EMPTY_SECTIONS: dict[str, Any] = {
     "orchestrators": [],  # KOR-57 (ADR-082 section 6)
     "subscriptions": {"api": 1, "shared": []},  # KOR-69 (ADR-090 sections 3 and 4)
     "vm_switch": [],  # KOR-70 (ADR-093 section 5)
+    "vm_switch_at": {},  # HOT-24 (ADR-093 addendum)
+    "vm_upgrade_version": 2,
     "agent_profiles": {"api": 1, "sessions": {}, "workgroups": {}},  # KOR-51
 }
 

@@ -14,6 +14,7 @@ import json
 import shutil
 import tarfile
 import tempfile
+import uuid
 from collections.abc import AsyncIterable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -272,3 +273,13 @@ async def ckit(env: Env, **settings: Any) -> CKit:
     existing = getattr(env.context, "context_env", None)
     contexts = existing if existing is not None and not settings else install_contexts(env, pk.kit, **settings)
     return CKit(pk=pk, contexts=contexts, store=HubContexts(env.hub).install())
+
+
+async def accept(env: Env, sid: str, count: int = 1) -> None:
+    """`count` prompts accepted for the session on this device: it worked (HOT-24)."""
+    async with env.pool.connection() as conn:
+        for _ in range(count):
+            await conn.execute(
+                "INSERT INTO runner.prompt_delivery (event_id, session_id, state) VALUES (%s, %s, 'accepted')",
+                (str(uuid.uuid4()), sid),
+            )

@@ -25,7 +25,7 @@ from agent_runner.sync.http import HubRefusal
 from ..prompts.kit import run
 from ..reconcile.rig import Rig, scope_key
 from ..sessions.kit import TASK, WG, session_id
-from .kit import CKit, archive, ckit, transport_error
+from .kit import CKit, accept, archive, ckit, transport_error
 
 AT = "2026-11-21T12:00:02.000Z"
 
@@ -146,10 +146,27 @@ def test_export_failures_drop_or_postpone_the_request(rig: Rig) -> None:
     async def body(env: Any) -> None:
         ck, sid = await prepared(env)
         worker = Checkpointer(ck.contexts)
-        for error in ("not_found", "state_conflict", "size_exceeded"):
+        # HOT-24: what the end of a request means is stored with it
+        outcomes = {
+            "not_found": ("impossible", "export_refused:not_found"),
+            "size_exceeded": ("impossible", "export_refused:size_exceeded"),
+            "state_conflict": ("nothing", None),  # no checkpoint of the session yet: nothing to save
+            "forbidden": ("dropped", None),
+        }
+        for error, outcome in outcomes.items():
             ck.guest.fail["export_context"] = GuestRefused("context_export", 409, error)
             assert await worker.take(await due_now(ck, sid)) == "dropped"
-            assert any(f"export_refused error={error}" in line for line in ck.lines)
+            assert any(f"export_refused error={error} outcome={outcome[0]}" in line for line in ck.lines)
+            async with env.pool.connection() as conn:
+                cur = await conn.execute(
+                    "SELECT checkpoint_state, impossible_reason FROM runner.context_session WHERE session_id = %s",
+                    (sid,),
+                )
+                assert await cur.fetchone() == outcome
+                await conn.execute("UPDATE runner.context_session SET checkpoint_state = NULL")  # due again below
+        # a passing fault of the guest is postponed like an unreachable guest
+        ck.guest.fail["export_context"] = GuestRefused("context_export", 503, "unavailable")
+        assert await worker.take(await due_now(ck, sid)) == "postponed"
         ck.guest.fail["export_context"] = GuestUnreachable("context_export")
         assert await worker.take(await due_now(ck, sid)) == "postponed"
         assert await due_rows(ck) == []  # waits for its backoff
@@ -157,6 +174,11 @@ def test_export_failures_drop_or_postpone_the_request(rig: Rig) -> None:
             await conn.execute("UPDATE runner.context_session SET next_at = NULL, attempts = %s", (MAX_ATTEMPTS - 1,))
         [due] = await due_rows(ck)
         assert await worker.take(due) == "dropped"
+        async with env.pool.connection() as conn:  # attempts that ran out: a passing cause, not "never savable"
+            cur = await conn.execute(
+                "SELECT checkpoint_state FROM runner.context_session WHERE session_id = %s", (sid,)
+            )
+            assert await cur.fetchone() == ("dropped",)
         assert retry_delay(0) == 5.0
         assert retry_delay(50) == 3600.0
 
@@ -496,6 +518,7 @@ def test_a_vm_that_goes_away_has_the_checkpoints_of_its_sessions_taken_first(rig
 
     async def body(env: Any) -> None:
         ck, sid = await prepared(env, state="working")
+        await accept(env, sid)  # it worked: a due checkpoint keeps its stopped VM (HOT-24)
         ended = await ck.pk.add_session(2, state="stopped")
         row = await ck.pk.vm()
         assert not await vm_retire.pending(env.context, row)
