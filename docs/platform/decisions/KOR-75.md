@@ -4,10 +4,10 @@ Package: the foundation of working modes – catalogue, choice, record, visibili
 with no mode but a test mode. Rules [E-32](../KONZEPT.md#e-32) (selectable, never forced, never on by default),
 [E-33](../KONZEPT.md#e-33) (independent work runs in parallel, each in its own sandbox), [E-04](../KONZEPT.md#e-04)
 (web and tool can do the same), [E-05](../KONZEPT.md#e-05), [E-19](../KONZEPT.md#e-19), [E-25](../KONZEPT.md#e-25)
-(no protection beyond what is needed); the owner's rule given with the package order ("what the platform can do itself
-is a platform tool and needs no VM; a session never sees the secret of an access" – „wenn ein agent einen unbuntu
-braucht um ein e-mail postfach abzurufen dann haben wir was falsch gemacht“; recorded as E-34 on the documentation
-branch, whose number develop still gives to the CI runner rule). Design:
+(no protection beyond what is needed) and E-37 ("what the platform can do itself is a platform tool and needs no VM;
+a session never sees the secret of an access" – „wenn ein agent einen unbuntu braucht um ein e-mail postfach abzurufen
+dann haben wir was falsch gemacht“; recorded on the documentation branch `ad5f2026-doc-11`, not yet on develop, so
+not linked here; E-34 to E-36 of develop are the CI runner rules and not part of this package). Design:
 [ADR-098](../adr/098-working-modes.md) §§1–4 and 8, step 1 of §9; §7 as of the branch `ad5f2026-doc-10` (D1–D6 and
 D8 decided, D7 and D9 open – neither is touched by this package, no access is built here). Specification:
 [17-working-modes.md](../spec/17-working-modes.md).
