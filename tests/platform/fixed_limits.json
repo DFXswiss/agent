@@ -1023,6 +1023,7 @@
   },
   "src/agent_runner/sync/push.py": {
    "HEDGE_MAX_BYTES": "size",
+   "LOSS_LIMIT": "integer",
    "MAX_BATCH_BYTES": "size",
    "MAX_ITEMS": "page"
   },
