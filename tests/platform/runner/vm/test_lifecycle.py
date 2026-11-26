@@ -52,8 +52,8 @@ def test_pool_path_then_running_vm(harness: Harness) -> None:
     first, again = harness.run(body)
     assert first.id == again.id
     assert first.state == "running"
-    # The second call found the running VM: no further clone or assignment.
-    assert [argv[0] for argv, _ in harness.fake.calls].count("clone") == 2
+    # One clone for the pool of 1; the second call found the running VM: no further clone or assignment.
+    assert [argv[0] for argv, _ in harness.fake.calls].count("clone") == 1
     assert harness.sql("SELECT last_session_at FROM runner.vm WHERE id = %s", (first.id,))[0]["last_session_at"]
 
 
@@ -714,7 +714,7 @@ def test_touch_and_capacity(harness: Harness) -> None:
         return capacity, await records.get(manager.env.db, row.id)
 
     capacity, row = harness.run(body)
-    assert (capacity.slots_total, capacity.slots_free, capacity.pool_ready) == (4, 2, 2)
+    assert (capacity.slots_total, capacity.slots_free, capacity.pool_ready) == (4, 3, 1)
     assert row.last_session_at is not None
 
 

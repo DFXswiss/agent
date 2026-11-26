@@ -510,12 +510,12 @@ def environment(config: Config) -> dict[str, str]:
         out[PREFIX + "CLAUDE_OAUTH_CLIENT_ID"] = config.claude_oauth_client_id
     if config.login_automation_set:
         out[PREFIX + "LOGIN_AUTOMATION"] = "on" if config.login_automation else "off"
-    if config.test_mode:
-        out[PREFIX + "TEST_MODE"] = "1"
-    if config.workvm_slots_self:
-        out[PREFIX + "WORKVM_SLOTS_SELF"] = "1"
-    if config.test_pool_empty:
-        out[PREFIX + "TEST_POOL_EMPTY"] = "1"
+    switches = {
+        "TEST_MODE": config.test_mode,
+        "WORKVM_SLOTS_SELF": config.workvm_slots_self,
+        "TEST_POOL_EMPTY": config.test_pool_empty,
+    }
+    out.update({PREFIX + name: "1" for name, on in switches.items() if on})
     return out
 
 

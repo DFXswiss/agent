@@ -295,7 +295,8 @@ def test_the_pool_is_one_vm_and_is_refilled_to_one(harness: Harness) -> None:
 
     first, again, taken, refilled, capacity = harness.run(body)
     assert (first, again, refilled) == (1, 0, 1)
-    assert taken is not None and taken.state == "running"
+    assert taken is not None
+    assert taken.state == "running"
     assert capacity.pool_ready == 1
     assert capacity.slots_free > 0
     assert sorted(row["state"] for row in harness.vms()) == ["pool", "running"]
@@ -440,20 +441,20 @@ def test_purge_deletes_pool_vms_of_a_retired_golden(harness: Harness) -> None:
     async def fill(manager: VmManager) -> Any:
         return await manager.refill()
 
-    assert harness.run(fill) == 2
+    assert harness.run(fill) == 1
     old = {row["id"] for row in harness.live()}
     harness.sql("UPDATE runner.golden SET state = 'retired'")
     harness.add_golden("g2", minute=5)
-    assert harness.run(fill) == 2
+    assert harness.run(fill) == 1
     rows = harness.vms()
     assert {row["id"] for row in rows if row["state"] == "deleted"} == old
-    assert {row["golden_version"] for row in rows if row["state"] == "pool"} == {"g2"}
+    assert [row["golden_version"] for row in rows if row["state"] == "pool"] == ["g2"]
     harness.sql("UPDATE runner.golden SET state = 'retired'")
 
     async def purge(manager: VmManager) -> Any:
         return await manager.pool.purge(None)
 
-    assert harness.run(purge) == 2
+    assert harness.run(purge) == 1
     assert harness.live() == []
 
 

@@ -8,8 +8,8 @@ Facts (codes, counts and names of the runner itself; never a token or hash):
 
 `size` is the fixed `POOL_SIZE` (1, ADR-009 addendum; 0 only while an E2E test holds the pool empty with
 `TEST_POOL_EMPTY` in test mode). `refill` is `disabled` (held empty), `no_golden` (no ready golden), `full` (pool
-complete), `no_capacity` (no free slot) or `pending` (the daemon will add VMs). The command reads the store like `image list` (a stopped cluster is
-started for the command) and needs no hub configuration.
+complete), `no_capacity` (no free slot) or `pending` (the daemon will add VMs). The command reads the store like
+`image list` (a stopped cluster is started for the command) and needs no hub configuration.
 """
 
 from __future__ import annotations
