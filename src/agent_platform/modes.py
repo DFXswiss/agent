@@ -169,7 +169,7 @@ def register(tree: Tree) -> None:
         "the working modes this platform offers, one line per mode with what it needs (listing chooses nothing)",
         example="agent-platform modes list",
         words="arbeitsweisen katalog arbeitsweise modus verfügbar working modes catalogue available ways",
-        then="agent-platform task mode on --task <task_id> --mode <name>",
+        then="agent-platform task mode on --task <task_id> --mode <mode>",
     )
     task_group = tree.group("task", "tasks")
     mode_group = tree.group("mode", "working modes of a task (ADR-098)", task_group)
@@ -178,14 +178,14 @@ def register(tree: Tree) -> None:
             "on",
             _on,
             "switch working modes on for a task (several --mode: in this order, the modes a mode needs first)",
-            "agent-platform task mode on --task <task_id> --mode <name>",
+            "agent-platform task mode on --task <task_id> --mode <mode>",
             "arbeitsweise einschalten wählen aktivieren modus switch enable choose activate mode",
         ),
         (
             "off",
             _off,
             "switch working modes of a task off (at once for new steps)",
-            "agent-platform task mode off --task <task_id> --mode <name>",
+            "agent-platform task mode off --task <task_id> --mode <mode>",
             "arbeitsweise ausschalten abschalten deaktivieren modus disable deactivate stop mode",
         ),
     ):
