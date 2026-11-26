@@ -58,7 +58,7 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     reason: 'one credential per supported kind (closed list)',
   },
   'src/ui/settings/sections/credentials/Mailbox.tsx': { count: 1, reason: 'the fixed fields of the mailbox form' },
-  'src/ui/settings/sections/mailboxes/index.tsx': {
+  'src/ui/settings/sections/mailboxes/MailboxesView.tsx': {
     count: 1,
     reason: 'mailboxes of the user (at most 100, ADR-099 section 2)',
   },

@@ -48,11 +48,11 @@ ImapFactory = Callable[..., Any]
 
 
 class Refused(Exception):
-    """The server refused the sign-in (`login`) or a command (`command`)."""
+    """The server refused the sign-in (`login`) or a command."""
 
-    def __init__(self, step: str) -> None:
-        super().__init__(step)
-        self.step = step
+    def __init__(self, *, login: bool = False) -> None:
+        super().__init__()
+        self.login = login
 
 
 @dataclass(frozen=True)
@@ -155,7 +155,7 @@ def _fetched(data: Iterable[object]) -> list[tuple[dict[str, str], bytes]]:
 def _ok(answer: tuple[str, Any]) -> Any:
     status, data = answer
     if status != "OK":
-        raise Refused("command")
+        raise Refused()
     return data
 
 
@@ -311,11 +311,11 @@ def find(server: Server, query: Query, *, imap_factory: ImapFactory = imaplib.IM
         try:
             conn.login(server.user, server.password)
         except imaplib.IMAP4.error:
-            raise Refused("login") from None
+            raise Refused(login=True) from None
         try:
             return _look(conn, query)
         except imaplib.IMAP4.error:
-            raise Refused("command") from None
+            raise Refused() from None
     finally:
         with contextlib.suppress(imaplib.IMAP4.error, OSError):
             conn.logout()

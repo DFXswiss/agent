@@ -139,7 +139,7 @@ def test_a_refused_sign_in_and_a_refused_command(mail: Callable[[], MailDouble])
     double = _started(mail)
     with pytest.raises(reader.Refused) as refused:
         reader.find(_server(double, "wrong"), Query())
-    assert refused.value.step == "login"
+    assert refused.value.login is True
     assert "wrong" not in str(refused.value)
 
     class Failing:
@@ -160,7 +160,7 @@ def test_a_refused_sign_in_and_a_refused_command(mail: Callable[[], MailDouble])
 
     with pytest.raises(reader.Refused) as failed:
         reader.find(_server(double), Query(), imap_factory=Failing)
-    assert failed.value.step == "command"
+    assert failed.value.login is False
 
     class Broken(Failing):
         def select(self, *_args: Any, **_kwargs: Any) -> tuple[str, Any]:

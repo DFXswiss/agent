@@ -153,7 +153,7 @@ async def find(ctx: OperationContext) -> dict[str, Any]:
             await asyncio.sleep(min(POLL_SECONDS, max(deadline - env.clock(), 0.0)))
     except reader.Refused as refused:
         outcome = "upstream_error"
-        failure = OperationFailed("upstream_error", message=REFUSED if refused.step == "login" else COMMAND)
+        failure = OperationFailed("upstream_error", message=REFUSED if refused.login else COMMAND)
     except ssl.SSLError:
         outcome = "upstream_error"
         failure = OperationFailed("upstream_error", message=TLS)
