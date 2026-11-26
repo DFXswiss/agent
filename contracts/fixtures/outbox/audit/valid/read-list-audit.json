@@ -1,0 +1,11 @@
+{
+  "action": "read.session.list_audit",
+  "result": "ok",
+  "target_kind": "device",
+  "target_id": "01930014-0000-7000-8000-000000000014",
+  "detail": {
+    "result_count": 1,
+    "read_wg_id": "01a1ee56-5e00-7004-8f1b-340691d99f05",
+    "triggered_by": "01a1ee56-5e00-7008-8f1b-340691d99f08"
+  }
+}

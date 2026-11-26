@@ -1,0 +1,6 @@
+{
+  "entity_kind": "workvm",
+  "entity_id": "wvm-0123abcd",
+  "metric": "cpu_ratio",
+  "points": []
+}

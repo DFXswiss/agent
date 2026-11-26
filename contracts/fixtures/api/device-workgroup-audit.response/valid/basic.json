@@ -1,0 +1,25 @@
+{
+  "rows": [
+    {
+      "seq": 41,
+      "at": "2026-11-21T10:00:00.000Z",
+      "actor_id": "01a1ee56-5e00-7008-8f1b-340691d99f08",
+      "actor_kind": "session",
+      "action": "operation.github_push",
+      "result": "denied",
+      "org_id": "01a1ee56-5e00-7001-8f1b-340691d99f01",
+      "wg_id": "01a1ee56-5e00-7004-8f1b-340691d99f05",
+      "task_id": "01a1ee56-5e00-7004-8f1b-340691d99f04",
+      "session_id": "01a1ee56-5e00-7006-8f1b-340691d99f06",
+      "device_id": "01a1ee56-5e00-7009-8f1b-340691d99f09",
+      "target_kind": "operation",
+      "target_id": "01a1ee56-5e00-700a-8f1b-340691d99f0a",
+      "detail": {
+        "reason": "rights_denied",
+        "count": 1
+      },
+      "event_id": null
+    }
+  ],
+  "next_before": "41"
+}

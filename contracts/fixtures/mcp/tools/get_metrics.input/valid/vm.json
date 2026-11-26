@@ -1,0 +1,9 @@
+{
+  "entity_kind": "vm",
+  "entity_id": "vm-0123abcd",
+  "metric": "cpu_ratio",
+  "since": "2026-11-14T10:00:00.000Z",
+  "step": 15,
+  "workgroup_id": "01a1ee56-5e00-7004-8f1b-340691d99f05",
+  "until": "2026-11-21T10:00:00.000Z"
+}

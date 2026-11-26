@@ -1,0 +1,14 @@
+{
+  "operations": [
+    {
+      "operation_id": "01a1ee56-5e00-700a-8f1b-340691d99f0a",
+      "task_id": "01a1ee56-5e00-7004-8f1b-340691d99f04",
+      "session_id": "01a1ee56-5e00-7006-8f1b-340691d99f06",
+      "type": "github.push",
+      "state": "failed",
+      "error_code": "timeout",
+      "created_at": "2026-11-21T10:00:00.000Z"
+    }
+  ],
+  "next_before": null
+}

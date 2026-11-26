@@ -140,8 +140,8 @@ def usage(
     """The usage of the workgroup in the period (module docstring)."""
     _workgroup(connection, view, wg)
     assert when.since is not None
-    params: dict[str, Any] = {"wg": wg, "since": when.since, "until": when.until, "now": now, "failed": FAILED_STATES}
-    params["limit"] = limit + 1
+    params: dict[str, Any] = {"wg": wg, "since": when.since, "until": when.until, "now": now}
+    params.update(failed=list(FAILED_STATES), limit=limit + 1)
     total = None
     if before is None:
         counted = connection.execute(
@@ -219,9 +219,6 @@ def audit(
     if when.since is not None:
         clauses.append("at >= %s")
         params.append(when.since)
-    if before is not None:
-        clauses.append("seq < %s")
-        params.append(audit_query.decode_before(before))
     for name, value in filters.items():
         if name == "action":
             clauses.append("(action = %s OR left(action, %s) = %s)")
@@ -231,6 +228,9 @@ def audit(
             params.append(value)
     if grouped:
         return _groups(connection, "hub.audit", ("action", "result"), clauses, params)
+    if before is not None:
+        clauses.append("seq < %s")
+        params.append(audit_query.decode_before(before))
     found = connection.execute(
         f"SELECT {audit_query.COLUMNS} FROM hub.audit WHERE {' AND '.join(clauses)} ORDER BY seq DESC LIMIT %s",
         (*params, limit + 1),

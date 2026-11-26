@@ -258,6 +258,24 @@ SPEC_TOOLS = {
     "request_operation": ("type params idempotency_key", "operation_id status result error duplicate_of"),
     "get_operation": ("operation_id wait_seconds", "operation_id status result error duplicate_of"),
     "list_operations": ("limit", "operations=operation_id,type,state,error_code,created_at"),
+    # ADR-095 section 3 (contracts/changes/KOR-53.md): the analysis reads of one workgroup; the alternatives of
+    # list_audit and list_workgroup_operations (rows or groups) are in SPEC_NESTED
+    "get_usage": (
+        "workgroup_id since until by before limit",
+        "workgroup_id since until by total rows next_before",
+    ),
+    "list_audit": (
+        "workgroup_id since until action task_id session_id group_by before limit",
+        "rows next_before groups truncated",
+    ),
+    "list_workgroup_operations": (
+        "workgroup_id since until type state group_by before limit",
+        "operations next_before groups truncated",
+    ),
+    "get_metrics": (
+        "workgroup_id entity_kind entity_id metric since until step",
+        "entity_kind entity_id metric points",
+    ),
     "get_subagent_result": ("session_id wait_seconds", "session_id state final_text finished_at instruction_id"),
     # 13-work-vm.md section 3 (contracts/changes/KOR-29.md): the work VM tools, answered through workvm.call
     "workvm_exec": (
@@ -304,6 +322,10 @@ SPEC_TOOL_LIMITS = [
     ("list_tasks", "limit", 100),
     ("get_task_messages", "limit", 200),
     ("list_operations", "limit", 100),
+    ("get_usage", "limit", 200),
+    ("list_audit", "limit", 200),
+    ("list_workgroup_operations", "limit", 200),
+    ("get_metrics", "step", 9999999),
     ("get_operation", "wait_seconds", 30),
     ("get_subagent_result", "wait_seconds", 30),
     ("workvm_exec", "wait_seconds", 30),
@@ -322,6 +344,14 @@ REQUIRED_ARGS: dict[str, dict[str, object]] = {
     "get_task_messages": {"task_id": TASK},
     "get_operation": {"operation_id": TASK},
     "get_subagent_result": {"session_id": TASK},
+    "get_usage": {"since": "2026-11-20T10:00:00.000Z"},
+    "get_metrics": {
+        "entity_kind": "session",
+        "entity_id": TASK,
+        "metric": "cpu_ratio",
+        "since": "2026-11-20T10:00:00.000Z",
+        "step": 60,
+    },
     "workvm_exec": {"command": "true"},
     "workvm_output": {"job_id": "j-0123456789ab"},
     "workvm_browse": {"url": "https://example.com/"},
@@ -383,6 +413,20 @@ SPEC_NESTED = {
     " subagent_max_total subagent_max_runtime_seconds",
     ("mcp/objects.json", "/$defs/output_get_task/properties/sessions/items"): "id state depth parent_session_id",
     ("mcp/objects.json", "/$defs/output_get_task/properties/operations/items"): "id type state",
+    # ADR-095 section 3 (KOR-53): the rows of the analysis reads
+    ("mcp/objects.json", "/$defs/output_get_usage/properties/total/anyOf/0"): "sessions tasks requests input_tokens"
+    " output_tokens cache_read_tokens cache_write_tokens cost_micro_usd charged_micro_usd runtime_ms operations"
+    " failed_operations",
+    ("mcp/objects.json", "/$defs/output_get_usage/properties/rows/items"): "task_id created_at sessions requests"
+    " input_tokens output_tokens cache_read_tokens cache_write_tokens cost_micro_usd charged_micro_usd runtime_ms"
+    " operations failed_operations session_id parent_session_id depth state model_id ended_at",
+    ("mcp/objects.json", "/$defs/output_list_audit/anyOf/0/properties/rows/items"): "seq at actor_kind actor_id action"
+    " result task_id session_id target_kind target_id detail",
+    ("mcp/objects.json", "/$defs/output_list_audit/anyOf/1/properties/groups/items"): "action result count",
+    ("mcp/objects.json", "/$defs/output_list_workgroup_operations/anyOf/0/properties/operations/items"): "operation_id"
+    " task_id session_id type state error_code created_at finished_at",
+    ("mcp/objects.json", "/$defs/output_list_workgroup_operations/anyOf/1/properties/groups/items"): "type state"
+    " error_code count",
     # 13-work-vm.md section 13.4 (KOR-44): the answer of every browser tool
     ("mcp/objects.json", "/$defs/output_browser/properties/tabs/items"): "index url title active",
     ("mcp/objects.json", "/$defs/output_browser/properties/file/anyOf/0"): "path name bytes",

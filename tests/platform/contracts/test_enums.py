@@ -110,7 +110,9 @@ SPEC_OUTBOX_AUDIT = (
 # 03-api.md section 8.1: the session platform tools that read (request_operation writes).
 SPEC_MCP_TOOLS = (
     "get_context list_workgroups list_members list_tasks get_task get_task_messages get_whiteboard get_notifications"
-    " request_operation get_operation list_operations get_subagent_result"
+    " request_operation get_operation list_operations"
+    " get_usage list_audit list_workgroup_operations get_metrics"  # ADR-095 section 3 (contracts/changes/KOR-53.md)
+    " get_subagent_result"
 )
 # 02-data-model.md section 2.9 (patterns expanded by the sources named in audit-actions.json).
 SPEC_AUDIT_FIXED = (

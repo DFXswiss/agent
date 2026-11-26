@@ -1,0 +1,4 @@
+{
+  "action": "read.session",
+  "group_by": "action"
+}

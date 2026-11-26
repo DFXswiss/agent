@@ -1,0 +1,23 @@
+{
+  "rows": [
+    {
+      "seq": 41,
+      "at": "2026-11-21T10:00:00.000Z",
+      "actor_kind": "session",
+      "actor_id": "01a1ee56-5e00-7008-8f1b-340691d99f08",
+      "action": "operation.github_push",
+      "result": "denied",
+      "task_id": "01a1ee56-5e00-7004-8f1b-340691d99f04",
+      "session_id": "01a1ee56-5e00-7006-8f1b-340691d99f06",
+      "target_kind": "operation",
+      "target_id": "a b",
+      "detail": {
+        "reason": "rights_denied",
+        "count": 1,
+        "retried": false,
+        "note": null
+      }
+    }
+  ],
+  "next_before": null
+}

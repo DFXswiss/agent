@@ -1383,7 +1383,11 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.device.subscription": {"properties": {}, "required": []},
     "read.device.subscriptions": {"properties": {}, "required": []},
     "read.device.task": {"properties": {}, "required": []},
+    "read.device.workgroup.audit": {"properties": {}, "required": []},
+    "read.device.workgroup.metrics": {"properties": {}, "required": []},
+    "read.device.workgroup.operations": {"properties": {}, "required": []},
     "read.device.workgroup.tasks": {"properties": {}, "required": []},
+    "read.device.workgroup.usage": {"properties": {}, "required": []},
     "read.device.wraps": {"properties": {}, "required": []},
     "read.device_request": {"properties": {}, "required": []},
     "read.github_identity": {"properties": {}, "required": []},
@@ -1419,11 +1423,25 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.platform.enrollments": {"properties": {}, "required": []},
     "read.platform.invites": {"properties": {}, "required": []},
     "read.platform.log": {"properties": {}, "required": []},
+    "read.platform.ui_health": {"properties": {}, "required": []},
     "read.platform.user": {"properties": {}, "required": []},
     "read.platform.waiting": {"properties": {}, "required": []},
-    "read.platform.ui_health": {"properties": {}, "required": []},
     "read.scope.events": {"properties": {}, "required": []},
     "read.session.get_context": {
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
+        "required": ["result_count"],
+    },
+    "read.session.get_metrics": {
         "properties": {
             "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
             "read_wg_id": [
@@ -1507,6 +1525,20 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["result_count"],
     },
+    "read.session.get_usage": {
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
+        "required": ["result_count"],
+    },
     "read.session.get_whiteboard": {
         "properties": {
             "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
@@ -1522,6 +1554,20 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["result_count"],
     },
     "read.session": {"properties": {}, "required": []},
+    "read.session.list_audit": {
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
+        "required": ["result_count"],
+    },
     "read.session.list_members": {
         "properties": {
             "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
@@ -1564,6 +1610,20 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["result_count"],
     },
+    "read.session.list_workgroup_operations": {
+        "properties": {
+            "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
+            "read_wg_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
+        "required": ["result_count"],
+    },
     "read.session.list_workgroups": {
         "properties": {
             "result_count": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
@@ -1578,8 +1638,8 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["result_count"],
     },
-    "read.stream.browser": {"properties": {}, "required": []},
     "read.session.orchestrator": {"properties": {}, "required": []},
+    "read.stream.browser": {"properties": {}, "required": []},
     "read.stream": {"properties": {}, "required": []},
     "read.stream.terminal": {"properties": {}, "required": []},
     "read.subscription": {"properties": {}, "required": []},
@@ -1953,7 +2013,10 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "task.close": {"properties": {"by": [{"type": "string", "enum": ["user", "hub"]}]}, "required": ["by"]},
     "task.create": {
-        "properties": {"origin": [{"type": "string", "enum": ["browser", "device"]}]},
+        "properties": {
+            "origin": [{"type": "string", "enum": ["browser", "device"]}],
+            "analysis": [{"type": "string", "enum": ["org", "wg"]}],
+        },
         "required": ["origin"],
     },
     "task.github_identity": {
@@ -1976,16 +2039,6 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["device_id", "vm_id"],
     },
-    "wg.placement": {
-        "properties": {
-            "device_id": [
-                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
-                {"type": "null"},
-            ],
-            "vm_id": [{"type": "string", "pattern": "^vm-[0-9a-f]{8}$"}, {"type": "null"}],
-        },
-        "required": ["device_id", "vm_id"],
-    },
     "vm.switch_requested": {
         "properties": {
             "vm_id": [{"type": "string", "pattern": "^vm-[0-9a-f]{8}$"}],
@@ -1995,6 +2048,16 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "requested": [{"type": "boolean"}],
         },
         "required": ["vm_id", "device_id", "requested"],
+    },
+    "wg.placement": {
+        "properties": {
+            "device_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "vm_id": [{"type": "string", "pattern": "^vm-[0-9a-f]{8}$"}, {"type": "null"}],
+        },
+        "required": ["device_id", "vm_id"],
     },
     "whiteboard.notify": {
         "properties": {

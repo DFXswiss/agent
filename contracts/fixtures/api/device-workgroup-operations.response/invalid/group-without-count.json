@@ -1,0 +1,10 @@
+{
+  "groups": [
+    {
+      "type": "github.push",
+      "state": "failed",
+      "error_code": "timeout"
+    }
+  ],
+  "truncated": false
+}

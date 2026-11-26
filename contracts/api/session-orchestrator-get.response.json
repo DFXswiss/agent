@@ -27,6 +27,7 @@
           "type": "string",
           "enum": [
             "not_main",
+            "analysis",
             "not_private",
             "not_platform",
             "not_running"

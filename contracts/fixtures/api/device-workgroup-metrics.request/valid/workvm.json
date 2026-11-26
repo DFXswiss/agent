@@ -1,0 +1,7 @@
+{
+  "entity_kind": "workvm",
+  "entity_id": "wvm-0123abcd",
+  "metric": "reachable",
+  "since": "2026-11-14T10:00:00.000Z",
+  "step": "900"
+}

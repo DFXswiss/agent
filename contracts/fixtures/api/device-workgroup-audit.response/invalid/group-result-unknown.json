@@ -1,0 +1,10 @@
+{
+  "groups": [
+    {
+      "action": "operation.github_push",
+      "result": "maybe",
+      "count": 7
+    }
+  ],
+  "truncated": true
+}

@@ -1,0 +1,7 @@
+{
+  "entity_kind": "session",
+  "entity_id": "01a1ee56-5e00-7006-8f1b-340691d99f06",
+  "metric": "cpu_ratio",
+  "since": "2026-11-14T10:00:00.000Z",
+  "step": "900"
+}

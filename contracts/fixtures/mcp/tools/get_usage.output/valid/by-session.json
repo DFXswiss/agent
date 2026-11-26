@@ -1,0 +1,30 @@
+{
+  "workgroup_id": "01a1ee56-5e00-7004-8f1b-340691d99f05",
+  "since": "2026-11-14T10:00:00.000Z",
+  "until": "2026-11-21T10:00:00.000Z",
+  "by": "session",
+  "total": null,
+  "rows": [
+    {
+      "session_id": "01a1ee56-5e00-7007-8f1b-340691d99f07",
+      "task_id": "01a1ee56-5e00-7004-8f1b-340691d99f04",
+      "parent_session_id": "01a1ee56-5e00-7006-8f1b-340691d99f06",
+      "depth": 1,
+      "state": "stopped",
+      "model_id": "claude-sonnet-4-5",
+      "created_at": "2026-11-21T10:00:00.000Z",
+      "ended_at": "2026-11-21T10:30:00.000Z",
+      "requests": 12,
+      "input_tokens": 3400,
+      "output_tokens": 800,
+      "cache_read_tokens": 1200,
+      "cache_write_tokens": 300,
+      "cost_micro_usd": 52000,
+      "charged_micro_usd": 60000,
+      "runtime_ms": 1800000,
+      "operations": 9,
+      "failed_operations": 1
+    }
+  ],
+  "next_before": null
+}

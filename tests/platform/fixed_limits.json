@@ -188,6 +188,15 @@
    "MAX_OPEN_PER_SOURCE": "open",
    "NETWORK_LIMITS": "rate"
   },
+  "src/agent_hub/analysis/reads.py": {
+   "LIST_MAX": "page",
+   "MAX_DAYS": "page",
+   "MAX_POINTS": "page"
+  },
+  "src/agent_hub/analysis/request.py": {
+   "MAX_DAYS": "page",
+   "MAX_DETAIL_DEVICES": "answer"
+  },
   "src/agent_hub/attention/read.py": {
    "LIST_MAX": "page"
   },
@@ -855,6 +864,15 @@
    "MAX_LENGTH": "size",
    "NAME_MAX": "size"
   },
+  "src/agent_runner/queries/analysis_api.py": {
+   "COUNT_MAX": "integer",
+   "DEFAULT_LIMIT": "page",
+   "MAX_DAYS": "page",
+   "MAX_GROUPS": "page",
+   "MAX_LIMIT": "page",
+   "MAX_POINTS": "page",
+   "MAX_STEP": "integer"
+  },
   "src/agent_runner/queries/common.py": {
    "NAME_MAX": "size"
   },
@@ -1257,8 +1275,23 @@
    "/properties/operations/maxItems": "answer",
    "/properties/sessions/maxItems": "answer"
   },
+  "contracts/api/device-workgroup-audit.response.json": {
+   "/anyOf/0/properties/rows/maxItems": "page",
+   "/anyOf/1/properties/groups/maxItems": "page"
+  },
+  "contracts/api/device-workgroup-metrics.response.json": {
+   "/properties/points/items/maxItems": "answer",
+   "/properties/points/maxItems": "page"
+  },
+  "contracts/api/device-workgroup-operations.response.json": {
+   "/anyOf/0/properties/operations/maxItems": "page",
+   "/anyOf/1/properties/groups/maxItems": "page"
+  },
   "contracts/api/device-workgroup-tasks.response.json": {
    "/properties/tasks/maxItems": "answer"
+  },
+  "contracts/api/device-workgroup-usage.response.json": {
+   "/properties/rows/maxItems": "page"
   },
   "contracts/api/device-wraps-get.response.json": {
    "/properties/wraps/maxItems": "answer"
@@ -1686,11 +1719,15 @@
    "/$defs/input_browser_upload/properties/paths/maxItems": "answer",
    "/$defs/input_browser_wait/properties/ms/maximum": "integer",
    "/$defs/input_browser_wait/properties/timeout_ms/maximum": "time",
+   "/$defs/input_get_metrics/properties/step/maximum": "integer",
    "/$defs/input_get_operation/properties/wait_seconds/maximum": "time",
    "/$defs/input_get_subagent_result/properties/wait_seconds/maximum": "time",
    "/$defs/input_get_task_messages/properties/limit/maximum": "page",
+   "/$defs/input_get_usage/properties/limit/maximum": "page",
+   "/$defs/input_list_audit/properties/limit/maximum": "page",
    "/$defs/input_list_operations/properties/limit/maximum": "page",
    "/$defs/input_list_tasks/properties/limit/maximum": "page",
+   "/$defs/input_list_workgroup_operations/properties/limit/maximum": "page",
    "/$defs/input_workvm_browse/properties/wait_ms/maximum": "time",
    "/$defs/input_workvm_exec/properties/env/maxItems": "answer",
    "/$defs/input_workvm_exec/properties/timeout_seconds/maximum": "time",
@@ -1702,14 +1739,21 @@
    "/$defs/output_browser/properties/tabs/items/properties/index/maximum": "integer",
    "/$defs/output_browser/properties/tabs/maxItems": "answer",
    "/$defs/output_get_context/properties/children/maxItems": "answer",
+   "/$defs/output_get_metrics/properties/points/items/maxItems": "answer",
+   "/$defs/output_get_metrics/properties/points/maxItems": "page",
    "/$defs/output_get_notifications/properties/notifications/maxItems": "answer",
    "/$defs/output_get_task/properties/operations/maxItems": "answer",
    "/$defs/output_get_task/properties/sessions/maxItems": "answer",
    "/$defs/output_get_task_messages/properties/messages/maxItems": "answer",
+   "/$defs/output_get_usage/properties/rows/maxItems": "page",
    "/$defs/output_get_whiteboard/properties/entries/maxItems": "answer",
+   "/$defs/output_list_audit/anyOf/0/properties/rows/maxItems": "page",
+   "/$defs/output_list_audit/anyOf/1/properties/groups/maxItems": "page",
    "/$defs/output_list_members/properties/members/maxItems": "answer",
    "/$defs/output_list_operations/properties/operations/maxItems": "answer",
    "/$defs/output_list_tasks/properties/tasks/maxItems": "answer",
+   "/$defs/output_list_workgroup_operations/anyOf/0/properties/operations/maxItems": "page",
+   "/$defs/output_list_workgroup_operations/anyOf/1/properties/groups/maxItems": "page",
    "/$defs/output_list_workgroups/properties/workgroups/maxItems": "answer",
    "/$defs/output_workvm_browse/properties/status/anyOf/0/maximum": "integer",
    "/$defs/output_workvm_exec/properties/exit_code/anyOf/0/maximum": "integer",
@@ -1784,7 +1828,7 @@
   },
   "contracts/outbox/objects.json": {
    "/$defs/body_audit/oneOf/0/properties/detail/properties/rule/maximum": "integer",
-   "/$defs/body_audit/oneOf/19/properties/detail/properties/value/anyOf/0/maximum": "integer",
+   "/$defs/body_audit/oneOf/23/properties/detail/properties/value/anyOf/0/maximum": "integer",
    "/$defs/body_metrics/properties/samples/maxItems": "answer",
    "/$defs/body_operator_quota/properties/subscriptions/maxItems": "answer",
    "/$defs/body_quota/anyOf/0/properties/windows/maxItems": "answer",

@@ -1,0 +1,10 @@
+{
+  "groups": [
+    {
+      "action": "operation.github_push",
+      "result": "denied",
+      "count": 7
+    }
+  ],
+  "truncated": false
+}

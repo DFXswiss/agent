@@ -1459,6 +1459,18 @@
           "$ref": "#/$defs/output_list_operations"
         },
         {
+          "$ref": "#/$defs/output_get_usage"
+        },
+        {
+          "$ref": "#/$defs/output_list_audit"
+        },
+        {
+          "$ref": "#/$defs/output_list_workgroup_operations"
+        },
+        {
+          "$ref": "#/$defs/output_get_metrics"
+        },
+        {
           "$ref": "#/$defs/output_get_subagent_result"
         },
         {

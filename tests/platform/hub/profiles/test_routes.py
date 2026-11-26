@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from psycopg.types.json import Jsonb
+
 from agent_hub.device.features import AGENT_PROFILES
 from agent_hub.profiles.model import BUILTIN, CLASSES
 from agent_hub.stream.publish import MemoryPublisher
@@ -14,6 +16,7 @@ from tests.platform.hub.operations.support import Ops
 from tests.platform.hub.orgs.support import Actor, new_id
 from tests.platform.hub.tasks.support import audit_rows, frames
 
+NOW = "2026-11-21T12:00:00.123Z"
 READER = {"operations": ["github.get_issue", "github.list_issues"], "reads": "task"}
 
 
@@ -142,3 +145,62 @@ def test_task_profile_refusals(ops: Ops) -> None:
     assert reader.browser.put(f"/v1/tasks/{task}/agent-profile", json={"profile": "review"}).status_code == 403
     assert writer.browser.put(f"/v1/tasks/{new_id()}/agent-profile", json={"profile": "review"}).status_code == 404
     assert audit_rows(ops.desk, "task.agent_profile") == []
+
+
+def _analysis_task(ops: Ops, reads: str) -> str:
+    """A task of the kind analysis with the snapshot its creation stores (ADR-095 section 2)."""
+    task, _session = ops.session()
+    snapshot = {**BUILTIN["analysis"].as_json(), "reads": reads}
+    ops.desk.execute(
+        "UPDATE hub.task SET analysis = %s, agent_profile = %s WHERE id = %s",
+        Jsonb({"scope": "org" if reads == "all" else "wg", "since": "2026-11-14T12:00:00.123Z", "until": NOW}),
+        Jsonb(snapshot),
+        task,
+    )
+    return task
+
+
+def test_the_profile_of_an_analysis_task_is_only_narrowed(ops: Ops) -> None:
+    _announce(ops, AGENT_PROFILES)
+    writer = ops.scene.writer
+    assert _wg(ops, writer, "triage").status_code == 200  # reads `task`, read types only
+    task = _analysis_task(ops, "workgroup")
+    for profile in ("read_only", "development", "analysis", None):  # wider reach, write types, the same, clearing
+        response = writer.browser.put(f"/v1/tasks/{task}/agent-profile", json={"profile": profile})
+        assert (response.status_code, response.json()) == (
+            403,
+            {"error": "forbidden", "detail": {"reason": "analysis"}},
+        ), profile
+    narrowed = writer.browser.put(f"/v1/tasks/{task}/agent-profile", json={"profile": "triage"})
+    assert narrowed.status_code == 200, narrowed.text
+    assert narrowed.json()["profile"]["name"] == "triage"
+    [row] = audit_rows(ops.desk, "task.agent_profile")
+    assert row[-1] == {"profile": "triage", "reads": "task"}
+    again = writer.browser.put(f"/v1/tasks/{task}/agent-profile", json={"profile": "triage"})
+    assert again.status_code == 200
+    assert writer.browser.put(f"/v1/tasks/{task}/agent-profile", json={"profile": "analysis"}).status_code == 403
+    assert len(audit_rows(ops.desk, "task.agent_profile")) == 1
+
+
+def test_an_organization_analysis_keeps_the_read_types_with_every_reach(ops: Ops) -> None:
+    _announce(ops, AGENT_PROFILES)
+    writer = ops.scene.writer
+    task = _analysis_task(ops, "all")
+    response = writer.browser.put(f"/v1/tasks/{task}/agent-profile", json={"profile": "read_only"})
+    assert response.status_code == 200, response.text
+    assert response.json()["profile"] == BUILTIN["read_only"].as_json()
+    assert writer.browser.put(f"/v1/tasks/{task}/agent-profile", json={"profile": "review"}).status_code == 403
+
+
+def test_the_role_analysis_is_built_in_and_its_name_reserved(ops: Ops) -> None:
+    _announce(ops, AGENT_PROFILES)
+    writer = ops.scene.writer
+    listed = {item["name"]: item for item in _listing(ops, writer).json()["profiles"]}
+    assert listed["analysis"]["scope"] == "builtin"
+    assert listed["analysis"]["operations"] == sorted(BUILTIN["read_only"].operations)
+    response = _wg(ops, writer, "analysis")
+    assert (response.status_code, response.json()["detail"]) == (400, {"pointers": ["/name"]})
+    task, _session = ops.session()  # an ordinary task may carry the role: no analysis, no lock
+    assigned = writer.browser.put(f"/v1/tasks/{task}/agent-profile", json={"profile": "analysis"})
+    assert assigned.json() == {"profile": BUILTIN["analysis"].as_json()}
+    assert writer.browser.put(f"/v1/tasks/{task}/agent-profile", json={"profile": None}).status_code == 200

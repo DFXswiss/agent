@@ -1,0 +1,17 @@
+{
+  "groups": [
+    {
+      "type": "github.push",
+      "state": "failed",
+      "error_code": "timeout",
+      "count": 7
+    },
+    {
+      "type": "github.push",
+      "state": "succeeded",
+      "error_code": null,
+      "count": 7
+    }
+  ],
+  "truncated": true
+}
