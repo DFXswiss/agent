@@ -20,7 +20,7 @@ Punkt), `#e-01` (Regel E-01), `#a-1` (Auslegung A1). Anker werden nie umbenannt 
 |---|---|
 | [A – Das Konzept](#teil-a--das-konzept) | Vollständige Konzeptfassung mit 47 Ideen, im Wortlaut |
 | [B – Regeln und Entscheide](#teil-b--regeln-und-entscheide-des-auftraggebers) | Regeln E-01 … mit Datum, Wortlaut, Bezug und Umsetzung |
-| [C – Auslegungen](#teil-c--auslegungen-bis-der-auftraggeber-anders-entscheidet) | A1–A19 |
+| [C – Auslegungen](#teil-c--auslegungen-bis-der-auftraggeber-anders-entscheidet) | A1–A21 |
 | [D – Pflege](#teil-d--pflege) | Wie eine neue Vorgabe eingetragen wird; offene Abweichungen |
 
 ## Teil A – Das Konzept
@@ -841,12 +841,78 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   Vorgänge der Plattform; ergänzt [E-31](#e-31) (jedes Abo zentral angemeldet) und [E-32](#e-32).
 - **Umsetzung:** offen – Postfach je Abo und parallele Anmeldungen in KOR-73.
 
+<a id="e-34"></a>
+
+### E-34 – Alle selbst gehosteten GitHub-Actions-Läufe über agent.dfx.swiss
+
+- **Datum:** 2026-11-25
+- **Regel:** Alle selbst gehosteten GitHub-Actions-Läufe der DFX-Organisationen laufen über agent.dfx.swiss; das
+  Konzept dazu steht in [spec/16-ci-runners.md](spec/16-ci-runners.md).
+- **Wortlaut:** „ich will alle self hostet runns über agent.dfx.swiss laufen lassen, repo dazu ist dfxswiss/agent“ –
+  als Auftrag zum Konzept: „was muss beachtet werden damit agent.dfx.swiss github runner dienstleistungen erbringen
+  kann? dann das gesamte Konzept vollständig dokumentieren inkl allem, auch die Lösung für MacOs RUnner inkl der
+  Abklärungen von Lizenzen und technischer Machbarkeit, anforderungen an Hardware und co. Das volle SetUp“
+- **Bezug:** ergänzt [Idee 27](#k-idee-27) (Wegwerf-VM je Testlauf, [A9](#a-9)); die VM je Job legt [A20](#a-20)
+  aus. In Spannung zu dieser Regel stehen die gerätegebundenen Läufe (Deploy), die heute auf einem Runner ausserhalb
+  der Plattform laufen; ob sie das dürfen, ist offen (Entscheid D-1 in
+  [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions), [offene Abweichungen](#d-offen)). Ebenfalls
+  in Spannung, Auflösung offen ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)):
+  [Grundprinzip](#k-gp),
+  [§2 Punkt 5](#k-2-b5) und [§16 Punkt 2](#k-16-b2) (ein CI-Job ist keine Nutzeranfrage und gehört zu keiner
+  Workgroup); [§3 Punkt 5](#k-3-b5) (VM je Workgroup, nach [A20](#a-20) je Job); [§5](#k-5) (der Hub sieht keine
+  Inhalte);
+  [§9 Punkt 5](#k-9-b5), [§10 Punkt 3](#k-10-b3) und [§10 Punkt 6](#k-10-b6) (git und freie Shell sind
+  Claude-Sessions verboten, ein CI-Gast braucht sie); [§6 Punkt 4](#k-6-b4) und [§11](#k-11) (Audit je
+  Aktion mit Akteur, Zeitpunkt, Task, Session, Workgroup, Gerät, Ziel, Ergebnis und Änderungen; ein CI-Job hat
+  Akteur (der GitHub-Auslöser), Zeitpunkt, Gerät, Ziel und Ergebnis, aber keinen Task, keine Session und keine
+  Workgroup); [§10 Punkt 8](#k-10-b8) (Protokollierung blockierter Versuche); [E-10](#e-10) (Ausgang),
+  [E-11](#e-11) (Freigaben), [E-25](#e-25) (Härtung nur auf Bestellung); [A16](#a-16) (Workflows); [Idee 46](#k-idee-46) und [Idee 47](#k-idee-47) (Abrechnung).
+- **Umsetzung:** offen – Konzept [spec/16-ci-runners.md](spec/16-ci-runners.md); Entscheide offen.
+
+<a id="e-35"></a>
+
+### E-35 – Eine gemeinsame Kapazität: alle Server des Betreibers gehören agent.dfx.swiss, Runner werden dort bezogen
+
+- **Datum:** 2026-11-25
+- **Regel:** Es gibt keine eigenen Rechner für selbst gehostete Runner neben der Plattform; die gesamte
+  Serverkapazität des Betreibers gehört agent.dfx.swiss, und ein Runner wird bei Bedarf über die Plattform bezogen.
+- **Wortlaut:** „heute haben wir server für agent und server für self hostet runner, das ist inneffizient, ich will
+  alle meine server kapazitäten an agent geben und wenn ich einen self hostet runner brauche dann diesen via agent
+  beziehen“
+- **Bezug:** dass der Runner eine VM aus demselben Pool wie die Arbeits-VMs ist, legte [A21](#a-21) aus; entschieden
+  durch [E-36](#e-36). Ergänzt [E-34](#e-34) und [§3 Punkt 3](#k-3-b3) (DFX stellt eigene Ausführungsserver);
+  ersetzt die Aufteilung der Ausführungsserver in [§3 Punkt 8](#k-3-b8) (initiale Serverzuordnung: ein Server für die
+  DFX-Cloud-Sessions), soweit sie Kapazität ausserhalb der Plattform voraussetzt; der Hub-Teil bleibt. Betrifft
+  [Idee 38](#k-idee-38) (Gerätewahl nach freier Kapazität), [§7 Punkt 6](#k-7-b6) (kapazitätsbasierte Verteilung)
+  und [E-02](#e-02) (klare Meldung bei erreichter Kapazität). In Spannung zu [E-25](#e-25) (Härtung nur auf
+  Bestellung), Auflösung offen ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)). In Spannung
+  zu dieser Regel stehen auch die gerätegebundenen Läufe (Deploy) auf einem Runner ausserhalb der Plattform; Entscheid
+  D-1 offen ([offene Abweichungen](#d-offen)).
+- **Umsetzung:** offen – [spec/16-ci-runners.md](spec/16-ci-runners.md).
+
+<a id="e-36"></a>
+
+### E-36 – CI-Jobs teilen die Geräte mit den Arbeitsbereichen
+
+- **Datum:** 2026-11-26
+- **Regel:** CI-Jobs, auch solche mit fremdem PR-Code, laufen auf denselben Geräten wie die Arbeits-VMs der
+  Workgroups; es gibt kein eigenes CI-Gerät, auch nicht innerhalb der Plattform.
+- **Wortlaut:** Frage: „Ich hatte deinen Entscheid ‚alle Kapazität an agent‘ so ausgelegt, dass CI-Jobs (auch fremder
+  PR-Code) auf denselben Geräten laufen wie die Agent-Arbeitsbereiche. Ein eigenes CI-Gerät innerhalb von
+  agent.dfx.swiss wäre aber auch ‚Kapazität von agent‘ und trennt fremden Code von Kundendaten. Was gilt?“ –
+  Antwort: „Alles teilen – Du entscheidest jetzt: CI-Jobs laufen auf denselben Geräten wie die
+  Agent-Arbeitsbereiche. Wird als dein Entscheid (neue Regel) eingetragen.“
+- **Bezug:** ergänzt [E-35](#e-35); macht [A21](#a-21) zum Entscheid. In Spannung mit der Sicherheitsempfehlung der
+  Recherche (Trennung fremden Codes vom Klartext der Workgroups): das Gate U bleibt Empfehlung (D-7, D-20 in
+  [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)); [E-25](#e-25) (Härtung nur auf Bestellung).
+- **Umsetzung:** offen – [spec/16-ci-runners.md](spec/16-ci-runners.md).
+
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
 **Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und
 offene Fragen nach dem Wortlaut des Konzepts: A1–A7 aus dem Abgleich der vollständigen Fassung vom 2026-11-23 (dem
 Auftraggeber am selben Abend mitgeteilt), A8–A18 aus dem Restplan vom 2026-11-24, A19 aus
-KOR-72 vom 2026-11-26. Sie gelten für alle Arbeiten, bis er
+KOR-72 vom 2026-11-26, A20 und A21 aus dem CI-Konzept vom 2026-11-25/26. Sie gelten für alle Arbeiten, bis er
 anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Aussage gilt, [E-01](#e-01)).
 
 <a id="a-1"></a>
@@ -927,6 +993,20 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
   werden nicht wählbar ([E-32](#e-32)). Spine, Checklisten und Done-Gates des Werkzeugs werden nicht nachgebaut, ihre
   Wirkung tragen Operationen, Prüfurteile, Merge-Kriterien und die Treiber der Arbeitsweisen. Umgesetzt mit
   [ADR-098](adr/098-working-modes.md).
+<a id="a-20"></a>
+- **A20 – Eine VM je CI-Job:** Jeder selbst gehostete GitHub-Actions-Job ([E-34](#e-34)) läuft in einer frischen VM,
+  die danach gelöscht wird – Empfehlung der Recherche vom 2026-11-25 und GitHubs Empfehlung für Einmal-Runner, nicht
+  Wortlaut des Auftraggebers. Diese Auslegung betrifft nur „eine VM je Job“. Läufe, die das Gerät selbst ändern oder
+  prüfen (gerätegebundene Läufe), erfasst sie nicht: Eine VM ohne Freigaben sieht das Gerät nicht, und ein Rückweg aus
+  der VM auf das Gerät höbe die Trennung auf
+  ([spec/16-ci-runners.md §1](spec/16-ci-runners.md#1-purpose-and-scope)). Ob sie ausserhalb der Plattform laufen
+  dürfen, ist offen (Entscheid D-1, [offene Abweichungen](#d-offen)).
+<a id="a-21"></a>
+- **A21 – Runner als VM aus dem gemeinsamen Pool:** Ein über die Plattform bezogener Runner ([E-35](#e-35)) ist eine
+  VM, und sie läuft auf denselben Geräten, aus demselben Pool wie die Arbeits-VMs. Die VM folgt aus [A20](#a-20) (eine
+  VM je Job); dass sie auf denselben Geräten läuft, ist entschieden durch [E-36](#e-36) (2026-11-26) und gilt
+  seither als Regel, nicht mehr als Auslegung ([Teil D](#teil-d--pflege) Punkt 4); der Anker bleibt für Verweise
+  ([spec/16-ci-runners.md §6.6](spec/16-ci-runners.md#66-shared-capacity)).
 
 ## Teil D – Pflege
 
@@ -972,6 +1052,9 @@ Stand 2026-11-26. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber nennt, welche Schalter umgelegt werden (gebaut, [ADR-079](adr/079-no-approval-as-precondition.md); ein Startguthaben gibt es nicht, [E-14](#e-14), entschieden 2026-11-25); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
+| [E-34](#e-34), [A20](#a-20) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)) |
+| [E-35](#e-35), [E-36](#e-36) Gemeinsame Kapazität ([A21](#a-21)) | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions); [§6.6](spec/16-ci-runners.md#66-shared-capacity)) |
+| [E-34](#e-34), [E-35](#e-35) gerätegebundene Läufe | Gerätegebundene Läufe (Deploy) laufen heute auf einem Runner ausserhalb der Plattform; das widerspricht E-34 und E-35, und [A20](#a-20) erfasst sie nicht | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions), D-1) |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |
 | [A10](#a-10) Subagenten | Ein Subagent endet nach einem Turn und bekommt keine Folge-Anweisung | KOR-45 |
