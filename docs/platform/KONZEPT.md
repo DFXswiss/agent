@@ -839,6 +839,21 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   Vorgänge der Plattform; ergänzt [E-31](#e-31) (jedes Abo zentral angemeldet) und [E-32](#e-32).
 - **Umsetzung:** offen – Postfach je Abo und parallele Anmeldungen in KOR-73.
 
+<a id="e-34"></a>
+
+### E-34 – Was eine Plattform-Operation sein kann, braucht keine VM
+
+- **Datum:** 2026-11-26
+- **Regel:** Ein Vorgang, den die Plattform selbst ausführen kann, ist ein Werkzeug der Plattform und braucht keine
+  Arbeits- oder Browser-VM, zum Beispiel ein Postfach lesen. Eine Sitzung nennt nur den Zugang, etwa das Postfach mit
+  Namen oder ID. Den geheimen Teil wie das Passwort sieht sie nicht, die Plattform nutzt ihn auf dem Gerät. Eine VM bekommt
+  nur, was wirklich eine braucht, etwa eine Webseite im Browser bedienen oder Software bauen und testen.
+- **Wortlaut:** „wenn ein agent einen unbuntu braucht um ein e-mail postfach abzurufen dann haben wir was falsch gemacht“
+  (als fünf Agenten für neue Abos je eine Arbeits-VM starten mussten, nur um ihre Anmeldemail zu lesen)
+- **Bezug:** ergänzt [E-33](#e-33) (parallel, jeder Vorgang in seiner eigenen Sandbox) und [§10 Punkt 3](#k-10-b3)
+  (Sitzungen führen selbst nichts aus, alles über Plattform-Operationen).
+- **Umsetzung:** offen – Postfach als Werkzeug in KOR-74.
+
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
 **Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und
