@@ -290,7 +290,7 @@ def test_a_newer_root_of_the_same_user_and_kind_replaces_the_running_flow_and_an
 def test_logins_of_different_subscriptions_run_side_by_side_up_to_the_slot_limit(
     store_dsn: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """KOR-73, ADR-098 section 2: the slot is the decrypted `subscription_id`; a root of the same slot replaces the
+    """KOR-73, ADR-099 section 2: the slot is the decrypted `subscription_id`; a root of the same slot replaces the
     running flow, a root of a new slot while `MAX_SLOTS` flows run is `busy`."""
     monkeypatch.setattr(service_module, "MAX_SLOTS", 3)
     hold = asyncio.Event()

@@ -1,4 +1,4 @@
-"""Subscriptions side by side against the hub double (KOR-73, ADR-098; rule E-33): `add` with an own mailbox, the use
+"""Subscriptions side by side against the hub double (KOR-73, ADR-099; rule E-33): `add` with an own mailbox, the use
 for organizations and a registration (the record written before the login, `slot`, `extended`), `add-many`, the check
 for humans (`check`: picture, a person's click, `relay`), `mailbox` (set, clear, check) and the parser of the new
 responses."""

@@ -20,7 +20,7 @@
   call of the resumed session starts it again (`_resume`), or deletes it and gets a new one when its RAM does not fit.
 - **run VMs** (scope `run`, `obtain_run_vm`): one fresh VM per `test.run` of `agent_runner.workvm.testrun`.
 - **browser VMs** (scope `browser`): the VM of a session's platform browser (`agent_runner.workvm.browser`).
-- **login VMs** (scope `login`, `obtain_login`; KOR-73, ADR-098 section 3): the browser sandbox of one Claude login
+- **login VMs** (scope `login`, `obtain_login`; KOR-73, ADR-099 section 3): the browser sandbox of one Claude login
   (`agent_runner.login.sandbox`): no session, task or organization (`NO_ID`, `session_id` = the login request), no
   credit check, no per-organization or per-owner limit (the capacity queue applies), not billed; deleted by the login
   (`login_ended`) or a restart.
@@ -117,7 +117,7 @@ RUN_SCOPE = "run"
 BROWSER_SCOPE = "browser"
 LOGIN_SCOPE = "login"
 OWNED_SCOPES = frozenset({RUN_SCOPE, BROWSER_SCOPE, LOGIN_SCOPE})
-"""VMs owned by one test run, one browser session or one login (ADR-080, ADR-085, ADR-098): no `workvm.state` events,
+"""VMs owned by one test run, one browser session or one login (ADR-080, ADR-085, ADR-099): no `workvm.state` events,
 no per-task limit, not torn down by the idle pass or stopped by the credit stop of this manager (their owner ends
 them)."""
 

@@ -37,7 +37,7 @@ measure only). The token is created on the device and never printed here.
   of `rename`, `note`, `logout` and `use` sends the mirror of the use it sealed.
 - `subscriptions remove --id`: `DELETE /v1/subscriptions/{id}` (`404` counts as done).
 
-Side by side, with an own mailbox and registration (KOR-73, ADR-098; rule E-33), only with a device that announced
+Side by side, with an own mailbox and registration (KOR-73, ADR-099; rule E-33), only with a device that announced
 `subscriptions.parallel` (else `no_device`, `reason: device_outdated`); every `claude.login` to such a device names its
 subscription as the plaintext `slot`, so logins of different subscriptions do not replace each other:
 - `subscriptions add` with `--mailbox-host`, `--mailbox-user`, `--mailbox-email` and the password on stdin
@@ -385,7 +385,7 @@ def _optional_label(value: object, most: int) -> bool:
 
 
 def _account(value: object) -> dict[str, Any]:
-    """The data of a new account (`account` of `claude.login`, ADR-098 section 5)."""
+    """The data of a new account (`account` of `claude.login`, ADR-099 section 5)."""
     if not isinstance(value, dict) or not set(value) <= ACCOUNT_FIELDS:
         raise PlatformError("invalid_argument", reason="account")
     found: dict[str, Any] = {"name": value.get("name")}
@@ -473,7 +473,7 @@ def _seal_put(
 
 
 def _create(account: Account, record_id: str, entry: dict[str, Any]) -> None:
-    """The new record without a token (ADR-098 section 1): it holds the mailbox and the use before the login."""
+    """The new record without a token (ADR-099 section 1): it holds the mailbox and the use before the login."""
     body: dict[str, Any] = {"email": entry.get("email"), "kind": "oauth_login", "name": entry["name"]}
     for name in ("note", "mailbox"):
         if name in entry:
@@ -568,7 +568,7 @@ def login(account: Account, args: Any, context: Context) -> dict[str, Any]:
 
 
 def _own_mailbox(account: Account, record_id: str) -> bool:
-    """Whether the record holds its own mailbox (its login then needs a device that reads it, ADR-098 section 7)."""
+    """Whether the record holds its own mailbox (its login then needs a device that reads it, ADR-099 section 7)."""
     answer = fetch(account, record_id)
     if answer is None:
         raise PlatformError("not_found")
@@ -601,7 +601,7 @@ def _entries(args: Any, context: Context) -> list[dict[str, Any]]:
 
 
 def add_many(account: Account, args: Any, context: Context) -> dict[str, Any]:
-    """Several subscriptions at once (ADR-098 section 2): every login starts before any is followed."""
+    """Several subscriptions at once (ADR-099 section 2): every login starts before any is followed."""
     _wait_option(args)
     entries = _entries(args, context)
     target = _device(account, args.device, parallel=True)
@@ -695,7 +695,7 @@ def check(account: Account, args: Any, _context: Context) -> dict[str, Any]:
 
 
 def mailbox(account: Account, args: Any, context: Context) -> dict[str, Any]:
-    """Set, remove or check the own mailbox of a further subscription (ADR-098 sections 1 and 7)."""
+    """Set, remove or check the own mailbox of a further subscription (ADR-099 sections 1 and 7)."""
     _wait_option(args)
     found = _mailbox_option(args, context)
     if args.check:

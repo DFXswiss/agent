@@ -1,4 +1,4 @@
-"""The code of a sign-in mail (KOR-73, ADR-098 section 4): when the provider's page asks for the code from the mail
+"""The code of a sign-in mail (KOR-73, ADR-099 section 4): when the provider's page asks for the code from the mail
 and the mail carries no sign-in link, the automation types the code instead.
 
 Same mailbox rules as the link of the legacy `agent_cli.account_login.newest_magic_link` (whose helpers it reuses,

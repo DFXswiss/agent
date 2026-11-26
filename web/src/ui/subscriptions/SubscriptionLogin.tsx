@@ -2,7 +2,7 @@
 // itself (an online one that announced `subscriptions`, `subscriptionDevices`), the `claude.login` request names the
 // subscription (and, for a new one, its label and note); then the relay of the credentials section runs
 // (`LoginRequest`: open the link, paste the code, done). The token is created on the device and never reaches this page.
-// KOR-73 (ADR-098): with a device that runs logins side by side the record may be written first (own mailbox, use), the
+// KOR-73 (ADR-099): with a device that runs logins side by side the record may be written first (own mailbox, use), the
 // login carries the subscription as its slot and may register a new account; a login that needs this is refused for
 // an older device (`no_device_available`).
 import { useCallback, useEffect, useRef, useState } from 'react';

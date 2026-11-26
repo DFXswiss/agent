@@ -276,7 +276,7 @@ class Config:
     claude_oauth_client_id: str = DEFAULT_CLAUDE_OAUTH_CLIENT_ID
     """The client ID of that renewal (the pinned Claude Code's)."""
     login_sandbox: str = "vm"
-    """`LOGIN_SANDBOX`: where the mailbox automation drives its browser (ADR-098 section 3): `vm` - a login VM per
+    """`LOGIN_SANDBOX`: where the mailbox automation drives its browser (ADR-099 section 3): `vm` - a login VM per
     login (the work VMs), `process` - a Chromium process of the device per login (devices without work VMs, the
     hermetic end-to-end topology)."""
 

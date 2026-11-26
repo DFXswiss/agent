@@ -3,7 +3,7 @@
 // the authorization link (opened in a new tab), the user pastes the code shown there, which goes to the device as a
 // follow-up request; the device stores the subscription token itself (CK-encrypted) and answers with the account's
 // e-mail. Automatic: the device's progress is shown; if the automation fails (`login_automation_failed`) the relay
-// continues with the link it sends. The token never reaches this page. KOR-73 (ADR-098 section 4): a check for humans
+// continues with the link it sends. The token never reaches this page. KOR-73 (ADR-099 section 4): a check for humans
 // in the device's login sandbox is shown as its picture (`HumanCheck`); the owner's click goes to the device, "sign in
 // myself" gives the automation up; the reason why the automation gave up is named with the link.
 import { type FormEvent, useEffect, useState } from 'react';

@@ -1,4 +1,4 @@
-// Subscriptions logged in side by side (KOR-73, ADR-098) against the real hub and the device double, which announces
+// Subscriptions logged in side by side (KOR-73, ADR-099) against the real hub and the device double, which announces
 // `subscriptions.parallel`: on the page "My subscriptions" the owner adds two subscriptions at once – one with its own
 // mailbox and the data of a new account (automatic), one with link and code – for the organization; each is written
 // first (no token, the use mirrored at the hub) and logged in by its own request with its own slot. The progress of each

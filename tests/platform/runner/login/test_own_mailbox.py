@@ -1,4 +1,4 @@
-"""U-RUN-login (KOR-73, ADR-098 sections 1 and 3): the login VM path of `LOGIN_SANDBOX=vm` (a device with work VMs;
+"""U-RUN-login (KOR-73, ADR-099 sections 1 and 3): the login VM path of `LOGIN_SANDBOX=vm` (a device with work VMs;
 the sandbox is closed on every path, a failing close is only logged) and `mailbox.check {subscription_id}` against the
 subscription's own mailbox."""
 

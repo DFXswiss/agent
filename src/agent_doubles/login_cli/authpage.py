@@ -21,7 +21,7 @@ Flow (each page has ``<body data-page="…">`` so a browser driver can tell wher
    ``client_id``) renews such a login like the provider: a new access token and a **new** refresh token; the used one
    is dead from then on (``400 invalid_grant``, as is an unknown one).
 
-KOR-73 (ADR-098 section 8) adds the shapes of the real pages: the sign-in mail also carries a six-digit code
+KOR-73 (ADR-099 section 8) adds the shapes of the real pages: the sign-in mail also carries a six-digit code
 (``Your login code is NNNNNN``; with ``link: false`` only the code), the check-email page a code form (``POST
 /login/code``, input ``autocomplete=one-time-code``, milestone ``code_entered``); an address of ``new_accounts`` has
 no account yet: its first authorize page after the sign-in redirects to ``GET /onboarding`` (full name, date of birth,

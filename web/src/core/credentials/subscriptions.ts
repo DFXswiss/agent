@@ -17,7 +17,7 @@
 //   `setSubscriptionUse` (`null` = measure only) build on it. The primary record is never changed here
 //   (`invalid_argument`).
 // - `removeSubscription`: `DELETE /v1/subscriptions/{id}` (`404` counts as done).
-// - KOR-73 (ADR-098): a further subscription may hold its own `mailbox` (the body of `credentials/mailbox.json`,
+// - KOR-73 (ADR-099): a further subscription may hold its own `mailbox` (the body of `credentials/mailbox.json`,
 //   sealed like the rest; only its address leaves this module). A device that announced `subscriptions.parallel`
 //   (`subscriptionDevices().parallel`) gets the new path: `createSubscription` writes the record before its login
 //   (no token, kind `oauth_login`, label, note, mailbox and use with its mirror, `expected_version` 0), the login is
@@ -50,7 +50,7 @@ import type { LoginMode } from './login';
 
 export const KIND = 'claude_subscription';
 export const FEATURE = 'subscriptions';
-/** A device that runs logins side by side, each with the subscription's own mailbox (KOR-73, ADR-098). */
+/** A device that runs logins side by side, each with the subscription's own mailbox (KOR-73, ADR-099). */
 export const PARALLEL_FEATURE = 'subscriptions.parallel';
 export const MAX_ORGS = 50;
 /** Where the user revokes a token at the provider (the platform cannot). */
@@ -327,7 +327,7 @@ export async function subscriptionDevices(context: TasksContext): Promise<{
 
 export const newSubscriptionId = (): string => uuid7();
 
-/** The data of a new account (registration, ADR-098 section 5); never stored. */
+/** The data of a new account (registration, ADR-099 section 5); never stored. */
 export interface Account {
   readonly name: string;
   readonly birth_date?: string;

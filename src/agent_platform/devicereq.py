@@ -265,7 +265,7 @@ def submit(
 ) -> dict[str, Any]:
     """Seal and post a request to the device `(id, keys)` (with `org`: the plaintext `org_id` of a company account;
     with `slot`: the plaintext subject of a root, the subscription of a `claude.login`, so logins of different
-    subscriptions run side by side, ADR-098 section 2); the prepared request `{id, kind, device, keys}`."""
+    subscriptions run side by side, ADR-099 section 2); the prepared request `{id, kind, device, keys}`."""
     device, keys = target
     header = {
         "v": 1,

@@ -1,4 +1,4 @@
-"""U-RUN-login (automation): `claude.login` mode `automatic` (05-runner.md section 11.3, ADR-098) in the process sandbox
+"""U-RUN-login (automation): `claude.login` mode `automatic` (05-runner.md section 11.3, ADR-099) in the process sandbox
 (`LOGIN_SANDBOX=process`: headless Chromium of Playwright for Python, browsers under `PLAYWRIGHT_BROWSERS_PATH`), the
 auth-page double with the real page shapes, the mail double (magic link in the Junk folder, or only the code) and the
 login-CLI double: the sign-in by link or code, the registration of a new account with the owner's consents only, the

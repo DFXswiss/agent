@@ -61,6 +61,6 @@ is absent, implementation uses model slot `first`. The pin is the default from
 `second`.
 
 Claude subscriptions of the platform are logged in side by side, each in its own
-login sandbox and with its own mailbox (ADR-098): `agent-platform subscriptions
+login sandbox and with its own mailbox (ADR-099): `agent-platform subscriptions
 add-many --file` adds several at once, and a check for humans is answered by a
 person (`subscriptions check`), never by a model.

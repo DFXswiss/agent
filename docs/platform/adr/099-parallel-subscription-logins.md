@@ -1,11 +1,10 @@
-# ADR-098: Subscriptions logged in side by side – an own mailbox per subscription, every login in its own browser sandbox, a check for humans done by the owner, registration of a new account
+# ADR-099: Subscriptions logged in side by side – an own mailbox per subscription, every login in its own browser sandbox, a check for humans done by the owner, registration of a new account
 
 Status: Accepted (2026-11-26)
 
 ## Context
-- Rule E-33 (the client, 2026-11-26, recorded by DOC-08; wording binding while it is not on develop): "agent sollte
-  doch so aufgebaut sein dass es parallel solche dinge machen kann in parallelen sandboxen". To five new
-  subscriptions: "die 5 personen haben noch kein abo, also man muss nicht nur anmelden sondern auch registrieren, und
+- Rule [E-33](../KONZEPT.md#e-33) (the client, 2026-11-26): platform operations run side by side, each in its own
+  sandbox, no single slots; every subscription has its own mailbox. To five new subscriptions: "die 5 personen haben noch kein abo, also man muss nicht nur anmelden sondern auch registrieren, und
   ich will dass du alles erledigst". Also [E-31](../KONZEPT.md#e-31) (every subscription logged in centrally, measured,
   used where the owner switches it on), [E-04](../KONZEPT.md#e-04)/[E-27](../KONZEPT.md#e-27) (everything without a
   browser too), [E-25](../KONZEPT.md#e-25) (no protection layers nobody ordered).
@@ -206,7 +205,7 @@ Status: Accepted (2026-11-26)
 ## Alternatives considered
 - A `mailbox` credential per subscription with its own record kind and endpoints: one more kind, one more rotation
   path; the subscription record already is the owner's sealed place for it.
-- A queue of logins on the device: the client asked for parallel sandboxes (E-33).
+- A queue of logins on the device: the client asked for parallel sandboxes ([E-33](../KONZEPT.md#e-33)).
 - The live picture of ADR-085 §6 (hub frame route, workgroup key): a login has no workgroup and no session; the
   responses of the request are sealed to the owner and need no new route.
 - Hiding the automation from the check (stealth plugins, solvers, a captcha service): refused (circumvention).

@@ -82,7 +82,7 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `CLAUDE_TOKEN_URL` | `https://platform.claude.com/v1/oauth/token` | token endpoint of the renewal of further subscriptions (§10.6, ADR-092); loopback `http` only in test mode |
 | `CLAUDE_OAUTH_CLIENT_ID` | `9d1c250a-e61b-44d9-88ed-5944d1962f5e` | client ID of that renewal (the pinned Claude Code's) |
 | `LOGIN_AUTOMATION` | `on` for platform devices (platform install profile), `off` for org devices | `on` enables §11.3 (needs the `login` extra; the platform install profile includes it) |
-| `LOGIN_SANDBOX` | `vm` | where §11.3 drives its browser (ADR-098 §3): `vm` – a login VM per login (the work VMs, scope `login`); `process` – a Chromium process of the device per login (devices without work VMs, the hermetic end-to-end topology) |
+| `LOGIN_SANDBOX` | `vm` | where §11.3 drives its browser (ADR-099 §3): `vm` – a login VM per login (the work VMs, scope `login`); `process` – a Chromium process of the device per login (devices without work VMs, the hermetic end-to-end topology) |
 | `GOLDEN_TEMPLATE` | `images/golden.yaml` of the checkout | the build also reads `images/`, `src/agent_guest/` and `contracts/` next to the template; missing → `golden_source_missing` (KOR-03) |
 | `TEST_MODE` | `0` | allows loopback HTTP and double upstreams; MUST be `0` in production (doctor warns) |
 
@@ -1044,7 +1044,7 @@ platform budget counts the pending cost (§10.2), every pending item besides the
 ### 11.1 Device request handling
 
 `request` hint → fetch, verify (§2.4), decrypt, process by kind; respond with encrypted, signed responses
-(`seq` 1..n). Expiry 15 min; at most one active request of each kind and slot per user per device (KOR-73, ADR-098
+(`seq` 1..n). Expiry 15 min; at most one active request of each kind and slot per user per device (KOR-73, ADR-099
 §2: the slot of `claude.login` is the `subscription_id` of the decrypted body, so logins of different subscriptions run
 side by side; at most 40 slots per user and kind, a further root is `busy`).
 
@@ -1100,7 +1100,7 @@ golden's Claude Code pin; a pin change re-checks them (`runbooks/claude-code-upg
 
 ### 11.3 `claude.login` – mailbox automation (`LOGIN_AUTOMATION=on`; default on platform devices, off on org devices)
 
-KOR-73, ADR-098. Same PTY start; instead of step 3 the runner drives the provider's pages itself:
+KOR-73, ADR-099. Same PTY start; instead of step 3 the runner drives the provider's pages itself:
 
 - **Mailbox:** the own `mailbox` of the further subscription's record (`subscription_id`), else the owner's single
   `mailbox` credential (`credential_missing` without either). Address: the request's `email`, else the record's,

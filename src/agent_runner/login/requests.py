@@ -87,7 +87,7 @@ ACCOUNT_FIELDS = frozenset({"name", "birth_date", "consents"})
 CONSENTS = frozenset({"terms", "age", "marketing"})
 BIRTH_RE = re.compile(r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")
 BASIC_STAGES = frozenset({"browser_started", "email_entered", "magic_link_received", "authorized"})
-"""The progress stages a client without `extended` knows (ADR-098 section 4)."""
+"""The progress stages a client without `extended` knows (ADR-099 section 4)."""
 VERIFY_FRAMES = 80
 """Pictures of a check for humans per login (the hub keeps at most 100 responses per request)."""
 LABEL_LIMITS = {"name": 64, "note": 500}
@@ -124,7 +124,7 @@ async def _fail(flow: Flow, code: str, to: FollowUp | None = None, *, shape: str
 
 @dataclass(frozen=True)
 class Stored:
-    """What a further subscription's record already holds: its address and its own mailbox (ADR-098 section 1)."""
+    """What a further subscription's record already holds: its address and its own mailbox (ADR-099 section 1)."""
 
     email: str | None
     mailbox: tuple[Mailbox, str] | None
@@ -205,7 +205,7 @@ async def _stored(flow: Flow, record_id: object) -> Stored | None:
 
 
 class HumanCheck:
-    """The check for humans of one login, done by its owner (ADR-098 section 4): the sandbox's picture goes out as
+    """The check for humans of one login, done by its owner (ADR-099 section 4): the sandbox's picture goes out as
     `verify` responses (when it changed, every `verify_tick`, at most `VERIFY_FRAMES`), a `{click}` follow-up of the
     owner's own identity is clicked at that point of the viewport, `{relay: true}` or no click within `verify_wait`
     gives up (`human_check`). Without `extended` the check is given up at once."""
@@ -239,7 +239,7 @@ class HumanCheck:
             _line(self.flow, "verify_follow_up_invalid")
             return "ignored"
         if request.user != request.owner:
-            _line(self.flow, "click_refused")  # a check for humans is never answered by an agent (ADR-098 section 4)
+            _line(self.flow, "click_refused")  # a check for humans is never answered by an agent (ADR-099 section 4)
             return "ignored"
         await sandbox.click_at(float(point["x"]) * page.width, float(point["y"]) * page.height)
         await asyncio.sleep(self.opts.verify_settle)
@@ -273,7 +273,7 @@ def _fraction(value: object) -> bool:
 
 
 async def _sandbox(flow: Flow, url: str, workdir: Path, opts: LoginOptions) -> Sandbox:
-    """The login's own sandbox (`LOGIN_SANDBOX`, ADR-098 section 3)."""
+    """The login's own sandbox (`LOGIN_SANDBOX`, ADR-099 section 3)."""
     if opts.sandbox is not None:
         made: Sandbox = await opts.sandbox(flow, url, workdir)
         return made
@@ -359,7 +359,7 @@ async def _plan(flow: Flow, wanted: Mapping[str, object], stored: Stored | None)
     email = wanted.get("email") or (stored.email if stored is not None else None) or own
     account = wanted.get("account")
     if isinstance(account, dict) and account.get("consents") and flow.request.user != flow.user:
-        # consents are the account holder's, declared by the user, never by the user's agent (ADR-098 section 5)
+        # consents are the account holder's, declared by the user, never by the user's agent (ADR-099 section 5)
         _line(flow, "consents_ignored")
         account = {name: value for name, value in account.items() if name != "consents"}
     return Plan(mailbox, str(email), account if isinstance(account, dict) else None)

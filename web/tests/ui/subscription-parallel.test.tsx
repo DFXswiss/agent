@@ -1,4 +1,4 @@
-// The dialogs of subscriptions logged in side by side (KOR-73, ADR-098) in jsdom, with a device that announced
+// The dialogs of subscriptions logged in side by side (KOR-73, ADR-099) in jsdom, with a device that announced
 // `subscriptions.parallel`: adding one with its own mailbox, a new account and organizations (the record is written
 // first, the login carries `extended`, the account and its slot), the check for humans (picture, click, relay, the
 // reason of the fallback), adding several at once with progress per subscription, and the own mailbox on the card

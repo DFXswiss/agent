@@ -58,7 +58,7 @@ export const PROGRESS_STAGES = [
   'registered',
   'verified',
 ] as const;
-/** Why the mailbox automation gave up (`reason` of `authorize`, KOR-73, ADR-098 section 4). */
+/** Why the mailbox automation gave up (`reason` of `authorize`, KOR-73, ADR-099 section 4). */
 export const AUTOMATION_REASONS = [
   'disabled',
   'no_sandbox',
@@ -70,7 +70,7 @@ export const AUTOMATION_REASONS = [
   'browser_failed',
 ] as const;
 export type AutomationReason = (typeof AUTOMATION_REASONS)[number];
-/** The consents an owner can give for a new account (ADR-098 section 5); only these boxes are ever ticked. */
+/** The consents an owner can give for a new account (ADR-099 section 5); only these boxes are ever ticked. */
 export const CONSENTS = ['terms', 'age', 'marketing'] as const;
 export type Consent = (typeof CONSENTS)[number];
 /** A date of birth `YYYY-MM-DD`. */
@@ -251,7 +251,7 @@ export function validRequestBody(kind: RequestKind, body: unknown, followUp: boo
     case 'claude.login':
       if (followUp) return isLoginFollowUp(body);
       // KOR-69 (ADR-090 section 2): a further subscription, its label and note and, automatic only, the address;
-      // KOR-73 (ADR-098 section 5): automatic only, the data of a new account
+      // KOR-73 (ADR-099 section 5): automatic only, the data of a new account
       return (
         keysAre(body, ['mode'], ['subscription_id', 'name', 'note', 'email', 'account', 'extended']) &&
         (body.extended === undefined || body.extended === true) &&

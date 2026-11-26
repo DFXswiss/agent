@@ -9,7 +9,7 @@ Every `running` work VM of this device is billed to the second as `vm_kind` `wor
 - a **session VM**, a **run VM** (one test run) and a **browser VM** (a platform browser session, KOR-44) belong to
   their session.
 
-A stopped VM (paused session) is not running and costs nothing. A login VM (KOR-73, ADR-098 section 3) is the device's
+A stopped VM (paused session) is not running and costs nothing. A login VM (KOR-73, ADR-099 section 3) is the device's
 own work for a Claude login and is not billed. The meter runs only on platform devices.
 """
 

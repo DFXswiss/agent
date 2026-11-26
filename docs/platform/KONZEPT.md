@@ -839,7 +839,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   (zur Anmeldung von fünf neuen Abos, die nur nacheinander ging, weil die Plattform nur ein Postfach je Konto hält)
 - **Bezug:** präzisiert [§16 Punkt 1](#k-16-b1) (Hunderte parallele Hauptagenten und temporäre Umgebungen) für die
   Vorgänge der Plattform; ergänzt [E-31](#e-31) (jedes Abo zentral angemeldet) und [E-32](#e-32).
-- **Umsetzung:** offen – Postfach je Abo und parallele Anmeldungen in KOR-73.
+- **Umsetzung:** gebaut für die Abo-Anmeldung – [ADR-099](adr/099-parallel-subscription-logins.md) (KOR-73): Postfach je
+  Abo, Anmeldungen nebeneinander, jede in einer eigenen Login-VM, Prüfung für Menschen durch den Inhaber, Registrierung.
 
 <a id="e-34"></a>
 

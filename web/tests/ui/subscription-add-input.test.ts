@@ -1,4 +1,4 @@
-// KOR-73 (ADR-098): the login input of "Add a subscription" for every combination of mailbox and account data.
+// KOR-73 (ADR-099): the login input of "Add a subscription" for every combination of mailbox and account data.
 import { describe, expect, it } from 'vitest';
 import { addInput } from '../../src/ui/subscriptions/AddSubscription';
 import { EMPTY_ACCOUNT, EMPTY_MAILBOX } from '../../src/ui/subscriptions/fields';

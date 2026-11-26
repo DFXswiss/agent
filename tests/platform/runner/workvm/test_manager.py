@@ -1275,7 +1275,7 @@ def test_without_a_disk_quota_the_disk_is_not_checked(world: World) -> None:
     assert world.run(request)["created"] is True
 
 
-# -- login VMs (KOR-73, ADR-098 section 3) ------------------------------------------------------------------------
+# -- login VMs (KOR-73, ADR-099 section 3) ------------------------------------------------------------------------
 
 
 def test_login_vms_need_no_session_count_for_no_limit_are_not_billed_and_go_with_the_login(world: World) -> None:

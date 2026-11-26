@@ -1,10 +1,9 @@
 # KOR-73 – decisions
 
 Package: subscriptions logged in side by side, each with its own mailbox, each login in its own sandbox, registration.
-Architecture: [ADR-098](../adr/098-parallel-subscription-logins.md). Rule E-33 (client, 2026-11-26) was not yet on
-develop; its wording from the package text is quoted in the ADR.
+Architecture: [ADR-099](../adr/099-parallel-subscription-logins.md). Rule: [E-33](../KONZEPT.md#e-33).
 
-1. **Mailbox in the subscription record**, not a new credential kind (ADR-098 §1): the record already is the owner's
+1. **Mailbox in the subscription record**, not a new credential kind (ADR-099 §1): the record already is the owner's
    sealed place; no new rotation path.
 2. **Plaintext `slot` at the hub** beside the envelope (like `org_id`): the hub needs a key to decide replacement and
    the signed envelope format stays unchanged; the runner trusts only the decrypted `subscription_id`.

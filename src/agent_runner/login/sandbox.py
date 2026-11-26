@@ -1,4 +1,4 @@
-"""The browser sandbox of one Claude login (KOR-73, ADR-098 section 3; 05-runner.md section 11.3).
+"""The browser sandbox of one Claude login (KOR-73, ADR-099 section 3; 05-runner.md section 11.3).
 
 Every automatic login drives its own browser, nothing is shared between logins:
 

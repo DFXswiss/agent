@@ -132,7 +132,7 @@ export interface PreparedRequest {
   readonly envelope: Envelope;
   /** The organization of a company account's `github.connect`, posted in plaintext (KOR-47). */
   readonly orgId?: string;
-  /** The subject of a root request, posted in plaintext (KOR-73, ADR-098 section 2). */
+  /** The subject of a root request, posted in plaintext (KOR-73, ADR-099 section 2). */
   readonly slot?: string;
 }
 

@@ -1,4 +1,4 @@
--- Login VMs (KOR-73, ADR-098 section 3): the browser sandbox of one Claude login is a `runner.workvm` row of scope
+-- Login VMs (KOR-73, ADR-099 section 3): the browser sandbox of one Claude login is a `runner.workvm` row of scope
 -- `login` (`session_id` = the login request, task, organization and workgroup the nil UUID). New teardown reason:
 -- `login_ended` (the login is over, on every path).
 ALTER TABLE runner.workvm DROP CONSTRAINT workvm_scope_check;

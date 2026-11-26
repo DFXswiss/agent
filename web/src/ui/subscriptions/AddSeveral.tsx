@@ -1,4 +1,4 @@
-// "Add several subscriptions" (KOR-73, ADR-098 section 2): one row per subscription (label, address, its own mailbox,
+// "Add several subscriptions" (KOR-73, ADR-099 section 2): one row per subscription (label, address, its own mailbox,
 // the data of a new account), one choice of the organizations that may use them, and one button that starts every
 // login at once on a device that runs logins side by side (`addSubscriptions`, each in its own sandbox and slot). The
 // progress of each subscription is shown in its row (`LoginRequest`: stages, the check for humans, link and code,

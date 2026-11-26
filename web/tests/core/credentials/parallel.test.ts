@@ -1,4 +1,4 @@
-// U-WEB-credentials (KOR-73, ADR-098): subscriptions logged in side by side – the own mailbox of a subscription in its
+// U-WEB-credentials (KOR-73, ADR-099): subscriptions logged in side by side – the own mailbox of a subscription in its
 // sealed record (only the address leaves), the record written before its login, the login with `extended`, its slot
 // and the data of a new account, several logins at once, the human check (`verify`, click, relay), the reason of a
 // fallback, the check of the own mailbox, and the bodies and the `slot` of the request client.

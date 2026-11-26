@@ -1,4 +1,4 @@
-"""U-RUN-login (KOR-73, ADR-098 sections 1-3, 8): five subscriptions logged in at once in one run, each with its own
+"""U-RUN-login (KOR-73, ADR-099 sections 1-3, 8): five subscriptions logged in at once in one run, each with its own
 record, its own mailbox and its own browser sandbox - the real platform browser helper of the login VM
 (`workvm-browser call`, one state directory and socket per login, as one VM per login), driven through
 `HelperSandbox`; then a new login of one of them reads its own mailbox again.
@@ -198,7 +198,7 @@ def test_five_subscriptions_log_in_at_once_each_with_its_own_mailbox_and_sandbox
             assert stored["token"]
         counts = world.mail.store.counts()
         assert all(counts[address]["INBOX"] == 1 for address in world.addresses)
-        # a new login of one subscription reads its own mailbox again (ADR-098 section 1)
+        # a new login of one subscription reads its own mailbox again (ADR-099 section 1)
         again = await login(run, records[3])
         await run.settle()
         assert run.bodies(again)[-1] == {"step": "done", "email": world.addresses[3]}

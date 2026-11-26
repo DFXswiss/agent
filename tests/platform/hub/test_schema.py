@@ -508,7 +508,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("created_at", TS),
         ("expires_at", TS),
         ("org_id", U),  # KOR-47, migration 0022
-        ("slot", U),  # KOR-73, migration 0040 (ADR-098)
+        ("slot", U),  # KOR-73, migration 0040 (ADR-099)
     ],
     # credential-change notices for devices (HUB-13, ADR-035, migration 0003)
     "credential_notice": [("device_id", U), ("owner_id", U), ("kind", T), ("changed_at", TS)],

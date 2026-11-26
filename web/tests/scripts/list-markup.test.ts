@@ -28,7 +28,7 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
   'src/ui/subscriptions/UseEditor.tsx': { count: 1, reason: 'organisations the user belongs to (a handful)' },
   'src/ui/subscriptions/AddSeveral.tsx': {
     count: 2,
-    reason: 'the rows and the progress of one batch of subscriptions (at most 40, ADR-090, ADR-098)',
+    reason: 'the rows and the progress of one batch of subscriptions (at most 40, ADR-090, ADR-099)',
   },
   'src/ui/subscriptions/fields.tsx': {
     count: 2,

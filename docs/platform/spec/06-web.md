@@ -958,7 +958,7 @@ not open). The page "My subscriptions" (KOR-68) opens the same dialogs at "Add s
 further subscription that is not logged in. A login is started once per attempt; closing the dialog while it starts
 sends nothing more.
 
-**Subscriptions side by side (KOR-73, [ADR-098](../adr/098-parallel-subscription-logins.md)).** When the preselected
+**Subscriptions side by side (KOR-73, [ADR-099](../adr/099-parallel-subscription-logins.md)).** When the preselected
 device announced `subscriptions.parallel` (`subscriptionDevices().parallel`; otherwise everything above stays):
 - "Add a subscription" also takes the subscription's **own mailbox** (IMAP host, port 993, user, password, address –
   `MailboxFields`), the address to sign in with, the **organizations** that may use it (`use.orgs`, E-31) and, with a

@@ -1,4 +1,4 @@
-// Form parts of adding Claude subscriptions on a device that runs logins side by side (KOR-73, ADR-098): the
+// Form parts of adding Claude subscriptions on a device that runs logins side by side (KOR-73, ADR-099): the
 // subscription's own mailbox, the data of a new account with the consents of the account holder (each unticked, each
 // saying that the person whose address it is gave it), the organizations that may use it, and whether the device can
 // do it (`useParallel`).
