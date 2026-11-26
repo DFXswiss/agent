@@ -6,8 +6,8 @@ work devices as pool devices, §10.2, D-25). Status: concept – not built; open
 
 This document is the complete concept for running the self-hosted GitHub Actions jobs of the DFX organisations
 through agent.dfx.swiss, on the same devices as its work VMs ([E-34](../KONZEPT.md#e-34) and
-[E-35](../KONZEPT.md#e-35); before E-35 the interpretation [A20](../KONZEPT.md#a-20)). Beyond these three rules and
-the interpretation [A19](../KONZEPT.md#a-19) (one VM per job) it decides nothing: recommendations (such as the
+[E-35](../KONZEPT.md#e-35); before E-35 the interpretation [A21](../KONZEPT.md#a-21)). Beyond these three rules and
+the interpretation [A20](../KONZEPT.md#a-20) (one VM per job) it decides nothing: recommendations (such as the
 trust classes of §5) are marked as such, and every choice is listed in §13 with its options and the factual tendency
 of the research; every number that is not yet known is listed in §14. Sources are given in square brackets and
 resolved in §16; repository paths are relative to `DFXswiss/agent`. "[OPS]" stands for the operator's infrastructure
@@ -19,8 +19,8 @@ not repeated here).
 ### 1.1 What "all self-hosted runs" means
 - Every job of a repository in a DFX organisation whose `runs-on` today names a self-hosted label runs, after the
   migration (§12), on a runner that agent.dfx.swiss starts for exactly this one job in a fresh VM and deletes
-  afterwards ([E-33](../KONZEPT.md#e-33), VM per job: [A19](../KONZEPT.md#a-19)). The host-bound jobs of §1.3 are
-  not covered by A19: open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)).
+  afterwards ([E-33](../KONZEPT.md#e-33), VM per job: [A20](../KONZEPT.md#a-20)). The host-bound jobs of §1.3 are
+  not covered by A20: open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)).
 - Organisations in scope: the DFX organisations on GitHub, each with its own installation of the CI app (§4). The
   exact list of organisations, repositories and labels is the inventory of stage 0 (§12) and is kept in [OPS].
 - Public repositories with self-hosted CI according to [OPS] include `DFXswiss/backend` and `DFXswiss/realunit-app`;
@@ -47,7 +47,7 @@ not repeated here).
 - The operator's model "every device deploys itself" is documented with reasons; an SSH fan-out from a central host
   was rejected [OPS].
 - Consequence: these jobs cannot move into a CI VM. Today they run on a deploy runner outside the platform, which
-  contradicts [E-33](../KONZEPT.md#e-33) and [E-34](../KONZEPT.md#e-34); [A19](../KONZEPT.md#a-19) does not cover
+  contradicts [E-33](../KONZEPT.md#e-33) and [E-34](../KONZEPT.md#e-34); [A20](../KONZEPT.md#a-20) does not cover
   them. Open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)): the options include a minimal deploy
   runner per device (class H, under the requirements of §5) as an exception and a signed pull deployment without an
   Actions runner (§13 D-1).
@@ -62,7 +62,7 @@ not repeated here).
 - Every label that a workflow requests needs an active host, and GitHub Actions must be enabled in the repository;
   stage 0 (§12) compares both with the current state, which is kept in [OPS].
 - `--ephemeral` alone gives a fresh registration, not a fresh environment; a fresh environment per job needs the VM of
-  [A19](../KONZEPT.md#a-19).
+  [A20](../KONZEPT.md#a-20).
 
 ## 2. Terms
 
@@ -280,7 +280,7 @@ shared pool of [E-34](../KONZEPT.md#e-34) and [E-35](../KONZEPT.md#e-35) (§6.6)
 
 ### 6.4 Where the KONZEPT model needs a decision
 A CI job is no user request and belongs to no workgroup ([Grundprinzip](../KONZEPT.md#k-gp),
-[§2 Punkt 5](../KONZEPT.md#k-2-b5), [§16 Punkt 2](../KONZEPT.md#k-16-b2)); a VM per job ([A19](../KONZEPT.md#a-19)) differs from a VM per
+[§2 Punkt 5](../KONZEPT.md#k-2-b5), [§16 Punkt 2](../KONZEPT.md#k-16-b2)); a VM per job ([A20](../KONZEPT.md#a-20)) differs from a VM per
 workgroup ([§3 Punkt 5](../KONZEPT.md#k-3-b5)). Options: an infrastructure workload without task, or a technical
 organisation/workgroup – decision D-12. An own product next to the platform is excluded by
 [E-34](../KONZEPT.md#e-34). Job audit: which record a job leaves
@@ -569,7 +569,7 @@ The recommendation flips (research 2 §7):
 - to **Anka/Orka**, if support or central management matters more than cost;
 - to a **dedicated Mac without VM**, if goldens, simulator or real devices are not stable in VMs – no longer available
   without a new rule of the client: it contradicts [E-34](../KONZEPT.md#e-34) (no own machine) and deviates from the
-  interpretation [A19](../KONZEPT.md#a-19) (VM per job); such jobs would be reported as not movable;
+  interpretation [A20](../KONZEPT.md#a-20) (VM per job); such jobs would be reported as not movable;
 - to **no macOS VM at all**, if almost nothing remains after the split;
 - to **stop**, if the legal review denies 2B(iii) for the installation type.
 
@@ -889,7 +889,7 @@ single option, the row says so. Everything else is open. The tendency is the fac
 
 | ID | Decision | Options | Tendency (not decided) |
 |---|---|---|---|
-| D-1 | Scope, and host-bound jobs (§1.3; not covered by [A19](../KONZEPT.md#a-19); open deviation, [KONZEPT part D](../KONZEPT.md#d-offen)) | (a) Linux, not host-bound only; (b) plus macOS VMs. Host-bound jobs: (c) signed pull deployment without an Actions runner; (d) minimal deploy runner per device outside the platform as an exception to [E-33](../KONZEPT.md#e-33) and [E-34](../KONZEPT.md#e-34), class H (§5); (e) another way the client names. Whether such jobs may run outside the platform at all is part of this decision | (a) first, (b) after the spike; host-bound jobs: no choice made, all of (c)–(e) open; on pool devices without runner groups (D-9) §5 recommends (c) rather than (d) |
+| D-1 | Scope, and host-bound jobs (§1.3; not covered by [A20](../KONZEPT.md#a-20); open deviation, [KONZEPT part D](../KONZEPT.md#d-offen)) | (a) Linux, not host-bound only; (b) plus macOS VMs. Host-bound jobs: (c) signed pull deployment without an Actions runner; (d) minimal deploy runner per device outside the platform as an exception to [E-33](../KONZEPT.md#e-33) and [E-34](../KONZEPT.md#e-34), class H (§5); (e) another way the client names. Whether such jobs may run outside the platform at all is part of this decision | (a) first, (b) after the spike; host-bound jobs: no choice made, all of (c)–(e) open; on pool devices without runner groups (D-9) §5 recommends (c) rather than (d) |
 | D-2 | Trigger | (a) `actions/scaleset`; (b) webhook + JIT; (c) polling + JIT; (d) fixed JIT stock | (a) |
 | D-3 | Location of the controller | (a) inside `agent-runner`; (b) sidecar with its own account; (c) separate host (not as a machine outside the platform (E-34), nor as an own CI device inside it (E-35)); (d) hub with KONZEPT change | (b) |
 | D-4 | Owner of the CI app and of the key that creates JIT runners, and where that key lies | operator; separate service account; external signer | separate from the user app ([ADR-015](../adr/015-github-app-device-flow-rest-only.md)); key never in VM or hub |
@@ -907,7 +907,7 @@ single option, the row says so. Everything else is open. The tendency is the fac
 | D-16 | Who counts as own use for macOS | RealUnit and 21gifts own use or third party; customers of agent.dfx.swiss excluded until legal review | customers excluded |
 | D-17 | RealUnit goldens | where they run today; whether they move into VMs | clarify first (§8.5) |
 | D-18 | Experimental Lima feature in production | yes, pinned with spike; no | depends on M-12, M-16 |
-| D-19 | macOS tool | Lima; Tart; Anka/Orka; GitHub-hosted; dedicated Mac without VM (excluded by E-34 as an own machine; deviates from A19, §8.6) | Lima, Tart as fallback (§8.6) |
+| D-19 | macOS tool | Lima; Tart; Anka/Orka; GitHub-hosted; dedicated Mac without VM (excluded by E-34 as an own machine; deviates from A20, §8.6) | Lima, Tart as fallback (§8.6) |
 | D-20 | Hardening order ([E-25](../KONZEPT.md#e-25)) | order the hardening expressly: which of §9.3–§9.7 and of the separation per class of §5 (own runner group, scale set, VM pool and slot accounts per class) the client orders before which stage; includes the recommended gate U (§9.3) with its two build parts: order it, order parts of it, or not; includes the repository preconditions for class U (§9.6: secrets only in environments bound to protected branches, organisation secrets only where needed, `GITHUB_TOKEN` read-only by default) | order gate U before stage 3; proposed default: class U does not start before this decision, and not in a repository that misses the §9.6 preconditions |
 | D-21 | Legal review of the Apple licences | 2B(iii) for the installation type (DFU/IPSW), governing law, intra-group charging, Xcode in a guest | review on the original text before the macOS pilot |
 | D-22 | Shares of the pool (§6.6) | values of `MIN_SHARE`, `MAX_SHARE`, `HEADROOM_INTERACTIVE`, organisation and class shares, `LATENCY_BUDGET`, `POOL_FAILURE_RESERVE`; order between workload kinds; may CI demand stop idle agent VMs? how much Linux capacity may the pilot device give up for macOS VMs? | open, after M-19/M-20 |
@@ -1054,7 +1054,7 @@ quotations are excerpts and are to be checked against the original before any le
 | SCALENINJA | https://scaleninja.com/macvisor/virtualization-framework/ (secondary source) |
 
 ### 16.4 Repository `DFXswiss/agent`
-- Concept and rules: [KONZEPT.md](../KONZEPT.md) (E-33, E-34, E-35 and the passages of their "Bezug"; A19, A20).
+- Concept and rules: [KONZEPT.md](../KONZEPT.md) (E-33, E-34, E-35 and the passages of their "Bezug"; A20, A21).
 - Specification: [00-overview.md](00-overview.md) §1, §3; [05-runner.md](05-runner.md) §2.1, §3.1, §3.2, §3.4, §4,
   §10.2, §14; [08-monitoring.md](08-monitoring.md); [13-work-vm.md](13-work-vm.md) §2, §4, §6, §7, §8, §10, §12.
 - Design and security: [PLATFORM-DESIGN.md](../PLATFORM-DESIGN.md) §3;

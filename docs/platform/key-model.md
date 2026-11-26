@@ -394,8 +394,8 @@ bearing on keys).
 | [A16](KONZEPT.md#a-16) | Workflow files are not blocked. | none | – |
 | [A17](KONZEPT.md#a-17) | Protected branches. | none | – |
 | [A18](KONZEPT.md#a-18) | Blocked attempts are logged. | none | – |
-| [A19](KONZEPT.md#a-19) | One throw-away VM per CI job; no bearing of its own on keys (the keys around CI VMs: row E-33). | none | – |
-| [A20](KONZEPT.md#a-20) | A runner is a VM from the same pool as the work VMs, decided by [E-35](KONZEPT.md#e-35): the pool device holds the keys of the workgroups it serves while CI VMs run on it. | decision needed | [§6](#6-where-plaintext-lies) |
+| [A20](KONZEPT.md#a-20) | One throw-away VM per CI job; no bearing of its own on keys (the keys around CI VMs: row E-33). | none | – |
+| [A21](KONZEPT.md#a-21) | A runner is a VM from the same pool as the work VMs, decided by [E-35](KONZEPT.md#e-35): the pool device holds the keys of the workgroups it serves while CI VMs run on it. | decision needed | [§6](#6-where-plaintext-lies) |
 
 ## 11. Gaps and the requirements on the follow-up packages
 
