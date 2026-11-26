@@ -20,7 +20,7 @@ Punkt), `#e-01` (Regel E-01), `#a-1` (Auslegung A1). Anker werden nie umbenannt 
 |---|---|
 | [A – Das Konzept](#teil-a--das-konzept) | Vollständige Konzeptfassung mit 47 Ideen, im Wortlaut |
 | [B – Regeln und Entscheide](#teil-b--regeln-und-entscheide-des-auftraggebers) | Regeln E-01 … mit Datum, Wortlaut, Bezug und Umsetzung |
-| [C – Auslegungen](#teil-c--auslegungen-bis-der-auftraggeber-anders-entscheidet) | A1–A18 |
+| [C – Auslegungen](#teil-c--auslegungen-bis-der-auftraggeber-anders-entscheidet) | A1–A19 |
 | [D – Pflege](#teil-d--pflege) | Wie eine neue Vorgabe eingetragen wird; offene Abweichungen |
 
 ## Teil A – Das Konzept
@@ -821,7 +821,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 
 **Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und
 offene Fragen nach dem Wortlaut des Konzepts: A1–A7 aus dem Abgleich der vollständigen Fassung vom 2026-11-23 (dem
-Auftraggeber am selben Abend mitgeteilt), A8–A18 aus dem Restplan vom 2026-11-24. Sie gelten für alle Arbeiten, bis er
+Auftraggeber am selben Abend mitgeteilt), A8–A18 aus dem Restplan vom 2026-11-24, A19 aus
+KOR-72 vom 2026-11-26. Sie gelten für alle Arbeiten, bis er
 anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Aussage gilt, [E-01](#e-01)).
 
 <a id="a-1"></a>
@@ -895,6 +896,13 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
 - **A18 – Blockierter Versuch:** Jede abgelehnte Aktion, die eine Session beantragt oder ein Hook abfängt, wird
   protokolliert ([§10 Punkt 8](#k-10-b8)). Ablehnungen einzelner Systemaufrufe durch den Kernel sind die zweite
   Schutzschicht ([§10 Punkt 5](#k-10-b5)) und werden gezählt, nicht einzeln protokolliert.
+<a id="a-19"></a>
+- **A19 – Grundfunktionen sind keine Arbeitsweisen:** Was ein lokaler Baustein nur ablegt, anzeigt oder weckt
+  (Ledger und Session-Store, `knock`, Dashboard, alter Hub), geht in Grundfunktionen der Plattform auf, die es ohne
+  Wahl schon gibt (Tasks, Sessions, Operationen, Pings, Oberfläche, Lagebild); sie ändern keine Arbeitsweise und
+  werden nicht wählbar ([E-32](#e-32)). Spine, Checklisten und Done-Gates des Werkzeugs werden nicht nachgebaut, ihre
+  Wirkung tragen Operationen, Prüfurteile, Merge-Kriterien und die Treiber der Arbeitsweisen. Umgesetzt mit
+  [ADR-098](adr/098-working-modes.md).
 
 ## Teil D – Pflege
 
@@ -933,7 +941,7 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
 
 ### Offene Abweichungen
 
-Stand 2026-11-25. Was hier steht, widerspricht dem gebauten Stand noch und wird vom genannten Paket geschlossen.
+Stand 2026-11-26. Was hier steht, widerspricht dem gebauten Stand noch und wird vom genannten Paket geschlossen.
 
 | Regel / Stelle | Gebauter Stand heute | Schließt |
 |---|---|---|
@@ -946,5 +954,5 @@ Stand 2026-11-25. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [A11](#a-11) Lesen über Workgroups | Eine Session liest nur in ihrer eigenen Workgroup, andere sieht sie nur namentlich | KOR-45 |
 | [A13](#a-13) Default-Workgroup | Das Schreibrecht in der Default-Workgroup lässt sich nicht herabsetzen | KOR-55 |
 | [A18](#a-18) Blockierter Versuch | Ablehnungen durch den Kernel werden nicht je Session gezählt | KOR-60 |
-| [E-32](#e-32) Arbeitsweisen | Werkzeug `agent`, alter Hub und die Werkzeuge, mit denen die Plattform gebaut wird, laufen lokal; es gibt keine wählbare Arbeitsweise | Pakete nach [ADR-098](adr/098-working-modes.md) §9 |
+| [E-32](#e-32) Arbeitsweisen | Werkzeug `agent`, alter Hub und die Werkzeuge, mit denen die Plattform gebaut wird, laufen lokal; es gibt keine wählbare Arbeitsweise; A38 kann die Slots nicht auf Programme verschiedener Anbieter legen (nur Claude Code, [§4 Punkt 6](#k-4-b6)) | Pakete nach [ADR-098](adr/098-working-modes.md) §9 |
 | Ideen 27–47, §16 | Stand je Idee in [spec/01-requirements.md](spec/01-requirements.md) Block R-16 | dort genannt |

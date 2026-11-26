@@ -388,6 +388,8 @@ readable. **Rollback:** start the legacy stack again (§7).
   store and local commands keep working; their sync to the legacy hub fails with retries from S6 on (the new hub
   answers 404 on the legacy paths). Developers who want to stop the retries unpair or stop their legacy daemon
   themselves. Platform use is by invitation (S8) and needs no legacy installation.
+- **Working modes ([ADR-098](adr/098-working-modes.md) §6):** S12 also waits until the A38 second review by team
+  members and the coordinator no longer go through the legacy hub and no device of the operator still syncs with it.
 - **Rollback of the retirement:** start the legacy stack again from its kept VM/data; routing it under the
   production name again is the S6 rollback, routing it under another name needs the owner and an infrastructure PR.
 
