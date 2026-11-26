@@ -42,5 +42,9 @@
   "row.device": "Device: {name}",
   "row.event": "Referenced event",
   "row.by-agent": "by agent {name}",
-  "row.by-unknown-agent": "by agent"
+  "row.by-unknown-agent": "by agent",
+  "filter.on_behalf_of": "On behalf of",
+  "filter.anybody": "Any person",
+  "actor.main_agent": "Main agent",
+  "actor.subagent": "Subagent"
 }

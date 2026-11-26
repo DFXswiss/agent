@@ -34,7 +34,9 @@
               "session",
               "hub",
               "operator",
-              "anonymous"
+              "anonymous",
+              "main_agent",
+              "subagent"
             ]
           },
           "action": {
@@ -159,6 +161,10 @@
           "agent_id": {
             "$ref": "../common.json#/$defs/uuid",
             "description": "the agent whose request wrote the row (11-agent-access.md section 7); absent otherwise"
+          },
+          "on_behalf_of": {
+            "$ref": "../common.json#/$defs/uuid",
+            "description": "the person whose instruction a main_agent/subagent actor followed (ADR-095 section 4); absent when unknown or for other actors"
           }
         },
         "required": [
@@ -185,6 +191,13 @@
     },
     "next_before": {
       "$ref": "../common.json#/$defs/next_before"
+    },
+    "actors": {
+      "type": "object",
+      "description": "the main agents and subagents named as actors on this page, keyed by session ID (ADR-095 section 4); not part of the hashed rows; keys are session IDs (checked by readers)",
+      "additionalProperties": {
+        "$ref": "objects.json#/$defs/audit_agent"
+      }
     }
   },
   "required": [

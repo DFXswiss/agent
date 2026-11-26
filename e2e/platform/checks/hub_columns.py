@@ -41,6 +41,9 @@ CATEGORIES: dict[str, str] = {
     "settings": "User settings (model access preference, model choice, locale, fallback of the model access)",
     "community": "Community metadata (14-community.md section 2.3, ADR-069): message IDs, authors, sequence numbers, "
     "times, sizes, tombstones, key epochs and checks, key requests, members, read positions, mutes, moderators",
+    "mainagents": "Main agents (ADR-095): the task's number in its organization, a child session's place below its "
+    "main agent, the ID of the newest task.agent_name event, and in audit rows the agent as actor and the person it "
+    "acted for - counters and IDs",
     "ciphertext": "Encrypted content (ADR-003): sealed under scope, credential or recipient keys the hub never holds",
     "agents": "Agents of a user (11-agent-access.md section 2): agent ID, public keys, state, times, claim hash, the "
     "source address of an open pairing, which login confirmed which pairing, which actions were taken by an agent, "
@@ -80,7 +83,7 @@ TOKEN = r"^[A-Za-z0-9_.:/+=-]*$"
 _MAP = """
 audit: audit | seq:number at:time actor_id:uuid actor_kind:code action:code result:code org_id:uuid wg_id:uuid
   task_id:uuid session_id:uuid device_id:uuid target_kind:code target_id:code detail:json event_id:uuid prev_hash:code
-  hash:code agent_id:uuid@agents
+  hash:code agent_id:uuid@agents on_behalf_of:uuid@mainagents
 agent: agents | id:uuid user_id:uuid kem_pub:bytes sig_pub:bytes state:code bundle_ct:bytes@ciphertext
   label_ct:bytes@ciphertext claim_hash:bytes claim_misses:number source:code source_net:code created_at:time
   expires_at:time confirmed_at:time claimed_at:time last_used_at:time revoked_at:time replaces:uuid
@@ -188,6 +191,7 @@ session: tasks | id:uuid task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid devic
   interrupted_at:time interruption_ended_at:time failover_of:uuid redeliver_event_id:uuid restore_object:uuid@contexts
   orchestrator_at:time
   agent_profile:json@profiles
+  agent_path:code@mainagents
 session_ping: notifications | id:uuid session_id:uuid kind:code level:code ref:code created_at:time
   delivered_at:time
 session_transition: tasks | session_id:uuid seq:number state:code reason:code at:time received_at:time
@@ -195,9 +199,11 @@ session_transition: tasks | session_id:uuid seq:number state:code reason:code at
 task: tasks | id:uuid org_id:uuid wg_id:uuid owner_id:uuid state:code state_reason:code created_at:time
   state_at:time last_activity_at:time closed_at:time placement_device_id:uuid placement_vm_id:code
   github_identity:uuid model_consent:flag agent_profile:json@profiles
+  number:number@mainagents
 task_attention: attention | task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid category:code reason:code
   ref_kind:code ref_id:uuid since:time seq:number subagents_total:number subagents_active:number updated_at:time
   wait_until:time
+task_counter: mainagents | org_id:uuid last:number
 task_transition: tasks | task_id:uuid seq:number state:code reason:code at:time by_id:uuid
 usage_counter: metrics | session_id:uuid requests:number input_tokens:number output_tokens:number
   cache_read_tokens:number cache_write_tokens:number thinking_tokens:number cost_micro_usd:number cost_basis:code

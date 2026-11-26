@@ -68,7 +68,12 @@ CHANGED_SENTENCE = "Facts of this session changed since your instructions were w
 """The sentence of a notice that has changed facts but no sentence of its own."""
 
 TOOLS: tuple[tuple[str, str, dict[str, Any]], ...] = (
-    ("get_context", "organization, workgroup, task, session, your rights and limits", {}),
+    (
+        "get_context",
+        "organization, workgroup, task, session, your rights and limits, your name and handle, your main agent and"
+        " your helpers",
+        {},
+    ),
     ("list_workgroups", "the workgroups of the organization", {}),
     ("list_members", "the members of the organization or of the workgroup", {"scope": "workgroup"}),
     (

@@ -206,6 +206,7 @@ SPEC_EVENT_MATRIX = [
     ("settings.workgroup", "wg", "user", "wg_write"),
     ("task.meta", "wg", "user", "wg_write"),
     ("task.meta", "wg", "device", "device_assigned_wg"),
+    ("task.agent_name", "wg", "user", "wg_write"),
     ("prompt", "wg", "user", "wg_write"),
     ("session.output", "wg", "device", "device_assigned_wg_session"),
     ("session.tool", "wg", "device", "device_assigned_wg_session"),
@@ -228,10 +229,10 @@ SPEC_EVENT_MATRIX = [
 ]
 # 03-api.md section 10 (event bodies): every kind.
 SPEC_EVENT_KINDS = (
-    "org.profile wg.profile member.profile member.name device.profile task.meta prompt whiteboard.entry whiteboard.edit"
-    " whiteboard.delete settings.workgroup session.output session.tool session.hook session.file session.terminal"
-    " session.status session.error operation.params operation.result platform.read workvm.run workvm.state"
-    " test.run browser.action browser.state"
+    "org.profile wg.profile member.profile member.name device.profile task.meta task.agent_name prompt whiteboard.entry"
+    " whiteboard.edit whiteboard.delete settings.workgroup session.output session.tool session.hook session.file"
+    " session.terminal session.status session.error operation.params operation.result platform.read workvm.run"
+    " workvm.state test.run browser.action browser.state"
 )
 
 
@@ -394,7 +395,7 @@ def test_event_kind_matrix(contracts: Contracts) -> None:
         assert set(row["header"].values()) <= rules
     by_kind = {(row["kind"], row["scope"], tuple(row["authors"])): row["header"] for row in rows}
     # 03-api.md section 10: task.meta and prompt address the task (session="" and ref="").
-    for kind in ("task.meta", "prompt"):
+    for kind in ("task.meta", "task.agent_name", "prompt"):
         assert by_kind[(kind, "wg", ("user",))]["session"] == "empty"
         assert by_kind[(kind, "wg", ("user",))]["ref"] == "empty"
     # 04-crypto.md section 4.3: wg.profile names its target in wg; member.profile ref = author;

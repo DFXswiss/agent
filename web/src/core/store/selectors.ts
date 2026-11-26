@@ -19,6 +19,25 @@ export function memoize<I extends object, O>(derive: (input: I) => O): (input: I
   };
 }
 
+/**
+ * `previous` when it has the same own fields as `next` (shallow), else `next`: an index rebuilt after a store update
+ * keeps the objects of unchanged items, so the components that select them do not render again (a burst of thousands
+ * of pulled events must not re-render every shown row once per frame).
+ */
+export function sameAs<T extends object>(previous: T | undefined, next: T): T {
+  if (previous === undefined) return next;
+  const keys = Object.keys(next) as (keyof T)[];
+  const equal =
+    keys.length === Object.keys(previous).length && keys.every((key) => Object.is(previous[key], next[key]));
+  return equal ? previous : next;
+}
+
+/** The scope ID of a scope's entries (null for an empty scope). */
+export function scopeIdOf(scope: ScopeEvents): string | null {
+  for (const entry of scope.entries.values()) return entry.scopeId;
+  return null;
+}
+
 const NO_EVENTS: readonly EventEntry[] = [];
 const ascending = memoize((scope: ScopeEvents): readonly EventEntry[] =>
   [...scope.entries.values()].sort((a, b) => a.scopeSeq - b.scopeSeq),

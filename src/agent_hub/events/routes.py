@@ -33,7 +33,7 @@ MAX_EVENTS = 100
 MAX_SEQ = 10**16 - 1
 """The largest `after` of the contract (`q_seq`: up to 16 digits)."""
 KINDS = frozenset(rule.kind for rule in KIND_RULES)
-_KINDS_RE = re.compile(r"[a-z]+(\.[a-z]+)?(,[a-z]+(\.[a-z]+)?){0,31}")
+_KINDS_RE = re.compile(r"[a-z_]+(\.[a-z_]+)?(,[a-z_]+(\.[a-z_]+)?){0,31}")
 
 
 class EventItem(BaseModel):

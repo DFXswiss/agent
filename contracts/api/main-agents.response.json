@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/main-agents.response.json",
+  "title": "GET /v1/orgs/{org}/main-agents response",
+  "description": "Body of a successful response to GET /v1/orgs/{org}/main-agents (03-api.md section 4.6, ADR-095 section 5): the open main agents of one person in the readable workgroups, newest activity first.",
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/agent_item"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "next_before": {
+      "$ref": "../common.json#/$defs/next_before"
+    }
+  },
+  "required": [
+    "items",
+    "next_before"
+  ],
+  "additionalProperties": false
+}

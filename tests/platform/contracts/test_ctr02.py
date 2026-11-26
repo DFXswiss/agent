@@ -244,7 +244,7 @@ def test_journal_failure_reasons_are_the_closed_list(contracts: Contracts) -> No
 # decisions CTR-02: the named array is given after "=").
 BROWSER_ANSWER = "browser_id seq ok error notice url title tab tabs snapshot result file"
 SPEC_TOOLS = {
-    "get_context": ("", "org workgroup task session rights limits api_version"),
+    "get_context": ("", "org workgroup task session rights limits agent children=session_id,handle,state api_version"),
     "list_workgroups": ("", "workgroups=id,name,is_default,my_access"),
     "list_members": ("scope workgroup_id", "members=id,kind,display_name,role,access"),
     "list_tasks": (
@@ -377,6 +377,8 @@ SPEC_NESTED = {
     ("mcp/objects.json", "/$defs/output_get_context/properties/task/properties/owner"): "id display_name",
     ("mcp/objects.json", "/$defs/output_get_context/properties/session"): "id parent_session_id depth model_id",
     ("mcp/objects.json", "/$defs/output_get_context/properties/rights"): "workgroup",
+    ("mcp/objects.json", "/$defs/output_get_context/properties/agent"): "kind handle name name_source main parent",
+    ("mcp/objects.json", "/$defs/output_get_context/properties/agent/properties/main"): "handle name",
     ("mcp/objects.json", "/$defs/output_get_context/properties/limits"): "subagent_max_depth subagent_max_parallel"
     " subagent_max_total subagent_max_runtime_seconds",
     ("mcp/objects.json", "/$defs/output_get_task/properties/sessions/items"): "id state depth parent_session_id",

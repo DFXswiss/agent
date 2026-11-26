@@ -1,0 +1,68 @@
+{
+  "about": "Automatic name of a main agent (ADR-095 section 1, 06-web.md section 4.0a): derived from the task's current title when the task has no verified task.agent_name event or its newest one names null. Whitespace = the Unicode White_Space property (the set of tasks/title.json). text = the title with every whitespace run replaced by one space, leading and trailing spaces removed; name = its first max_words space-separated words joined by one space; when name has more than max_code_points code points: take its first max_code_points + 1 code points and cut before the last space among them, or (no space after the first code point) keep the first max_code_points code points; an empty name is the value of empty. Clients show a main agent as \"<name> #<number>\".",
+  "max_words": 5,
+  "max_code_points": 40,
+  "empty": "Agent",
+  "cases": [
+    {
+      "name": "short_title",
+      "title": "Fix the login bug",
+      "agent_name": "Fix the login bug"
+    },
+    {
+      "name": "five_words",
+      "title": "Bitte fasse PR #12 zusammen und prüfe die Tests",
+      "agent_name": "Bitte fasse PR #12 zusammen"
+    },
+    {
+      "name": "cut_at_space",
+      "title": "Internationalisation documentation reorganisation overview",
+      "agent_name": "Internationalisation documentation"
+    },
+    {
+      "name": "one_long_word",
+      "title": "Donaudampfschifffahrtsgesellschaftskapitänsmütze",
+      "agent_name": "Donaudampfschifffahrtsgesellschaftskapit"
+    },
+    {
+      "name": "exactly_forty",
+      "title": "aaaaaaaaa bbbbbbbbb ccccccccc dddddddddd",
+      "agent_name": "aaaaaaaaa bbbbbbbbb ccccccccc dddddddddd"
+    },
+    {
+      "name": "space_at_forty_one",
+      "title": "aaaaaaaaa bbbbbbbbb ccccccccc dddddddddd e",
+      "agent_name": "aaaaaaaaa bbbbbbbbb ccccccccc dddddddddd"
+    },
+    {
+      "name": "whitespace_runs",
+      "title": "  Review  the\tchanges  ",
+      "agent_name": "Review the changes"
+    },
+    {
+      "name": "astral_code_points",
+      "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "agent_name": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+    },
+    {
+      "name": "empty",
+      "title": "",
+      "agent_name": "Agent"
+    },
+    {
+      "name": "whitespace_only",
+      "title": " 　 ",
+      "agent_name": "Agent"
+    },
+    {
+      "name": "no_spaces_cjk",
+      "title": "修复登录错误并更新文档以及所有相关的测试用例和配置文件还有部署脚本以及监控告警规则的说明",
+      "agent_name": "修复登录错误并更新文档以及所有相关的测试用例和配置文件还有部署脚本以及监控告警规"
+    },
+    {
+      "name": "ellipsis_title",
+      "title": "Write the release notes for version two of the platform and…",
+      "agent_name": "Write the release notes for"
+    }
+  ]
+}

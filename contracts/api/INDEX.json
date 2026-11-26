@@ -2595,6 +2595,44 @@
     },
     {
       "method": "GET",
+      "path": "/v1/orgs/{org}/main-agents",
+      "name": "main-agents",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "org:member"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/main-agents.request.json",
+      "response": "api/main-agents.response.json",
+      "read_resource": "org.main_agents",
+      "streaming": false,
+      "owner": "KOR-52"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/people/agents",
+      "name": "people-agents",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "org:member"
+      ],
+      "path_params": {
+        "org": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/people-agents.request.json",
+      "response": "api/people-agents.response.json",
+      "read_resource": "org.people.agents",
+      "streaming": false,
+      "owner": "KOR-52"
+    },
+    {
+      "method": "GET",
       "path": "/v1/orgs/{org}/attention/summary",
       "name": "orgs-attention-summary",
       "section": "4.6",

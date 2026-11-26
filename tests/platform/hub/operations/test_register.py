@@ -77,8 +77,8 @@ def test_accepted_operation_rows_transitions_audit_and_frame(ops: Ops, published
         (
             "operation.accepted",
             "ok",
-            "device",
-            ops.device.id,
+            "main_agent",  # the session's agent, reported by the device (ADR-095 section 4)
+            session,
             {
                 "type": "github.comment",
                 "error_code": None,

@@ -1,10 +1,13 @@
 """Outbox item `audit` (03-api.md section 6.1, 02-data-model.md section 2.9): a runner-side audit row.
 
 Only the actions of `contracts/enums/outbox-audit-actions.json` are accepted, each with the detail schema of its
-action (`agent_hub.outbox.bodies`). The row is attributed to the device (`actor_kind` `device`). Its scope comes from
-the hub's own rows, never from the runner: with `session_id` the session must run on the device (`device:session`;
-a `task_id` given as well must be the session's task, else `400 request_invalid`), with only `task_id` the task's
-workgroup must be one the device is assigned to (`device:wg`); org, workgroup and task are copied from those rows.
+action (`agent_hub.outbox.bodies`). A row that names a session is the agent's (ADR-095 section 4): actor = the session
+as `main_agent`/`subagent` (`agent_hub.audit.agents`), `on_behalf_of` = the session's `triggered_by` while it is an
+active member of the org (else null), `device_id` = the device; a row without a session is attributed to the device
+(`actor_kind` `device`). Its scope comes from the hub's own rows, never from the runner: with `session_id` the
+session must run on the device (`device:session`; a `task_id` given as well must be the session's task, else
+`400 request_invalid`), with only `task_id` the task's workgroup must be one the device is assigned to
+(`device:wg`); org, workgroup and task are copied from those rows.
 `ping.delivered` needs `session_id` (05-runner.md section 9). A hub ping (`whiteboard.entry`) additionally marks the
 durable `session_ping` row of the session delivered (an unknown ping or one of another session or kind is
 `404 not_found`; a ping delivered before keeps its first time). The runner's own pings (`subagent.finished`,
@@ -18,6 +21,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from agent_hub.audit.agents import session_actor
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.errors import HubError
 from agent_hub.outbox.base import ItemContext, session_on_device
@@ -68,12 +72,13 @@ def handle(item: ItemContext, body: AuditBody) -> None:
     org, wg, task, session = _scope(item, body)
     if body.action == PING_DELIVERED:
         _mark_ping(item, body, session)
+    actor = None if session is None else session_actor(item.connection, session)
     append_audit(
         item.connection,
         AuditRow(
             at=item.now,
-            actor_kind="device",
-            actor_id=item.device,
+            actor_kind="device" if actor is None else actor.kind,
+            actor_id=item.device if actor is None else actor.id,
             action=body.action,
             result=body.result,
             org_id=org,
@@ -84,5 +89,6 @@ def handle(item: ItemContext, body: AuditBody) -> None:
             target_kind=body.target_kind,
             target_id=body.target_id,
             detail=body.detail,
+            on_behalf_of=None if actor is None else actor.on_behalf_of,
         ),
     )

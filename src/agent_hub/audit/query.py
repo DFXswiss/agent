@@ -4,9 +4,11 @@
 at most `limit` (default 50, max 200) with the opaque cursor `next_before` (b64u of the canonical `{"seq": n}`). An
 admin sees every row of the org; a member only the rows of workgroups the member reads (`wg_access`) and the member's
 own actions (`actor_id` = the member); a non-member gets `404 not_found`. Filters (all optional, combined with AND):
-`action` (the action itself or a dotted group, e.g. `operation` matches `operation.accepted`), `actor`, `task`,
-`session`, `wg`. Rows are returned as the hash covers them (`agent_hub.audit.chain.row_json`), so a client can
-recompute a row's hash with its `prev_hash` taken from the verification.
+`action` (the action itself or a dotted group, e.g. `operation` matches `operation.accepted`), `actor` (a principal
+or the session of a main agent or subagent), `task`, `session`, `wg`, `on_behalf_of` (the person an agent acted for,
+ADR-095 section 4). Rows are returned as the hash covers them (`agent_hub.audit.chain.row_json`), so a client can
+recompute a row's hash with its `prev_hash` taken from the verification. Outside the rows, `actors` names the agent of
+every `main_agent`/`subagent` actor of the page (`agent_hub.audit.agents.actors`).
 
 **Account.** `GET /v1/me/audit` (KOR-24) returns the caller's account audit in the same form and paging: the rows the
 user wrote outside any org (`actor_id` = the user and no `org_id`: sign-in, passkeys, recovery, agents) and every row
@@ -31,6 +33,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.audit import agents
 from agent_hub.audit.chain import AuditRow, row_json, verify_chain
 from agent_hub.audit.checkpoint import AuditCheckpoint, checkpoint_valid, newest_checkpoint
 from agent_hub.crypto.encoding import b64u_decode, b64u_encode, canonical, format_time
@@ -42,12 +45,18 @@ Connection = psycopg.Connection[Any]
 LIST_DEFAULT = 50
 LIST_MAX = 200
 EMPTY_HASH = "0" * 64
-FILTERS = ("action", "actor", "task", "session", "wg")
-_FILTER_COLUMNS = {"actor": "actor_id", "task": "task_id", "session": "session_id", "wg": "wg_id"}
+FILTERS = ("action", "actor", "task", "session", "wg", "on_behalf_of")
+_FILTER_COLUMNS = {
+    "actor": "actor_id",
+    "task": "task_id",
+    "session": "session_id",
+    "wg": "wg_id",
+    "on_behalf_of": "on_behalf_of",
+}
 _ACTION_RE = re.compile(r"[a-z_]+(?:\.[a-z_]+)*")
 _COLUMNS = (
     "seq, at, actor_id, actor_kind, action, result, org_id, wg_id, task_id, session_id, device_id, target_kind,"
-    " target_id, detail, event_id, agent_id"
+    " target_id, detail, event_id, agent_id, on_behalf_of"
 )
 MAX_ACTION = 96
 
@@ -111,6 +120,7 @@ def _row(record: tuple[Any, ...]) -> dict[str, Any]:
         detail=record[13],
         event_id=record[14],
         agent_id=record[15],
+        on_behalf_of=record[16],
     )
     return row_json(int(record[0]), row)
 
@@ -150,7 +160,11 @@ def list_audit(
         (*params, limit + 1),
     ).fetchall()
     rows = [_row(record) for record in found[:limit]]
-    return {"rows": rows, "next_before": encode_before(rows[-1]["seq"]) if len(found) > limit else None}
+    return {
+        "rows": rows,
+        "next_before": encode_before(rows[-1]["seq"]) if len(found) > limit else None,
+        "actors": agents.actors(connection, rows),
+    }
 
 
 def list_account_audit(connection: Connection, user: UUID, *, before: str | None, limit: int) -> dict[str, Any]:

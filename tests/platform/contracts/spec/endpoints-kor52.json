@@ -1,0 +1,27 @@
+{
+  "description": "Endpoints added by KOR-52 (ADR-095): the people with their open main agents and the main agents of one person; 03-api.md section 4.6.",
+  "rights": [
+    "org:member"
+  ],
+  "auth": [
+    "browser"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/main-agents",
+      "rights": [
+        "org:member"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/people/agents",
+      "rights": [
+        "org:member"
+      ],
+      "section": "4.6"
+    }
+  ]
+}

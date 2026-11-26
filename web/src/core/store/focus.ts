@@ -46,6 +46,8 @@ export const OTHER_KINDS: readonly string[] = [
   'session.error',
   'session.status',
   'settings.workgroup',
+  // the name a person gives a main agent (ADR-095 section 2): one per renaming, never in masses
+  'task.agent_name',
   'task.meta',
   'wg.profile',
   'whiteboard.delete',

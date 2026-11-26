@@ -13,7 +13,7 @@
   an agent with its own identity opens the settings page in the user's browser instead, as for a passkey (ADR-082).
 - `agents list`: `GET /v1/me/agents`, each label opened with the identity (an unknown agent when it does not open;
   always for an agent with its own identity, which holds no key the label is sealed to); `agents revoke`:
-  `revoke.py`.
+  `revoke.py`. `agents list --org` lists one person's main agents instead (`mainagents`, KOR-52).
 - `platform invite|list|revoke`: platform user invitations of users with the platform role `inviter`, or of every
   user while the switch `open_platform_invites` is on (both read from the verified platform log, never from the hub's
   word; ADR-079): the code is drawn here, only `invite_id`, `pk_inv` and the expiry go to the hub; the link is printed
@@ -33,6 +33,7 @@ from typing import Any
 
 import httpx
 
+from agent_platform import mainagents
 from agent_platform.account import Account, unverified
 from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
@@ -280,6 +281,10 @@ def _recovery_new(account: Account, args: Any, context: Context) -> dict[str, An
 
 
 def _agents_list(account: Account, args: Any, context: Context) -> dict[str, Any]:
+    if args.org is not None:
+        return mainagents.agents_list_command(account, args)
+    if args.owner is not None or args.before is not None:
+        raise PlatformError("invalid_argument")
     return agents_list(account)
 
 
@@ -346,16 +351,23 @@ def register(tree: Tree) -> None:
         example="agent-platform recovery new",
         words="notfallcode wiederherstellungscode wiederherstellung backup emergency",
     )
-    group = tree.group("agents", "the user's connected AI agents")
-    tree.command(
+    group = tree.group("agents", "your connected AI agents and the main agents of tasks")
+    sub = tree.command(
         group,
         "list",
         _agents_list,
-        "agents with their names",
-        example="agent-platform agents list",
-        words="agenten verbundene ki assistenten connected ai assistants",
+        "without --org: your connected AI agents with their names; with --org: the main agents of tasks of one person"
+        " (KOR-52)",
+        example="agent-platform agents list --org <org_id> [--owner <user_id>]",
+        words=(
+            "agenten verbundene ki assistenten hauptagenten einer person connected ai assistants main agents of a"
+            " person owner"
+        ),
         trim="first",
     )
+    sub.add_argument("--org", help="the open main agents of one person in this org (ADR-095)")
+    sub.add_argument("--owner", help="with --org: the person's user ID, or me (the default)")
+    sub.add_argument("--before", help="with --org: next_before of the previous page")
     sub = tree.command(
         group,
         "revoke",

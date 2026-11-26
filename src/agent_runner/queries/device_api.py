@@ -11,13 +11,17 @@ contract are dropped (lists) or make the read `unavailable` (a single task). A r
 (`None`); an unreachable hub or any other refusal is `unavailable`. The hub names the workgroup of a task, but the
 reads take content only from events sealed in that workgroup's scope, so a hub that names a wrong workgroup yields no
 content of another one.
+
+KOR-52 (ADR-095 section 1): a task row may carry its `number` and a session row its `agent_path`, the handles of the
+main agent and its subagents. A hub of an older release sends neither (`number` None, no path); a value that breaks the
+contract drops the row like any other field (a path must also have one ordinal per level of the session's depth).
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -52,6 +56,8 @@ TIME_RE = re.compile(
 )
 OPERATION_TYPE_RE = re.compile(r"^(?=.{1,64}$)[a-z][a-z_]*(\.[a-z][a-z_]*)+$")
 BEFORE_RE = re.compile(r"^[A-Za-z0-9_-]{1,256}$")
+AGENT_PATH_RE = re.compile(r"^[1-9][0-9]{0,8}(\.[1-9][0-9]{0,8})*$")
+NUMBER_MAX = 9007199254740991
 MAX_SESSIONS, MAX_OPERATIONS = 100, 1000
 """The maxima of `api/device-task-get.response.json` (a hub answering more is cut to them)."""
 HUB_UNAVAILABLE = ReadRefused("unavailable", "The platform is not reachable right now. Try again later.")
@@ -67,6 +73,8 @@ class TaskRow:
     state: str
     created_at: str
     last_activity_at: str
+    number: int | None = None
+    """The task's number in its organization (`#<number>`), None from a hub that does not send it."""
 
 
 def _uuid(value: object) -> bool:
@@ -77,12 +85,22 @@ def _time(value: object) -> bool:
     return isinstance(value, str) and TIME_RE.fullmatch(value) is not None
 
 
+def _number(value: Mapping[str, Any]) -> tuple[bool, int | None]:
+    """`(valid, number)` of a task row: absent or null is valid and None."""
+    number = value.get("number")
+    if number is None:
+        return True, None
+    return type(number) is int and 1 <= number <= NUMBER_MAX, number
+
+
 def task_row(scope: ReadScope, value: object, wg_id: str) -> TaskRow | None:
     """A task row of the session's org and workgroup `wg_id` with the fields the reads return, else None."""
     if not isinstance(value, Mapping):
         return None
+    number_valid, number = _number(value)
     valid = (
-        _uuid(value.get("task_id"))
+        number_valid
+        and _uuid(value.get("task_id"))
         and value.get("org_id") == scope.org_id
         and value.get("wg_id") == wg_id
         and _uuid(value.get("owner_id"))
@@ -99,6 +117,7 @@ def task_row(scope: ReadScope, value: object, wg_id: str) -> TaskRow | None:
         state=value["state"],
         created_at=value["created_at"],
         last_activity_at=value["last_activity_at"],
+        number=number,
     )
 
 
@@ -142,6 +161,15 @@ class TaskDetail:
     task: TaskRow
     sessions: list[dict[str, Any]]
     operations: list[dict[str, Any]]
+    agent_paths: dict[str, str] = field(default_factory=dict)
+    """Session ID -> `agent_path` of the subagent sessions whose row carries one."""
+
+
+def _path_fits(path: object, depth: int) -> bool:
+    """An absent path fits every session (older hub); a present one is a subagent's, one ordinal per level."""
+    if path is None:
+        return True
+    return isinstance(path, str) and AGENT_PATH_RE.fullmatch(path) is not None and path.count(".") + 1 == depth
 
 
 def _session(value: object) -> dict[str, Any] | None:
@@ -154,6 +182,7 @@ def _session(value: object) -> dict[str, Any] | None:
         and type(depth) is int
         and depth >= 0
         and (parent is None or _uuid(parent))
+        and _path_fits(value.get("agent_path"), depth)
     )
     if not valid:
         return None
@@ -192,11 +221,16 @@ async def task(context: Any, scope: ReadScope, task_id: str) -> TaskDetail | Non
     if found is None or found.task_id != task_id:
         raise HUB_INVALID
     sessions, operations = answer.get("sessions"), answer.get("operations")
+    rows = sessions if isinstance(sessions, list) else []
+    kept = [(row, found_session) for row in rows if (found_session := _session(row)) is not None][:MAX_SESSIONS]
     return TaskDetail(
         task=found,
-        sessions=[s for s in map(_session, sessions if isinstance(sessions, list) else []) if s is not None][
-            :MAX_SESSIONS
-        ],
+        sessions=[found_session for _row, found_session in kept],
+        agent_paths={
+            found_session["id"]: row["agent_path"]
+            for row, found_session in kept
+            if isinstance(row.get("agent_path"), str)
+        },
         operations=[o for o in map(_operation, operations if isinstance(operations, list) else []) if o is not None][
             :MAX_OPERATIONS
         ],

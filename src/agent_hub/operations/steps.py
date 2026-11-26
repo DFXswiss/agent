@@ -5,7 +5,9 @@ steps here; the outbox base handler (HUB-10) writes the steps the runner reports
 metadata only (`contracts/audit/operation.<state>.json`): type, error code, the original of a duplicate and the
 runner's local check (registration only), the GitHub identity the operation acts with and the human who triggered it
 (ADR-078 section 6; null when the registration named none). The audit `result` follows the decision: `rejected`,
-`denied` and `duplicate` keep their name, `expired` is `failed`, everything else `ok`.
+`denied` and `duplicate` keep their name, `expired` is `failed`, everything else `ok`. A step the device reports is
+the agent's (ADR-095 section 4): the registration and the outbox name the operation's session as actor
+(`main_agent`/`subagent`) and its stored `triggered_by` as `on_behalf_of`; the expiry job writes as the hub.
 """
 
 from __future__ import annotations
@@ -71,6 +73,7 @@ def audit_step(
     error_code: str | None = None,
     duplicate_of: UUID | None = None,
     local_check: str | None = None,
+    on_behalf_of: UUID | None = None,
 ) -> None:
     """The audit row `operation.<state>` (module docstring)."""
     append_audit(
@@ -95,5 +98,6 @@ def audit_step(
                 "local_check": local_check,
                 **identity_detail(operation.github_identity, operation.triggered_by),
             },
+            on_behalf_of=on_behalf_of,
         ),
     )

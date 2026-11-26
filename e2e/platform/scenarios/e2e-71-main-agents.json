@@ -1,0 +1,185 @@
+{
+  "name": "e2e-71-main-agents",
+  "description": "E2E-71 (KOR-52, ADR-095): two people with several main agents; two main agents hand work to a subagent each, and each subagent reads get_context, which names its handle (#1.1, #4.1), its main agent and its parent. Canary texts for the plaintext scan. The subagents' requests are side steps: a subagent may start before its main agent's next request.",
+  "steps": [
+    {
+      "id": "a1",
+      "expect": {
+        "user_text_contains": "E2E71-A1",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.request",
+              "params": {
+                "purpose": "Login review kz65-purpose-a1",
+                "prompt": "E2E71-CHILD-A check the login kz65-child-a"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a1-handed",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "A helper checks the login."
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2",
+      "expect": {
+        "user_text_contains": "E2E71-A2",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Release notes drafted kz65-done-a2."
+          }
+        ]
+      }
+    },
+    {
+      "id": "w1",
+      "expect": {
+        "user_text_contains": "E2E71-W1",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "subagent.request",
+              "params": {
+                "purpose": "Docs check kz65-purpose-w1",
+                "prompt": "E2E71-CHILD-W check the docs kz65-child-w"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "w1-handed",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "A helper checks the docs."
+          }
+        ]
+      }
+    },
+    {
+      "id": "w2",
+      "expect": {
+        "user_text_contains": "E2E71-W2",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Changelog sorted kz65-done-w2."
+          }
+        ]
+      }
+    }
+  ],
+  "side": [
+    {
+      "id": "child-a",
+      "expect": {
+        "user_text_contains": "E2E71-CHILD-A",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_context",
+            "input": {}
+          }
+        ]
+      }
+    },
+    {
+      "id": "child-a-known",
+      "expect": {
+        "tool_result_contains": "\"handle\":\"#1.1\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "I am helper #1.1."
+          }
+        ]
+      }
+    },
+    {
+      "id": "child-w",
+      "expect": {
+        "user_text_contains": "E2E71-CHILD-W",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_context",
+            "input": {}
+          }
+        ]
+      }
+    },
+    {
+      "id": "child-w-known",
+      "expect": {
+        "tool_result_contains": "\"handle\":\"#4.1\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "I am helper #4.1."
+          }
+        ]
+      }
+    },
+    {
+      "id": "a3",
+      "expect": {
+        "user_text_contains": "E2E71-A3",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Budget planned kz65-done-a3."
+          }
+        ]
+      }
+    }
+  ]
+}

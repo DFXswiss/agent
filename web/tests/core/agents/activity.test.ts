@@ -31,7 +31,7 @@ describe('loadAccountAudit', () => {
         { rows: [row, { junk: 1 }], next_before: 'c' }
       ),
     };
-    expect(await loadAccountAudit(client)).toEqual({ rows: [row], next: 'c' });
+    expect(await loadAccountAudit(client)).toEqual({ rows: [row], next: 'c', actors: {} });
     await loadAccountAudit(client, 'c');
     expect(targets).toEqual(['/v1/me/audit?limit=100', '/v1/me/audit?limit=100&before=c']);
   });

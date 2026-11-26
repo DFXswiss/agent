@@ -1,7 +1,9 @@
 // List-level selectors of the audit-like lists (ADR-086 section 1): one `useStore` per list delivers what its rows
-// need – task titles, agent names – recomputed only when the store parts they read change, so rows never subscribe to
+// need – task titles, agent names, the names of the main agents named as actors – recomputed only when the store parts they read change, so rows never subscribe to
 // the store themselves.
-import type { AuditRow } from '../../../core/monitoring/audit';
+import { agentLabel, selectAgentName } from '../../../core/agents/naming';
+import { agentActor } from '../../../core/monitoring/actors';
+import type { AuditActors, AuditRow } from '../../../core/monitoring/audit';
 import type { Selector } from '../../../core/store';
 import { agentName } from '../../../core/store/slices/agents';
 import { selectTitle } from '../../../core/tasks/directory';
@@ -55,5 +57,35 @@ export function agentNamesSelector(ids: readonly string[]): Selector<ReadonlyMap
   return cachedSelector(
     (state) => [state.agents],
     (state) => new Map(ids.map((id) => [id, agentName(state, id)])),
+  );
+}
+
+/** The distinct tasks (with the row's workgroup) of the agent actors of the rows (ADR-095 section 4), in row order. */
+export function agentTasksOf(rows: readonly AuditRow[], actors: AuditActors): TaskRef[] {
+  const seen = new Map<string, TaskRef>();
+  for (const row of rows) {
+    const agent = agentActor(row, actors);
+    if (agent !== null && row.wg_id !== null && !seen.has(agent.task))
+      seen.set(agent.task, { wg: row.wg_id, task: agent.task });
+  }
+  return [...seen.values()];
+}
+
+/**
+ * Task ID → the shown name of its main agent (given, else automatic from the title) for the given tasks; tasks whose
+ * name is not readable yet are left out. Recomputed only when one of their workgroup scopes changed.
+ */
+export function agentLabelsSelector(tasks: readonly TaskRef[]): Selector<ReadonlyMap<string, string>> {
+  return cachedSelector(
+    (state) => tasks.map((ref) => state.events[ref.wg]),
+    (state) => {
+      const labels = new Map<string, string>();
+      for (const ref of tasks) {
+        const name = selectAgentName(ref.wg, ref.task, null)(state);
+        const label = agentLabel(name, selectTitle(ref.wg, ref.task, null)(state));
+        if (label.status === 'given' || label.status === 'automatic') labels.set(ref.task, label.text);
+      }
+      return labels;
+    },
   );
 }

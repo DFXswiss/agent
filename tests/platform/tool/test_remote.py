@@ -7,7 +7,6 @@ import fcntl
 import json
 import os
 import stat
-import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -147,15 +146,26 @@ def test_wait_reports_waiting_then_confirmed_then_connects(tool: Tool, hub: HubF
     assert tool.run("status")[0] == 0
 
 
-def test_wait_polls_until_the_confirmation(tool: Tool, hub: HubFake) -> None:
+def test_wait_polls_until_the_confirmation(tool: Tool, hub: HubFake, monkeypatch: pytest.MonkeyPatch) -> None:
     user = hub.add_user()
     start(tool, hub)
     pairing_id = pending(tool)["pairing_id"]
-    timer = threading.Timer(0.3, lambda: hub.confirm_remote(pairing_id, user))
-    timer.start()
+    looked: list[str] = []
+    real = remote._lookup
+
+    def lookup(pairing: Pairing) -> dict[str, Any]:
+        # the person confirms right after the first look, whatever the load: the tool always waits once (E-19)
+        answer = real(pairing)
+        looked.append(answer["state"])
+        if len(looked) == 1:
+            hub.confirm_remote(pairing_id, user)
+        return answer
+
+    monkeypatch.setattr(remote, "_lookup", lookup)
     code, document = tool.run("pair", "--wait", "--timeout", "10")
-    timer.join()
     assert (code, document["state"]) == (0, "confirmed")
+    assert looked[0] != "confirmed"
+    assert looked[-1] == "confirmed"
 
 
 def test_success_replaces_a_paired_state_and_keeps_files_in_file_mode(tool: Tool, hub: HubFake) -> None:

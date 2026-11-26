@@ -63,6 +63,17 @@ def test_read_filters(scene: Scene) -> None:
     assert _seqs(scene.read(scene.reader, ref=new_id())) == []
 
 
+def test_read_filters_a_kind_with_an_underscore(scene: Scene) -> None:
+    """KOR-52: the `kinds` filter takes the kind of a main agent's name (`task.agent_name`)."""
+    filled = _fill(scene)
+    named = scene.wg_event(scene.writer, "task.agent_name", task=filled["task"])
+    assert scene.post(scene.writer, named).status_code == 200
+    response = scene.read(scene.reader, kinds="task.agent_name")
+    assert _seqs(response) == [7]
+    assert response.json()["events"][0]["event"] == named
+    assert _seqs(scene.read(scene.reader, kinds="task.agent_name,prompt", task=filled["task"])) == [2, 7]
+
+
 def test_read_paginates(scene: Scene) -> None:
     _fill(scene)
     page = scene.read(scene.reader, limit="2")

@@ -3,9 +3,13 @@
 The hub creates the child in the registration's transaction, right after the decision `accepted`: a new session of the
 parent's task on the parent's device and VM, `parent_session_id` = the requesting session, `origin_operation_id` = the
 operation, `depth` = parent depth + 1, owner = the task owner, agent `claude-code`, state `requested` with its first
-transition. It writes the audit row `session.requested` (actor: the requesting device) and records the `session` frame
+transition. The trigger `session_agent_path` gives it its place below the main agent (`agent_path`, ADR-095 section 1;
+the caller's task lock serialises the ordinals). It writes the audit row `session.requested` (actor: the requesting
+session as `main_agent`/`subagent` on behalf of the child's `triggered_by`, `session_id` the child, `device_id` the
+device; ADR-095 section 4) and records the `session` frame
 for the org's browsers, the hint `session.start {session_id}` for the device (whose `GET /v1/device/state` lists the
-child in `sessions`) and the task derivation (`refresh_task`: the task's activity time and `task` frame). The child's
+child in `sessions`) and the task derivation (`refresh_task` as the device: the task's activity time and `task`
+frame). The child's
 `github_identity` is the one the registration names, else the parent session's (ADR-078 section 3); its `triggered_by`
 is the operation's (ADR-083 section 2); its `agent_profile` the resolved snapshot of the profile the request named
 (ADR-094 section 1; NULL: the child works with its parent's rights). The model of the child is chosen by the runner
@@ -22,6 +26,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.audit.agents import agent_kind
 from agent_hub.crypto.ids import uuid7
 from agent_hub.profiles.model import Profile
 from agent_hub.profiles.store import snapshot
@@ -92,10 +97,9 @@ def create_child(
         " VALUES (%s, 1, 'requested', NULL, %s, %s, NULL)",
         (child, now, now),
     )
-    actor = Actor("device", parent.device_id)
     audit(
         connection,
-        actor,
+        Actor(agent_kind(parent.depth), parent.id),
         "session.requested",
         task,
         now,
@@ -103,8 +107,9 @@ def create_child(
         session_id=child,
         device_id=parent.device_id,
         target=("session", child),
+        on_behalf_of=triggered_by,
     )
     effects.hint(parent.device_id, START_HINT, {"session_id": str(child)})
     effects.org_frame(task.org_id, "session", rows.session_frame(connection, child))
-    refresh_task(connection, task, now, actor, effects)
+    refresh_task(connection, task, now, Actor("device", parent.device_id), effects)
     return child

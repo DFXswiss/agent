@@ -1,0 +1,25 @@
+{
+  "rows": [
+    {
+      "seq": 121,
+      "at": "2026-11-21T12:00:00.000Z",
+      "actor_id": "01930005-0000-7000-8000-000000000005",
+      "actor_kind": "subagent",
+      "action": "operation.accepted",
+      "result": "ok",
+      "org_id": "01930001-0000-7000-8000-000000000001",
+      "wg_id": "01930002-0000-7000-8000-000000000002",
+      "task_id": "01930003-0000-7000-8000-000000000003",
+      "session_id": "01930005-0000-7000-8000-000000000005",
+      "device_id": "01930014-0000-7000-8000-000000000014",
+      "target_kind": "operation",
+      "target_id": "0193002d-0000-7000-8000-00000000002d",
+      "detail": {
+        "type": "github.comment"
+      },
+      "event_id": null,
+      "on_behalf_of": null
+    }
+  ],
+  "next_before": null
+}

@@ -885,6 +885,8 @@ class HubFake:
         for event in body["events"]:
             self.store_event(wg, event)
         row = {"task_id": task, "org_id": org, "wg_id": wg, "owner_id": request.user, "state": "scheduling"}
+        # the task's number in its organization (KOR-52, ADR-095 section 1)
+        row |= {"number": 1 + sum(1 for t in self.tasks.values() if t["task"]["org_id"] == org), "name_event_id": None}
         row |= {"state_reason": None, "created_at": now_ms_text(), "last_activity_at": now_ms_text(), "closed_at": None}
         placement = body.get("placement")
         row["placement"] = None if placement is None else {"vm_id": None, **placement}

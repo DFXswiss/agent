@@ -20,4 +20,5 @@ INSTALLERS: tuple[str, ...] = (
     "pulls",
     "stream",
     "subscriptions",
+    "main_agents",
 )

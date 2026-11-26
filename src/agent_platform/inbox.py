@@ -14,7 +14,10 @@
   window aligned to the step like the web).
 - `audit`: the account audit (`GET /v1/me/audit`) or with `--org` the org audit with the hub's filters
   (`GET /v1/orgs/{org}/audit`); `--verify` asks the hub to verify the org's audit chain
-  (`GET /v1/orgs/{org}/audit/verify`, org admins). Malformed rows are left out.
+  (`GET /v1/orgs/{org}/audit/verify`, org admins). Malformed rows are left out. KOR-52 (ADR-095 section 4):
+  `--on-behalf-of USER` filters the org audit by the person an agent acted for, and every row whose actor is a main
+  agent or a subagent gets `actor_text` ("Main agent <name> #42 on behalf of <person>", "Subagent #42.1 of <name> #42
+  on behalf of <person>", `agentnames.actor_text`) from the page's `actors`.
 """
 
 from __future__ import annotations
@@ -26,12 +29,14 @@ from typing import Any
 from urllib.parse import urlencode
 
 from agent_platform.account import Account, unverified
+from agent_platform.agentnames import AUTOMATIC_EMPTY, actor_text, handle, shown, task_names
 from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import rows_of, uuid_argument
 from agent_platform.hub import segment
 from agent_platform.modelaccess import newest_bars, org_quotas, parsed_time
 from agent_runner.crypto.encoding import format_time
+from agent_runner.crypto.ids import is_uuid7
 
 NOTIFICATIONS_PAGE = 50
 READ_MAX = 200
@@ -58,6 +63,8 @@ METRICS = (
 )
 ENTITY_KINDS = ("device", "vm", "session", "workvm")
 ENTITY_ID_RES = {"vm": re.compile(r"vm-[0-9a-f]{8}"), "workvm": re.compile(r"wvm-[0-9a-f]{8}")}
+AGENT_ACTORS = ("main_agent", "subagent")
+AGENT_PATH_RE = re.compile(r"[1-9][0-9]{0,8}(\.[1-9][0-9]{0,8})*")
 AUDIT_NULLABLE = (
     "actor_id",
     "org_id",
@@ -184,6 +191,7 @@ def audit_row(row: dict[str, Any]) -> bool:
         and isinstance(detail, dict)
         and all(value is None or isinstance(value, str | int | float | bool) for value in detail.values())
         and ("agent_id" not in row or isinstance(row["agent_id"], str))
+        and ("on_behalf_of" not in row or isinstance(row["on_behalf_of"], str))
     )
 
 
@@ -193,11 +201,52 @@ def _filters(args: Any) -> dict[str, str]:
         if len(args.action) > ACTION_MAX or not ACTION_RE.fullmatch(args.action):
             raise PlatformError("invalid_argument")
         found["action"] = args.action
-    for name in ("actor", "wg", "task", "session"):
+    for name in ("actor", "wg", "task", "session", "on_behalf_of"):
         value = getattr(args, name)
         if value is not None:
             found[name] = uuid_argument(value)
     return found
+
+
+def _audit_agent(value: object) -> dict[str, Any] | None:
+    """One entry of the org audit's `actors` (`api/objects.json#/$defs/audit_agent`), None when it does not fit."""
+    if not isinstance(value, dict) or handle(value.get("number")) is None or not is_uuid7(str(value.get("task_id"))):
+        return None
+    path = value.get("agent_path")
+    return value if path is None or (isinstance(path, str) and AGENT_PATH_RE.fullmatch(path)) else None
+
+
+def _main_text(account: Account, org: str, wg: object, agent: dict[str, Any]) -> str | None:
+    """The main agent of `agent` as people see it, None when its workgroup is unknown or the user cannot read it."""
+    if not isinstance(wg, str):
+        return None
+    task = str(agent["task_id"])
+    try:
+        return shown(task_names(account, org, wg, task).get(task, AUTOMATIC_EMPTY), agent["number"])
+    except PlatformError:
+        return None
+
+
+def _actor_texts(account: Account, org: str, rows: list[dict[str, Any]], actors: object) -> None:
+    """`actor_text` of every row whose actor is a main agent or subagent (ADR-095 section 4): the agent from the page's
+    `actors`, the main agent's name from the task's verified events where the user can read them (else its handle),
+    the person from the verified profiles (else the user ID)."""
+    agent_rows = [row for row in rows if row["actor_kind"] in AGENT_ACTORS]
+    if not agent_rows:
+        return
+    found = actors if isinstance(actors, dict) else {}
+    people = account.names(org).members
+    mains: dict[str, str | None] = {}
+    for row in agent_rows:
+        agent = _audit_agent(found.get(str(row.get("actor_id"))))
+        if agent is None:
+            continue
+        task = str(agent["task_id"])
+        if task not in mains:
+            mains[task] = _main_text(account, org, row.get("wg_id"), agent)
+        person = row.get("on_behalf_of")
+        name = people.get(person, person) if isinstance(person, str) else None
+        row["actor_text"] = actor_text(row["actor_kind"], agent, mains[task], name)
 
 
 def audit(account: Account, args: Any) -> dict[str, Any]:
@@ -215,9 +264,12 @@ def audit(account: Account, args: Any) -> dict[str, Any]:
     path = "/v1/me/audit" if org is None else f"/v1/orgs/{segment(uuid_argument(org))}/audit"
     answer = account.call("GET", f"{path}?{urlencode(query)}")
     following = answer.get("next_before")
+    rows = [row for row in rows_of(answer, "rows") if audit_row(row)]
+    if org is not None:
+        _actor_texts(account, org, rows, answer.get("actors"))
     return {
         "org_id": org,
-        "rows": [row for row in rows_of(answer, "rows") if audit_row(row)],
+        "rows": rows,
         "next_before": following if isinstance(following, str) else None,
     }
 
@@ -317,4 +369,5 @@ def register(tree: Tree) -> None:
     sub.add_argument("--action", help="an action or a group (`operation` matches `operation.*`)")
     for name in ("actor", "wg", "task", "session"):
         sub.add_argument(f"--{name}")
+    sub.add_argument("--on-behalf-of", help="only what agents did on behalf of this person (user ID, ADR-095)")
     sub.add_argument("--before", help="next_before of the previous page")

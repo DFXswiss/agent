@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/main-agents.request.json",
+  "title": "GET /v1/orgs/{org}/main-agents request",
+  "description": "query parameters (03-api.md section 4.6, ADR-095 section 5)",
+  "type": "object",
+  "properties": {
+    "owner": {
+      "$ref": "../common.json#/$defs/uuid",
+      "description": "required: the responsible person"
+    },
+    "before": {
+      "$ref": "../common.json#/$defs/q_before"
+    },
+    "limit": {
+      "$ref": "../common.json#/$defs/q_limit_attention",
+      "description": "default 50, max 100"
+    }
+  },
+  "required": [
+    "owner"
+  ],
+  "additionalProperties": false
+}

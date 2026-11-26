@@ -77,6 +77,19 @@ def test_cursors_kinds_and_pages(world: World, fleet: Fleet) -> None:
     assert one.json()["more"] is False
 
 
+def test_pull_a_kind_with_an_underscore(world: World, fleet: Fleet) -> None:
+    """KOR-52: the `kinds` filter takes the kind of a main agent's name (`task.agent_name`)."""
+    scene = org_device_scene(world)
+    fill(scene)
+    task, _session = scene.start_session()
+    named = scene.wg_event(scene.writer, "task.agent_name", task=task)
+    assert scene.post(scene.writer, named).status_code == 200
+    client = fleet.client(scene.device)
+    answer = client.get("/v1/device/pull", params={"cursor": f"{scene.wg}:0", "kinds": "task.agent_name"}).json()
+    assert kinds(answer) == [(scene.wg, 5, "task.agent_name")]
+    assert answer["events"][0]["event"] == named
+
+
 def test_pull_rights(world: World, fleet: Fleet) -> None:
     scene = org_device_scene(world)
     fill(scene)

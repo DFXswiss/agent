@@ -53,10 +53,13 @@ async def get_audit(
     task: str | None = None,
     session: str | None = None,
     wg: str | None = None,
+    on_behalf_of: str | None = None,
 ) -> dict[str, Any]:
     org_id = path_id(org)
     count = parse_count(limit, query.LIST_DEFAULT, 1, query.LIST_MAX)
-    filters = query.parse_filters({"action": action, "actor": actor, "task": task, "session": session, "wg": wg})
+    filters = query.parse_filters(
+        {"action": action, "actor": actor, "task": task, "session": session, "wg": wg, "on_behalf_of": on_behalf_of}
+    )
     user = cast(UUID, principal.principal_id)
     return await asyncio.to_thread(
         functools.partial(_list, context, user, org_id, filters=filters, before=before, limit=count)

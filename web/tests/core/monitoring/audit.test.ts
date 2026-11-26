@@ -45,6 +45,7 @@ describe('filter state', () => {
       wg: WG,
       task: 'not-a-uuid',
       session: S1,
+      on_behalf_of: ORG,
       from: iso(T0),
       to: 'later',
     });
@@ -54,9 +55,11 @@ describe('filter state', () => {
       wg: WG,
       task: null,
       session: S1,
+      on_behalf_of: ORG,
       from: T0,
       to: null,
     });
+    expect(parseFilters(new URLSearchParams({ on_behalf_of: 'someone' })).on_behalf_of).toBeNull();
     expect(parseFilters(new URLSearchParams({ action: 'Bad Action', from: '' })).action).toBeNull();
     expect(parseFilters(new URLSearchParams({ action: 'a'.repeat(97) })).action).toBeNull();
   });
@@ -109,12 +112,15 @@ describe('rows and pages', () => {
     expect(isAuditRow(auditRow(1, T0, { result: null }))).toBe(false);
     expect(isAuditRow(auditRow(1, T0, { device_id: 4 }))).toBe(false);
     expect(isAuditRow(null)).toBe(false);
+    expect(isAuditRow(auditRow(1, T0, { on_behalf_of: ORG }))).toBe(true);
+    expect(isAuditRow(auditRow(1, T0, { on_behalf_of: null }))).toBe(false);
   });
 
   it('parses pages', () => {
     expect(parseAuditPage({ rows: [auditRow(2, T0), { seq: 'x' }], next_before: 'c' })).toEqual({
       rows: [auditRow(2, T0)],
       next: 'c',
+      actors: {},
     });
     expect(parseAuditPage({ rows: [], next_before: null }).next).toBeNull();
     expect(() => parseAuditPage({ rows: {} })).toThrow(HubError);

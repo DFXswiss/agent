@@ -1,8 +1,10 @@
 // Tab "Sessions" of a task (06-web.md section 5.3): the tree of the task's sessions – main sessions and their
-// subagent children by `parent_session_id`, depth ≤ 2 – with state, "Triggered by <name>" (the person whose
-// instruction created the session, ADR-083), device (its label, `ui/screens/devices/labels.ts`), model and usage
-// (tokens and cost of the session, slice `usage`), "Cancelled because the device failed" for a session the hub ended
-// when it moved the task to another device (ADR-087 section 3); each node links to the session detail `/o/:org/s/:session`
+// subagent children by `parent_session_id`, depth ≤ 2 – with the handle (`#42`, `#42.1`, ADR-095), state, "Triggered
+// by <name>" (the person whose instruction created the session, ADR-083), a subagent's purpose where readable and the
+// GitHub identity of a subagent that acts with another one than the task (section 4.0a), device (its label,
+// `ui/screens/devices/labels.ts`), model and usage (tokens and cost of the session, slice `usage`), "Cancelled
+// because the device failed" for a session the hub ended when it moved the task to another device (ADR-087
+// section 3); each node links to the session detail `/o/:org/s/:session`
 // (terminal, session chat, children).
 //
 // Many sessions (ADR-086 section 1): the tree is flattened depth first (the depth indents a row) into a
@@ -11,13 +13,24 @@
 // the device names and the presence of the task's devices are read once for the list, and the rows are memoized on
 // their session, usage, device name and reachability (only the runtime of a running session ticks inside its row).
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { taskNumber } from '../../../core/agents/name';
+import { OPERATION_KINDS } from '../../../core/operations/load';
+import { pullOnce } from '../../../core/tasks/pull';
 import { formatMoney, formatNumber } from '../../../core/i18n';
 import { formatDuration } from '../../../core/monitoring/units';
 import { runtimeSeconds } from '../../../core/sessions/runtime';
-import { flatten, indentLevel, sessionMeta, type SessionNode, sessionTree } from '../../../core/sessions/tree';
-import type { SessionEntry, TasksState } from '../../../core/store/slices/tasks';
+import {
+  flatten,
+  indentLevel,
+  nodeFacts,
+  nodeHandle,
+  sessionMeta,
+  type SessionNode,
+  sessionTree,
+} from '../../../core/sessions/tree';
+import type { SessionEntry, TaskRow, TasksState } from '../../../core/store/slices/tasks';
 import type { SessionUsage } from '../../../core/store/slices/usage';
 import type { StoreState } from '../../../core/store/store';
 import { useNow } from '../../countdown/useNow';
@@ -32,6 +45,9 @@ import type { TaskTabProps } from '../../registries/task-tabs';
 import '../../../core/i18n/lazy/model';
 import { TriggeredBy } from '../people';
 import { RoleBadge } from '../../profiles/RoleBadge';
+import { IdentityName } from '../../settings/sections/github/identities';
+import { Purpose } from '../../screens/session/children/Purpose';
+import '../../../core/i18n/lazy/mainagent';
 
 /** Rows rendered at first, rows added by a move, the cap. */
 export const WINDOW = 100;
@@ -183,31 +199,59 @@ export function selectTaskSessions(task: string): (state: StoreState) => TaskSes
 interface Item extends Shown {
   readonly node: SessionNode;
   readonly org: string;
+  /** `#42` / `#42.1` (null while the task row or its number is not known). */
+  readonly handle: string | null;
+  /** The task's GitHub identity (a subagent with another one shows its own). */
+  readonly taskIdentity: string | null;
+}
+
+/** A subagent's own GitHub identity and its purpose, below its link (nothing for a main session without them). */
+function NodeFacts({ node, taskIdentity }: { readonly node: SessionNode; readonly taskIdentity: string | null }) {
+  const { t } = useI18n();
+  const { identities, origins } = nodeFacts(node, taskIdentity);
+  if (identities.length + origins.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-2 px-2 text-xs text-gray-700">
+      {identities.map((identity) => (
+        <span key={identity} data-testid="sessions.identity">
+          {t('mainagent.tree.identity')} <IdentityName id={identity} orgName={null} />
+        </span>
+      ))}
+      {origins.map((origin) => (
+        <Purpose key={origin} wg={node.entry.row.wg_id} operation={origin} child={node.entry.row.session_id} />
+      ))}
+    </div>
+  );
 }
 
 function Node({ item }: { readonly item: Item }) {
   const { t } = useI18n();
-  const { node, org } = item;
+  const { node, org, handle } = item;
   const id = node.entry.row.session_id;
   return (
-    <Link
-      className="flex min-h-11 flex-wrap items-center gap-2 rounded px-2 py-1 hover:bg-gray-50"
-      to={`/o/${encodeURIComponent(org)}/s/${encodeURIComponent(id)}`}
-      data-testid="sessions.link"
-    >
-      <span className="font-medium">
-        {node.depth === 0 ? t('task.sessions.main') : t('task.chat.subagent', { path: node.path.join('.') })}
-      </span>
-      <SessionState state={node.entry.row.state} />
-      <RoleBadge session={id} task={node.entry.row.task_id} />
-      {node.entry.row.state === 'stopped' && node.entry.row.state_reason === 'device_failed' && (
-        <span className="text-xs text-gray-600" data-testid="sessions.device-failed">
-          {t('task.sessions.device_failed')}
+    <>
+      <Link
+        className="flex min-h-11 flex-wrap items-center gap-2 rounded px-2 py-1 hover:bg-gray-50"
+        to={`/o/${encodeURIComponent(org)}/s/${encodeURIComponent(id)}`}
+        data-testid="sessions.link"
+      >
+        <span className="font-medium">
+          {node.depth === 0
+            ? [t('task.sessions.main'), handle].filter((part) => part !== null).join(' ')
+            : t('task.chat.subagent', { path: handle ?? node.path.join('.') })}
         </span>
-      )}
-      <Facts entry={node.entry} device={item.device} reachable={item.reachable} usage={item.usage} />
-      <TriggeredBy org={org} user={node.entry.row.triggered_by} testId="session.triggered-by" />
-    </Link>
+        <SessionState state={node.entry.row.state} />
+        <RoleBadge session={id} task={node.entry.row.task_id} />
+        {node.entry.row.state === 'stopped' && node.entry.row.state_reason === 'device_failed' && (
+          <span className="text-xs text-gray-600" data-testid="sessions.device-failed">
+            {t('task.sessions.device_failed')}
+          </span>
+        )}
+        <Facts entry={node.entry} device={item.device} reachable={item.reachable} usage={item.usage} />
+        <TriggeredBy org={org} user={node.entry.row.triggered_by} testId="session.triggered-by" />
+      </Link>
+      <NodeFacts node={node} taskIdentity={item.taskIdentity} />
+    </>
   );
 }
 
@@ -216,6 +260,8 @@ export const sameItem = (a: Item, b: Item): boolean =>
   a.node.depth === b.node.depth &&
   a.node.path.join('.') === b.node.path.join('.') &&
   a.org === b.org &&
+  a.handle === b.handle &&
+  a.taskIdentity === b.taskIdentity &&
   a.device === b.device &&
   a.reachable === b.reachable &&
   a.usage === b.usage;
@@ -236,6 +282,7 @@ const attributes = (item: Item): RowAttributes => ({
   'data-testid': 'sessions.node',
   'data-session': key(item),
   'data-depth': item.node.depth,
+  'data-handle': item.handle ?? '',
 });
 
 export function SessionsTab({ orgId, taskId }: TaskTabProps) {
@@ -245,6 +292,14 @@ export function SessionsTab({ orgId, taskId }: TaskTabProps) {
     useMemo(() => selectTaskSessions(taskId), [taskId]),
     app.store,
   );
+  const task: TaskRow | null = useStore((state) => state.tasks.tasks[taskId] ?? null, app.store);
+  const number = task === null ? null : taskNumber(task);
+  const taskIdentity = task?.github_identity ?? null;
+  const wg = task?.wg_id ?? null;
+  // the purposes of the subagents (the sealed parameters of their `subagent.request`)
+  useEffect(() => {
+    if (wg !== null) pullOnce(app.tasks, orgId, wg, { kinds: OPERATION_KINDS, task: taskId }).catch(() => 0);
+  }, [app, orgId, wg, taskId]);
   const name = useDeviceNames([orgId]);
   const nodes = useMemo(() => flatten(sessionTree(own.sessions, taskId)), [own.sessions, taskId]);
   // the devices of the task's sessions (a handful): their presence is read once for the list
@@ -260,12 +315,14 @@ export function SessionsTab({ orgId, taskId }: TaskTabProps) {
         return {
           node,
           org: orgId,
+          handle: nodeHandle(node, number),
+          taskIdentity,
           device: row.device_id === null ? null : placementText(name(row.device_id), sessionVm(row)),
           reachable: row.device_id === null ? undefined : presence?.get(row.device_id),
           usage: own.usage[row.session_id]!,
         };
       }),
-    [nodes, orgId, name, presence, own.usage],
+    [nodes, orgId, number, taskIdentity, name, presence, own.usage],
   );
   return (
     <section aria-label={t('task.sessions.label')} data-testid="sessions">

@@ -42,6 +42,9 @@ whether the hub received it from the author's agent (`via_agent`), holding sessi
 `too_late`). `task prompt --cancel EVENT` withdraws one's own waiting prompt
 (`POST /v1/tasks/{task}/prompts/{event}/withdraw`): `withdrawn` at once, or `withdrawing` until the session's device
 decides; a device that cannot decide yet is `peer_outdated`.
+
+KOR-52 (ADR-095): the task rows of `task list` and `task show` carry the main agent as people see it (`agent`:
+`<name> #<number>`, with `number` and `name_source`; `agentnames`).
 """
 
 from __future__ import annotations
@@ -52,6 +55,7 @@ from typing import Any, cast
 from urllib.parse import urlencode
 
 from agent_platform.account import Account, KeyRing
+from agent_platform.agentnames import agent_fields, read_names, task_names
 from agent_platform.diagnose import WAITING, task_next
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import open_item, seal
@@ -350,8 +354,9 @@ def task_show(account: Account, task: str) -> dict[str, Any]:
     titles = [e["body"].get("title") for e in metas if isinstance(e.get("body"), dict)]
     chat = latest_runs([e for e in events if e["kind"] != "task.meta"])
     keys = ("task_id", "org_id", "wg_id", "owner_id", "state", "state_reason", "created_at", "closed_at")
+    agents = task_names(account, org, wg, task)
     return {
-        "task": {key: row.get(key) for key in keys},
+        "task": {**{key: row.get(key) for key in keys}, **agent_fields(agents, row)},
         "runtime_s": runtime_seconds(row.get("created_at"), row.get("closed_at"), True, time.time()),
         "placement": row.get("placement"),
         "main_session": main_session(answer),
@@ -365,14 +370,9 @@ def task_show(account: Account, task: str) -> dict[str, Any]:
 
 
 def titles(account: Account, org: str, wg: str) -> dict[str, str]:
-    """The verified titles of the workgroup's tasks (the newest `task.meta` of each task wins)."""
-    found: dict[str, str] = {}
-    ring = account.keys(org)
-    for item in scope_events(account, wg, {"kinds": "task.meta"}):
-        opened = _open(account, org, wg, item, ring)
-        if opened is not None and isinstance(opened.get("body"), dict):
-            found[str(opened["task"])] = str(opened["body"].get("title", ""))
-    return found
+    """The verified titles of the workgroup's tasks (the newest `task.meta` of each task wins; one reader with the
+    main agents' names, `agentnames.read_names`)."""
+    return read_names(account, org, wg).titles
 
 
 def _rows(account: Account, wg: str, query: dict[str, Any]) -> tuple[list[Any], Any]:
@@ -401,7 +401,7 @@ def _open_rows(account: Account, wg: str) -> tuple[list[Any], bool]:
 
 
 def task_list(account: Account, wg: str, state: str | None) -> dict[str, Any]:
-    """The tasks of a workgroup with their verified titles."""
+    """The tasks of a workgroup with their verified titles and their main agents (`<name> #<number>`, ADR-095)."""
     if state is not None and state not in STATES:
         raise PlatformError("invalid_argument")
     org = find_org(account, _id(wg))
@@ -410,12 +410,13 @@ def task_list(account: Account, wg: str, state: str | None) -> dict[str, Any]:
     else:
         rows, before = _rows(account, wg, {"state": state} if state else {})
         truncated = isinstance(before, str)
-    found = titles(account, org, wg)
+    named = read_names(account, org, wg)
     tasks = [
         {
             "task_id": row.get("task_id"),
             "state": row.get("state"),
-            "title": found.get(str(row.get("task_id"))),
+            "title": named.titles.get(str(row.get("task_id"))),
+            **agent_fields(named.agents, row),
             "created_at": row.get("created_at"),
             "last_activity_at": row.get("last_activity_at"),
         }

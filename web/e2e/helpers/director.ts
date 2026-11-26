@@ -95,3 +95,14 @@ export async function registerOrchestrator(
 export async function orchestratorView(session: string): Promise<HubAnswer> {
   return (await call('GET', `/sessions/${session}/orchestrator`)) as HubAnswer;
 }
+
+/**
+ * `count` further people of `org`, each the owner of one open task in workgroup `wg` (KOR-52, the situation view by
+ * person with hundreds of people): the director writes the hub's rows directly (people that never sign in, tasks
+ * without sealed events – their titles read "unverifiable"/loading, which the volume spec does not look at). Returns
+ * the owners.
+ */
+export async function seedPeople(org: string, wg: string, count: number): Promise<string[]> {
+  const answer = (await call('POST', `/orgs/${org}/people`, { wg, count })) as { owners: string[] };
+  return answer.owners;
+}

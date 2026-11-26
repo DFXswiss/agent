@@ -78,7 +78,7 @@ Retention: events are kept for the lifetime of the organization (no deletion in 
 
 | Table | Columns | Notes |
 |---|---|---|
-| `task` | `id` PK, `org_id`, `wg_id`, `owner_id`, `github_identity` NULL (KOR-47), `state` CHECK in (`scheduling`,`starting`,`working`,`idle`,`failed`,`closed`), `state_reason` NULL, `created_at`, `state_at`, `last_activity_at`, `closed_at` NULL, `placement_device_id` NULL, `placement_vm_id` NULL (the chosen device and VM, ADR-075 §6) | title only in `task.meta` events |
+| `task` | `id` PK, `org_id`, `wg_id`, `owner_id`, `github_identity` NULL (KOR-47), `state` CHECK in (`scheduling`,`starting`,`working`,`idle`,`failed`,`closed`), `state_reason` NULL, `created_at`, `state_at`, `last_activity_at`, `closed_at` NULL, `placement_device_id` NULL, `placement_vm_id` NULL (the chosen device and VM, ADR-075 §6), `number` bigint (KOR-52: 1, 2, 3 … per organization, set by the trigger `task_number` from `task_counter`; UNIQUE (`org_id`,`number`)) | title only in `task.meta` events, the main agent's name only in `task.agent_name` events |
 | `task_transition` [AO] | (`task_id`,`seq`) PK, `state`, `reason`, `at`, `by_id` | |
 | `session` | `id` PK, `task_id`, `org_id`, `wg_id`, `owner_id` (task owner), `github_identity` NULL (KOR-47), `device_id` NULL, `vm_id` NULL, `parent_session_id` NULL, `origin_operation_id` NULL, `depth` int (0 = main), `state` (§2.4.1), `state_reason` NULL, `model_access` CHECK in (`subscription`,`api_key`,`platform`) NULL, `model_id` NULL, `agent_kind` default `claude-code`, `agent_version` NULL, `estimate_ms` int NULL, `created_at`, `ready_at` NULL, `first_working_at` NULL, `ended_at` NULL, `context_restore` CHECK in (`restored`,`fallback`) NULL, `context_reason` NULL (closed list `contracts/common.json#/$defs/context_reason`), `interrupted_at` NULL, `interruption_ended_at` NULL, `failover_of` NULL, `redeliver_event_id` NULL, `restore_object` NULL (KOR-58), `orchestrator_at` timestamptz NULL (KOR-57, hub migration 0032: the task owner's latest request to make the session the main orchestrator, `11-agent-access.md` §11) | `context_*`: how a main session continued the conversation (ADR-072 §7, KOR-33): `fallback` always with a fallback reason (`context_missing`, `context_invalid`, `context_unavailable`, `version_incompatible`, `restore_failed`); `restored` with no reason or `workspace_partial`/`workspace_omitted`/`golden_switch` (the session's VM was switched to a newer golden while it was paused, ADR-093 §4); null with no reason (checked by the constraint `session_context_reason`) |
 | `task_attention` [P] | `task_id` PK, `org_id`, `wg_id`, `owner_id`, `category` CHECK in (`needs_decision`,`blocked`,`working`,`done`), `reason` (code), `ref_kind` CHECK in (`operation`,`session`) NULL, `ref_id` NULL, `since`, `seq` ≥ 1, `subagents_total`, `subagents_active` (subagent sessions not `stopped`/`failed`), `updated_at`; CHECK (`ref_kind` NULL) = (`ref_id` NULL); indexes (`org_id`,`category`,`since` DESC,`task_id` DESC), (`wg_id`,`category`,`since`), (`owner_id`,`category`,`wg_id`); `event` gets the partial index (`task_id`,`received_at` DESC) WHERE `kind` = `prompt` | projection, ADR-076 (KOR-39); derived from task, session and operation metadata; written only by `agent_hub.attention.store.refresh`; exported with the org |
@@ -126,6 +126,17 @@ main session failed and no retry is pending; `closed` only by user action.
 | `charge.triggered_by` NULL, `charge_person_daily` | the person of a consumption item (`usage`/`runtime`) and the daily sum per organization, person (null = unattributed) and kind | IDs and amounts only ([A4](../KONZEPT.md#a-4)); booking to the organization unchanged |
 | `prompt_withdrawal` | `event_id` PK (a `prompt` event), `task_id`, `requested_by`, `requested_at`, `withdrawn_at` NULL | `withdrawn_at` set at once for a session without device, else when the device reports `session.prompt_withdrawn`; withdrawn prompts leave the routing |
 
+#### 2.4.4 Main agents (KOR-52, ADR-095)
+
+Migration `0037_main_agents`: `task_counter` (`org_id` PK, `last` bigint) and `task.number` (assigned by the BEFORE
+INSERT trigger `task_number`, existing tasks numbered per organization by `created_at`, `id`); `session.agent_path`
+text NULL (CHECK the form of `contracts/api/objects.json#/$defs/agent_path`, NULL exactly for depth 0; set by the
+BEFORE INSERT trigger `session_agent_path`: depth 1 = the next ordinal among the task's depth-1 sessions, deeper =
+the parent's path, a dot and the next ordinal among the parent's children; UNIQUE (`task_id`,`agent_path`); existing
+children numbered by `created_at`, `id`); the partial index `task_open_owner` (`org_id`,`owner_id`,
+`last_activity_at` DESC,`id` DESC) WHERE `state` <> `closed`; `audit.on_behalf_of` uuid NULL and the actor kinds
+`main_agent`, `subagent`.
+
 ### 2.5 Operations
 
 | Table | Columns | Notes |
@@ -172,7 +183,7 @@ main session failed and no retry is pending; `closed` only by user action.
 
 | Table | Columns | Notes |
 |---|---|---|
-| `audit` [AO] | `seq` bigint PK (gapless, assigned under advisory lock `742180101`), `at`, `actor_id` NULL, `actor_kind` CHECK in (`user`,`device`,`session`,`hub`,`operator`,`anonymous`), `action` text, `result` CHECK in (`ok`,`denied`,`rejected`,`duplicate`,`failed`), `org_id`, `wg_id`, `task_id`, `session_id`, `device_id`, `target_kind`, `target_id`, `detail` jsonb, `event_id` NULL, `prev_hash` text, `hash` text, `agent_id` NULL (KOR-24: the agent whose request wrote the row; part of the hashed row only when set) | `hash = sha256_hex("agent-audit-v1\n" ‖ seq ‖ "\n" ‖ canonical(row without hash fields) ‖ "\n" ‖ (prev_hash or "-"))` |
+| `audit` [AO] | `seq` bigint PK (gapless, assigned under advisory lock `742180101`), `at`, `actor_id` NULL, `actor_kind` CHECK in (`user`,`device`,`session`,`hub`,`operator`,`anonymous`,`main_agent`,`subagent`) (`session` is no longer written; `main_agent`/`subagent`: ADR-095 §4), `action` text, `result` CHECK in (`ok`,`denied`,`rejected`,`duplicate`,`failed`), `org_id`, `wg_id`, `task_id`, `session_id`, `device_id`, `target_kind`, `target_id`, `detail` jsonb, `event_id` NULL, `prev_hash` text, `hash` text, `agent_id` NULL (KOR-24: the agent whose request wrote the row; part of the hashed row only when set), `on_behalf_of` NULL (KOR-52: the person a `main_agent`/`subagent` actor acted for; part of the hashed row only when set) | `hash = sha256_hex("agent-audit-v1\n" ‖ seq ‖ "\n" ‖ canonical(row without hash fields) ‖ "\n" ‖ (prev_hash or "-"))` |
 | `audit_checkpoint` [AO] | (`hub_key_id`,`seq`) PK, `hash`, `published_at`, `signature` | hourly, text `agent-audit-head-v1\n<key>\n<seq>\n<hash>\n<time>` signed with the hub key (format of `record/checkpoint.py`) |
 
 `action` values (closed list, `contracts/enums/audit-actions.json`; the subset runners may send via the outbox is `contracts/enums/outbox-audit-actions.json`, `03-api.md` §6.1): authentication (`auth.register`, `auth.login`,

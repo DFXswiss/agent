@@ -26,7 +26,7 @@ import {
   selectChart,
 } from '../../../src/core/store/slices/monitoring';
 import { FakeClient } from '../tasks/world';
-import { auditRow, DEV, iso, ORG, overviewBody, S1, S2, sample, T0 } from './fixtures';
+import { auditRow, DEV, iso, ORG, overviewBody, S1, S2, sample, T0, TASK } from './fixtures';
 
 function setup() {
   const store = createStore();
@@ -309,6 +309,8 @@ describe('monitoring slice', () => {
 
 describe('audit slice', () => {
   const page = (rows: unknown[], next: string | null) => ({ rows, next_before: next });
+  const AGENT_1 = { task_id: TASK, number: 4, agent_path: null, parent_session_id: null };
+  const AGENT_2 = { task_id: TASK, number: 4, agent_path: '1', parent_session_id: S1 };
 
   it('loads the first page and the next one, newest first', async () => {
     const t = setup();
@@ -316,8 +318,8 @@ describe('audit slice', () => {
     expect(auditView(t.store.getState().audit, key)).toMatchObject({ status: 'loading', rows: [] });
     t.client.on(`GET /v1/orgs/${ORG}/audit`, (_body, target) =>
       target.includes('before=')
-        ? page([auditRow(1, T0)], null)
-        : page([auditRow(3, T0 + 2), auditRow(2, T0 + 1)], 'c2'),
+        ? { ...page([auditRow(1, T0)], null), actors: { [S2]: AGENT_2 } }
+        : { ...page([auditRow(3, T0 + 2), auditRow(2, T0 + 1)], 'c2'), actors: { [S1]: AGENT_1 } },
     );
     await loadAudit(t.context, ORG, NO_FILTERS);
     let view = auditView(t.store.getState().audit, key);
@@ -328,6 +330,8 @@ describe('audit slice', () => {
     view = auditView(t.store.getState().audit, key);
     expect(view.rows.map((row) => row.seq)).toEqual([3, 2, 1]);
     expect(view.next).toBeNull();
+    // the agent actors of every page stay with the view
+    expect(view.actors).toEqual({ [S1]: AGENT_1, [S2]: AGENT_2 });
     await loadAudit(t.context, ORG, NO_FILTERS, true);
     expect(t.client.calls).toHaveLength(2);
   });

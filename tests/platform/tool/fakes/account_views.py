@@ -7,8 +7,9 @@ section 4):
 - `GET /v1/me/quotas` with `unreadable` (`{since}` while the subscription refuses the read, else null; KOR-40);
 - `GET /v1/monitoring/overview?org` (member, else `404`; missing `org` `400`; with the work VMs of KOR-29),
   `GET /v1/monitoring/series` (every parameter required, `step` at least 15);
-- `GET /v1/orgs/{org}/audit` (member: own rows and rows of readable workgroups; admin: all) with the filters,
-  `GET /v1/orgs/{org}/audit/verify` (admins, else `404`), `GET /v1/me/audit`;
+- `GET /v1/orgs/{org}/audit` (member: own rows and rows of readable workgroups; admin: all) with the filters (also
+  `on_behalf_of`, KOR-52) and the page's `actors` (`agent_actors`: session -> `audit_agent`, for the actors
+  `main_agent`/`subagent`), `GET /v1/orgs/{org}/audit/verify` (admins, else `404`), `GET /v1/me/audit`;
 - `GET /v1/me` with `passkeys`, `platform_roles` and `unread_notifications`; `DELETE /v1/passkeys/{id}` (`404`
   unknown, `403 last_passkey`);
 - `GET|PUT /v1/me/bundles/recovery` (`new_recovery_id` required; an agent needs no assertion; a taken ID is
@@ -48,6 +49,8 @@ class Views:
     overview: dict[str, Json] = field(default_factory=dict)
     points: list[Any] = field(default_factory=list)
     audit: list[Json] = field(default_factory=list)
+    agent_actors: dict[str, Json] = field(default_factory=dict)
+    """Session ID -> `{task_id, number, agent_path, parent_session_id}` (KOR-52): the org audit's `actors`."""
     passkeys: dict[str, list[Json]] = field(default_factory=dict)
     bundles: dict[str, Json] = field(default_factory=dict)
     platform_invites: dict[str, Json] = field(default_factory=dict)
@@ -185,7 +188,7 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
         if not member_org(request, org):
             return 404, {"error": "not_found"}
         query = request.query
-        if set(query) - {"before", "limit", "action", "actor", "task", "session", "wg"}:
+        if set(query) - {"before", "limit", "action", "actor", "task", "session", "wg", "on_behalf_of"}:
             return 400, {"error": "request_invalid"}
         rows = audit_rows(request, org)
         if "action" in query:
@@ -193,7 +196,14 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
         for name in ("actor", "task", "session", "wg"):
             if name in query:
                 rows = [r for r in rows if r[f"{name}_id"] == query[name]]
-        return 200, {"rows": rows, "next_before": None}
+        if "on_behalf_of" in query:
+            rows = [r for r in rows if r.get("on_behalf_of") == query["on_behalf_of"]]
+        actors = {
+            r["actor_id"]: found.agent_actors[r["actor_id"]]
+            for r in rows
+            if r["actor_kind"] in ("main_agent", "subagent") and r["actor_id"] in found.agent_actors
+        }
+        return 200, {"rows": rows, "next_before": None, "actors": actors}
 
     def verify(request: Request, body: Any, org: str) -> tuple[int, Any]:
         if not member_org(request, org) or not hub.orgs[org].log.state.is_admin(cast(str, request.user)):

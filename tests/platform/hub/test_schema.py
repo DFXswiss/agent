@@ -277,7 +277,10 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("github_identity", U),  # KOR-47, migration 0022
         ("model_consent", BOOL),  # KOR-50, migration 0025 (ADR-081)
         ("agent_profile", J),  # KOR-51, migration 0036 (ADR-094)
+        ("number", BI),  # KOR-52, migration 0037 (ADR-095)
     ],
+    # 2.4.4 the numbering of an org's tasks (KOR-52, migration 0037)
+    "task_counter": [("org_id", U), ("last", BI)],
     "task_transition": [("task_id", U), ("seq", INT), ("state", T), ("reason", T), ("at", TS), ("by_id", U)],
     # KOR-39, migration 0011 (ADR-076): the attention record of a task, a projection
     "task_attention": [
@@ -333,6 +336,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("restore_object", U),
         ("orchestrator_at", TS),  # KOR-57, migration 0032 (ADR-082 section 6)
         ("agent_profile", J),  # KOR-51, migration 0036 (ADR-094)
+        ("agent_path", T),  # KOR-52, migration 0037 (ADR-095)
     ],
     # 2.4.2 context checkpoints and pull-request links (KOR-33, ADR-072)
     "context_object": [
@@ -723,6 +727,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("prev_hash", T),
         ("hash", T),
         ("agent_id", U),  # KOR-24, migration 0010
+        ("on_behalf_of", U),  # KOR-52, migration 0037 (ADR-095)
     ],
     # the community (KOR-26, ADR-069, 14-community.md section 2, migration 0018)
     "community_epoch": [("epoch", INT), ("key_check", B), ("created_by", U), ("created_at", TS)],
@@ -843,6 +848,7 @@ PLAINTEXT_ALLOWED = {
     ("operation", "error_code"),
     ("operation_transition", "error_code"),
     ("audit", "result"),  # closed list ok/denied/rejected/duplicate/failed
+    ("session", "agent_path"),  # ordinals joined by dots, a subagent's place below its main agent (ADR-095)
 }
 
 
@@ -884,7 +890,7 @@ def test_no_column_names_confidential_plaintext(owner: psycopg.Connection[Any]) 
             assert PLAINTEXT_WORDS.search(column) is None, (table, column)
 
 
-def test_only_the_hub_schema_and_the_trigger_function_exist(owner: psycopg.Connection[Any]) -> None:
+def test_only_the_hub_schema_and_the_trigger_functions_exist(owner: psycopg.Connection[Any]) -> None:
     schemas = owner.execute(
         "SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg\\_%' AND nspname NOT IN"
         " ('information_schema', 'public')"
@@ -892,8 +898,10 @@ def test_only_the_hub_schema_and_the_trigger_function_exist(owner: psycopg.Conne
     assert schemas == [("hub",)]
     functions = owner.execute(
         "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'hub'"
+        " ORDER BY p.proname"
     ).fetchall()
-    assert functions == [("refuse_change",)]
+    # the append-only guard and the numbering triggers of the main agents (KOR-52, migration 0037)
+    assert functions == [("refuse_change",), ("session_agent_path",), ("task_number",)]
 
 
 def test_only_the_live_state_of_the_browser_is_unlogged(owner: psycopg.Connection[Any]) -> None:
@@ -939,6 +947,8 @@ def test_every_other_table_has_a_single_column_primary_key(owner: psycopg.Connec
         ("charge", "device_id, origin_seq, part"),
         ("dfx_key", "key_ref"),
         ("dfx_key", "org_id, device_id) WHERE (revoked_at IS NULL"),
+        ("task", "org_id, number"),  # KOR-52
+        ("session", "task_id, agent_path"),
     ],
 )
 def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns: str) -> None:
@@ -967,6 +977,9 @@ def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns:
         ("credential", "(owner_id, updated_at DESC, id DESC) WHERE (kind = 'claude_subscription'::text)"),
         ("subscription_quota", "(owner_id)"),
         ("pr_link", '(wg_id, created_at DESC, epoch DESC, tag COLLATE "C" DESC)'),
+        ("task", "(org_id, owner_id, last_activity_at DESC, id DESC) WHERE (state <> 'closed'::text)"),  # KOR-52
+        ("audit", "(on_behalf_of, seq DESC) WHERE (on_behalf_of IS NOT NULL)"),
+        ("event", "(task_id, scope_seq DESC) WHERE (kind = 'task.agent_name'::text)"),
     ],
 )
 def test_named_indexes(owner: psycopg.Connection[Any], table: str, definition: str) -> None:
@@ -1058,7 +1071,11 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
         ("github_default", "scope", ["org", "wg"]),
         ("metric_sample", "entity_kind", ["device", "vm", "session", "workvm"]),
         ("usage_counter", "cost_basis", ["provider", "list_price", "subscription_equivalent"]),
-        ("audit", "actor_kind", ["user", "device", "session", "hub", "operator", "anonymous"]),
+        (
+            "audit",
+            "actor_kind",
+            ["user", "device", "session", "hub", "operator", "anonymous", "main_agent", "subagent"],  # KOR-52
+        ),
         ("audit", "result", ["ok", "denied", "rejected", "duplicate", "failed"]),
     ],
 )
@@ -1123,7 +1140,8 @@ def test_writer_rights(migrated_db: HubDatabase, owner: psycopg.Connection[Any])
         granted = _privileges(owner, migrated_db.writer_role, table)
         if table == "schema_version":
             assert granted == {"SELECT"}
-        elif table == "event_audit_cover":  # a cursor the audit job moves; rows are never removed (ADR-063)
+        elif table in ("event_audit_cover", "task_counter"):
+            # a cursor the audit job moves (ADR-063) and the task numbers, never reused (KOR-52): never removed
             assert granted == {"SELECT", "INSERT", "UPDATE"}
         elif table in APPEND_ONLY:
             assert granted == {"SELECT", "INSERT"}, table
@@ -1146,9 +1164,11 @@ def test_public_has_no_rights(migrated_db: HubDatabase, owner: psycopg.Connectio
     assert database_acl is not None
     assert not re.search(r"[{,]=", database_acl[0])
     assert f"{migrated_db.writer_role}=c/" in database_acl[0]
-    function_acl = owner.execute("SELECT proacl::text FROM pg_proc WHERE proname = 'refuse_change'").fetchone()
-    assert function_acl is not None
-    assert not re.search(r"[{,]=", function_acl[0])
+    for function in ("refuse_change", "task_number", "session_agent_path"):
+        function_acl = owner.execute("SELECT proacl::text FROM pg_proc WHERE proname = %s", (function,)).fetchone()
+        assert function_acl is not None
+        assert function_acl[0] is not None
+        assert not re.search(r"[{,]=", function_acl[0]), function
 
 
 def test_a_role_without_grants_cannot_read(migrated_db: HubDatabase) -> None:

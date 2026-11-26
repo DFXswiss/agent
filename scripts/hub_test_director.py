@@ -33,6 +33,10 @@ test hub (`scripts/hub_test_server.py` starts it on `--port` with the hub's writ
 - `POST /sessions/<id>/orchestrator {"pairing_id", "pub", "pop", "fp", "forged"?}`: the keys of a main orchestrator
   session registered by the session's device (`scripts/hub_test_orchestrator.py`, ADR-082 section 6); `GET` of the
   same path: the device's view with the stored handover. Both answer `{status, body}` of the hub.
+- `POST /orgs/<id>/people {"wg", "count"}`: `count` further people of the org (KOR-52, the situation view by person),
+  written directly into the hub's tables like the hub's volume tests do: a user principal, an org membership and read
+  access to `wg` (sequence 0, no log entry: people that never sign in) and one open task in `wg` each (numbered by the
+  hub's trigger, no sealed events, no session); answers `{"owners": [...]}` in creation order.
 
 Frames and hints of these changes reach the hub's browsers over the PostgreSQL bus (`hub_stream`), exactly like the
 frames of another hub process (`agent_hub.stream.bus`). Only loopback, only for tests.
@@ -341,6 +345,33 @@ class Director:
                 time.sleep(interval_ms / 1000)
             self.transition(session_id, state, reason if index == len(states) - 1 else None)
 
+    # --- people (KOR-52) ---
+
+    def seed_people(self, org: str, wg: str, count: int) -> list[str]:
+        """`count` people of `org` with read access to `wg` and one open task there each (module docstring)."""
+        owners = [str(uuid7()) for _ in range(count)]
+        moment = now()
+        with self.pool.connection() as connection, connection.transaction():
+            for owner in owners:
+                connection.execute(
+                    "INSERT INTO hub.principal (id, kind, created_at) VALUES (%s, 'user', %s)", (owner, moment)
+                )
+                connection.execute(
+                    "INSERT INTO hub.org_member (org_id, principal_id, kind, role, joined_seq)"
+                    " VALUES (%s, %s, 'user', 'member', 0)",
+                    (org, owner),
+                )
+                connection.execute(
+                    "INSERT INTO hub.wg_access (wg_id, user_id, access, granted_seq) VALUES (%s, %s, 'read', 0)",
+                    (wg, owner),
+                )
+                connection.execute(
+                    "INSERT INTO hub.task (id, org_id, wg_id, owner_id, state, created_at, state_at, last_activity_at)"
+                    " VALUES (%s, %s, %s, %s, 'idle', %s, %s, %s)",
+                    (str(uuid7()), org, wg, owner, moment, moment, moment),
+                )
+        return owners
+
     def walk_logged(self, session_id: str, states: Sequence[str], reason: str | None, interval_ms: int) -> None:
         """`walk` in a background thread: a refused transition is printed (the spec then times out on its assertion)."""
         try:
@@ -356,6 +387,7 @@ CHILDREN_RE = re.compile(r"^/sessions/([0-9a-f-]{36})/children$")
 OPERATIONS_RE = re.compile(r"^/sessions/([0-9a-f-]{36})/operations$")
 ORCHESTRATOR_RE = re.compile(r"^/sessions/([0-9a-f-]{36})/orchestrator$")
 ONLINE_RE = re.compile(r"^/devices/([0-9a-f-]{36})/online$")
+PEOPLE_RE = re.compile(r"^/orgs/([0-9a-f-]{36})/people$")
 
 
 def handler(director: Director) -> type[BaseHTTPRequestHandler]:
@@ -390,7 +422,8 @@ def handler(director: Director) -> type[BaseHTTPRequestHandler]:
             self._send(404, {"error": "not_found"}) if found is None else self._send(200, found)
 
         def _session_post(self, body: Json) -> bool:
-            """The routes of WEB-05 (events, children), WEB-09 (operations, requests) and WEB-12 (monitoring)."""
+            """The routes of WEB-05 (events, children), WEB-09 (operations, requests), WEB-12 (monitoring) and KOR-52
+            (people)."""
             if (match := EVENTS_RE.match(self.path)) is not None:
                 seqs = hub_test_events.session_events(
                     director.pool,
@@ -428,6 +461,8 @@ def handler(director: Director) -> type[BaseHTTPRequestHandler]:
                 answer = self._volume_post(body)
             if answer is None and (match := ORCHESTRATOR_RE.match(self.path)) is not None:
                 answer = director.orchestrator(match.group(1), body)
+            if answer is None and (match := PEOPLE_RE.match(self.path)) is not None:
+                answer = {"owners": director.seed_people(match.group(1), str(body["wg"]), int(body["count"]))}
             if answer is not None:
                 self._send(200, answer)
             return answer is not None

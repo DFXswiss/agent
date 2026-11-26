@@ -610,6 +610,14 @@
       "group": "read"
     },
     {
+      "action": "read.org.main_agents",
+      "group": "read"
+    },
+    {
+      "action": "read.org.people.agents",
+      "group": "read"
+    },
+    {
       "action": "read.org.audit",
       "group": "read"
     },

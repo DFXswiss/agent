@@ -121,13 +121,13 @@ function fail(code: string): never {
   throw new SendError(code);
 }
 
-/** A sealed `prompt` (or `task.meta`) event of a task in workgroup `wg`. */
-async function sealWg(
+/** A sealed task-level event of the user (`task.meta`, `prompt`, `task.agent_name`) of a task in workgroup `wg`. */
+export async function sealWg(
   context: TasksContext,
   org: string,
   wg: string,
   task: string,
-  kind: 'task.meta' | 'prompt',
+  kind: 'task.meta' | 'prompt' | 'task.agent_name',
   body: unknown,
 ): Promise<unknown> {
   const { userId, identity, log } = writer(context.store, org);

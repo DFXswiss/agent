@@ -1,11 +1,15 @@
 // The audit view (03-api.md section 4.11, 06-web.md section 9.2): filters, pages, the time filter and the chain
 // verification. The hub filters by `action` (an action or a dotted group: `operation` matches `operation.*`), `actor`,
-// `task`, `session` and `wg`, and pages newest first with the opaque cursor `before`; it has no time parameter
+// `task`, `session`, `wg` and `on_behalf_of` (the person whose instruction an agent followed, ADR-095 section 4), and
+// pages newest first with the opaque cursor `before`; it has no time parameter
 // (decision HUB-16 15), so the time filter is applied here: rows outside `[from, to]` are not shown, and paging stops
 // once the oldest row of a page is older than `from` (rows are newest first, nothing older can match).
 //
 // Filters live in the URL query of the screen (`?action=log&wg=…&from=…`), so a filtered view can be linked; values
 // that are not well-formed are dropped before any request.
+//
+// An actor `main_agent` / `subagent` is a session (ADR-095 section 4); the page's `actors` map names its task, number
+// and place (`agentActor`), from which the view writes "Main agent <name> #42 on behalf of <person>".
 import { formatTime } from '../encoding/time';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
@@ -162,6 +166,8 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'read.org.devices',
   'read.org.invites',
   'read.org.log',
+  'read.org.main_agents',
+  'read.org.people.agents',
   'read.org.quotas',
   'read.platform.enrollments',
   'read.platform.invites',
@@ -264,7 +270,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const ACTION = /^[a-z_]+(?:\.[a-z_]+)*$/;
 const MAX_ACTION = 96;
 
-export const ID_FILTERS = ['actor', 'wg', 'task', 'session'] as const;
+export const ID_FILTERS = ['actor', 'wg', 'task', 'session', 'on_behalf_of'] as const;
 export type IdFilter = (typeof ID_FILTERS)[number];
 
 export interface AuditFilters {
@@ -273,6 +279,8 @@ export interface AuditFilters {
   readonly wg: string | null;
   readonly task: string | null;
   readonly session: string | null;
+  /** The person whose instruction an agent actor followed. */
+  readonly on_behalf_of: string | null;
   /** Unix ms, inclusive bounds of the time filter. */
   readonly from: number | null;
   readonly to: number | null;
@@ -284,6 +292,7 @@ export const NO_FILTERS: AuditFilters = {
   wg: null,
   task: null,
   session: null,
+  on_behalf_of: null,
   from: null,
   to: null,
 };
@@ -310,6 +319,7 @@ export function parseFilters(query: { get(name: string): string | null }): Audit
     wg: id('wg'),
     task: id('task'),
     session: id('session'),
+    on_behalf_of: id('on_behalf_of'),
     from: time(query.get('from')),
     to: time(query.get('to')),
   };
@@ -361,6 +371,8 @@ export interface AuditRow {
   readonly event_id: string | null;
   /** The agent whose request wrote the row (11-agent-access.md section 7); absent otherwise. */
   readonly agent_id?: string;
+  /** The person whose instruction a `main_agent` / `subagent` actor followed (ADR-095 section 4); absent otherwise. */
+  readonly on_behalf_of?: string;
 }
 
 const NULLABLE_TEXT = [
@@ -388,20 +400,31 @@ export function isAuditRow(value: unknown): value is AuditRow {
     NULLABLE_TEXT.every((field) => value[field] === null || typeof value[field] === 'string') &&
     isRecord(value.detail) &&
     Object.values(value.detail).every(isDetailValue) &&
-    (value.agent_id === undefined || typeof value.agent_id === 'string')
+    (value.agent_id === undefined || typeof value.agent_id === 'string') &&
+    (value.on_behalf_of === undefined || typeof value.on_behalf_of === 'string')
   );
 }
+
+/**
+ * The agents of a page's actors as the hub sent them (session ID → `audit_agent`), not checked here: the audit view
+ * checks an entry when it names an actor (`core/monitoring/actors.ts`, loaded with the view, not with the first load).
+ */
+export type AuditActors = Readonly<Record<string, unknown>>;
 
 export interface AuditPage {
   readonly rows: readonly AuditRow[];
   readonly next: string | null;
+  /** Session ID → the agent of an agent actor of the page (as sent; checked where it is used). */
+  readonly actors: AuditActors;
 }
 
 /** A page of the audit list; a malformed body is `unavailable`, malformed rows are left out. */
 export function parseAuditPage(body: unknown): AuditPage {
   if (!isRecord(body) || !Array.isArray(body.rows)) throw new HubError('unavailable', 200);
   const next = typeof body.next_before === 'string' ? body.next_before : null;
-  return { rows: body.rows.filter(isAuditRow), next };
+  const listed = isRecord(body.actors) ? Object.entries(body.actors) : [];
+  const actors = Object.fromEntries(listed.filter(([id]) => isUuid(id)));
+  return { rows: body.rows.filter(isAuditRow), next, actors };
 }
 
 /** `GET /v1/me/audit` (the user's account audit, 11-agent-access.md section 7) for a page. */

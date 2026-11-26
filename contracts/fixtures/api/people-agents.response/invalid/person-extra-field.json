@@ -1,0 +1,14 @@
+{
+  "people": [
+    {
+      "owner_id": "0193000a-0000-7000-8000-00000000000a",
+      "agents": 12,
+      "needs_decision": 2,
+      "blocked": 1,
+      "working": 5,
+      "subagents_active": 7,
+      "name": "Anna"
+    }
+  ],
+  "next_after": null
+}

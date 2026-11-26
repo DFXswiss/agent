@@ -101,7 +101,7 @@ const sessions = (...rows: { row: SessionRow; transitions?: { seq: number; state
 const scope = (...entries: EventEntry[]) => ({ entries: new Map(entries.map((entry) => [entry.scopeSeq, entry])) });
 
 describe('timeline', () => {
-  it('orders the task events by time and seq, hides titles, terminal and non-deny hooks, keeps unverifiable rows', () => {
+  it('orders the task events by time and seq, hides titles, agent names, terminal and non-deny hooks, keeps unverifiable rows', () => {
     const items = buildTimeline({
       task: task(),
       sessions: {},
@@ -119,6 +119,7 @@ describe('timeline', () => {
         event(11, 'prompt', { status: 'locked' }),
         event(12, 'prompt', { status: 'unverifiable', task: 'other' }),
         { ...event(13, 'x', { status: 'unverifiable' }), event: { header: { task: TASK, kind: 'session.terminal' } } },
+        event(14, 'task.agent_name'),
       ),
     });
     expect(items.map((item) => item.key)).toEqual(['e1', 'e3', 'e7', 'e5', 'e8']);
@@ -376,8 +377,13 @@ describe('session tree', () => {
 
   it('reads the extra row fields defensively', () => {
     const entry = { row: { session_id: 's' } as SessionRow, transitions: [], estimatedAt: null };
-    expect(sessionMeta(entry)).toEqual({ parent: null, depth: 0, modelId: null });
-    expect(sessionMeta({ ...entry, row: null as never })).toEqual({ parent: null, depth: 0, modelId: null });
+    expect(sessionMeta(entry)).toEqual({ parent: null, depth: 0, modelId: null, agentPath: null });
+    expect(sessionMeta({ ...entry, row: null as never })).toEqual({
+      parent: null,
+      depth: 0,
+      modelId: null,
+      agentPath: null,
+    });
   });
 });
 

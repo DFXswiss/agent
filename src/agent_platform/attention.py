@@ -9,7 +9,8 @@ owner names (the verified profile events) and, for the reasons `question` and `a
 &ref=`), opened only after the reader checks (device author, kind rule, signature) and only when its body names that
 operation and the asking type. Items that do not fit the API shape are left out and counted (`unverified`). An entry
 carries the hub's `wait_until` (ADR-081 section 5: `working/quota_wait` and `needs_decision/quota_choice` continue by
-themselves at that time; null otherwise, and from a hub of an older release).
+themselves at that time; null otherwise, and from a hub of an older release). An entry names the task's main agent
+(`agent`: `<name> #<number>`, KOR-52, `agentnames`).
 """
 
 from __future__ import annotations
@@ -18,10 +19,11 @@ from typing import Any, cast
 from urllib.parse import urlencode
 
 from agent_platform.account import Account
+from agent_platform.agentnames import Named, agent_fields, read_names
 from agent_platform.errors import PlatformError
 from agent_platform.hub import segment
 from agent_platform.reader import scope_events
-from agent_platform.tasks import open_verified, titles
+from agent_platform.tasks import open_verified
 from agent_runner.crypto.ids import is_uuid7
 
 CATEGORIES = {"needs-decision": "needs_decision", "blocked": "blocked", "working": "working", "done": "done"}
@@ -82,7 +84,7 @@ class Reader:
         self.account = account
         self.org = org
         self.names = account.names(org)
-        self.titles: dict[str, dict[str, str]] = {}
+        self.named: dict[str, Named] = {}
         self.unverified = 0
 
     def rows(self, category: str, *, mine: bool, limit: int) -> list[tuple[dict[str, Any], dict[str, Any]]]:
@@ -111,10 +113,11 @@ class Reader:
             before = following
         return found[:limit]
 
-    def title(self, wg: str, task: str) -> str | None:
-        if wg not in self.titles:
-            self.titles[wg] = titles(self.account, self.org, wg)
-        return self.titles[wg].get(task)
+    def of(self, wg: str) -> Named:
+        """The titles and main agents' names of a workgroup's tasks, read once."""
+        if wg not in self.named:
+            self.named[wg] = read_names(self.account, self.org, wg)
+        return self.named[wg]
 
     def question(self, wg: str, task: str, attention: dict[str, Any]) -> str | None:
         """The question of a `question` / `approval` record, opened and verified; None when it cannot be read."""
@@ -141,7 +144,8 @@ class Reader:
             "owner_id": owner,
             "owner": self.names.members.get(str(owner)),
             "state": task.get("state"),
-            "title": self.title(wg, task_id),
+            "title": self.of(wg).titles.get(task_id),
+            **agent_fields(self.of(wg).agents, task),
             **{key: attention.get(key) for key in ATTENTION_KEYS},
         }
         if question and attention.get("reason") in ASKING:

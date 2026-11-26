@@ -38,14 +38,15 @@ registration runs in one transaction:
      (`rights_denied`, ADR-076 section 3);
    - H5/H6 with a dedupe slot: a held slot makes the operation a `duplicate` of its holder, otherwise the operation
      takes the slot for the type's window (`agent_hub.operations.dedupe`); without a slot it is accepted directly.
-5. The decision is written: the operation row (`state`, `error_code`, `duplicate_of`, `decided_at`), transition 2
-   (`at` = hub time, `by_id` NULL = the hub) and the audit row `operation.<state>` (actor: the device; detail with
-   the local check, `github_identity` and `triggered_by`). An accepted `subagent.request` creates the child session
-   (`agent_hub.operations.children`; its `github_identity` is the registration's, else the parent session's, its
-   `triggered_by` the registration's, ADR-083 section 2, its `agent_profile` the snapshot of `child_profile`, ADR-094
-   section 1) and answers its ID, and when the registration named a `child_profile` the child's effective profile
-   (`child_profile`). A `subagent.request` naming a `github_identity` passes the feature gate of the org first (`409
-   peer_outdated`, nothing stored).
+5. The decision is written: the operation row (`state`, `error_code`, `duplicate_of`, `decided_at`), transition 2 (`at`
+   = hub time, `by_id` NULL = the hub) and the audit row `operation.<state>` (actor: the requesting session as
+   `main_agent`/`subagent` on behalf of the registration's `triggered_by` when it names an active member of the org,
+   else of nobody; `device_id` the device, ADR-095 section 4; detail with the local check, `github_identity` and
+   `triggered_by`). An accepted `subagent.request` creates the child session (`agent_hub.operations.children`; its
+   `github_identity` is the registration's, else the parent session's, its `triggered_by` the registration's, ADR-083
+   section 2, its `agent_profile` the snapshot of `child_profile`, ADR-094 section 1) and answers its ID, and when the
+   registration named a `child_profile` the child's effective profile (`child_profile`). A `subagent.request` naming
+   a `github_identity` passes the feature gate of the org first (`409 peer_outdated`, nothing stored).
 
 6. The task's attention record is refreshed (`agent_hub.attention.store`, ADR-076; the last lock of the transaction).
 
@@ -64,6 +65,7 @@ import psycopg
 from pydantic import Field, StringConstraints
 
 from agent_hub.attention import store as attention
+from agent_hub.audit.agents import agent_kind
 from agent_hub.audit.chain import AUDIT_LOCK
 from agent_hub.audit.recorder import unchanged
 from agent_hub.auth.fields import B64u32, Strict, Uuid7
@@ -342,6 +344,14 @@ def _profile_allowed(connection: Connection, request: RegistrationRequest, task:
     return child is not None and profile_model.within(child, profile)
 
 
+def _person(connection: Connection, task: TaskRow, triggered_by: UUID | None) -> UUID | None:
+    """`on_behalf_of` of the registration's audit row: its `triggered_by` while that names an active member of the
+    task's org (H2a); a refused stranger is no person the agent acted for (ADR-095 section 4)."""
+    if triggered_by is None or not identities.is_member(connection, task.org_id, triggered_by):
+        return None
+    return triggered_by
+
+
 def _refusal(
     connection: Connection,
     request: RegistrationRequest,
@@ -475,11 +485,12 @@ def register(
         ref,
         state,
         now,
-        actor_kind="device",
-        actor_id=device,
+        actor_kind=agent_kind(session.depth),
+        actor_id=parent.id,
         error_code=error_code,
         duplicate_of=duplicate_of,
         local_check=request.local_check,
+        on_behalf_of=_person(connection, task, ref.triggered_by),
     )
     outcome = Outcome({})
     child = None

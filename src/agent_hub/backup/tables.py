@@ -107,6 +107,8 @@ RULES: tuple[TableRule, ...] = (
     TableRule("device_stream", DEVICE_ROWS),
     TableRule("outbox_receipt", DEVICE_ROWS),
     TableRule("task", ORG_ROWS),
+    # the numbering of the org's tasks (ADR-095 section 1): exported rows keep their numbers, so the counter continues
+    TableRule("task_counter", ORG_ROWS),
     # the attention records (ADR-076): a projection whose `since` and `seq` keep the history of the occasions, so it is
     # exported rather than derived again (a missing row is derived by the job `attention.backfill`)
     TableRule("task_attention", ORG_ROWS),

@@ -399,6 +399,8 @@ def stored_audit(row: Row) -> StoredAudit:
         target_id=row["target_id"],
         detail=row["detail"],
         event_id=_uuid(row["event_id"]),
+        agent_id=_uuid(row["agent_id"]),
+        on_behalf_of=_uuid(row["on_behalf_of"]),
     )
     return StoredAudit(seq=row["seq"], row=audit, prev_hash=row["prev_hash"], hash=row["hash"])
 

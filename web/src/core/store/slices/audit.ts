@@ -2,7 +2,9 @@
 // page) and the newest chain verification per org. The time filter is not a hub parameter (core/monitoring/audit.ts):
 // a load fetches further pages on its own while a page holds no row of the time range and the range can still be
 // reached, at most `AUTO_PAGES` pages per load, so that a narrow time window does not need many "Load more" clicks.
+// The agents named as actors (`actors` of each page, ADR-095 section 4) are kept with the view's rows.
 import {
+  type AuditActors,
   type AuditFilters,
   type AuditRow,
   auditTarget,
@@ -26,6 +28,8 @@ export interface AuditView {
   readonly rows: readonly AuditRow[];
   /** The cursor of the next page, null at the end. */
   readonly next: string | null;
+  /** The agent actors of the loaded pages (session ID → agent). */
+  readonly actors: AuditActors;
 }
 
 export interface VerifyState {
@@ -52,7 +56,7 @@ export const slice: Slice<'audit'> = { name: 'audit', initial: () => ({ views: {
 /** The store key of the view of `org` with the hub filters of `filters`. */
 export const viewKey = (org: string, filters: AuditFilters): string => `${org}?${hubQuery(filters)}`;
 
-const EMPTY: AuditView = { status: 'loading', code: null, rows: [], next: null };
+const EMPTY: AuditView = { status: 'loading', code: null, rows: [], next: null, actors: {} };
 
 export const auditView = (state: AuditState, key: string): AuditView => state.views[key] ?? EMPTY;
 
@@ -85,18 +89,22 @@ export async function loadAudit(
   if (more && !canLoadMore(start, filters)) return;
   let rows = start.rows;
   let next = start.next;
+  let actors = start.actors;
   put(store, key, { ...start, status: 'loading', code: null });
   try {
     for (let page = 0; page < AUTO_PAGES; page += 1) {
       const found = parseAuditPage(await context.client.request('GET', auditTarget(org, filters, next)));
       rows = [...rows, ...found.rows];
       next = found.next;
-      const view = { status: 'loading' as const, code: null, rows, next };
+      actors = { ...actors, ...found.actors };
+      const view = { status: 'loading' as const, code: null, rows, next, actors };
       if (found.rows.some((row) => inTime(row, filters)) || !canLoadMore(view, filters)) break;
     }
-    if (store.generation === generation) put(store, key, { status: 'ready', code: null, rows, next });
+    if (store.generation === generation) put(store, key, { status: 'ready', code: null, rows, next, actors });
   } catch (error) {
-    if (store.generation === generation) put(store, key, { status: 'error', code: sendErrorCode(error), rows, next });
+    if (store.generation === generation) {
+      put(store, key, { status: 'error', code: sendErrorCode(error), rows, next, actors });
+    }
   }
 }
 

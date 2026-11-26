@@ -29,6 +29,10 @@ export interface TaskRow {
   readonly github_identity?: string | null;
   /** The rights profile of the task's main sessions (ADR-094 section 1); absent from hubs before KOR-51. */
   readonly agent_profile?: unknown;
+  /** The task's number in its organization: the handle `#<number>` of its main agent (ADR-095); absent before KOR-52. */
+  readonly number?: number;
+  /** The hub's newest `task.agent_name` event of the task (ADR-095 section 2); absent before KOR-52. */
+  readonly name_event_id?: string | null;
 }
 
 /** The fields of `session_row` the client uses (the row is kept as received). */
@@ -51,6 +55,10 @@ export interface SessionRow {
   readonly triggered_by?: string | null;
   /** The rights profile a child was started with (ADR-094 section 1; `profiles.sessionRole`). */
   readonly agent_profile?: unknown;
+  /** A subagent's place below its main agent, handle `#<number>.<agent_path>` (ADR-095); null for a main session. */
+  readonly agent_path?: string | null;
+  /** The GitHub identity the session acts with (ADR-078); absent from an older hub. */
+  readonly github_identity?: string | null;
 }
 
 /** `session_transition`: `at` is the device clock, `received_at` the hub clock. */

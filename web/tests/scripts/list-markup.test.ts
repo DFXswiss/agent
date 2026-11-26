@@ -167,14 +167,30 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
   },
   'src/ui/screens/devices/parts.tsx': { count: 1, reason: 'the fixed expiry choices (EXPIRY_HOURS)' },
   'src/ui/screens/home/HomeScreen.tsx': {
-    count: 3,
+    count: 4,
     reason:
-      'the four counters and the four attention categories of the situation view (closed lists) and native ' +
-      '<option>s of the writable workgroups',
+      'the four counters and the four attention categories of the situation view (closed lists), native ' +
+      '<option>s of the writable workgroups and the two groupings "By situation | By person" (ADR-095 section 5)',
   },
   'src/ui/screens/home/AttentionGroup.tsx': {
     count: 1,
     reason: 'a group of the situation view renders its own window of at most WINDOW entries, paged by the hub (HOT-05)',
+  },
+  'src/ui/screens/home/people/PeopleView.tsx': {
+    count: 2,
+    reason:
+      'the person rows render their own window of at most WINDOW rows, paged by the hub (ADR-095 section 5, like ' +
+      'AttentionGroup), and the five counters of one person row (closed list)',
+  },
+  'src/ui/screens/home/people/AgentList.tsx': {
+    count: 1,
+    reason:
+      "a person's main agents render their own window of at most WINDOW rows, paged by the hub (ADR-095 section 5)",
+  },
+  'src/ui/task-tabs/sessions/SessionsTab.tsx': {
+    count: 2,
+    reason:
+      'below one session: at most its one own GitHub identity and the one operation that requested it (nodeFacts)',
   },
   'src/ui/screens/home/SessionTree.tsx': {
     count: 1,
@@ -183,9 +199,10 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
   'src/ui/screens/tasks/OverviewScreen.tsx': { count: 1, reason: 'native <option>s of the readable workgroups' },
   'src/ui/screens/tasks/TaskTable.tsx': { count: 1, reason: 'the task states (closed list)' },
   'src/ui/screens/audit/AuditView.tsx': {
-    count: 3,
+    count: 4,
     reason:
-      'filter choices: the closed action list and native <option>s of the org members and workgroups (one element ' +
+      'filter choices: the closed action list and native <option>s of the org members (actors and "On behalf of", ' +
+      'ADR-095 section 4) and workgroups (one element ' +
       'each; the membership is complete by design, ADR-086 section 2)',
   },
   'src/ui/task-tabs/operations/OperationsTab.tsx': {

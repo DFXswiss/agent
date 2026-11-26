@@ -132,7 +132,7 @@ function Item({ org, id, category, state, userId, directory, now }: AttentionIte
           {open ? t('attention.toggle.hide') : t('attention.toggle.show')}
         </button>
       </div>
-      {open && <SessionTree task={id} subagents={row.subagents_total} />}
+      {open && <SessionTree row={task} subagents={row.subagents_total} orgName={directory.orgName} />}
     </TaskEntry>
   );
 }

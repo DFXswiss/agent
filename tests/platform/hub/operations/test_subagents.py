@@ -99,7 +99,8 @@ def test_accepted_request_creates_the_child_session(ops: Ops, published: MemoryP
         " AND target_kind = 'session'",
         child,
     )
-    assert audit == [("session.requested", "device", ops.device.id, ops.device.id)]
+    # the requesting main agent starts its subagent, reported by the device (ADR-095 section 4)
+    assert audit == [("session.requested", "main_agent", session, ops.device.id)]
     assert [action for (action,) in ops.desk.rows("SELECT action FROM hub.audit ORDER BY seq DESC LIMIT 2")] == [
         "session.requested",
         "operation.accepted",

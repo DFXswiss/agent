@@ -3411,6 +3411,20 @@
           "task": "set",
           "wg": "scope_id"
         },
+        "kind": "task.agent_name",
+        "right": "wg_write",
+        "scope": "wg"
+      },
+      {
+        "authors": [
+          "user"
+        ],
+        "header": {
+          "ref": "empty",
+          "session": "empty",
+          "task": "set",
+          "wg": "scope_id"
+        },
         "kind": "prompt",
         "right": "wg_write",
         "scope": "wg"

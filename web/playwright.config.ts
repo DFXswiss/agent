@@ -37,6 +37,7 @@ const MOBILE_DEVICE_SPECS = [
   '**/devices/pulls.spec.ts',
   '**/devices/browser.spec.ts',
   '**/devices/subscriptions.spec.ts',
+  '**/devices/agents.spec.ts',
 ];
 /** The volume gate (ADR-086 §4, KOR-35): its own projects, each in a lane of its own (own hub and data set). */
 const VOLUME_SPECS = '**/volume/*.spec.ts';

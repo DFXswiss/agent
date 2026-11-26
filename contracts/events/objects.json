@@ -2452,6 +2452,28 @@
         "owner"
       ],
       "additionalProperties": false
+    },
+    "body_task_agent_name": {
+      "type": "object",
+      "description": "the name a person gives the main agent of a task (ADR-095 section 2); null = back to the automatic name",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "1-80 characters, single line",
+              "pattern": "^[^\r\n]{1,80}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
     }
   }
 }

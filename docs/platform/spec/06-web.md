@@ -320,6 +320,31 @@ The home of an organization shows where people are needed, across all workgroups
   second); works fully on a phone (single column, controls
   ≥ 44 px).
 
+### 4.0a Main agents, their people and their names (KOR-52, [ADR-095](../adr/095-main-agents-with-names.md))
+
+- **Name and handle.** A main agent is shown as `<name> #<number>` (`task_row.number`); the name is the newest
+  verified `task.agent_name` of the task, else the automatic name derived from the title
+  (`contracts/tasks/agent-name.json`, `web/src/core/agents/name.ts`); an unverifiable newest name is shown as such.
+  A subagent is `Subagent #<number>.<agent_path>` "of `<name> #<number>`" with its purpose where the browser can
+  open the sealed `operation.params` of its `subagent.request`.
+- **Where.** Every situation-view entry and task-list row shows the name and handle next to the title; the task page
+  header shows them with "Rename" for writers of the workgroup (a field with the current name, "Save", "Automatic
+  name"; sends a sealed `task.agent_name`, `{name: null}` for the automatic name); the agent tree (§4.0, task tab
+  "Sessions" §5.3) shows handles, purposes, states, the GitHub identity of a child that acts with another one and
+  "triggered by".
+- **By person.** The situation view has the switch "By situation | By person" (`?by=person`; one control, no new
+  navigation entry). By person: the counters stay; below them one row per person (`GET /v1/orgs/{org}/people/agents`,
+  paged by 50, windowed): the person's name (the signed directory; unknown → "Unknown person"), main agents, waiting
+  for a decision, stuck, running, active subagents – the user's own row first ("You"), the others of the loaded pages
+  sorted by name. Opening a row lists the person's open main agents (`GET /v1/orgs/{org}/main-agents?owner=`, paged by
+  50, at most 50 in the DOM): name and handle, title, workgroup, state, the attention reason, the GitHub identity
+  (`IdentityName`: the account, a company account, "another person's account" or "Automatic"), the role (the task's
+  rights profile, KOR-51), active/total subagents, "Rename" for writers, "Open task" and the agent tree on demand. Works on a phone (single column,
+  controls ≥ 44 px).
+- **Audit** (§9.2): an actor `main_agent` / `subagent` reads "Main agent `<name> #42` on behalf of `<person>`" /
+  "Subagent `#42.1` of `<name> #42` on behalf of `<person>`" (`actors` of the response; the name when the task's
+  name is in the store, else the handle); the filter "On behalf of" (`on_behalf_of`).
+
 ### 4.1 Entry
 
 Right after the first login (and on `/o/:org` whenever the user has no task yet) the home screen shows the composer

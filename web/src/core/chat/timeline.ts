@@ -1,10 +1,11 @@
 // The chat timeline of a task (06-web.md section 5.2): the verified events of the workgroup scope that belong to the
 // task, ordered by `(ts, scope_seq)` (chat is ascending, section 12.4), plus system rows from the session rows:
 //
-// - every verified event of the task except `task.meta` (the title), the watched kinds `session.terminal` and
-//   `browser.action`, and `session.hook` other than `deny`; the UI renders the kinds it has a chat-item renderer for
-//   (`prompt`, `session.*`, `operation.*`, `workvm.*`, `test.run`, `browser.state`); of the `workvm.run` items of one
-//   job, the `test.run` items of one run and the `browser.state` items of one browser session only the latest is kept
+// - every verified event of the task except `task.meta` (the title), `task.agent_name` (the agent's name, shown in the
+//   header), the watched kinds `session.terminal` and `browser.action`, and `session.hook` other than `deny`; the UI
+//   renders the kinds it has a chat-item renderer for (`prompt`, `session.*`, `operation.*`, `workvm.*`, `test.run`,
+//   `browser.state`); of the `workvm.run` items of one job, the `test.run` items of one run and the `browser.state`
+//   items of one browser session only the latest is kept
 //   (the final one replaces the running one, `workvm.ts`);
 // - unverifiable events whose (unchecked) header names the task, as neutral rows with the code – never as content,
 //   never dropped; pending and locked events appear once the reader settled them;
@@ -53,7 +54,12 @@ export const chatQuery = (task: string, session?: string): ListQuery => ({
 });
 
 export const SYSTEM_STATES: ReadonlySet<string> = new Set(['suspended', 'stopped', 'failed']);
-export const HIDDEN_KINDS: ReadonlySet<string> = new Set(['task.meta', 'session.terminal', 'browser.action']);
+export const HIDDEN_KINDS: ReadonlySet<string> = new Set([
+  'task.meta',
+  'task.agent_name',
+  'session.terminal',
+  'browser.action',
+]);
 
 /** Rank of items at the same time: events by `scope_seq` first, then system rows. */
 const SYSTEM_SEQ = Number.MAX_SAFE_INTEGER;

@@ -138,6 +138,23 @@
             }
           ],
           "description": "the rights profile of the task's main sessions (ADR-094 section 1), null without"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "description": "the task's number in its organization (1, 2, 3 ...): the handle #<number> of its main agent (ADR-095 section 1)"
+        },
+        "name_event_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the newest task.agent_name event of the task (the main agent's name, ADR-095 section 2), null without one"
         }
       },
       "required": [
@@ -514,6 +531,17 @@
             }
           ],
           "description": "the rights profile a child was started with (ADR-094 section 1), null without (a child without one works with its parent's rights; a main session with its task's)"
+        },
+        "agent_path": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/agent_path"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "a subagent's place below its main agent (ADR-095 section 1): handle #<task number>.<agent_path>; null for a main session"
         }
       },
       "required": [
@@ -2232,6 +2260,109 @@
       ],
       "additionalProperties": false,
       "description": "a subscription of the caller with its newest reading (null before the first one)"
+    },
+    "agent_path": {
+      "type": "string",
+      "description": "ordinals joined by dots: the first among the task's depth-1 sessions, each further one among its parent's children (ADR-095 section 1)",
+      "pattern": "^[1-9][0-9]{0,8}(\\.[1-9][0-9]{0,8})*$"
+    },
+    "agent_item": {
+      "type": "object",
+      "description": "one main agent of a person (ADR-095 section 5): its task and attention record (null while the hub has none)",
+      "properties": {
+        "task": {
+          "$ref": "#/$defs/task_row"
+        },
+        "attention": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/attention_row"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "task",
+        "attention"
+      ],
+      "additionalProperties": false
+    },
+    "agent_person": {
+      "type": "object",
+      "description": "the open main agents of one person in the readable workgroups (ADR-095 section 5)",
+      "properties": {
+        "owner_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "agents": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "needs_decision": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "blocked": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "working": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "subagents_active": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "owner_id",
+        "agents",
+        "needs_decision",
+        "blocked",
+        "working",
+        "subagents_active"
+      ],
+      "additionalProperties": false
+    },
+    "audit_agent": {
+      "type": "object",
+      "description": "the agent of an audit actor main_agent/subagent (ADR-095 section 4)",
+      "properties": {
+        "task_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "agent_path": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/agent_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent_session_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "task_id",
+        "number",
+        "agent_path",
+        "parent_session_id"
+      ],
+      "additionalProperties": false
     }
   }
 }

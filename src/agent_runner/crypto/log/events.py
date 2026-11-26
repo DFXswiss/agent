@@ -101,6 +101,8 @@ KIND_RULES: tuple[KindRule, ...] = (
     KindRule(
         "task.meta", "wg", (DEVICE,), DEVICE_ASSIGNED_WG, _WG_TASK, "only as result of the operation task.set_title"
     ),
+    # the name of the task's main agent (ADR-095 section 2): written by people only, with the right of the title
+    KindRule("task.agent_name", "wg", (USER,), WG_WRITE, _WG_TASK),
     KindRule("prompt", "wg", (USER,), WG_WRITE, _WG_TASK),
     *(
         KindRule(f"session.{name}", "wg", (DEVICE,), DEVICE_ASSIGNED_WG_SESSION, _SESSION)

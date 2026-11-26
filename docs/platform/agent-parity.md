@@ -80,6 +80,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | org-create | screens/home | `org create` | done |
 | attention-view | screens/home | `status --attention --org` | done |
 | attention-list | screens/home | `task list --org --state --mine --limit` | done |
+| agents-by-person | screens/home (switch "By situation \| By person", ADR-095 section 5: one row per person, a person's paged main agents with name, handle, state, GitHub identity and subagents) | `agents people --org --after --limit`, `agents list --org --owner --before --limit`, `task list --wg --by-person` | done |
+| agent-tree | screens/home (a main agent's tree on demand: handles, purposes, states, GitHub identities, ADR-095 sections 5 and 6) | `agents show --task` | done |
+| agent-rename | screens/home, screens/task ("Rename" of a main agent for writers of its workgroup: a sealed `task.agent_name`, or back to the automatic name, ADR-095 section 2) | `agents rename --task --name --automatic` | done |
+| audit-agent-actor | screens/audit (the actor "Main agent <name> #42 on behalf of <person>" / "Subagent #42.1 of …" and the filter "on behalf of", ADR-095 section 4) | `audit --org --on-behalf-of --actor` | done |
 | attention-answer | screens/home | `task prompt --task --text` | done |
 | attention-approve | screens/home | `task prompt --task --approve --text` | done |
 | attention-decline | screens/home | `task prompt --task --decline --text` | done |
@@ -197,7 +201,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `PUT /v1/github-identities/{identity}` | github-company-accounts, github-rewrap |
 | `DELETE /v1/github-identities/{identity}` | github-accounts, github-company-accounts |
 | `PUT /v1/github-identities/{identity}/primary` | github-accounts |
-| `POST /v1/events` | wg-settings, workgroups-rename, whiteboard-write, devices-profile, org-join |
+| `POST /v1/events` | wg-settings, workgroups-rename, whiteboard-write, devices-profile, org-join, agent-rename |
 | `POST /v1/invites/lookup` | register, org-join |
 | `GET /v1/me` | me-view, passkey-list, notifications-list, credential-rotate |
 | `GET /v1/me/agents` | agents-list |
@@ -247,7 +251,9 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/orgs` | org-create |
 | `GET /v1/orgs/{org}/attention` | attention-view, attention-list |
 | `GET /v1/orgs/{org}/attention/summary` | attention-view |
-| `GET /v1/orgs/{org}/audit` | audit, task-model-switch |
+| `GET /v1/orgs/{org}/people/agents` | agents-by-person |
+| `GET /v1/orgs/{org}/main-agents` | agents-by-person |
+| `GET /v1/orgs/{org}/audit` | audit, task-model-switch, audit-agent-actor |
 | `GET /v1/orgs/{org}/audit/verify` | audit |
 | `GET /v1/orgs/{org}/billing` | settings-billing, credit-balance, consumption-per-person |
 | `GET /v1/orgs/{org}/quotas` | model-quotas, attention-quota-counter, subscriptions-list |

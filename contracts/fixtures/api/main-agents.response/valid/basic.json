@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "task": {
+        "task_id": "01930003-0000-7000-8000-000000000003",
+        "org_id": "01930001-0000-7000-8000-000000000001",
+        "wg_id": "01930002-0000-7000-8000-000000000002",
+        "owner_id": "0193000a-0000-7000-8000-00000000000a",
+        "state": "idle",
+        "state_reason": null,
+        "created_at": "2026-11-21T12:00:00.000Z",
+        "state_at": "2026-11-21T12:00:00.000Z",
+        "last_activity_at": "2026-11-21T12:00:00.000Z",
+        "closed_at": null,
+        "main_session_id": "01930004-0000-7000-8000-000000000004",
+        "title_event_id": "01930029-0000-7000-8000-000000000029",
+        "number": 42,
+        "name_event_id": "01930030-0000-7000-8000-000000000030",
+        "github_identity": null
+      },
+      "attention": {
+        "task_id": "01930003-0000-7000-8000-000000000003",
+        "category": "needs_decision",
+        "reason": "question",
+        "ref_kind": "operation",
+        "ref_id": "01930060-0000-7000-8000-000000000060",
+        "since": "2026-11-21T12:00:00.000Z",
+        "seq": 7,
+        "subagents_total": 0,
+        "subagents_active": 0,
+        "updated_at": "2026-11-21T12:00:00.000Z"
+      }
+    }
+  ],
+  "next_before": "MDE5MzAwMDM"
+}

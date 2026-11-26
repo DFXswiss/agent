@@ -195,6 +195,20 @@
       "note": "only as result of the operation task.set_title"
     },
     {
+      "kind": "task.agent_name",
+      "scope": "wg",
+      "authors": [
+        "user"
+      ],
+      "right": "wg_write",
+      "header": {
+        "wg": "scope_id",
+        "task": "set",
+        "session": "empty",
+        "ref": "empty"
+      }
+    },
+    {
       "kind": "prompt",
       "scope": "wg",
       "authors": [

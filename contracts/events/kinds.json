@@ -126,6 +126,18 @@
       "device_pull": true
     },
     {
+      "kind": "task.agent_name",
+      "body": "events/task.agent_name.json",
+      "scopes": [
+        "wg"
+      ],
+      "authors": [
+        "user"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": true
+    },
+    {
       "kind": "prompt",
       "body": "events/prompt.json",
       "scopes": [

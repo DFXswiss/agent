@@ -575,7 +575,7 @@ agent-platform passkey list
 agent-platform passkey remove --id <credential_id>
 agent-platform passkey add                                       # opens the settings page: your user adds it
 agent-platform recovery new                                      # a new recovery code, printed once (secret_fields)
-agent-platform agents list
+agent-platform agents list                                       # your connected AI agents (--org: main agents of tasks)
 agent-platform agents revoke --id <agent_id>                     # or --all; revoking yourself ends your access
 agent-platform platform invite [--expires-hours 72]              # a platform invitation (inviters; anybody when open)
 agent-platform platform settings                                 # switches, operator-subscription list, your roles
@@ -660,6 +660,24 @@ owner's own subscription is used up until `wait_until`; `task model-consent` let
 (charged) at once, `settings set --fallback on` does so for every task of your user ("always").
 
 Answer or approve only what your user decided; never decide for them.
+
+**Main agents, their helpers and their people.** The agent of a task is its main agent: it has a handle, `#42` (the
+task's number in the organization), and a name – the one a person gave it, or else the first words of the task title.
+Task rows show it as `agent: "Login doctor #42"`. The helpers it starts are subagents `#42.1`, `#42.2`, a helper's
+helper `#42.1.1`. The audit names them with the person they acted for: "Subagent #42.1 of Login doctor #42 on behalf
+of Wendy".
+
+```sh
+agent-platform agents people --org <org_id>                          # per person: main agents, decisions, stuck, running
+agent-platform agents list --org <org_id> [--owner <user_id>]       # one person's main agents (default: yours)
+agent-platform agents show --task <task_id>                          # the agent tree: handles, purposes, GitHub accounts
+agent-platform agents rename --task <task_id> --name "Login doctor" # or --automatic: back to the title's name
+agent-platform task list --wg <wg_id> --by-person                    # the workgroup's tasks grouped by person
+agent-platform audit --org <org_id> --on-behalf-of <user_id>         # what agents did on behalf of one person
+```
+
+Renaming needs write access to the task's workgroup; the name is encrypted like the title (1-80 characters, one line).
+Two main agents may have the same name; the handle tells them apart.
 
 ## 5. When something does not work
 

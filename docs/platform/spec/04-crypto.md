@@ -148,6 +148,7 @@ Event kinds, scopes and allowed authors (hub and readers enforce; bodies in `03-
 | `whiteboard.entry` / `.edit` / `.delete` (wg level: `task=""`; task level: `task` set) | wg | user | wg write |
 | `settings.workgroup` | wg | user | wg write |
 | `task.meta` | wg | user or device | user: wg write; device: assigned to wg (only as result of `task.set_title`) |
+| `task.agent_name` (`task` set; the name of the task's main agent, ADR-095) | wg | user | wg write |
 | `prompt` | wg | user | wg write |
 | `session.output`, `session.tool`, `session.hook`, `session.file`, `session.terminal`, `session.status` | wg | device | assigned to wg, and the session runs on this device |
 | `operation.params`, `operation.result` (`ref` = operation) | wg | device | assigned to wg |
@@ -645,6 +646,7 @@ E9 `id` unique (same `id` + identical bytes → idempotent success; different by
 | Passkey credential IDs and public keys, sign counters, session public keys | authentication |
 | Event headers (kind, scope, epoch, author, task, session, ref, ts, lh), sizes, receive times | sync, fan-out, audit |
 | Task state, owner, timestamps; session state, device, VM ID, parent session, depth, model access kind, model ID; the GitHub identity (record ID) chosen for a task or session (ADR-078) | countdown, status, limits, identity choice |
+| Main agents (ADR-095): the task's number in its organization (`task.number`), a child session's place below its main agent (`agent_path`), the ID of the newest `task.agent_name` event, and in audit rows the agent as actor and the person it acted for (`on_behalf_of`, a user ID) – counters and IDs; the name itself is sealed like the title | handles, responsibility view, audit actor |
 | Operation type, state, decision, error code, dedupe tag, timestamps, actor; the GitHub identity (record ID) an operation acted with and the human who triggered it (ADR-078) | duplicate protection, audit, limits, traceability |
 | Resource metrics, token counters, cost, context-window percentage, subscription quota percentages; anonymous UI health counters per day, web client version and view type (`ui_health_daily`, ADR-081: no user, org, device or object ID) | monitoring, limits, display (KONZEPT §6, §7) |
 | Notification records (recipient, kind, target IDs) | notifications |
@@ -663,7 +665,8 @@ E9 `id` unique (same `id` + identical bytes → idempotent success; different by
 | Community metadata of `14-community.md` §2.3 (message IDs, authors, times, sizes, tombstones, key epochs and checks, key requests, members, read positions, mutes, moderators) | community (ADR-069); names and texts are ciphertext under the community key |
 
 Not visible: everything listed as confidential in `00-overview.md` §3, invitation and recovery codes, PRF
-outputs, scope keys, private keys, credential values, the handover secret of an agent pairing and an agent's name.
+outputs, scope keys, private keys, credential values, the handover secret of an agent pairing and the label of a person's delegated agent, the name of a main agent
+(`task.agent_name`).
 
 ## 8. Error codes
 

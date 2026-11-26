@@ -5,12 +5,14 @@ Both need `device:wg`: the device is assigned to the workgroup (of the task); an
 is `404 not_found`. Rows carry metadata only - titles, prompts and output live in events.
 
 - A task row is `{task_id, org_id, wg_id, owner_id, state, state_reason, created_at, state_at, last_activity_at,
-  closed_at, main_session_id, title_event_id}`; `main_session_id` is the task's current session of depth 0 (the newest
-  one, as in the browser API; KOR-06 A-15), `title_event_id` the newest `task.meta` event of the task.
+  closed_at, main_session_id, title_event_id, number, name_event_id}`; `main_session_id` is the task's current session
+  of depth 0 (the newest one, as in the browser API; KOR-06 A-15), `title_event_id` the newest `task.meta` event of the
+  task, `number` the task's number in its organization and `name_event_id` the newest `task.agent_name` event (null
+  without one): the runner names a session's main agent and handle from them (ADR-095 sections 1 and 3).
 - The list is newest first (`created_at DESC, id DESC`, 02-data-model.md section 1 rule 5) with the optional filter
   `state`, at most `limit` rows (default 50, max 200) and the opaque cursor `next_before` (b64u of the canonical
   `{"at": <microseconds>, "id"}` of the last row); `before` continues after that row.
-- The task answer adds its sessions (the tree: by depth, then creation) and its operations
+- The task answer adds its sessions (the tree: by depth, then creation; each with its `agent_path`) and its operations
   (`{id, type, state, error_code, result_event_id}`, oldest first).
 """
 
@@ -39,12 +41,15 @@ _TASK_COLUMNS = (
     " (SELECT s.id FROM hub.session s WHERE s.task_id = t.id AND s.depth = 0"
     " ORDER BY s.created_at DESC, s.id DESC LIMIT 1),"
     " (SELECT e.id FROM hub.event e WHERE e.task_id = t.id AND e.kind = 'task.meta'"
+    " ORDER BY e.scope_seq DESC LIMIT 1),"
+    " t.number,"
+    " (SELECT e.id FROM hub.event e WHERE e.task_id = t.id AND e.kind = 'task.agent_name'"
     " ORDER BY e.scope_seq DESC LIMIT 1)"
 )
 _SESSION_COLUMNS = (
     "id, task_id, org_id, wg_id, owner_id, device_id, vm_id, parent_session_id, origin_operation_id, depth, state,"
     " state_reason, model_access, model_id, agent_kind, agent_version, estimate_ms, created_at, ready_at,"
-    " first_working_at, ended_at"
+    " first_working_at, ended_at, agent_path"
 )
 _SESSION_FIELDS = (
     "session_id",
@@ -68,6 +73,7 @@ _SESSION_FIELDS = (
     "ready_at",
     "first_working_at",
     "ended_at",
+    "agent_path",
 )
 
 
@@ -95,6 +101,8 @@ def task_row(row: tuple[Any, ...]) -> dict[str, Any]:
         "closed_at",
         "main_session_id",
         "title_event_id",
+        "number",
+        "name_event_id",
     )
     return {name: _json(value) for name, value in zip(names, row, strict=True)}
 

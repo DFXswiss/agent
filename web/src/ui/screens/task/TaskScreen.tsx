@@ -6,7 +6,8 @@
 // of the model access (ModelSwitchLine, ADR-081 section 5).
 // The send sequence of the home screen navigates here at once (WEB-04); the countdown is part of the chat. The header
 // names device and VM of the main session ("on <device> · vm-…", ADR-075 section 6).
-// The task's GitHub identity is shown below it; writers change it (`TaskIdentity.tsx`, ADR-078).
+// The task's GitHub identity is shown below it; writers change it (`TaskIdentity.tsx`, ADR-078). Below the title the
+// name and handle of the task's main agent, with "Rename" for writers (`TaskAgent.tsx`, ADR-095).
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { closeTask, loadChat } from '../../../core/chat/actions';
@@ -27,6 +28,7 @@ import { useDirectory, useOrgView, useTitle } from '../tasks/hooks';
 import { ContextNotice } from './ContextNotice';
 import { DeviceFailureNotice } from './DeviceFailureNotice';
 import { ModelSwitchLine } from './ModelSwitchLine';
+import { TaskAgent } from './TaskAgent';
 import { activeTab, Tabs } from './Tabs';
 import { TaskIdentity } from './TaskIdentity';
 import { TaskProfile } from './TaskProfile';
@@ -154,6 +156,7 @@ function TaskView({ row }: { readonly row: TaskRow }) {
               {t('operations.renamed')}
             </span>
           )}
+          <TaskAgent row={row} writer={writer && row.state !== 'closed'} />
           <span className="text-sm text-gray-600" data-testid="task.state" data-state={row.state}>
             {t(`tasks.state.${row.state}`)}
           </span>

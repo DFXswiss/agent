@@ -264,7 +264,7 @@ def test_consumer_skips_events_it_cannot_attribute(rig: Rig) -> None:
 
 def test_consumer_registration() -> None:
     (consumer,) = consumers.CONSUMERS
-    assert consumer.kinds == {"org.profile", "wg.profile", "member.profile", "task.meta"}
+    assert consumer.kinds == {"org.profile", "wg.profile", "member.profile", "task.meta", "task.agent_name"}
     assert profiles.object_of("member.profile", {"ref": "r"}) == "r"
     assert SimpleNamespace is not None
 

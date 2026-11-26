@@ -383,6 +383,119 @@
         "api_version": {
           "type": "integer",
           "const": 1
+        },
+        "agent": {
+          "type": "object",
+          "description": "who this session is (ADR-095 section 3)",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "main",
+                "subagent"
+              ]
+            },
+            "handle": {
+              "type": "string",
+              "description": "#<task number> or #<task number>.<agent path> (ADR-095 section 1)",
+              "pattern": "^#[1-9][0-9]{0,15}(\\.[1-9][0-9]{0,8})*$"
+            },
+            "name": {
+              "type": "string",
+              "description": "the main agent's name: given by a person (task.agent_name) or automatic (contracts/tasks/agent-name.json)",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "name_source": {
+              "type": "string",
+              "enum": [
+                "given",
+                "automatic"
+              ]
+            },
+            "main": {
+              "type": "object",
+              "properties": {
+                "handle": {
+                  "type": "string",
+                  "description": "#<task number> or #<task number>.<agent path> (ADR-095 section 1)",
+                  "pattern": "^#[1-9][0-9]{0,15}(\\.[1-9][0-9]{0,8})*$"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "the main agent's name: given by a person (task.agent_name) or automatic (contracts/tasks/agent-name.json)",
+                  "minLength": 1,
+                  "maxLength": 80
+                }
+              },
+              "required": [
+                "handle",
+                "name"
+              ],
+              "additionalProperties": false
+            },
+            "parent": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "session_id": {
+                      "$ref": "../common.json#/$defs/uuid"
+                    },
+                    "handle": {
+                      "type": "string",
+                      "description": "#<task number> or #<task number>.<agent path> (ADR-095 section 1)",
+                      "pattern": "^#[1-9][0-9]{0,15}(\\.[1-9][0-9]{0,8})*$"
+                    }
+                  },
+                  "required": [
+                    "session_id",
+                    "handle"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "handle",
+            "name",
+            "name_source",
+            "main",
+            "parent"
+          ],
+          "additionalProperties": false
+        },
+        "children": {
+          "type": "array",
+          "description": "this session's own child sessions, oldest first (at most 100)",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "properties": {
+              "session_id": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "handle": {
+                "type": "string",
+                "description": "#<task number> or #<task number>.<agent path> (ADR-095 section 1)",
+                "pattern": "^#[1-9][0-9]{0,15}(\\.[1-9][0-9]{0,8})*$"
+              },
+              "state": {
+                "$ref": "../common.json#/$defs/session_state"
+              }
+            },
+            "required": [
+              "session_id",
+              "handle",
+              "state"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [

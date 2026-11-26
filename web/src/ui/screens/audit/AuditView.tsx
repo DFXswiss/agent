@@ -1,16 +1,22 @@
 // The audit view (06-web.md section 9.2), used by the audit screen and the task tab "Audit" (task filter fixed).
-// Filters action (an action or a group), actor, workgroup, task, session and time live in the URL query, so a view can
-// be linked; they apply on "Apply". Rows are newest first with the time as `HH:MM:SS.mmm` (section 12.4), the actor's
-// display name, action, result, the decrypted names of target, workgroup, task and device where the client has them,
+// Filters action (an action or a group), actor, workgroup, task, session, "On behalf of" (the person whose instruction
+// an agent followed) and time live in the URL query, so a view can be linked; they apply on "Apply". Rows are newest
+// first with the time as `HH:MM:SS.mmm` (section 12.4), the actor's display name – an agent actor as "Main agent
+// <name> #42 on behalf of <person>" / "Subagent #42.1 of <name> #42 on behalf of <person>" (section 4.0a; the name when
+// the task's name is in the store, else the handle) –, action, result, the decrypted names of target, workgroup, task and device where the client has them,
 // and a link to the referenced event. "Load more" pages with the hub's cursor. Admins verify the chain
 // (`GET /v1/orgs/{org}/audit/verify`) and see the result: head, newest checkpoint, ok or not.
 import { type FormEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { formatEventTime, localTimeZone } from '../../../core/i18n';
 import { loadAgents } from '../../../core/agents/list';
+import { type AgentActor, agentActor } from '../../../core/monitoring/actors';
 import type { ListPaging } from '../../../core/lists/window';
+import { AGENT_NAME_KIND } from '../../../core/agents/naming';
+import '../../../core/i18n/lazy/mainagent';
 import {
   ACTION_GROUPS,
+  type AuditActors,
   actorName,
   agentMarker,
   type AuditFilters,
@@ -25,7 +31,7 @@ import {
   parseFilters,
   targetName,
 } from '../../../core/monitoring/audit';
-import { DEVICE } from '../../../core/log/state';
+import { DEVICE, USER } from '../../../core/log/state';
 import { DEVICE_PROFILE, selectDeviceLabels } from '../../../core/org/devices';
 import {
   auditView,
@@ -36,6 +42,7 @@ import {
   viewKey,
   visibleRows,
 } from '../../../core/store/slices/audit';
+import { TITLE_KIND } from '../../../core/tasks/directory';
 import { titles as pullTitles } from '../../../core/tasks/list';
 import { pullOnce } from '../../../core/tasks/pull';
 import { useStore } from '../../hooks/useStore';
@@ -44,8 +51,16 @@ import { type RowAttributes, type RowProps, WindowedList } from '../../lists/Win
 import { useAppEnv } from '../../shell/context';
 import { BUTTON, PRIMARY } from '../members/ActionDialog';
 import { useDirectory, useOrgView } from '../tasks/hooks';
-import { knownPersonName, NoName } from '../../names/names';
-import { agentNamesSelector, agentsOf, shallowSame, tasksOf, titlesSelector } from './select';
+import { knownPersonName, NoName, personName } from '../../names/names';
+import {
+  agentLabelsSelector,
+  agentNamesSelector,
+  agentsOf,
+  agentTasksOf,
+  shallowSame,
+  tasksOf,
+  titlesSelector,
+} from './select';
 
 const pad = (value: number) => String(value).padStart(2, '0');
 
@@ -69,6 +84,7 @@ interface Draft {
   readonly wg: string;
   readonly task: string;
   readonly session: string;
+  readonly on_behalf_of: string;
   readonly from: string;
   readonly to: string;
 }
@@ -79,6 +95,7 @@ const draftOf = (filters: AuditFilters): Draft => ({
   wg: filters.wg ?? '',
   task: filters.task ?? '',
   session: filters.session ?? '',
+  on_behalf_of: filters.on_behalf_of ?? '',
   from: localInput(filters.from),
   to: localInput(filters.to),
 });
@@ -98,6 +115,7 @@ const filtersOf = (draft: Draft): AuditFilters => ({
   wg: draft.wg === '' ? null : draft.wg,
   task: draft.task === '' ? null : draft.task,
   session: draft.session === '' ? null : draft.session,
+  on_behalf_of: draft.on_behalf_of === '' ? null : draft.on_behalf_of,
   from: fromLocalInput(draft.from),
   // "until" names a whole second: every row within it is included
   to: draft.to === '' ? null : fromLocalInput(draft.to)! + 999,
@@ -112,6 +130,7 @@ function Filters(props: {
   readonly filters: AuditFilters;
   readonly fixedTask: boolean;
   readonly actors: readonly Option[];
+  readonly people: readonly Option[];
   readonly workgroups: readonly Option[];
   readonly onApply: (filters: AuditFilters) => void;
 }) {
@@ -167,6 +186,17 @@ function Filters(props: {
         <select {...field('actor')}>
           <option value="">{t('audit.filter.anyone')}</option>
           {props.actors.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="flex flex-col gap-1">
+        {label('on_behalf_of')}
+        <select {...field('on_behalf_of')}>
+          <option value="">{t('audit.filter.anybody')}</option>
+          {props.people.map((item) => (
             <option key={item.id} value={item.id}>
               {item.name}
             </option>
@@ -286,7 +316,7 @@ function Verify({ org }: { readonly org: string }) {
 interface AuditItem {
   readonly org: string;
   readonly row: AuditRow;
-  /** The actor's display name, null when not known. */
+  /** The actor's display name (an agent actor's text), null when not known. */
   readonly actor: string | null;
   /** The target's display name, null when not known. */
   readonly target: string | null;
@@ -310,6 +340,21 @@ const attributes = (item: AuditItem): RowAttributes => ({
   'data-action': item.row.action,
 });
 
+type T = (key: string, params?: Record<string, string>) => string;
+
+/**
+ * "Main agent <name> #42 on behalf of <person>" / "Subagent #42.1 of <name> #42 …" of an agent actor (`label`: the
+ * shown name of its main agent, null when not readable: then the handle alone).
+ */
+export function agentActorText(t: T, agent: AgentActor, label: string | null, person: (id: string) => string): string {
+  const main = label === null ? agent.main : `${label} ${agent.main}`;
+  const kind = agent.kind === 'main_agent' ? 'main' : 'subagent';
+  const params = { agent: main, handle: agent.handle };
+  return agent.onBehalfOf === null
+    ? t(`mainagent.audit.${kind}.nobody`, params)
+    : t(`mainagent.audit.${kind}`, { ...params, person: person(agent.onBehalfOf) });
+}
+
 function Row({ item }: RowProps<AuditItem>) {
   const { app } = useAppEnv();
   const { t, locale } = useI18n();
@@ -326,7 +371,7 @@ function Row({ item }: RowProps<AuditItem>) {
         <time className="text-xs text-gray-600 tabular-nums" dateTime={row.at} data-testid="audit.row.time">
           {formatEventTime(Date.parse(row.at), { locale, timeZone: localTimeZone(), now: app.tasks.now() })}
         </time>
-        <span className="font-medium" data-testid="audit.row.actor">
+        <span className="font-medium" data-testid="audit.row.actor" data-actor-kind={row.actor_kind}>
           {actor}
         </span>
         {agent !== undefined && (
@@ -388,12 +433,14 @@ function AuditRows(props: {
   readonly org: string;
   readonly listId: 'audit' | 'task.audit';
   readonly rows: readonly AuditRow[];
-  readonly names: AuditNames & { readonly wg: (id: string) => string | null };
+  readonly names: AuditNames & { readonly wg: (id: string) => string | null; readonly person: (id: string) => string };
   readonly paging: ListPaging;
+  /** The agent actors of the loaded pages (session ID → agent). */
+  readonly actors: AuditActors;
 }) {
   const { app } = useAppEnv();
   const { t } = useI18n();
-  const { org, rows, names, paging } = props;
+  const { org, rows, names, paging, actors } = props;
   const tasks = useMemo(() => tasksOf(rows), [rows]);
   const tasksKey = tasks.map((ref) => `${ref.wg}/${ref.task}`).join(' ');
   const titles = useStore(
@@ -408,6 +455,22 @@ function AuditRows(props: {
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `tasksKey` names the tasks
   }, [app, org, tasksKey]);
+  // the main agents named as actors: their names (and titles, for an automatic name) read with one selector
+  const agentTasks = useMemo(() => agentTasksOf(rows, actors), [rows, actors]);
+  const agentTasksKey = agentTasks.map((ref) => `${ref.wg}/${ref.task}`).join(' ');
+  const labels = useStore(
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `agentTasksKey` names the tasks
+    useMemo(() => agentLabelsSelector(agentTasks), [agentTasksKey]),
+    app.store,
+  );
+  useEffect(() => {
+    for (const ref of agentTasks) {
+      for (const kind of [AGENT_NAME_KIND, TITLE_KIND]) {
+        pullOnce(app.tasks, org, ref.wg, { kinds: [kind], task: ref.task }).catch(() => 0);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `agentTasksKey` names the tasks
+  }, [app, org, agentTasksKey]);
   const agentIds = useMemo(() => agentsOf(rows), [rows]);
   const agentsKey = agentIds.join(' ');
   const agents = useStore(
@@ -415,19 +478,27 @@ function AuditRows(props: {
     useMemo(() => agentNamesSelector(agentIds), [agentsKey]),
     app.store,
   );
+  const actorOf = useMemo(
+    () => (row: AuditRow) => {
+      const agent = agentActor(row, actors);
+      if (agent === null) return actorName(row, names);
+      return agentActorText(t, agent, labels.get(agent.task) ?? null, names.person);
+    },
+    [actors, labels, names, t],
+  );
   const items = useMemo(
     () =>
       rows.map((row): AuditItem => ({
         org,
         row,
-        actor: actorName(row, names),
+        actor: actorOf(row),
         target: targetName(row, names),
         wg: row.wg_id === null ? null : names.wg(row.wg_id),
         title: row.task_id === null ? null : (titles.get(row.task_id) ?? null),
         device: row.device_id === null ? null : names.device(row.device_id),
         agent: agentMarker(row, (id) => agents.get(id)!),
       })),
-    [org, rows, names, titles, agents],
+    [org, rows, names, titles, agents, actorOf],
   );
   return (
     <WindowedList
@@ -503,6 +574,7 @@ export function AuditView({
       member: (id: string) => knownPersonName(t, directory, id) ?? null,
       device: (id: string) => labels.get(id) ?? null,
       wg: (id: string) => directory.workgroups.get(id) ?? null,
+      person: (id: string) => personName(t, directory, id),
     }),
     [directory, labels, t],
   );
@@ -517,6 +589,10 @@ export function AuditView({
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
   const workgroups = state === null ? [] : [...state.workgroups.keys()].map((id) => ({ id, name: wgName(id) }));
+  const people = principals
+    .filter((p) => p.kind === USER)
+    .map((p) => ({ id: p.id, name: personName(t, directory, p.id) }))
+    .sort((a, b) => a.name.localeCompare(b.name));
   const admin = state !== null && userId !== null && state.isAdmin(userId);
   const rows = useMemo(() => visibleRows(view, filters), [view, query]); // eslint-disable-line react-hooks/exhaustive-deps -- `query` names the filters
   const loading = view.status === 'loading';
@@ -527,7 +603,14 @@ export function AuditView({
   };
   return (
     <div className="flex flex-col gap-4" data-testid="audit.view">
-      <Filters filters={filters} fixedTask={task !== null} actors={actors} workgroups={workgroups} onApply={apply} />
+      <Filters
+        filters={filters}
+        fixedTask={task !== null}
+        actors={actors}
+        people={people}
+        workgroups={workgroups}
+        onApply={apply}
+      />
       {admin && <Verify org={org} />}
       {view.status === 'error' && (
         <p className="text-red-800" role="alert" data-testid="audit.error">
@@ -539,7 +622,7 @@ export function AuditView({
           {t('audit.empty')}
         </p>
       )}
-      <AuditRows org={org} listId={listId} rows={rows} names={names} paging={paging} />
+      <AuditRows org={org} listId={listId} rows={rows} names={names} paging={paging} actors={view.actors} />
       {rows.length === 0 && loading && (
         <p className="text-gray-600" role="status" data-testid="audit.loading">
           {t('audit.loading')}

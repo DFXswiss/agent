@@ -11,7 +11,9 @@ outbox.
 Effects: the operation row (`state`, `error_code`, `retryable`, `result_event_id`; `started_at` = receive time of
 `executing`, `finished_at` = receive time of a final state), an `operation_transition` row (`at` = device clock,
 `by_id` = device), the release of the operation's dedupe slot on `failed` and `expired` (02-data-model.md section 2.5),
-the audit row `operation.<state>` (with the operation's `github_identity` and `triggered_by`), the refresh of the
+the audit row `operation.<state>` (actor: the operation's session as `main_agent`/`subagent` on behalf of the
+operation's stored `triggered_by`, `device_id` the device, ADR-095 section 4; with the operation's `github_identity`
+and `triggered_by`), the refresh of the
 task's attention record (`agent_hub.attention.store`, ADR-076)
 and the `operation` frame for the org's browsers after the commit. Pings to the
 requesting session and other reactions are added by later areas as handlers of the same kind (ADR-030).
@@ -24,6 +26,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from agent_hub.attention import store as attention
+from agent_hub.audit.agents import agent_kind
 from agent_hub.audit.chain import AuditRow, append_audit
 from agent_hub.crypto.encoding import format_time
 from agent_hub.errors import HubError
@@ -95,13 +98,14 @@ def handle(item: ItemContext, body: OperationTransitionBody) -> None:
     """Apply the reported operation step (module docstring)."""
     connection = item.connection
     found = connection.execute(
-        "SELECT id, org_id, wg_id, task_id, session_id, device_id, type, state, duplicate_of, github_identity,"
-        " triggered_by FROM hub.operation WHERE id = %s FOR UPDATE",
+        "SELECT o.id, o.org_id, o.wg_id, o.task_id, o.session_id, o.device_id, o.type, o.state, o.duplicate_of,"
+        " o.github_identity, o.triggered_by, s.depth FROM hub.operation o JOIN hub.session s ON s.id = o.session_id"
+        " WHERE o.id = %s FOR UPDATE OF o",
         (body.operation_id,),
     ).fetchone()
     if found is None:
         raise HubError("not_found")
-    operation, org, wg, task, session, device, kind, state, duplicate_of, github_identity, triggered_by = found
+    operation, org, wg, task, session, device, kind, state, duplicate_of, github_identity, triggered_by, depth = found
     if device != item.device:
         raise HubError("forbidden")
     if state == body.state:
@@ -141,8 +145,8 @@ def handle(item: ItemContext, body: OperationTransitionBody) -> None:
         connection,
         AuditRow(
             at=item.now,
-            actor_kind="device",
-            actor_id=item.device,
+            actor_kind=agent_kind(depth),
+            actor_id=session,
             action=f"operation.{body.state}",
             result="ok",
             org_id=org,
@@ -159,6 +163,7 @@ def handle(item: ItemContext, body: OperationTransitionBody) -> None:
                 "local_check": None,
                 **identity_detail(github_identity, triggered_by),
             },
+            on_behalf_of=triggered_by,
         ),
     )
     item.effects.org_frame(org, "operation", operation_row(connection, operation))

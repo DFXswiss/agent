@@ -166,7 +166,8 @@ test('a running task shows its phase and opens its agent tree with the subagents
     '1',
   ]);
   await expect(nodes.getByTestId('attention.tree.state')).toHaveText(['Working', 'Working', 'Working', 'Idle']);
-  await expect(nodes.nth(2)).toContainText('Subagent 1.1');
+  // the handle: task #1, the first child's first child (ADR-095)
+  await expect(nodes.nth(2)).toContainText('Subagent #1.1.1');
   await expect(entry.getByTestId('attention.item.toggle')).toHaveAttribute('aria-expanded', 'true');
 });
 

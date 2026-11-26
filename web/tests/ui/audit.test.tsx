@@ -399,6 +399,102 @@ describe('audit view', () => {
   });
 });
 
+describe('agent actors (ADR-095 section 4)', () => {
+  const MAIN = '01930000-0000-7000-8000-00000000e011';
+  const SUB = '01930000-0000-7000-8000-00000000e012';
+  const LOST = '01930000-0000-7000-8000-00000000e013';
+  const OTHER = '01930000-0000-7000-8000-00000000e014';
+  const UNREAD = '01930000-0000-7000-8000-00000000e015';
+  const TASK3 = '01930000-0000-7000-8000-00000000c003';
+
+  it('names the main agent and the subagent on behalf of a person, with the name when it is known', async () => {
+    const { w, wg } = await world();
+    const ada = w.others.ada.id;
+    putEvents(w.store, wg, [
+      {
+        org: w.org,
+        scopeId: wg,
+        scopeSeq: 2,
+        receivedAt: null,
+        event: {},
+        status: 'verified',
+        code: null,
+        header: { kind: 'task.agent_name', id: 'name-1', task: TASK },
+        body: { name: 'Build doctor' },
+      },
+      {
+        org: w.org,
+        scopeId: wg,
+        scopeSeq: 3,
+        receivedAt: null,
+        event: {},
+        status: 'verified',
+        code: null,
+        header: { kind: 'task.meta', id: 'title-2', task: TASK2 },
+        body: { title: 'Deploy the site to production today please' },
+      },
+    ]);
+    const agentRow = (seq: number, extra: Record<string, unknown>) =>
+      auditRow(seq, T0 + seq * 1000, { action: 'operation.succeeded', wg_id: wg, task_id: TASK, ...extra });
+    w.client.on(`GET /v1/orgs/${w.org}/audit`, () => ({
+      rows: [
+        agentRow(5, { actor_kind: 'main_agent', actor_id: MAIN, session_id: MAIN, on_behalf_of: ada }),
+        agentRow(4, { actor_kind: 'subagent', actor_id: SUB, session_id: SUB }),
+        agentRow(3, { actor_kind: 'subagent', actor_id: SUB, session_id: SUB, on_behalf_of: ada }),
+        agentRow(2, { actor_kind: 'main_agent', actor_id: MAIN, session_id: MAIN, wg_id: null }),
+        agentRow(1, { actor_kind: 'main_agent', actor_id: LOST, session_id: LOST }),
+        agentRow(0, { actor_kind: 'main_agent', actor_id: OTHER, session_id: OTHER, task_id: TASK2 }),
+        agentRow(-1, { actor_kind: 'main_agent', actor_id: UNREAD, session_id: UNREAD, task_id: TASK3 }),
+      ],
+      next_before: null,
+      actors: {
+        [MAIN]: { task_id: TASK, number: 42, agent_path: null, parent_session_id: null },
+        [SUB]: { task_id: TASK, number: 42, agent_path: '1', parent_session_id: MAIN },
+        [OTHER]: { task_id: TASK2, number: 43, agent_path: null, parent_session_id: null },
+        [UNREAD]: { task_id: TASK3, number: 44, agent_path: null, parent_session_id: null },
+      },
+    }));
+    mountScreen(w);
+    expect(await screen.findAllByTestId('audit.row')).toHaveLength(7);
+    const actor = (seq: number) => within(row(seq)).getByTestId('audit.row.actor');
+    // without a given name: the automatic name of the title
+    expect(actor(0)).toHaveTextContent('Main agent Deploy the site to production #43 (no single person)');
+    expect(actor(5)).toHaveAttribute('data-actor-kind', 'main_agent');
+    expect(actor(5)).toHaveTextContent('Main agent Build doctor #42 on behalf of Ada');
+    expect(actor(4)).toHaveTextContent('Subagent #42.1 of Build doctor #42 (no single person)');
+    expect(actor(3)).toHaveTextContent('Subagent #42.1 of Build doctor #42 on behalf of Ada');
+    // a row without a workgroup names the agent by the name read for its task from the other rows
+    expect(actor(2)).toHaveTextContent('Main agent Build doctor #42 (no single person)');
+    // a task whose name and title are not readable: the handle alone
+    expect(actor(-1)).toHaveTextContent('Main agent #44 (no single person)');
+    // an agent the page does not name is shown by its kind
+    expect(actor(1)).toHaveAttribute('data-actor-kind', 'main_agent');
+    expect(actor(1)).toHaveTextContent('Main agent');
+    const pulls = w.client.of(`GET /v1/scopes/${wg}/events`).map((call) => call.target);
+    expect(pulls.some((target) => target.includes('kinds=task.agent_name'))).toBe(true);
+  });
+
+  it('filters by the person an agent acted for', async () => {
+    const { w, wg } = await world();
+    w.client.on(`GET /v1/orgs/${w.org}/audit`, () => ({ rows: rowsOf(w, wg), next_before: null }));
+    const { router } = mountScreen(w);
+    await screen.findAllByTestId('audit.row');
+    const people = within(screen.getByTestId('audit.filter.on_behalf_of'))
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+    expect(people[0]).toBe('Any person');
+    expect(people).toContain('Ada');
+    expect(people).not.toContain('Mac Studio');
+    fireEvent.change(screen.getByTestId('audit.filter.on_behalf_of'), { target: { value: w.others.ada.id } });
+    fireEvent.click(screen.getByTestId('audit.filter.apply'));
+    expect(new URLSearchParams(router.state.location.search).get('on_behalf_of')).toBe(w.others.ada.id);
+    await waitFor(() =>
+      expect(w.client.of(`GET /v1/orgs/${w.org}/audit`).at(-1)!.target).toContain(`on_behalf_of=${w.others.ada.id}`),
+    );
+    expect((screen.getByTestId('audit.filter.on_behalf_of') as HTMLSelectElement).value).toBe(w.others.ada.id);
+  });
+});
+
 describe('audit task tab', () => {
   it('fixes the task filter and keeps the tab on apply', async () => {
     const { w, wg } = await world();

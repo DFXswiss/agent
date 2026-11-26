@@ -230,6 +230,8 @@ links it to this task. A subagent keeps running after it answered: give it follo
 answer with `mcp__platform__get_subagent_result`: it answers your newest instruction - `working` while that turn
 runs, then its `final_text` (`wait_seconds` waits up to 30 s for it). The notice `subagent.finished` means that a turn
 of the subagent ended.
+`mcp__platform__get_context` tells you your name and handle (a main agent `#42`, its subagents `#42.1`, `#42.2`), your
+main agent and your helpers (your own subagents with their handles and states).
 
 To keep work, review and release apart, start one subagent per role: one with `profile` `development` writes and
 pushes, one with `profile` `review` reads the pull request and gives `review.verdict`, one with `profile` `merge`

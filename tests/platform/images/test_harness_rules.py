@@ -67,6 +67,9 @@ MANDATORY = [
     "You may create, write and edit files only inside your task workspace",
     "Request every other action with `mcp__platform__request_operation`",
     "Subagents exist only through `subagent.request`",
+    # KOR-52 (ADR-095 section 3): the session learns who it is
+    "`mcp__platform__get_context` tells you your name and handle",
+    "your main agent and your helpers",
     "If the task needs GitHub, request the operation",
     "even when GitHub is not connected; the platform asks the user to connect",
     "continues your operation afterwards.",

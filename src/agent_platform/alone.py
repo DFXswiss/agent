@@ -463,7 +463,7 @@ def register(tree: Tree) -> None:
     sub.add_argument("--name", default="Claude Code")
     sub.add_argument("--host", default=default_host())
     sub.add_argument("--platform-root-key", help="platform root key (b64u) instead of the hub's")
-    group = tree.group("agents", "the user's connected AI agents")
+    group = tree.group("agents", "your connected AI agents and the main agents of tasks")
     sub = tree.command(
         group,
         "confirm",

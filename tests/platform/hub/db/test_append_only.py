@@ -181,6 +181,9 @@ def test_every_append_only_table_has_both_triggers_enabled_always(owner: psycopg
         # tgtype bits: 1 row, 2 before, 8 delete, 16 update, 32 truncate.
         expected.append((table, f"{table}_no_change", "A", 1 | 2 | 8 | 16, "refuse_change"))
         expected.append((table, f"{table}_no_truncate", "A", 2 | 32, "refuse_change"))
+    # the only other triggers number tasks and subagents before an insert (KOR-52, migration 0037; 4 = insert)
+    expected.append(("session", "session_agent_path", "O", 1 | 2 | 4, "session_agent_path"))
+    expected.append(("task", "task_number", "O", 1 | 2 | 4, "task_number"))
     assert sorted(rows) == sorted(expected)
 
 

@@ -1,4 +1,5 @@
-"""Inbox consumer of this area (ADR-039): keeps the latest profile events for the harness context (`profiles`).
+"""Inbox consumer of this area (ADR-039): keeps the latest profile events for the harness context and the main agent's
+name (`profiles`, ADR-095 section 3).
 
 The event already passed every check of the inbox (E1-E5 at `lh`, decryption); the author's signing key is taken from
 the verified log at `lh`, so the stored event can be opened again later with the same check.
@@ -23,7 +24,9 @@ async def keep_profile(context: Any, conn: AsyncConnection[Any], event: Verified
     author = log.states[lh].principals.get(event.author)
     if author is None:
         return
-    await profiles.remember(conn, header=event.header, sealed=event.sealed, author_sig=author.sig)
+    await profiles.remember(
+        conn, header=event.header, sealed=event.sealed, author_sig=author.sig, scope_seq=event.scope_seq
+    )
 
 
 CONSUMERS = [Consumer("sessions.profiles", profiles.KINDS, keep_profile)]

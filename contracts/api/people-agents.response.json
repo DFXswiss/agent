@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/people-agents.response.json",
+  "title": "GET /v1/orgs/{org}/people/agents response",
+  "description": "Body of a successful response to GET /v1/orgs/{org}/people/agents (03-api.md section 4.6, ADR-095 section 5): per person the open main agents in the readable workgroups; the caller first, then by owner_id.",
+  "type": "object",
+  "properties": {
+    "people": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/agent_person"
+      },
+      "minItems": 0,
+      "maxItems": 100
+    },
+    "next_after": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "people",
+    "next_after"
+  ],
+  "additionalProperties": false
+}

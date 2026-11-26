@@ -17,7 +17,7 @@
 //   state does not know ends the search (no owner rather than a later one).
 import { AGENT, DEVICE, type OrgState, USER } from '../log/state';
 import { orgEntry } from '../store/slices/orgs';
-import { memoize } from '../store/selectors';
+import { memoize, sameAs, scopeIdOf } from '../store/selectors';
 import type { EventEntry, ScopeEvents } from '../store/slices/events';
 import { isRecord } from '../registry';
 import type { StoreState } from '../store/store';
@@ -192,7 +192,13 @@ interface TitleIndex {
   readonly authors: ReadonlyMap<string, readonly string[]>;
 }
 
+/** The newest title index of each scope (weakly: decrypted titles do not outlive the store's events; its titles are kept
+ * when unchanged, `sameAs`). */
+const previousTitles = new Map<string, WeakRef<TitleIndex>>();
+
 const titlesOf = memoize((scope: ScopeEvents): TitleIndex => {
+  const previous = previousTitles.get(scopeIdOf(scope) ?? '')?.deref();
+  const keep = (id: string, title: Title): Title => sameAs(previous?.byEvent.get(id)?.title, title);
   const byEvent = new Map<string, { task: string | null; title: Title }>();
   const byTask = new Map<string, Title>();
   const authors = new Map<string, string[]>();
@@ -200,11 +206,13 @@ const titlesOf = memoize((scope: ScopeEvents): TitleIndex => {
   for (const entry of entries) {
     if (entry.status === 'unverifiable') {
       const id = isRecord(entry.event) && isRecord(entry.event.header) ? entry.event.header.id : null;
-      if (typeof id === 'string') byEvent.set(id, { task: null, title: { status: 'unverifiable', code: entry.code! } });
+      if (typeof id === 'string') {
+        byEvent.set(id, { task: null, title: keep(id, { status: 'unverifiable', code: entry.code! }) });
+      }
       continue;
     }
     if (entry.status !== 'verified' || entry.header!.kind !== TITLE_KIND) continue;
-    const title: Title = { status: 'verified', text: text(entry.body, 'title') ?? '' };
+    const title = keep(entry.header!.id as string, { status: 'verified', text: text(entry.body, 'title') ?? '' });
     byEvent.set(entry.header!.id as string, { task: entry.header!.task as string, title });
     byTask.set(entry.header!.task as string, title);
     const task = entry.header!.task as string;
@@ -212,7 +220,10 @@ const titlesOf = memoize((scope: ScopeEvents): TitleIndex => {
     if (known === undefined) authors.set(task, [entry.header!.author as string]);
     else known.push(entry.header!.author as string);
   }
-  return { byEvent, byTask, authors };
+  const index = { byEvent, byTask, authors };
+  const scopeId = scopeIdOf(scope);
+  if (scopeId !== null) previousTitles.set(scopeId, new WeakRef(index));
+  return index;
 });
 
 /** The title of `task` in workgroup `wg` (`titleEventId` from the task row). */

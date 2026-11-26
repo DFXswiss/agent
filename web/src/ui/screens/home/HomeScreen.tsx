@@ -9,9 +9,12 @@
 //   then the card "My subscriptions" with every subscription of the user (KOR-68, `ui/subscriptions/`).
 // - The four groups in this order: "Needs your decision", "Stuck", "Running", "Recently finished" (the last links the
 //   default workgroup's full task list), each a windowed list paged by the hub (`AttentionGroup.tsx`).
+// - The switch "By situation | By person" (section 4.0a, ADR-095 section 5; kept in the URL as `?by=person`, no
+//   navigation entry of its own): by person the counters stay and the groups give way to one row per person with
+//   their main agents (`people/PeopleView.tsx`).
 // Live `attention` frames update the entries and the counters (batched in the store, counters at most once a second).
 import { useId, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { selectNoTask } from '../../../core/attention/view';
 import { CATEGORIES, type AttentionSummary } from '../../../core/store/slices/attention';
 import { formatNumber } from '../../../core/i18n';
@@ -22,7 +25,9 @@ import { useI18n } from '../../i18n';
 import { Composer } from '../../composer/Composer';
 import { useAppEnv } from '../../shell/context';
 import { useDirectory, useOrgView } from '../tasks/hooks';
+import '../../../core/i18n/lazy/mainagent';
 import { AttentionGroup } from './AttentionGroup';
+import { PeopleView } from './people/PeopleView';
 import { useSummary } from './hooks';
 import { QuotaCounter } from './QuotaCounter';
 import { SubscriptionsCard } from '../../subscriptions/SubscriptionsCard';
@@ -61,6 +66,35 @@ function Counters({ org }: { readonly org: string }) {
   );
 }
 
+/** The grouping of the situation view (`?by=person`; anything else is "by situation"). */
+export type GroupBy = 'situation' | 'person';
+
+function GroupSwitch({ by, onChange }: { readonly by: GroupBy; readonly onChange: (by: GroupBy) => void }) {
+  const { t } = useI18n();
+  return (
+    <div
+      role="group"
+      aria-label={t('mainagent.switch.label')}
+      className="flex self-start rounded border border-gray-300"
+      data-testid="agents.switch"
+      data-by={by}
+    >
+      {(['situation', 'person'] as const).map((value) => (
+        <button
+          key={value}
+          type="button"
+          className={`min-h-11 px-4 text-sm ${by === value ? 'bg-blue-700 text-white' : 'text-gray-800'}`}
+          aria-pressed={by === value}
+          onClick={() => onChange(value)}
+          data-testid={`agents.switch.${value}`}
+        >
+          {t(`mainagent.switch.${value}`)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function HomeScreen() {
   const { org } = useParams() as { readonly org: string };
   const { t } = useI18n();
@@ -76,6 +110,14 @@ export function HomeScreen() {
   const now = useNow(true, 30_000);
   const [chosen, setChosen] = useState<string | null>(null);
   const [chips, setChips] = useState(false);
+  const [search, setSearch] = useSearchParams();
+  const by: GroupBy = search.get('by') === 'person' ? 'person' : 'situation';
+  const group = (next: GroupBy) => {
+    const params = new URLSearchParams(search);
+    if (next === 'person') params.set('by', 'person');
+    else params.delete('by');
+    setSearch(params);
+  };
   const loading = (
     <p className="p-4" data-testid="home.loading">
       {t('home.loading')}
@@ -152,22 +194,25 @@ export function HomeScreen() {
         <h1 className="text-xl font-semibold">{t('attention.title')}</h1>
         <p className="text-sm text-gray-700">{t('attention.intro')}</p>
       </div>
+      <GroupSwitch by={by} onChange={group} />
       <Counters org={org} />
       <QuotaCounter org={org} />
       <SubscriptionsCard />
-      {CATEGORIES.map((category) => (
-        <AttentionGroup
-          key={category}
-          org={org}
-          category={category}
-          state={state}
-          userId={userId}
-          directory={directory}
-          now={now}
-          {...(category !== 'done' && { count: counts[category] ?? null })}
-          {...(category === 'done' && { extra: allTasks })}
-        />
-      ))}
+      {by === 'person' && <PeopleView org={org} state={state} userId={userId} directory={directory} now={now} />}
+      {by === 'situation' &&
+        CATEGORIES.map((category) => (
+          <AttentionGroup
+            key={category}
+            org={org}
+            category={category}
+            state={state}
+            userId={userId}
+            directory={directory}
+            now={now}
+            {...(category !== 'done' && { count: counts[category] ?? null })}
+            {...(category === 'done' && { extra: allTasks })}
+          />
+        ))}
     </main>
   );
 }

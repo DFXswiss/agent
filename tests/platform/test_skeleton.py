@@ -45,6 +45,7 @@ AREAS: dict[ModuleType, list[str]] = {
         "invites",
         "jobs",
         "log",
+        "mainagents",
         "me",
         "models",
         "monitoring",

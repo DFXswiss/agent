@@ -92,6 +92,8 @@ export const KIND_RULES: readonly KindRule[] = [
   rule('settings.workgroup', 'wg', [USER], WG_WRITE, { wg: 'scope_id' }),
   rule('task.meta', 'wg', [USER], WG_WRITE, WG_TASK),
   rule('task.meta', 'wg', [DEVICE], DEVICE_ASSIGNED_WG, WG_TASK, 'only as result of the operation task.set_title'),
+  // the name a person gives the main agent of a task (ADR-095 section 2)
+  rule('task.agent_name', 'wg', [USER], WG_WRITE, WG_TASK),
   rule('prompt', 'wg', [USER], WG_WRITE, WG_TASK),
   ...['output', 'tool', 'hook', 'file', 'terminal', 'status', 'error'].map((name) =>
     rule(`session.${name}`, 'wg', [DEVICE], DEVICE_ASSIGNED_WG_SESSION, SESSION),

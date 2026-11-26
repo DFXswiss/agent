@@ -224,8 +224,8 @@ def test_operation_transitions(outbox: Outbox, published: MemoryPublisher) -> No
         "SELECT action, actor_kind, target_id, detail FROM hub.audit WHERE action LIKE 'operation.%%' ORDER BY seq"
     )
     assert [(row[0], row[1], row[2]) for row in audited] == [
-        ("operation.executing", "device", operation),
-        ("operation.failed", "device", operation),
+        ("operation.executing", "main_agent", operation),
+        ("operation.failed", "main_agent", operation),
     ]
     for action, *_rest, detail in audited:
         contracts_registry().validate(f"audit/{action}.json", detail)
@@ -408,13 +408,15 @@ def test_audit_items(outbox: Outbox) -> None:
     assert {status for _seq, status, _error in outbox.statuses(*items, plain, task_only)} == {"ok"}
     rows = outbox.desk.rows(
         "SELECT action, actor_kind, actor_id::text, device_id::text, org_id::text, wg_id::text, task_id::text,"
-        " session_id::text, result, detail FROM hub.audit WHERE actor_kind = 'device' AND action = ANY(%s)"
-        " ORDER BY seq",
+        " session_id::text, result, detail FROM hub.audit WHERE action = ANY(%s) ORDER BY seq",
         [*sorted(DETAILS), "read.session.list_tasks"],
     )
     device = outbox.device.id
     scoped = (outbox.desk.org, outbox.desk.wg, task, session)
-    assert rows[0] == ("hook.denied", "device", device, device, *scoped, "denied", {"tool": "Bash", "rule": 3})
+    # an item that names a session is its agent's (ADR-095 section 4); the others stay the device's
+    assert rows[0] == ("hook.denied", "main_agent", session, device, *scoped, "denied", {"tool": "Bash", "rule": 3})
+    assert [row[1] for row in rows] == ["main_agent"] * len(DETAILS) + ["device", "device"]
+    assert {row[2] for row in rows[8:]} == {device}
     assert [row[0] for row in rows] == [*DETAILS, "runner.alert", "read.session.list_tasks"]
     assert rows[8][4:8] == (None, None, None, None)
     assert rows[9][4:8] == (outbox.desk.org, outbox.desk.wg, task, None)
@@ -460,7 +462,7 @@ def test_ping_delivered_of_a_runner_ping_is_audited_without_a_hub_row(outbox: Ou
     assert outbox.statuses(outbox.audit(1, "ping.delivered", delivered, session_id=session)) == [(1, "ok", None)]
     assert outbox.desk.rows("SELECT 1 FROM hub.session_ping WHERE id = %s", ping) == []
     [row] = audit_rows(outbox.desk, "ping.delivered")
-    assert (row[0], row[3]) == ("device", delivered)
+    assert (row[0], str(row[1]), row[3]) == ("main_agent", session, delivered)
     # without a session it stays refused
     assert outbox.statuses(outbox.audit(2, "ping.delivered", {**delivered, "ping_id": new_id()})) == [
         (2, "rejected", "request_invalid")

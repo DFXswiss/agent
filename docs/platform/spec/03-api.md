@@ -156,7 +156,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | Endpoint | Right | Request → Response |
 |---|---|---|
 | `POST /v1/tasks` | wg:write | `{task_id,wg_id,events:[task.meta,prompt],placement?:{device_id,vm_id?},github_identity?}` → `{task,session:{session_id,state,device_id,estimate_ms},events:[…]}`; the task is always created – without a device it waits `scheduling` with a reason of §4.6.2 (ADR-075 §7; `409 no_device` is no longer answered). `placement` (else the workgroup default, else automatic): `403 placement_forbidden` for a device that is not a candidate of the workgroup, `409 placement_invalid` for a VM that is not a live VM of the workgroup on that device; `github_identity` (KOR-47, ADR-078 §3): an own record of the caller or a company record of an organization the caller is an active member of, else `403 identity_forbidden`; `409 peer_outdated` while an active device of the organization has not announced `github.identities` |
-| `GET /v1/workgroups/{wg}/tasks` | wg:read | `?state=&before=&order=` → tasks newest first (`order=created`, default) or by latest activity (`order=activity`, KOR-32) `{task_id,owner_id,state,created_at,last_activity_at,main_session_id,title_event_id}` |
+| `GET /v1/workgroups/{wg}/tasks` | wg:read | `?state=&before=&order=` → tasks newest first (`order=created`, default) or by latest activity (`order=activity`, KOR-32) `{task_id,owner_id,state,created_at,last_activity_at,main_session_id,title_event_id,number,name_event_id}` (`number`: the task's number in its organization, the handle `#<number>` of its main agent; `name_event_id`: the newest `task.agent_name` event or null; ADR-095 §1–2) |
 | `GET /v1/tasks/{task}` | task:read | → task + sessions (tree) + usage per session + latest transitions |
 | `POST /v1/tasks/{task}/prompts` | task:write | `{event}` (kind `prompt`) → `{scope_seq,session_id}` (resumes or restarts the main session, §4.6.3) |
 | `PUT /v1/tasks/{task}/github-identity` | wg:write | `{identity_id\|null}` → `{}`: set or clear the task's GitHub identity (same checks as at creation; clearing is always allowed; audit `task.github_identity`; KOR-47) |
@@ -172,8 +172,12 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `GET /v1/tasks/{task}/contexts` | task:read | → `{contexts:[{object_id,session_id,author_id,epoch,chunks,size,digest,created_at,completed_at}]}`: the complete context checkpoints of the task (metadata only, newest first as in §4.6.3, at most 1000); uploads in progress are never listed (ADR-072 §5) |
 | `GET /v1/orgs/{org}/attention` | org:member (rows of readable workgroups only) | `?category=needs_decision\|blocked\|working\|done&mine=1&since=&before=&limit=` (KOR-39, ADR-076) → `{items:[{task:task_row,attention:attention_row}],next_before}`; `category` required; order `since ASC, task_id ASC` for `needs_decision` (longest waiting first), else `since DESC, task_id DESC`; `limit` default 50, max 100; `mine=1`: tasks the caller owns; `since` (RFC 3339): only records that entered their category at or after it |
 | `GET /v1/orgs/{org}/attention/summary` | org:member | `?since=` → `{needs_decision,needs_decision_mine,blocked,working,done_since}` (counts over the readable workgroups; `done_since` counts `done` records with `since` ≥ the parameter, default the last 24 h) |
+| `GET /v1/orgs/{org}/people/agents` | org:member (open tasks of readable workgroups only) | `?after=&limit=` (KOR-52, ADR-095 §5) → `{people:[{owner_id,agents,needs_decision,blocked,working,subagents_active}],next_after}`: per responsible person (task owner) the number of open main agents (tasks not `closed`), of those waiting for a decision, stuck and running (attention category) and the active subagents; the caller's row first, then by `owner_id` (`after` continues after that owner); `limit` default 50, max 100; a person without open main agents is not listed |
+| `GET /v1/orgs/{org}/main-agents` | org:member (rows of readable workgroups only) | `?owner=&before=&limit=` (KOR-52, ADR-095 §5) → `{items:[{task:task_row,attention:attention_row\|null}],next_before}`: the open main agents (tasks not `closed`) of `owner` (required), `last_activity_at DESC, task_id DESC`; `limit` default 50, max 100 |
 
-Session rows (`GET /v1/tasks/{task}`, `GET /v1/sessions/{session}`, the `session` frame) carry `context_restore`
+Session rows (`GET /v1/tasks/{task}`, `GET /v1/sessions/{session}`, the `session` frame, the device API) carry `agent_path` (a subagent's
+place below its main agent, the handle `#<task number>.<agent_path>`; null for a main session; KOR-52, ADR-095 §1)
+and `context_restore`
 (`restored`, `fallback` or null) and `context_reason` (closed list `common.json#/$defs/context_reason`): what the
 runner reported for a main session that continued an earlier one (§4.6.3). The user's agent reads all of this through
 the same endpoints (`11-agent-access.md`, KOR-24 parity); continuing is `POST /v1/tasks/{task}/prompts`.
@@ -393,7 +397,7 @@ a response with header `final:true` arrives (success or error – the outcome is
 |---|---|---|
 | `GET /v1/monitoring/overview` | org:member | `?org=` → `{devices:[{device_id,online,capacity,latest}],vms:[{vm_id,device_id,wg_id,state,latest}] (only own wgs),sessions:[{session_id,task_id,wg_id,state,latest,usage}] (wg:read),sessions_total,truncated,devices_truncated}`; at most 2 000 sessions, the most recently active first; the devices of the org's device list (cap 10 000, `devices_truncated` when cut) |
 | `GET /v1/monitoring/series` | as overview for the entity | `?entity_kind=&entity_id=&metric=&from=&to=&step=` (`step` ≥ 15 s raw within 48 h, ≥ 300 s from rollups) → `{points:[[ts,value]]}` |
-| `GET /v1/orgs/{org}/audit` | org:admin (all), org:member (rows of wgs with wg:read and own actions) | `?before=&action=&actor=&task=&session=&wg=` → audit rows newest first |
+| `GET /v1/orgs/{org}/audit` | org:admin (all), org:member (rows of wgs with wg:read and own actions) | `?before=&action=&actor=&task=&session=&wg=&on_behalf_of=` → audit rows newest first; `actor` may name a session; rows of a main agent or subagent (`actor_kind` `main_agent`/`subagent`, KOR-52, ADR-095 §4) carry `on_behalf_of` when known, and the response adds `actors` {session ID → `{task_id,number,agent_path,parent_session_id}`} for them (outside the hashed rows) |
 | `GET /v1/orgs/{org}/audit/verify` | org:admin | → `{ok,head:{seq,hash},checkpoint}` |
 | `POST /v1/telemetry/ui` | anon | `{version,views:{<view type>:{count,blocked_ms,max_bucket}}}` (≤ 64 views, body ≤ 8 KiB; view types `contracts/enums/ui-views.json`, an unknown one counts as `other`; values clamped) → `{}`; anonymous UI health report, stored only as daily counters per version and view type (`08-monitoring.md` §6.1, ADR-086 §5) |
 | `GET /v1/platform/ui-health` | platform:inviter | `?days=` (1–90, default 7) → `{from,rows:[{day,version,view,reports,count,blocked_ms,max_bucket}]}` newest day first, at most 10 000 rows (`truncated`) |
@@ -631,7 +635,7 @@ All argument objects have `additionalProperties:false`. Integers reject booleans
 
 | Tool | Arguments | Result |
 |---|---|---|
-| `get_context` | `{}` | `{org:{id,name},workgroup:{id,name,is_default},task:{id,title,state,owner:{id,display_name}},session:{id,parent_session_id,depth,model_id},rights:{workgroup:"read"|"write"},limits:{subagent_max_depth,subagent_max_parallel,subagent_max_total},api_version:1}` |
+| `get_context` | `{}` | `{org:{id,name},workgroup:{id,name,is_default},task:{id,title,state,owner:{id,display_name}},session:{id,parent_session_id,depth,model_id},rights:{workgroup:"read"|"write"},limits:{subagent_max_depth,subagent_max_parallel,subagent_max_total},agent:{kind,handle,name,name_source,main:{handle,name},parent},children:[{session_id,handle,state}],api_version:1}` – `agent`: who this session is (`main`/`subagent`, handle `#<task number>[.<agent path>]`, the main agent's name given by a person (`task.agent_name`) or automatic, `parent` null for a main session); `children`: its own child sessions, oldest first, at most 100 (KOR-52, ADR-095 §3) |
 | `list_workgroups` | `{}` | `[{id,name,is_default,my_access}]` – names of all org workgroups (archived ones left out); `my_access` = the session's access: the task owner's explicit access for the own workgroup, `read` for another readable workgroup, else null |
 | `list_members` | `{scope:"org"|"workgroup",workgroup_id?}` | `[{id,kind,display_name,role|access}]`; `workgroup_id` (only for scope `workgroup`, default own workgroup) selects another readable workgroup |
 | `list_tasks` | `{state?,limit?≤100,before?,workgroup_id?}` | tasks of the own workgroup or of the readable workgroup `workgroup_id` `[{id,title,state,owner_id,created_at,last_activity_at}]` |
@@ -826,6 +830,7 @@ operation's result (decrypted from its `operation.result` event) with `status:"d
 | `device.profile` | `{label}` |
 | `member.name` | `{display_name}`; header `ref` = the user or the invitation the name is for (ADR-073) |
 | `task.meta` | `{title,description?}`; header `session=""`, `ref=""` |
+| `task.agent_name` | `{name}` (1–80 characters on one line, or null = automatic name); header `session=""`, `ref=""` (KOR-52, ADR-095 §2) |
 | `prompt` | `{text,attachments:[]}` (attachments reserved, empty in v1); header `session=""`, `ref=""` (prompts address the task) |
 | `whiteboard.entry` | `{level,text}` (Markdown, ≤ 64 KiB) |
 | `whiteboard.edit` | `{text,base_event_id}` |

@@ -27,6 +27,9 @@
     },
     "wg": {
       "$ref": "../common.json#/$defs/uuid"
+    },
+    "on_behalf_of": {
+      "$ref": "../common.json#/$defs/uuid"
     }
   },
   "additionalProperties": false

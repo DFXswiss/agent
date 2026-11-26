@@ -34,7 +34,8 @@ SIGNAL = "task.state"
 
 @dataclass(frozen=True)
 class Actor:
-    """Who causes a change: a user, a device or the hub itself (audit `actor_kind`, transition `by_id`)."""
+    """Who causes a change: a user, a device, an agent (a session, ADR-095) or the hub itself (audit `actor_kind`,
+    transition `by_id`)."""
 
     kind: str
     id: UUID | None = None
@@ -79,8 +80,9 @@ def audit(
     session_id: UUID | None = None,
     device_id: UUID | None = None,
     target: tuple[str, UUID] | None = None,
+    on_behalf_of: UUID | None = None,
 ) -> None:
-    """One audit row of the tasks area (metadata only)."""
+    """One audit row of the tasks area (metadata only; `on_behalf_of` for an agent actor, ADR-095 section 4)."""
     kind, target_id = target or ("task", task.id)
     append_audit(
         connection,
@@ -98,6 +100,7 @@ def audit(
             target_kind=kind,
             target_id=str(target_id),
             detail=detail,
+            on_behalf_of=on_behalf_of,
         ),
     )
 

@@ -16,6 +16,11 @@ A row written while the request of an agent is processed (ADR-056) carries the a
 pipeline sets `ACTING_AGENT` for the request, and `append_audit` fills it into a row that names no agent itself. The
 hashed row JSON contains the key `agent_id` only when it is set, so the hashes of rows written before (and of every
 row without an agent) are unchanged.
+
+What a session does is attributed to its agent (ADR-095 section 4, KOR-52): `actor_kind` `main_agent` or `subagent`
+with the session as `actor_id`, and `on_behalf_of` the person whose instruction it followed. Like `agent_id`, the key
+`on_behalf_of` is part of the hashed row only when it is set, so every row written before keeps its hash; any other
+actor kind with a person is refused.
 """
 
 from __future__ import annotations
@@ -43,9 +48,21 @@ HASH_LABEL = "agent-audit-v1"
 NO_PREVIOUS = "-"
 READ_BATCH = 1000
 
-ACTOR_KINDS = frozenset({"user", "device", "session", "hub", "operator", "anonymous"})
+ACTOR_KINDS = frozenset({"user", "device", "session", "hub", "operator", "anonymous", "main_agent", "subagent"})
 RESULTS = frozenset({"ok", "denied", "rejected", "duplicate", "failed"})
-ID_FIELDS = ("actor_id", "org_id", "wg_id", "task_id", "session_id", "device_id", "event_id", "agent_id")
+AGENT_ACTORS = frozenset({"main_agent", "subagent"})
+"""The actor kinds that act on behalf of a person (`on_behalf_of`, ADR-095 section 4)."""
+ID_FIELDS = (
+    "actor_id",
+    "org_id",
+    "wg_id",
+    "task_id",
+    "session_id",
+    "device_id",
+    "event_id",
+    "agent_id",
+    "on_behalf_of",
+)
 ACTING_AGENT: ContextVar[UUID | None] = ContextVar("agent_hub_acting_agent", default=None)
 """The agent whose request is being processed (set by the request pipeline, ADR-056)."""
 MAX_DETAIL_KEYS = 32
@@ -67,7 +84,7 @@ DetailValue = str | int | bool | None
 
 _COLUMNS = (
     "seq, at, actor_id, actor_kind, action, result, org_id, wg_id, task_id, session_id, device_id, target_kind,"
-    " target_id, detail, event_id, prev_hash, hash, agent_id"
+    " target_id, detail, event_id, prev_hash, hash, agent_id, on_behalf_of"
 )
 
 
@@ -98,6 +115,8 @@ class AuditRow:
     detail: Mapping[str, DetailValue] = field(default_factory=dict)
     event_id: UUID | None = None
     agent_id: UUID | None = None
+    on_behalf_of: UUID | None = None
+    """The person a `main_agent`/`subagent` actor acted for (ADR-095 section 4)."""
 
 
 @dataclass(frozen=True)
@@ -147,6 +166,8 @@ def validate_row(row: AuditRow) -> None:
         raise AuditRowInvalid("action")
     if row.result not in RESULTS:
         raise AuditRowInvalid("result")
+    if row.on_behalf_of is not None and row.actor_kind not in AGENT_ACTORS:
+        raise AuditRowInvalid("on_behalf_of")
     for name in ID_FIELDS:
         value = getattr(row, name)
         if value is not None and (not isinstance(value, UUID) or value.version != UUID_VERSION):
@@ -176,8 +197,8 @@ def _id_text(value: UUID | None) -> str | None:
 
 
 def row_json(seq: int, row: AuditRow) -> dict[str, Any]:
-    """The audit row without its hash fields, as the API returns it and as the hash covers it (`agent_id` only when
-    set)."""
+    """The audit row without its hash fields, as the API returns it and as the hash covers it (`agent_id` and
+    `on_behalf_of` only when set)."""
     found: dict[str, Any] = {
         "seq": seq,
         "at": format_time(to_millis(row.at)),
@@ -197,6 +218,8 @@ def row_json(seq: int, row: AuditRow) -> dict[str, Any]:
     }
     if row.agent_id is not None:
         found["agent_id"] = str(row.agent_id)
+    if row.on_behalf_of is not None:
+        found["on_behalf_of"] = str(row.on_behalf_of)
     return found
 
 
@@ -237,7 +260,7 @@ def append_audit(connection: psycopg.Connection[Any], row: AuditRow) -> StoredAu
         digest = audit_hash(seq, stored_row, prev_hash)
         connection.execute(
             f"INSERT INTO hub.audit ({_COLUMNS})"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 seq,
                 stored_row.at,
@@ -257,6 +280,7 @@ def append_audit(connection: psycopg.Connection[Any], row: AuditRow) -> StoredAu
                 prev_hash,
                 digest,
                 stored_row.agent_id,
+                stored_row.on_behalf_of,
             ),
         )
     note(seq, digest, stored_row.result)
@@ -280,6 +304,7 @@ def _stored(record: Sequence[Any]) -> StoredAudit:
         detail=record[13],
         event_id=record[14],
         agent_id=record[17],
+        on_behalf_of=record[18],
     )
     return StoredAudit(seq=int(record[0]), row=row, prev_hash=record[15], hash=record[16])
 

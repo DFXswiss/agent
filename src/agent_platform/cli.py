@@ -27,6 +27,7 @@ from agent_platform import (
     claude,
     diagnose,
     lookup,
+    mainagents,
     membership,
     modelaccess,
     names,
@@ -364,13 +365,14 @@ def cmd_device_assign(account: Account, args: argparse.Namespace, context: Conte
 
 def cmd_task_list(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
     if args.org is not None:
-        if args.state is None:
+        if args.state is None or args.by_person:
             raise PlatformError("invalid_argument")
         limit = attention.LIST_DEFAULT if args.limit is None else args.limit
         return attention.task_list(account, args.org, args.state, mine=args.mine, limit=limit)
     if args.state not in (None, *tasks.STATES) or args.mine:
         raise PlatformError("invalid_argument")
-    return tasks.task_list(account, args.wg, args.state)
+    listed = tasks.task_list(account, args.wg, args.state)
+    return mainagents.by_person(account, listed) if args.by_person else listed
 
 
 def cmd_task_create(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -564,7 +566,10 @@ def _task_commands(tree: Tree) -> None:
         with_account(cmd_task_list),
         "tasks of a workgroup, or of an org by attention",
         example="agent-platform task list --wg <wg_id> [--state open|closed]",
-        words="aufgabenliste aufgaben liste arbeitsgruppe titel hängt läuft tasks all stuck running needs-decision",
+        words=(
+            "aufgabenliste aufgaben liste arbeitsgruppe titel hängt läuft nach person verantwortlich tasks all stuck"
+            " running needs-decision by person responsible"
+        ),
         then="agent-platform task show --task <task_id>",
         trim="first",
     )
@@ -573,6 +578,7 @@ def _task_commands(tree: Tree) -> None:
     where.add_argument("--org", help="one category of the org's situation view (--state needs-decision|...)")
     sub.add_argument("--state", choices=[*tasks.STATES, *attention.CATEGORIES])
     sub.add_argument("--mine", action="store_true", help="with --org: only tasks the user owns")
+    sub.add_argument("--by-person", action="store_true", help="with --wg: grouped by the responsible person")
     sub = tree.add(
         group,
         "create",

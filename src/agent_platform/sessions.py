@@ -258,7 +258,7 @@ def _cursor(before: str | None) -> dict[str, str]:
     return {} if before is None else {"before": before}
 
 
-def _metas(account: Account, org: str, wg: str) -> dict[str, tuple[str | None, str | None]]:
+def metas(account: Account, org: str, wg: str) -> dict[str, tuple[str | None, str | None]]:
     """Per task: the newest verified title and the author of the first user-written `task.meta`."""
     log = account.org_log(org)
     items, _last = pull(account, wg, {"kinds": "task.meta"})
@@ -282,9 +282,9 @@ def task_overview(account: Account, org: str, state: str | None, mine: bool, sea
     names = account.names(org).workgroups
     merged: list[dict[str, Any]] = []
     for wg in readable:
-        metas = _metas(account, org, wg)
+        metas_of = metas(account, org, wg)
         for row in _wg_tasks(account, wg, state):
-            title, owner = metas.get(str(row.get("task_id")), (None, None))
+            title, owner = metas_of.get(str(row.get("task_id")), (None, None))
             merged.append(
                 {
                     "task_id": row.get("task_id"),

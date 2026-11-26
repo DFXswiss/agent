@@ -165,7 +165,8 @@ TABLES = {
     # 0006 (RUN-09): the last response number of a device request
     "device_request": ["id", "kind", "user_id", "state", "updated_at", "last_seq"],
     # 0002 (RUN-04): latest profile events for the harness context of a session; 0009 (KOR-03): keyed per scope
-    "profile_event": ["kind", "org_id", "object_id", "event_id", "ts", "author_sig", "sealed", "scope_id"],
+    # 0036 (KOR-52, ADR-095) adds scope_seq (the position that decides the newest task.agent_name)
+    "profile_event": ["kind", "org_id", "object_id", "event_id", "ts", "author_sig", "sealed", "scope_id", "scope_seq"],
     # 0003 (RUN-05): verified prompt events of the device's workgroups
     # 0016 (HOT-14) adds author_id
     "prompt_event": [

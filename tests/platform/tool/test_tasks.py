@@ -47,6 +47,9 @@ def test_create_list_prompt_show(tool: Tool, hub: HubFake, account: User) -> Non
             "task_id": task,
             "state": "scheduling",
             "title": "Fix the login bug",
+            "number": 1,
+            "agent": "Fix the login bug #1",
+            "name_source": "automatic",
             "created_at": listed["tasks"][0]["created_at"],
             "last_activity_at": listed["tasks"][0]["last_activity_at"],
         }
@@ -129,8 +132,8 @@ def test_refusals_and_malformed_answers(tool: Tool, hub: HubFake, account: User)
     hub.hooks[("GET", f"/v1/workgroups/{wg}/tasks")] = lambda body, request: (200, {"tasks": ["x"]})
     assert tool.run("task", "list", "--wg", wg)[1]["tasks"] == []
     del hub.hooks[("GET", f"/v1/workgroups/{wg}/tasks")]
-    # paging: a second page after `next_after`
-    pages = iter([(200, {"events": [], "next_after": 5}), (200, {"events": [], "next_after": None})])
+    # paging: a second page after `next_after` (then the one page of the main agent's name, KOR-52)
+    pages = iter([(200, {"events": [], "next_after": 5}), *[(200, {"events": [], "next_after": None})] * 2])
     hub.hooks[("GET", f"/v1/scopes/{wg}/events")] = lambda body, request: next(pages)
     assert tool.run("task", "show", "--task", task)[1]["events"] == []
 
