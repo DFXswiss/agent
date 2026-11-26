@@ -2634,6 +2634,25 @@
       "owner": "KOR-41"
     },
     {
+      "method": "PUT",
+      "path": "/v1/tasks/{task}/fields",
+      "name": "task-fields-put",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "task:write"
+      ],
+      "path_params": {
+        "task": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/task-fields-put.request.json",
+      "response": "api/task-fields-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-75"
+    },
+    {
       "method": "GET",
       "path": "/v1/platform/waiting",
       "name": "platform-waiting",

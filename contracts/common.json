@@ -447,6 +447,25 @@
         "closed"
       ]
     },
+    "task_status": {
+      "type": "string",
+      "description": "the ticket status of a task (ADR-100 section 1): todo before an agent started, inProgress, completed exactly when closed",
+      "enum": [
+        "todo",
+        "inProgress",
+        "completed"
+      ]
+    },
+    "task_urgency": {
+      "type": "string",
+      "description": "the urgency of a task (ADR-100 section 1); default normal",
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "urgent"
+      ]
+    },
     "attention_category": {
       "type": "string",
       "description": "category of a task's attention record (ADR-076, contracts/enums/attention.json)",
@@ -507,6 +526,7 @@
         "member.profile",
         "device.profile",
         "member.name",
+        "topic.profile",
         "whiteboard.entry",
         "whiteboard.edit",
         "whiteboard.delete",
@@ -1001,6 +1021,7 @@
             "member.profile",
             "device.profile",
             "member.name",
+            "topic.profile",
             "whiteboard.entry",
             "whiteboard.edit",
             "whiteboard.delete",

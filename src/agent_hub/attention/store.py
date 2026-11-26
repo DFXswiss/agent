@@ -266,7 +266,10 @@ def attention_json(row: tuple[Any, ...]) -> dict[str, Any]:
 
 
 def refresh(connection: Connection, task_id: UUID | str, now: datetime, effects: Effects) -> bool:
-    """Derive and store the record of a task in the caller's transaction (module docstring); whether it changed."""
+    """Derive and store the record of a task in the caller's transaction (module docstring); whether it changed. A
+    task without any session (captured, never started; ADR-100 section 6) has no record."""
+    if connection.execute("SELECT 1 FROM hub.session WHERE task_id = %s LIMIT 1", (task_id,)).fetchone() is None:
+        return False
     locked = _lock(connection, task_id, now)
     if locked is None:
         return False

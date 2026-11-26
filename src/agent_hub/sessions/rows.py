@@ -17,7 +17,9 @@ ADR-094 section 1): a child without one works with what its parent has. The hand
 task row names the task's `number` in its organization and `name_event_id`, the newest `task.agent_name` event of the
 task (the main agent's name, null without one); a session row its `agent_path` (null for a main session).
 `analysis` marks an analysis task with its scope and period (`{scope, since, until}`, null for every other task;
-ADR-097 section 1).
+ADR-097 section 1). The ticket fields of ADR-100 (E-41): `status` (`todo`, `inProgress`, `completed`), `urgency`
+(`low`, `normal`, `high`, `urgent`), `assignee_id` (the responsible user, null without one) and `topic_id` (the topic,
+null without one); a captured task has no session, so its `main_session_id` is null.
 """
 
 from __future__ import annotations
@@ -49,6 +51,10 @@ TASK_FIELDS = (
     "number",
     "name_event_id",
     "analysis",
+    "status",
+    "urgency",
+    "assignee_id",
+    "topic_id",
 )
 TASK_COLUMNS = (
     "t.id, t.org_id, t.wg_id, t.owner_id, t.state, t.state_reason, t.created_at, t.state_at, t.last_activity_at,"
@@ -59,7 +65,7 @@ TASK_COLUMNS = (
     " t.github_identity, t.agent_profile, t.number,"
     " (SELECT e.id FROM hub.event e WHERE e.task_id = t.id AND e.kind = 'task.agent_name'"
     " ORDER BY e.scope_seq DESC LIMIT 1),"
-    " t.analysis, t.placement_device_id, t.placement_vm_id"
+    " t.analysis, t.status, t.urgency, t.assignee_id, t.topic_id, t.placement_device_id, t.placement_vm_id"
 )
 """The task columns: `TASK_FIELDS`, then the chosen device and VM (ADR-075; `placement` only when one is chosen)."""
 SESSION_FIELDS = (

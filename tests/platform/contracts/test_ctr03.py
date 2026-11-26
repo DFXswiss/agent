@@ -175,7 +175,8 @@ def test_event_kinds_table(contracts: Contracts) -> None:
         assert row["max_ct_bytes"] == limits.get(row["kind"], limits["default_ct_bytes"]), row
         # devices pull every kind but the watched kinds and the admin-given names (ADR-073: the sessions name members
         # from their own profiles; 13-work-vm.md section 13.6: the watched kinds)
-        not_pulled = {"session.terminal", "browser.action", "member.name", "support.info"}  # support.info: ADR-096
+        # support.info: ADR-096; topic.profile: ADR-100 (sessions need no topic names)
+        not_pulled = {"session.terminal", "browser.action", "member.name", "support.info", "topic.profile"}
         assert row["device_pull"] is (row["kind"] not in not_pulled), row
         assert row["body"] == f"events/{row['kind']}.json"
         assert row["body"] in contracts.schemas

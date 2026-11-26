@@ -1,5 +1,5 @@
 {
-  "description": "Every event kind of 03-api.md section 10 with its body schema, the scopes and author kinds of enums/event-kinds.json (04-crypto.md section 4.3) and the ciphertext limit (E8). device_pull: delivered by GET /v1/device/pull (every kind except the watched kinds session.terminal and browser.action, member.name and support.info, 03-api.md section 6.1, ADR-073, ADR-096).",
+  "description": "Every event kind of 03-api.md section 10 with its body schema, the scopes and author kinds of enums/event-kinds.json (04-crypto.md section 4.3) and the ciphertext limit (E8). device_pull: delivered by GET /v1/device/pull (every kind except the watched kinds session.terminal and browser.action, member.name, support.info and topic.profile, 03-api.md section 6.1, ADR-073, ADR-096, ADR-100).",
   "kinds": [
     {
       "kind": "org.profile",
@@ -52,6 +52,18 @@
     {
       "kind": "member.name",
       "body": "events/member.name.json",
+      "scopes": [
+        "org"
+      ],
+      "authors": [
+        "user"
+      ],
+      "max_ct_bytes": 262144,
+      "device_pull": false
+    },
+    {
+      "kind": "topic.profile",
+      "body": "events/topic.profile.json",
       "scopes": [
         "org"
       ],

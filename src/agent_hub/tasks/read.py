@@ -5,7 +5,8 @@
   task list (`agent_hub.device.tasks.encode_cursor`: b64u of canonical `{"at": <microseconds>, "id"}`). With
   `order="activity"` (KOR-32) the order is the latest activity (`last_activity_at DESC, id DESC`) and the cursor holds
   the last activity of the page's last row instead of its creation time (the task overview of the web client merges
-  the lists of several workgroups by activity and pages each with its own cursor).
+  the lists of several workgroups by activity and pages each with its own cursor). The ticket filters of ADR-100
+  (`status`, `urgency`, `assignee`, `topic`; `none` for tasks without a person or topic) combine with the state.
 - `get_task(task)`: the task row, its sessions as a tree order (depth, creation), each with its usage and its newest
   100 transitions, and the newest 100 task transitions.
 - `get_session(session)`: the session row, its newest 1000 transitions, usage, VM and the IDs of its first 1000
@@ -16,6 +17,7 @@ Rows hold metadata only; the title and every content stay in events.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -36,6 +38,34 @@ CHILDREN_MAX = 1000
 
 ORDERS = {"created": ("t.created_at", 6), "activity": ("t.last_activity_at", 8)}
 """List orders: the time column and its index in `rows.TASK_COLUMNS` (the cursor's time)."""
+NONE = "none"
+
+
+@dataclass(frozen=True)
+class TicketFilter:
+    """The ticket filters of a list (ADR-100 section 5): a status, an urgency, a person and a topic (an ID, or `none`
+    for tasks without one); None filters nothing."""
+
+    status: str | None = None
+    urgency: str | None = None
+    assignee: UUID | str | None = None
+    topic: UUID | str | None = None
+
+    def clauses(self) -> tuple[list[str], list[Any]]:
+        """The SQL conditions over `hub.task t` and their parameters."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        for column, value in (("status", self.status), ("urgency", self.urgency)):
+            if value is not None:
+                clauses.append(f"t.{column} = %s")
+                params.append(value)
+        for column, value in (("assignee_id", self.assignee), ("topic_id", self.topic)):
+            if value == NONE:
+                clauses.append(f"t.{column} IS NULL")
+            elif value is not None:
+                clauses.append(f"t.{column} = %s")
+                params.append(value)
+        return clauses, params
 
 
 def list_tasks(
@@ -46,6 +76,7 @@ def list_tasks(
     before: str | None,
     limit: int,
     order: str = "created",
+    ticket: TicketFilter | None = None,
 ) -> dict[str, Any]:
     """The tasks of a workgroup, newest first (module docstring); the caller checked `wg:read`."""
     column, at_index = ORDERS[order]
@@ -54,6 +85,9 @@ def list_tasks(
     if state is not None:
         clauses.append("t.state = %s")
         params.append(state)
+    more, values = (ticket or TicketFilter()).clauses()
+    clauses += more
+    params += values
     if before is not None:
         at, task = decode_cursor(before)
         clauses.append(f"({column}, t.id) < (%s, %s)")

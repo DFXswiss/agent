@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/task.fields.json",
+  "title": "audit detail task.fields",
+  "description": "detail of audit rows with action task.fields: the ticket fields of a task changed (ADR-100 section 5); each changed field with its new value, codes and IDs only. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "status": {
+      "$ref": "../common.json#/$defs/task_status"
+    },
+    "urgency": {
+      "$ref": "../common.json#/$defs/task_urgency"
+    },
+    "assignee_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "topic_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

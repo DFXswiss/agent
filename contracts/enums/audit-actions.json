@@ -922,6 +922,10 @@
       "group": "task"
     },
     {
+      "action": "task.fields",
+      "group": "task"
+    },
+    {
       "action": "read.me.github_identities",
       "group": "read"
     },

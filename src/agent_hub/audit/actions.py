@@ -29,6 +29,7 @@ AUDIT_ACTIONS = frozenset(
         "read.device.subscription",
         "read.device.subscriptions",
         "task.github_identity",
+        "task.fields",
         "task.model_consent",
         "session.model_switched",
         "session.interrupted",

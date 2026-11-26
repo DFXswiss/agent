@@ -425,6 +425,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "member.profile",
                         "device.profile",
                         "member.name",
+                        "topic.profile",
                         "whiteboard.entry",
                         "whiteboard.edit",
                         "whiteboard.delete",
@@ -1972,6 +1973,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "member.profile",
                         "device.profile",
                         "member.name",
+                        "topic.profile",
                         "whiteboard.entry",
                         "whiteboard.edit",
                         "whiteboard.delete",
@@ -2016,8 +2018,24 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "origin": [{"type": "string", "enum": ["browser", "device"]}],
             "analysis": [{"type": "string", "enum": ["org", "wg"]}],
+            "captured": [{"type": "boolean", "enum": [True]}],
         },
         "required": ["origin"],
+    },
+    "task.fields": {
+        "properties": {
+            "status": [{"type": "string", "enum": ["todo", "inProgress", "completed"]}],
+            "urgency": [{"type": "string", "enum": ["low", "normal", "high", "urgent"]}],
+            "assignee_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "topic_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
+        "required": [],
     },
     "task.github_identity": {
         "properties": {

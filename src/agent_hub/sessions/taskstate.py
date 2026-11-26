@@ -128,6 +128,10 @@ def _write_state(
     return TaskRow(task.id, task.org_id, task.wg_id, task.owner_id, state, reason)
 
 
+write_state = _write_state
+"""Write a task state with its transition (a captured task reopened by its status, ADR-100 section 5)."""
+
+
 def _main_session(connection: Connection, task_id: UUID) -> MainSession | None:
     row = connection.execute(
         f"SELECT state, state_reason, device_id IS NOT NULL, {INTERRUPTED_SQL} FROM hub.session"
