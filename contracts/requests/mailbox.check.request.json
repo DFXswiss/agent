@@ -2,9 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/requests/mailbox.check.request.json",
   "title": "device request body mailbox.check",
-  "description": "no parameters",
+  "description": "no parameters: the user's single mailbox credential; with subscription_id (KOR-73) the own mailbox of that further subscription",
   "type": "object",
-  "properties": {},
+  "properties": {
+    "subscription_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
   "required": [],
   "additionalProperties": false
 }

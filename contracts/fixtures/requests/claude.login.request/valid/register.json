@@ -1,5 +1,13 @@
 {
   "mode": "automatic",
   "subscription_id": "01930060-0000-7000-8000-000000000061",
-  "account": {"name": "Ada Example", "birth_date": "1990-04-01", "consents": ["terms", "age"]}
+  "account": {
+    "name": "Ada Example",
+    "birth_date": "1990-04-01",
+    "consents": [
+      "terms",
+      "age"
+    ]
+  },
+  "extended": true
 }

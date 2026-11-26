@@ -41,14 +41,22 @@ Status: Accepted (2026-11-26)
 - A **new login** of the subscription (`subscriptions login --id … --automatic`, "Jetzt anmelden") reads the same
   record and therefore its own mailbox – for every subscription, not only the last one.
 - The mailbox of an existing subscription is set or changed by the owner's client (`subscriptions mailbox`, the
-  subscription card in the web) as a new record version; `mailbox.check` keeps checking the single mailbox.
+  subscription card in the web) as a new record version; `mailbox.check {subscription_id}` checks the own mailbox of
+  that subscription (without it the single mailbox, as before).
+- Who opens the mailbox password: whoever opens the record – the owner's clients and the devices eligible for the
+  owner's `CK` – exactly as for the token in the same body; it never reaches a guest, a log or the hub.
+- A runner from before keeps only name, note and use on a new login (its `KEPT`) and would drop `mailbox`: clients
+  send the login of a record with `mailbox` only to a device that announced `subscriptions.parallel` (§7).
 
 ### 2. Logins side by side
 - **Hub:** `POST /v1/device-requests` takes an optional plaintext `slot` (a UUID; for `claude.login` the
   subscription record it fills – the hub sees record IDs anyway). An active root is replaced only by a new root of
   the same user, device, kind **and slot** (`device_request.slot`, hub migration); roots without slot behave as
-  before (the primary record's login stays one at a time). There is no other limit of parallel requests.
-- **Runner:** at most one flow per owner, kind and slot is active; the slot of `claude.login` is the
+  before (the primary record's login stays one at a time; a root without slot never replaces one with a slot and vice
+  versa). The hub sets no further limit.
+- **Runner:** at most one flow per owner, kind and slot is active, and at most `MAX_SLOTS` (40, `MAX_SUBSCRIPTIONS`)
+  slots per owner and kind (a further root is answered `busy`, so one user cannot queue unbounded logins on a
+  device); the slot of `claude.login` is the
   `subscription_id` of the **decrypted** body, never the hub's plaintext (a hub that lies about the slot can only make
   the owner's own logins replace or not replace each other, which it can do anyway by not delivering).
 - Every login has its own working directory (`tmp/login-<request>`, PTY, `HOME`, `CLAUDE_CONFIG_DIR`; 05-runner
@@ -59,7 +67,7 @@ Status: Accepted (2026-11-26)
   device's capacity (§3), never a fixed number.
 
 ### 3. Every login in its own sandbox
-- `LOGIN_SANDBOX` (runner setting, `auto` default, `vm`, `process`):
+- `LOGIN_SANDBOX` (runner setting, `vm` default, `process`):
   - **`vm`** – a **login VM**: a `runner.workvm` row of the new scope `login` (runner migration), one per login,
     obtained like a browser VM of ADR-085 §2 (warm pool, FIFO capacity queue, slot, RAM, disk, the outside boundary
     of the work VMs) and driven through the same helper (`workvm-browser call`: navigate, evaluate, type, click –
@@ -70,8 +78,10 @@ Status: Accepted (2026-11-26)
     (`restart`). The login's request ID is its `session_id` column.
   - **`process`** – a headless Chromium of the device (the `login` extra) with its own profile directory below the
     login's working directory, one process per login, removed with that directory. For devices without work VMs and
-    for the hermetic end-to-end topology, whose doubles a VM cannot reach (the VM's boundary).
-  - **`auto`** – `vm` when the device offers work VMs, else `process`.
+    for the hermetic end-to-end topology, whose doubles a VM cannot reach (the VM's boundary). Only when set
+    explicitly: it is a separate browser process, not a VM (a deviation from the package's "one VM per browser
+    session", accepted for devices without work VMs and the hermetic tests). A device with `vm` but without work VMs
+    gives the automation up (`no_sandbox`, the relay).
 - Both sandboxes answer the same four calls (`goto`, `evaluate`, `type`, `click` at a target or a point) with the
   page's URL and, on request, its picture (JPEG, at most 100 KiB, the ladder of ADR-085 §4). The automation (§4) is
   one code path over both.
@@ -93,18 +103,28 @@ Status: Accepted (2026-11-26)
   of `navigator.webdriver`, of the automation flags), no solver, no third-party service, no repetition to wear the
   check down. When the classification says `challenge`, the login **pauses** and hands the check to its owner:
   - the device answers `verify {frame, image}` – the sandbox's picture, sealed to the requester like every response
-    (the hub sees neither picture nor address) – and keeps sending a new picture after each click (after 1.5 s and
-    5 s) and while waiting every 5 s when the picture changed, at most `VERIFY_FRAMES` (40) per login, so a login
-    stays within the hub's 100 responses per request;
+    (the hub sees neither picture nor address) – and keeps the picture live: every `VERIFY_TICK` (2 s) it looks at the
+    sandbox and sends a new picture when it changed, and after each click at once when the page settled; at most
+    `VERIFY_FRAMES` (80) pictures per login, so a login stays within the hub's 100 responses per request (the rest is
+    progress and the end). When the pictures are used up, the automation gives up (`human_check`). This is the live
+    picture of the login, not the frame route of ADR-085 §6: a login has no workgroup and no session, and the
+    responses are already sealed to the owner;
   - the owner clicks into the picture; the client sends the follow-up `{click: {x, y}}` (fractions of the picture)
     and the device clicks that point of the sandbox's viewport – the owner does the check, the platform only carries
-    the click (like a remote screen);
+    the click (like a remote screen). **Only the user's own identity may click** (the passkey browser, or the agent
+    tool signing as the user): a click of the user's agent (ADR-082 own identity) is ignored and logged
+    (`click_refused`), so no model answers a check for humans; `{relay: true}` may come from either;
   - when the check is gone, the login continues (`progress verified`); `{relay: true}` from the owner, or no click
     within `VERIFY_WAIT` (180 s), gives the automation up: the device answers `authorize` with the link
     (`automation: "failed"`, `reason: "human_check"`) and the login continues as the relay in the owner's own
     browser, exactly as before.
 - Without the owner nothing waits longer than `VERIFY_WAIT`; every other unexpected state falls back to the relay at
-  once with its `reason` (`unknown_page`, `mail_timeout`, `browser_failed`, `no_sandbox`, `disabled`).
+  once with its `reason` (`unknown_page`, `mail_timeout`, `browser_failed` – also a missing extra or a code of the
+  wrong form –, `no_sandbox`, `disabled`).
+- **Older clients**: the web parser and the agent tool from before accept only the known steps, stages and fields. A
+  client that understands `verify`, `reason` and the new stages says so with `extended: true` in the root body; to
+  any other request the device sends none of them (the new stages are left out, `reason` is omitted) and a check for
+  humans falls back to the relay at once.
 - **What is possible without circumvention and what is not:**
   - possible: the e-mail, link, code, registration and authorize pages are driven; a check that a human passes with a
     click in the picture passes, because the click is a human's;
@@ -116,8 +136,13 @@ Status: Accepted (2026-11-26)
 
 ### 5. Registration
 - `claude.login` (automatic) takes `account {name, birth_date?, consents?}` – data of a new account, used only when
-  the provider asks for it on the `register` page, never stored, never logged. `consents` lists only what the owner
-  gave explicitly: `terms` (terms of use and privacy policy), `age` (the minimum age), `marketing` (product e-mails).
+  the provider asks for it on the `register` page, never stored, never logged. `consents` lists only what was given
+  explicitly: `terms` (terms of use and privacy policy), `age` (the minimum age), `marketing` (product e-mails).
+- **Whose consent:** the account belongs to the person whose address it is, who may not be the platform user. The
+  clients ask for each consent with the statement that the account holder gave it (unticked by default), and the
+  signed request is the record of who declared it and when; the platform user acts as that person's agent and is
+  responsible for having the consent, as with every account created for someone else. Whether the provider allows
+  accounts to be created for another person is the provider's terms; the platform neither checks nor promises it.
 - On the `register` page the automation fills the name and the date of birth (a date input, or day, month and year
   inputs) and ticks **only** the boxes whose consent the owner gave (classified by their label text). A box it must
   tick for the page to continue but cannot classify, or whose consent is missing, ends the automation
@@ -135,21 +160,40 @@ Status: Accepted (2026-11-26)
   that may use it are named at adding time (`use.orgs` of the record written before the login, with the mirror, E-31);
   without them it is measured only.
 
+### 7. Feature, older clients and older runners
+- **Feature `subscriptions.parallel`** (ADR-060 decision 6): a runner that keys logins by slot, reads the record's
+  mailbox, understands `account`, `extended`, `click`, `relay` and `mailbox.check {subscription_id}` announces it.
+  Clients send `slot`, `account`, `extended`, a record with `mailbox` (also its new login) and several logins at once
+  only to a device that announced it; with an older device they keep the single login of ADR-090 (one at a time, the
+  single mailbox).
+
+### 8. Tests
+- The auth-page double (DBL-03) gains the real shapes (§4), a code in the sign-in mail, a registration page for new
+  addresses and a page with a check for humans whose box passes only when clicked at its place.
+- Runner: five logins at once with five records and five mailboxes in one run, each in its own sandbox (the real
+  browser helper, one per login); a new login of a subscription from its own mailbox; registration with and without
+  the needed consent; the check for humans (picture, click, continue; no click → relay; an agent's click ignored);
+  slots in the request service and at the hub; the login VM (scope, capacity, teardown, no billing).
+- Web: adding several subscriptions with progress per subscription, the check for humans and the relay fallback
+  (Playwright). Agent tool: `add` with mailbox, `add-many`, `mailbox`, `check`.
+- No live test against the provider in the suite.
+
 ## Consequences
 - The hub additionally sees which subscription a `claude.login` is for (`slot`, a record ID it already knew) and how
   many logins run at once; never a mailbox, address, name, picture or click position.
-- The login VM is a work VM without an owner limit: a user who starts many logins fills the device's capacity queue
+- **Deviation from ADR-085 §2/§6:** a login VM holds, for the minutes of one login, the sign-in link and the
+  session of one provider account (ADR-085: a browser VM holds no credential) and takes clicks into its picture
+  (ADR-085: the live view has no input path). Both end with the login: the VM is deleted, the token is created by the
+  login program on the device, never in the VM.
+- The login VM is a work VM without an organization limit: a user who starts many logins fills the device's capacity queue
   like many browser sessions; the queue's time limit applies. Each login VM lives from the start of the automation to
   its end (typically one to three minutes; at most the request's 15 minutes).
 - The picture of a check page reaches the owner's browser or agent tool only, sealed like every response. It shows
   what the sandbox shows (the provider's page, the address typed in).
 - A record with `mailbox` is refused by a web client from before (its closed field list); web and hub are deployed
   together. The agent tool keeps unknown fields (ADR-092 §1).
-- **Feature `subscriptions.parallel`** (ADR-060 decision 6): a runner that keys logins by slot, reads the record's
-  mailbox, understands `account`, `verify`, `click` and `relay` announces it. Clients send `slot`, `account`, a record
-  with `mailbox` and several logins at once only to a device that announced it; with an older device they keep the
-  single login of ADR-090 (one at a time, the single mailbox).
-- Roll-out: hub first (accepts `slot`), then runners, then the clients (web with the hub).
+- Roll-out: hub with the web first (the hub accepts `slot`; the web uses it only with a device that announced the
+  feature), then runners, then the agent tool.
 
 ## Alternatives considered
 - A `mailbox` credential per subscription with its own record kind and endpoints: one more kind, one more rotation

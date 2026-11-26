@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/requests/claude.login.request.json",
   "title": "device request body claude.login",
-  "description": "first request {mode} (manual = setup-token relay, automatic = mailbox automation in a login sandbox, 05-runner.md section 11.3) with, for a subscription record of ADR-090, subscription_id (the record to fill; a new ID creates it), name and note (taken for a new record, for an existing one only when given) and, for automatic, email (the address to sign in with when it is not the mailbox's own) and account (KOR-73: the data of a new Claude account when the address has none yet - name, birth date and the consents the owner gave explicitly; never stored); follow-up requests (header follows set): {code} (05-runner.md section 11.2), {click} (the owner's click into the picture of a human check, x and y as fractions of its width and height, KOR-73) and {relay: true} (give the automation up and continue with link and code)",
+  "description": "first request {mode} (manual = setup-token relay, automatic = mailbox automation in a login sandbox, 05-runner.md section 11.3) with, for a subscription record of ADR-090, subscription_id (the record to fill; a new ID creates it), name and note (taken for a new record, for an existing one only when given) and, for automatic, email (the address to sign in with when it is not the mailbox's own) extended (KOR-73: the client understands the new responses) and account (KOR-73: the data of a new Claude account when the address has none yet - name, birth date and the consents the owner gave explicitly; never stored); follow-up requests (header follows set): {code} (05-runner.md section 11.2), {click} (the owner's click into the picture of a human check, x and y as fractions of its width and height, KOR-73) and {relay: true} (give the automation up and continue with link and code)",
   "oneOf": [
     {
       "type": "object",
@@ -71,6 +71,11 @@
             "name"
           ],
           "additionalProperties": false
+        },
+        "extended": {
+          "type": "boolean",
+          "const": true,
+          "description": "the client understands the responses of KOR-73 (step verify, authorize.reason, the stages mail_code_received, registered and verified); without it the device sends none of them and a check for humans falls back to the relay at once"
         }
       },
       "required": [

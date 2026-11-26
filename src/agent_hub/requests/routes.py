@@ -3,7 +3,7 @@
 | Route | Right |
 |---|---|
 | `GET /v1/me/devices` | `user`: the devices eligible for the user's device requests and `CK` |
-| `POST /v1/device-requests` | `user`, the device in `GET /v1/me/devices`; with `org_id` an admin of that org |
+| `POST /v1/device-requests` | `user`, the device in `GET /v1/me/devices`; with `org_id` an admin of that org; `slot` (KOR-73) any UUID |
 | `GET /v1/device-requests/{id}` | `owner`: the user of the request |
 | `GET /v1/device/requests/{id}` | `device_addressed` |
 | `POST /v1/device/requests/{id}/responses` | `device_addressed` |
@@ -40,6 +40,7 @@ from agent_hub.requests import store
 from agent_hub.stream.publish import Audience, hint, publish
 
 router = HubRouter()
+UUID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 
 
 class EnvelopeBody(BaseModel):
@@ -50,11 +51,11 @@ class EnvelopeBody(BaseModel):
 
 
 class RequestBody(EnvelopeBody):
-    """Body of `POST /v1/device-requests`: the envelope and, for a company identity, the organization."""
+    """Body of `POST /v1/device-requests`: the envelope, for a company identity the organization, and the slot of a
+    root (KOR-73: the subscription a `claude.login` fills; roots of different slots run side by side)."""
 
-    org_id: (
-        Annotated[str, Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")] | None
-    ) = None
+    org_id: Annotated[str, Field(pattern=UUID_PATTERN)] | None = None
+    slot: Annotated[str, Field(pattern=UUID_PATTERN)] | None = None
 
 
 async def _in_transaction[T](context: HubContext, work: Callable[[Any], T]) -> T:
@@ -109,10 +110,13 @@ async def get_my_devices(context: Context, principal: CurrentPrincipal) -> dict[
 async def post_request(context: Context, principal: CurrentPrincipal, body: RequestBody) -> dict[str, Any]:
     user, now = user_id(principal), context.clock()
     org = None if body.org_id is None else UUID(body.org_id)
+    slot = None if body.slot is None else UUID(body.slot)
 
     def work(connection: Any) -> tuple[store.Created, list[Notification]]:
         sender = actor(principal)  # the user's own-identity agent signs as itself (ADR-082)
-        created = store.create_request(connection, user, body.envelope, now, org_id=org, sender=UUID(sender.id))
+        created = store.create_request(
+            connection, user, body.envelope, now, org_id=org, sender=UUID(sender.id), slot=slot
+        )
         if created.replayed:
             return created, []
         # an agent sent a device request (e.g. connect GitHub): the user is told (KOR-24)
