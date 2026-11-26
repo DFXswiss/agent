@@ -26,6 +26,15 @@ describe('addInput', () => {
     expect(addInput('id', FORM, false)).toMatchObject({ mode: 'manual' });
     expect(addInput('id', { ...FORM, automatic: true }, false)).toMatchObject({ mode: 'automatic' });
     expect(addInput('id', { ...FORM, name: '' }, false)).toBeNull();
+    expect(addInput('id', { ...FORM, note: 'for reviews' }, false)).toMatchObject({ note: 'for reviews' });
+    expect(addInput('id', { ...FORM, note: 'n'.repeat(501) }, false)).toBeNull();
+    expect(addInput('id', { ...FORM, automatic: true, email: 'no-at-sign' }, false)).toBeNull();
+    expect(
+      addInput('id', { ...FORM, automatic: true, email: `${'a'.repeat(64)}@${'b'.repeat(190)}` }, false),
+    ).toBeNull();
+    expect(addInput('id', { ...FORM, automatic: true, email: 'a@example.com' }, false)).toMatchObject({
+      email: 'a@example.com',
+    });
   });
 
   it('logs in by link and code without a mailbox and ignores account data then', () => {
