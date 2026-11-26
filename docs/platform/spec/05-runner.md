@@ -1319,6 +1319,41 @@ that an organisation requires SSO authorisation of the token (the URL of the hea
 Every GitHub request carries `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, timeout
 30 s, no redirects except for tarball downloads (to the codeload host of the configured web URL).
 
+### 12.2 Operations without a VM; `mail.find` (KOR-74, ADR-099)
+
+**Rule.** What can be a platform operation needs no VM. A session gets a work VM or a browser VM only for what really
+needs one (its own code, a build, a test, a page in a browser). Everything the device can do itself with a credential
+the session must not see - reading a mailbox, a GitHub call, asking a person - is an operation executed by the runner
+on the device, recorded and audited like every operation, with the credential opened on the device for that one use.
+A new need of sessions is checked against this rule before a VM tool is offered for it.
+
+`mail.find` (`agent_runner.mail`):
+- **Which mailbox.** `GET /v1/device/mailboxes?wg_id=<session's workgroup>` lists the candidates (the hub's plaintext
+  mirror). A record is used only when it verifies and opens under its owner's `CK`, its **sealed** `use.wgs` names the
+  session's workgroup and its owner has explicit `read`/`write` access there on the verified membership log now. The
+  session names it by `name` or ID; anything else is `not_found` with the names released there and the remedy
+  ("Its owner releases a mailbox in the settings under Mailboxes or with agent-platform mailbox release.").
+- **One look** (`mail.reader`, in a thread, one connection per look): implicit TLS on the mailbox's port with the
+  device's trust store, 30 s per connection and command; `LOGIN`; for `INBOX` and the spam folder (`\Junk` flag, else
+  its name) `EXAMINE`, `UID SEARCH` (`FROM`, `SUBJECT`, `SINCE`/`BEFORE` a day wider than asked), headers of the
+  newest 200 hits (`BODY.PEEK[HEADER]`, `INTERNALDATE`, `RFC822.SIZE`), the exact arrival window, the `limit` newest of
+  all folders; with `body` or `id` the mail up to 1 MiB (`BODY.PEEK[]` partial): the plain-text part or the HTML
+  reduced to text (at most 12 000 characters) and the distinct `http(s)` links (at most 20 of at most 2 000
+  characters); always `LOGOUT`. Nothing is marked read, moved, deleted or sent.
+- **Waiting.** `wait_seconds` > 0: a look every 5 s until a mail matches (arrived at or after `since`; without
+  `since` at or after two minutes before the request) or the wait ends (`messages: []`, `timed_out: true`, no
+  failure). The guest's `request_operation` waits `wait_seconds` + 20 s (at most 320 s) for this type, so the session
+  does not poll; a guest before 0.7.0 answers `pending` after 20 s as for every operation.
+- **Answer** at most 200 KiB (texts of the oldest answered mails are left out first, `text_truncated`).
+- **Failures**: `upstream_error` for a refused sign-in or command (the sentence never carries a server answer),
+  `timeout` (retryable) for a server that does not answer, `not_found` also for an `id` that is gone,
+  `hub_unreachable` (retryable) when the list cannot be read.
+- **Audit**: the outbox item `audit` `mail.read` (target `credential`/the mailbox ID) with `{operation_id, owner_id,
+  folder, count, waited_seconds, timed_out, result}` after every look that reached the mailbox - never an address,
+  subject, text, link or the password. The password lives only in the opened body for the operation and is cleared
+  after it; it is never logged.
+- Any number of `mail.find` run at once (each in its own thread and connection); no VM, slot or queue.
+
 ## 13. Subagents (ADR-088, ADR-038)
 
 - Created only after hub acceptance of `subagent.request` (the limits depth, running and total are settings of the

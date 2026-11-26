@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 
-from agent_platform import credentials, devicereq
+from agent_platform import credentials, creds, devicereq
 from agent_runner.crypto.credential import new_header, open_credential, seal_credential
 from agent_runner.crypto.encoding import body_json, parse_json
 from agent_runner.crypto.ids import uuid7
@@ -147,7 +147,7 @@ def test_add_retries_a_concurrent_write_once(tool: Tool, hub: HubFake, account: 
 def test_list_marks_records_that_do_not_open(tool: Tool, hub: HubFake, account: User) -> None:
     assert tool.run("mailbox", "list")[1]["mailboxes"] == []
     _org, _wg, device = assign_device(tool, hub, account)
-    good = add(hub, account.id, sealed(hub, account, body(name="b")), use=[WG])
+    good = add(hub, account.id, sealed(hub, account, body(name="b", use={"wgs": [WG]})), use=[WG])
     by_device = add(hub, account.id, sealed(hub, account, body(name="a", use={"wgs": [WG]}), author=device), use=None)
     codes = {
         add(hub, account.id, sealed(hub, account, body(extra=1))): "params_invalid",
@@ -284,3 +284,11 @@ def test_delete_removes_the_record(tool: Tool, hub: HubFake, account: User) -> N
 )
 def test_mailbox_bodies_follow_the_contract(extra: Json, valid: bool) -> None:
     assert credentials.valid_body("mailbox", body(**extra)) is valid
+
+
+def test_set_mailbox_keeps_the_name_purpose_and_release_of_the_primary_mailbox() -> None:
+    body: dict[str, Any] = {"imap_host": "imap.example.com"}
+    creds.keep_release(body, None, {"name": "login", "purpose": "p", "use": {"wgs": []}, "imap_host": "old"})
+    assert body == {"imap_host": "imap.example.com", "name": "login", "purpose": "p", "use": {"wgs": []}}
+    creds.keep_release(body, None, None)
+    assert body["name"] == "login"

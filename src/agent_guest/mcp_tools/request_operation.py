@@ -73,8 +73,7 @@ def wait_for(kind: str, params: dict[str, Any]) -> float:
     """How long the tool waits for the answer of an operation (module docstring)."""
     if kind != "mail.find":
         return WAIT_SECONDS
-    extra = params.get("wait_seconds", 0)
-    return min(WAIT_SECONDS + (extra if isinstance(extra, int) else 0), MAIL_WAIT_SECONDS)
+    return min(WAIT_SECONDS + float(params.get("wait_seconds", 0)), MAIL_WAIT_SECONDS)
 
 
 def _ask(call: ToolCall, body: dict[str, Any]) -> dict[str, Any] | None:

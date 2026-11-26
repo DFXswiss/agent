@@ -958,6 +958,15 @@ not open). The page "My subscriptions" (KOR-68) opens the same dialogs at "Add s
 further subscription that is not logged in. A login is started once per attempt; closing the dialog while it starts
 sends nothing more.
 
+**Mailboxes (KOR-74, [ADR-099](../adr/099-mailboxes-read-by-the-platform.md)).** Settings section "Mailboxes"
+(`settings/mailboxes`, core `core/credentials/mailboxes.ts`): every own mailbox (`GET /v1/me/mailboxes`, each record
+opened in the browser) as a card with name, address, purpose, the workgroups it is released to and "for the automatic
+login" on the primary one; "Add a mailbox" (name, purpose, address, IMAP host, port 993, user, password), "Change"
+(the password field stays empty to keep the stored one), "Release" (checkboxes of the workgroups the user has access
+to; the sealed `use {wgs}` and its plaintext mirror), "Check" (device request `mailbox.check` with the mailbox body,
+sealed to the device) and "Remove" (one confirmation). Sessions of a released workgroup read the mailbox with
+`mail.find`; the password never leaves the record and the device.
+
 ### 8.3 Connected agents (KOR-24, `11-agent-access.md`)
 
 - `/settings` → "Connected agents": `GET /v1/me/agents`, each with name and computer (opened from the sealed label),

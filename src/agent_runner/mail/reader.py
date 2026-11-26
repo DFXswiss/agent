@@ -219,7 +219,7 @@ def _links(candidates: Iterable[str]) -> list[str]:
     found: list[str] = []
     for candidate in candidates:
         link = candidate.rstrip(_TRAILING)
-        if _LINK.fullmatch(link) is None or len(link) > MAX_LINK or link in found:
+        if not link.isascii() or _LINK.fullmatch(link) is None or len(link) > MAX_LINK or link in found:
             continue
         found.append(link)
         if len(found) == MAX_LINKS:

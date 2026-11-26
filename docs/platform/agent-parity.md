@@ -57,6 +57,12 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | subscriptions-logout | settings/subscription-logins (drop the access and refresh token, keep name, note and use) | `subscriptions logout --id` | done |
 | subscriptions-use | settings/subscription-logins (use per subscription: only measured, organizations, the operator's pool; ADR-090 §3) | `subscriptions use --id --measure --pool --org` | done |
 | subscriptions-remove | settings/subscription-logins (remove a subscription and its readings) | `subscriptions remove --id` | done |
+| mailboxes-list | settings/mailboxes (every own mailbox: name, address, purpose, released workgroups, "login" for the primary one; ADR-099) | `mailbox list` | done |
+| mailboxes-add | settings/mailboxes (add a mailbox; the password is write-only) | `mailbox add --name --email --imap-host --imap-port --imap-user --purpose --wg` | done |
+| mailboxes-edit | settings/mailboxes (change a mailbox; what is not given stays, the password is write-only) | `mailbox change --id --name --email --imap-host --imap-port --imap-user --purpose --password-stdin` | done |
+| mailboxes-release | settings/mailboxes (release a mailbox to workgroups whose sessions read it with `mail.find`, ADR-099 §3) | `mailbox release --id --wg --none` | done |
+| mailboxes-check | settings/mailboxes (check a mailbox on a device, `mailbox.check` with the mailbox) | `mailbox check --id --device --wait` | done |
+| mailboxes-delete | settings/mailboxes (delete a mailbox) | `mailbox delete --id` | done |
 | model-quotas | settings/model-quotas (model access and quotas of the active organization: own subscription, operator subscriptions with state and release or "not readable" with the last observed limit, DFX access, summary; ADR-081) | `quotas --org` | done |
 | github-status | settings/github | `github status` | done |
 | github-connect | settings/github | `github connect --device --request --wait` | done |
@@ -232,6 +238,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/subscriptions/{id}` | subscriptions-list, subscriptions-edit, subscriptions-use, subscriptions-logout |
 | `PUT /v1/subscriptions/{id}` | subscriptions-edit, subscriptions-use, subscriptions-logout |
 | `DELETE /v1/subscriptions/{id}` | subscriptions-remove |
+| `GET /v1/me/mailboxes` | mailboxes-list |
+| `GET /v1/mailboxes/{id}` | mailboxes-list, mailboxes-edit, mailboxes-release, mailboxes-check |
+| `PUT /v1/mailboxes/{id}` | mailboxes-add, mailboxes-edit, mailboxes-release |
+| `DELETE /v1/mailboxes/{id}` | mailboxes-delete |
 | `POST /v1/me/recovery/begin` | recovery-new |
 | `DELETE /v1/me/registration` | register |
 | `PUT /v1/me/settings` | settings-language, settings-model, attention-model-always |

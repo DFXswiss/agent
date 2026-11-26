@@ -3026,7 +3026,7 @@
           "maxItems": 20,
           "items": {
             "type": "string",
-            "pattern": "^https?://",
+            "pattern": "^https?://[!-~]{1,1992}$",
             "maxLength": 2000
           }
         },
