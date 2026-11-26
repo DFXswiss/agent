@@ -627,6 +627,11 @@ The recommendation flips (research 2 §7):
 - Escape from the VM (hypervisor bug) is out of scope of the platform; damage is limited to the slot account
   (`docs/platform/security/work-vm-threat-model.md`). On a shared device that account lies next to agent VMs and the
   runner; this residual risk follows from E-34 and E-35 and gate U does not remove it.
+- The same threat model (`docs/platform/security/work-vm-threat-model.md:35`) adds: since HOT-18 the Lima `_config`
+  belongs to the slot account, so such an escape can also leave an `override.yaml` for that slot's later VMs. Slot
+  accounts are reused between jobs within a class; an escaped class U job could thus influence later U jobs in the same
+  slot, also of other repositories. **Recommendation** (part of D-20, not decided): before every CI VM start reset the
+  slot's Lima `_config` or make it root-owned, or rotate the slot account per job.
 - Separation between agent VMs and CI VMs on one device:
   - Slot accounts, Lima homes and pf rules are separate per workload kind and, within CI, per class; an account is
     never reused across them.
@@ -950,7 +955,7 @@ single option, the row says so. Everything else is open. The tendency is the fac
 | Deploy runner reached by other workflows | Class H runs persistently on the host of a pool device; a label or a changed `runs-on` in a PR targets it | Own group with one repository and protected workflow refs, no PR trigger; without groups pull deployment (§5, D-1 (c), D-9); check in §12.3 step c |
 | CI load displaces sessions | CI VMs hold capacity or slow the device; session starts wait or fail | Shares, headroom, latency budget, stop of new CI VMs (§6.6, M-19); displacement metrics (§11.2) |
 | Co-residency of foreign code with workgroup plaintext (**carried knowingly**) | CI jobs with foreign PR code run on the devices that hold workgroup plaintext; this is the client's decision ([E-35](../KONZEPT.md#e-35)), not an oversight, and no own CI device separates them | The client carries this risk by E-35; the countermeasures stay a recommendation: gate U (§9.3; open, D-7, D-20), separation rules of §9.3, D-24 |
-| Side channel between workloads | Foreign code and workgroup plaintext on one host: CPU caches, timing, hypervisor bug | Nothing writable shared, separate slot accounts (§9.3); the rest is a residual risk of E-34 and E-35, carried knowingly by the client (E-35), named again with D-20 |
+| Side channel between workloads | Foreign code and workgroup plaintext on one host: CPU caches, timing, hypervisor bug | Nothing writable shared, separate slot accounts (§9.3); the rest is a residual risk of E-34 and E-35, carried knowingly by the client (E-35), named again with D-20. Residual risk: after an escape the slot account's Lima `_config` can carry an `override.yaml` into later jobs of the same slot; recommended reset/root ownership of `_config` or per-job slot account (§9.3; open, D-20) |
 | Pool failure hits both workloads | Device, egress, update or boundary failure stops sessions and CI together | Failure reserve, rolling maintenance (one device at a time), repair way without CI (§11.3) |
 | Mixing U and T | A JIT runner takes another matching job | Groups per class, repository/workflow policy, no shared labels (§5) |
 | Theft of the app key | Key in the runner process or a VM | Own account or signer, organisation runner permission only, rotation (D-4) |

@@ -849,7 +849,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 
 <a id="e-34"></a>
 
-### E-34 – Eine gemeinsame Kapazität: alle Rechner gehören agent.dfx.swiss, Runner werden dort bezogen
+### E-34 – Eine gemeinsame Kapazität: alle Server des Betreibers gehören agent.dfx.swiss, Runner werden dort bezogen
 
 - **Datum:** 2026-11-25
 - **Regel:** Es gibt keine eigenen Rechner für selbst gehostete Runner neben der Plattform; die gesamte
