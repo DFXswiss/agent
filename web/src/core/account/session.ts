@@ -2,25 +2,32 @@
 // signed client, the background-job runner, the event reader and the live channel of the active org.
 //
 // - `restore()` at start-up: a stored, unexpired session key makes the browser `locked` (signed requests work, but
-//   identity and scope keys live only in memory, so a reload needs the passkey again, section 2.3).
+//   identity and scope keys live only in memory, section 2.3). A browser that stays signed in (rule E-37, ADR-099)
+//   opens the identity with its device key (`persist/device-key.ts`) and goes on to `unlocked` without the passkey.
 // - `begin(signIn)` stores a new session key (non-extractable, IndexedDB) – first sign-in and renewal alike.
 // - `unlock(identity)` checks the identity against the registered public keys (`GET /v1/me`), loads the profile,
-//   verifies the logs and opens the wraps of every org (jobs `login`), then `unlocked`.
+//   verifies the logs and opens the wraps of every org (jobs `login`), then `unlocked`. With "Stay signed in" on
+//   (`Prefs.staySignedIn`) the device key then keeps the identity on this browser, with it off its entry is deleted.
+// - While a browser stays signed in, `renewIfDue()` runs every minute: it takes over a session another tab renewed
+//   or signed in (IndexedDB), and at most once an hour – or when the session is about to end – one tab renews it with
+//   `POST /v1/session/renew`, signed by the still valid key (one tab at a time: `exclusive`, the page's Web Locks).
 // - `signOut()` ends the session at the hub (`POST /v1/session/end`), stops jobs and channel, deletes the IndexedDB
-//   session entries and clears memory (`store.reset()`).
+//   session entries and this browser's device-key entry of the user and clears memory (`store.reset()`).
 import type { BrowserContext } from '../browser/watch';
 import type { BrowserWatchList } from '../browser/watchlist';
 import { b64uDecode } from '../encoding/b64u';
+import { parseTime } from '../encoding/time';
 import type { PlatformConfig } from '../config/check';
-import { fail } from '../crypto/errors';
+import { CryptoError, fail } from '../crypto/errors';
 import type { Identity } from '../crypto/keys';
 import { isLocale, type Locale } from '../i18n/locale';
 import { backgroundJobs, JobRunner, type JobRegistration } from '../jobs';
 import { INTERVAL_MS } from '../jobs/catch-up';
 import { applyFrame } from '../net/frames';
 import { connectLive, type LiveConnection, type LiveWiring } from '../net/live';
-import { hostOf, type Session, type SessionNotice, SignedClient } from '../net/signedFetch';
-import type { Persist } from '../persist';
+import { hostOf, RENEW_BEFORE_MS, type Session, type SessionNotice, SignedClient } from '../net/signedFetch';
+import type { Persist, StoredSession } from '../persist';
+import type { DeviceKeys } from '../persist/device-key';
 import { isRecord } from '../registry';
 import { refreshShown } from '../store/focus';
 import { EventReader } from '../store/reader';
@@ -49,6 +56,26 @@ export type SessionPersist = Pick<
   | 'saveCursors'
 >;
 
+/** What the session needs of this browser's device keys (`persist/device-key.ts`). */
+export type DeviceStore = Pick<DeviceKeys, 'remember' | 'unlock' | 'forget'>;
+
+/** How often a browser that stays signed in looks at its session (rule E-37). */
+export const KEEP_CHECK_MS = 60_000;
+/** A tab renews the session when its last renewal is this old (or the session is about to end). */
+export const RENEW_EVERY_MS = 3_600_000;
+
+/** Runs `run` alone among the tabs of this browser (Web Locks); without them it just runs. */
+export function exclusiveOf(
+  locks: { request(name: string, run: () => Promise<unknown>): Promise<unknown> } | undefined,
+): <T>(run: () => Promise<T>) => Promise<T> {
+  if (locks === undefined) return (run) => run();
+  return <T>(run: () => Promise<T>) => locks.request('agent-platform.session-renew', run) as Promise<T>;
+}
+
+/** Deletes the device-key entry of `userId`; a refusing IndexedDB only keeps it (nothing to do about it here). */
+const forgetQuietly = (device: DeviceStore, userId: string): Promise<void> =>
+  device.forget(userId).catch(() => undefined);
+
 export interface AppSessionDeps {
   readonly store: Store;
   readonly fetch: typeof globalThis.fetch;
@@ -67,6 +94,10 @@ export interface AppSessionDeps {
     readonly start: (tick: () => void, ms: number) => unknown;
     readonly stop: (handle: unknown) => void;
   };
+  /** This browser's device keys (rule E-37); without them the browser never stays signed in. */
+  readonly device?: () => Promise<DeviceStore>;
+  /** Runs a renewal alone among the tabs of this browser (default: `exclusiveOf(undefined)`). */
+  readonly exclusive?: <T>(run: () => Promise<T>) => Promise<T>;
 }
 
 /** What `GET /v1/me` lists per org (03-api.md section 4.1). */
@@ -109,6 +140,12 @@ export class AppSession {
   #live: { readonly org: string; readonly connection: Promise<LiveConnection | null> } | null = null;
   /** The handle of the `interval` timer while unlocked. */
   #interval: unknown = null;
+  /** This browser keeps the signed-in user's identity with its device key (rule E-37). */
+  #remembered = false;
+  /** The handle of the renewal check while the browser stays signed in. */
+  #keeping: unknown = null;
+  /** A renewal check is running (one at a time per tab). */
+  #renewing: Promise<void> | null = null;
   /** `setInterval`/`clearInterval` are called as functions (a browser refuses them as methods of another object). */
   readonly #timer: NonNullable<AppSessionDeps['timer']>;
   /** Watched terminal sessions in watch order: session → org and number of views (06-web.md section 5.5). */
@@ -168,7 +205,16 @@ export class AppSession {
     return this.store.getState().me.userId;
   }
 
-  /** Start-up: a stored, unexpired session key makes the browser `locked`; anything else `anonymous`. */
+  /** This browser keeps the identity with its device key and renews the session by itself (rule E-37). */
+  get staysSignedIn(): boolean {
+    return this.#remembered;
+  }
+
+  /**
+   * Start-up: a stored, unexpired session key makes the browser `locked`; anything else `anonymous`. A browser that
+   * stays signed in opens the identity with its device key and unlocks (an entry that does not open is deleted; a hub
+   * that cannot be reached leaves the browser `locked`, the passkey still unlocks).
+   */
   async restore(): Promise<void> {
     const stored = await this.#deps.persist.loadSession().catch(() => null);
     if (stored === null || stored.expiresAt <= this.#now()) {
@@ -176,11 +222,40 @@ export class AppSession {
       setPhase(this.store, 'anonymous');
       return;
     }
+    this.#take(stored);
+    this.#userPrefs(stored.userId);
+    setPhase(this.store, 'locked');
+    const device = await this.#device();
+    if (device === null) return;
+    const forget = () => forgetQuietly(device, stored.userId);
+    let identity: Identity | null;
+    try {
+      identity = await device.unlock(stored.userId);
+    } catch {
+      // an entry that does not open (another browser's data, tampering) can never unlock
+      await forget();
+      return;
+    }
+    if (identity === null) return;
+    try {
+      await this.#unlock(identity);
+    } catch (caught) {
+      // another identity than the registered one can never unlock either
+      if (caught instanceof CryptoError && caught.code === 'decrypt_failed') await forget();
+      return;
+    }
+    this.#keep(true);
+  }
+
+  /** The session of `stored` in memory and in the store. */
+  #take(stored: StoredSession): void {
     this.#session = { keyId: stored.keyId, privateKey: stored.privateKey, expiresAt: stored.expiresAt };
     this.#credentialId = stored.credentialId;
     setSession(this.store, stored.userId, { keyId: stored.keyId, expiresAt: stored.expiresAt });
-    this.#userPrefs(stored.userId);
-    setPhase(this.store, 'locked');
+  }
+
+  async #device(): Promise<DeviceStore | null> {
+    return (await this.#deps.device?.().catch(() => null)) ?? null;
   }
 
   /**
@@ -229,6 +304,93 @@ export class AppSession {
    * `unlocked`.
    */
   async unlock(identity: Identity): Promise<void> {
+    await this.#unlock(identity);
+    await this.#stayOnBrowser(identity);
+  }
+
+  /**
+   * "Stay signed in" after an unlock (rule E-37): on – this browser's device key keeps `identity` and the session
+   * renews itself; off – this browser's entry of the user is deleted (a reload is `locked` as before).
+   */
+  async #stayOnBrowser(identity: Identity): Promise<void> {
+    const userId = this.userId!;
+    const device = await this.#device();
+    if (device === null) return;
+    if (!this.prefs.staySignedIn()) {
+      await forgetQuietly(device, userId);
+      this.#keep(false);
+      return;
+    }
+    this.#keep(
+      await device.remember(userId, identity).then(
+        () => true,
+        () => false,
+      ),
+    );
+  }
+
+  /**
+   * Whether this browser stays signed in, after the settings changed its device-key entry ("Forget on this browser",
+   * "Stay signed in on this browser"): on starts the renewal, off stops it (the session then simply ends).
+   */
+  noteRemembered(on: boolean): void {
+    this.#keep(on);
+  }
+
+  #keep(on: boolean): void {
+    this.#remembered = on;
+    if (!on) {
+      if (this.#keeping !== null) this.#timer.stop(this.#keeping);
+      this.#keeping = null;
+      return;
+    }
+    if (this.#keeping !== null) return;
+    this.#keeping = this.#timer.start(() => void this.renewIfDue(), KEEP_CHECK_MS);
+    void this.renewIfDue();
+  }
+
+  /**
+   * The renewal check of a browser that stays signed in (rule E-37, ADR-099): a session another tab renewed or signed
+   * in for the same user (IndexedDB) is taken over; when this browser's last renewal is an hour old or the session is
+   * about to end, `POST /v1/session/renew` (signed by the still valid key) moves its end and the new end is stored for
+   * every tab. One tab at a time (`exclusive`); a failure leaves the session as it is (an ended one shows the usual
+   * "Sign in again").
+   */
+  renewIfDue(): Promise<void> {
+    if (!this.#remembered || this.#session === null) return Promise.resolve();
+    if (this.#renewing === null) {
+      const exclusive = this.#deps.exclusive ?? exclusiveOf(undefined);
+      this.#renewing = exclusive(() => this.#renew())
+        .catch(() => undefined)
+        .finally(() => {
+          this.#renewing = null;
+        });
+    }
+    return this.#renewing;
+  }
+
+  async #renew(): Promise<void> {
+    const persist = this.#deps.persist;
+    const stored = await persist.loadSession();
+    const userId = this.userId;
+    if (stored === null || stored.userId !== userId || this.#session === null) return;
+    if (stored.keyId !== this.#session.keyId || stored.expiresAt > this.#session.expiresAt) {
+      this.#take(stored);
+      sessionRenewed(this.store);
+    }
+    const now = this.#now();
+    if (now - (stored.renewedAt ?? 0) < RENEW_EVERY_MS && stored.expiresAt - now > RENEW_BEFORE_MS) return;
+    const body = await this.client.request('POST', '/v1/session/renew', { body: {} });
+    if (!isRecord(body) || body.key_id !== stored.keyId) fail('header_invalid');
+    const renewed: StoredSession = { ...stored, expiresAt: parseTime(body.expires_at), renewedAt: now };
+    // signed out (or in again) while the hub answered: nothing of the old session is stored again
+    if (this.#session?.keyId !== stored.keyId) return;
+    await persist.saveSession(renewed);
+    this.#take(renewed);
+    sessionRenewed(this.store);
+  }
+
+  async #unlock(identity: Identity): Promise<void> {
     const me = await this.loadMe();
     if (!sameIdentity(identity, me.identity)) fail('decrypt_failed');
     setIdentity(this.store, identity);
@@ -506,6 +668,7 @@ export class AppSession {
   async #clear(): Promise<void> {
     if (this.#interval !== null) this.#timer.stop(this.#interval);
     this.#interval = null;
+    this.#keep(false);
     this.#stopLive();
     this.#watched.clear();
     this.#runner?.stop();
@@ -517,9 +680,15 @@ export class AppSession {
     this.store.reset();
   }
 
-  /** Sign-out (06-web.md section 2.6): the hub ends the session (best effort), then everything local is cleared. */
+  /**
+   * Sign-out (06-web.md section 2.6): the hub ends the session (best effort), this browser's device-key entry of the
+   * user is deleted (rule E-37: nothing keeps the browser signed in any more), then everything local is cleared.
+   */
   async signOut(): Promise<void> {
+    const userId = this.userId;
     if (this.#session !== null) await this.client.request('POST', '/v1/session/end', { body: {} }).catch(() => null);
+    const device = userId === null ? null : await this.#device();
+    if (device !== null) await forgetQuietly(device, userId!);
     await this.#clear();
     setPhase(this.store, 'anonymous');
   }

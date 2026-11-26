@@ -4,15 +4,16 @@ import { preparePrivateOrg } from '../../../src/core/account/genesis';
 import { signIn, unlockWithRecoveryCode } from '../../../src/core/account/login';
 import { Prefs, type PrefStorage } from '../../../src/core/account/prefs';
 import { register } from '../../../src/core/account/register';
-import { AppSession, meOrgs, settingsLocale } from '../../../src/core/account/session';
+import { AppSession, exclusiveOf, meOrgs, RENEW_EVERY_MS, settingsLocale } from '../../../src/core/account/session';
 import { Identity } from '../../../src/core/crypto/keys';
 import type { LiveConnection, LiveWiring } from '../../../src/core/net/live';
 import { Persist } from '../../../src/core/persist';
+import { DeviceKeys } from '../../../src/core/persist/device-key';
 import { createStore } from '../../../src/core/store';
 import { setProfile } from '../../../src/core/store/slices/me';
 import { setActiveOrg, setLocale, setPhase, setPrfMissing } from '../../../src/core/store/slices/session';
 import { FakeAuthenticator, giveRecoveryCode } from './authenticator';
-import { CONFIG, ORIGIN, SimHub, T0 } from './hub';
+import { CONFIG, HubFailure, ORIGIN, RENEW_MS, SimHub, T0 } from './hub';
 
 class MemoryStorage implements PrefStorage {
   readonly items = new Map<string, string>();
@@ -102,6 +103,18 @@ describe('Prefs', () => {
     expect(storage.items.has('agent-platform.recovery-unconfirmed.u')).toBe(false);
   });
 
+  it('keeps "Stay signed in" on unless it was switched off', () => {
+    const storage = new MemoryStorage();
+    const prefs = new Prefs(storage);
+    expect(prefs.staySignedIn()).toBe(true);
+    prefs.setStaySignedIn(false);
+    expect(storage.items.get('agent-platform.stay-signed-in')).toBe('off');
+    expect(prefs.staySignedIn()).toBe(false);
+    prefs.setStaySignedIn(true);
+    expect(storage.items.size).toBe(0);
+    expect(new Prefs(null).staySignedIn()).toBe(true);
+  });
+
   it('behaves as empty without or with a refusing storage', () => {
     const none = new Prefs(null);
     none.setLastOrg('u', 'o');
@@ -133,6 +146,271 @@ describe('profile helpers', () => {
     expect(settingsLocale({ settings: { locale: 'fr' } })).toBeNull();
     expect(settingsLocale({ settings: null })).toBeNull();
     expect(settingsLocale(null)).toBeNull();
+  });
+});
+
+/** A timer whose ticks the test runs by hand. */
+function manualTimer() {
+  const ticks = new Map<number, () => void>();
+  let next = 0;
+  return {
+    ticks,
+    timer: {
+      start: (tick: () => void) => {
+        next += 1;
+        ticks.set(next, tick);
+        return next;
+      },
+      stop: (handle: unknown) => void ticks.delete(handle as number),
+    },
+  };
+}
+
+describe('AppSession: stay signed in (rule E-37)', () => {
+  /** An onboarded browser whose app has this browser's device keys; `again` is a reload of it (same IndexedDB). */
+  async function staying(options: { stay?: boolean; now?: () => number } = {}) {
+    const context = await setup(options.now === undefined ? {} : { now: options.now });
+    const devices = new IDBFactory();
+    const keys = await DeviceKeys.open(devices);
+    const manual = manualTimer();
+    const prefs = new Prefs(context.storage);
+    if (options.stay === false) prefs.setStaySignedIn(false);
+    const make = (extra: Partial<ConstructorParameters<typeof AppSession>[0]> = {}) =>
+      new AppSession({
+        store: createStore(),
+        fetch: context.hub.fetch,
+        config: CONFIG,
+        rootKey: CONFIG.platform_root_key,
+        persist: context.persist,
+        prefs,
+        now: options.now ?? (() => T0),
+        timer: manual.timer,
+        device: async () => keys,
+        ...extra,
+      });
+    const app = make();
+    const ctx = { ...context, app, store: app.store };
+    const flows = await onboarded(ctx);
+    await app.renewIfDue();
+    return { ...ctx, ...flows, keys, manual, prefs, again: make };
+  }
+
+  it('keeps the identity after an unlock and restores straight to unlocked', async () => {
+    const { app, keys, again, registration, prepared, hub } = await staying();
+    expect(app.staysSignedIn).toBe(true);
+    expect(await keys.info(registration.userId)).not.toBeNull();
+    const reloaded = again();
+    await reloaded.restore();
+    const state = reloaded.store.getState();
+    expect(state.session.phase).toBe('unlocked');
+    expect(state.me.identity!.public()).toEqual(registration.identity.public());
+    expect(state.orgs.byId[prepared.org]!.keys.size).toBe(2);
+    expect(reloaded.staysSignedIn).toBe(true);
+    // no passkey ceremony was needed
+    expect(hub.log.filter((entry) => entry.target === '/v1/passkeys/login/begin')).toHaveLength(1);
+  });
+
+  it('with "Stay signed in" off forgets the entry and restores locked as before', async () => {
+    const { app, keys, again, registration, hub } = await staying({ stay: false });
+    expect(app.staysSignedIn).toBe(false);
+    expect(await keys.info(registration.userId)).toBeNull();
+    expect(hub.renewals).toEqual([]);
+    const reloaded = again();
+    await reloaded.restore();
+    expect(reloaded.store.getState().session.phase).toBe('locked');
+  });
+
+  it('stays locked without device keys, without an entry or when the hub cannot be reached', async () => {
+    const { again, keys, registration, hub } = await staying();
+    const none = again({ device: () => Promise.reject(new Error('no IndexedDB')) });
+    await none.restore();
+    expect(none.store.getState().session.phase).toBe('locked');
+    hub.override.set('GET /v1/me', new HubFailure(503, 'unavailable'));
+    const offline = again();
+    await offline.restore();
+    expect(offline.store.getState().session.phase).toBe('locked');
+    // the entry stays: the next start unlocks again
+    expect(await keys.info(registration.userId)).not.toBeNull();
+    hub.override.delete('GET /v1/me');
+    await keys.forget(registration.userId);
+    const forgotten = again();
+    await forgotten.restore();
+    expect(forgotten.store.getState().session.phase).toBe('locked');
+    expect(forgotten.staysSignedIn).toBe(false);
+  });
+
+  it('deletes an entry that does not open or holds another identity', async () => {
+    const { again, keys, registration } = await staying();
+    vi.spyOn(keys, 'unlock').mockRejectedValueOnce(new Error('decrypt_failed'));
+    const tampered = again();
+    await tampered.restore();
+    expect(tampered.store.getState().session.phase).toBe('locked');
+    expect(await keys.info(registration.userId)).toBeNull();
+    await keys.remember(registration.userId, await Identity.generate());
+    const other = again();
+    await other.restore();
+    expect(other.store.getState().session.phase).toBe('locked');
+    expect(await keys.info(registration.userId)).toBeNull();
+  });
+
+  it('keeps nothing when the device key cannot be stored', async () => {
+    const context = await setup();
+    const app = new AppSession({
+      store: context.store,
+      fetch: context.hub.fetch,
+      config: CONFIG,
+      rootKey: CONFIG.platform_root_key,
+      persist: context.persist,
+      prefs: new Prefs(null),
+      now: () => T0,
+      device: async () => ({
+        remember: () => Promise.reject(new Error('quota')),
+        unlock: async () => null,
+        forget: async () => undefined,
+      }),
+    });
+    await onboarded({ ...context, app });
+    expect(app.staysSignedIn).toBe(false);
+    // "Stay signed in" off with an IndexedDB that refuses to delete: the unlock and the sign-out still go through
+    const refusing = await setup();
+    const forget = vi.fn(() => Promise.reject(new Error('blocked')));
+    const prefs = new Prefs(refusing.storage);
+    prefs.setStaySignedIn(false);
+    const off = new AppSession({
+      store: refusing.store,
+      fetch: refusing.hub.fetch,
+      config: CONFIG,
+      rootKey: CONFIG.platform_root_key,
+      persist: refusing.persist,
+      prefs,
+      now: () => T0,
+      device: async () => ({ remember: async () => ({ userId: '', createdAt: 0 }), unlock: async () => null, forget }),
+    });
+    await onboarded({ ...refusing, app: off });
+    await off.signOut();
+    expect(forget).toHaveBeenCalledTimes(2);
+    expect(off.store.getState().session.phase).toBe('anonymous');
+  });
+
+  it('renews the session right after the sign-in and then at most once an hour', async () => {
+    let now = T0;
+    const { app, hub, persist, login, manual, store } = await staying({ now: () => now });
+    expect(hub.renewals).toEqual([login.keyId]);
+    const stored = (await persist.loadSession())!;
+    expect(stored.expiresAt).toBe(T0 + RENEW_MS);
+    expect(stored.renewedAt).toBe(T0);
+    expect(store.getState().me.session!.expiresAt).toBe(T0 + RENEW_MS);
+    // the minute check: not due yet
+    now = T0 + RENEW_EVERY_MS - 1;
+    hub.now = now;
+    for (const tick of manual.ticks.values()) tick();
+    await app.renewIfDue();
+    expect(hub.renewals).toHaveLength(1);
+    now = T0 + RENEW_EVERY_MS;
+    hub.now = now;
+    await app.renewIfDue();
+    expect(hub.renewals).toHaveLength(2);
+    expect((await persist.loadSession())!.expiresAt).toBe(now + RENEW_MS);
+    expect(store.getState().connection.session).toBe('ok');
+  });
+
+  it('renews a session about to end at once and runs one renewal per tab at a time', async () => {
+    const now = T0;
+    const { app, hub, persist } = await staying({ now: () => now });
+    const stored = (await persist.loadSession())!;
+    await persist.saveSession({ ...stored, expiresAt: T0 + 60_000 });
+    const first = app.renewIfDue();
+    const second = app.renewIfDue();
+    expect(second).toBe(first);
+    await first;
+    expect(hub.renewals).toHaveLength(2);
+    expect((await persist.loadSession())!.expiresAt).toBe(now + RENEW_MS);
+  });
+
+  it('takes over a session another tab renewed or signed in, and ignores another user', async () => {
+    const { app, hub, persist, store, auth } = await staying();
+    const stored = (await persist.loadSession())!;
+    // another tab renewed: this tab takes the later end without asking the hub
+    await persist.saveSession({ ...stored, expiresAt: stored.expiresAt + 5_000 });
+    await app.renewIfDue();
+    expect(store.getState().me.session!.expiresAt).toBe(stored.expiresAt + 5_000);
+    expect(hub.renewals).toHaveLength(1);
+    // another tab signed in again (new key): this tab signs with it from now on
+    const login = await signIn({ anon: app.anon, credentials: auth, origin: ORIGIN, now: () => T0 });
+    await persist.saveSession({
+      ...stored,
+      keyId: login.keyId,
+      privateKey: login.privateKey,
+      publicKey: login.publicKey,
+    });
+    await app.renewIfDue();
+    expect(store.getState().me.session!.keyId).toBe(login.keyId);
+    await app.loadMe();
+    // another user's session in IndexedDB: nothing to take over
+    await persist.saveSession({ ...stored, userId: 'someone-else' });
+    await app.renewIfDue();
+    expect(store.getState().me.session!.keyId).toBe(login.keyId);
+  });
+
+  it('leaves the session as it is when the renewal fails', async () => {
+    let now = T0;
+    const { app, hub, store } = await staying({ now: () => now });
+    now = T0 + RENEW_EVERY_MS;
+    hub.now = now;
+    hub.override.set('POST /v1/session/renew', () => ({ key_id: 'session.other', expires_at: 'x' }));
+    await app.renewIfDue();
+    expect(hub.log.at(-1)!.target).toBe('/v1/session/renew');
+    expect(store.getState().me.session!.expiresAt).toBe(T0 + RENEW_MS);
+    hub.override.set('POST /v1/session/renew', new HubFailure(401, 'session_expired'));
+    await app.renewIfDue();
+    expect(store.getState().connection.session).toBe('expired');
+  });
+
+  it('stores nothing again when the tab signed out while the hub renewed', async () => {
+    let now = T0;
+    const { app, hub, persist, login } = await staying({ now: () => now });
+    now = T0 + RENEW_EVERY_MS;
+    hub.now = now;
+    let release = () => undefined as void;
+    hub.override.set('POST /v1/session/renew', async () => {
+      await new Promise<void>((resolve) => (release = resolve));
+      return { key_id: login.keyId, expires_at: '2026-12-21T12:00:00.000Z' };
+    });
+    const pending = app.renewIfDue();
+    await vi.waitFor(() => expect(hub.log.at(-1)!.target).toBe('/v1/session/renew'));
+    await app.signOut();
+    release();
+    await pending;
+    expect(await persist.loadSession()).toBeNull();
+  });
+
+  it('starts and stops renewing when the settings change the entry, and not without a session', async () => {
+    const { app, manual, hub } = await staying();
+    app.noteRemembered(false);
+    expect(app.staysSignedIn).toBe(false);
+    expect(manual.ticks.size).toBe(1); // the interval trigger of the jobs only
+    await app.renewIfDue();
+    expect(hub.renewals).toHaveLength(1);
+    app.noteRemembered(true);
+    app.noteRemembered(true);
+    expect(manual.ticks.size).toBe(2);
+    await app.signOut();
+    expect(manual.ticks.size).toBe(0);
+    await app.renewIfDue();
+    expect(hub.renewals).toHaveLength(1);
+  });
+
+  it('runs a renewal under the lock of the page, or directly without one', async () => {
+    const request = vi.fn(async (_name: string, run: () => Promise<unknown>) => run());
+    const exclusive = exclusiveOf({ request });
+    await expect(exclusive(async () => 7)).resolves.toBe(7);
+    expect(request).toHaveBeenCalledWith('agent-platform.session-renew', expect.any(Function));
+    await expect(exclusiveOf(undefined)(async () => 8)).resolves.toBe(8);
+    const { again, hub } = await staying();
+    const locked = again({ exclusive });
+    await locked.restore();
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(hub.renewals).toHaveLength(1);
   });
 });
 
@@ -390,6 +668,42 @@ describe('AppSession', () => {
     vi.spyOn(other.persist, 'clearSession').mockRejectedValue(new Error('blocked'));
     await expect(other.app.signOut()).resolves.toBeUndefined();
     expect(other.store.getState().session.phase).toBe('anonymous');
+  });
+
+  it('forgets this browser device-key entry at sign-out, also when the device keys fail', async () => {
+    const context = await setup();
+    const { app } = context;
+    await onboarded(context);
+    const store = await DeviceKeys.open(new IDBFactory());
+    const userId = app.userId!;
+    await store.remember(userId, context.store.getState().me.identity!);
+    const withDevice = new AppSession({
+      store: createStore(),
+      fetch: context.hub.fetch,
+      config: CONFIG,
+      rootKey: CONFIG.platform_root_key,
+      persist: context.persist,
+      prefs: new Prefs(null),
+      now: () => T0,
+      device: async () => store,
+    });
+    await withDevice.restore();
+    expect(withDevice.store.getState().session.phase).toBe('unlocked');
+    await withDevice.signOut();
+    expect(await store.info(userId)).toBeNull();
+    // a device store that refuses does not stop the sign-out
+    const broken = await setup();
+    await onboarded(broken);
+    const failing = new AppSession({
+      store: broken.store,
+      fetch: broken.hub.fetch,
+      config: CONFIG,
+      rootKey: CONFIG.platform_root_key,
+      persist: broken.persist,
+      prefs: new Prefs(null),
+      device: () => Promise.reject(new Error('no IndexedDB')),
+    });
+    await expect(failing.signOut()).resolves.toBeUndefined();
   });
 
   it('reports session notices of the signed client', async () => {

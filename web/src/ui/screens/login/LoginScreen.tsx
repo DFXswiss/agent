@@ -5,6 +5,8 @@
 // otherwise the `prf_missing` guidance of WEB-14 (`ui/prf-missing`: recovery code once, no rotation; remember this
 // browser; a PRF passkey from another device). After an unlock without PRF of a PRF-capable passkey whose slot is
 // missing, the slot is uploaded so the next sign-in needs only the passkey. "Lost your passkeys?" leads to `/recover`.
+// "Stay signed in" (rule E-37, on unless switched off; the choice is kept for this browser in `Prefs`) lets the unlock
+// keep the identity with this browser's device key, so a reload, a new tab or a restart opens without the passkey.
 import { useState } from 'react';
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { CeremonyCancelled } from '../../../core/account/ceremony';
@@ -33,7 +35,13 @@ export function LoginScreen() {
   const target = safeNext(params.get('next')) ?? '/';
   const unlocked = useStore((state) => state.session.phase === 'unlocked', app.store);
   const [status, setStatus] = useState<Status>({ step: 'idle', notice: null });
+  const [stay, setStay] = useState(() => app.prefs.staySignedIn());
   if (unlocked && status.step === 'idle') return <Navigate to={target} replace />;
+
+  const chooseStay = (on: boolean) => {
+    app.prefs.setStaySignedIn(on);
+    setStay(on);
+  };
 
   const finish = async (result: SignIn, identity: Identity) => {
     await app.unlock(identity);
@@ -88,6 +96,20 @@ export function LoginScreen() {
           >
             {status.step === 'working' ? t('login.working') : t('login.submit')}
           </button>
+          <label className="flex min-h-11 items-center gap-2">
+            <input
+              type="checkbox"
+              className="h-5 w-5"
+              checked={stay}
+              onChange={(event) => chooseStay(event.target.checked)}
+              disabled={status.step === 'working'}
+              data-testid="login.stay"
+            />
+            <span>{t('login.stay')}</span>
+          </label>
+          <p className="text-sm text-gray-700" data-testid="login.stay.hint">
+            {t('login.stay.hint')}
+          </p>
           {status.step === 'idle' && status.notice !== null && (
             <p role="alert" data-testid="login.error">
               {status.notice}

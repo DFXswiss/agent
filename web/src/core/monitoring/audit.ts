@@ -34,6 +34,7 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'auth.refused',
   'auth.register',
   'auth.session_end',
+  'auth.session_renew',
   'billing.export',
   'billing.fx_set',
   'community.delete',

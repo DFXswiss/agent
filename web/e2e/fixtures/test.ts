@@ -1,7 +1,8 @@
 // Playwright fixtures for every web spec (and for SCN-00):
 // - V8 coverage of every page, added to the monocart cache with the build's source maps;
 // - a CSP listener: every `securitypolicyviolation` of any page fails the test (06-web.md section 10.2);
-// - the lane of the worker's project (`lane`): the helpers call that lane's device double.
+// - the lane of the worker's project (`lane`): the helpers call that lane's device double;
+// - "Stay signed in" (rule E-37) off unless a spec asks for the default (`staySignedIn`).
 // Both apply to the default `context` and to every context created with the `newContext` fixture; specs that need
 // more contexts (other locales, several users) use `newContext` instead of `browser.newContext`.
 import { test as base, expect, type BrowserContext, type BrowserContextOptions, type Page } from '@playwright/test';
@@ -47,7 +48,16 @@ async function instrument(context: BrowserContext, violations: CspViolation[]): 
 interface Fixtures {
   cspViolations: CspViolation[];
   newContext: (options?: BrowserContextOptions) => Promise<BrowserContext>;
+  /**
+   * "Stay signed in" (rule E-37) as the product's default (on). Off for every spec unless it sets
+   * `test.use({ staySignedIn: true })`: the specs written before E-37 rely on a reload asking for the passkey, so their
+   * browsers carry the user's choice "off" (the same `localStorage` entry the sign-in page writes).
+   */
+  staySignedIn: boolean;
 }
+
+/** The choice "Stay signed in: off" of the sign-in page (`core/account/prefs.ts`), set before the app starts. */
+const STAY_OFF = `try { localStorage.setItem('agent-platform.stay-signed-in', 'off'); } catch {}`;
 
 /**
  * Waits until the lane's device double answers (`fetchHealth`, default: `GET /health`): the global setup starts a
@@ -102,16 +112,19 @@ export const test = base.extend<Fixtures, { lane: string }>({
     await use(violations);
     expect(violations, 'Content-Security-Policy violations').toEqual([]);
   },
-  context: async ({ context, cspViolations }, use) => {
+  staySignedIn: [false, { option: true }],
+  context: async ({ context, cspViolations, staySignedIn }, use) => {
     const finish = await instrument(context, cspViolations);
+    if (!staySignedIn) await context.addInitScript({ content: STAY_OFF });
     await use(context);
     await finish();
   },
-  newContext: async ({ browser, cspViolations }, use) => {
+  newContext: async ({ browser, cspViolations, staySignedIn }, use) => {
     const opened: [BrowserContext, () => Promise<void>][] = [];
     await use(async (options) => {
       const context = await browser.newContext(options);
       opened.push([context, await instrument(context, cspViolations)]);
+      if (!staySignedIn) await context.addInitScript({ content: STAY_OFF });
       return context;
     });
     for (const [context, finish] of opened) {

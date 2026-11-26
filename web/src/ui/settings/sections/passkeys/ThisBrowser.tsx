@@ -1,6 +1,8 @@
-// The device key of this browser profile (06-web.md section 3.3): "This browser can unlock without passkey PRF" with
-// the date and "Forget" (deletes the IndexedDB entry), or "Remember this browser" (a new non-extractable device key
-// encrypts the identity in memory). Only the signed-in user's entry is shown.
+// "Stay signed in" on this browser profile (06-web.md sections 3.3 and 3.4, rule E-37): with a device-key entry the
+// browser stays signed in and opens the data without a passkey – shown with its date and "Forget on this browser"
+// (deletes the IndexedDB entry; the session then simply ends, a reload asks for the passkey); without one "Stay signed
+// in on this browser" (a new non-extractable device key encrypts the identity in memory). Only the signed-in user's
+// entry is shown.
 import { useCallback, useEffect, useState } from 'react';
 import type { DeviceInfo, DeviceKeys } from '../../../../core/persist/device-key';
 import { formatEventTime } from '../../../../core/i18n';
@@ -41,13 +43,17 @@ export function ThisBrowser({ keys = deviceKeys }: { readonly keys?: () => Promi
   const forget = async () => {
     setBusy(true);
     await (await keys()).forget(userId).catch(() => undefined);
+    app.noteRemembered(false);
     await load();
     setBusy(false);
   };
   const remember = async () => {
     setBusy(true);
     if (!(await rememberBrowser(userId, identity!, keys))) setState({ step: 'failed' });
-    else await load();
+    else {
+      app.noteRemembered(true);
+      await load();
+    }
     setBusy(false);
   };
 
@@ -91,7 +97,7 @@ export function ThisBrowser({ keys = deviceKeys }: { readonly keys?: () => Promi
             disabled={busy}
             data-testid="passkeys.browser.remember"
           >
-            {t('passkeys.prf-missing.remember')}
+            {t('passkeys.browser.remember')}
           </button>
         </>
       )}

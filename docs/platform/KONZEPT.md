@@ -841,6 +841,24 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   Vorgänge der Plattform; ergänzt [E-31](#e-31) (jedes Abo zentral angemeldet) und [E-32](#e-32).
 - **Umsetzung:** offen – Postfach je Abo und parallele Anmeldungen in KOR-73.
 
+<a id="e-37"></a>
+
+### E-37 – Angemeldet bleiben auf agent.dfx.swiss
+
+- **Datum:** 2026-11-26
+- **Regel:** Nach der Anmeldung bleibt ein Browser auf agent.dfx.swiss angemeldet und entsperrt – nach einem Neuladen,
+  in einem neuen Tab, nach Schließen und erneutem Öffnen des Tabs und nach einem Neustart des Browsers –, ohne erneute
+  Passkey-Abfrage, bis der Nutzer sich abmeldet; die Anmeldesitzung erneuert sich selbst, solange der Browser genutzt
+  wird. „Angemeldet bleiben“ ist wählbar und voreingestellt an; aus gilt das bisherige Verhalten. „Abmelden“ beendet
+  die Sitzung und löscht, was diesen Browser angemeldet hält.
+- **Wortlaut:** „ich will auf agent eingeloggt bleiben, auch wenn ich reload mache oder tab schliesse und komplett neu
+  öffne“
+- **Bezug:** ergänzt [§1 Punkt 3](#k-1-b3) (Anmeldung mit Passkey) und [E-12](#e-12); die Grenzen der Anmeldung ändern
+  sich nur so weit wie nötig, ohne zusätzliche Schutzschicht ([E-25](#e-25)).
+- **Umsetzung:** gebaut – [ADR-099](adr/099-stay-signed-in.md) (KOR-74): Gerätschlüssel des Browsers öffnet die
+  Identität beim Start, Erneuerung der Sitzung mit dem noch gültigen Sitzungsschlüssel (`POST /v1/session/renew`),
+  „Angemeldet bleiben“ auf der Anmeldeseite und in den Einstellungen.
+
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
 **Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und

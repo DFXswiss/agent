@@ -54,6 +54,7 @@ AUDIT_ACTIONS = frozenset(
         "auth.refused",
         "auth.register",
         "auth.session_end",
+        "auth.session_renew",
         "community.key_create",
         "community.key_request",
         "community.key_wrap",

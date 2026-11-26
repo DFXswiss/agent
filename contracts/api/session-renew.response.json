@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/session-renew.response.json",
+  "title": "POST /v1/session/renew response",
+  "description": "Body of a successful response to POST /v1/session/renew (03-api.md section 4.1, ADR-099): the renewed session and its new expiry.",
+  "type": "object",
+  "properties": {
+    "key_id": {
+      "$ref": "../common.json#/$defs/session_key_id"
+    },
+    "expires_at": {
+      "$ref": "../common.json#/$defs/time"
+    }
+  },
+  "required": [
+    "key_id",
+    "expires_at"
+  ],
+  "additionalProperties": false
+}

@@ -37,6 +37,8 @@ test hub (`scripts/hub_test_server.py` starts it on `--port` with the hub's writ
   written directly into the hub's tables like the hub's volume tests do: a user principal, an org membership and read
   access to `wg` (sequence 0, no log entry: people that never sign in) and one open task in `wg` each (numbered by the
   hub's trigger, no sealed events, no session); answers `{"owners": [...]}` in creation order.
+- `POST /users/<id>/sessions/expiring {"seconds"}`: every open browser session of the user ends `seconds` from now
+  (rule E-37, ADR-099: the expiry that a browser which stays signed in renews silently); answers `{"sessions": n}`.
 
 Frames and hints of these changes reach the hub's browsers over the PostgreSQL bus (`hub_stream`), exactly like the
 frames of another hub process (`agent_hub.stream.bus`). Only loopback, only for tests.
@@ -395,6 +397,19 @@ OPERATIONS_RE = re.compile(r"^/sessions/([0-9a-f-]{36})/operations$")
 ORCHESTRATOR_RE = re.compile(r"^/sessions/([0-9a-f-]{36})/orchestrator$")
 ONLINE_RE = re.compile(r"^/devices/([0-9a-f-]{36})/online$")
 PEOPLE_RE = re.compile(r"^/orgs/([0-9a-f-]{36})/people$")
+EXPIRING_RE = re.compile(r"^/users/([0-9a-f-]{36})/sessions/expiring$")
+
+
+def expiring_sessions(pool: ConnectionPool[psycopg.Connection[Any]], user: str, seconds: int) -> int:
+    """Every open browser session of `user` ends `seconds` from now (rule E-37: the expiry a browser that stays signed
+    in renews silently); answers how many sessions changed."""
+    with pool.connection() as connection:
+        changed = connection.execute(
+            "UPDATE hub.browser_session SET expires_at = now() + make_interval(secs => %s)"
+            " WHERE user_id = %s AND ended_at IS NULL",
+            (seconds, user),
+        ).rowcount
+    return int(changed)
 
 
 def handler(director: Director) -> type[BaseHTTPRequestHandler]:
@@ -470,6 +485,8 @@ def handler(director: Director) -> type[BaseHTTPRequestHandler]:
                 answer = director.orchestrator(match.group(1), body)
             if answer is None and (match := PEOPLE_RE.match(self.path)) is not None:
                 answer = {"owners": director.seed_people(match.group(1), str(body["wg"]), int(body["count"]))}
+            if answer is None and (match := EXPIRING_RE.match(self.path)) is not None:
+                answer = {"sessions": expiring_sessions(director.pool, match.group(1), int(body.get("seconds", 60)))}
             if answer is not None:
                 self._send(200, answer)
             return answer is not None

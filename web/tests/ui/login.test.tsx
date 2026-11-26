@@ -143,6 +143,18 @@ describe('LoginScreen', () => {
     expect([...bundles.keys()]).toEqual(['recovery']);
   });
 
+  it('offers "Stay signed in", on by default, and keeps the choice for this browser (rule E-37)', async () => {
+    const { app } = await loginPage();
+    const stay = screen.getByTestId('login.stay') as HTMLInputElement;
+    expect(stay.checked).toBe(true);
+    expect(screen.getByTestId('login.stay.hint')).toHaveTextContent('until you sign out');
+    fireEvent.click(stay);
+    expect(stay.checked).toBe(false);
+    expect(app.prefs.staySignedIn()).toBe(false);
+    fireEvent.click(stay);
+    expect(app.prefs.staySignedIn()).toBe(true);
+  });
+
   it('sends an unlocked user on', async () => {
     const harness = await renderApp('/login?next=/settings', {}, async (made) => {
       const hub = made.hub;

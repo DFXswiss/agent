@@ -179,6 +179,8 @@ KOR51_AUDIT = "agent_profile.set agent_profile.delete task.agent_profile"
 """Rights profiles (ADR-094): own profiles of an org or a workgroup, the profile of a task."""
 # ADR-096 (KOR-56): the support release
 KOR56_AUDIT = "support.people support.write support.name"
+# rule E-37, ADR-099 (KOR-74): the renewal of a browser session
+KOR74_AUDIT = "auth.session_renew"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 03-api.md section 4.6.2, ADR-075 section 7: reasons of a waiting task beyond the session failure reasons
 SPEC_WAITING_REASONS = "no_device platform_access_required wg_vm_limit placement_full placement_offline keys_pending"
@@ -312,6 +314,7 @@ def test_audit_actions(index: dict[str, Any]) -> None:
     expected = set(SPEC_AUDIT_FIXED.split()) | set(DECIDED_AUDIT.split()) | set(KOR31_AUDIT.split())
     expected |= set(KOR47_AUDIT.split()) | set(KOR50_AUDIT.split()) | set(KOR48_AUDIT.split())
     expected |= set(KOR58_AUDIT.split()) | set(KOR51_AUDIT.split()) | set(KOR56_AUDIT.split())
+    expected |= set(KOR74_AUDIT.split())
     for prefix, values in SPEC_AUDIT_PATTERNS.items():
         expected |= {f"{prefix}.{value}" for value in values.split()}
     expected |= {f"read.{e['read_resource']}" for e in index["endpoints"] if e["read_resource"]}

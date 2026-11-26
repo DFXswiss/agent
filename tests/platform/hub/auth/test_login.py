@@ -1,10 +1,11 @@
 """U-HUB-passkeys (login) and U-HUB-auth (sessions): `POST /v1/passkeys/login/begin|finish`, the session-key
-resolver of the signature gate and `POST /v1/session/end` (03-api.md sections 1, 4.1, 12; 04-crypto.md sections 4.9,
-5.4).
+resolver of the signature gate, `POST /v1/session/end` and `POST /v1/session/renew` (03-api.md sections 1, 4.1, 12;
+04-crypto.md sections 4.9, 5.4; ADR-099).
 
 The certificate is verified against the stored passkey (V1-V11), bound to the ceremony's hub value, the counter
 must not regress, the session lasts at most 43080 s, and the session key then signs every request: expired →
-`session_expired`, ended or passkey removed or user disabled → `key_revoked`.
+`session_expired`, ended or passkey removed or user disabled → `key_revoked`. A still valid session renews itself to
+30 days from the hub's clock (rule E-37), the same key and row.
 """
 
 from __future__ import annotations
@@ -19,7 +20,8 @@ import pytest
 from agent_core.passkey.certificate import statement_challenge
 from agent_core.passkey.encoding import session_key_id
 from agent_core.signing import b64url_decode, b64url_encode
-from agent_hub.auth.keys import RESOLVERS, SESSION_PREFIX, resolve_session
+from agent_hub.auth.keys import RESOLVERS, SESSION_PREFIX, Principal, resolve_session
+from agent_hub.auth.sessions import SESSION_RENEW_SECONDS, renew_session
 from agent_hub.crypto.bundle import open_bundle, passkey_slot
 from agent_hub.crypto.encoding import format_time
 from agent_hub.crypto.kdf import kek_from_prf, prf_input
@@ -313,6 +315,81 @@ def test_ending_the_session_revokes_its_key(browser: FakeBrowser, account: Accou
 def test_session_end_needs_a_session(browser: FakeBrowser) -> None:
     response = browser.hub.anon.post("/v1/session/end", json={})
     assert (response.status_code, response.json()) == (401, {"error": "signature_missing"})
+
+
+# --- renewal (rule E-37, ADR-099) -------------------------------------------------------------------------------------
+
+
+def test_renewal_extends_the_same_session(browser: FakeBrowser, account: Account) -> None:
+    hub = browser.hub
+    session = browser.login(account)
+    client = browser.client(session)
+    [(created_before, statement_before)] = rows(
+        hub, "SELECT created_at, statement FROM hub.browser_session WHERE key_id = %s", session.key_id
+    )
+    hub.clock.advance(3600)
+    response = client.post("/v1/session/renew", json={})
+    assert response.status_code == 200
+    assert response.extensions["hub_signature"] is True
+    renewed = hub.clock() + timedelta(seconds=SESSION_RENEW_SECONDS)
+    assert response.json() == {"key_id": session.key_id, "expires_at": format_time(renewed)}
+    [(created, statement, expires, ended)] = rows(
+        hub,
+        "SELECT created_at, statement, expires_at, ended_at FROM hub.browser_session WHERE key_id = %s",
+        session.key_id,
+    )
+    assert (created, statement, expires, ended) == (created_before, statement_before, renewed, None)
+    # the same key keeps signing after the 12 h of the login
+    hub.clock.advance(SESSION_ISSUE_SECONDS)
+    assert client.get("/v1/me").status_code == 200
+    [(actor, target, detail)] = rows(
+        hub, "SELECT actor_id, target_id, detail FROM hub.audit WHERE action = 'auth.session_renew'"
+    )
+    assert (str(actor), target, detail) == (account.user_id, session.key_id, {"key_id": session.key_id})
+
+
+def test_renewal_never_shortens_a_session(browser: FakeBrowser, account: Account) -> None:
+    hub = browser.hub
+    session = browser.login(account)
+    later = hub.clock() + timedelta(seconds=SESSION_RENEW_SECONDS + 600)
+    with hub.pool.connection() as connection:
+        connection.execute("UPDATE hub.browser_session SET expires_at = %s", (later,))
+    response = browser.client(session).post("/v1/session/renew", json={})
+    assert response.json() == {"key_id": session.key_id, "expires_at": format_time(later)}
+
+
+def test_an_expired_session_cannot_renew(browser: FakeBrowser, account: Account) -> None:
+    client = browser.client(browser.login(account))
+    browser.hub.clock.advance(SESSION_ISSUE_SECONDS)
+    response = client.post("/v1/session/renew", json={})
+    assert (response.status_code, response.json()) == (401, {"error": "session_expired"})
+
+
+def test_an_ended_session_cannot_renew(browser: FakeBrowser, account: Account) -> None:
+    client = browser.client(browser.login(account))
+    assert client.post("/v1/session/end", json={}).status_code == 200
+    response = client.post("/v1/session/renew", json={})
+    assert (response.status_code, response.json()) == (401, {"error": "key_revoked"})
+
+
+def test_renewal_needs_a_session(browser: FakeBrowser) -> None:
+    response = browser.hub.anon.post("/v1/session/renew", json={})
+    assert (response.status_code, response.json()) == (401, {"error": "signature_missing"})
+
+
+def test_renewal_refuses_a_session_ended_after_the_gate_and_an_agent(browser: FakeBrowser, account: Account) -> None:
+    hub = browser.hub
+    session = browser.login(account)
+    context: HubContext = hub.app.state.hub
+    user = uuid.UUID(account.user_id)
+    with hub.pool.connection() as connection:
+        connection.execute("UPDATE hub.browser_session SET ended_at = %s", (hub.clock(),))
+    principal = Principal(kind="session", key_id=session.key_id, principal_id=user, actor_kind="user")
+    with pytest.raises(HubError, match="key_revoked"):
+        renew_session(context, principal)
+    agent = Principal(kind="agent", key_id="agent." + "0" * 32, principal_id=user, actor_kind="user")
+    with pytest.raises(HubError, match="forbidden"):
+        renew_session(context, agent)
 
 
 @pytest.mark.parametrize(
