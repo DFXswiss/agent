@@ -221,9 +221,9 @@ class GoldenSwitch:
         """The sessions whose `checkpoint_impossible` hold a request by hand of the VM covers: the ones reported to a
         hub that shows the hold and its consequence (`vm_upgrade_version` 2 or later) before the time of the request -
         what the member saw when asking (HOT-24)."""
-        if not self.hub_reads_impossible or row.id not in self.requested:
+        if not self.hub_reads_impossible:
             return frozenset()
-        at = await records.request_time(self.env.db, row.id)
+        at = await records.request_time(self.env.db, row.id)  # the store is the truth, also before a first pass
         if at is None:
             return frozenset()
         reported = await records.hold_reported(self.env.db, row.id)
