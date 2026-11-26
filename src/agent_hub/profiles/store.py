@@ -4,7 +4,8 @@
   (`hub.agent_profile`). A name resolves in the order workgroup, organization, built-in; the built-in names are
   reserved, so an own profile never shadows a role.
 - **Assignments** are snapshots: `task.agent_profile` for the task's main sessions, `session.agent_profile` for a child
-  that was started with a profile of its own (NULL: the child takes what its parent has).
+  that was started with a profile of its own (NULL: the child takes what its parent has). On an analysis task
+  (ADR-095 section 2) every snapshot is named `analysis` (`for_task`), so the marker holds along the whole chain.
 - **Effective profile** of a session: the intersection of the task's snapshot and every snapshot along the session's
   chain of parents (itself included): the operation types all of them allow and the narrowest reach, named after the
   innermost snapshot. A restriction set on the task or on any ancestor therefore applies at once to every session
@@ -17,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import psycopg
@@ -26,6 +27,7 @@ from psycopg.types.json import Jsonb
 from agent_hub.crypto.encoding import format_time
 from agent_hub.errors import HubError
 from agent_hub.profiles.model import (
+    ANALYSIS,
     BUILTIN,
     NAME_RE,
     REACHES,
@@ -92,6 +94,16 @@ def effective(connection: Connection, session_id: UUID | str) -> Profile | None:
     if rows and rows[0][1] is not None:
         snapshots.append(rows[0][1])
     return intersect(profile for profile in map(from_json, snapshots) if profile is not None)
+
+
+def for_task(connection: Connection, task_id: UUID | str, profile: Profile) -> Profile:
+    """The snapshot of `profile` for a child of the task: on an analysis task (ADR-095 section 2) it keeps the name
+    `analysis` with the profile's types and reach, so the marker holds along the whole chain of sessions."""
+    marked = cast(
+        tuple[bool],
+        connection.execute("SELECT analysis IS NOT NULL FROM hub.task WHERE id = %s", (task_id,)).fetchone(),
+    )
+    return Profile(ANALYSIS, profile.operations, profile.reads) if marked[0] else profile
 
 
 def check_name(name: str) -> None:

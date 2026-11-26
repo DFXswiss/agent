@@ -30,17 +30,14 @@ def test_defaults_are_the_last_seven_days_up_to_now() -> None:
     found = request.parse({"scope": "wg"}, NOW)
     assert (found.scope, found.since, found.until) == ("wg", NOW - timedelta(days=7), NOW)
     assert found.stored() == {"scope": "wg", "since": "2026-11-14T12:00:00.123Z", "until": "2026-11-21T12:00:00.123Z"}
-    assert found.given({"scope": "wg"}) == {"scope": "wg"}
 
 
-def test_explicit_times_are_kept_and_named_for_a_repetition() -> None:
+def test_explicit_times_are_kept() -> None:
     value = {"scope": "org", "since": "2026-08-21T12:01:00.123Z", "until": "2026-11-21T12:01:00.123Z"}
     found = request.parse(value, NOW)
     assert found.stored() == value
-    assert found.given(value) == value
     only_until = request.parse({"scope": "org", "until": "2026-11-20T00:00:00.000Z"}, NOW)
     assert only_until.since == datetime(2026, 11, 13, tzinfo=UTC)
-    assert only_until.given({"scope": "org", "until": "x"}) == {"scope": "org", "until": "2026-11-20T00:00:00.000Z"}
 
 
 def test_the_profile_reaches_the_organization_or_only_the_workgroup() -> None:

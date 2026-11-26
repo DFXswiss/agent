@@ -44,8 +44,9 @@ registration runs in one transaction:
    else of nobody; `device_id` the device, ADR-095 section 4; detail with the local check, `github_identity` and
    `triggered_by`). An accepted `subagent.request` creates the child session (`agent_hub.operations.children`; its
    `github_identity` is the registration's, else the parent session's, its `triggered_by` the registration's, ADR-083
-   section 2, its `agent_profile` the snapshot of `child_profile`, ADR-094 section 1) and answers its ID, and when the
-   registration named a `child_profile` the child's effective profile (`child_profile`). A `subagent.request` naming
+   section 2, its `agent_profile` the snapshot of `child_profile`, ADR-094 section 1,
+   named `analysis` on an analysis task, ADR-095 section 2) and answers its ID, and when the registration named a
+   `child_profile` the child's effective profile (`child_profile`). A `subagent.request` naming
    a `github_identity` passes the feature gate of the org first (`409 peer_outdated`, nothing stored).
 
 6. The task's attention record is refreshed (`agent_hub.attention.store`, ADR-076; the last lock of the transaction).
@@ -506,7 +507,13 @@ def register(
             triggered_by=None if request.triggered_by is None else UUID(request.triggered_by),
             agent_profile=None
             if request.child_profile is None
-            else profiles.resolve(connection, task.org_id, task.wg_id, request.child_profile),
+            else profiles.for_task(  # H2b resolved the name before it accepted
+                connection,
+                task.id,
+                cast(
+                    profile_model.Profile, profiles.resolve(connection, task.org_id, task.wg_id, request.child_profile)
+                ),
+            ),
         )
     outcome.body = _answer(
         connection, state, error_code, duplicate_of, child, with_profile=request.child_profile is not None

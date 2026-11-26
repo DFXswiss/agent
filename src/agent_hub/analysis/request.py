@@ -4,7 +4,7 @@
   `until` (default now) at most `FUTURE_SLACK` after now, `since` (default `DEFAULT_DAYS` before `until`) before
   `until` and at most `MAX_DAYS` before it; anything else is `400 request_invalid` with the pointer.
 - `Analysis.stored()`: the plaintext record kept as `hub.task.analysis` (`{scope, since, until}`, times in the API form;
-  a repetition of the request compares it).
+  a repetition of the request compares the fields it names with it, before any check against the time).
 - `Analysis.profile()`: the snapshot of the built-in profile `analysis` the task gets in its creating transaction:
   reach `all` for scope `org`, `workgroup` for scope `wg` (only the task's workgroup).
 - `require_features(connection, org_id, root_key)`: every active device assigned to a workgroup of the organization has
@@ -44,10 +44,6 @@ class Analysis:
 
     def stored(self) -> dict[str, str]:
         return {"scope": self.scope, "since": format_time(self.since), "until": format_time(self.until)}
-
-    def given(self, value: Mapping[str, Any]) -> dict[str, str]:
-        """The stored fields the request named (a repetition must name the same; the defaults depend on the time)."""
-        return {name: text for name, text in self.stored().items() if name in value}
 
     def profile(self) -> model.Profile:
         return model.analysis(model.REACH_ALL if self.scope == "org" else model.REACH_WORKGROUP)

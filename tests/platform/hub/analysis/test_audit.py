@@ -147,3 +147,14 @@ def test_the_audit_of_a_workgroup_the_device_does_not_serve_is_not_found(reads: 
 )
 def test_audit_parameter_errors_name_the_parameter(reads: Reads, query: dict[str, str], pointer: str) -> None:
     assert reads.refused("audit", **query) == invalid(pointer)
+
+
+def test_without_since_the_longest_period_before_until_is_read(reads: Reads) -> None:
+    """No list or count spans more than 92 days: without `since` the period starts 92 days before `until`."""
+    ancient = reads.audit("operation.failed", reads.ago(days=100))
+    recent = reads.audit("operation.failed", reads.ago(days=91))
+    until = format_time(reads.ago(seconds=1))
+    assert _seqs(reads.ok("audit", until=until)) == [recent]
+    groups = reads.ok("audit", until=until, group_by="action")["groups"]
+    assert groups == [{"action": "operation.failed", "result": "ok", "count": 1}]
+    assert _seqs(reads.ok("audit", until=format_time(reads.ago(days=95)))) == [ancient]

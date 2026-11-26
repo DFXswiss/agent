@@ -90,6 +90,24 @@ def test_a_repetition_names_the_same_scope_and_the_same_explicit_times(desk: Des
     assert desk.rows("SELECT count(*) FROM hub.task") == [(1,)]
 
 
+def test_a_late_retry_gets_the_stored_answer(desk: Desk) -> None:
+    """The period is checked against the hub's time only for a new task: a retry after the first request, whose
+    `since` is now more than the longest period before the hub's time, is still answered from the stored task."""
+    _announce(desk, [AGENT_PROFILES, PLATFORM_ANALYSIS])
+    early = "2026-08-21T12:00:01.123Z"  # one second less than the longest period before the hub's time
+    body = _body(desk, {"scope": "org", "since": early})
+    first = _post(desk, body)
+    assert first.status_code == 200, first.text
+    desk.hub.clock.advance(2)
+    again = _post(desk, body)
+    assert (again.status_code, again.json().get("replayed")) == (200, True), again.text
+    assert again.json()["task"]["analysis"] == first.json()["task"]["analysis"]
+    unknown = _post(desk, {**body, "analysis": {"scope": "org", "since": early, "days": 7}}, extensions=NOT_CONTRACT)
+    assert (unknown.status_code, unknown.json()) == (409, {"error": "id_conflict"})
+    fresh = _post(desk, _body(desk, {"scope": "org", "since": early}))
+    assert (fresh.status_code, fresh.json()["detail"]) == (400, {"pointers": ["/analysis/since"]})
+
+
 def test_an_ordinary_task_repeated_as_an_analysis_is_a_conflict(desk: Desk) -> None:
     _announce(desk, [AGENT_PROFILES, PLATFORM_ANALYSIS])
     task_id = new_id()

@@ -7,13 +7,15 @@ may read the workgroup (ADR-089) and checks every row again. The hub only reads 
 (IDs, numbers, states, times, audit codes), never content - and changes no audit or billing logic.
 
 - **Period.** `since`/`until` (ISO-8601 UTC with milliseconds): `until` defaults to now, `since` is required for usage
-  and metrics; `since < until` and at most `MAX_DAYS` apart, else `400 request_invalid` with the pointer.
+  and metrics and defaults to `MAX_DAYS` before `until` for audit and operations (no list or count spans more);
+  `since < until` and at most `MAX_DAYS` apart, else `400 request_invalid` with the pointer.
 - **Usage** (`by` `session` or `task`, default `task`): the sessions of the workgroup **started** in the period, each
   with its whole counters (`hub.usage_counter`), its charged amount (`hub.charge`, any time), its runtime (creation to
   end, or to now while it runs) and its operation counts (all, and those that ended `failed`, `denied`, `rejected` or
-  `expired`); by task the sums per task. Rows newest first (sessions by creation, tasks by the task's creation), at
-  most `limit` (default 50, max 200) with the cursor `next_before` of `agent_hub.device.tasks`; `total` sums the whole
-  period on the first page (null with `before`, so paging does not aggregate the period again).
+  `expired`); by task the sums per task (the page's tasks are chosen first, then only their sessions are summed). Rows
+  newest first (sessions by creation, tasks by the task's creation), at most `limit` (default 50, max 200) with the
+  cursor `next_before` of `agent_hub.device.tasks`; `total` sums the whole period on the first page (null with
+  `before`, so paging does not aggregate the period again).
 - **Audit**: the rows of the workgroup (`wg_id` = the workgroup, in its organization) newest first by `seq`, filtered
   by period, action (the action or a dotted group, as `agent_hub.audit.query`), task and session; the cursor of
   `agent_hub.audit.query`. Rows as the hash covers them. `group_by=action`: the counts per action and result of the
@@ -76,7 +78,7 @@ WITH s AS (
     (SELECT count(*) FROM hub.operation o WHERE o.session_id = s.id) AS operations,
     (SELECT count(*) FROM hub.operation o WHERE o.session_id = s.id AND o.state = ANY(%(failed)s)) AS failed_operations
   FROM hub.session s LEFT JOIN hub.usage_counter u ON u.session_id = s.id
-  WHERE s.wg_id = %(wg)s AND s.created_at >= %(since)s AND s.created_at < %(until)s
+  WHERE s.wg_id = %(wg)s AND s.created_at >= %(since)s AND s.created_at < %(until)s{only}
 )
 """
 _SUMS = ", ".join(f"coalesce(sum({name}), 0)::bigint" for name in FIGURES)
@@ -84,7 +86,7 @@ _SUMS = ", ".join(f"coalesce(sum({name}), 0)::bigint" for name in FIGURES)
 
 @dataclass(frozen=True)
 class Period:
-    since: datetime | None
+    since: datetime
     until: datetime
 
 
@@ -109,6 +111,7 @@ def period(params: Mapping[str, str | None], now: datetime, *, since_required: b
     if since is None:
         if since_required:
             raise _invalid("since")
+        since = end - timedelta(days=MAX_DAYS)
     elif since >= end or end - since > timedelta(days=MAX_DAYS):
         raise _invalid("since")
     return Period(since, end)
@@ -139,23 +142,23 @@ def usage(
 ) -> dict[str, Any]:
     """The usage of the workgroup in the period (module docstring)."""
     _workgroup(connection, view, wg)
-    assert when.since is not None
     params: dict[str, Any] = {"wg": wg, "since": when.since, "until": when.until, "now": now}
     params.update(failed=list(FAILED_STATES), limit=limit + 1)
+    every = _SESSIONS.format(only="")
     total = None
+    cursor = ""
     if before is None:
         counted = connection.execute(
-            f"{_SESSIONS} SELECT count(*), count(DISTINCT task_id), {_SUMS} FROM s", params
+            f"{every} SELECT count(*), count(DISTINCT task_id), {_SUMS} FROM s", params
         ).fetchall()[0]
         total = {"sessions": int(counted[0]), "tasks": int(counted[1]), **_figures(counted[2:])}
-        cursor = ""
     else:
         params["at"], params["id"] = decode_cursor(before)
-        cursor = "WHERE (created_at, id) < (%(at)s, %(id)s)"
+        cursor = " AND (created_at, id) < (%(at)s, %(id)s)"
     if by == "session":
         found = connection.execute(
-            f"{_SESSIONS} SELECT id, task_id, parent_session_id, depth, state, model_id, created_at, ended_at,"
-            f" {', '.join(FIGURES)} FROM s {cursor} ORDER BY created_at DESC, id DESC LIMIT %(limit)s",
+            f"{every} SELECT id, task_id, parent_session_id, depth, state, model_id, created_at, ended_at,"
+            f" {', '.join(FIGURES)} FROM s WHERE true{cursor} ORDER BY created_at DESC, id DESC LIMIT %(limit)s",
             params,
         ).fetchall()
         rows = [
@@ -174,18 +177,28 @@ def usage(
         ]
         keys = [(item[6], item[0]) for item in found[:limit]]
     else:
-        having = cursor.replace("created_at, id", "t.created_at, t.id")
+        # the page's tasks first (bounded by the index on the sessions), then the figures of only their sessions
         found = connection.execute(
-            f"{_SESSIONS} SELECT t.id, t.created_at, count(*), {_SUMS} FROM s JOIN hub.task t ON t.id = s.task_id"
-            f" {having} GROUP BY t.id, t.created_at ORDER BY t.created_at DESC, t.id DESC LIMIT %(limit)s",
+            "SELECT id, created_at FROM hub.task WHERE id IN (SELECT task_id FROM hub.session WHERE wg_id = %(wg)s"
+            f" AND created_at >= %(since)s AND created_at < %(until)s){cursor}"
+            " ORDER BY created_at DESC, id DESC LIMIT %(limit)s",
             params,
         ).fetchall()
+        params["tasks"] = [item[0] for item in found[:limit]]
+        sums = {
+            item[0]: item[1:]
+            for item in connection.execute(
+                f"{_SESSIONS.format(only=' AND s.task_id = ANY(%(tasks)s)')}"
+                f" SELECT task_id, count(*), {_SUMS} FROM s GROUP BY task_id",
+                params,
+            )
+        }
         rows = [
             {
                 "task_id": str(item[0]),
                 "created_at": format_time(item[1]),
-                "sessions": int(item[2]),
-                **_figures(item[3:]),
+                "sessions": int(sums[item[0]][0]),
+                **_figures(sums[item[0]][1:]),
             }
             for item in found[:limit]
         ]
@@ -215,10 +228,8 @@ def audit(
     """The audit rows of the workgroup (module docstring); `filters` from `audit_query.parse_filters` without `wg` and
     `actor`; `grouped`: the counts per action and result instead."""
     org = _workgroup(connection, view, wg)
-    clauses, params = ["org_id = %s", "wg_id = %s", "at < %s"], list[Any]([org, wg, when.until])
-    if when.since is not None:
-        clauses.append("at >= %s")
-        params.append(when.since)
+    clauses = ["org_id = %s", "wg_id = %s", "at >= %s", "at < %s"]
+    params = list[Any]([org, wg, when.since, when.until])
     for name, value in filters.items():
         if name == "action":
             clauses.append("(action = %s OR left(action, %s) = %s)")
@@ -254,10 +265,8 @@ def operations(
     """The operations of every task of the workgroup (module docstring); `grouped`: the counts per type, state and
     error code instead."""
     _workgroup(connection, view, wg)
-    clauses, params = ["wg_id = %s", "created_at < %s"], list[Any]([wg, when.until])
-    if when.since is not None:
-        clauses.append("created_at >= %s")
-        params.append(when.since)
+    clauses = ["wg_id = %s", "created_at >= %s", "created_at < %s"]
+    params = list[Any]([wg, when.since, when.until])
     for column, value in (("type", op_type), ("state", state)):
         if value is not None:
             clauses.append(f"{column} = %s")
@@ -313,7 +322,6 @@ def metrics(
     when = period(params, now, since_required=True)
     if params.get("entity_kind") not in ENTITY_KINDS:
         raise _invalid("entity_kind")
-    assert when.since is not None
     query = monitoring.parse_series(
         {
             "entity_kind": params.get("entity_kind"),

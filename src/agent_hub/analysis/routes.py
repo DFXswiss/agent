@@ -8,7 +8,8 @@ Routes (right `device:wg`, read resource `device.workgroup.<name>`), query param
 - `GET /v1/device/workgroups/{wg}/metrics` (`entity_kind`, `entity_id`, `metric`, `since`, `until`, `step`)
 
 Query values follow `contracts/api/device-workgroup-*.request.json`; anything else is `400 request_invalid` with the
-pointer of the parameter. Each read runs in one repeatable-read transaction (`agent_hub.device.routes`); every one is
+pointer of the parameter. Without `since` audit and operations read the `MAX_DAYS` before `until` (usage and metrics
+require it). Each read runs in one repeatable-read transaction (`agent_hub.device.routes`); every one is
 read-logged by the pipeline. The semantics are those of `agent_hub.analysis.reads`.
 """
 

@@ -169,3 +169,23 @@ def test_usage_of_a_workgroup_the_device_does_not_serve_is_not_found(reads: Read
 )
 def test_usage_parameter_errors_name_the_parameter(reads: Reads, query: dict[str, str], pointer: str) -> None:
     assert reads.refused("usage", **query) == invalid(pointer)
+
+
+def test_a_task_sums_only_its_sessions_started_in_the_period(reads: Reads) -> None:
+    task = reads.task(reads.ago(days=20))
+    early = reads.session(task, reads.ago(days=20), state="stopped", ended=reads.ago(days=19))
+    late = reads.session(task, reads.ago(hours=1))
+    reads.usage(early, 9, 900, 9000)
+    reads.usage(late, 1, 100, 100)
+    body = reads.ok("usage", since=format_time(reads.ago(days=7)))
+    [row] = body["rows"]
+    assert (row["task_id"], row["created_at"], row["sessions"], row["requests"], row["cost_micro_usd"]) == (
+        task,
+        format_time(reads.ago(days=20)),
+        1,
+        1,
+        100,
+    )
+    assert (body["total"]["sessions"], body["total"]["requests"]) == (1, 1)
+    both = reads.ok("usage", since=format_time(reads.ago(days=21)), by="task")
+    assert (both["rows"][0]["sessions"], both["rows"][0]["requests"]) == (2, 10)

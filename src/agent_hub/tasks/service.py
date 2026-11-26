@@ -132,8 +132,9 @@ class Given:
 
     github_identity: UUID | None
     requested: tuple[UUID, str | None] | None
-    analysis: dict[str, str] | None = None
-    """The analysis fields the request named (scope, and `since`/`until` when given; ADR-095 section 1)."""
+    analysis: dict[str, Any] | None = None
+    """The analysis fields the request named (scope, and `since`/`until` when given; ADR-095 section 1): a repetition
+    names the same values (an omitted time is not compared, its default moves with the hub's time)."""
 
 
 def _replayed_create(
@@ -194,11 +195,8 @@ def create_task(
     author of the events (the user's own-identity agent, ADR-082; default the user), `analysis` the request's
     analysis (ADR-095)."""
     now = context.clock()
-    checked = None if analysis is None else analysis_request.parse(analysis, now)
     given = Given(
-        github_identity=github_identity,
-        requested=requested,
-        analysis=None if checked is None or analysis is None else checked.given(analysis),
+        github_identity=github_identity, requested=requested, analysis=None if analysis is None else dict(analysis)
     )
     actor = Actor("user", user)
     with context.pool.connection() as connection, connection.transaction():
@@ -208,6 +206,8 @@ def create_task(
         known = connection.execute("SELECT 1 FROM hub.task WHERE id = %s", (task_id,)).fetchone()
         if known is not None:
             return Outcome(body=_replayed_create(connection, user, task_id, wg_id, events, given=given))
+        # checked against the hub's time only for a new task: a late retry still gets the stored answer
+        checked = None if analysis is None else analysis_request.parse(analysis, now)
         if github_identity is not None:
             identities.require_usable(connection, github_identity, user)
             identities.require_feature(

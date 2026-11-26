@@ -173,7 +173,9 @@ def test_the_profile_of_an_analysis_task_is_only_narrowed(ops: Ops) -> None:
         ), profile
     narrowed = writer.browser.put(f"/v1/tasks/{task}/agent-profile", json={"profile": "triage"})
     assert narrowed.status_code == 200, narrowed.text
-    assert narrowed.json()["profile"]["name"] == "triage"
+    marked = {"name": "analysis", "operations": READER["operations"], "reads": "task"}
+    assert narrowed.json() == {"profile": marked}  # the narrower snapshot stays marked as an analysis
+    assert writer.browser.get(f"/v1/tasks/{task}").json()["task"]["agent_profile"] == marked
     [row] = audit_rows(ops.desk, "task.agent_profile")
     assert row[-1] == {"profile": "triage", "reads": "task"}
     again = writer.browser.put(f"/v1/tasks/{task}/agent-profile", json={"profile": "triage"})
@@ -188,7 +190,8 @@ def test_an_organization_analysis_keeps_the_read_types_with_every_reach(ops: Ops
     task = _analysis_task(ops, "all")
     response = writer.browser.put(f"/v1/tasks/{task}/agent-profile", json={"profile": "read_only"})
     assert response.status_code == 200, response.text
-    assert response.json()["profile"] == BUILTIN["read_only"].as_json()
+    assert response.json()["profile"] == BUILTIN["analysis"].as_json()  # the same types and reach, still marked
+    assert audit_rows(ops.desk, "task.agent_profile") == []  # nothing changed
     assert writer.browser.put(f"/v1/tasks/{task}/agent-profile", json={"profile": "review"}).status_code == 403
 
 

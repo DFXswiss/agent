@@ -114,3 +114,35 @@ def test_the_device_state_names_the_effective_profiles(ops: Ops) -> None:
     assert section["sessions"][other] is None
     assert sorted(section["workgroups"][ops.desk.wg]) == sorted(BUILTIN)
     assert other_task != task
+
+
+def test_a_child_of_an_analysis_task_stays_marked_as_one(ops: Ops) -> None:
+    """ADR-095 section 2: a child started with a narrower profile of its own keeps the name `analysis`, so the
+    guest's checks keyed on the name (no web search) hold along the chain; a child of an ordinary task keeps its
+    profile's name."""
+    task, session = ops.session()
+    snapshot = {**BUILTIN["analysis"].as_json(), "reads": "workgroup"}
+    ops.desk.execute(
+        "UPDATE hub.task SET analysis = %s, agent_profile = %s WHERE id = %s",
+        Jsonb({"scope": "wg", "since": "2026-11-14T12:00:00.123Z", "until": "2026-11-21T12:00:00.123Z"}),
+        Jsonb(snapshot),
+        task,
+    )
+    ops.desk.execute(
+        "INSERT INTO hub.agent_profile (scope, scope_id, org_id, name, operations, reads, updated_by, updated_at)"
+        " VALUES ('wg', %s, %s, 'triage', %s, 'task', %s, now())",
+        ops.desk.wg,
+        ops.desk.org,
+        ["github.get_issue", "subagent.request"],
+        ops.scene.writer.id,
+    )
+    narrower = _child(ops, session, "triage")
+    marked = {"name": "analysis", "operations": ["github.get_issue", "subagent.request"], "reads": "task"}
+    assert narrower["child_profile"] == marked
+    child = narrower["child_session_id"]
+    assert ops.desk.rows("SELECT agent_profile FROM hub.session WHERE id = %s", child) == [(marked,)]
+    inheriting = _child(ops, child)
+    assert ops.desk.rows("SELECT agent_profile FROM hub.session WHERE id = %s", inheriting["child_session_id"]) == [
+        (None,)
+    ]
+    assert _child(ops, session, "development") == {"state": "denied", "error_code": "rights_denied"}

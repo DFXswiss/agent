@@ -116,3 +116,16 @@ def test_the_operations_of_a_workgroup_the_device_does_not_serve_are_not_found(r
 )
 def test_operation_parameter_errors_name_the_parameter(reads: Reads, query: dict[str, str], pointer: str) -> None:
     assert reads.refused("operations", **query) == invalid(pointer)
+
+
+def test_without_since_the_longest_period_before_until_is_read(reads: Reads) -> None:
+    """No list or count spans more than 92 days: without `since` the period starts 92 days before `until`."""
+    task = reads.task(reads.ago(days=200))
+    session = reads.session(task, reads.ago(days=200))
+    ancient = reads.operation(session, reads.ago(days=100))
+    recent = reads.operation(session, reads.ago(days=91))
+    assert _ids(reads.ok("operations")) == [recent]
+    assert reads.ok("operations", group_by="type")["groups"] == [
+        {"type": "github.push", "state": "succeeded", "error_code": None, "count": 1}
+    ]
+    assert _ids(reads.ok("operations", until=format_time(reads.ago(days=95)))) == [ancient]
