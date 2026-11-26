@@ -37,6 +37,13 @@ the installation of an own device sets no pool setting.
 - An own device keeps one more running VM than before (its memory counts against the capacity budget above).
 - The clone path is still measured (PERF-02, E2E-07): the E2E suite holds the pool empty with `TEST_POOL_EMPTY=1`,
   which the runner accepts only in test mode (`TEST_MODE=1`, never in production; otherwise `config_invalid`).
+- **One warm VM per device across all kinds.** The client's rule covers every kind of pre-warmed VM together: a device
+  holds **exactly 1 warm VM in total**, whatever kinds of VMs it runs, also when further kinds come later. CI VMs are
+  included: the warm VMs per CI class planned in [16-ci-runners.md §6.2](../spec/16-ci-runners.md) do not add to this
+  count; that concept's capacity work (§6.6) has to fit its warm VMs into the one warm VM of the device, and
+  16-ci-runners.md is adapted for that. A new kind of VM never brings its own warm pool on top of the one VM.
+- Open against that rule: the work VM pool (`WORKVM_POOL_SIZE`, default 1, [13-work-vm.md](../spec/13-work-vm.md)) is
+  today a second warm VM on a device with work VM slots; it is not yet counted together with the session pool.
 
 ## Alternatives considered
 Cold start (too slow), snapshots (unsupported), pausing VMs (no RAM gain, unsupported), one shared VM per device (violates per-workgroup VM).
