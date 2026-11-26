@@ -255,6 +255,7 @@ def test_malformed_and_refused_records_end_with_their_code(
         foreign: "header_invalid",
     }
     assert entries[extra]["status"] == "logged_in"  # a field of a later version is kept, not refused (KOR-71)
+    assert subscriptions.valid_body({"email": None}) is False  # the kind is required
     # a refusal other than a concurrent write is not tried again
     kept = add(hub, account.id, sealed(hub, account, body(name="Kept")))
     state_of(hub).refuse_put = True

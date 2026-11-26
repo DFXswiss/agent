@@ -454,3 +454,17 @@ def test_answers_of_the_token_endpoint_out_of_form_are_refused() -> None:
     assert "scopes" not in renewal._fields({**good, "scope": 7}, 0.0)  # type: ignore[operator]
     assert renewal.expires({**login(), "expires_at": "x"}) is None
     assert renewal.expires({"kind": "setup_token"}) is None
+
+
+def test_a_renewal_with_a_waiting_row_only_writes_it(store_dsn: str) -> None:
+    async def body(env: Env, hub: SubscriptionHub, double: UsageDouble, auth: AuthPageDouble) -> None:
+        grant(auth)
+        record = hub.add(login(), owner=ALICE)
+        hub.put_refusals = [(503, {"error": "unavailable"})]
+        await poller(env, double).tick(DESIRED, DUE)
+        [item] = [found for found in await cached(env) if found.id == record]
+        assert await renewal.Renewer(context=env.context).renew(item, DUE + 1, force=True) is True
+        assert hub.opened(record)["token"] == renewed(1)[0]
+        assert auth.run.counters["refresh"] == 1
+
+    run(store_dsn, body)
