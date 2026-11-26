@@ -1,0 +1,199 @@
+{
+  "name": "e2e-71-process-analysis",
+  "description": "E2E-71 (KOR-53, ADR-095). (1) A task in workgroup B renames itself (task.set_title succeeded) and answers, so B has usage, operations and audit. (2) The analysis task's main session (fixed prompt `Optimize processes: analyse the organization from <since> to <until> ...`, brief in the system prompt, the four new tools offered, no web search) takes the period from the prompt and reads: list_workgroups, get_usage and list_workgroup_operations (group_by type) of its own workgroup; get_usage by session, list_workgroup_operations (group_by and rows) of B (its ID captured by its name) and get_usage of workgroup C of another organization (`wg_c`, set by the spec), which is `not_found`; list_audit page 1 and get_metrics of its own session; list_audit page 2 with the cursor `next_before` of page 1 and list_audit group_by action. (3) It requests task.set_title, which its profile `analysis` refuses (`rights_denied`). (4) It answers the report with the six sections.",
+  "variables": {
+    "wg_c": "01900000-0000-7000-8000-000000000000"
+  },
+  "steps": [
+    {
+      "id": "wg-b-task",
+      "expect": {
+        "user_text_contains": "E2E71-WGB",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Renaming the task." },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": { "type": "task.set_title", "params": { "title": "Budget kz71-title-b-r2t6" } }
+          }
+        ]
+      }
+    },
+    {
+      "id": "wg-b-done",
+      "expect": {
+        "tool_result_contains": "\"status\":\"succeeded\""
+      },
+      "reply": {
+        "content": [{ "type": "text", "text": "Budget noted kz71-answer-b-m3k8." }]
+      }
+    },
+    {
+      "id": "analysis-start",
+      "expect": {
+        "user_text_contains": "Optimize processes: analyse the organization from ",
+        "has_tool_result": false,
+        "system_contains": "This session is the process analysis of its task.",
+        "tools_include": [
+          "mcp__platform__get_usage",
+          "mcp__platform__list_audit",
+          "mcp__platform__list_workgroup_operations",
+          "mcp__platform__get_metrics"
+        ],
+        "tools_exclude": ["WebSearch", "WebFetch"]
+      },
+      "capture": {
+        "since": {
+          "regex": "Optimize processes: analyse the organization from (\\S+) to ",
+          "source": "messages"
+        },
+        "until": {
+          "regex": "Optimize processes: analyse the organization from \\S+ to (\\S+) and propose improvements\\.",
+          "source": "messages"
+        },
+        "own_session": {
+          "regex": "- Session ID: `([0-9a-f-]{36})`",
+          "source": "system"
+        }
+      },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Reading the figures of the period." },
+          { "type": "tool_use", "name": "mcp__platform__list_workgroups", "input": {} },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_usage",
+            "input": { "since": "${since}", "until": "${until}" }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__list_workgroup_operations",
+            "input": { "since": "${since}", "until": "${until}", "group_by": "type" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "analysis-other-workgroups",
+      "expect": {
+        "tool_result_contains": "kz71-wg-b-p8x3"
+      },
+      "capture": {
+        "wg_b": {
+          "regex": "\\{(?=[^{}]*kz71-wg-b-p8x3)[^{}]*\"id\":\"([0-9a-f-]{36})\"",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_usage",
+            "input": { "workgroup_id": "${wg_b}", "since": "${since}", "until": "${until}", "by": "session" }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__list_workgroup_operations",
+            "input": { "workgroup_id": "${wg_b}", "since": "${since}", "until": "${until}", "group_by": "type" }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__list_workgroup_operations",
+            "input": { "workgroup_id": "${wg_b}", "since": "${since}", "until": "${until}" }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_usage",
+            "input": { "workgroup_id": "${wg_c}", "since": "${since}", "until": "${until}" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "analysis-audit-page-1",
+      "expect": {
+        "tool_result_contains": "\"error\":\"not_found\""
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__list_audit",
+            "input": { "since": "${since}", "until": "${until}" }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__get_metrics",
+            "input": {
+              "entity_kind": "session",
+              "entity_id": "${own_session}",
+              "metric": "cpu_ratio",
+              "since": "${since}",
+              "until": "${until}",
+              "step": 3600
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "analysis-audit-page-2",
+      "expect": {
+        "tool_result_contains": "\"next_before\":\""
+      },
+      "capture": {
+        "audit_cursor": {
+          "regex": "(?s).*\"next_before\":\"([^\"]+)\"",
+          "source": "messages"
+        }
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__list_audit",
+            "input": { "since": "${since}", "until": "${until}", "before": "${audit_cursor}" }
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__list_audit",
+            "input": { "since": "${since}", "until": "${until}", "group_by": "action" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "analysis-try-write",
+      "expect": {
+        "tool_result_contains": "\"groups\":["
+      },
+      "reply": {
+        "content": [
+          { "type": "text", "text": "Trying to rename the task." },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": { "type": "task.set_title", "params": { "title": "Analysed kz71-title-refused-w4n9" } }
+          }
+        ]
+      }
+    },
+    {
+      "id": "analysis-report",
+      "expect": {
+        "tool_result_contains": "rights_denied"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Process analysis kz71-report-h5d2\n\n## Efficiency\n\nWorkgroup B finished its only task with one operation; no operation failed (list_workgroup_operations).\n\n## Token usage\n\nOne session in workgroup B used the tokens of the period (get_usage); no change is needed.\n\n## Repetitions\n\nThe task list of the default workgroup was read many times in a row (list_audit); a saved filter would save these reads.\n\n## Subagents\n\nNo subagent ran in the period (get_usage by session).\n\n## Workflows\n\nTask titles are set by the sessions themselves; keep it so.\n\n## Resources\n\nNo metric of the period is above its limit (get_metrics); data of other organizations were not readable."
+          }
+        ]
+      }
+    }
+  ]
+}
