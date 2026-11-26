@@ -373,6 +373,9 @@ bearing on keys).
 | [E-32](KONZEPT.md#e-32) | Self-hosted CI runs through the platform (concept): CI VMs (concept) hold no scope key and no device key; placement of the CI app key is open (spec/16 D-4; recommendation: never in a VM or at the hub). | decision needed | KM-37 |
 | [E-33](KONZEPT.md#e-33) | One shared capacity: the rule itself names no key; with [E-34](KONZEPT.md#e-34) a pool device holds the keys of the workgroups it serves while CI VMs run on it (data access of the device, as for idea 35). | decision needed | [§6](#6-where-plaintext-lies) |
 | [E-34](KONZEPT.md#e-34) | CI jobs, also with foreign PR code, share the devices with the work VMs (no own CI device): a pool device holds the plaintext and keys of the workgroups it serves while CI VMs run on it; the separating measures (gate U, spec/16 D-7, D-20) stay a recommendation. | decision needed | [§6](#6-where-plaintext-lies) |
+| [E-33](KONZEPT.md#e-33) | Self-hosted CI runs through the platform (concept): CI VMs (concept) hold no scope key and no device key; placement of the CI app key is open (spec/16 D-4; recommendation: never in a VM or at the hub). | decision needed | KM-37 |
+| [E-34](KONZEPT.md#e-34) | One shared capacity: the rule itself names no key; with [E-35](KONZEPT.md#e-35) a pool device holds the keys of the workgroups it serves while CI VMs run on it (data access of the device, as for idea 35). | decision needed | [§6](#6-where-plaintext-lies) |
+| [E-35](KONZEPT.md#e-35) | CI jobs, also with foreign PR code, share the devices with the work VMs (no own CI device): a pool device holds the plaintext and keys of the workgroups it serves while CI VMs run on it; the separating measures (gate U, spec/16 D-7, D-20) stay a recommendation. | decision needed | [§6](#6-where-plaintext-lies) |
 | [A1](KONZEPT.md#a-1) | Subagents have the parent's rights and no keys. | carried | [§1](#1-principals) |
 | [A2](KONZEPT.md#a-2) | Conflict fix by merge commit. | none | – |
 | [A3](KONZEPT.md#a-3) | The hardening is built: the agent has its own identity as a sub-principal and is rotated out on revocation (ADR-082); the rekey of the user's identity for copies made before is a decision of the owner. | decision needed | KM-28, KM-30, KM-39 |
@@ -391,8 +394,8 @@ bearing on keys).
 | [A16](KONZEPT.md#a-16) | Workflow files are not blocked. | none | – |
 | [A17](KONZEPT.md#a-17) | Protected branches. | none | – |
 | [A18](KONZEPT.md#a-18) | Blocked attempts are logged. | none | – |
-| [A19](KONZEPT.md#a-19) | One throw-away VM per CI job; no bearing of its own on keys (the keys around CI VMs: row E-32). | none | – |
-| [A20](KONZEPT.md#a-20) | A runner is a VM from the same pool as the work VMs, decided by [E-34](KONZEPT.md#e-34): the pool device holds the keys of the workgroups it serves while CI VMs run on it. | decision needed | [§6](#6-where-plaintext-lies) |
+| [A19](KONZEPT.md#a-19) | One throw-away VM per CI job; no bearing of its own on keys (the keys around CI VMs: row E-33). | none | – |
+| [A20](KONZEPT.md#a-20) | A runner is a VM from the same pool as the work VMs, decided by [E-35](KONZEPT.md#e-35): the pool device holds the keys of the workgroups it serves while CI VMs run on it. | decision needed | [§6](#6-where-plaintext-lies) |
 
 ## 11. Gaps and the requirements on the follow-up packages
 
