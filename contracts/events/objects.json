@@ -602,7 +602,7 @@
         },
         "merge_criteria": {
           "type": "object",
-          "description": "formal criteria of github.merge (KOR-51, ADR-091 section 5); absent or all zero/false: only GitHub's own rules apply",
+          "description": "formal criteria of github.merge (KOR-51, ADR-093 section 5); absent or all zero/false: only GitHub's own rules apply",
           "properties": {
             "passed_verdicts": {
               "$ref": "../common.json#/$defs/count",
@@ -626,7 +626,7 @@
         },
         "separate_duties": {
           "type": "boolean",
-          "description": "a session that made or pushed a commit of the pull request may neither give a verdict on its head nor merge it, and its verdicts never count (KOR-51, ADR-091 section 6); default false"
+          "description": "a session that made or pushed a commit of the pull request may neither give a verdict on its head nor merge it, and its verdicts never count (KOR-51, ADR-093 section 6); default false"
         }
       },
       "required": [

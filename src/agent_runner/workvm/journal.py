@@ -11,7 +11,7 @@ tool error. A pending call is taken once even when its page is read again. Nothi
 the call is visible as the `session.tool` event of the transcript.
 
 A session whose rights profile does not allow the type a tool stands for (`workvm.request` for the work VM tools,
-`browser.open` for the browser tools; ADR-091 section 3) gets the tool error `forbidden` with the profile's sentence
+`browser.open` for the browser tools; ADR-093 section 3) gets the tool error `forbidden` with the profile's sentence
 before anything starts.
 
 A body that is not `{pending_id, tool, arguments}` with a UUID, a known tool and valid arguments (`RULES`, and the

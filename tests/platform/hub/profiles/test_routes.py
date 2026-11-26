@@ -1,5 +1,5 @@
 """U-HUB-profiles: own profiles of a workgroup or an organization, the listing with the built-in roles and the profile
-of a task (ADR-091 sections 1, 2 and 7; `PUT/DELETE /v1/workgroups/{wg}/agent-profiles/{name}`,
+of a task (ADR-093 sections 1, 2 and 7; `PUT/DELETE /v1/workgroups/{wg}/agent-profiles/{name}`,
 `PUT/DELETE /v1/orgs/{org}/agent-profiles/{name}`, `GET /v1/workgroups/{wg}/agent-profiles`,
 `PUT /v1/tasks/{task}/agent-profile`)."""
 

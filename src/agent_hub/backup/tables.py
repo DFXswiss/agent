@@ -124,7 +124,7 @@ RULES: tuple[TableRule, ...] = (
     # the records of the org's users and the org's own company records (ADR-078)
     TableRule("credential", "owner_id = ANY(%(users)s) OR owner_id = %(org)s"),
     TableRule("github_default", "(scope = 'org' AND scope_id = %(org)s) OR (scope = 'wg' AND scope_id = ANY(%(wgs)s))"),
-    # the own rights profiles of the org and its workgroups (ADR-091)
+    # the own rights profiles of the org and its workgroups (ADR-093)
     TableRule("agent_profile", "org_id = %(org)s"),
     TableRule("credential_notice", "owner_id = ANY(%(users)s) OR owner_id = %(org)s"),
     TableRule("device_request", USER_ROWS),

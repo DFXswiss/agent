@@ -1,4 +1,4 @@
-"""`profile list|set|delete`, `task profile` and `review verdicts` (KOR-51, ADR-091; E-04: what the web offers) against
+"""`profile list|set|delete`, `task profile` and `review verdicts` (KOR-51, ADR-093; E-04: what the web offers) against
 the hub double with the profile routes of the hub."""
 
 from __future__ import annotations

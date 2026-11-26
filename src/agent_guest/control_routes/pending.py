@@ -11,7 +11,7 @@ answers with ``POST /v1/pending/{id}/answer``; the API process waits for the ans
   journal body without ``pending_id``; it is validated with the ID added (``request_invalid`` with pointers); the
   kind ``relay`` is the orchestrator tool's alone (``orch.sock``, ``control_routes/orchestrator.py``) and refused here;
   an operation the session's rights profile does not allow is recorded ``local_check: "rejected"`` with
-  ``rights_denied`` (``profiles.refusal``, ADR-091 section 3), so the runner never executes it; the call is answered
+  ``rights_denied`` (``profiles.refusal``, ADR-093 section 3), so the runner never executes it; the call is answered
   at once with that rejection (the runner answers no locally rejected request)
 * op ``pending.wait {pending_id, session_id, timeout <= 33} -> {state: "answered", answer} | {state: "waiting"}``;
   33 s is the longest MCP wait (``get_operation``/``get_subagent_result``: ``wait_seconds`` ≤ 30 plus the read margin,

@@ -4,7 +4,7 @@
 // applies) and the PR draft default (true). They are a `settings.workgroup` event of
 // the workgroup scope, written by users with `wg:write`; the newest verified one wins (by `scope_seq`).
 //
-// - merge criteria and separate duties (KOR-51, ADR-091 sections 5 and 6): optional, off by default; the body carries
+// - merge criteria and separate duties (KOR-51, ADR-093 sections 5 and 6): optional, off by default; the body carries
 //   `merge_criteria` only when one criterion is set and `separate_duties` only when it is on, so a workgroup that sets
 //   nothing writes the same body as before.
 // - `parseSettings`: the form input (one repository and one pattern per line) → the event body, or the errors per
@@ -68,7 +68,7 @@ export interface SettingsInput {
   readonly repositories: string;
   readonly protectedBranches: string;
   readonly prDraftDefault: boolean;
-  /** Merge criteria and separation (ADR-091); absent: unchanged defaults. */
+  /** Merge criteria and separation (ADR-093); absent: unchanged defaults. */
   readonly mergeVerdicts?: number;
   readonly mergeVerdictProfile?: string;
   readonly mergeChecksGreen?: boolean;

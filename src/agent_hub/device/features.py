@@ -22,7 +22,7 @@ announced it (`agent_hub.github.identities.require_feature`, `409 peer_outdated`
 and the platform role `operator` (the hub refuses to append them while an active platform device has not announced it,
 `agent_hub.platform.log`).
 
-`agent.profiles` (KOR-51, ADR-091 section 3): the runner enforces rights profiles (operation types, the work VM and
+`agent.profiles` (KOR-51, ADR-093 section 3): the runner enforces rights profiles (operation types, the work VM and
 browser tools, the reach of reads) from the section `agent_profiles` of the device state. The hub refuses to assign a
 profile to a task while an active device assigned to a workgroup of the org has not announced it
 (`agent_hub.profiles.routes`, `409 peer_outdated`).

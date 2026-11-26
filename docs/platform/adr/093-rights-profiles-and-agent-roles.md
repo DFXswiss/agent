@@ -1,4 +1,4 @@
-# ADR-091: Rights profiles and agent roles – work, review and release kept apart, a voluntary setting and never a precondition
+# ADR-093: Rights profiles and agent roles – work, review and release kept apart, a voluntary setting and never a precondition
 
 Status: Accepted (2026-11-25, after a review of the draft with fresh context; its findings are worked in)
 

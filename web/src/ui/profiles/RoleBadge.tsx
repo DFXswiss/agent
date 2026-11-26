@@ -1,4 +1,4 @@
-// The role of a session (ADR-091 section 7): the name of the rights profile it works with (`profiles.sessionRole`),
+// The role of a session (ADR-093 section 7): the name of the rights profile it works with (`profiles.sessionRole`),
 // a built-in role in the catalog's words, an own profile by its name; nothing for a session without a profile.
 import { ROLES, sessionRole } from '../../core/profiles/profiles';
 import { useStore } from '../hooks/useStore';

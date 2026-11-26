@@ -62,7 +62,7 @@ class Launch:
     mcp_configs: tuple[str, ...] = ()
     """Further ``--mcp-config`` files after the platform's (absolute paths of the image)."""
     disallowed: tuple[str, ...] = ()
-    """Platform tools the session's rights profile does not offer (``profiles.disallowed_tools``, ADR-091)."""
+    """Platform tools the session's rights profile does not offer (``profiles.disallowed_tools``, ADR-093)."""
 
 
 class AgentDriver(Protocol):

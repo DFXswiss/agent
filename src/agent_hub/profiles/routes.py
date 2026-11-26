@@ -1,4 +1,4 @@
-"""Routes of the rights profiles (ADR-091 sections 1, 2 and 7; 03-api.md section 4.10).
+"""Routes of the rights profiles (ADR-093 sections 1, 2 and 7; 03-api.md section 4.10).
 
 | Route | Right |
 |---|---|

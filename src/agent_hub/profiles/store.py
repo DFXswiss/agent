@@ -1,4 +1,4 @@
-"""Profile definitions, assignments and the effective profile of a session (ADR-091 sections 1-3).
+"""Profile definitions, assignments and the effective profile of a session (ADR-093 sections 1-3).
 
 - **Definitions**: the built-in roles (`model.BUILTIN`) and the own profiles of an organization or a workgroup
   (`hub.agent_profile`). A name resolves in the order workgroup, organization, built-in; the built-in names are

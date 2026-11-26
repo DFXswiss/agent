@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/task-agent-profile-put.request.json",
   "title": "PUT /v1/tasks/{task}/agent-profile request",
-  "description": "Assign (a profile name, resolved in the task's workgroup) or clear (null) the rights profile of the task's main sessions (writers of the workgroup; ADR-091 section 1). Assigning passes the feature gate agent.profiles (409 peer_outdated).",
+  "description": "Assign (a profile name, resolved in the task's workgroup) or clear (null) the rights profile of the task's main sessions (writers of the workgroup; ADR-093 section 1). Assigning passes the feature gate agent.profiles (409 peer_outdated).",
   "type": "object",
   "properties": {
     "profile": {

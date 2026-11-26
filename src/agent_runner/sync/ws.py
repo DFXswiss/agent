@@ -61,8 +61,8 @@ FEATURES = (
 ways of "Connect GitHub" it can run (`features`, KOR-65), so a device without them offers only an existing token;
 `prompt.withdraw` - the withdrawal of waiting prompts through `prompt_queue.withdrawn` of the device state (ADR-083
 section 3); `subscriptions` - `claude.login` for further subscriptions (`subscription_id`, `name`, `note`, `email`;
-ADR-091 section 2), so clients send those fields only to such a device;
-`agent.profiles` - the rights profiles of the section `agent_profiles` (ADR-091 section 3)."""
+ADR-093 section 2), so clients send those fields only to such a device;
+`agent.profiles` - the rights profiles of the section `agent_profiles` (ADR-093 section 3)."""
 DEVICE_FLOW = "github.device_flow"
 OAUTH_APP = "github.oauth_app"
 OPERATOR_GITHUB = "github.operator"

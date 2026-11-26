@@ -368,6 +368,7 @@ TABLES = {
     # 0032 (KOR-51, ADR-090 section 3): the rights profiles of the device's sessions
     # 0033 (KOR-51, ADR-090 section 3): the rights profiles of the device's sessions
     # 0033 (KOR-51, ADR-091 section 3): the rights profiles of the device's sessions
+    # 0034 (KOR-51, ADR-093 section 3): the rights profiles of the device's sessions
     "profile_state": ["id", "section", "received_at"],
     "session_profile": ["session_id", "profile", "created_at"],
     "schema_version": ["version", "name", "checksum", "applied_at"],

@@ -1,4 +1,4 @@
-"""The formal merge criteria of a workgroup and the separation of duties (ADR-091 sections 5 and 6; §10 point 7:
+"""The formal merge criteria of a workgroup and the separation of duties (ADR-093 sections 5 and 6; §10 point 7:
 deterministic and formal, never on content).
 
 `refusal(...)` is a pure function of what the runner read: the workgroup's `MergeCriteria` and `separate_duties`, the

@@ -55,7 +55,7 @@ CATEGORIES: dict[str, str] = {
     "contexts": "Context checkpoints (ADR-072): IDs, epoch, chunk counts, sizes, digest and chunk hashes, the signed "
     "manifest, times; pull-request links: opaque tag, epoch, task and session or the user who linked it, the sealed "
     "body of fixed length (ADR-084); restore outcomes",
-    "profiles": "Rights profiles (ADR-091): names of own profiles, the operation types they allow, their read reach, "
+    "profiles": "Rights profiles (ADR-093): names of own profiles, the operation types they allow, their read reach, "
     "who changed them and when; the profile snapshot of a task or a child session",
 }
 

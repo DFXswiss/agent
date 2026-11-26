@@ -1,4 +1,4 @@
-"""Executors of this area (`<area>/executors.py:EXECUTORS`; ADR-091 section 4).
+"""Executors of this area (`<area>/executors.py:EXECUTORS`; ADR-093 section 4).
 
 - `review.verdict`: records the verdict; the result names it (`verdict_id` = the operation ID) with the name of the
   session's effective rights profile at this moment (`profile`, null without), which the merge criteria compare.

@@ -1,6 +1,6 @@
 # KOR-51 – contract changes
 
-ADR-027 section 3 (additive). Decision: ADR-091 (rights profiles and agent roles).
+ADR-027 section 3 (additive). Decision: ADR-093 (rights profiles and agent roles).
 
 ## Common (`common.json`)
 - New `agent_profile {name, operations (≤ 256 operation types), reads}`, `agent_profile_name`

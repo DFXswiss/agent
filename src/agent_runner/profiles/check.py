@@ -1,4 +1,4 @@
-"""The runner's checks of rights profiles (ADR-091 section 3).
+"""The runner's checks of rights profiles (ADR-093 section 3).
 
 - `operation(db, op, session)`: before every other check of an operation, the type must be allowed by the session's
   effective profile (`rights_denied` with a sentence that names the profile, the type and who can change it). For

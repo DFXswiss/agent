@@ -1,4 +1,4 @@
-// E2E-69 (07-testing.md section 2.1; KOR-51, ADR-091; concept idea 42, interpretation A1, rule E-11): agent roles and
+// E2E-69 (07-testing.md section 2.1; KOR-51, ADR-093; concept idea 42, interpretation A1, rule E-11): agent roles and
 // rights profiles keep work, review and release apart - voluntarily, never as a precondition.
 // 1. The workgroup's settings list the built-in roles; Ada sets the merge rules there (one passed verdict of a review
 //    session, separate duties).

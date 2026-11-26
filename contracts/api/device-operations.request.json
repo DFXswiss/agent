@@ -73,7 +73,7 @@
               "type": "null"
             }
           ],
-          "description": "for subagent.request: the profile the child is started with (ADR-091 section 1; plaintext, the name only); absent or null: the child works with its parent's rights"
+          "description": "for subagent.request: the profile the child is started with (ADR-093 section 1; plaintext, the name only); absent or null: the child works with its parent's rights"
         }
       },
       "required": [
@@ -161,7 +161,7 @@
               "type": "null"
             }
           ],
-          "description": "for subagent.request: the profile the child is started with (ADR-091 section 1; plaintext, the name only); absent or null: the child works with its parent's rights"
+          "description": "for subagent.request: the profile the child is started with (ADR-093 section 1; plaintext, the name only); absent or null: the child works with its parent's rights"
         }
       },
       "required": [

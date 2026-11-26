@@ -138,7 +138,7 @@ def test_kind_version_and_factory() -> None:
 
 
 def test_a_rights_profile_shortens_the_tool_list(driver: ClaudeCodeDriver) -> None:
-    """ADR-091 section 3: the platform tools a session's profile does not allow are not offered at all."""
+    """ADR-093 section 3: the platform tools a session's profile does not allow are not offered at all."""
     launch = Launch(
         session_id=SID,
         harness_file=HARNESS,

@@ -254,7 +254,7 @@ class Estate:
                 (org, company, writer.id, now),
             ),
             (
-                # an own rights profile of the org (ADR-091)
+                # an own rights profile of the org (ADR-093)
                 "INSERT INTO hub.agent_profile (scope, scope_id, org_id, name, operations, reads, updated_by,"
                 " updated_at) VALUES ('org', %s, %s, 'triage', %s, 'task', %s, %s)",
                 (org, org, ["github.get_issue"], writer.id, now),

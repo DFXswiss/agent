@@ -3,7 +3,7 @@ step 3).
 
 The inbox hands every verified `settings.workgroup` event (E1-E5, author `wg:write` at `lh`, decrypted with a held
 scope key) to `keep`: the body must be exactly `{repositories, protected_branches, pr_draft_default}` with the contract
-shapes, optionally with `merge_criteria` and `separate_duties` (KOR-51, ADR-091 sections 5 and 6), else the event is
+shapes, optionally with `merge_criteria` and `separate_duties` (KOR-51, ADR-093 sections 5 and 6), else the event is
 refused (`settings_invalid`). The latest event per workgroup wins by the hub's scope order
 (`scope_seq`); it is kept as received with the author's verified signing key (`runner.workgroup_settings`) and opened
 again only into memory (`load`).
@@ -48,7 +48,7 @@ class SettingsInvalid(ValueError):
 
 @dataclass(frozen=True)
 class MergeCriteria:
-    """The formal criteria of `github.merge` (ADR-091 section 5); the defaults require nothing."""
+    """The formal criteria of `github.merge` (ADR-093 section 5); the defaults require nothing."""
 
     passed_verdicts: int = 0
     verdict_profile: str = "review"

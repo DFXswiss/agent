@@ -1,4 +1,4 @@
-"""U-RUN-github (KOR-51, ADR-091 sections 4-6): review verdicts and security reports, the reviews and checks of a pull
+"""U-RUN-github (KOR-51, ADR-093 sections 4-6): review verdicts and security reports, the reviews and checks of a pull
 request, and `github.merge` with the workgroup's formal criteria and separation of duties, through the operation
 pipeline against the GitHub double. Without criteria only GitHub's own rules decide (E-11)."""
 

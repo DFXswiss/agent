@@ -1,5 +1,5 @@
 """U-HUB-profiles: the classes of the operation types against the contract, the built-in roles derived from them and
-the rule "a child never has more than its parent" (ADR-091 sections 1 and 2)."""
+the rule "a child never has more than its parent" (ADR-093 sections 1 and 2)."""
 
 from __future__ import annotations
 

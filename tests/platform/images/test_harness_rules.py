@@ -51,7 +51,7 @@ SPEC_OPERATIONS: dict[str, tuple[set[str], set[str]]] = {
     "github.list_identities": (set(), set()),
     # ADR-084 (KOR-48)
     "github.merge_base": ({"repo", "number"}, {"discard"}),
-    # ADR-091 (KOR-51)
+    # ADR-093 (KOR-51)
     "github.list_reviews": ({"repo", "number"}, set()),
     "github.get_checks": ({"repo", "ref"}, set()),
     "review.verdict": ({"repo", "number", "head_sha", "outcome", "summary"}, {"evidence"}),

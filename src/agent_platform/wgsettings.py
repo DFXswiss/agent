@@ -9,7 +9,7 @@ allows every repository the user's GitHub connection reaches. Protected branch p
 
 - `repos list|allow|disallow --wg`: the list, and a change of it;
 - `wg settings --wg`: shows the settings, or with `--protected-branch` / `--pr-draft-default` sets them; the merge
-  criteria and the separation of duties (KOR-51, ADR-091 sections 5 and 6, all optional and off by default) with
+  criteria and the separation of duties (KOR-51, ADR-093 sections 5 and 6, all optional and off by default) with
   `--merge-verdicts N`, `--merge-verdict-profile NAME`, `--merge-checks-green true|false`, `--merge-approvals N` and
   `--separate-duties true|false`;
 - `wg rename --wg --name`: the workgroup's name, a `wg.profile` event of the org scope sealed with the org key (admins).

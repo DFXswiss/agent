@@ -161,7 +161,7 @@ def test_workgroup_rename(tool: Tool, hub: HubFake, account: User, tmp_path: Pat
 
 
 def test_merge_criteria_and_separate_duties(tool: Tool, hub: HubFake, account: User) -> None:
-    """KOR-51 (ADR-091 sections 5 and 6): optional, off by default, set one by one."""
+    """KOR-51 (ADR-093 sections 5 and 6): optional, off by default, set one by one."""
     wg = default_wg(hub, account)
     code, saved = tool.run(
         "wg",

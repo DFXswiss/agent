@@ -1,4 +1,4 @@
-"""U-RUN-reviews (KOR-51, ADR-091 section 5): the optional `merge_criteria` and `separate_duties` of a
+"""U-RUN-reviews (KOR-51, ADR-093 section 5): the optional `merge_criteria` and `separate_duties` of a
 `settings.workgroup` body; any other shape refuses the event."""
 
 from __future__ import annotations

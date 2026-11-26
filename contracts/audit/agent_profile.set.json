@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/audit/agent_profile.set.json",
   "title": "audit detail agent_profile.set",
-  "description": "detail of audit rows with action agent_profile.set: an own rights profile of an organization or a workgroup was created or changed (target the organization or the workgroup; ADR-091 section 2); operations is the number of types it allows. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "description": "detail of audit rows with action agent_profile.set: an own rights profile of an organization or a workgroup was created or changed (target the organization or the workgroup; ADR-093 section 2); operations is the number of types it allows. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
   "type": "object",
   "properties": {
     "scope": {

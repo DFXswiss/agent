@@ -28,7 +28,7 @@ registration runs in one transaction:
      (an older runner; `github.request_connection` and `github.list_identities` act with no identity) is denied while
      the session or the task names an identity or a default of the task's workgroup or org exists, so an old runner
      never acts with another account than the chosen one;
-   - H2b the rights profile (ADR-091 section 3; else `denied` with `rights_denied`): the type is allowed by the
+   - H2b the rights profile (ADR-093 section 3; else `denied` with `rights_denied`): the type is allowed by the
      session's effective profile (`agent_hub.profiles.store.effective`: the task's and every snapshot along the chain
      of parents; none = every type); for `subagent.request` a `child_profile` resolves in the task's workgroup and is
      within the requesting session's effective profile;
@@ -42,7 +42,7 @@ registration runs in one transaction:
    (`at` = hub time, `by_id` NULL = the hub) and the audit row `operation.<state>` (actor: the device; detail with
    the local check, `github_identity` and `triggered_by`). An accepted `subagent.request` creates the child session
    (`agent_hub.operations.children`; its `github_identity` is the registration's, else the parent session's, its
-   `triggered_by` the registration's, ADR-083 section 2, its `agent_profile` the snapshot of `child_profile`, ADR-091
+   `triggered_by` the registration's, ADR-083 section 2, its `agent_profile` the snapshot of `child_profile`, ADR-093
    section 1) and answers its ID, and when the registration named a `child_profile` the child's effective profile
    (`child_profile`). A `subagent.request` naming a `github_identity` passes the feature gate of the org first (`409
    peer_outdated`, nothing stored).

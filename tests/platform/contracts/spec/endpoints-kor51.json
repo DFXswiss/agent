@@ -1,5 +1,5 @@
 {
-  "description": "Endpoints of rights profiles (ADR-091, KOR-51): the profiles usable in a workgroup, own profiles of a workgroup or an organization, and the profile of a task.",
+  "description": "Endpoints of rights profiles (ADR-093, KOR-51): the profiles usable in a workgroup, own profiles of a workgroup or an organization, and the profile of a task.",
   "rights": [
     "wg:read",
     "wg:write",
