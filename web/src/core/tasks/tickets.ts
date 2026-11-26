@@ -262,7 +262,8 @@ export function changedFields(row: TaskRow, next: Required<HubFields>): HubField
 }
 
 /** Whether the sealed fields differ. */
-export const metaChanged = (a: TicketMeta, b: TicketMeta): boolean => META_FIELDS.some((field) => a[field] !== b[field]);
+export const metaChanged = (a: TicketMeta, b: TicketMeta): boolean =>
+  META_FIELDS.some((field) => a[field] !== b[field]);
 
 /** Writes the full set of the sealed fields as a new `task.meta` (module comment); returns its `scope_seq`. */
 export async function writeMeta(context: TasksContext, task: TaskRow, input: MetaInput): Promise<number> {

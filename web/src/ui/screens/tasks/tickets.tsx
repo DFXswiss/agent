@@ -112,7 +112,11 @@ export function StatusBadge({ row, testId }: { readonly row: TaskRow; readonly t
   const { t } = useI18n();
   const status = taskStatus(row);
   return (
-    <span className={`self-start rounded px-2 text-xs ${STATUS_BADGE[status]}`} data-testid={testId} data-status={status}>
+    <span
+      className={`self-start rounded px-2 text-xs ${STATUS_BADGE[status]}`}
+      data-testid={testId}
+      data-status={status}
+    >
       {t(`tickets.status.${status}`)}
     </span>
   );

@@ -161,7 +161,11 @@ export function TaskFields({
             value={topic === null ? t('tickets.topic.none') : topicLabel(t, topics, topic)}
             testId="task.fields.topic"
           />
-          <Field label={t('tickets.field.github-org')} value={meta.github_org || none} testId="task.fields.github-org" />
+          <Field
+            label={t('tickets.field.github-org')}
+            value={meta.github_org || none}
+            testId="task.fields.github-org"
+          />
           <Field
             label={t('tickets.field.github-repo')}
             value={meta.github_repo || none}

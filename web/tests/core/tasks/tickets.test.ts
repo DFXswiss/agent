@@ -214,7 +214,10 @@ describe('capture', () => {
     const answer = (session: unknown, events: unknown, task = row(t, { task_id: prepared.taskId })) => {
       t.client.on('POST /v1/tasks', () => ({ task, session, events }));
     };
-    answer(null, [{ id: 'x', scope_id: t.wg, scope_seq: 7 }, { id: 'y', scope_id: t.wg, scope_seq: 8 }]);
+    answer(null, [
+      { id: 'x', scope_id: t.wg, scope_seq: 7 },
+      { id: 'y', scope_id: t.wg, scope_seq: 8 },
+    ]);
     const sent = await sendCapture(t.context, prepared);
     expect(sent.task_id).toBe(prepared.taskId);
     expect(t.store.getState().tasks.tasks[prepared.taskId]).toEqual(sent);

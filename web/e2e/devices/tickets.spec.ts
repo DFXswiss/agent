@@ -34,7 +34,8 @@ async function capture(page: Page, ticket: Ticket): Promise<string> {
   const form = page.getByTestId('tickets.capture');
   await form.getByTestId('tickets.capture.title').fill(ticket.title);
   if (ticket.description !== undefined) await form.getByTestId('tickets.capture.description').fill(ticket.description);
-  if (ticket.person !== undefined) await form.getByTestId('tickets.capture.person').selectOption({ label: ticket.person });
+  if (ticket.person !== undefined)
+    await form.getByTestId('tickets.capture.person').selectOption({ label: ticket.person });
   if (typeof ticket.topic === 'string') {
     await form.getByTestId('tickets.capture.topic').selectOption({ label: ticket.topic });
   } else if (ticket.topic !== undefined) {

@@ -66,11 +66,17 @@ async function world() {
     event(t, t.org, 4, { kind: 'topic.profile', ref: TOPIC }, { name: 'Billing' }),
   ]);
   putEvents(t.store, t.wg, [
-    event(t, t.wg, 1, { kind: 'settings.workgroup', wg: t.wg }, {
-      repositories: ['dfxswiss/agent'],
-      protected_branches: [],
-      pr_draft_default: true,
-    }),
+    event(
+      t,
+      t.wg,
+      1,
+      { kind: 'settings.workgroup', wg: t.wg },
+      {
+        repositories: ['dfxswiss/agent'],
+        protected_branches: [],
+        pr_draft_default: true,
+      },
+    ),
   ]);
   const listed: string[] = [];
   for (const wg of [t.wg, research]) {
@@ -254,7 +260,9 @@ describe('ticket filters and rows', () => {
 describe('the fields panel of the task page', () => {
   function panel(t: TaskWorld, row: TaskRow, writer = true) {
     act(() => putTasks(t.store, [row]));
-    const Panel = () => <TaskFields row={t.store.getState().tasks.tasks[row.task_id]!} writer={writer} directory={EMPTY_DIRECTORY} />;
+    const Panel = () => (
+      <TaskFields row={t.store.getState().tasks.tasks[row.task_id]!} writer={writer} directory={EMPTY_DIRECTORY} />
+    );
     return mount(t, '/x', [{ path: '/x', element: <Panel /> }]);
   }
 
@@ -386,11 +394,17 @@ describe('suggestions and people', () => {
   it('suggests the GitHub accounts and repositories, unique and sorted, and survives failed reads', async () => {
     const { t, research } = await world();
     putEvents(t.store, t.wg, [
-      event(t, t.wg, 5, { kind: 'settings.workgroup', wg: t.wg }, {
-        repositories: ['dfxswiss/agent', 'acme/web'],
-        protected_branches: [],
-        pr_draft_default: true,
-      }),
+      event(
+        t,
+        t.wg,
+        5,
+        { kind: 'settings.workgroup', wg: t.wg },
+        {
+          repositories: ['dfxswiss/agent', 'acme/web'],
+          protected_branches: [],
+          pr_draft_default: true,
+        },
+      ),
     ]);
     t.client.on(`GET /v1/scopes/${research}/events`, () => {
       throw new HubError('unavailable', 503);
@@ -401,10 +415,7 @@ describe('suggestions and people', () => {
     act(() =>
       t.store.update('githubIdentities', (state) => ({
         ...state,
-        identities: [
-          { status: 'verified', account: { login: 'Zed' } },
-          { status: 'locked' },
-        ] as never,
+        identities: [{ status: 'verified', account: { login: 'Zed' } }, { status: 'locked' }] as never,
         knownLogins: { company: 'acme' },
       })),
     );
@@ -427,11 +438,20 @@ describe('suggestions and people', () => {
       {
         path: '/x',
         element: (
-          <TicketForm org={unknown} wgs={[]} values={EMPTY_VALUES} onChange={() => undefined} disabled={false} prefix="x" />
+          <TicketForm
+            org={unknown}
+            wgs={[]}
+            values={EMPTY_VALUES}
+            onChange={() => undefined}
+            disabled={false}
+            prefix="x"
+          />
         ),
       },
     ]);
     expect(within(screen.getByTestId('x.person')).getAllByRole('option')).toHaveLength(1);
-    expect(document.getElementById(screen.getByTestId('x.github-repo').getAttribute('list')!)!.children).toHaveLength(0);
+    expect(document.getElementById(screen.getByTestId('x.github-repo').getAttribute('list')!)!.children).toHaveLength(
+      0,
+    );
   });
 });
