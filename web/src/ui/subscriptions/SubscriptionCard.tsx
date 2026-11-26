@@ -50,6 +50,7 @@ export function SubscriptionCard({ item, onChanged }: { readonly item: Subscript
   };
   const title = item.primary ? t('subscription-login.primary') : (item.name ?? t('subscription-login.unnamed'));
   const changeable = !item.primary && item.status !== 'unverifiable';
+  const loginClass = item.status === 'not_logged_in' ? PRIMARY : BUTTON;
   const removable = !item.primary && item.status === 'unverifiable' && open === 'none';
   return (
     <article className="flex flex-col gap-2 rounded border border-gray-300 p-3" data-testid={`subcard.${item.id}`}>
@@ -69,12 +70,7 @@ export function SubscriptionCard({ item, onChanged }: { readonly item: Subscript
       )}
       {changeable && open === 'none' && (
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            className={item.status === 'not_logged_in' ? PRIMARY : BUTTON}
-            onClick={() => setOpen('login')}
-            data-testid="subcard.login"
-          >
+          <button type="button" className={loginClass} onClick={() => setOpen('login')} data-testid="subcard.login">
             {item.status === 'not_logged_in' ? t('subscription-login.login-now') : t('subscription-login.login-again')}
           </button>
           <button type="button" className={BUTTON} onClick={() => setOpen('edit')} data-testid="subcard.edit">

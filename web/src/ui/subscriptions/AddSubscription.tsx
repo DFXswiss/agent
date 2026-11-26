@@ -21,12 +21,11 @@ export function AddSubscription({ onAdded, onClose }: { readonly onAdded: () => 
     event.preventDefault();
     setStarted(true);
   };
-  if (started) {
-    const input = automatic
-      ? { subscriptionId: id, mode: 'automatic' as const, name, note, email }
-      : { subscriptionId: id, mode: 'manual' as const, name, note };
-    return <SubscriptionLogin input={input} onDone={onAdded} onClose={onClose} />;
-  }
+  // single statements without braces: the bundler reprints them unchanged, so browser and unit coverage line up
+  const input = automatic
+    ? { subscriptionId: id, mode: 'automatic' as const, name, note, email }
+    : { subscriptionId: id, mode: 'manual' as const, name, note };
+  if (started) return <SubscriptionLogin input={input} onDone={onAdded} onClose={onClose} />;
   return (
     <form className="flex flex-col gap-3 rounded border border-gray-300 p-4" onSubmit={submit} data-testid="subadd">
       <label htmlFor="subadd-name">{t('subscription-login.name')}</label>

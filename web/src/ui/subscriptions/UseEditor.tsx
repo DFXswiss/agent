@@ -22,6 +22,59 @@ function OrgName({ org }: { readonly org: string }) {
   return <>{directory.orgName ?? org.slice(0, 8)}</>;
 }
 
+function PoolChoice({
+  show,
+  pool,
+  onPool,
+}: {
+  readonly show: boolean;
+  readonly pool: boolean;
+  readonly onPool: () => void;
+}) {
+  const { t } = useI18n();
+  // an early return without braces: the bundler reprints it unchanged, so browser and unit coverage line up
+  if (!show) return null;
+  return (
+    <label className="flex min-h-11 items-center gap-2">
+      <input type="checkbox" checked={pool} onChange={onPool} data-testid="subuse.pool" />
+      {t('subscription-login.use.pool')}
+    </label>
+  );
+}
+
+function Choices({
+  showPool,
+  pool,
+  onPool,
+  orgs,
+  chosen,
+  onToggle,
+}: {
+  readonly showPool: boolean;
+  readonly pool: boolean;
+  readonly onPool: () => void;
+  readonly orgs: readonly string[];
+  readonly chosen: readonly string[];
+  readonly onToggle: (org: string) => void;
+}) {
+  return (
+    <div className="ml-6 flex flex-col gap-1">
+      <PoolChoice show={showPool} pool={pool} onPool={onPool} />
+      {orgs.map((org) => (
+        <label key={org} className="flex min-h-11 items-center gap-2">
+          <input
+            type="checkbox"
+            checked={chosen.includes(org)}
+            onChange={() => onToggle(org)}
+            data-testid={`subuse.org.${org}`}
+          />
+          <OrgName org={org} />
+        </label>
+      ))}
+    </div>
+  );
+}
+
 export function UseEditor({
   id,
   use,
@@ -40,6 +93,7 @@ export function UseEditor({
   const operator = platform !== null && userId !== null && platform.hasRole(userId, OPERATOR_ROLE);
   // an organization the user left, or the pool after losing the role, stays visible so it can be switched off
   const orgs = [...new Set([...meOrgs(profile).map((item) => item.org_id), ...use.orgs])];
+  const showPool = operator || use.pool;
   const [shared, setShared] = useState(use.pool || use.orgs.length > 0);
   const [pool, setPool] = useState(use.pool);
   const [chosen, setChosen] = useState<readonly string[]>(use.orgs);
@@ -82,25 +136,14 @@ export function UseEditor({
         {t('subscription-login.use.shared')}
       </label>
       {shared && (
-        <div className="ml-6 flex flex-col gap-1">
-          {(operator || use.pool) && (
-            <label className="flex min-h-11 items-center gap-2">
-              <input type="checkbox" checked={pool} onChange={() => setPool(!pool)} data-testid="subuse.pool" />
-              {t('subscription-login.use.pool')}
-            </label>
-          )}
-          {orgs.map((org) => (
-            <label key={org} className="flex min-h-11 items-center gap-2">
-              <input
-                type="checkbox"
-                checked={chosen.includes(org)}
-                onChange={() => toggle(org)}
-                data-testid={`subuse.org.${org}`}
-              />
-              <OrgName org={org} />
-            </label>
-          ))}
-        </div>
+        <Choices
+          showPool={showPool}
+          pool={pool}
+          onPool={() => setPool(!pool)}
+          orgs={orgs}
+          chosen={chosen}
+          onToggle={toggle}
+        />
       )}
       <button
         type="button"
