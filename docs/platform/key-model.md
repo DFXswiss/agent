@@ -388,7 +388,7 @@ bearing on keys).
 | [A17](KONZEPT.md#a-17) | Protected branches. | none | – |
 | [A18](KONZEPT.md#a-18) | Blocked attempts are logged. | none | – |
 | [A20](KONZEPT.md#a-20) | One throw-away VM per CI job; no bearing of its own on keys (the keys around CI VMs: row E-34). | none | – |
-| [A21](KONZEPT.md#a-21) | A runner is a VM from the same pool as the work VMs, decided by [E-36](KONZEPT.md#e-36): the pool device holds the keys of the workgroups it serves while CI VMs run on it. | decision needed | [§6](#6-where-plaintext-lies) |
+| [A21](KONZEPT.md#a-21) | That the runner runs on the same devices as the work VMs is decided by [E-36](KONZEPT.md#e-36); that it is a VM stays interpretation [A20](KONZEPT.md#a-20). The pool device holds the keys of the workgroups it serves while CI VMs run on it. | decision needed | [§6](#6-where-plaintext-lies) |
 
 ## 11. Gaps and the requirements on the follow-up packages
 

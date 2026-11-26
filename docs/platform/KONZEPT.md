@@ -879,8 +879,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „heute haben wir server für agent und server für self hostet runner, das ist inneffizient, ich will
   alle meine server kapazitäten an agent geben und wenn ich einen self hostet runner brauche dann diesen via agent
   beziehen“
-- **Bezug:** dass der Runner eine VM aus demselben Pool wie die Arbeits-VMs ist, legte [A21](#a-21) aus; entschieden
-  durch [E-36](#e-36). Ergänzt [E-34](#e-34) und [§3 Punkt 3](#k-3-b3) (DFX stellt eigene Ausführungsserver);
+- **Bezug:** dass der Runner auf denselben Geräten wie die Arbeits-VMs läuft, ist durch [E-36](#e-36) entschieden;
+  dass er eine VM ist, bleibt Auslegung [A20](#a-20) (zusammengefasst in [A21](#a-21)). Ergänzt [E-34](#e-34) und [§3 Punkt 3](#k-3-b3) (DFX stellt eigene Ausführungsserver);
   ersetzt die Aufteilung der Ausführungsserver in [§3 Punkt 8](#k-3-b8) (initiale Serverzuordnung: ein Server für die
   DFX-Cloud-Sessions), soweit sie Kapazität ausserhalb der Plattform voraussetzt; der Hub-Teil bleibt. Betrifft
   [Idee 38](#k-idee-38) (Gerätewahl nach freier Kapazität), [§7 Punkt 6](#k-7-b6) (kapazitätsbasierte Verteilung)
@@ -900,8 +900,9 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** Frage: „Ich hatte deinen Entscheid ‚alle Kapazität an agent‘ so ausgelegt, dass CI-Jobs (auch fremder
   PR-Code) auf denselben Geräten laufen wie die Agent-Arbeitsbereiche. Ein eigenes CI-Gerät innerhalb von
   agent.dfx.swiss wäre aber auch ‚Kapazität von agent‘ und trennt fremden Code von Kundendaten. Was gilt?“ –
-  Antwort: „Alles teilen – Du entscheidest jetzt: CI-Jobs laufen auf denselben Geräten wie die
-  Agent-Arbeitsbereiche. Wird als dein Entscheid (neue Regel) eingetragen.“
+  Antwort: gewählte Option „Alles teilen“ (Kontext, nicht Worte des Auftraggebers: der Text dieser Option in der
+  Frage sagte, dass er damit entscheidet, CI-Jobs laufen auf denselben Geräten wie die Agent-Arbeitsbereiche, und dass
+  das als sein Entscheid, als neue Regel, eingetragen wird)
 - **Bezug:** ergänzt [E-35](#e-35); macht [A21](#a-21) zum Entscheid. In Spannung mit der Sicherheitsempfehlung der
   Recherche (Trennung fremden Codes vom Klartext der Workgroups): das Gate U bleibt Empfehlung (D-7, D-20 in
   [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)); [E-25](#e-25) (Härtung nur auf Bestellung).
