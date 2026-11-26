@@ -27,12 +27,13 @@ A request is announced by the hint `request {request_id}` or listed in `requests
 3. **dispatches** a root request (`follows` empty) to the handler of its kind (`<area>/requests.py:HANDLERS`,
    `registry.request_handlers`) in its own asyncio task (`Flow`). At most one flow per user, kind and slot is active
    (the slot of a kind is a field of the **decrypted** body, `SLOTS`: `claude.login` - its `subscription_id`, so the
-   logins of different subscriptions run side by side, KOR-73, ADR-099 section 2; a body without it is a slot of its
-   own): a newer root (header time, then ID) replaces the running flow of its slot (the hub has already failed the
-   older chain), an older one is answered `{step:"failed", code:"busy"}`; so is a root of a new slot while `MAX_SLOTS`
-   flows of the owner and kind run. A kind without handler is answered `failed`
-   `upstream_error`. A follow-up request (`follows` = root ID) goes to the running flow of its root when owner and
-   kind match (`Flow.follow_ups`, `Flow.wait_follow_up`), else it is refused like a forged request (`forbidden`);
+   logins of different subscriptions run side by side, KOR-73, ADR-099 section 2; `vnc.open` - the `id` of its
+   screen, so the owner holds one connection per screen, ADR-101; a body without it is a slot of its own): a newer
+   root (header time, then ID) replaces the running flow of its slot (the hub has already failed the older chain),
+   an older one is answered `{step:"failed", code:"busy"}`; so is a root of a new slot while `MAX_SLOTS` flows of the
+   owner and kind run. A kind without handler is answered `failed` `upstream_error`. A follow-up request (`follows` =
+   root ID) goes to the running flow of its root when owner and kind match (`Flow.follow_ups`,
+   `Flow.wait_follow_up`), else it is refused like a forged request (`forbidden`);
 4. **answers** with encrypted, signed responses (`Flow.respond`): HPKE to the requester's X25519 key, signed by
    the device, `seq` 1..n per request without a gap, `final:true` on the last. The next `seq` is stored before the
    response is sent and the same envelope is resent on transport errors (the hub accepts an identical retry); a number
@@ -97,7 +98,7 @@ MAX_WAITING = 10_000
 """Bound of the memory of requests waiting for a log refresh (the oldest entry is dropped when reached)."""
 MAX_SLOTS = 40
 """Flows of one owner and kind at the same time (the number of subscriptions a user may hold, ADR-099 section 2)."""
-SLOTS = {"claude.login": "subscription_id"}
+SLOTS = {"claude.login": "subscription_id", "vnc.open": "id"}
 """The body field that names the slot of a root of the kind (module docstring point 3)."""
 ACTIVE, ANSWERED, FAILED, ABANDONED, REJECTED = "active", "answered", "failed", "abandoned", "rejected"
 CLOSED = frozenset({ANSWERED, FAILED, ABANDONED, REJECTED})

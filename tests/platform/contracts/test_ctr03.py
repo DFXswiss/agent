@@ -43,13 +43,15 @@ SPEC_PLATFORM_TYPES = (
 )
 # 04-crypto.md section 4.4 and 02-data-model.md section 2.7 (device_request.kind).
 SPEC_CREDENTIAL_KINDS = "github anthropic_api_key claude_subscription mailbox"
-SPEC_REQUEST_KINDS = "github.connect claude.login credential.check mailbox.check github.pull_status"
+SPEC_REQUEST_KINDS = "github.connect claude.login credential.check mailbox.check github.pull_status vnc.open"
 # 03-api.md section 6.1: the device endpoints (CTR-03 rows of INDEX.json) and the two live channels.
 SPEC_CHANNELS = {
     "/v1/stream": ("ws/sse/query.json", "ws/sse/frame.json"),
     "/v1/device/ws": ("ws/device/query.json", "ws/device/hint.json"),
 }
 SPEC_LOG_FILES = {"log/invitation-package.json", "log/session-statement.json"}
+# ADR-101: the query and messages of the VNC tunnel's two WebSockets (rows of api/INDEX.json, not live channels).
+VNC_SCHEMAS = {"ws/vnc/query.json", "ws/vnc/record.json"}
 
 
 def enum_file(name: str) -> dict[str, Any]:
@@ -92,8 +94,10 @@ def test_device_rows_are_complete(index: dict[str, Any], contracts: Contracts) -
     assert "CTR-03" not in index["pending_owners"]
     rows = [e for e in index["endpoints"] if e["owner"] == "CTR-03"]
     # later packages add device rows of their own (KOR-33: context checkpoints; KOR-44: the browser; KOR-57: the
-    # orchestrator session; KOR-69: subscriptions; KOR-53: the analysis reads of a workgroup)
-    later = {e["path"] for e in index["endpoints"] if e["owner"] in ("KOR-33", "KOR-44", "KOR-57", "KOR-69", "KOR-53")}
+    # orchestrator session; KOR-69: subscriptions; KOR-53: the analysis reads of a workgroup; ADR-101: the device's
+    # end of a VNC tunnel)
+    owners = ("KOR-33", "KOR-44", "KOR-57", "KOR-69", "KOR-53", "ADR-101")
+    later = {e["path"] for e in index["endpoints"] if e["owner"] in owners}
     assert {e["path"] for e in rows} | later >= {
         e["path"] for e in index["endpoints"] if e["path"].startswith("/v1/device/")
     }
@@ -122,7 +126,7 @@ def test_live_channel_index(contracts: Contracts) -> None:
         for frame in channel["from_hub"] + channel["from_client"]:
             assert frame["data"] in contracts.schemas, frame
     listed = {f["data"] for c in channels for f in c["from_hub"] + c["from_client"]}
-    listed |= {rel for pair in SPEC_CHANNELS.values() for rel in pair}
+    listed |= {rel for pair in SPEC_CHANNELS.values() for rel in pair} | VNC_SCHEMAS
     assert {rel for rel in contracts.schemas if rel.startswith("ws/") and not rel.endswith("objects.json")} == listed
 
 

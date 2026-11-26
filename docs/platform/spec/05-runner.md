@@ -1121,6 +1121,9 @@ KOR-73, ADR-099. Same PTY start; instead of step 3 the runner drives the provide
   (fractions of the picture) of the user's own identity is clicked at that viewport point (an agent's click is
   ignored, `click_refused`); when the check is gone: progress `verified`; `{relay: true}`, no click within 180 s or
   the pictures used up: `human_check`. Without `extended` in the root the check gives up at once.
+- **VNC** (ADR-101, a root with `vnc: true`): the check first answers `{step:"needs_human", vnc_available}` and, when
+  the sandbox has a screen (a login VM), offers it to the owner (`vnc/screens.py`) until the check is gone or given
+  up; while a VNC connection is open no picture is sent and the 180 s start again at every look.
 - Progress `browser_started`, `email_entered`, `magic_link_received`, `mail_code_received`, `registered`,
   `verified`, `authorized`; the last three, `mail_code_received` and the `reason` only for a root with `extended`.
 
@@ -1128,6 +1131,19 @@ Any failure falls back to §11.2 step 3 with `{step:"authorize", url, automation
 `login_automation_failed`); follow-ups `{click}`/`{relay}` that arrive while the runner waits for the code are passed
 over. `mailbox.check {subscription_id}` checks the subscription's own mailbox. Hermetic tests only (login-CLI double
 + auth-page double + mail double); live tests of logins are forbidden.
+
+### 11.3a `vnc.open` – the screen of a sandbox for its owner (ADR-101)
+
+Root `{kind: "login"|"session", id}`, slot `id`, no follow-ups (`vnc/requests.py`). A request of the owner's agent is
+`failed forbidden` (`runner.vnc refused reason=agent`); no screen of the owner under the target (a login's offered
+check, or the open platform browser of a session whose task owner the requester is) is `failed no_screen`. Otherwise:
+`workvm-vnc start` with a one-time password (`failed upstream_error` when it does not start), response
+`{step:"vnc", key, password, idle_seconds}`, the device's end of the tunnel (`GET /v1/device/vnc/{request}`, signed
+like the device WebSocket), after `{"type":"paired"}` the records joined with `workvm-vnc connect`
+(`vnc/tunnel.py`: AES-256-GCM per direction, the record number as nonce). It ends `ended` (the check passed or was
+given up, the login or the browser session ended), `idle` (120 s without a record of the viewer), `closed`,
+`unpaired` (120 s), `timeout`, `broken` or `unreachable`; `workvm-vnc stop` on every path; final
+`{step:"done", reason}`. The password and the key are never logged.
 
 ### 11.4 GitHub connect (ADR-015)
 

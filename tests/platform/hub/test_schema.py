@@ -1080,7 +1080,7 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
         (
             "device_request",
             "kind",
-            ["github.connect", "claude.login", "credential.check", "mailbox.check", "github.pull_status"],
+            ["github.connect", "claude.login", "credential.check", "mailbox.check", "github.pull_status", "vnc.open"],
         ),
         ("device_request", "state", ["pending", "delivered", "answered", "failed", "expired"]),
         ("github_default", "scope", ["org", "wg"]),

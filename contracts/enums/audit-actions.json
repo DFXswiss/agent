@@ -1020,6 +1020,14 @@
     {
       "action": "read.org.support",
       "group": "read"
+    },
+    {
+      "action": "vnc.connect",
+      "group": "device_request"
+    },
+    {
+      "action": "vnc.close",
+      "group": "device_request"
     }
   ]
 }

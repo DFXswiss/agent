@@ -29,7 +29,7 @@ from agent_runner.crypto.request import ENC_ALG, open_request, seal_response, ve
 
 from ..hubfake import HubFake, Json, Request, now_ms_text
 
-KINDS = ("github.connect", "claude.login", "credential.check", "mailbox.check", "github.pull_status")
+KINDS = ("github.connect", "claude.login", "credential.check", "mailbox.check", "github.pull_status", "vnc.open")
 ACTIVE = ("pending", "delivered")
 
 

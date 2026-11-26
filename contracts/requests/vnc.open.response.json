@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/requests/vnc.open.response.json",
+  "title": "device response body vnc.open",
+  "description": "Plaintext body of a device response to vnc.open (ADR-101). vnc: the VNC server of the sandbox runs; key (32 bytes, base64url without padding) encrypts the tunnel records of GET /v1/vnc/{request} (the hub relays them unopened), password is the one-time password of this connection, idle_seconds the time without input after which the connection closes. done (final): the connection ended - ended (the process the screen was offered for went on or ended), idle, closed (the viewer or the server closed it), unpaired (no client joined in time), timeout (the request's time ran out), broken (a record did not open), unreachable (the hub could not be reached). Sealed to the requester like every response.",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "vnc"
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$"
+        },
+        "password": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9]{8}$"
+        },
+        "idle_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 900
+        }
+      },
+      "required": [
+        "step",
+        "key",
+        "password",
+        "idle_seconds"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "done"
+        },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "ended",
+            "idle",
+            "closed",
+            "unpaired",
+            "timeout",
+            "broken",
+            "unreachable"
+          ]
+        }
+      },
+      "required": [
+        "step",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "failed"
+        },
+        "code": {
+          "$ref": "objects.json#/$defs/failure_code"
+        }
+      },
+      "required": [
+        "step",
+        "code"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "description": "Endpoints added by ADR-101: the two ends of a VNC tunnel to a sandbox's screen (03-api.md sections 4.10 and 6.1).",
+  "rights": [
+    "owner",
+    "device_addressed"
+  ],
+  "auth": [
+    "browser",
+    "device"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/vnc/{request}",
+      "rights": [
+        "owner"
+      ],
+      "section": "4.10"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/vnc/{request}",
+      "rights": [
+        "device_addressed"
+      ],
+      "section": "6.1"
+    }
+  ]
+}

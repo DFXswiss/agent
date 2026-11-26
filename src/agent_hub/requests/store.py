@@ -63,7 +63,9 @@ PENDING, DELIVERED, ANSWERED, FAILED, EXPIRED = "pending", "delivered", "answere
 ACTIVE = (PENDING, DELIVERED)
 TTL = timedelta(seconds=LIMITS["device_request_seconds"])
 FOLLOWS_POINTER = "/envelope/header/follows"
-REQUEST_KINDS = frozenset({"github.connect", "claude.login", "credential.check", "mailbox.check", "github.pull_status"})
+REQUEST_KINDS = frozenset(
+    {"github.connect", "claude.login", "credential.check", "mailbox.check", "github.pull_status", "vnc.open"}
+)
 MAX_ENVELOPE_CT_CHARS = 349526
 """The `ct` limit of `contracts/common.json` `device_request_envelope`/`device_response_envelope` (256 KiB)."""
 MAX_RESPONSES = 100

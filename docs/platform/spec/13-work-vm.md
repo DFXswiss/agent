@@ -469,7 +469,8 @@ use. The work VM and its free browser (`workvm_browse`) stay as they are and unw
 ### 13.3 Helper in the VM (`/usr/local/bin/workvm-browser`, work image)
 Node with the image's Playwright; the runner runs it over Lima's SSH as `sudo /usr/local/bin/workvm-browser …`:
 - `serve` – the daemon (transient unit `workvm-browser`, started by `call` when absent): one persistent Chromium
-  context (headless, viewport 1280×800, profile `/var/lib/workvm-browser/profile`, downloads
+  context (with a window on the virtual display `:99` of Xvfb when installed - a person can take it over by VNC,
+  ADR-101 -, else headless; viewport 1280×800, profile `/var/lib/workvm-browser/profile`, downloads
   `/var/lib/workvm-browser/downloads`), dialogs accepted and reported, listening on `/run/workvm-browser.sock` (root,
   0600).
 - `call` – reads one JSON request `{tool, arguments}` on stdin (`browser_navigate` never carries `query`: the runner
@@ -488,6 +489,12 @@ Node with the image's Playwright; the runner runs it over Lima's SSH as `sudo /u
 - `selftest` – starts the daemon, opens `about:blank`, prints `{"ok":true}`.
 The runner caps every answer (header line ≤ 4 KiB, call answer ≤ 4 MiB, frame ≤ 512 KiB), validates it against a
 closed schema and treats anything else as a failed helper (`vm_lost`).
+
+`/usr/local/bin/workvm-vnc` (Python, ADR-101 §2; packages `xvfb`, `x11vnc`): `start` reads a one-time password
+(8 letters or digits) on stdin and serves the display `:99` with `x11vnc` on the VM's loopback port 5900 for exactly
+that password (`{"ok":true}`; transient unit `workvm-vnc`, a running server is replaced); `connect` joins stdin and
+stdout with that port (one long-lived process per viewer, the runner carries the bytes through the hub's tunnel);
+`stop` ends the server and removes the password file below `/run/workvm-vnc` (0700); `selftest` checks the packages.
 
 ### 13.4 Tools (03-api.md §8.1)
 Forwarded like the work VM tools (§3: journal `workvm.call`, no read audit, visible as `session.tool`). Without an

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ws/vnc/record.json",
+  "title": "VNC tunnel messages",
+  "description": "Messages of a VNC tunnel (ADR-101): the hub sends each end one text message {\"type\": \"paired\"} when both ends joined; then every binary message of one end (an AES-256-GCM record of at most 16400 bytes, agent_runner.vnc.tunnel) reaches the other end unchanged. A text message or a larger record from an end closes the tunnel.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "paired"
+    }
+  },
+  "required": [
+    "type"
+  ],
+  "additionalProperties": false
+}

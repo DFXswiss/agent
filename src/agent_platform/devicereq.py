@@ -43,7 +43,7 @@ from agent_runner.crypto.log.state import DEVICE
 from agent_runner.crypto.log.wraps import cred_readers
 from agent_runner.crypto.request import ENC_ALG, open_response, seal_request, verify_response
 
-KINDS = ("github.connect", "claude.login", "credential.check", "mailbox.check")
+KINDS = ("github.connect", "claude.login", "credential.check", "mailbox.check", "vnc.open")
 ENDED = frozenset({"answered", "failed", "expired"})
 FAILURE_CODES = frozenset(
     {
@@ -61,6 +61,7 @@ FAILURE_CODES = frozenset(
         "sso_required",
         "github_not_connected",
         "forbidden",
+        "no_screen",
     }
 )
 REQUEST_FAILED = "request_failed"
@@ -98,6 +99,11 @@ USER_CODE_RE = re.compile(r"[A-Z0-9-]{4,16}")
 CODE_RE = re.compile(r"[!-~]{1,512}")
 POLL_S = 2.0
 WAIT_MAX_S = 600
+VNC_KEY_RE = re.compile(r"[A-Za-z0-9_-]{43}")
+VNC_PASSWORD_RE = re.compile(r"[A-Za-z0-9]{8}")
+VNC_IDLE_MAX = 900
+VNC_REASONS = frozenset({"ended", "idle", "closed", "unpaired", "timeout", "broken", "unreachable"})
+"""Why a VNC connection ended (`vnc.open` `done.reason`, ADR-101)."""
 
 Keys = tuple[bytes, bytes]
 
@@ -163,6 +169,8 @@ def _login(body: dict[str, Any]) -> bool:
         )
     if step == "verify":
         return _keys(body, {"step", "frame", "image"}) and _count(body["frame"], MAX_FRAMES) and _image(body["image"])
+    if step == "needs_human":
+        return _keys(body, {"step", "vnc_available"}) and isinstance(body["vnc_available"], bool)
     if step == "progress":
         return _keys(body, {"step", "stage"}) and body.get("stage") in PROGRESS_STAGES
     email_valid = "email" not in body or _match(body["email"], EMAIL_RE, 254)
@@ -173,12 +181,28 @@ def _check(body: dict[str, Any]) -> bool:
     return body.get("step") == "done" and _keys(body, {"step", "valid"}) and isinstance(body.get("valid"), bool)
 
 
+def _vnc(body: dict[str, Any]) -> bool:
+    """A response to `vnc.open` (ADR-101): the connection's key and one-time password, or why it ended."""
+    if body.get("step") == "vnc":
+        seconds = body.get("idle_seconds")
+        return (
+            _keys(body, {"step", "key", "password", "idle_seconds"})
+            and _match(body.get("key"), VNC_KEY_RE)
+            and _match(body.get("password"), VNC_PASSWORD_RE)
+            and isinstance(seconds, int)
+            and not isinstance(seconds, bool)
+            and 1 <= seconds <= VNC_IDLE_MAX
+        )
+    return body.get("step") == "done" and _keys(body, {"step", "reason"}) and body.get("reason") in VNC_REASONS
+
+
 CHECKS: dict[str, Callable[[dict[str, Any]], bool]] = {
     "github.connect": _github,
     "claude.login": _login,
     "credential.check": _check,
     "mailbox.check": _check,
     "github.pull_status": valid_response,
+    "vnc.open": _vnc,
 }
 
 

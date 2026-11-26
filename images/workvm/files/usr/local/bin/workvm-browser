@@ -14,9 +14,13 @@
 // attribute `data-wb-ref` (`e12`, `f1e3` in frame f1), valid until the next snapshot. Nothing here restricts what a
 // page does: the VM is a temporary browser VM and the runner treats every answer as untrusted.
 //
+// The screen (ADR-101): when Xvfb is installed, `serve` starts the virtual display `DISPLAY_NAME` (the size of the
+// viewport) and runs Chromium with a window on it, so a person can take the screen over by VNC (`workvm-vnc`) when a
+// page asks for a human; without Xvfb Chromium runs headless as before.
+//
 // Test overrides (never set in the image; sudo resets the environment): WORKVM_BROWSER_DIR (state directory),
 // WORKVM_BROWSER_SOCKET (socket path), WORKVM_BROWSER_START=direct (start the daemon as a child process instead of
-// through systemd-run).
+// through systemd-run), WORKVM_BROWSER_DISPLAY=none (headless even with Xvfb).
 'use strict';
 const childProcess = require('child_process');
 const crypto = require('crypto');
@@ -33,6 +37,9 @@ const SOCKET = process.env.WORKVM_BROWSER_SOCKET || '/run/workvm-browser.sock';
 const DIRECT_START = process.env.WORKVM_BROWSER_START === 'direct';
 const UNIT = 'workvm-browser';
 const VIEWPORT = { width: 1280, height: 800 };
+const DISPLAY_NAME = ':99';
+const XVFB = '/usr/bin/Xvfb';
+const DISPLAY_WAIT_MS = 5000;
 const START_WAIT_MS = 15000;
 const SELFTEST_START_WAIT_MS = 40000;
 const CALL_MS = 25000;
@@ -895,6 +902,26 @@ function parseStreamOptions(value) {
   return { fps, quality, width };
 }
 
+// The virtual display of the screen (ADR-101): the display name once Xvfb draws, null without Xvfb (headless).
+async function startDisplay() {
+  if (process.env.WORKVM_BROWSER_DISPLAY === 'none' || !fs.existsSync(XVFB)) return null;
+  const socketPath = `/tmp/.X11-unix/X${DISPLAY_NAME.slice(1)}`;
+  if (!fs.existsSync(socketPath)) {
+    const screenSize = `${VIEWPORT.width}x${VIEWPORT.height}x24`;
+    const child = childProcess.spawn(XVFB, [DISPLAY_NAME, '-screen', '0', screenSize, '-nolisten', 'tcp'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+    const until = Date.now() + DISPLAY_WAIT_MS;
+    while (!fs.existsSync(socketPath)) {
+      if (Date.now() >= until) return null;
+      await sleep(100);
+    }
+  }
+  return DISPLAY_NAME;
+}
+
 async function serve() {
   if (await ping()) {
     process.stderr.write('workvm-browser: already serving\n');
@@ -904,9 +931,11 @@ async function serve() {
   process.on('unhandledRejection', (error) => process.stderr.write(`workvm-browser: ${message(error)}\n`));
   for (const sub of ['profile', 'downloads', 'screenshots']) fs.mkdirSync(path.join(DIR, sub), { recursive: true, mode: 0o700 });
   fs.chmodSync(DIR, 0o700);
+  const screen = await startDisplay();
   const context = await chromium.launchPersistentContext(path.join(DIR, 'profile'), {
-    headless: true,
-    args: ['--no-sandbox'],
+    headless: screen === null,
+    args: screen === null ? ['--no-sandbox'] : ['--no-sandbox', '--window-position=0,0', `--window-size=${VIEWPORT.width},${VIEWPORT.height}`],
+    env: screen === null ? process.env : { ...process.env, DISPLAY: screen },
     viewport: VIEWPORT,
     acceptDownloads: true,
     downloadsPath: path.join(DIR, 'downloads'),

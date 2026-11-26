@@ -279,6 +279,10 @@ class Account:
     def call(self, method: str, path: str, body: object | None = None) -> dict[str, Any]:
         return self.client.call(method, path, body)
 
+    def upgrade(self, path: str) -> tuple[str, dict[str, str]]:
+        """The WebSocket URL and signed upgrade headers of `path` (`AgentClient.upgrade`)."""
+        return self.client.upgrade(path)
+
     def close(self) -> None:
         self.client.close()
 
