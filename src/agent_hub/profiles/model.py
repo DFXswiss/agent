@@ -74,9 +74,13 @@ ROLE_CLASSES: Mapping[str, frozenset[str]] = MappingProxyType(
         "security": frozenset({READ, RUN, SCAN, DELEGATE, ASK}),
         "review": frozenset({READ, REVIEW, RUN, DELEGATE, ASK}),
         "merge": frozenset({READ, MERGE, DELEGATE, ASK}),
+        "analysis": frozenset({READ, DELEGATE, ASK}),
     }
 )
-"""The built-in roles by the classes they allow (ADR-094 section 2)."""
+"""The built-in roles by the classes they allow (ADR-094 section 2; `analysis`: the process analysis, ADR-095 section
+2 - the classes of `read_only`, and the session start names the analysis brief of the harness)."""
+
+ANALYSIS = "analysis"
 
 NAME_RE = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 SCOPE_BUILTIN, SCOPE_ORG, SCOPE_WG = "builtin", "org", "wg"
@@ -107,6 +111,12 @@ def of_classes(classes: Iterable[str]) -> frozenset[str]:
 BUILTIN: Mapping[str, Profile] = MappingProxyType(
     {name: Profile(name, of_classes(classes), REACH_ALL) for name, classes in ROLE_CLASSES.items()}
 )
+
+
+def analysis(reads: str) -> Profile:
+    """The snapshot an analysis task gets at its creation (ADR-095 section 2): the built-in `analysis` with the reach
+    `reads` (`all` for an analysis of the organization, `workgroup` for one of the task's workgroup)."""
+    return Profile(ANALYSIS, BUILTIN[ANALYSIS].operations, reads)
 
 
 def from_json(value: Mapping[str, Any] | None) -> Profile | None:

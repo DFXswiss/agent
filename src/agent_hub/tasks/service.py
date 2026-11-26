@@ -41,14 +41,16 @@ live session `stopping` (the device gets `session.control {action:"stop"}`), a s
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, cast
 from uuid import UUID
 
 import psycopg
+from psycopg.types.json import Jsonb
 
+from agent_hub.analysis import request as analysis_request
 from agent_hub.audit.chain import ACTING_AGENT
 from agent_hub.audit.recorder import unchanged
 from agent_hub.crypto.errors import CryptoError
@@ -130,6 +132,8 @@ class Given:
 
     github_identity: UUID | None
     requested: tuple[UUID, str | None] | None
+    analysis: dict[str, str] | None = None
+    """The analysis fields the request named (scope, and `since`/`until` when given; ADR-095 section 1)."""
 
 
 def _replayed_create(
@@ -144,10 +148,15 @@ def _replayed_create(
     """The answer to a repeated `POST /v1/tasks` (module docstring), `409 id_conflict` for other content."""
     unchanged()
     found = connection.execute(
-        "SELECT wg_id, owner_id, github_identity, placement_device_id, placement_vm_id FROM hub.task WHERE id = %s",
+        "SELECT wg_id, owner_id, github_identity, placement_device_id, placement_vm_id, analysis"
+        " FROM hub.task WHERE id = %s",
         (task_id,),
     ).fetchone()
     if found is None or (found[0], found[1], found[2]) != (wg_id, user, given.github_identity):
+        raise HubError("id_conflict")
+    if (found[5] is None) != (given.analysis is None) or any(
+        found[5].get(name) != value for name, value in (given.analysis or {}).items()
+    ):
         raise HubError("id_conflict")
     if given.requested is not None and (found[3], found[4]) != given.requested:
         raise HubError("id_conflict")
@@ -179,11 +188,18 @@ def create_task(
     requested: tuple[UUID, str | None] | None = None,
     github_identity: UUID | None = None,
     author: str | None = None,
+    analysis: Mapping[str, Any] | None = None,
 ) -> Outcome:
     """`POST /v1/tasks` (module docstring); `requested` is the chosen device and VM of the request, `author` the
-    author of the events (the user's own-identity agent, ADR-082; default the user)."""
+    author of the events (the user's own-identity agent, ADR-082; default the user), `analysis` the request's
+    analysis (ADR-095)."""
     now = context.clock()
-    given = Given(github_identity=github_identity, requested=requested)
+    checked = None if analysis is None else analysis_request.parse(analysis, now)
+    given = Given(
+        github_identity=github_identity,
+        requested=requested,
+        analysis=None if checked is None or analysis is None else checked.given(analysis),
+    )
     actor = Actor("user", user)
     with context.pool.connection() as connection, connection.transaction():
         rights.require(connection, user, rights.WG_WRITE, wg_id=wg_id, write=True)
@@ -195,6 +211,10 @@ def create_task(
         if github_identity is not None:
             identities.require_usable(connection, github_identity, user)
             identities.require_feature(
+                connection, cast(UUID, rights.wg_org(connection, wg_id)), context.config.platform_root_key
+            )
+        if checked is not None:
+            analysis_request.require_features(
                 connection, cast(UUID, rights.wg_org(connection, wg_id)), context.config.platform_root_key
             )
         pin = placement.for_new_task(connection, wg_id, requested)
@@ -209,9 +229,20 @@ def create_task(
         org_id = cast(UUID, rights.wg_org(connection, wg_id))
         inserted = connection.execute(
             "INSERT INTO hub.task (id, org_id, wg_id, owner_id, state, created_at, state_at, last_activity_at,"
-            " github_identity) VALUES (%s, %s, %s, %s, 'scheduling', %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING"
-            " RETURNING id",
-            (task_id, org_id, wg_id, user, now, now, now, github_identity),
+            " github_identity, analysis, agent_profile) VALUES (%s, %s, %s, %s, 'scheduling', %s, %s, %s, %s, %s, %s)"
+            " ON CONFLICT (id) DO NOTHING RETURNING id",
+            (
+                task_id,
+                org_id,
+                wg_id,
+                user,
+                now,
+                now,
+                now,
+                github_identity,
+                None if checked is None else Jsonb(checked.stored()),
+                None if checked is None else Jsonb(checked.profile().as_json()),
+            ),
         ).fetchone()
         if inserted is None:  # a concurrent create of the same task_id with other events committed first
             raise HubError("id_conflict")
@@ -222,7 +253,10 @@ def create_task(
         )
         placement.store_for_new_task(connection, task_id, pin)
         task = TaskRow(task_id, org_id, wg_id, user, "scheduling", None)
-        audit(connection, actor, "task.create", task, now, detail={"origin": "browser"})
+        detail: dict[str, Any] = {"origin": "browser"}
+        if checked is not None:
+            detail["analysis"] = checked.scope
+        audit(connection, actor, "task.create", task, now, detail=detail)
         outcome = Outcome(body={}, stored=stored)
         session_id = new_session_id(now)
         create_main_session(

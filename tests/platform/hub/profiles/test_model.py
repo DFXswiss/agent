@@ -20,7 +20,7 @@ def test_every_type_has_the_class_of_the_contract() -> None:
 
 
 def test_roles_are_derived_from_the_classes() -> None:
-    assert set(BUILTIN) == {"read_only", "development", "security", "review", "merge"}
+    assert set(BUILTIN) == {"read_only", "development", "security", "review", "merge", "analysis"}
     read_only = BUILTIN["read_only"].operations
     assert "github.get_pull_request" in read_only
     assert "subagent.request" in read_only

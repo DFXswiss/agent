@@ -17,7 +17,8 @@ task's live sessions get `reconcile {}`. A changed definition reaches the organi
 Assigning a profile (never clearing one) passes the feature gate `agent.profiles` of the organization's devices
 (`409 peer_outdated`): only the runner can check reads and the work VM and browser tools.
 Every change is audited (`agent_profile.set`, `agent_profile.delete`, `task.agent_profile`); a repetition without
-change is not.
+change is not. The profile of an analysis task (ADR-095 section 2) is never widened or cleared: only a profile within
+its snapshot is assigned, anything else is `403 forbidden` with detail `{"reason": "analysis"}`.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ from agent_hub.http.context import Context, CurrentPrincipal, HubContext
 from agent_hub.http.routing import HubRouter
 from agent_hub.orgs import rights
 from agent_hub.orgs.routes import user_id
-from agent_hub.profiles import store
+from agent_hub.profiles import model, store
 from agent_hub.profiles.model import CLASSES, SCOPE_ORG, SCOPE_WG, Profile, invalid_operations
 from agent_hub.sessions import rows
 from agent_hub.sessions.effects import Effects
@@ -262,7 +263,10 @@ def set_task_profile(
             raise HubError("not_found")
         require_feature(connection, task.org_id, root_key)
     wanted = None if profile is None else profile.as_json()
-    current = connection.execute("SELECT agent_profile FROM hub.task WHERE id = %s", (task.id,)).fetchone()
+    current = connection.execute("SELECT agent_profile, analysis FROM hub.task WHERE id = %s", (task.id,)).fetchone()
+    if current[1] is not None and (profile is None or not model.within(profile, model.from_json(current[0]))):
+        # an analysis task always reads only: only a narrower profile (ADR-095 section 2)
+        raise HubError("forbidden", detail={"reason": "analysis"})
     if current[0] == wanted:
         unchanged()
         return effects, wanted

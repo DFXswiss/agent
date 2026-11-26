@@ -28,7 +28,8 @@ A running main session of the user becomes the user's main orchestrator. The flo
    (`platform.log`).
 
 `allowed` (ADR-082 section 9.6): a main session (`not_main`) of a task in the owner's private organization - private,
-created by the owner and with no other active user member (`not_private`) - on an active platform device
+created by the owner and with no other active user member (`not_private`), of a task that is no analysis
+(`analysis`, ADR-095 section 2: the orchestrator would hold the user's full agent access) - on an active platform device
 (`not_platform`), in a state in which its VM runs, `working` or `idle` (`not_running`). Registering keys also needs
 a request the session has not answered yet (`not_requested`); the same keys registered again after their pairing
 expired unconfirmed open it anew, a pairing confirmed but not claimed by its deadline no longer holds the session.
@@ -59,13 +60,14 @@ Connection = psycopg.Connection[Any]
 RUNNING = frozenset({"working", "idle"})
 """Session states in which the session's VM runs and can draw the keys."""
 UNAVAILABLE = "orchestrator_unavailable"
-REASONS = ("not_main", "not_private", "not_platform", "not_running", "not_requested")
+REASONS = ("not_main", "analysis", "not_private", "not_platform", "not_running", "not_requested")
 HINT = "session.orchestrator"
 _FACTS = (
     "SELECT s.id, s.owner_id, s.org_id, s.wg_id, s.task_id, s.device_id, s.depth, s.state, s.orchestrator_at,"
     " o.private AND o.created_by = s.owner_id AND NOT EXISTS (SELECT 1 FROM hub.org_member m"
     " WHERE m.org_id = s.org_id AND m.kind = 'user' AND m.removed_seq IS NULL AND m.principal_id <> s.owner_id),"
-    " COALESCE(d.kind = 'platform' AND d.state = 'active', false)"
+    " COALESCE(d.kind = 'platform' AND d.state = 'active', false),"
+    " EXISTS (SELECT 1 FROM hub.task t WHERE t.id = s.task_id AND t.analysis IS NOT NULL)"
     " FROM hub.session s JOIN hub.org o ON o.id = s.org_id LEFT JOIN hub.device d ON d.id = s.device_id"
     " WHERE s.id = %s"
 )
@@ -90,6 +92,8 @@ class SessionFacts:
     requested_at: datetime | None
     private: bool
     platform: bool
+    analysis: bool = False
+    """The session belongs to an analysis task (ADR-095 section 2): it never becomes the main orchestrator."""
 
 
 def facts(connection: Connection, session_id: UUID, *, lock: bool = False) -> SessionFacts:
@@ -104,6 +108,8 @@ def reason(found: SessionFacts) -> str | None:
     """Why the session cannot become the main orchestrator (module docstring), None when it can."""
     if found.depth != 0:
         return "not_main"
+    if found.analysis:
+        return "analysis"
     if not found.private:
         return "not_private"
     if not found.platform:

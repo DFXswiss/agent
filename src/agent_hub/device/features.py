@@ -30,6 +30,11 @@ profile to a task while an active device assigned to a workgroup of the org has 
 platform role `support` (the hub refuses to append them while an active device - of the org, or for the platform log
 of any kind - has not announced it: an older runner would stop at the unknown type or value).
 
+`platform.analysis` (KOR-53, ADR-095 section 2): the runner answers the read tools `get_usage`, `list_audit`,
+`list_workgroup_operations` and `get_metrics` from the device routes of the workgroup. The hub creates an analysis task
+only while every active device assigned to a workgroup of the org has announced it and `agent.profiles`
+(`agent_hub.analysis.request`, `409 peer_outdated`).
+
 `prompt.withdraw` (KOR-46, ADR-083 section 3): the runner withdraws a pending prompt listed in `prompt_queue.withdrawn`
 of `GET /v1/device/state` and reports `session.prompt_withdrawn`. The hub refuses to request a withdrawal from a device
 that has not announced it (`409 peer_outdated`).
@@ -58,6 +63,7 @@ VM_CHOICE = "vm.choice"
 GITHUB_IDENTITIES = "github.identities"
 PROMPT_WITHDRAW = "prompt.withdraw"
 AGENT_PROFILES = "agent.profiles"
+PLATFORM_ANALYSIS = "platform.analysis"
 MAX_FEATURES = 16
 _TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,31}")
 

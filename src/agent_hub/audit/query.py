@@ -54,7 +54,7 @@ _FILTER_COLUMNS = {
     "on_behalf_of": "on_behalf_of",
 }
 _ACTION_RE = re.compile(r"[a-z_]+(?:\.[a-z_]+)*")
-_COLUMNS = (
+COLUMNS = (
     "seq, at, actor_id, actor_kind, action, result, org_id, wg_id, task_id, session_id, device_id, target_kind,"
     " target_id, detail, event_id, agent_id, on_behalf_of"
 )
@@ -103,7 +103,7 @@ def parse_filters(params: Mapping[str, str | None]) -> dict[str, Any]:
     return found
 
 
-def _row(record: tuple[Any, ...]) -> dict[str, Any]:
+def row(record: tuple[Any, ...]) -> dict[str, Any]:
     row = AuditRow(
         at=record[1],
         actor_id=record[2],
@@ -156,10 +156,10 @@ def list_audit(
             clauses.append(f"{_FILTER_COLUMNS[name]} = %s")
             params.append(value)
     found = connection.execute(
-        f"SELECT {_COLUMNS} FROM hub.audit WHERE {' AND '.join(clauses)} ORDER BY seq DESC LIMIT %s",
+        f"SELECT {COLUMNS} FROM hub.audit WHERE {' AND '.join(clauses)} ORDER BY seq DESC LIMIT %s",
         (*params, limit + 1),
     ).fetchall()
-    rows = [_row(record) for record in found[:limit]]
+    rows = [row(record) for record in found[:limit]]
     return {
         "rows": rows,
         "next_before": encode_before(rows[-1]["seq"]) if len(found) > limit else None,
@@ -176,10 +176,10 @@ def list_account_audit(connection: Connection, user: UUID, *, before: str | None
         clauses.append("seq < %s")
         params.append(decode_before(before))
     found = connection.execute(
-        f"SELECT {_COLUMNS} FROM hub.audit WHERE {' AND '.join(clauses)} ORDER BY seq DESC LIMIT %s",
+        f"SELECT {COLUMNS} FROM hub.audit WHERE {' AND '.join(clauses)} ORDER BY seq DESC LIMIT %s",
         (*params, limit + 1),
     ).fetchall()
-    rows = [_row(record) for record in found[:limit]]
+    rows = [row(record) for record in found[:limit]]
     return {"rows": rows, "next_before": encode_before(rows[-1]["seq"]) if len(found) > limit else None}
 
 

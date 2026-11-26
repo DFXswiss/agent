@@ -53,6 +53,7 @@ class CreateTaskRequest(BaseModel):
     events: list[dict[str, Any]] = Field(min_length=2, max_length=2)
     placement: Placement | None = None
     github_identity: str | None = None
+    analysis: dict[str, Any] | None = None
 
 
 class PromptRequest(BaseModel):
@@ -103,7 +104,11 @@ async def create_task(context: Context, principal: CurrentPrincipal, body: Creat
         requested = (body_id(body.placement.device_id, "/placement/device_id"), vm)
     identity = None if body.github_identity is None else body_id(body.github_identity, "/github_identity")
     write = functools.partial(
-        service.create_task, requested=requested, github_identity=identity, author=actor(principal).id
+        service.create_task,
+        requested=requested,
+        github_identity=identity,
+        author=actor(principal).id,
+        analysis=body.analysis,
     )
     return await asyncio.to_thread(_run, context, write, user, task_id, wg_id, body.events)
 

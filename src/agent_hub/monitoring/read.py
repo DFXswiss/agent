@@ -359,6 +359,12 @@ def entity_visible(connection: Connection, user: UUID, kind: str, entity_id: str
             (user, entity_id),
         ).fetchone()
         return row is not None
+    wg = entity_wg(connection, kind, entity_id)
+    return wg is not None and wg_access(connection, wg, user) is not None
+
+
+def entity_wg(connection: Connection, kind: str, entity_id: str) -> UUID | None:
+    """The workgroup of a session, workgroup VM or work VM (the session of its newest sample), None without one."""
     if kind == "workvm":
         found = connection.execute(
             "SELECT s.wg_id FROM hub.session s WHERE s.id = (SELECT session_id FROM hub.metric_sample"
@@ -368,7 +374,7 @@ def entity_visible(connection: Connection, user: UUID, kind: str, entity_id: str
     else:
         table = "hub.vm" if kind == "vm" else "hub.session"
         found = connection.execute(f"SELECT wg_id FROM {table} WHERE id = %s", (entity_id,)).fetchone()
-    return found is not None and found[0] is not None and wg_access(connection, found[0], user) is not None
+    return None if found is None or found[0] is None else UUID(str(found[0]))
 
 
 def _aggregate(metric: str, rollup: bool) -> str:
