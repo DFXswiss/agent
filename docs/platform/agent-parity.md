@@ -50,6 +50,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | credential-rotate | jobs (CK re-wrap) | `credentials rotate` | done |
 | quotas | settings/quotas | `quotas` | done |
 | subscriptions-list | screens/subscriptions and the card "My subscriptions" of screens/home (every own subscription with status - also `relogin` when the device could not renew it -, use, expiry, plan and the remaining quota per window, for the operator also the token-file subscriptions; ADR-091, ADR-092, rules E-30, E-31) | `subscriptions list` (token files: `quotas --org`) | done |
+| subscriptions-usage | screens/subscriptions, section "Who used how much" (tokens, sessions, share of the tokens and the estimated share of the quota per person and subscription for the 5-hour window, the week or a chosen span; the owner sees everybody, everybody else their own use; usage through DFX access per person; ADR-100) | `subscriptions usage --period --since --until` (DFX access: `billing --org`) | done |
 | settings-subscriptions | settings/subscriptions (the link to the page "My subscriptions", ADR-091) | `subscriptions list` | done |
 | subscriptions-add | screens/subscriptions ("Add subscription") and settings/subscription-logins (a new subscription logged in on a platform device, ADR-090) | `subscriptions add --name --note --automatic --email` | done |
 | subscriptions-login | screens/subscriptions ("Log in now") and settings/subscription-logins (log a subscription in again) | `subscriptions login --id` | done |

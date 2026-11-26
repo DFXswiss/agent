@@ -25,6 +25,7 @@ AUDIT_ACTIONS = frozenset(
         "read.github_identity",
         "read.me.github_identities",
         "read.me.subscriptions",
+        "read.me.subscriptions.usage",
         "read.subscription",
         "read.device.subscription",
         "read.device.subscriptions",

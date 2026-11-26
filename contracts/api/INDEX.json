@@ -3004,6 +3004,23 @@
     },
     {
       "method": "GET",
+      "path": "/v1/me/subscriptions/usage",
+      "name": "subscriptions-usage",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/subscriptions-usage.request.json",
+      "response": "api/subscriptions-usage.response.json",
+      "read_resource": "me.subscriptions.usage",
+      "streaming": false,
+      "owner": "KOR-75"
+    },
+    {
+      "method": "GET",
       "path": "/v1/subscriptions/{id}",
       "name": "subscription-get",
       "section": "4.8",

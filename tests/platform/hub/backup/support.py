@@ -396,6 +396,13 @@ class Estate:
                 " VALUES (%s, %s, false, %s, %s)",
                 (self.subscription, writer.id, Jsonb([org]), now),
             ),
+            # the tokens of a person on it (KOR-75, ADR-100)
+            (
+                "INSERT INTO hub.subscription_usage (credential_id, owner_id, user_id, org_id, session_id, slot,"
+                " requests, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)"
+                " VALUES (%s, %s, %s, %s, %s, %s, 2, 100, 20, 1000, 30)",
+                (self.subscription, writer.id, writer.id, org, self.session, now),
+            ),
             # model access with fallback (KOR-50): a limit, a snapshot, an issuer, a key and its waiting cost
             (
                 "INSERT INTO hub.quota_limit (owner_id, at, until, readable, device_id, fetched_at)"

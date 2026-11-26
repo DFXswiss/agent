@@ -294,6 +294,18 @@ The home of an organization shows where people are needed, across all workgroups
   not readable, cannot be opened), note, use, listed (record or token file), plan, used and reset per window, measuring
   device, checked (time of the reading) and changed (time of the record). The card, the page and their texts load
   lazily. The settings link the page.
+- **Who used how much** (KOR-75, [ADR-100](../adr/100-subscription-usage-per-person.md)): a section of the page
+  `/subscriptions` below the table. The period is the running 5-hour window, the running week or a span of days the
+  user chooses (at most 92; an invalid span is refused before any request). Per subscription a heading (an own one by
+  its name as in the table, another person's as "Subscription of <name>"), the span, the measured use of the window
+  with its age or "no measurement", and a table (scrolling sideways on a phone): person (oneself "you", an agent as
+  "Agent of …"), input, output, cache read, cache write, tokens in total, sessions, share of the tokens and "share of
+  the quota (estimated)" (`≈ 30%`, "—" without a measurement), with a total line for an own subscription used by
+  several people. A note says that the share is an estimate (the provider measures per subscription only); for a chosen
+  span that the provider measures no quota for it. Another person's subscription shows the user's own row only. Below,
+  the usage through DFX access per person of the active organization (the `people` of `GET /v1/orgs/{org}/billing`,
+  ADR-083 §2) and a link to the settings section "Credit and usage". Data: `GET /v1/me/subscriptions/usage`, refreshed
+  every minute.
 - **Groups** in this order: "Needs your decision" (`needs_decision`, longest waiting first), "Stuck" (`blocked`),
   "Running" (`working`), "Recently finished" (`done`, last 7 days, with the link to the default workgroup's task
   list); the last three newest first. Each group is a windowed list paged by the hub (50 per page; at most 50 entries

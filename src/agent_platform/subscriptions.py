@@ -36,6 +36,12 @@ measure only). The token is created on the device and never printed here.
   only for a user with the platform role `operator` (the organizations of the root-signed platform log). Every write
   of `rename`, `note`, `logout` and `use` sends the mirror of the use it sealed.
 - `subscriptions remove --id`: `DELETE /v1/subscriptions/{id}` (`404` counts as done).
+- `subscriptions usage [--period five_hour|week|range] [--since] [--until]` (ADR-100): `GET
+  /v1/me/subscriptions/usage` - per subscription the span, the measured window, the total (own subscriptions only) and
+  per person requests, tokens (input, output, cache read, cache write), sessions, `token_share` and
+  `estimated_percent` (an estimate, `estimate` says why); `you` marks the caller. Own subscriptions carry `name` and
+  `email` as `list` shows them; another owner's subscription is named by `owner_id` and lists only the caller's row.
+  `dfx_access` names the command with the consumption per person through DFX access (`billing`, ADR-083).
 """
 
 from __future__ import annotations
@@ -43,6 +49,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urlencode
 
 from agent_platform.account import Account, unverified
 from agent_platform.commands import Context, Tree
@@ -78,6 +85,12 @@ LABEL_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 SCOPE_RE = re.compile(r"^[a-z_:]{1,64}$")
 RELOGIN = "renewal_refused"
 MAX_ORGS = 50
+USAGE_PERIODS = ("five_hour", "week", "range")
+TIME_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$")
+ESTIMATE_NOTE = (
+    "estimated_percent is an estimate: the provider measures the quota per subscription only; each person's share of"
+    " the tokens on the subscription in the window times the measured use of the window"
+)
 
 
 class Unverifiable(Exception):
@@ -436,6 +449,61 @@ def _list(account: Account, _args: Any, _context: Context) -> dict[str, Any]:
     return overview(account)
 
 
+# --- who used how much (ADR-100) ---
+
+
+def _usage_entry(item: object) -> dict[str, Any]:
+    texts = ("subscription_id", "owner_id", "since", "until")
+    if (
+        not isinstance(item, dict)
+        or not all(isinstance(item.get(name), str) for name in texts)
+        or not isinstance(item.get("own"), bool)
+        or not isinstance(item.get("primary"), bool)
+        or not isinstance(item.get("people"), list)
+        or not all(isinstance(person, dict) and isinstance(person.get("user_id"), str) for person in item["people"])
+        or not (item.get("measured") is None or isinstance(item.get("measured"), dict))
+        or not (item.get("total") is None or isinstance(item.get("total"), dict))
+    ):
+        raise unverified("response_invalid")
+    return item
+
+
+def usage_overview(account: Account, period: str, since: str | None, until: str | None) -> dict[str, Any]:
+    """`subscriptions usage` (module docstring): the hub's figures, each own subscription named as in `list`."""
+    if period not in USAGE_PERIODS or (period != "range" and (since or until)) or (period == "range" and not since):
+        raise PlatformError("invalid_argument", reason="period")
+    query = {"period": period}
+    for name, value in (("since", since), ("until", until)):
+        if value is not None:
+            if not TIME_RE.fullmatch(value):
+                raise PlatformError("invalid_argument", reason=name)
+            query[name] = value
+    answer = account.call("GET", f"/v1/me/subscriptions/usage?{urlencode(query)}")
+    entries = [_usage_entry(item) for item in rows_of(answer, "subscriptions")]
+    names: dict[str, dict[str, Any]] = {}
+    if any(entry["own"] for entry in entries):
+        names = {item["id"]: item for item in overview(account)["subscriptions"]}
+    found = []
+    for entry in entries:
+        named = names.get(entry["subscription_id"], {})
+        people = [{**person, "you": person["user_id"] == account.user_id} for person in entry["people"]]
+        found.append({**entry, "name": named.get("name"), "email": named.get("email"), "people": people})
+    result: dict[str, Any] = {
+        "period": period,
+        "subscriptions": found,
+        "estimate": ESTIMATE_NOTE,
+        "dfx_access": "agent-platform billing --org <org_id>",
+    }
+    for name in ("since", "until"):
+        if isinstance(answer.get(name), str):
+            result[name] = answer[name]
+    return result
+
+
+def _usage(account: Account, args: Any, _context: Context) -> dict[str, Any]:
+    return usage_overview(account, args.period, args.since, args.until)
+
+
 def _login_options(sub: Any) -> None:
     sub.add_argument("--automatic", action="store_true", help="sign in through the user's mailbox (no browser)")
     sub.add_argument("--email", help="with --automatic: the address to sign in with (default: the mailbox's)")
@@ -453,6 +521,18 @@ def register(tree: Tree) -> None:
         example="agent-platform subscriptions list",
         words="abos abonnements kontingent übersicht rest woche messen subscriptions quota overview remaining",
     )
+    sub = tree.command(
+        group,
+        "usage",
+        _usage,
+        "who used how much of which subscription: tokens, sessions and the estimated share of the quota per person",
+        example="agent-platform subscriptions usage --period week",
+        words="verbrauch kollegen wer wieviel tokens guthaben anteil geschätzt fenster woche zeitraum person"
+        " usage colleagues who how much tokens share estimated window week period person",
+    )
+    sub.add_argument("--period", default="five_hour", help="five_hour (default), week or range")
+    sub.add_argument("--since", help="with --period range: start (2026-11-01T00:00:00.000Z)")
+    sub.add_argument("--until", help="with --period range: end (default now)")
     sub = tree.command(
         group,
         "add",

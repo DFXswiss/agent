@@ -158,6 +158,7 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'read.me.invitees',
   'read.me.quotas',
   'read.me.subscriptions',
+  'read.me.subscriptions.usage',
   'read.monitoring.overview',
   'read.monitoring.series',
   'read.notifications',

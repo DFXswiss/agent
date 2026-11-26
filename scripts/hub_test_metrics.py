@@ -13,7 +13,8 @@ written straight into `hub.metric_rollup`.
   workgroup of that session)
 - `POST /devices/<id>/metrics {"samples": [{"entity_kind", "entity_id", "age_s"?, <values>?}]}` (`age_s`: seconds
   before now; missing values are typical figures, so a spec names only what it checks)
-- `POST /devices/<id>/usage {"session_id", <usage fields>?}`
+- `POST /devices/<id>/usage {"session_id", <usage fields>?, "subscription_id"?, "triggered_by"?}` (the last two as the
+  runner sends them: the subscription record that served the requests and the person behind them, ADR-100)
 - `POST /devices/<id>/rollups {"rollups": [{"entity_kind", "entity_id", "age_h", <field>_avg?, ...}]}`
 - `POST /devices/<id>/quotas {"owner_id", "windows": [{"window", "used_percent", "resets_in_s"?, "severity"?}]}`: the
   subscription windows of an owner as the polling device reports them (`quota` item; the hub accepts it only from the
@@ -152,6 +153,9 @@ class MetricsDouble:
             "context_window_tokens": int(body.get("context_window_tokens", 200_000)),
             "last_provider": body.get("last_provider", "anthropic"),
         }
+        for name in ("subscription_id", "triggered_by"):
+            if name in body:
+                usage[name] = body[name]
         self.push(device_id, [("usage", usage)])
 
     def quotas(self, device_id: str, body: Json) -> None:

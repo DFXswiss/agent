@@ -591,6 +591,8 @@ agent-platform subscriptions use --id <subscription_id> --org <org_id>   # sessi
 agent-platform subscriptions use --id <subscription_id> --measure      # only measured again (the default)
 agent-platform subscriptions logout --id <subscription_id>       # drops the token; revoke it at the provider too
 agent-platform subscriptions remove --id <subscription_id>
+agent-platform subscriptions usage [--period week]                # who used how much: tokens, sessions, estimated share
+agent-platform subscriptions usage --period range --since <time> [--until <time>]   # a chosen span (at most 92 days)
 agent-platform settings set --fallback on                        # own subscription used up: continue on DFX access
 agent-platform settings set --fallback-platform off              # operator subscriptions used up: wait instead
 agent-platform billing --org <org_id>                            # credit balance, prices, credit history, usage
@@ -609,6 +611,12 @@ agent-platform platform list
 agent-platform platform revoke --id <invite_id>
 agent-platform security                                          # checks the web build against its manifest
 ```
+
+`subscriptions usage` (ADR-100) answers per subscription who used how much in the running 5-hour window (default),
+the week (`--period week`) or a chosen span: per person requests, tokens (input, output, cache read, cache write),
+sessions, `token_share` and `estimated_percent` - an estimate, since the provider measures the quota per subscription
+only (`estimate` says how it is computed). Your user sees everybody on their own subscriptions and only their own row
+on other people's; `you: true` marks your user. Usage through DFX access per person is in `billing --org`.
 
 Claude subscriptions (rule E-31): each subscription has its own login on a platform device, is measured and renewed
 there and never comes to a computer of your user. `subscriptions add` answers the authorization link in `next`: your

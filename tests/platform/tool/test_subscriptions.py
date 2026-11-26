@@ -313,3 +313,55 @@ def test_full_logins_show_expiry_plan_and_log_in_again(tool: Tool, hub: HubFake,
     assert after["name"] == "New"
     tool.run("subscriptions", "logout", "--id", refused)
     assert "relogin" not in stored(hub, account, refused)
+
+
+def _person(user: str, tokens: int, share: float, estimated: float | None) -> Json:
+    counts = {"input_tokens": tokens, "output_tokens": 0, "cache_read_tokens": 0, "cache_write_tokens": 0}
+    return {"user_id": user, "requests": 1, **counts, "tokens": tokens, "sessions": 1, "token_share": share,
+            "estimated_percent": estimated}  # fmt: skip
+
+
+def test_usage_shows_who_used_how_much(tool: Tool, hub: HubFake, account: User) -> None:
+    """KOR-75, ADR-100: `subscriptions usage` shows the hub's figures per subscription and person, names the own
+    subscriptions as `list` does, marks the caller and says that the share of the quota is an estimate."""
+    own = add(hub, account.id, sealed(hub, account, body(name="Team")), reading(40.0))
+    colleague, owner = uuid7(), uuid7()
+    span = {"since": "2026-11-26T10:00:00.000Z", "until": "2026-11-26T13:00:00.000Z"}
+    measured = {"used_percent": 40.0, "resets_at": "2026-11-26T15:00:00.000Z", "fetched_at": "2026-11-26T12:55:00.000Z"}
+    mine = _person(account.id, 30, 0.75, 30.0)
+    theirs = _person(colleague, 10, 0.25, 10.0)
+    kept = {k: v for k, v in mine.items() if k not in ("user_id", "token_share", "estimated_percent")}
+    total = {**kept, "tokens": 40}
+    entry = {"subscription_id": own, "owner_id": account.id, "primary": False, "own": True, **span,
+             "measured": measured, "total": total, "people": [mine, theirs]}  # fmt: skip
+    foreign = {"subscription_id": uuid7(), "owner_id": owner, "primary": True, "own": False, **span,
+               "measured": None, "total": None, "people": [_person(account.id, 5, 0.5, None)]}  # fmt: skip
+    state_of(hub).usage = {"period": "five_hour", "subscriptions": [entry, foreign]}
+    code, found = tool.run("subscriptions", "usage")
+    assert code == 0, found
+    assert state_of(hub).usage_queries[-1] == {"period": "five_hour"}
+    first, second = found["subscriptions"]
+    assert (first["name"], first["email"], second["name"]) == ("Team", "team@example.com", None)
+    assert [(p["user_id"], p["you"], p["estimated_percent"]) for p in first["people"]] == [
+        (account.id, True, 30.0),
+        (colleague, False, 10.0),
+    ]
+    assert "estimate" in found["estimate"]
+    assert found["dfx_access"].startswith("agent-platform billing")
+    assert "since" not in found
+    # only another person's subscription: no record is opened
+    state_of(hub).usage = {"period": "range", **span, "subscriptions": [foreign]}
+    ranged = tool.run("subscriptions", "usage", "--period", "range", "--since", span["since"], "--until", span["until"])
+    assert (ranged[1]["since"], ranged[1]["until"]) == (span["since"], span["until"])
+    assert state_of(hub).usage_queries[-1] == {"period": "range", **span}
+    for argv in (
+        ("--period", "month"),
+        ("--period", "week", "--since", span["since"]),
+        ("--period", "range"),
+        ("--period", "range", "--since", "yesterday"),
+        ("--period", "range", "--since", span["since"], "--until", "now"),
+    ):
+        assert tool.run("subscriptions", "usage", *argv)[1]["error"] == "invalid_argument", argv
+    for broken in ({"period": "week"}, {"period": "week", "subscriptions": [{"subscription_id": own}]}):
+        state_of(hub).usage = broken
+        assert tool.run("subscriptions", "usage", "--period", "week")[1]["reason"] == "response_invalid"

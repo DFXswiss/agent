@@ -3,6 +3,7 @@
 | Route | Right |
 |---|---|
 | `GET /v1/me/subscriptions` | `user`: every own subscription with its newest reading (`store.rows_for`) |
+| `GET /v1/me/subscriptions/usage` | `user`: who used how much of the own subscriptions (`usage.answer`, ADR-100) |
 | `GET /v1/subscriptions/{id}` | `user`: an own subscription record |
 | `PUT /v1/subscriptions/{id}` | `user`: an own further subscription (never the primary record) |
 | `DELETE /v1/subscriptions/{id}` | `user`: an own subscription record (also the primary one) |
@@ -54,7 +55,7 @@ from agent_hub.http.routing import EVENT_BATCH_BYTES, HubRouter
 from agent_hub.notifications.rules import Notification, publish_rows
 from agent_hub.orgs.routes import parse_id, user_id
 from agent_hub.requests.store import authorizes_write
-from agent_hub.subscriptions import store
+from agent_hub.subscriptions import store, usage
 from agent_hub.usage import binding
 from agent_hub.usage.polling import polls_for
 from agent_hub.wraps.rules import cred_epoch
@@ -123,6 +124,20 @@ def _primary(connection: Any, record_id: UUID) -> bool:
 async def get_subscriptions(context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
     user = user_id(principal)
     return {"subscriptions": await _in_transaction(context, lambda c: store.rows_for(c, user))}
+
+
+@router.get("/v1/me/subscriptions/usage", auth="browser", right="user", read_resource="me.subscriptions.usage")
+async def get_subscriptions_usage(
+    context: Context,
+    principal: CurrentPrincipal,
+    *,
+    period: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+) -> dict[str, Any]:
+    user, now = user_id(principal), context.clock()
+    name, fixed = usage.checked(period, since, until, now)
+    return await _in_transaction(context, lambda c: usage.answer(c, user, name, fixed, now))
 
 
 @router.get("/v1/subscriptions/{id}", auth="browser", right="user", read_resource="subscription")

@@ -9,9 +9,11 @@ only, no content) inside the journal page's transaction, so a merged delta is ne
   largest contract count), every other field is the newest one, exactly what the hub keeps when it applies the items
   one by one ("latest reported values") - and writes the outbox item at once when the first delta is `WINDOW_S` old.
   Only deltas of the same billing key merge: the hub charges an item under its `model` and `access_origin` (KOR-31,
-  12-billing.md section 4), books it to the person in its `triggered_by` (KOR-46), prices it with the price list in
+  12-billing.md section 4), books it to the person in its `triggered_by` (KOR-46) and to the subscription in its
+  `subscription_id` (ADR-100), prices it with the price list in
   force at its `at` and books it on the UTC day of its `at` (`hub.charge_daily`), so a delta whose `model`,
-  `access_origin`, `triggered_by` or UTC day of `at` differs from the pending row's writes that row out first and
+  `access_origin`, `triggered_by`, `subscription_id` or UTC day of `at` differs from the pending row's writes that row
+  out first and
   starts a new one (a delta or row without `at` has no day and merges with either). `at` (the time of the request)
   is the newest merged request's time (a request without a valid time keeps the one before) - the time of the last
   request the item bills, never more than `WINDOW_S` after its first one and
@@ -44,10 +46,10 @@ WINDOW_S = 10.0
 TICK_S = 1.0
 
 
-def _key(item: Mapping[str, Any]) -> tuple[Any, Any, Any]:
+def _key(item: Mapping[str, Any]) -> tuple[Any, Any, Any, Any]:
     """The billing key besides the session and the day: deltas merge only within one (model, access_origin,
-    triggered_by)."""
-    return item.get("model"), item.get("access_origin"), item.get("triggered_by")
+    triggered_by, subscription_id)."""
+    return item.get("model"), item.get("access_origin"), item.get("triggered_by"), item.get("subscription_id")
 
 
 def _day(item: Mapping[str, Any]) -> str | None:

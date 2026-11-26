@@ -254,6 +254,12 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
       "the user's own subscriptions (at most 40, subscriptions-list.response.json) by provider (a closed set), and " +
       'the windows of one provider (5 hours, week, week per model: at most 16 per reading)',
   },
+  'src/ui/subscriptions/UsageOverview.tsx': {
+    count: 4,
+    reason:
+      'the three periods and the fixed columns, the subscriptions of one answer (the own ones, at most 40, and those ' +
+      'of others the user used) and the people who used one subscription in the span (ADR-100)',
+  },
   'src/ui/screens/subscriptions/SubscriptionsScreen.tsx': {
     count: 4,
     reason:
