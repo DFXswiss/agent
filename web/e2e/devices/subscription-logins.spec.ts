@@ -120,3 +120,42 @@ test('two subscriptions log in side by side with progress, a check for humans an
   await page.getByTestId('subbatch.close').click();
   await expect(page.getByTestId('subscriptions.row')).toHaveCount(2);
 });
+
+test('one subscription with its own mailbox and a new account is written first and logged in automatically', async ({
+  page,
+  baseURL,
+}) => {
+  const user = await freshUser(page, baseURL!);
+  await page.goto('/subscriptions');
+  await page.getByTestId('login.submit').click();
+  await page.getByTestId('subscriptions.add').click();
+  await page.getByTestId('subadd.name').fill('Seat three');
+  await page.getByTestId('subadd.note').fill('for the reviews');
+  await page.getByTestId('subadd.email').fill('seat-3@example.com');
+  await page.getByTestId('subadd.mailbox.host').fill('imap.example.com');
+  await page.getByTestId('subadd.mailbox.user').fill('seat-3@example.com');
+  await page.getByTestId('subadd.mailbox.password').fill(PASSWORD);
+  await expect(page.getByTestId('subadd.start')).toBeDisabled(); // the mailbox is not complete yet
+  await page.getByTestId('subadd.mailbox.email').fill('seat-3@example.com');
+  await page.getByTestId('subadd.account.on').check();
+  await expect(page.getByTestId('subadd.start')).toBeDisabled(); // the account has no name yet
+  await page.getByTestId('subadd.account.name').fill('Grace Example');
+  await page.getByTestId('subadd.account.birth').fill('1990-04-01');
+  await page.getByTestId('subadd.account.consent.terms').check();
+  await page.getByTestId('subadd.account.consent.age').check();
+  await page.getByTestId(`subadd.orgs.${user.org}`).check();
+  await page.getByTestId('subadd.start').click();
+  const started = await answer(user.device, [{ body: { step: 'progress', stage: 'registered' } }]);
+  expect(started.body).toMatchObject({
+    mode: 'automatic',
+    extended: true,
+    email: 'seat-3@example.com',
+    account: { name: 'Grace Example', birth_date: '1990-04-01', consents: ['terms', 'age'] },
+  });
+  await expect(page.getByTestId('claude.progress')).toHaveAttribute('data-stage', 'registered');
+  await answer(user.device, [{ body: { step: 'done', email: 'seat-3@example.com' }, final: true }], {
+    request_id: started.request_id,
+  });
+  await expect(page.getByTestId('subscriptions.row')).toHaveCount(1);
+  expect(await page.content()).not.toContain(PASSWORD);
+});
