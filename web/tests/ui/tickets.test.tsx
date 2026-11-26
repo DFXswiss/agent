@@ -14,6 +14,7 @@ import { EMPTY_DIRECTORY } from '../../src/core/tasks/directory';
 import { I18nProvider } from '../../src/ui/i18n';
 import { TaskFields } from '../../src/ui/screens/task/TaskFields';
 import { CaptureForm } from '../../src/ui/screens/tasks/CaptureForm';
+import { EMPTY_VALUES, TicketForm } from '../../src/ui/screens/tasks/TicketForm';
 import { OverviewScreen } from '../../src/ui/screens/tasks/OverviewScreen';
 import { TaskListScreen } from '../../src/ui/screens/tasks/TaskListScreen';
 import { AppEnvProvider } from '../../src/ui/shell/context';
@@ -359,5 +360,78 @@ describe('the fields panel of the task page', () => {
     expect(screen.getByTestId('task.start')).toHaveTextContent('No agent works on this task yet.');
     expect(screen.getByTestId('task.fields.status')).toBeDisabled();
     expect(screen.getByTestId('task.fields.description')).toHaveTextContent('–');
+  });
+
+  it('sets a person on a task without a topic', async () => {
+    const { t } = await world();
+    const row = taskRow(t, { state: 'idle', main_session_id: null, status: 'todo', topic_id: null }) as TaskRow;
+    putEvents(t.store, t.wg, [event(t, t.wg, 2, { kind: 'task.meta', task: TASK }, { title: 'Alpha' })]);
+    t.client.on(`PUT /v1/tasks/${TASK}/fields`, (body) => ({ task: { ...row, ...(body as object) } }));
+    panel(t, row);
+    expect(screen.getByTestId('task.fields.topic')).toHaveTextContent('No topic');
+    fireEvent.click(screen.getByTestId('task.fields.edit'));
+    expect(screen.getByTestId('task.fields.form.topic')).toHaveValue('');
+    fireEvent.change(screen.getByTestId('task.fields.form.person'), { target: { value: t.me.id } });
+    // a repository without an owner leaves the organisation alone
+    fireEvent.change(screen.getByTestId('task.fields.form.github-repo'), { target: { value: 'agent' } });
+    expect(screen.getByTestId('task.fields.form.github-org')).toHaveValue('');
+    fireEvent.change(screen.getByTestId('task.fields.form.github-repo'), { target: { value: '' } });
+    fireEvent.click(screen.getByTestId('task.fields.save'));
+    await waitFor(() => expect(screen.queryByTestId('task.fields.form')).toBeNull());
+    expect(t.client.of(`PUT /v1/tasks/${TASK}/fields`)[0]!.body).toEqual({ assignee_id: t.me.id });
+  });
+});
+
+describe('suggestions and people', () => {
+  it('suggests the GitHub accounts and repositories, unique and sorted, and survives failed reads', async () => {
+    const { t, research } = await world();
+    putEvents(t.store, research, [
+      event(t, research, 1, { kind: 'settings.workgroup', wg: research }, {
+        repositories: ['acme/web', 'DFXswiss/agent'],
+        protected_branches: [],
+        pr_draft_default: true,
+      }),
+    ]);
+    t.client.on(`GET /v1/scopes/${research}/events`, () => {
+      throw new HubError('unavailable', 503);
+    });
+    t.client.on('GET /v1/me/github-identities', () => {
+      throw new HubError('unavailable', 503);
+    });
+    act(() =>
+      t.store.update('githubIdentities', (state) => ({
+        ...state,
+        identities: [
+          { status: 'verified', account: { login: 'Zed' } },
+          { status: 'locked' },
+        ] as never,
+        knownLogins: { company: 'acme' },
+      })),
+    );
+    mount(t, `/o/${t.org}/capture`, captureRoutes(t, [t.wg, research]));
+    fireEvent.click(screen.getByTestId('tickets.capture.open'));
+    const org = screen.getByTestId('tickets.capture.github-org');
+    const repo = screen.getByTestId('tickets.capture.github-repo');
+    const values = (input: HTMLElement) =>
+      [...document.getElementById(input.getAttribute('list')!)!.querySelectorAll('option')].map((node) => node.value);
+    // both workgroups' lists, one entry per repository (any case), sorted
+    await waitFor(() => expect(values(repo)).toEqual(['acme/web', 'DFXswiss/agent']));
+    // the verified account, the company login and the repositories' owners
+    expect(values(org)).toEqual(['acme', 'DFXswiss', 'Zed']);
+  });
+
+  it('offers no person before the log is verified and no repository without a workgroup', async () => {
+    const { t } = await world();
+    const unknown = '0190f000-0000-7000-8000-0000000000ff';
+    mount(t, '/x', [
+      {
+        path: '/x',
+        element: (
+          <TicketForm org={unknown} wgs={[]} values={EMPTY_VALUES} onChange={() => undefined} disabled={false} prefix="x" />
+        ),
+      },
+    ]);
+    expect(within(screen.getByTestId('x.person')).getAllByRole('option')).toHaveLength(1);
+    expect(document.getElementById(screen.getByTestId('x.github-repo').getAttribute('list')!)!.children).toHaveLength(0);
   });
 });
