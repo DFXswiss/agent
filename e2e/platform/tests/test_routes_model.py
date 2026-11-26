@@ -591,6 +591,7 @@ def test_login_doubles_restart_only_running_runners(ctx: Context, node: FakeNode
     node.alive_names.discard("runner-1")
     assert call(ctx, "POST", "/login/doubles", {"seed": "s"})[1]["restarted"] == []
     assert ctx.runners["runner-1"].env["AGENT_RUNNER_LOGIN_AUTOMATION"] == "on"
+    assert ctx.runners["runner-1"].env["AGENT_RUNNER_LOGIN_SANDBOX"] == "process"
 
 
 def test_magic_link(ctx: Context, node: FakeNode) -> None:
