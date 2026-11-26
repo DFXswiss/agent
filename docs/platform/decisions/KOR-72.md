@@ -32,7 +32,7 @@ the interpretation [A19](../KONZEPT.md#a-19), this note and an internal inventor
 9. **The merge lane follows A2** (merge commits); a rebasing train is the owner decision D9.
 10. **The legacy hub is retired without data migration** (CUTOVER §§7, 9) with two added preconditions; the team
     record is not rebuilt (in practice unused: no signing keys are configured).
-11. **Accesses are decided by whoever provides them**; for the operator's organization D1–D9 are open decisions of
-    the owner, one by one.
+11. **Accesses are decided by whoever provides them**; for the operator's organization the owner decided on
+    2026-11-26 that the accesses D1–D6 and D8 move without a further question (ADR-098 §7); D7 and D9 stay his decisions.
 12. **No second agent software** is decided here (ADR-021); the A38 slots of different vendors stay an open
     difference in part D.

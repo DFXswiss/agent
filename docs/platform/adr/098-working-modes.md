@@ -240,20 +240,23 @@ stays open in [KONZEPT part D](../KONZEPT.md#d-offen) until closed.
   organization who adds the organization's own credential needs no further approval
   ([E-11](../KONZEPT.md#e-11)). A mode without the credential works without that part and initiates the step in the
   task (E-05: the admins are asked to add it).
-- **For the operator's organization nothing is assumed.** The owner decides each of the following, one by one; until
-  then the corresponding part stays unbuilt in operation, not in code:
+- **For the operator's organization the owner has decided** (2026-11-26, on [E-32](../KONZEPT.md#e-32): "alles sofort
+  umziehen, ohne zu fragen"): every access the modes need moves to the platform as the mode is built, without a further
+  question. D1–D6 and D8 below are therefore decided and are provided by the operator's organization when their package
+  lands. D7 and D9 are no accesses but rules of work and stay decisions of the owner. Services on the owner's computer
+  that do not come from this repository are not part of the inventory and do not move (E-32).
 
-| Point | Access | Needed by |
-|---|---|---|
-| D1 | Apple Developer ID signing and notarisation | `release_ops` (runner package for own devices) |
-| D2 | Production hosts (deploy, operations checks) | `release_ops` |
-| D3 | Production error logs (read) | `prod_error_fix` |
-| D4 | Mailboxes (sending notifications) | `notifications` |
-| D5 | A Telegram bot | `notifications` |
-| D6 | Further subscriptions for helpers (each by its owner's switch, E-31) and further vendors' usage | `orchestrator`, `a38`, `coordinator`, `subscription_login` |
-| D7 | GitHub accounts beyond the user's own (team second review, worker logins of the coordinator; the operator's account is never shared) | `a38`, `coordinator` |
-| D8 | Which of the operator's Macs serve as platform devices for checks (own hardware, ADR-074) | `mac_checks`, `merge_lane` |
-| D9 | A rebasing train with `--force-with-lease` instead of merge commits (A2) | `merge_lane` |
+| Point | Access | Needed by | State |
+|---|---|---|---|
+| D1 | Apple Developer ID signing and notarisation | `release_ops` (runner package for own devices) | decided |
+| D2 | Production hosts (deploy, operations checks) | `release_ops` | decided |
+| D3 | Production error logs (read) | `prod_error_fix` | decided |
+| D4 | Mailboxes (sending notifications) | `notifications` | decided |
+| D5 | A Telegram bot | `notifications` | decided |
+| D6 | Further subscriptions for helpers (each by its owner's switch, E-31) and further vendors' usage | `orchestrator`, `a38`, `coordinator`, `subscription_login` | decided |
+| D7 | GitHub accounts beyond the user's own (team second review, worker logins of the coordinator; the operator's account is never shared) | `a38`, `coordinator` | owner decides |
+| D8 | Which of the operator's Macs serve as platform devices for checks (own hardware, ADR-074) | `mac_checks`, `merge_lane` | decided |
+| D9 | A rebasing train with `--force-with-lease` instead of merge commits (A2) | `merge_lane` | owner decides |
 
 ### 8. New contracts and operations (built by the packages of §9)
 - `contracts/modes/` (catalogue), `task.mode` (class `write`), routes `GET /v1/modes`, `PUT /v1/tasks/{id}/modes/{mode}`,
