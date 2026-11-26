@@ -1,4 +1,4 @@
-// E2E-69 (07-testing.md section 2.1; KOR-51, ADR-094; concept idea 42, interpretation A1, rule E-11): agent roles and
+// E2E-70 (07-testing.md section 2.1; KOR-51, ADR-094; concept idea 42, interpretation A1, rule E-11): agent roles and
 // rights profiles keep work, review and release apart - voluntarily, never as a precondition.
 // 1. The workgroup's settings list the built-in roles; Ada sets the merge rules there (one passed verdict of a review
 //    session, separate duties).
@@ -37,7 +37,7 @@ import {
 } from '../fixtures/platform.ts';
 
 const scenario: unknown = JSON.parse(
-  readFileSync(new URL('../scenarios/e2e-69-agent-roles.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../scenarios/e2e-70-agent-roles.json', import.meta.url), 'utf8'),
 );
 const LOGIN = 'kz69-octo-p3m7';
 const OWNER = 'kz69-org';
@@ -63,7 +63,7 @@ const CANARIES = [
 ];
 const MERGE = 'PUT /repos/{owner}/{repo}/pulls/{number}/merge';
 
-test('@E2E-69 @needs-vm agent roles keep work, review and release apart, restrict only by choice and never exceed the parent', async ({
+test('@E2E-70 @needs-vm agent roles keep work, review and release apart, restrict only by choice and never exceed the parent', async ({
   page,
   orchestrator,
   authenticator,
