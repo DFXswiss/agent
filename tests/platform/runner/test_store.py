@@ -374,7 +374,7 @@ TABLES = {
     # 0035 (KOR-51, ADR-094 section 3): the rights profiles of the device's sessions
     "profile_state": ["id", "section", "received_at"],
     "session_profile": ["session_id", "profile", "created_at"],
-    # 0037 (KOR-74, ADR-099 section 3): the newest verified version of each mailbox record (no rollback)
+    # 0038 (KOR-74, ADR-099 section 3): the newest verified version of each mailbox record (no rollback)
     "mailbox_seen": ["id", "owner_id", "version"],
     "schema_version": ["version", "name", "checksum", "applied_at"],
 }
