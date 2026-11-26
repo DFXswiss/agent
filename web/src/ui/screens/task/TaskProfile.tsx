@@ -1,8 +1,11 @@
 // The rights profile of a task (ADR-094 sections 1 and 7): "Every right" without one (the default, E-11), else the
 // profile's name; writers of the workgroup choose a profile of the workgroup or none, saved with
 // `PUT /v1/tasks/{task}/agent-profile` (it applies at once to the task's sessions and their subagents; `409
-// peer_outdated` when a device of the organization runs an older runner).
+// peer_outdated` when a device of the organization runs an older runner). The profile of an analysis task is never
+// widened (ADR-095 section 2): it shows no change button but the reason and a link to start an ordinary task.
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { isAnalysis } from '../../../core/analysis/analysis';
 import {
   listProfiles,
   profileLabel,
@@ -22,6 +25,7 @@ export function TaskProfile({ row, writer }: { readonly row: TaskRow; readonly w
   const { app } = useAppEnv();
   const { t, error } = useI18n();
   const current = profileOf(row.agent_profile);
+  const analysis = isAnalysis(row);
   const [choices, setChoices] = useState<readonly ListedProfile[] | null>(null);
   const [value, setValue] = useState(current?.name ?? NONE);
   const [failed, setFailed] = useState<string | null>(null);
@@ -46,12 +50,26 @@ export function TaskProfile({ row, writer }: { readonly row: TaskRow; readonly w
         <span data-testid="task.profile.name" data-profile={current?.name ?? ''}>
           {profileLabel(current, t('profiles.task.none'))}
         </span>
-        {writer && choices === null && (
+        {writer && !analysis && choices === null && (
           <button type="button" className={BUTTON} onClick={edit} data-testid="task.profile.change">
             {t('profiles.task.change')}
           </button>
         )}
       </p>
+      {analysis && (
+        <p className="flex flex-wrap items-center gap-2 text-gray-700" data-testid="task.profile.analysis">
+          <span>{t('analysis.profile.locked')}</span>
+          {writer && (
+            <Link
+              className="flex min-h-11 items-center text-blue-800 underline"
+              to={`/o/${encodeURIComponent(row.org_id)}/w/${encodeURIComponent(row.wg_id)}`}
+              data-testid="task.profile.new"
+            >
+              {t('analysis.profile.new')}
+            </Link>
+          )}
+        </p>
+      )}
       {choices !== null && (
         <div className="flex flex-wrap items-center gap-2">
           <select

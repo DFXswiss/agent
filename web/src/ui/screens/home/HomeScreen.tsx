@@ -3,7 +3,9 @@
 // - At the top a compact composer (section 4.1): the context line with the organization and the workgroup selector
 //   (preselected with the default workgroup; only workgroups with `wg:write`) and the prompt field. The suggestion
 //   chips are shown while the organization has no task yet, otherwise behind "Suggestions". A user without write
-//   access anywhere sees a short note instead (controls the rights do not allow are not rendered, section 1).
+//   access anywhere sees a short note instead (controls the rights do not allow are not rendered, section 1). Next to
+//   it "Optimize processes" (ADR-095 section 6): an analysis of the organization, in the default workgroup unless
+//   chosen otherwise.
 // - The counters: "Waiting for me", "Stuck", "Running", "Finished today" (since local midnight), and below them the
 //   organization's subscriptions ("Subscriptions: n available · m used up – next release 14:05", ADR-081 section 6),
 //   then the card "My subscriptions" with every subscription of the user (KOR-68, `ui/subscriptions/`).
@@ -23,6 +25,7 @@ import { useNow } from '../../countdown/useNow';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { Composer } from '../../composer/Composer';
+import { AnalysisButton } from '../../analysis/AnalysisButton';
 import { useAppEnv } from '../../shell/context';
 import { useDirectory, useOrgView } from '../tasks/hooks';
 import '../../../core/i18n/lazy/mainagent';
@@ -179,6 +182,7 @@ export function HomeScreen() {
                   {t('attention.suggestions')}
                 </button>
               )}
+              <AnalysisButton org={org} scope="org" workgroups={writable} initial={writable[0]!} name={wgName} />
             </>
           )}
         </div>

@@ -1,13 +1,16 @@
 // Task list of a workgroup (06-web.md section 5.1, route `/o/:org/w/:wg`, right `wg:read`): newest activity first
 // with the decrypted title, state, owner and last activity; a state filter; a windowed list with "Load more"; the composer at the top
-// for users with `wg:write`; a link to the workgroup settings (WEB-09). The list is the shared task table
-// (`TaskTable.tsx`, also used by the task overview of the organization). A workgroup the user cannot read is "not
+// for users with `wg:write`, who also get "Optimize processes" (an analysis of this workgroup, ADR-095 section 6); a
+// link to the workgroup settings (WEB-09). The list is the shared task table (`TaskTable.tsx`, also used by the task
+// overview of the organization). A workgroup the user cannot read is "not
 // found" (existence is not revealed, 03-api.md section 1).
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { WG } from '../../../core/log/state';
 import { useI18n } from '../../i18n';
 import { Composer } from '../../composer/Composer';
+import { AnalysisButton } from '../../analysis/AnalysisButton';
+import { writableWorkgroups } from '../../../core/tasks/send';
 import { useDirectory, useOrgView } from './hooks';
 import { StateFilter, TaskTable } from './TaskTable';
 import { Unlocking } from '../../unlock/Unlocking';
@@ -48,23 +51,36 @@ export function TaskListScreen() {
       </p>
     );
   }
-  const name = directory.workgroups.get(wg) ?? t('tasks.wg.unnamed');
+  const wgName = (id: string) => directory.workgroups.get(id) ?? t('tasks.wg.unnamed');
+  const name = wgName(wg);
+  const writer = state.canWriteWg(userId, wg);
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" data-testid="tasks.screen">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold" data-testid="tasks.title">
           {name}
         </h1>
-        <Link
-          className="flex min-h-11 items-center text-sm text-blue-800 underline"
-          to={`/o/${encodeURIComponent(org)}/w/${encodeURIComponent(wg)}/settings`}
-          data-testid="tasks.settings"
-        >
-          {t('wg-settings.link')}
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          {writer && (
+            <AnalysisButton
+              org={org}
+              scope="wg"
+              workgroups={writableWorkgroups(state, userId)}
+              initial={wg}
+              name={wgName}
+            />
+          )}
+          <Link
+            className="flex min-h-11 items-center text-sm text-blue-800 underline"
+            to={`/o/${encodeURIComponent(org)}/w/${encodeURIComponent(wg)}/settings`}
+            data-testid="tasks.settings"
+          >
+            {t('wg-settings.link')}
+          </Link>
+        </div>
       </div>
       <Unlocking org={org} wg={wg} />
-      {state.canWriteWg(userId, wg) && <Composer org={org} wg={wg} />}
+      {writer && <Composer org={org} wg={wg} />}
       <TaskList org={org} wg={wg} />
     </main>
   );

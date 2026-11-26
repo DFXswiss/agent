@@ -8,6 +8,7 @@
 // names device and VM of the main session ("on <device> · vm-…", ADR-075 section 6).
 // The task's GitHub identity is shown below it; writers change it (`TaskIdentity.tsx`, ADR-078). Below the title the
 // name and handle of the task's main agent, with "Rename" for writers (`TaskAgent.tsx`, ADR-095).
+// An analysis task carries the badge "Analysis" next to its state (ADR-095 section 6).
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { closeTask, loadChat } from '../../../core/chat/actions';
@@ -32,6 +33,7 @@ import { TaskAgent } from './TaskAgent';
 import { activeTab, Tabs } from './Tabs';
 import { TaskIdentity } from './TaskIdentity';
 import { TaskProfile } from './TaskProfile';
+import { AnalysisBadge } from '../../analysis/AnalysisBadge';
 import { Unlocking } from '../../unlock/Unlocking';
 import { sessionVm } from '../../../core/tasks/placement';
 import { useDeviceNames } from '../devices/labels';
@@ -157,8 +159,11 @@ function TaskView({ row }: { readonly row: TaskRow }) {
             </span>
           )}
           <TaskAgent row={row} writer={writer && row.state !== 'closed'} />
-          <span className="text-sm text-gray-600" data-testid="task.state" data-state={row.state}>
-            {t(`tasks.state.${row.state}`)}
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-gray-600" data-testid="task.state" data-state={row.state}>
+              {t(`tasks.state.${row.state}`)}
+            </span>
+            <AnalysisBadge row={row} testId="task.analysis" />
           </span>
           <TaskRuntime start={row.created_at} end={row.closed_at} />
           <TaskPlacement row={row} />

@@ -3,7 +3,9 @@
 // 1. `prepareTask`: the title (`title.ts`), `task.meta` and `prompt` sealed with the workgroup's current key at
 //    `lh` = the verified head, a fresh `task_id`. The prepared body is kept by the caller: a retry sends the identical
 //    request (same IDs, same bytes), which the hub answers `replayed` (03-api.md section 1). An optional GitHub
-//    identity chosen for the task goes along as `github_identity` (ADR-078 section 3; without it: automatic).
+//    identity chosen for the task goes along as `github_identity` (ADR-078 section 3; without it: automatic). An
+//    analysis task (ADR-095, `core/analysis/`) brings its fixed `title` instead of the derived one and its plaintext
+//    `analysis` (scope and period) for the body.
 // 2. `ensureDevice` (step 1 of the first-task flow): if the workgroup has no assigned device, an admin of an org with
 //    platform access (ADR-026; in a private org the single member is the admin) assigns the first platform candidate
 //    that the verified platform log certifies with the same keys (`GET …/device-candidates`, compiled root key): one
@@ -149,6 +151,13 @@ export async function sealWg(
   return sealEvent(key, header, bodyJson(body), identity.sig.privateKey);
 }
 
+/** The plaintext `analysis` of `POST /v1/tasks` (ADR-095 section 1). */
+export interface TaskAnalysis {
+  readonly scope: 'org' | 'wg';
+  readonly since: string;
+  readonly until: string;
+}
+
 /** A task ready to send; keep it to retry with the same IDs. */
 export interface PreparedTask {
   readonly org: string;
@@ -165,12 +174,15 @@ export interface PreparedTask {
     readonly placement?: { readonly device_id: string; readonly vm_id?: string };
     /** The GitHub identity chosen for the task (ADR-078 section 3); absent for "automatic". */
     readonly github_identity?: string;
+    /** Scope and period of an analysis task (ADR-095 section 1); absent for every other task. */
+    readonly analysis?: TaskAnalysis;
   };
 }
 
 /**
  * Step 1: title, sealed `task.meta` and `prompt`, a fresh task ID (`forbidden` without `wg:write`); `placement` is the
- * chosen device and VM (null or absent: the workgroup default, else automatic).
+ * chosen device and VM (null or absent: the workgroup default, else automatic); `title` replaces the derived title
+ * (an analysis task's fixed title) and `analysis` goes into the body.
  */
 export async function prepareTask(
   context: TasksContext,
@@ -180,12 +192,14 @@ export async function prepareTask(
     readonly prompt: string;
     readonly placement?: Placement | null;
     readonly githubIdentity?: string;
+    readonly title?: string;
+    readonly analysis?: TaskAnalysis;
   },
 ): Promise<PreparedTask> {
   const { userId, log } = writer(context.store, input.org);
   if (!log.state.canWriteWg(userId, input.wg)) fail('forbidden');
   if (!sendable(input.prompt)) fail(input.prompt.length > PROMPT_MAX ? 'size_exceeded' : 'request_invalid');
-  const title = deriveTitle(input.prompt);
+  const title = input.title ?? deriveTitle(input.prompt);
   const taskId = uuid7(context.now());
   const meta = await sealWg(context, input.org, input.wg, taskId, 'task.meta', { title });
   const prompt = await sealWg(context, input.org, input.wg, taskId, 'prompt', { text: input.prompt, attachments: [] });
@@ -207,6 +221,7 @@ export async function prepareTask(
         },
       }),
       ...(input.githubIdentity !== undefined && { github_identity: input.githubIdentity }),
+      ...(input.analysis !== undefined && { analysis: input.analysis }),
     },
   };
 }

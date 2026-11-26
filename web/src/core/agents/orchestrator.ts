@@ -45,8 +45,9 @@ type Client = Pick<SignedClient, 'request'>;
 /** How often the page reads the session's pairing while the session draws its keys, and for how long at most. */
 export const POLL_MS = 1_000;
 export const WAIT_MS = 60_000;
-/** The reasons the hub names for a session that cannot become the main orchestrator. */
-export const REASONS = ['not_main', 'not_private', 'not_platform', 'not_running'] as const;
+/** The reasons the hub names for a session that cannot become the main orchestrator (`analysis`: a session of an
+ *  analysis task, ADR-095 section 2). */
+export const REASONS = ['not_main', 'not_private', 'not_platform', 'not_running', 'analysis'] as const;
 export const PAIRING_STATES = ['open', 'confirmed', 'active'] as const;
 
 export interface SessionPairing {

@@ -151,6 +151,11 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     reason: 'workgroup chips of one row: the first 8, the rest (bounded by the org workgroups) on request',
   },
   'src/ui/screens/members/MembersScreen.tsx': { count: 1, reason: 'native <option>s of the org workgroups' },
+  'src/ui/analysis/AnalysisButton.tsx': {
+    count: 2,
+    reason: 'native <option>s of the writable workgroups and of the four period presets (ADR-095 section 6)',
+  },
+  'src/ui/analysis/Adopt.tsx': { count: 1, reason: 'the two whiteboard levels of "Adopt" (workgroup, organization)' },
   'src/ui/settings/ActiveOrg.tsx': { count: 1, reason: 'native <option>s of the orgs of the account (GET /v1/me)' },
   'src/ui/screens/members/InviteSection.tsx': {
     count: 2,

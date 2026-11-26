@@ -19,6 +19,7 @@
   "role.security": "Security",
   "role.review": "Review",
   "role.merge": "Merge",
+  "role.analysis": "Analysis",
   "task.current": "Rights profile:",
   "task.none": "Every right (no profile)",
   "task.change": "Change"

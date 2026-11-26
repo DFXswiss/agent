@@ -2,7 +2,8 @@
 // with its code) with the name and handle of the task's main agent below it (section 4.0a), the workgroup in lists of
 // several workgroups (KOR-32), the state badge, the owner's display name (the signed author of the task's first
 // user-written `task.meta`; the hub's `owner_id` is ignored, KOR-04) and the last activity as absolute local time with a
-// relative label as secondary text.
+// relative label as secondary text. An analysis task carries the badge
+// "Analysis" (ADR-095 section 6).
 //
 // The row is the content of a `WindowedList` row (ADR-086 section 1): everything it shows comes in its item (the list
 // reads titles and owners with one selector), it is memoized with `sameTaskItem`, and the time formats are created
@@ -18,6 +19,7 @@ import type { TaskRow } from '../../../core/store/slices/tasks';
 import type { Directory, Title } from '../../../core/tasks/directory';
 import { AgentName, type AgentNameIds } from '../../agents/AgentName';
 import { useI18n } from '../../i18n';
+import { AnalysisBadge } from '../../analysis/AnalysisBadge';
 import type { RowAttributes, RowProps } from '../../lists/WindowedList';
 import { knownPersonName } from '../../names/names';
 import { sameTitle, useOwner, useTitle } from './hooks';
@@ -119,6 +121,7 @@ function Columns({ item, agentIds = ROW_AGENT }: { readonly item: TaskItemData; 
         </span>
         <AgentName row={row} ids={agentIds} className="text-sm text-gray-700" />
       </span>
+      <AnalysisBadge row={row} testId="tasks.row.analysis" />
       {workgroup !== null && (
         <span className="text-sm text-gray-700" data-testid="tasks.row.wg" data-wg={row.wg_id}>
           {workgroup}

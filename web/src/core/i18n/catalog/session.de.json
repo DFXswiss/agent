@@ -31,5 +31,6 @@
   "orchestrator.outcome.connected": "Diese Session ist jetzt dein Hauptorchestrator.",
   "orchestrator.outcome.failed": "Die Session hat die Verbindung nicht abgeschlossen. Versuche es erneut.",
   "orchestrator.this": "Diese Session",
-  "orchestrator.label": "Eine Session auf DFX-Hardware"
+  "orchestrator.label": "Eine Session auf DFX-Hardware",
+  "orchestrator.reason.analysis": "Eine Session einer Analyse-Aufgabe kann nicht dein Hauptorchestrator werden: Sie liest nur."
 }

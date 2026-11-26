@@ -2,9 +2,10 @@
 // 9.6): offered only to the task owner, only for a running main session (`working`, `idle`), and only when the hub
 // says the session may become it (`GET /v1/sessions/{id}/orchestrator`: a session of the owner's private organization
 // on a platform device; any other session is refused there too). A session that is the main orchestrator already says
-// so instead. The dialog (`OrchestratorDialog`) asks the session's runner for keys, checks them and runs the
-// confirmation. It is imported statically: it lies in the lazy chunk of the session screen anyway, and an import inside
-// one chunk has no chunk of its own whose integrity the import could check (`src/core/assets/integrity.ts`).
+// so instead; a session of an analysis task says why it cannot become it (ADR-095 section 2). The dialog
+// (`OrchestratorDialog`) asks the session's runner for keys, checks them and runs the confirmation. It is imported
+// statically: it lies in the lazy chunk of the session screen anyway, and an import inside one chunk has no chunk of
+// its own whose integrity the import could check (`src/core/assets/integrity.ts`).
 import { useEffect, useState } from 'react';
 import { loadOrchestrator, type OrchestratorView } from '../../../core/agents/orchestrator';
 import type { SessionEntry } from '../../../core/store/slices/tasks';
@@ -36,7 +37,15 @@ export function OrchestratorAction({ entry, depth }: { readonly entry: SessionEn
       live = false;
     };
   }, [app, session, offered, open]);
-  if (!offered || view === null || !view.available) return null;
+  if (!offered || view === null) return null;
+  if (view.reason === 'analysis') {
+    return (
+      <p className="text-sm text-gray-700" data-testid="orchestrator.analysis">
+        {t('session.orchestrator.reason.analysis')}
+      </p>
+    );
+  }
+  if (!view.available) return null;
   if (view.pairing?.state === 'active') {
     return (
       <p className="text-sm font-semibold" data-testid="orchestrator.current">
