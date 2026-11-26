@@ -54,6 +54,9 @@ Status: Accepted (2026-11-26)
   the same user, device, kind **and slot** (`device_request.slot`, hub migration); roots without slot behave as
   before (the primary record's login stays one at a time; a root without slot never replaces one with a slot and vice
   versa). The hub sets no further limit.
+- **Shared mailboxes** (aliases of one IMAP account): the sign-in mail is matched by sender and time only, so logins
+  that share a mailbox take turns from entering the address to reading the mail (one lock per mailbox on the device);
+  logins with different mailboxes are not held up.
 - **Runner:** at most one flow per owner, kind and slot is active, and at most `MAX_SLOTS` (40, `MAX_SUBSCRIPTIONS`)
   slots per owner and kind (a further root is answered `busy`, so one user cannot queue unbounded logins on a
   device); the slot of `claude.login` is the
@@ -113,7 +116,10 @@ Status: Accepted (2026-11-26)
     and the device clicks that point of the sandbox's viewport – the owner does the check, the platform only carries
     the click (like a remote screen). **Only the user's own identity may click** (the passkey browser, or the agent
     tool signing as the user): a click of the user's agent (ADR-082 own identity) is ignored and logged
-    (`click_refused`), so no model answers a check for humans; `{relay: true}` may come from either;
+    (`click_refused`) and gives the check no further time; `{relay: true}` may come from either. Limit: the device
+    cannot tell a person from a program that holds the user's own key; the agent tool refuses `--click` for an
+    own-identity agent and says in its answer that a person clicks, never a model – a rule for the tool's users,
+    not something the platform can prove;
   - when the check is gone, the login continues (`progress verified`); `{relay: true}` from the owner, or no click
     within `VERIFY_WAIT` (180 s), gives the automation up: the device answers `authorize` with the link
     (`automation: "failed"`, `reason: "human_check"`) and the login continues as the relay in the owner's own
@@ -138,6 +144,8 @@ Status: Accepted (2026-11-26)
 - `claude.login` (automatic) takes `account {name, birth_date?, consents?}` – data of a new account, used only when
   the provider asks for it on the `register` page, never stored, never logged. `consents` lists only what was given
   explicitly: `terms` (terms of use and privacy policy), `age` (the minimum age), `marketing` (product e-mails).
+- Consents in a request of the user's agent (own identity) are dropped (`consents_ignored`): only the user declares
+  them. A box is ticked exactly when its consent was given – a pre-ticked box without consent is unticked.
 - **Whose consent:** the account belongs to the person whose address it is, who may not be the platform user. The
   clients ask for each consent with the statement that the account holder gave it (unticked by default), and the
   signed request is the record of who declared it and when; the platform user acts as that person's agent and is

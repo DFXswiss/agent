@@ -68,7 +68,7 @@ CLASSIFY = r"""(() => {
     out.code = shown || built;
     return out;
   }
-  const allow = /^(authori[sz]e|autorisieren|allow|zulassen|erlauben)$/i;
+  const allow = /^(authori[sz]e|autorisieren|allow|zulassen|erlauben)\b/i;
   if (/\/oauth\/authorize/.test(url.pathname) && mark(button(allow), 'authorize')) {
     out.kind = 'authorize';
     return out;
@@ -89,7 +89,8 @@ CLASSIFY = r"""(() => {
     if (/\b18\b|\byears? old\b|\bjahre\b|\bage\b|\balter\b/i.test(label)) return 'age';
     return 'other';
   };
-  if (!email && (name || birth || parts.some(Boolean) || boxes.length)) {
+  const consentBoxes = boxes.filter((el) => consent(el) !== 'other');
+  if (!email && (name || birth || parts.some(Boolean) || consentBoxes.length)) {
     out.kind = 'register';
     mark(name, 'name');
     if (birth) mark(birth, 'birth');

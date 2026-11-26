@@ -26,8 +26,9 @@ RECORD = "01930099-0000-7000-8000-0000000000c1"
 class Blank:
     """A login VM whose page is never one the automation knows; its close fails."""
 
-    def __init__(self) -> None:
+    def __init__(self, error: Exception) -> None:
         self.closed = False
+        self.error = error
 
     async def goto(self, url: str) -> None:
         return None
@@ -49,15 +50,23 @@ class Blank:
 
     async def close(self) -> None:
         self.closed = True
-        raise SandboxError("delete_failed")
+        raise self.error
 
 
+@pytest.mark.parametrize(
+    "case", [(SandboxError("delete_failed"), "delete_failed"), (RuntimeError("db"), "RuntimeError")]
+)
 def test_a_device_with_work_vms_drives_the_login_in_a_login_vm(
-    store_dsn: str, tmp_path: Path, doubles: Callable[..., Login], monkeypatch: pytest.MonkeyPatch
+    store_dsn: str,
+    tmp_path: Path,
+    doubles: Callable[..., Login],
+    monkeypatch: pytest.MonkeyPatch,
+    case: tuple[Exception, str],
 ) -> None:
+    error, reason = case
     login = doubles()
     made: list[tuple[Any, str]] = []
-    blank = Blank()
+    blank = Blank(error)
 
     async def vm_sandbox(workvms: Any, request_id: str, log: Callable[[str], None]) -> Blank:
         made.append((workvms, request_id))
@@ -72,7 +81,7 @@ def test_a_device_with_work_vms_drives_the_login_in_a_login_vm(
         assert bodies[-1]["reason"] == "unknown_page"
         assert made == [(workvms, run.root)]
         assert blank.closed
-        assert "runner.login sandbox_close_failed reason=delete_failed" in run.env.log()
+        assert f"runner.login sandbox_close_failed reason={reason}" in run.env.log()
         follow = await run.follow({"code": await asyncio.to_thread(code_for, login, bodies[-1]["url"])})
         await run.settle()
         assert run.bodies(follow) == [{"step": "done"}]

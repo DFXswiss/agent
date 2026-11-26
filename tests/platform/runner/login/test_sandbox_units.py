@@ -746,3 +746,132 @@ def test_the_platform_chromium_below_the_runner_home_is_used(tmp_path: Path, mon
     (tmp_path / "ms-playwright").mkdir()
     sandbox.use_browsers(tmp_path)
     assert os.environ["PLAYWRIGHT_BROWSERS_PATH"] == str(tmp_path / "ms-playwright")
+
+
+def test_a_pre_ticked_box_without_consent_is_unticked() -> None:
+    boxes = [
+        {"mark": "box-0", "kind": "terms", "required": True, "checked": True},
+        {"mark": "box-1", "kind": "marketing", "required": False, "checked": True},
+    ]
+    box = Scripted([page("register", boxes=boxes, marks=["submit"]), page("code", code="C#S")])
+    assert drive(box, Plan(BOX, "a@x.example", {"name": "Ada", "consents": ["terms"]}))[0] == "C#S"
+    assert box.actions[1:] == ["click [data-agent-login='box-1']", "click [data-agent-login='submit']"]
+
+
+def _sharing(name: str, order: list[str], end: float, wait: float = 0.0) -> Driver:
+    script = Scripted([page("email", marks=["email", "continue"]), page("check_email"), page("code", code="C#S")])
+
+    async def mail(_with_code: bool) -> tuple[str, str]:
+        order.append(f"{name} reads")
+        await asyncio.sleep(wait)
+        return "link", "https://x.example/magic-link#" + name
+
+    async def quiet(_stage: str) -> None:
+        return None
+
+    async def no_human(_box: Any, _page: Page) -> None:
+        return None
+
+    made = Driver(
+        script,
+        PLAN,
+        url="https://x.example/oauth/authorize",
+        opts=FAST,
+        progress=quiet,
+        human=no_human,
+        end=end,
+        clock=lambda: 1.0,
+    )
+    made._mail = mail  # type: ignore[method-assign,assignment]
+    return made
+
+
+def test_logins_sharing_a_mailbox_take_turns_from_the_address_to_the_mail() -> None:
+    order: list[str] = []
+
+    async def main() -> list[str]:
+        end = asyncio.get_running_loop().time() + 5
+        first, second = _sharing("first", order, end, 0.1), _sharing("second", order, end)
+        codes = list(await asyncio.gather(first.run(), second.run()))
+        assert not first.lock.locked()
+        await first.lock.acquire()  # a login that holds the mailbox past the other's time
+        late = _sharing("late", order, asyncio.get_running_loop().time() + 0.05)
+        with pytest.raises(AutomationFailed, match="mail_timeout"):
+            await late.run()
+        first.lock.release()
+        return codes
+
+    assert asyncio.run(main()) == ["C#S", "C#S"]
+    assert order == ["first reads", "second reads"]
+
+
+def test_an_unexpected_error_in_the_automation_is_a_browser_failure() -> None:
+    class Broken(Scripted):
+        async def goto(self, url: str) -> None:
+            raise RuntimeError("boom")
+
+    async def main() -> None:
+        await automation.authorize(
+            "https://x.example/",
+            PLAN,
+            sandbox=Broken([page("unknown")]),
+            opts=FAST,
+            progress=lambda _s: asyncio.sleep(0),
+            human=lambda _b, _p: asyncio.sleep(0),
+            budget=1.0,
+            clock=lambda: 0.0,
+        )
+
+    with pytest.raises(AutomationFailed) as failed:
+        asyncio.run(main())
+    assert (failed.value.reason, failed.value.answer) == ("RuntimeError", "browser_failed")
+
+
+def test_only_the_owners_click_gives_the_check_more_time() -> None:
+    flow = Flow([follow({"click": {"x": 0.5, "y": 0.5}}, agent=True) for _ in range(200)])
+    box = Scripted([page("challenge")], picture=SHOT)
+    with pytest.raises(AutomationFailed, match="human_check"):
+        check_human(flow, box, opts=dataclasses.replace(FAST, verify_wait=0.2))
+    assert box.actions == []
+
+
+def test_the_page_recognition_never_reads_the_markers_of_the_double() -> None:
+    assert "data-page" not in pages.CLASSIFY
+
+
+def test_consents_sent_by_the_users_agent_are_ignored() -> None:
+    lines: list[str] = []
+    log = SimpleNamespace(write=lines.append, flush=lambda: None)
+    config = SimpleNamespace(login_automation=True)
+    stored = requests.Stored("a@x.example", (BOX, "a@x.example"))
+    account = {"name": "Ada", "consents": ["terms", "age"]}
+
+    def flow(user: str) -> Any:
+        return SimpleNamespace(
+            id="req-1",
+            user="alice",
+            request=SimpleNamespace(user=user),
+            context=SimpleNamespace(config=config, log=log),
+        )
+
+    async def main() -> tuple[Any, Any]:
+        wanted = {"account": account}
+        return await requests._plan(flow("agent"), wanted, stored), await requests._plan(flow("alice"), wanted, stored)
+
+    by_agent, by_user = asyncio.run(main())
+    assert by_agent.account == {"name": "Ada"}
+    assert by_user.account == account
+    assert lines == ["runner.login consents_ignored request_id=req-1\n"]
+
+
+def test_an_e_mail_page_seen_again_keeps_the_mailbox() -> None:
+    script = [
+        page("email", marks=["email", "continue"]),
+        page("challenge"),
+        page("email", marks=["email", "continue"]),
+        page("check_email"),
+        page("code", code="C#S"),
+    ]
+    box = Scripted(script)
+    assert drive(box, PLAN, mail=link_mail)[0] == "C#S"
+    assert box.actions.count("type [data-agent-login='email'] a@x.example") == 2

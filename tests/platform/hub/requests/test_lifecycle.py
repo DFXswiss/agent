@@ -262,7 +262,7 @@ def test_roots_of_different_slots_run_side_by_side(desk: Desk, published: Memory
         ("request", {"request_id": again}),
     ]
     second = send(None)
-    assert (desk.state(unslotted), desk.state(second)) == ("failed", "pending")
+    assert (desk.state(unslotted), desk.state(second), desk.state(roots[0])) == ("failed", "pending", "pending")
     refused = writer.browser.post(
         "/v1/device-requests",
         json={"envelope": desk.request(writer, device, "claude.login"), "slot": "not-a-slot"},

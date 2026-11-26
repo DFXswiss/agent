@@ -229,21 +229,21 @@ class HumanCheck:
         image = {"width": picture.width, "height": picture.height, "data": base64.b64encode(picture.jpeg).decode()}
         await self.flow.respond({"step": "verify", "frame": self.frames, "image": image})
 
-    async def click(self, sandbox: Sandbox, page: Page, follow: FollowUp) -> bool:
-        """Handle one follow-up; True when it asked for the relay."""
+    async def click(self, sandbox: Sandbox, page: Page, follow: FollowUp) -> str:
+        """Handle one follow-up: `relay`, `clicked` or `ignored` (malformed, or an agent's click)."""
         body, request = follow.request.body, follow.request
         if body == {"relay": True}:
-            return True
+            return "relay"
         point = body.get("click") if set(body) == {"click"} else None
         if not (isinstance(point, dict) and set(point) == {"x", "y"} and all(_fraction(point[k]) for k in point)):
             _line(self.flow, "verify_follow_up_invalid")
-            return False
+            return "ignored"
         if request.user != request.owner:
             _line(self.flow, "click_refused")  # a check for humans is never answered by an agent (ADR-098 section 4)
-            return False
+            return "ignored"
         await sandbox.click_at(float(point["x"]) * page.width, float(point["y"]) * page.height)
         await asyncio.sleep(self.opts.verify_settle)
-        return False
+        return "clicked"
 
     async def __call__(self, sandbox: Sandbox, page: Page) -> None:
         if not self.extended:
@@ -254,9 +254,10 @@ class HumanCheck:
         await self.show(sandbox)
         while True:
             follow = await self.flow.wait_follow_up(min(self.opts.verify_tick, max(deadline - loop.time(), 0.0)))
-            if follow is not None:
-                if await self.click(sandbox, page, follow):
-                    raise AutomationFailed("human_check")
+            outcome = "none" if follow is None else await self.click(sandbox, page, follow)
+            if outcome == "relay":
+                raise AutomationFailed("human_check")
+            if outcome == "clicked":  # only a click of the owner gives the check its time again
                 deadline = loop.time() + self.opts.verify_wait
             if (await automation.classify(sandbox)).kind != "challenge":
                 _line(self.flow, "verify_passed")
@@ -312,8 +313,9 @@ async def _automate(flow: Flow, url: str, plan: Plan, opts: LoginOptions, workdi
     finally:
         try:
             await sandbox.close()
-        except SandboxError as error:
-            _line(flow, f"sandbox_close_failed reason={error.reason}")
+        except Exception as error:  # a failed teardown is logged and swept (VMs), never the end of the login
+            reason = error.reason if isinstance(error, SandboxError) else type(error).__name__
+            _line(flow, f"sandbox_close_failed reason={reason}")
 
 
 async def _store(flow: Flow, login: str | FullLogin, email: str | None, target: Mapping[str, object]) -> None:
@@ -356,6 +358,10 @@ async def _plan(flow: Flow, wanted: Mapping[str, object], stored: Stored | None)
     mailbox, own = await _mailbox(flow, stored)
     email = wanted.get("email") or (stored.email if stored is not None else None) or own
     account = wanted.get("account")
+    if isinstance(account, dict) and account.get("consents") and flow.request.user != flow.user:
+        # consents are the account holder's, declared by the user, never by the user's agent (ADR-098 section 5)
+        _line(flow, "consents_ignored")
+        account = {name: value for name, value in account.items() if name != "consents"}
     return Plan(mailbox, str(email), account if isinstance(account, dict) else None)
 
 

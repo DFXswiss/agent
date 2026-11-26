@@ -36,6 +36,7 @@ from agent_runner.login import mailcode
 from agent_runner.login.pages import CLASSIFY, Page, parse
 from agent_runner.login.relay import LoginOptions
 from agent_runner.login.sandbox import Sandbox, SandboxError
+from agent_runner.requests.service import RequestClosed
 
 CODE_RE = re.compile(r"^[!-~]{1,512}$")
 HOST_RE = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
@@ -58,6 +59,14 @@ REASONS = frozenset(
 )
 """The `reason` values of the fall-back response (`contracts/requests/claude.login.response.json`)."""
 MAX_STEPS = 16
+_MAIL_LOCKS: dict[tuple[int, str, int, str], asyncio.Lock] = {}
+"""One lock per mailbox: logins that share a mailbox (aliases) take turns from the address entered to the mail read,
+so none takes the sign-in mail of another (ADR-098 section 2)."""
+
+
+def mail_lock(mailbox: Mailbox) -> asyncio.Lock:
+    key = (id(asyncio.get_running_loop()), mailbox.host.lower(), mailbox.port, mailbox.user.lower())
+    return _MAIL_LOCKS.setdefault(key, asyncio.Lock())
 TRANSIENT = frozenset({"unknown"})
 
 Progress = Callable[[str], Awaitable[None]]
@@ -149,6 +158,8 @@ class Driver:
         self.clock = clock
         self.since: float | None = None
         self.loop = asyncio.get_running_loop()
+        self.lock = mail_lock(plan.mailbox)
+        self.holding = False
 
     async def next_page(self, leave: str | None) -> Page:
         """The first page that is neither transient nor `leave`, within `page_timeout` (else `unknown_page`)."""
@@ -162,6 +173,17 @@ class Driver:
             await asyncio.sleep(self.opts.page_poll)
 
     async def run(self) -> str:
+        try:
+            return await self._run()
+        finally:
+            self.release()
+
+    def release(self) -> None:
+        if self.holding:
+            self.holding = False
+            self.lock.release()
+
+    async def _run(self) -> str:
         await self.sandbox.goto(self.url)
         await self.progress("browser_started")
         page = await self.next_page(None)
@@ -185,6 +207,12 @@ class Driver:
         await self.human(self.sandbox, page)
 
     async def email(self, page: Page) -> None:
+        if not self.holding:
+            try:
+                await asyncio.wait_for(self.lock.acquire(), timeout=max(self.end - self.loop.time(), 0.0))
+            except TimeoutError:
+                raise AutomationFailed("mail_timeout") from None
+            self.holding = True
         await self.sandbox.type(target("email"), self.plan.email)
         self.since = self.clock()
         await self.sandbox.click(target("continue"))
@@ -192,7 +220,7 @@ class Driver:
 
     async def _mail(self, with_code: bool) -> tuple[str, str] | None:
         mailbox, opts = self.plan.mailbox, self.opts
-        since = self.clock() if self.since is None else self.since
+        since = self.since if self.since is not None else self.clock()
         try:
             link = await asyncio.to_thread(
                 newest_magic_link,
@@ -216,6 +244,8 @@ class Driver:
 
     async def check_email(self, page: Page) -> None:
         with_code = "mail-code" in page.marks
+        if self.since is None:
+            self.since = self.clock()
         while True:
             found = await self._mail(with_code)
             if found is not None:
@@ -224,6 +254,7 @@ class Driver:
                 raise AutomationFailed("mail_timeout")
             await asyncio.sleep(self.opts.mail_poll)
         kind, value = found
+        self.release()
         if kind == "link":
             await self.progress("magic_link_received")
             await self.sandbox.goto(value)
@@ -243,9 +274,10 @@ class Driver:
         if needs_birth and not isinstance(birth, str):
             raise AutomationFailed("account_missing")
         consents = set(account.get("consents") or ())
-        boxes = [box for box in page.boxes if not box.checked and (box.kind in consents or box.required)]
-        if any(box.kind not in consents for box in boxes):
+        if any(box.required and box.kind not in consents for box in page.boxes):
             raise AutomationFailed("consent_missing")
+        # a box is ticked exactly when its consent was given: a pre-ticked one without consent is unticked
+        boxes = [box for box in page.boxes if box.checked != (box.kind in consents)]
         if "name" in page.marks:
             await self.sandbox.type(target("name"), str(account["name"]))
         if isinstance(birth, str):
@@ -289,3 +321,7 @@ async def authorize(
         return await driver.run()
     except SandboxError as error:
         raise AutomationFailed(error.reason) from None
+    except (AutomationFailed, RequestClosed):
+        raise
+    except Exception as exc:
+        raise AutomationFailed(type(exc).__name__) from None
