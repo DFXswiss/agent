@@ -805,11 +805,17 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   - mit dem Agentenwerkzeug ([E-04](#e-04)).
 
   Eine gewählte Arbeitsweise wird vollständig umgesetzt. Ohne Wahl arbeitet eine Sitzung wie bisher.
+
+  Die Zugänge, die diese Bausteine brauchen (Apple-Signatur und Notarisierung, Zugriff auf die Server, Postfächer,
+  Abos), ziehen **ohne Rückfrage** mit auf die Plattform. Dienste auf dem Rechner, die nicht aus dem Repository agent
+  stammen, gehören nicht dazu: Sie werden weder aufgenommen noch umgezogen.
 - **Wortlaut:** „ich will local nichts mehr haben, ausser vielleicht eine claude session mit der ich agent.dfx.swiss
   ansteuere. alles was heute local läuft und local installiert ist muss vollständig in agent.dfx.swiss integriert
   werden. wichtig ist, es muss wählbar sein, niemals erzwungen! und auch nicht per default aktiv. aber ich will eine
   session starten können mit sowas wie: halte dich an A38 und dann wird das vollständig umgesetzt. oder baue feature
-  xy, nutze den Orchestrator“ (zu den Bausteinen „orchestrator, ledger und so“ im Repository agent)
+  xy, nutze den Orchestrator“ (zu den Bausteinen „orchestrator, ledger und so“ im Repository agent). Zu den Zugängen,
+  denen der Orchestrator zuerst eine Freigabe je Zugang vorschalten wollte: „alles sofort umziehen, ohne zu fragen“. Zu
+  den fremden Diensten auf dem Rechner: „nein, nicht in die liste und nicht umziehen“.
 - **Bezug:** verallgemeinert [E-31](#e-31) („nichts läuft lokal“) von den Abos auf alles. Dazu gehören [E-04](#e-04)
   (Oberfläche und Werkzeug können dasselbe) und [E-27](#e-27) (ein KI-Agent kann alles). Eine Sitzung führt selbst
   nichts aus, alles läuft über Plattform-Operationen ([§10 Punkt 3](#k-10-b3)). Der delegierte Hauptorchestrator ist
