@@ -292,7 +292,8 @@ The home of an organization shows where people are needed, across all workgroups
   "detailed" (opens all; the user's own choices come back when it is switched off) and "sort by used" (providers by
   their headline total), and a table with provider, account, name, status (logged in, not logged in with "Log in now",
   not readable, cannot be opened), note, use, listed (record or token file), plan, used and reset per window, measuring
-  device, checked (time of the reading) and changed (time of the record). The card, the page and their texts load lazily. The settings link the page.
+  device, checked (time of the reading) and changed (time of the record). The card, the page and their texts load
+  lazily. The settings link the page.
 - **Groups** in this order: "Needs your decision" (`needs_decision`, longest waiting first), "Stuck" (`blocked`),
   "Running" (`working`), "Recently finished" (`done`, last 7 days, with the link to the default workgroup's task
   list); the last three newest first. Each group is a windowed list paged by the hub (50 per page; at most 50 entries
