@@ -45,6 +45,7 @@ EMPTY_SECTIONS: dict[str, Any] = {
     "vm_switch_at": {},  # HOT-24 (ADR-093 addendum)
     "vm_upgrade_version": 2,
     "agent_profiles": {"api": 1, "sessions": {}, "workgroups": {}},  # KOR-51
+    "task_modes": {"api": 1, "tasks": {}},  # KOR-75
 }
 
 

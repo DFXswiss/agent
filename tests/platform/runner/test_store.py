@@ -374,6 +374,10 @@ TABLES = {
     # 0035 (KOR-51, ADR-094 section 3): the rights profiles of the device's sessions
     "profile_state": ["id", "section", "received_at"],
     "session_profile": ["session_id", "profile", "created_at"],
+    # 0038 (KOR-75, ADR-098 sections 3 and 4): the modes of the device's tasks, their drivers and the rate budget
+    "task_mode": ["task_id", "mode", "version", "chosen_by", "way", "changed_at", "driver"],
+    "mode_driver": ["task_id", "mode", "step", "counters", "next_at", "updated_at"],
+    "mode_rate": ["identity", "window_start", "used"],
     "schema_version": ["version", "name", "checksum", "applied_at"],
 }
 OUTBOX_KINDS = [

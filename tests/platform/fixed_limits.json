@@ -1250,6 +1250,7 @@
    "/properties/events/maxItems": "answer"
   },
   "contracts/api/device-state.response.json": {
+   "/oneOf/1/properties/task_modes/properties/tasks/additionalProperties/maxItems": "answer",
    "/oneOf/1/properties/assigned/maxItems": "answer",
    "/oneOf/1/properties/credentials_changed/maxItems": "answer",
    "/oneOf/1/properties/delivered_prompt_event_ids/additionalProperties/maxItems": "answer",
@@ -1381,7 +1382,11 @@
   "contracts/api/notifications-read.request.json": {
    "/oneOf/0/properties/ids/maxItems": "answer"
   },
+  "contracts/api/modes-list.response.json": {
+   "/properties/modes/maxItems": "answer"
+  },
   "contracts/api/objects.json": {
+   "/$defs/task_row/properties/modes/maxItems": "answer",
    "/$defs/attestation_credential/properties/transports/maxItems": "answer",
    "/$defs/audit_agent/properties/number/maximum": "integer",
    "/$defs/creation_options/properties/excludeCredentials/items/properties/transports/maxItems": "answer",
@@ -1524,7 +1529,8 @@
    "/properties/withdrawals/maxItems": "answer"
   },
   "contracts/api/tasks-create.request.json": {
-   "/properties/events/maxItems": "answer"
+   "/properties/events/maxItems": "answer",
+   "/properties/modes/maxItems": "answer"
   },
   "contracts/api/tasks-create.response.json": {
    "/properties/events/maxItems": "answer"
@@ -1568,6 +1574,9 @@
   },
   "contracts/api/wraps-post.request.json": {
    "/properties/wraps/maxItems": "answer"
+  },
+  "contracts/audit/task.mode_on.json": {
+   "/properties/version/maximum": "integer"
   },
   "contracts/audit/agent.identity.json": {
    "/properties/gen/maximum": "integer"
@@ -1621,6 +1630,11 @@
    "/properties/epoch/maximum": "integer"
   },
   "contracts/common.json": {
+   "/$defs/device_task_mode/properties/version/maximum": "integer",
+   "/$defs/error/properties/detail/properties/modes/maxItems": "answer",
+   "/$defs/mode_driver_state/properties/counters/additionalProperties/maximum": "integer",
+   "/$defs/mode_driver_state/properties/counters/maxProperties": "answer",
+   "/$defs/task_mode/properties/version/maximum": "integer",
    "/$defs/agent_gen/maximum": "integer",
    "/$defs/agent_profile/properties/operations/maxItems": "answer",
    "/$defs/context_manifest/properties/chunks/maximum": "integer",
@@ -1777,6 +1791,14 @@
   },
   "contracts/mcp/tools-list.result.json": {
    "/properties/tools/maxItems": "answer"
+  },
+  "contracts/modes/mode.json": {
+   "/$defs/mode/properties/accesses/maxItems": "answer",
+   "/$defs/mode/properties/drivers/maxItems": "answer",
+   "/$defs/mode/properties/operations/maxItems": "answer",
+   "/$defs/mode/properties/version/maximum": "integer",
+   "/$defs/needs/properties/modes/maxItems": "answer",
+   "/$defs/needs/properties/prerequisites/maxItems": "answer"
   },
   "contracts/model-catalog.json": {
    "/properties/access/properties/api_key/properties/allowed/maxItems": "answer",
