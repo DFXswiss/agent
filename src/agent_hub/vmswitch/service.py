@@ -9,7 +9,9 @@
   stores nothing. Either way the write is audited (`vm.switch_requested {vm_id, device_id, requested}`). The answer
   is the preview: the VM's status as reported, `requested` and `requested_at`.
 - `requested(connection, device)`: the VMs of the device with a request that are still live and outdated, oldest
-  request first, with the time of the request (the desired state's `vm_switch` and `vm_switch_at`).
+  request first, with the time of the request (the desired state's `vm_switch` and `vm_switch_at`). The time is the
+  hub's clock; the device compares it with the time it first reported a hold, so the usual clock skew between the two
+  can make a hold reported in the seconds around a request need one more request (ADR-093 addendum HOT-24).
 - `apply_report(connection, body)`: what a `vm_state` report adds (`outbox.py`): `upgrade` when present (NULL ends a
   request), `replaced_by` with the workgroup default (`wg_placement.vm_id`) and task choices (`task.placement_vm_id`)
   that named the replaced VM moved to its successor, so a member's choice survives the switch.
