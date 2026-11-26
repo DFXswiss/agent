@@ -3,7 +3,7 @@
 | Route | Right |
 |---|---|
 | `GET /v1/me/devices` | `user`: the devices eligible for the user's device requests and `CK` |
-| `POST /v1/device-requests` | `user`, the device in `GET /v1/me/devices`; with `org_id` an admin of that org; `slot` (KOR-73) any UUID |
+| `POST /v1/device-requests` | `user`, the device in `GET /v1/me/devices`; with `org_id` an admin of that org |
 | `GET /v1/device-requests/{id}` | `owner`: the user of the request |
 | `GET /v1/device/requests/{id}` | `device_addressed` |
 | `POST /v1/device/requests/{id}/responses` | `device_addressed` |

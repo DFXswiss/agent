@@ -481,6 +481,7 @@ def environment(config: Config) -> dict[str, str]:
         "WORKVM_MAX_SIZE": None if config.workvm_max_size == "large" else config.workvm_max_size,
         "WORKVM_TEMPLATE": config.workvm_template,
         "BROWSER_SEARCH_URL": config.browser_search_url or None,
+        "LOGIN_SANDBOX": None if config.login_sandbox == "vm" else config.login_sandbox,
     }
     for name, value in optional_text.items():
         if value is not None:
@@ -501,8 +502,6 @@ def environment(config: Config) -> dict[str, str]:
         out[PREFIX + "CLAUDE_OAUTH_CLIENT_ID"] = config.claude_oauth_client_id
     if config.login_automation_set:
         out[PREFIX + "LOGIN_AUTOMATION"] = "on" if config.login_automation else "off"
-    if config.login_sandbox != "vm":
-        out[PREFIX + "LOGIN_SANDBOX"] = config.login_sandbox
     if config.test_mode:
         out[PREFIX + "TEST_MODE"] = "1"
     if config.workvm_slots_self:
