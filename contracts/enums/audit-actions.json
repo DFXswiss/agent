@@ -634,6 +634,10 @@
       "group": "read"
     },
     {
+      "action": "read.org.tasks.counts",
+      "group": "read"
+    },
+    {
       "action": "read.org.audit",
       "group": "read"
     },

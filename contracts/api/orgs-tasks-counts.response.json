@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/orgs-tasks-counts.response.json",
+  "title": "GET /v1/orgs/{org}/tasks/counts response",
+  "description": "The counters of the task dashboard (E-43, ADR-101 section 1) over the readable workgroups: per status the tasks matching every filter but the status, per urgency those matching every filter but the urgency, total those matching all.",
+  "type": "object",
+  "properties": {
+    "by_status": {
+      "type": "object",
+      "properties": {
+        "todo": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "inProgress": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "completed": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "todo",
+        "inProgress",
+        "completed"
+      ],
+      "additionalProperties": false
+    },
+    "by_urgency": {
+      "type": "object",
+      "properties": {
+        "low": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "normal": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "high": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "urgent": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "low",
+        "normal",
+        "high",
+        "urgent"
+      ],
+      "additionalProperties": false
+    },
+    "total": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "by_status",
+    "by_urgency",
+    "total"
+  ],
+  "additionalProperties": false
+}

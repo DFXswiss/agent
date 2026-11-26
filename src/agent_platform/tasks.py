@@ -56,6 +56,7 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, cast
 from urllib.parse import urlencode
 
@@ -421,32 +422,52 @@ def _scanned_rows(
     return found[:LIST_LIMIT], len(found) > LIST_LIMIT or isinstance(before, str)
 
 
-def task_list(account: Account, wg: str, state: str | None, filters: tickets.Filters | None = None) -> dict[str, Any]:
-    """The tasks of a workgroup with their verified titles, their main agents (`<name> #<number>`, ADR-095) and their
-    ticket fields (ADR-100), filtered by `filters` (status, urgency, person and topic at the hub, GitHub organisation
-    and repository here on the opened `task.meta`)."""
-    if state is not None and state not in STATES:
-        raise PlatformError("invalid_argument")
-    org = find_org(account, _id(wg))
-    wanted = filters or tickets.Filters()
-    extra = tickets.list_query(account, org, filters)
+ORDERS = tickets.ORDERS
+
+
+@dataclass(frozen=True)
+class ListQuery:
+    """What a task list asks for: the task state (`open`/`closed`), the ticket filters, the order and a title search
+    (case-insensitive part of the verified title, applied here because titles are sealed)."""
+
+    state: str | None = None
+    filters: tickets.Filters | None = None
+    order: str = "activity"
+    search: str = ""
+
+    def checked(self) -> ListQuery:
+        if self.state not in (None, *STATES) or self.order not in ORDERS:
+            raise PlatformError("invalid_argument")
+        return self
+
+
+def _listed(account: Account, org: str, wg: str, query: ListQuery) -> tuple[list[dict[str, Any]], bool]:
+    """The task rows of one workgroup for `query` (at most `LIST_LIMIT`, in its order) with their titles, main agents
+    and ticket fields, and whether rows were cut off or pages left unread."""
+    wanted = query.filters or tickets.Filters()
+    extra = tickets.list_query(account, org, query.filters) + f"&order={query.order}"
     meta = tickets.ticket_meta(account, org, wg) if wanted.sealed() else None
+    named = read_names(account, org, wg)
+    needle = query.search.strip().casefold()
 
     def keep(row: dict[str, Any]) -> bool:
-        is_open = state != "open" or row.get("state") != "closed"
-        return is_open and (meta is None or wanted.matches(meta.get(str(row.get("task_id")), {})))
+        task = str(row.get("task_id"))
+        is_open = query.state != "open" or row.get("state") != "closed"
+        sealed = meta is None or wanted.matches(meta.get(task, {}))
+        return is_open and sealed and needle in named.titles.get(task, "").casefold()
 
-    if state == "open" or meta is not None:
-        scan = extra + ("&state=closed" if state == "closed" else "")
+    if query.state == "open" or meta is not None or needle:
+        scan = extra + ("&state=closed" if query.state == "closed" else "")
         rows, truncated = _scanned_rows(account, wg, keep, scan)
     else:
-        rows, before = _rows(account, wg, {"state": state} if state else {}, extra)
+        rows, before = _rows(account, wg, {"state": query.state} if query.state else {}, extra)
         truncated = isinstance(before, str)
-    named = read_names(account, org, wg)
     topic_names = tickets.topics(account, org) if any(isinstance(r, dict) and r.get("topic_id") for r in rows) else {}
     tasks = [
         {
             "task_id": row.get("task_id"),
+            "org_id": org,
+            "wg_id": wg,
             "state": row.get("state"),
             "title": named.titles.get(str(row.get("task_id"))),
             **agent_fields(named.agents, row),
@@ -457,7 +478,19 @@ def task_list(account: Account, wg: str, state: str | None, filters: tickets.Fil
         for row in rows
         if isinstance(row, dict)
     ]
+    return tasks, truncated
+
+
+def task_list(account: Account, wg: str, query: ListQuery | None = None) -> dict[str, Any]:
+    """The tasks of a workgroup with their verified titles, their main agents (`<name> #<number>`, ADR-095) and their
+    ticket fields (ADR-100), filtered by the query (status, urgency, person and topic at the hub, GitHub organisation,
+    repository and the title search here on the opened events), in its order."""
+    wanted = (query or ListQuery()).checked()
+    org = find_org(account, _id(wg))
+    tasks, truncated = _listed(account, org, wg, wanted)
     return {"org_id": org, "wg_id": wg, "tasks": tasks, "truncated": truncated}
+
+
 
 
 def task_follow(account: Account, task: str, after: int, wait: int) -> dict[str, Any]:

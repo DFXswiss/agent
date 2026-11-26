@@ -1421,6 +1421,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.org.people.agents": {"properties": {}, "required": []},
     "read.org.quotas": {"properties": {}, "required": []},
     "read.org.support": {"properties": {}, "required": []},
+    "read.org.tasks.counts": {"properties": {}, "required": []},
     "read.platform.enrollments": {"properties": {}, "required": []},
     "read.platform.invites": {"properties": {}, "required": []},
     "read.platform.log": {"properties": {}, "required": []},

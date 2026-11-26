@@ -176,6 +176,7 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'read.org.people.agents',
   'read.org.quotas',
   'read.org.support',
+  'read.org.tasks.counts',
   'read.platform.enrollments',
   'read.platform.invites',
   'read.platform.log',

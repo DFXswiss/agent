@@ -309,6 +309,9 @@ agent-platform task start --task <task_id>
 # the agent starts with the title and description as its first prompt (--text replaces them)
 agent-platform topic list --org <org_id>
 agent-platform topic create --org <org_id> --name "Payments"
+agent-platform task overview --status todo --urgency high --order urgency
+# the task dashboard: every task you may read in all organizations (or --org / --wg), with the counters per status
+# and urgency (counts); the same filters, --search and --order work for task list --wg|--org
 ```
 
 Status is `todo` (captured), `inProgress` (an agent was started, or set by hand) or `completed` (the task is closed;
@@ -355,7 +358,7 @@ the text from stdin. Ids are the `*_id` values other commands return.
 **Tasks and sessions**
 
 ```sh
-agent-platform task overview --org <org_id> [--state working] [--mine] [--search "deploy"]   # all workgroups
+agent-platform task overview [--org <org_id>] [--state working] [--mine] [--search "deploy"] # all orgs, dashboard
 agent-platform task close --task <task_id>
 agent-platform task operations --task <task_id> [--operation <operation_id>]                 # pushes, PRs, results
 agent-platform task charges --task <task_id>                    # its costs per session (tokens, VM runtime), total

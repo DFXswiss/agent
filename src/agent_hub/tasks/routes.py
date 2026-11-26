@@ -23,6 +23,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent_hub.agents.identity import actor
+from agent_hub.attention.read import readable_workgroups
 from agent_hub.errors import HubError
 from agent_hub.events.routes import parse_count, parse_uuid
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
@@ -191,12 +192,8 @@ async def list_tasks(
 ) -> dict[str, Any]:
     if state is not None and state not in TASK_STATES:
         raise HubError("request_invalid", detail={"pointers": ["/state"]})
-    if order is not None and order not in read.ORDERS:
+    if order is not None and order not in (*read.ORDERS, read.URGENCY):
         raise HubError("request_invalid", detail={"pointers": ["/order"]})
-    if status is not None:
-        fields.check_code(status, fields.STATUSES, "/status")
-    if urgency is not None:
-        fields.check_code(urgency, fields.URGENCIES, "/urgency")
     count = parse_count(limit, read.LIST_DEFAULT, 1, read.LIST_MAX)
     user = cast(UUID, principal.principal_id)
     options = {
@@ -204,14 +201,59 @@ async def list_tasks(
         "before": before,
         "limit": count,
         "order": order or "created",
-        "ticket": read.TicketFilter(
-            status=status,
-            urgency=urgency,
-            assignee=_filter_id(assignee, "/assignee"),
-            topic=_filter_id(topic, "/topic"),
-        ),
+        "ticket": _ticket_filter(status, urgency, assignee, topic),
     }
     return await asyncio.to_thread(_list, context, user, path_id(wg), **options)
+
+
+def _ticket_filter(
+    status: str | None, urgency: str | None, assignee: str | None, topic: str | None
+) -> read.TicketFilter:
+    """The ticket filters of a query (`400 request_invalid` with the pointer for a value outside its form)."""
+    if status is not None:
+        fields.check_code(status, fields.STATUSES, "/status")
+    if urgency is not None:
+        fields.check_code(urgency, fields.URGENCIES, "/urgency")
+    return read.TicketFilter(
+        status=status,
+        urgency=urgency,
+        assignee=_filter_id(assignee, "/assignee"),
+        topic=_filter_id(topic, "/topic"),
+    )
+
+
+def _counts(
+    context: HubContext, user: UUID, org: UUID, *, wg: UUID | None, state: str | None, ticket: read.TicketFilter
+) -> dict[str, Any]:
+    with context.pool.connection() as connection:
+        rights.require(connection, user, rights.ORG_MEMBER, org_id=org)
+        readable = readable_workgroups(connection, org, user)
+        if wg is not None and wg not in readable:
+            raise HubError("not_found")
+        return read.count_tasks(connection, readable if wg is None else [wg], state=state, ticket=ticket)
+
+
+@router.get("/v1/orgs/{org}/tasks/counts", auth="browser", right="org:member", read_resource="org.tasks.counts")
+async def task_counts(
+    context: Context,
+    principal: CurrentPrincipal,
+    org: str,
+    *,
+    wg: str | None = None,
+    state: str | None = None,
+    status: str | None = None,
+    urgency: str | None = None,
+    assignee: str | None = None,
+    topic: str | None = None,
+) -> dict[str, Any]:
+    """The counters of the task dashboard (E-43, ADR-101 section 1) over the readable workgroups of the org."""
+    if state is not None and state not in TASK_STATES:
+        raise HubError("request_invalid", detail={"pointers": ["/state"]})
+    ticket = _ticket_filter(status, urgency, assignee, topic)
+    chosen = None if wg is None else body_id(wg, "/wg")
+    user = cast(UUID, principal.principal_id)
+    work = functools.partial(_counts, wg=chosen, state=state, ticket=ticket)
+    return await asyncio.to_thread(work, context, user, path_id(org))
 
 
 def _task(context: HubContext, user: UUID, task: UUID) -> dict[str, Any]:

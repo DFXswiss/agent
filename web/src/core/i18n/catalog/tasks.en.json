@@ -17,7 +17,7 @@
   "state.closed": "Closed",
   "nav": "Tasks",
   "overview.title": "Tasks",
-  "overview.intro": "All tasks of the workgroups you can see – most recent activity first.",
+  "overview.intro": "All tasks you can see, in every organization and workgroup – captured ones and those with an agent.",
   "overview.empty": "There are no tasks yet.",
   "overview.how": "To create a task, open Home, describe what the agent should do and press Send. Every request becomes a task.",
   "overview.create": "Create a task on Home",
@@ -31,5 +31,15 @@
   "filter.reset": "Clear filters",
   "search.scanned": "Searched the {scanned} most recent tasks.",
   "search.scanned-of": "Searched {scanned} of {total} tasks.",
-  "search.further": "Search further"
+  "search.further": "Search further",
+  "filter.org": "Organization",
+  "filter.org.all": "All organizations",
+  "order.label": "Sort",
+  "order.activity": "Latest activity",
+  "order.created": "Newest",
+  "order.urgency": "Most urgent",
+  "dashboard.total": "Tasks: {count}",
+  "dashboard.by-status": "Tasks by status",
+  "dashboard.by-urgency": "Tasks by urgency",
+  "dashboard.counts-failed": "The counts could not be loaded."
 }

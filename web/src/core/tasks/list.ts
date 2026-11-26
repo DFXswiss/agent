@@ -50,7 +50,8 @@ export function listTarget(wg: string, filter: string | null, before: string | n
   filterParams(filter, params);
   if (before !== null) params.set('before', before);
   params.set('limit', String(PAGE_SIZE));
-  params.set('order', 'activity');
+  // the order of the key (E-43, ADR-101 section 2), else the latest activity (KOR-32)
+  if (!params.has('order')) params.set('order', 'activity');
   return `/v1/workgroups/${encodeURIComponent(wg)}/tasks?${params.toString()}`;
 }
 

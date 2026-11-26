@@ -19,10 +19,10 @@ import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { WindowedList } from '../../lists/WindowedList';
 import { knownPersonName, personName } from '../../names/names';
-import { topicLabel, useTopics } from './tickets';
+import { topicLabel, useTopicsOf } from './tickets';
 import { useAppEnv } from '../../shell/context';
 import { useNow } from '../../countdown/useNow';
-import { useDirectory, useOrgView, useRowInfo, useTitles } from './hooks';
+import { useDirectories, useRowInfo, useTitles } from './hooks';
 import { type SearchScan, useSearchScan } from './scan';
 import { sameTaskItem, TaskItem, type TaskItemData, taskKey, taskRowAttributes } from './TaskItem';
 
@@ -31,6 +31,8 @@ export const MAX_ROWS = 200;
 
 export interface TaskTableProps {
   readonly org: string;
+  /** The organizations of the rows (the task dashboard lists several, E-43; default `org` alone). */
+  readonly orgs?: readonly string[];
   /** The windowed list this table is (`tasks.list` for a workgroup and home, `tasks.overview` for the overview). */
   readonly listId?: ListId;
   /** The workgroups to list (only ones the user can read). */
@@ -52,6 +54,7 @@ export interface TaskTableProps {
 
 export function TaskTable({
   org,
+  orgs,
   listId = 'tasks.list',
   wgs,
   state,
@@ -64,9 +67,10 @@ export function TaskTable({
 }: TaskTableProps) {
   const { app } = useAppEnv();
   const { t, error } = useI18n();
-  const { state: orgState } = useOrgView(org);
-  const directory = useDirectory(org, orgState !== null);
-  const topics = useTopics(org);
+  const orgList = useMemo(() => orgs ?? [org], [orgs, org]);
+  const directories = useDirectories(orgList);
+  const topicsBy = useTopicsOf(orgList);
+  const several = orgList.length > 1;
   // the same array while the workgroups are the same (the lists load again only when they or the state change)
   const wgsKey = JSON.stringify(wgs);
   const lists = useMemo(() => JSON.parse(wgsKey) as string[], [wgsKey]);
@@ -77,7 +81,7 @@ export function TaskTable({
   const select = useMemo(() => selectOverview(query), [query]);
   const view = useStore(select, app.store);
   const rows = view.rows;
-  const info = useRowInfo(org, rows);
+  const info = useRowInfo(rows);
   const now = useNow(true, 30_000);
   // the search and "only mine" need the titles and owners of every merged row, not only of the shown ones
   useTitles(view.merged);
@@ -88,24 +92,29 @@ export function TaskTable({
   const filtering = clientFiltered(query);
   const scan = useSearchScan(app.tasks, query, view, filtering);
   const unnamed = t('tasks.wg.unnamed');
+  const unnamedOrg = t('home.org.unnamed');
   const items = useMemo(
     () =>
       rows.map((row): TaskItemData => {
         const { title, owner } = info.get(row.task_id)!;
         const assignee = taskAssignee(row);
         const topic = taskTopic(row);
+        // the row's own organization (every listed workgroup belongs to one of `orgList`)
+        const directory = directories.get(row.org_id)!;
+        const wgName = directory.workgroups.get(row.wg_id) ?? unnamed;
+        const orgName = directory.orgName ?? unnamedOrg;
         return {
-          org,
+          org: row.org_id,
           row,
           title,
           owner: knownPersonName(t, directory, owner) ?? null,
-          workgroup: showWorkgroup ? (directory.workgroups.get(row.wg_id) ?? unnamed) : null,
+          workgroup: showWorkgroup ? (several ? `${orgName} · ${wgName}` : wgName) : null,
           now,
           assignee: assignee === null ? null : personName(t, directory, assignee),
-          topic: topic === null ? null : topicLabel(t, topics, topic),
+          topic: topic === null ? null : topicLabel(t, topicsBy.get(row.org_id)!, topic),
         };
       }),
-    [rows, info, directory, org, showWorkgroup, unnamed, now, t, topics],
+    [rows, info, directories, showWorkgroup, several, unnamed, unnamedOrg, now, t, topicsBy],
   );
   // "Load more" of the plain list; while filtering, "Search further" loads the next pages instead
   const paging = !filtering;

@@ -474,6 +474,17 @@ search above. The task page shows the fields with "Edit" (`PUT /v1/tasks/{task}/
 organisation and repository as a new sealed `task.meta`), the status as a choice (completed closes the task), and for a
 task without a main session "Start agent" (its first prompt: title, blank line, description; editable).
 
+**Task dashboard (KOR-75, [ADR-101](../adr/101-task-dashboard.md), E-43).** §5.1a is the dashboard of every task the
+user reads: every organization of `GET /v1/me` with a verified log and every readable workgroup there, captured tasks
+and agent tasks in one list; with several organizations each row names "organization · workgroup", and the filters
+offer the organization and the workgroups of all of them. On top the counters per status and per urgency
+(`GET /v1/orgs/{org}/tasks/counts` per organization shown, summed; under the hub filters of the list); a click on a
+counter sets that status or urgency filter, a second click clears it. They load again when a filter changes, when a
+row of the shown workgroups appears or changes its status or urgency, and after a reconnect; a failed request keeps
+the last numbers and says so. Sort: latest activity (default), newest, most urgent (`order=urgency`). Home links the
+dashboard ("Dashboard of all tasks"), so it is one click from Home and from the menu. "Capture task" captures in the
+route's organization.
+
 ### 5.1b Resume notice (task page, KOR-33, ADR-072 §7)
 
 Below the task header, `ContextNotice` reads `context_restore`/`context_reason` of the task's current main session

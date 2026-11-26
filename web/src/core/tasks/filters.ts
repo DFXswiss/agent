@@ -6,16 +6,28 @@
 // slice uses it.
 import type { TaskRow } from '../store/slices/tasks';
 
-/** The filters the hub applies; null or absent: not filtered. */
+/** The filters the hub applies; null or absent: not filtered. `order` is the list's order (E-43, ADR-101 section 2;
+ * absent: latest activity). */
 export interface HubFilter {
   readonly state?: string | null;
   readonly status?: string | null;
   readonly urgency?: string | null;
   readonly assignee?: string | null;
   readonly topic?: string | null;
+  readonly order?: string | null;
 }
 
-const NAMES = ['state', 'status', 'urgency', 'assignee', 'topic'] as const;
+const NAMES = ['state', 'status', 'urgency', 'assignee', 'topic', 'order'] as const;
+
+/** The orders of a task list: latest activity (the default), newest creation, most urgent first. */
+export const ORDERS = ['activity', 'created', 'urgency'] as const;
+export type Order = (typeof ORDERS)[number];
+
+/** The order of a list key (latest activity when it names none). */
+export const orderOf = (key: string | null): Order => {
+  const order = parseFilter(key).order;
+  return order === 'created' || order === 'urgency' ? order : 'activity';
+};
 
 /** "No person", "no topic". */
 export const NONE = 'none';
@@ -59,11 +71,26 @@ export function matchesFilter(key: string | null, row: TaskRow): boolean {
   );
 }
 
-/** The query parameters of a filter key for `GET /v1/workgroups/{wg}/tasks`. */
-export function filterParams(key: string | null, params: URLSearchParams): void {
+/** The query parameters of a filter key for `GET /v1/workgroups/{wg}/tasks` (the order only with `withOrder`). */
+export function filterParams(key: string | null, params: URLSearchParams, withOrder = true): void {
   const filter = parseFilter(key);
   for (const name of NAMES) {
     const value = filter[name];
-    if (value != null) params.set(name, value);
+    if (value != null && (withOrder || name !== 'order')) params.set(name, value);
   }
+}
+
+const URGENCY_RANK: Readonly<Record<string, number>> = { low: 0, normal: 1, high: 2, urgent: 3 };
+
+/**
+ * Whether row `a` comes after row `b` in the order of `order` (every order descending, the task ID last): the hub's
+ * order of each list, so the merge of several lists keeps it.
+ */
+export function comesAfter(order: Order, a: TaskRow, b: TaskRow): boolean {
+  const time = (row: TaskRow) => Date.parse(order === 'created' ? row.created_at : row.last_activity_at);
+  const rank = (row: TaskRow) => URGENCY_RANK[row.urgency ?? 'normal'] ?? 1;
+  const byRank = order === 'urgency' ? rank(a) - rank(b) : 0;
+  if (byRank !== 0) return byRank < 0;
+  const delta = time(a) - time(b);
+  return delta < 0 || (delta === 0 && a.task_id < b.task_id);
 }

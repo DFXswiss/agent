@@ -205,7 +205,7 @@ describe('rows', () => {
   it('reads titles and owners of a list with one selector that keeps its map while nothing changed', async () => {
     const t = await taskWorld();
     const rows = [taskRow(t, { task_id: 'a' }), taskRow(t, { task_id: 'b' })] as TaskRow[];
-    const select = selectRowInfo(t.org, rows);
+    const select = selectRowInfo(rows);
     const first = select(t.store.getState());
     expect(first.get('a')).toEqual({ title: { status: 'missing' }, owner: null });
     putEvents(t.store, t.org, [{ ...meta(t, 1, 'x', 'x'), scopeId: t.org }]);

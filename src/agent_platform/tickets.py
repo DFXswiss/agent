@@ -19,7 +19,7 @@ edit`, `task start`, `topic list`, `topic create` and the ticket fields and filt
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode
@@ -44,6 +44,22 @@ GITHUB_ORG_RE = re.compile("[A-Za-z0-9][A-Za-z0-9-]{0,38}")
 GITHUB_REPO_RE = re.compile("([A-Za-z0-9][A-Za-z0-9-]{0,38})/[A-Za-z0-9_.-]{1,100}")
 NONE = "none"
 ME = "me"
+ORDERS = ("activity", "created", "urgency")
+"""The orders of `task list` and `task overview` (E-43, ADR-101 section 2): latest activity (default), newest
+creation, most urgent first."""
+
+
+def sort_key(order: str) -> Callable[[Mapping[str, Any]], tuple[Any, ...]]:
+    """The key that sorts listed tasks of several workgroups in `order` (descending; each hub list's order)."""
+    if order == "created":
+        return lambda row: (str(row.get("created_at")), str(row.get("task_id")))
+    if order == "urgency":
+        return lambda row: (
+            URGENCIES.index(str(row.get("urgency"))),
+            str(row.get("last_activity_at")),
+            str(row.get("task_id")),
+        )
+    return lambda row: (str(row.get("last_activity_at")), str(row.get("task_id")))
 
 
 def _invalid(reason: str) -> PlatformError:

@@ -136,6 +136,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | devices-own-mac-remove | screens/devices (unpair; the Mac then removes its installation by itself, ADR-074) | `device remove --this-computer` | done |
 | tasks-list | screens/tasks | `task list` | done |
 | tasks-overview | screens/tasks (overview of an org) | `task overview --org --state --mine --search` | done |
+| tasks-dashboard | screens/tasks (the task dashboard over every organization and workgroup: counters per status and urgency, filters by organization, workgroup, state, status, urgency, person, topic, GitHub organisation, repository, "only mine" and title, order; E-43, ADR-101) | `task overview [--org\|--wg] --state --mine --search --status --urgency --assignee --topic --github-org --repo --order`, `task list --org\|--wg` with the same filters | done |
 | task-create | screens/home, screens/tasks | `task create --device --vm --github-identity` | done |
 | task-github-identity | screens/home, screens/tasks, screens/task (the task's GitHub identity at creation and changed later, ADR-078 section 3) | `task create --github-identity`, `task github-identity --task --identity --none` | done |
 | task-view | screens/task (chat) | `task show` | done |
@@ -263,6 +264,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/orgs` | org-create |
 | `GET /v1/orgs/{org}/attention` | attention-view, attention-list |
 | `GET /v1/orgs/{org}/attention/summary` | attention-view |
+| `GET /v1/orgs/{org}/tasks/counts` | tasks-dashboard |
 | `GET /v1/orgs/{org}/people/agents` | agents-by-person |
 | `GET /v1/orgs/{org}/main-agents` | agents-by-person |
 | `GET /v1/orgs/{org}/audit` | audit, task-model-switch, audit-agent-actor |
@@ -319,7 +321,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/workgroups/{wg}/device-candidates` | devices-assign, task-create |
 | `PUT /v1/workgroups/{wg}/placement` | wg-placement |
 | `POST /v1/workgroups/{wg}/vms/{vm}/switch` | wg-vm-switch |
-| `GET /v1/workgroups/{wg}/tasks` | tasks-list, tasks-overview, tasks-filters |
+| `GET /v1/workgroups/{wg}/tasks` | tasks-list, tasks-overview, tasks-filters, tasks-dashboard |
 | `GET /v1/workgroups/{wg}/pr-links` | pr-view |
 | `POST /v1/workgroups/{wg}/pr-links` | pr-link-address |
 | `GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag}` | pr-view, pr-link-address, pr-unlink, pr-fix-conflicts |

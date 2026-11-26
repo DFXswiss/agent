@@ -1,11 +1,11 @@
 // The ticket filters of both task lists (E-41, ADR-100 sections 2 and 7): status, urgency, person and topic go to the
 // hub (the list key, `core/tasks/filters.ts`); GitHub organisation and repository are sealed and filtered in the
 // browser over the loaded rows with the bounded scan of the title search (`scan.ts`).
-import { useId } from 'react';
-import { filterKey, NONE } from '../../../core/tasks/filters';
+import { useId, useMemo } from 'react';
+import { filterKey, NONE, type Order } from '../../../core/tasks/filters';
 import { STATUSES, URGENCIES } from '../../../core/tasks/tickets';
 import { useI18n } from '../../i18n';
-import { usePeople, useTopics } from './tickets';
+import { usePeopleOf, useTopicsOf } from './tickets';
 
 /** The chosen ticket filters ("" = any). */
 export interface TicketFilterValues {
@@ -32,14 +32,18 @@ export const NO_FILTERS: TicketFilterValues = {
 export const ticketFiltered = (values: TicketFilterValues): boolean =>
   Object.values(values).some((value) => value.trim() !== '');
 
-/** The list key of the hub filters with the state filter `state`. */
-export const hubKey = (state: string | null, values: TicketFilterValues): string | null =>
+/**
+ * The list key of the hub filters with the state filter `state` and the order `order` (latest activity, the default,
+ * stays out of the key: the list is the same one the other screens load).
+ */
+export const hubKey = (state: string | null, values: TicketFilterValues, order: Order = 'activity'): string | null =>
   filterKey({
     state,
     status: values.status || null,
     urgency: values.urgency || null,
     assignee: values.assignee || null,
     topic: values.topic || null,
+    order: order === 'activity' ? null : order,
   });
 
 const SELECT = 'min-h-11 min-w-0 max-w-full flex-1 rounded border border-gray-300 px-2 sm:flex-none';
@@ -47,17 +51,22 @@ const FIELD = 'flex w-full min-w-0 items-center gap-2 sm:w-auto';
 
 export function TicketFilters({
   org,
+  orgs,
   values,
   onChange,
 }: {
   readonly org: string;
+  /** The organizations whose people and topics are offered (the task dashboard, E-43; default `org` alone). */
+  readonly orgs?: readonly string[];
   readonly values: TicketFilterValues;
   readonly onChange: (values: TicketFilterValues) => void;
 }) {
   const { t } = useI18n();
   const id = useId();
-  const people = usePeople(org);
-  const topics = useTopics(org);
+  const orgList = useMemo(() => orgs ?? [org], [orgs, org]);
+  const people = usePeopleOf(orgList);
+  const topicsBy = useTopicsOf(orgList);
+  const topics = useMemo(() => [...topicsBy.values()].flat(), [topicsBy]);
   const set = (patch: Partial<TicketFilterValues>) => onChange({ ...values, ...patch });
   const select = (
     name: 'status' | 'urgency' | 'assignee' | 'topic',

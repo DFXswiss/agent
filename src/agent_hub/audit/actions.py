@@ -171,6 +171,7 @@ AUDIT_ACTIONS = frozenset(
         "read.org.attention.summary",
         "read.org.main_agents",
         "read.org.people.agents",
+        "read.org.tasks.counts",
         "read.org.audit",
         "read.org.audit.verify",
         "read.org.billing",

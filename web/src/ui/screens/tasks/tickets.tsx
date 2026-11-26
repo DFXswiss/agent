@@ -20,7 +20,9 @@ import { useI18n } from '../../i18n';
 import { personName } from '../../names/names';
 import { useIdentities } from '../../settings/sections/github/identities';
 import { useAppEnv } from '../../shell/context';
-import { useDirectory, useOrgView } from './hooks';
+import type { OrgState } from '../../../core/log/state';
+import { orgEntry } from '../../../core/store/slices/orgs';
+import { useDirectories, useDirectory, useOrgView } from './hooks';
 
 /** The topics of `org` by name; pulls them once. */
 export function useTopics(org: string): readonly Topic[] {
@@ -29,6 +31,30 @@ export function useTopics(org: string): readonly Topic[] {
     loadTopics(app.tasks, org).catch(() => 0);
   }, [app, org]);
   const select = useMemo(() => selectTopics(org), [org]);
+  return useStore(select, app.store);
+}
+
+/**
+ * A selector of the topics of the organizations in `key` (IDs joined by commas, at least one), by organization: the
+ * same map while every organization's list is the same array. Create it once per key.
+ */
+export function selectTopicsOf(key: string): (state: StoreState) => ReadonlyMap<string, readonly Topic[]> {
+  let last: ReadonlyMap<string, readonly Topic[]> | null = null;
+  return (state) => {
+    const next = new Map(key.split(',').map((org) => [org, selectTopics(org)(state)]));
+    if (last === null || [...next].some(([org, found]) => last!.get(org) !== found)) last = next;
+    return last;
+  };
+}
+
+/** The topics of several organizations (the task dashboard, E-43); pulls them once. */
+export function useTopicsOf(orgs: readonly string[]): ReadonlyMap<string, readonly Topic[]> {
+  const { app } = useAppEnv();
+  const key = orgs.join(',');
+  useEffect(() => {
+    for (const org of key.split(',')) loadTopics(app.tasks, org).catch(() => 0);
+  }, [app, key]);
+  const select = useMemo(() => selectTopicsOf(key), [key]);
   return useStore(select, app.store);
 }
 
@@ -47,6 +73,45 @@ export function usePeople(org: string): readonly Person[] {
     () => (state === null ? [] : assignablePeople(state).map((id) => ({ id, name: personName(t, directory, id) }))),
     [state, directory, t],
   );
+}
+
+/** The people of several organizations (each once, named by the first organization that has them). */
+export function usePeopleOf(orgs: readonly string[]): readonly Person[] {
+  const { t } = useI18n();
+  const { app } = useAppEnv();
+  const directories = useDirectories(orgs);
+  const key = orgs.join(',');
+  const select = useMemo(() => selectLogs(key), [key]);
+  const logs = useStore(select, app.store);
+  return useMemo(() => {
+    const found = new Map<string, Person>();
+    for (const [org, state] of logs) {
+      for (const id of assignablePeople(state)) {
+        if (!found.has(id)) found.set(id, { id, name: personName(t, directories.get(org)!, id) });
+      }
+    }
+    return [...found.values()];
+  }, [logs, directories, t]);
+}
+
+/**
+ * A selector of the verified states of the organizations in `key` (IDs joined by commas, at least one) that have one
+ * (the same map while unchanged).
+ */
+export function selectLogs(key: string): (state: StoreState) => ReadonlyMap<string, OrgState> {
+  let last: ReadonlyMap<string, OrgState> | null = null;
+  return (state) => {
+    const next = new Map(
+      key.split(',').flatMap((org): [string, OrgState][] => {
+        const log = orgEntry(state.orgs, org).log;
+        return log === null ? [] : [[org, log.state]];
+      }),
+    );
+    const same =
+      last !== null && last.size === next.size && [...next].every(([org, found]) => last!.get(org) === found);
+    if (!same) last = next;
+    return last!;
+  };
 }
 
 /** Suggestions for the GitHub organisation and repository of a task of the workgroups `wgs`. */

@@ -189,6 +189,14 @@ session, and every prompt that starts a new main session moves `todo` to `inProg
 filters by `status`, `urgency`, `assignee` and `topic` (an ID or `none`). Title, description, GitHub organisation and
 repository are sealed in `task.meta` (§10), topic names in `topic.profile`.
 
+**Task dashboard (KOR-75, ADR-101, E-43).** `GET /v1/orgs/{org}/tasks/counts` (org:member, audit read
+`read.org.tasks.counts`) `?state=&status=&urgency=&assignee=&topic=&wg=` → `{by_status:{todo,inProgress,completed},
+by_urgency:{low,normal,high,urgent},total}` over the tasks of the workgroups of the organization the user can read
+(`wg`: one of them; an unreadable one `404`), with the filters of `GET /v1/workgroups/{wg}/tasks`; the counters per
+status ignore `status` and those per urgency ignore `urgency` (facets), `total` applies both.
+`GET /v1/workgroups/{wg}/tasks` also takes `order=urgency`: urgency rank descending (`urgent` first), then latest
+activity, then task ID, with its own cursor.
+
 Session rows (`GET /v1/tasks/{task}`, `GET /v1/sessions/{session}`, the `session` frame, the device API) carry `agent_path` (a subagent's
 place below its main agent, the handle `#<task number>.<agent_path>`; null for a main session; KOR-52, ADR-095 §1)
 and `context_restore`

@@ -18,9 +18,10 @@
       "type": "string",
       "enum": [
         "created",
-        "activity"
+        "activity",
+        "urgency"
       ],
-      "description": "list order (KOR-32): created = created_at DESC (default), activity = last_activity_at DESC; the cursor of next_before follows the order"
+      "description": "list order (KOR-32): created = created_at DESC (default), activity = last_activity_at DESC, urgency = the most urgent first, then last_activity_at DESC (E-43, ADR-101 section 2); the cursor of next_before follows the order"
     },
     "status": {
       "$ref": "../common.json#/$defs/task_status",

@@ -17,7 +17,7 @@
   "state.closed": "Geschlossen",
   "nav": "Tasks",
   "overview.title": "Tasks",
-  "overview.intro": "Alle Aufgaben der Workgroups, die du sehen darfst – die neueste Aktivität zuerst.",
+  "overview.intro": "Alle Tasks, die du sehen darfst, in jeder Organisation und Workgroup – erfasste und solche mit Agent.",
   "overview.empty": "Es gibt noch keine Tasks.",
   "overview.how": "So legst du einen Task an: Öffne „Start“, beschreibe, was der Agent tun soll, und klicke auf „Senden“. Jede Anfrage wird ein Task.",
   "overview.create": "Task auf der Startseite anlegen",
@@ -31,5 +31,15 @@
   "filter.reset": "Filter zurücksetzen",
   "search.scanned": "Die {scanned} neuesten Tasks durchsucht.",
   "search.scanned-of": "{scanned} von {total} Tasks durchsucht.",
-  "search.further": "Weiter suchen"
+  "search.further": "Weiter suchen",
+  "filter.org": "Organisation",
+  "filter.org.all": "Alle Organisationen",
+  "order.label": "Sortierung",
+  "order.activity": "Neueste Aktivität",
+  "order.created": "Neueste zuerst",
+  "order.urgency": "Dringendste zuerst",
+  "dashboard.total": "Tasks: {count}",
+  "dashboard.by-status": "Tasks nach Status",
+  "dashboard.by-urgency": "Tasks nach Dringlichkeit",
+  "dashboard.counts-failed": "Die Zahlen konnten nicht geladen werden."
 }

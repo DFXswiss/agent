@@ -137,6 +137,54 @@ def test_refusals(real: RealHub) -> None:
     assert document["error"] == "invalid_argument"
 
 
+def test_the_dashboard_over_organizations(real: RealHub) -> None:
+    """E-43, ADR-101 section 4: `task overview` lists the tasks of every readable workgroup of every organization,
+    filtered, searched and sorted, with the counters; `task list --org` is the same for one organization."""
+    ada, org, wg = _setup(real)
+    other_org = str(run_ok(ada.tool, "org", "create", "--name", "Beta", "--display-name", "Ada")["org_id"])
+    other_wg = str(run_ok(ada.tool, "wg", "create", "--org", other_org, "--name", "Ops")["wg_id"])
+    urgent = run_ok(ada.tool, "task", "capture", "--wg", wg, "--title", "Fix payments", "--urgency", "urgent")
+    mine = run_ok(
+        ada.tool, "task", "capture", "--wg", other_wg, "--title", "Write docs", "--assignee", "me", "--repo", "acme/d"
+    )
+    later = run_ok(ada.tool, "task", "capture", "--wg", wg, "--title", "Plan the release")
+    run_ok(ada.tool, "task", "edit", "--task", str(later["task_id"]), "--status", "completed")
+
+    def ids(*argv: str) -> list[str]:
+        return [str(row["task_id"]) for row in run_ok(ada.tool, "task", "overview", *argv)["tasks"]]
+
+    everything = run_ok(ada.tool, "task", "overview")
+    assert {str(row["task_id"]) for row in everything["tasks"]} >= {urgent["task_id"], mine["task_id"]}
+    assert set(everything["organizations"]) >= {org, other_org}
+    assert everything["counts"]["by_status"]["completed"] >= 1
+    assert everything["counts"]["by_urgency"]["urgent"] >= 1
+    assert ids("--order", "urgency")[0] == urgent["task_id"]
+    assert ids("--order", "created")[0] == later["task_id"]
+    assert ids("--urgency", "urgent") == [urgent["task_id"]]
+    assert ids("--assignee", "me") == [mine["task_id"]]
+    assert ids("--repo", "ACME/d") == [mine["task_id"]]
+    assert ids("--search", "PAYMENTS") == [urgent["task_id"]]
+    assert ids("--org", other_org) == [mine["task_id"]]
+    assert ids("--wg", wg, "--status", "completed") == [later["task_id"]]
+    assert ids("--state", "open", "--org", org) == [urgent["task_id"]]
+    assert ids("--mine", "--org", org, "--order", "urgency") == [urgent["task_id"], later["task_id"]]
+    row = next(row for row in everything["tasks"] if row["task_id"] == mine["task_id"])
+    assert (row["org_id"], row["workgroup"], row["assignee_id"], row["status"]) == (other_org, "Ops", ada.id, "todo")
+    one = run_ok(ada.tool, "task", "list", "--org", org, "--status", "todo")
+    assert [row["task_id"] for row in one["tasks"]] == [urgent["task_id"]]
+    assert one["counts"]["by_status"] == {"todo": 1, "inProgress": 0, "completed": 1}
+    assert run_ok(ada.tool, "task", "list", "--org", org, "--state", "open")["counts"]["total"] == 2
+    listed = run_ok(ada.tool, "task", "list", "--wg", wg, "--order", "urgency", "--search", "e")
+    assert [row["task_id"] for row in listed["tasks"]] == [urgent["task_id"], later["task_id"]]
+    assert ada.tool.run("task", "overview", "--org", org, "--wg", wg)[0] != 0
+    for argv in (
+        ("task", "list", "--org", org, "--mine"),
+        ("task", "list", "--org", org, "--state", "needs-decision", "--status", "todo"),
+        ("task", "list", "--org", org, "--by-person"),
+    ):
+        assert ada.tool.run(*argv)[1]["error"] == "invalid_argument", argv
+
+
 def test_a_chat_program_captures_a_task(real: RealHub) -> None:
     ada, _org, wg = _setup(real)
     captured = call(3, "run", {"args": ["task", "capture", "--wg", wg, "--title", "Thema xy anschauen"]})

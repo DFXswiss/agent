@@ -2,7 +2,16 @@
 // before), its inverse, the query parameters, and which rows a filtered list holds.
 import { describe, expect, it } from 'vitest';
 import type { TaskRow } from '../../../src/core/store/slices/tasks';
-import { filterKey, filterParams, matchesFilter, NONE, parseFilter, rowStatus } from '../../../src/core/tasks/filters';
+import {
+  comesAfter,
+  filterKey,
+  filterParams,
+  matchesFilter,
+  NONE,
+  orderOf,
+  parseFilter,
+  rowStatus,
+} from '../../../src/core/tasks/filters';
 
 const base = {
   task_id: 't',
@@ -39,6 +48,48 @@ describe('filter keys', () => {
     expect(params.toString()).toBe('status=todo&topic=none');
     filterParams(null, params);
     expect(params.toString()).toBe('status=todo&topic=none');
+  });
+});
+
+describe('the order of a list (E-43, ADR-101 section 2)', () => {
+  it('keys the order last and sends it only when asked', () => {
+    const key = filterKey({ status: 'todo', order: 'urgency' });
+    expect(key).toBe('status=todo&order=urgency');
+    expect(orderOf(key)).toBe('urgency');
+    expect(orderOf('order=created')).toBe('created');
+    expect(orderOf('order=bogus')).toBe('activity');
+    expect(orderOf(null)).toBe('activity');
+    expect(orderOf('idle')).toBe('activity');
+    const all = new URLSearchParams();
+    filterParams(key, all);
+    expect(all.toString()).toBe('status=todo&order=urgency');
+    const counted = new URLSearchParams();
+    filterParams(key, counted, false);
+    expect(counted.toString()).toBe('status=todo');
+  });
+
+  it('orders rows by urgency, creation or activity, every order descending with the task ID last', () => {
+    const row = (task: string, urgency: string | undefined, created: number, activity: number) =>
+      ({
+        ...base,
+        task_id: task,
+        ...(urgency !== undefined && { urgency }),
+        created_at: `2026-11-21T12:0${created}:00.000Z`,
+        last_activity_at: `2026-11-21T12:0${activity}:00.000Z`,
+      }) as TaskRow;
+    const urgent = row('a', 'urgent', 1, 1);
+    const plain = row('b', undefined, 2, 3);
+    const low = row('c', 'low', 3, 2);
+    const twin = row('d', undefined, 2, 3);
+    expect(comesAfter('urgency', plain, urgent)).toBe(true);
+    expect(comesAfter('urgency', urgent, plain)).toBe(false);
+    expect(comesAfter('urgency', low, plain)).toBe(true);
+    expect(comesAfter('urgency', { ...plain, urgency: 'bogus' }, low)).toBe(false);
+    expect(comesAfter('created', plain, low)).toBe(true);
+    expect(comesAfter('activity', plain, low)).toBe(false);
+    expect(comesAfter('activity', plain, twin)).toBe(true);
+    expect(comesAfter('activity', twin, plain)).toBe(false);
+    expect(comesAfter('urgency', plain, twin)).toBe(true);
   });
 });
 

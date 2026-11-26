@@ -281,6 +281,97 @@ def test_the_list_filters_by_the_fields(desk: Desk) -> None:
         assert response.json()["detail"]["pointers"] == [pointer]
 
 
+def _dashboard(desk: Desk) -> dict[str, str]:
+    """Four tasks a second apart: a captured urgent task without a person, a captured normal one of the reader, an
+    agent task (inProgress) and a completed captured one."""
+    found: dict[str, str] = {}
+    tasks: list[tuple[str, dict[str, Any]]] = [
+        ("urgent", {"urgency": "urgent"}),
+        ("mine", {"assignee_id": desk.scene.reader.id}),
+        ("done", {}),
+    ]
+    for name, extra in tasks:
+        desk.hub.clock.advance(1)
+        found[name] = _capture(desk, **extra).json()["task"]["task_id"]
+    desk.hub.clock.advance(1)
+    found["agent"], _ = desk.started()
+    desk.hub.clock.advance(1)
+    response = desk.scene.writer.browser.put(f"/v1/tasks/{found['done']}/fields", json={"status": "completed"})
+    assert response.status_code == 200, response.text
+    return found
+
+
+def test_the_dashboard_counters(desk: Desk) -> None:
+    """E-43, ADR-101 section 1: per status the tasks matching every filter but the status, per urgency every filter
+    but the urgency, total all of them."""
+    _dashboard(desk)
+    base = f"/v1/orgs/{desk.org}/tasks/counts"
+
+    def counted(query: str = "") -> dict[str, Any]:
+        response = desk.scene.reader.browser.get(f"{base}?{query}" if query else base)
+        assert response.status_code == 200, response.text
+        return dict(response.json())
+
+    everything = counted()
+    assert everything == {
+        "by_status": {"todo": 2, "inProgress": 1, "completed": 1},
+        "by_urgency": {"low": 0, "normal": 3, "high": 0, "urgent": 1},
+        "total": 4,
+    }
+    todo = counted("status=todo")
+    assert (todo["by_status"], todo["by_urgency"]["normal"], todo["by_urgency"]["urgent"], todo["total"]) == (
+        everything["by_status"],
+        1,
+        1,
+        2,
+    )
+    urgent = counted("urgency=urgent")
+    assert (urgent["by_status"]["todo"], urgent["by_status"]["inProgress"], urgent["total"]) == (1, 0, 1)
+    assert urgent["by_urgency"] == everything["by_urgency"]
+    assert counted(f"assignee={desk.scene.reader.id}")["total"] == 1
+    assert counted("assignee=none&topic=none")["total"] == 3
+    assert counted("state=closed")["by_status"] == {"todo": 0, "inProgress": 0, "completed": 1}
+    assert counted(f"wg={desk.wg}") == everything
+    # a workgroup the caller does not read, another organization, a stranger
+    assert desk.scene.reader.browser.get(f"{base}?wg={new_id()}").status_code == 404
+    assert desk.scene.stranger.browser.get(base).status_code in (403, 404)
+    for query, pointer in (
+        ("status=done", "/status"),
+        ("urgency=x", "/urgency"),
+        ("assignee=x", "/assignee"),
+        ("topic=x", "/topic"),
+        ("wg=x", "/wg"),
+        ("state=x", "/state"),
+    ):
+        response = desk.scene.reader.browser.get(f"{base}?{query}", extensions={"contract": False})
+        assert response.status_code == 400, query
+        assert response.json()["detail"]["pointers"] == [pointer]
+
+
+def test_the_list_by_urgency(desk: Desk) -> None:
+    """E-43, ADR-101 section 2: `order=urgency`, the most urgent first, then the latest activity, paged."""
+    found = _dashboard(desk)
+    base = f"/v1/workgroups/{desk.wg}/tasks?order=urgency&limit=1"
+    seen: list[str] = []
+    target = base
+    while True:
+        response = desk.scene.reader.browser.get(target)
+        assert response.status_code == 200, response.text
+        seen += [row["task_id"] for row in response.json()["tasks"]]
+        cursor = response.json()["next_before"]
+        if cursor is None:
+            break
+        target = f"{base}&before={cursor}"
+    assert seen == [found["urgent"], found["done"], found["agent"], found["mine"]]
+    for cursor in ("x", "e30", "eyJhdCI6MCwiaWQiOiIwMCIsInJhbmsiOjl9"):
+        response = desk.scene.reader.browser.get(f"{base}&before={cursor}", extensions={"contract": False})
+        assert (response.status_code, response.json()["detail"]["pointers"]) == (400, ["/before"])
+    response = desk.scene.reader.browser.get(
+        f"/v1/workgroups/{desk.wg}/tasks?order=title", extensions={"contract": False}
+    )
+    assert response.status_code == 400
+
+
 def test_topics_are_written_by_every_member(desk: Desk) -> None:
     topic = new_id()
     _topic(desk, desk.scene.reader, topic)

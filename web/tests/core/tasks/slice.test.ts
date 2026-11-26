@@ -6,6 +6,7 @@ import { applyFrame, frameHandlers } from '../../../src/core/net/frames';
 import { createStore } from '../../../src/core/store';
 import {
   frames,
+  inListOrder,
   isSessionRow,
   isTaskRow,
   isTransition,
@@ -61,6 +62,18 @@ describe('lists', () => {
     // the latest activity counts, not the creation time (KOR-32)
     const active = row('d', '2026-11-20T00:00:00.000Z', { last_activity_at: '2026-11-21T12:00:02.000Z' });
     expect(newestFirst({ ...tasks, d: active }, ['a', 'b', 'c', 'd'])).toEqual(['d', 'b', 'c', 'a']);
+  });
+
+  it('keeps a list in the order of its key (E-43, ADR-101 section 2)', () => {
+    const tasks = {
+      a: row('a', '2026-11-21T12:00:00.000Z', { urgency: 'low' }),
+      b: row('b', '2026-11-21T12:00:01.000Z'),
+      c: row('c', '2026-11-21T12:00:02.000Z', { urgency: 'urgent' }),
+    };
+    expect(inListOrder(tasks, ['a', 'b', 'c', 'a'], null)).toEqual(['c', 'b', 'a']);
+    expect(inListOrder(tasks, ['b', 'a', 'c'], 'status=todo&order=urgency')).toEqual(['c', 'b', 'a']);
+    expect(inListOrder(tasks, ['c', 'a', 'b'], 'order=urgency')).toEqual(['c', 'b', 'a']);
+    expect(inListOrder(tasks, ['a', 'c', 'b'], 'order=created')).toEqual(['c', 'b', 'a']);
   });
 
   it('returns the same idle list object until a list is loaded', () => {

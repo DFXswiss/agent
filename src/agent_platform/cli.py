@@ -36,6 +36,7 @@ from agent_platform import (
     relay,
     remote,
     session,
+    sessions,
     tasks,
     tickets,
     upkeep,
@@ -364,24 +365,37 @@ def cmd_device_assign(account: Account, args: argparse.Namespace, context: Conte
     return orgs.device_assign(account, args.wg)
 
 
-def cmd_task_list(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    filters = tickets.Filters(
-        status=args.status,
-        urgency=args.urgency,
-        assignee=args.assignee,
-        topic=args.topic,
-        github_org=args.github_org,
-        github_repo=args.repo,
+def _list_query(args: argparse.Namespace) -> tasks.ListQuery:
+    """The state, ticket filters, order and title search of `task list`."""
+    return tasks.ListQuery(
+        state=args.state,
+        filters=sessions.dashboard_filters(args),
+        order=args.order or "activity",
+        search=args.search or "",
     )
-    given = filters != tickets.Filters()
-    if args.org is not None:
-        if args.state is None or args.by_person or given:
+
+
+def cmd_task_list(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    query = _list_query(args)
+    if args.org is not None and args.state in attention.CATEGORIES:
+        # the org's situation view by attention category (KOR-39)
+        if args.by_person or query != tasks.ListQuery(state=args.state):
             raise PlatformError("invalid_argument")
         limit = attention.LIST_DEFAULT if args.limit is None else args.limit
         return attention.task_list(account, args.org, args.state, mine=args.mine, limit=limit)
-    if args.state not in (None, *tasks.STATES) or args.mine:
+    if args.mine or (args.org is not None and args.by_person):
         raise PlatformError("invalid_argument")
-    listed = tasks.task_list(account, args.wg, args.state, filters if given else None)
+    if args.org is not None:
+        # every readable workgroup of the org with the filters: the task dashboard of one org (E-43, ADR-101)
+        dashboard = sessions.Dashboard(
+            org=args.org,
+            state=query.state,
+            search=query.search,
+            filters=query.filters,
+            order=query.order,
+        )
+        return sessions.task_overview(account, dashboard)
+    listed = tasks.task_list(account, args.wg, query)
     return mainagents.by_person(account, listed) if args.by_person else listed
 
 
@@ -621,16 +635,15 @@ def _task_commands(tree: Tree) -> None:
     )
     where = sub.add_mutually_exclusive_group(required=True)
     where.add_argument("--wg", help="the tasks of a workgroup (--state open|closed)")
-    where.add_argument("--org", help="one category of the org's situation view (--state needs-decision|...)")
+    where.add_argument(
+        "--org",
+        help="every readable workgroup of the org with the filters, or one category of its situation view"
+        " (--state needs-decision|...)",
+    )
     sub.add_argument("--state", choices=[*tasks.STATES, *attention.CATEGORIES])
-    sub.add_argument("--mine", action="store_true", help="with --org: only tasks the user owns")
+    sub.add_argument("--mine", action="store_true", help="with --org and a category: only tasks the user owns")
     sub.add_argument("--by-person", action="store_true", help="with --wg: grouped by the responsible person")
-    sub.add_argument("--status", choices=tickets.STATUSES, help="with --wg: only tasks with this status")
-    sub.add_argument("--urgency", choices=tickets.URGENCIES, help="with --wg: only tasks with this urgency")
-    sub.add_argument("--assignee", help="with --wg: only tasks of this person (a user ID, me, or none)")
-    sub.add_argument("--topic", help="with --wg: only tasks of this topic (from `topic list`, or none)")
-    sub.add_argument("--github-org", help="with --wg: only tasks of this GitHub organisation")
-    sub.add_argument("--repo", help="with --wg: only tasks of this repository (owner/name)")
+    _filter_arguments(sub)
     _ticket_commands(tree, group)
     sub = tree.add(
         group,
@@ -707,6 +720,18 @@ def _task_commands(tree: Tree) -> None:
     sub.add_argument(
         "--timeout", type=int, default=tasks.WAIT_DEFAULT_S, help="seconds to wait at most (0-3600, default 600)"
     )
+
+
+def _filter_arguments(sub: Parser) -> None:
+    """The filters, order and search of `task list` and `task overview` (ADR-100, ADR-101)."""
+    sub.add_argument("--status", choices=tickets.STATUSES, help="only tasks with this status")
+    sub.add_argument("--urgency", choices=tickets.URGENCIES, help="only tasks with this urgency (prio)")
+    sub.add_argument("--assignee", help="only tasks of this person (a user ID, me, or none)")
+    sub.add_argument("--topic", help="only tasks of this topic (from `topic list`, or none)")
+    sub.add_argument("--github-org", help="only tasks of this GitHub organisation")
+    sub.add_argument("--repo", help="only tasks of this repository (owner/name)")
+    sub.add_argument("--search", help="only tasks whose title contains this text (any case)")
+    sub.add_argument("--order", choices=tickets.ORDERS, help="activity (default), created or urgency")
 
 
 def _ticket_arguments(sub: Parser, *, edit: bool) -> None:

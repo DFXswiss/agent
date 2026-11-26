@@ -7,7 +7,7 @@
 // The slice also exports `frames` (the live-channel frames it applies, `core/net/frames.ts`).
 import { parseTime } from '../../encoding/time';
 import { isRecord } from '../../registry';
-import { matchesFilter } from '../../tasks/filters';
+import { comesAfter, matchesFilter, orderOf } from '../../tasks/filters';
 import type { Slice, Store } from '../store';
 
 /** `task_row` of the contracts (02-data-model.md section 2.4). */
@@ -231,6 +231,17 @@ export function newestFirst(tasks: Readonly<Record<string, TaskRow>>, ids: Itera
   return [...new Set(ids)].sort((a, b) => time(b) - time(a) || Number(b > a) - Number(b < a));
 }
 
+/** The IDs in the order of the list key `filter` (`newestFirst` for the latest activity; E-43, ADR-101 section 2). */
+export function inListOrder(
+  tasks: Readonly<Record<string, TaskRow>>,
+  ids: Iterable<string>,
+  filter: string | null,
+): string[] {
+  const order = orderOf(filter);
+  if (order === 'activity') return newestFirst(tasks, ids);
+  return [...new Set(ids)].sort((a, b) => (comesAfter(order, tasks[a]!, tasks[b]!) ? 1 : -1));
+}
+
 /** A row older than the stored one (an answer that was overtaken by a frame): by last activity, then state time. */
 export function staleTask(known: TaskRow | undefined, row: TaskRow): boolean {
   if (known === undefined) return false;
@@ -252,7 +263,9 @@ function placeInLists(lists: TasksState['lists'], tasks: TasksState['tasks'], ro
     const matches = matchesFilter(list.state, row);
     const present = list.ids.includes(row.task_id);
     if (matches === present && !matches) continue;
-    const ids = matches ? newestFirst(tasks, [...list.ids, row.task_id]) : list.ids.filter((id) => id !== row.task_id);
+    const ids = matches
+      ? inListOrder(tasks, [...list.ids, row.task_id], list.state)
+      : list.ids.filter((id) => id !== row.task_id);
     next = { ...next, [key]: { ...list, ids } };
   }
   return next;
@@ -303,10 +316,10 @@ export function listPage(
     const last = page.rows.at(-1);
     let older: string[] = [];
     if (page.refresh && page.nextBefore !== null && last !== undefined) {
-      const ranked = newestFirst(tasks, [...ids, ...list.ids]);
+      const ranked = inListOrder(tasks, [...ids, ...list.ids], page.state);
       older = ranked.slice(ranked.indexOf(last.task_id) + 1);
     }
-    const merged = newestFirst(tasks, page.first ? [...ids, ...older] : [...list.ids, ...ids]);
+    const merged = inListOrder(tasks, page.first ? [...ids, ...older] : [...list.ids, ...ids], page.state);
     const nextBefore = older.length > 0 ? list.nextBefore : page.nextBefore;
     const updated: TaskList = { ...list, ids: merged, nextBefore, status: 'ready', code: null };
     return { ...state, tasks, lists: { ...state.lists, [key]: updated } };
