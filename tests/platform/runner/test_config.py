@@ -504,6 +504,17 @@ def test_login_automation_invalid(value: str, base: dict[str, str]) -> None:
     refused(base, "LOGIN_AUTOMATION")
 
 
+def test_login_sandbox(base: dict[str, str]) -> None:
+    """KOR-73, ADR-098 section 3: a login VM per login unless `process` is set; the environment keeps only `process`."""
+    assert load(base).login_sandbox == "vm"
+    assert "AGENT_RUNNER_LOGIN_SANDBOX" not in environment(load(base))
+    base["AGENT_RUNNER_LOGIN_SANDBOX"] = "process"
+    assert load(base).login_sandbox == "process"
+    assert environment(load(base))["AGENT_RUNNER_LOGIN_SANDBOX"] == "process"
+    base["AGENT_RUNNER_LOGIN_SANDBOX"] = "auto"
+    refused(base, "LOGIN_SANDBOX")
+
+
 @pytest.mark.parametrize("value", ["", "wp-run01-", "arp", "a" * 32])
 def test_vm_prefix(value: str, base: dict[str, str]) -> None:
     base["AGENT_RUNNER_VM_PREFIX"] = value

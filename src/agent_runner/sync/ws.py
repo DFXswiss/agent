@@ -58,6 +58,7 @@ FEATURES = (
     "subscriptions",
     "agent.profiles",
     "platform.analysis",
+    "subscriptions.parallel",
 )
 """What this runner understands: `log.admit` - membership logs with `admit` entries and platform logs with
 `user_certify`/`user_decertify` (the copied verifier of `agent_runner.crypto.log`); `github.ways` - it announces the
@@ -67,7 +68,9 @@ section 3); `subscriptions` - `claude.login` for further subscriptions (`subscri
 ADR-094 section 2), so clients send those fields only to such a device;
 `agent.profiles` - the rights profiles of the section `agent_profiles` (ADR-094 section 3); `platform.analysis` - the
 session read tools `get_usage`, `list_audit`, `list_workgroup_operations` and `get_metrics` (ADR-097 section 3), so the
-hub creates an analysis task only while every device of the organization announced it."""
+hub creates an analysis task only while every device of the organization announced it; `subscriptions.parallel` - logins of
+different subscriptions side by side (slot), the record's own mailbox, `account`, `extended`, `click`, `relay` and
+`mailbox.check {subscription_id}` (ADR-098 section 7), so clients send those only to such a device."""
 DEVICE_FLOW = "github.device_flow"
 OAUTH_APP = "github.oauth_app"
 OPERATOR_GITHUB = "github.operator"
