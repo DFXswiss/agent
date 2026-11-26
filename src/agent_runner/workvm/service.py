@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import subprocess
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -289,6 +290,11 @@ def default_template() -> Path:
     return Path(__file__).resolve().parents[3] / "images" / "workvm.yaml"
 
 
+def volume_mounted(path: str = accounts.HOME_ROOT) -> bool:
+    """The volume of the slot homes hangs at its mount point (HOT-25)."""
+    return os.path.ismount(path)
+
+
 def workvms_for(context: Any) -> WorkVms | None:
     """The daemon's work VMs; None on a device without slots or before enrollment."""
     found = existing(context)
@@ -375,6 +381,7 @@ def workvms_for(context: Any) -> WorkVms | None:
         ),
         capture=Capturer(context, shell_for),
         hub_lease=lambda: lease.held(runtime_client(context), service.env.desired),
+        volume_ok=lambda: config.workvm_slots_self or volume_mounted(),
     )
     return install(context, WorkVms(deps))
 

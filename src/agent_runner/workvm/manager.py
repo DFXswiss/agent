@@ -53,7 +53,7 @@ from agent_runner.credentials import acting
 from agent_runner.errors import RunnerError
 from agent_runner.operations.extensions import OperationFailed
 from agent_runner.sessions.records import LocalSession
-from agent_runner.vm.lima import Lima, LimaError
+from agent_runner.vm.lima import Instance, Lima, LimaError
 from agent_runner.workvm import firewall, jobs, records, sync
 from agent_runner.workvm.jobs import JobView, Shell, WorkVmError
 from agent_runner.workvm.records import Pooled, WorkVm
@@ -175,6 +175,8 @@ class Deps:
     """Stores the output of a final job (`vm, identity, job_id, output_bytes`) as a log; returns its `log_ref`."""
     hub_lease: Callable[[], bool] = field(default_factory=lambda: _always)
     """The runner's lease of the tools with internet egress (`sync.lease.held`, ADR-087 section 4)."""
+    volume_ok: Callable[[], bool] = field(default_factory=lambda: _always)
+    """The volume of the slot homes hangs at its mount point (HOT-25; always in self mode)."""
 
 
 def _tail(text: str, limit: int) -> str:
@@ -256,9 +258,17 @@ class WorkVms:
         if self.deps.settings.slots == 0:
             return None
         image = await records.ready_image(self.deps.db)
-        if image is None or not await self.deps.boundary_ok():
+        if image is None or not self.deps.volume_ok() or not await self.deps.boundary_ok():
             return None
         return image
+
+    def check_volume(self) -> bool:
+        """Log once at the start of the task when the volume of the slot homes is not mounted (HOT-25): no work VM is
+        offered until it is; `doctor` names it (`workvm_volume`)."""
+        if self.deps.settings.slots == 0 or self.deps.volume_ok():
+            return True
+        self.deps.log("runner.workvm volume_missing")
+        return False
 
     # -- request / release -------------------------------------------------------------------------------------
 
@@ -940,7 +950,7 @@ class WorkVms:
             for slot in range(self.deps.settings.slots):
                 lima = self.deps.lima_for(slot)
                 marker = lima.prefix + "wvm-"
-                for instance in await asyncio.to_thread(lima.list):
+                for instance in await self._instances(slot, lima):
                     if instance.name.startswith(marker) and instance.name not in known:
                         try:
                             await asyncio.to_thread(lima.delete, instance.name)
@@ -1024,10 +1034,23 @@ class WorkVms:
         for slot in range(self.deps.settings.slots):
             lima = self.deps.lima_for(slot)
             marker = lima.prefix + "wvm-"
-            for instance in await asyncio.to_thread(lima.list):
+            for instance in await self._instances(slot, lima):
                 if instance.name.startswith(marker) and instance.name not in known.get(slot, set()):
-                    await asyncio.to_thread(lima.delete, instance.name)
+                    try:
+                        await asyncio.to_thread(lima.delete, instance.name)
+                    except LimaError as error:
+                        self.deps.log(f"runner.workvm orphan_delete_failed slot={slot} {failure(error)}")
+                        continue
                     self.deps.log(f"runner.workvm orphan_deleted slot={slot}")
+
+    async def _instances(self, slot: int, lima: Lima) -> list[Instance]:
+        """The slot's instances; none (logged) when Lima cannot list them, so one broken slot never stops the
+        reconciliation or the sweep (and with it the daemon task, HOT-25)."""
+        try:
+            return await asyncio.to_thread(lima.list)
+        except LimaError as error:
+            self.deps.log(f"runner.workvm list_failed slot={slot} {failure(error)}")
+            return []
 
     # -- tool calls --------------------------------------------------------------------------------------------
 

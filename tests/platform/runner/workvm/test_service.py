@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import hashlib
 import io
+import os
 import subprocess
 import sys
 import time
@@ -399,6 +400,16 @@ def test_wiring_with_slot_accounts(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     deps.log("runner.workvm started")
     deps.log("second")
     assert ctx.log.getvalue() == "runner.workvm started\nsecond\n"
+    # the volume of the slot homes is checked at its mount point (HOT-25)
+    mounts: list[str] = []
+
+    def not_mounted(path: str) -> bool:
+        mounts.append(path)
+        return False
+
+    monkeypatch.setattr(os.path, "ismount", not_mounted)
+    assert deps.volume_ok() is False
+    assert mounts == ["/var/agent-workvm"]
 
 
 def test_wiring_in_self_mode_with_a_template(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -418,6 +429,8 @@ def test_wiring_in_self_mode_with_a_template(monkeypatch: pytest.MonkeyPatch, tm
 
     assert asyncio.run(boundary()) is True
     assert workvms.deps.settings.test_mode is True
+    assert workvms.deps.volume_ok() is True  # self mode: no volume of slot homes
+    assert service.volume_mounted("/") is True
 
 
 # -- emit ------------------------------------------------------------------------------------------------------

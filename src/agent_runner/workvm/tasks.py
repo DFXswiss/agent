@@ -3,7 +3,9 @@ live VMs are taken first; the test runs still `running` end `error`, with the lo
 goes after its capture; then every VM taken goes, ADR-087 section 5), then every `INTERVAL` seconds (and at once after a
 pool entry was assigned) the boundary guard (every live VM and pool entry goes when the host filter check fails), the
 idle pass of the platform browser sessions (`browser_idle`) and of the work VMs, the sweep of failed deletions and
-orphan instances, and the warm pool refill. The task ends at once on a device without work VMs."""
+orphan instances, and the warm pool refill. A volume of the slot homes that does not hang at its mount point is logged
+at the start (`volume_missing`, HOT-25); no work VM is offered until it does. The task ends at once on a device without
+work VMs."""
 
 from __future__ import annotations
 
@@ -30,6 +32,7 @@ async def run_workvm(context: Any) -> None:
     workvms = workvms_for(context)
     if workvms is None:
         return
+    workvms.check_volume()
     left = await workvms.left_over()
     await runs_of(context, workvms).reconcile()
     await workvms.reconcile(left)

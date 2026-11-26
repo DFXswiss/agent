@@ -58,7 +58,7 @@ from agent_runner.config import Config
 from agent_runner.errors import RunnerError
 from agent_runner.identity import ensure_private_dir
 from agent_runner.vm import cli as vm_cli
-from agent_runner.workvm import accounts, firewall, image, service
+from agent_runner.workvm import accounts, firewall, image, service, volume
 
 EXIT_OK = 0
 EXIT_FAILURE = 1
@@ -270,8 +270,22 @@ def cmd_status(_args: argparse.Namespace, ctx: Any) -> int:
         },
     )
     if config.workvm_slots and not config.workvm_slots_self:
+        _volume_status(ctx, run)
         _boundary(ctx, run, found, ("accounts_missing",) if missing else ())
     return EXIT_OK
+
+
+def _volume_status(ctx: Any, run: firewall.Run) -> None:
+    """`runner.workvm.volume name=<name> mountpoint=<where it hangs|-> ok=yes|no` (HOT-25)."""
+    try:
+        found = volume.find(run)
+    except RunnerError as error:
+        ctx.out.fact("workvm.volume", {"name": accounts.VOLUME_NAME, "mountpoint": "-", "ok": "no"})
+        ctx.out.fact("workvm.volume.problem", {"code": error.name or error.code})
+        return
+    where = found.mountpoint if found is not None and found.mountpoint else "-"
+    ok = found is not None and volume.same_place(found.mountpoint)
+    ctx.out.fact("workvm.volume", {"name": accounts.VOLUME_NAME, "mountpoint": where, "ok": "yes" if ok else "no"})
 
 
 def _run_all(run: firewall.Run, commands: Sequence[Sequence[str]]) -> None:
@@ -304,12 +318,18 @@ def _group_gid(run: firewall.Run, group: str) -> int | None:
     return int(value)
 
 
-def _install_volume(machine: Machine, quota_gib: int) -> str:
-    if machine.is_mount(accounts.HOME_ROOT):
-        return "present"
-    container = accounts.apfs_container(machine.run)
-    _run_all(machine.run, accounts.apfs_volume_commands(container, quota_gib))
-    return "created"
+def _install_volume(machine: Machine, quota_gib: int) -> tuple[str, volume.Repair]:
+    """Create the volume unless it exists (also when it hangs elsewhere after a restart), then make its `fstab` entry
+    and its mount point right (`volume.repair`)."""
+    action = "present"
+    if not machine.is_mount(accounts.HOME_ROOT) and volume.find(machine.run) is None:
+        container = accounts.apfs_container(machine.run)
+        _run_all(machine.run, accounts.apfs_volume_commands(container, quota_gib))
+        action = "created"
+    repaired = volume.repair(machine.run, machine.read_file, machine.write_file)
+    if repaired is None:
+        raise RunnerError("workvm_volume", "missing")
+    return action, repaired
 
 
 def _install_group(run: firewall.Run, prefix: str, used: set[int]) -> tuple[str, int, str]:
@@ -371,9 +391,13 @@ def _print_plan(args: argparse.Namespace, ctx: Any, config: Config, machine: Mac
     """`install --plan`: what `install` would change, read-only."""
     run, out = machine.run, ctx.out
     planned = _slot_accounts(config)
-    volume = "present" if machine.is_mount(accounts.HOME_ROOT) else "create"
+    if machine.is_mount(accounts.HOME_ROOT):
+        planned_volume = "present"
+    else:
+        planned_volume = "create" if volume.find(machine.run) is None else "remount"
     out.fact(
-        "workvm.plan", {"step": "volume", "action": volume, "path": accounts.HOME_ROOT, "quota_gib": args.quota_gib}
+        "workvm.plan",
+        {"step": "volume", "action": planned_volume, "path": accounts.HOME_ROOT, "quota_gib": args.quota_gib},
     )
     out.fact("workvm.plan", {"step": "images", "path": f"{accounts.HOME_ROOT}/images"})
     used = _ids(run, "/Users", "UniqueID") | _ids(run, "/Groups", "PrimaryGroupID")
@@ -421,8 +445,17 @@ def cmd_install(args: argparse.Namespace, ctx: Any) -> int:
     if problems:
         raise RunnerError("workvm_firewall_unhooked", problems[0])
 
-    volume = _install_volume(machine, args.quota_gib)
-    out.fact("workvm.install", {"step": "volume", "action": volume, "path": accounts.HOME_ROOT})
+    action, repaired = _install_volume(machine, args.quota_gib)
+    out.fact(
+        "workvm.install",
+        {
+            "step": "volume",
+            "action": action,
+            "path": accounts.HOME_ROOT,
+            "fstab": repaired.fstab,
+            "mount": repaired.mount,
+        },
+    )
     images = f"{accounts.HOME_ROOT}/images"  # service.IMAGES_DIR: the runner writes clone templates, slots read
     owner = ["/usr/sbin/chown", args.runner_account, images]
     _run_all(run, [["/bin/mkdir", "-p", images], owner, ["/bin/chmod", "0755", images]])
@@ -480,18 +513,34 @@ def cmd_uninstall(args: argparse.Namespace, ctx: Any) -> int:
     for path in (accounts.WRAPPER_PATH, accounts.SUDOERS_PATH):
         machine.remove_file(path)
     out.fact("workvm.uninstall", {"step": "files", "wrapper": accounts.WRAPPER_PATH, "sudoers": accounts.SUDOERS_PATH})
-    volume = "kept" if args.keep_volume else "absent"
+    volume_action = "kept" if args.keep_volume else "absent"
     if not args.keep_volume and machine.is_mount(accounts.HOME_ROOT):
         _run_all(run, [accounts.delete_volume_command()])
-        volume = "removed"
+        volume_action = "removed"
     if not args.keep_volume:
         machine.remove_dir(accounts.HOME_ROOT)  # the mount point `install` created (only when empty)
-    out.fact("workvm.uninstall", {"step": "volume", "action": volume, "path": accounts.HOME_ROOT})
-    left = _left_over(machine, names, group, volume=not args.keep_volume)
+        _drop_fstab_entry(machine)
+    out.fact("workvm.uninstall", {"step": "volume", "action": volume_action, "path": accounts.HOME_ROOT})
+    left = _left_over(machine, names, group, with_volume=not args.keep_volume)
     for code in left:
         out.fact("workvm.uninstall.problem", {"code": code})
     out.fact("workvm.uninstall", {"result": "ok" if not left else "incomplete"})
     return EXIT_FAILURE if left else EXIT_OK
+
+
+def _fstab(machine: Machine) -> str:
+    try:
+        return machine.read_file(volume.FSTAB)
+    except FileNotFoundError:
+        return ""
+
+
+def _drop_fstab_entry(machine: Machine) -> None:
+    """Remove the entry of the slot homes' mount point from `/etc/fstab` (the volume is gone)."""
+    text = _fstab(machine)
+    kept = volume.without_entry(text)
+    if kept != text:
+        machine.write_file(volume.FSTAB, kept, volume.FSTAB_MODE)
 
 
 def _stop_slots(run: firewall.Run, names: Sequence[str]) -> None:
@@ -500,7 +549,7 @@ def _stop_slots(run: firewall.Run, names: Sequence[str]) -> None:
         run([firewall.PKILL, "-KILL", "-u", account], accounts.COMMAND_TIMEOUT)
 
 
-def _left_over(machine: Machine, names: Sequence[str], group: str, *, volume: bool) -> list[str]:
+def _left_over(machine: Machine, names: Sequence[str], group: str, *, with_volume: bool) -> list[str]:
     """What an uninstall left behind (empty = the state before `install`)."""
     run = machine.run
     left: list[str] = []
@@ -523,10 +572,12 @@ def _left_over(machine: Machine, names: Sequence[str], group: str, *, volume: bo
         left.append(f"group:{group}")
     if firewall.without_legacy_lines(machine.read_file(firewall.PF_CONF)) != machine.read_file(firewall.PF_CONF):
         left.append("pf_conf")
-    if volume and machine.is_mount(accounts.HOME_ROOT):
+    if with_volume and machine.is_mount(accounts.HOME_ROOT):
         left.append("volume")
-    elif volume and machine.exists(accounts.HOME_ROOT):
+    elif with_volume and machine.exists(accounts.HOME_ROOT):
         left.append(f"dir:{accounts.HOME_ROOT}")
+    if with_volume and volume.without_entry(_fstab(machine)) != _fstab(machine):
+        left.append("fstab")
     return left
 
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import psycopg
@@ -48,8 +48,14 @@ class ClusterTools:
     stop: Callable[[Path], None] = pg.stop_cluster
     create_database: Callable[[str, str], str] = pg.create_database
     exists: Callable[[Path], bool] = pg.cluster_exists
-    wal_sync_method: str | None = field(default_factory=durable_wal_sync_method)
-    """The required `wal_sync_method` (module docstring); None leaves the server's value."""
+    wal_sync_method: str | None = None
+    """The required `wal_sync_method` (module docstring); None leaves the server's value (tools of a test that hand
+    out a shared server). The daemon's tools are `device_tools()`."""
+
+
+def device_tools() -> ClusterTools:
+    """The tools of the device's own cluster: the legacy helpers with the durable `wal_sync_method`."""
+    return ClusterTools(wal_sync_method=durable_wal_sync_method())
 
 
 def _setting(admin: str, name: str) -> str:
@@ -84,7 +90,7 @@ def start_store(pg_dir: Path, tools: ClusterTools | None = None) -> str:
     Failures of the legacy helpers (`PgError`, whose text may contain server output) become
     `RunnerError("store_unavailable")`, so do database errors (their text may name server details).
     """
-    used = tools or ClusterTools()
+    used = tools or device_tools()
     try:
         admin, _state = ensure_durable(pg_dir, used.ensure(pg_dir), used)
         return used.create_database(admin, DATABASE)
@@ -94,7 +100,7 @@ def start_store(pg_dir: Path, tools: ClusterTools | None = None) -> str:
 
 def store_exists(pg_dir: Path, tools: ClusterTools | None = None) -> bool:
     """True when a cluster exists under `pg_dir`; probe failures are `store_unavailable`."""
-    used = tools or ClusterTools()
+    used = tools or device_tools()
     try:
         return used.exists(pg_dir)
     except (pg.PgError, OSError):
@@ -103,7 +109,7 @@ def store_exists(pg_dir: Path, tools: ClusterTools | None = None) -> bool:
 
 def stop_store(pg_dir: Path, tools: ClusterTools | None = None) -> None:
     """Stop the cluster when it runs; a missing cluster is not an error."""
-    used = tools or ClusterTools()
+    used = tools or device_tools()
     try:
         if used.exists(pg_dir):
             used.stop(pg_dir)

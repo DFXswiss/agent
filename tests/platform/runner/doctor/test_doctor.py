@@ -175,7 +175,7 @@ def test_a_healthy_device_only_warns_about_the_test_mode(case: Case) -> None:
     found = check_map(out)
     assert list(found) == [
         "os", "lima", "vz", "postgresql", "golden", "landlock", "login_cli", "hub", "clock", "textfile",
-        "operator_subscriptions", "operator_github", "test_mode", "sync",
+        "operator_subscriptions", "operator_github", "test_mode", "workvm_volume", "sync",
     ]  # fmt: skip
     assert found["os"] == [("ok", "supported", "darwin")]
     assert found["lima"] == [("ok", "version", "2.3.1")]
@@ -190,6 +190,7 @@ def test_a_healthy_device_only_warns_about_the_test_mode(case: Case) -> None:
     assert found["operator_subscriptions"] == [("ok", "off", None)]
     assert found["test_mode"] == [("warn", "test_mode_on", None)]
     assert found["operator_github"] == [("ok", "off", None)]
+    assert found["workvm_volume"] == [("ok", "off", None)]
     assert found["sync"] == [("ok", "clear", None)]
     assert out.splitlines()[-1] == "runner.doctor result=warn"
     assert case.stops == [case.home / "pg"]
@@ -753,3 +754,49 @@ def test_the_operator_subscriptions_are_counted_without_names(tmp_path: Path) ->
     bad.unlink()
     assert found() == checks.Check("operator_subscriptions", "ok", "usable", 2)
     assert org not in repr(found())
+
+
+def test_the_volume_of_the_work_vm_slots_must_hang_at_its_mount_point() -> None:
+    """HOT-25: after a restart without the fstab entry the volume hangs under /Volumes; doctor names it."""
+    from types import SimpleNamespace  # noqa: PLC0415
+    from typing import cast  # noqa: PLC0415
+
+    from agent_runner.config import Config  # noqa: PLC0415
+
+    def config(slots: int, self_mode: bool = False) -> Config:
+        return cast(Config, SimpleNamespace(workvm_slots=slots, workvm_slots_self=self_mode))
+
+    seen: list[str] = []
+
+    def mounted(path: str) -> bool:
+        seen.append(path)
+        return True
+
+    entry = "UUID=0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D /var/agent-workvm apfs rw\n"
+
+    def check(slots: int, is_mount: Any, fstab: str, self_mode: bool = False) -> checks.Check:
+        return checks.check_workvm_volume(config(slots, self_mode), is_mount, lambda: fstab)
+
+    assert check(0, mounted, "") == checks.Check("workvm_volume", "ok", "off")
+    assert check(2, mounted, "", self_mode=True) == checks.Check("workvm_volume", "ok", "self")
+    assert seen == []
+    assert check(2, mounted, entry) == checks.Check("workvm_volume", "ok", "mounted", "/var/agent-workvm")
+    assert check(2, mounted, "# /var/agent-workvm\n") == checks.Check(
+        "workvm_volume", "warn", "fstab_missing", "/var/agent-workvm"
+    )
+    assert check(2, lambda _p: False, entry) == checks.Check(
+        "workvm_volume", "fail", "not_mounted", "/var/agent-workvm"
+    )
+    assert seen == ["/var/agent-workvm", "/var/agent-workvm"]
+    options = checks.DoctorOptions()
+    assert options.is_mount("/")
+    assert isinstance(options.fstab(), str)
+
+
+def test_a_missing_fstab_reads_as_empty(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from agent_runner.workvm import volume  # noqa: PLC0415
+
+    monkeypatch.setattr(volume, "FSTAB", str(tmp_path / "fstab"))
+    assert checks.read_fstab() == ""
+    (tmp_path / "fstab").write_text("x\n")
+    assert checks.read_fstab() == "x\n"

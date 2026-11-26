@@ -20,6 +20,10 @@ class FakeWorkVms:
         self.calls: list[str] = []
         self.pool_wanted = asyncio.Event()
 
+    def check_volume(self) -> bool:
+        self.calls.append("check_volume")
+        return True
+
     async def left_over(self) -> list[str]:
         self.calls.append("left_over")
         return ["wvm-left"]
@@ -93,6 +97,7 @@ def test_reconcile_then_idle_passes_until_stopping(monkeypatch: pytest.MonkeyPat
         return workvms.calls
 
     assert asyncio.run(run()) == [
+        "check_volume",
         "left_over",
         "runs",
         "reconcile",
@@ -115,6 +120,7 @@ def test_a_stop_during_the_wait_ends_the_task_without_another_pass(monkeypatch: 
         return workvms.calls
 
     assert asyncio.run(run()) == [
+        "check_volume",
         "left_over",
         "runs",
         "reconcile",
@@ -135,7 +141,7 @@ def test_a_stopped_daemon_reconciles_only(monkeypatch: pytest.MonkeyPatch) -> No
         await tasks.run_workvm(SimpleNamespace(stopping=stopping))
         return workvms.calls
 
-    assert asyncio.run(run()) == ["left_over", "runs", "reconcile"]
+    assert asyncio.run(run()) == ["check_volume", "left_over", "runs", "reconcile"]
 
 
 def test_an_assigned_pool_entry_refills_at_once(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,6 +159,7 @@ def test_an_assigned_pool_entry_refills_at_once(monkeypatch: pytest.MonkeyPatch)
         return workvms.calls
 
     assert asyncio.run(run()) == [
+        "check_volume",
         "left_over",
         "runs",
         "reconcile",

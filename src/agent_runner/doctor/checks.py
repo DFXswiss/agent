@@ -37,8 +37,14 @@ and an optional value (versions, counts, seconds; never a secret). The order is 
   daemon runs on (as for `operator_subscriptions`); `value` is `OPERATOR_GITHUB_ORG` when set (KOR-47). Never the
   token, the account or the approved users.
 - `test_mode`: ok for `AGENT_RUNNER_TEST_MODE=0`; warn `test_mode_on` (production MUST run with 0).
+- `workvm_volume` (HOT-25): ok `off` without work VM slots, ok `self` in self mode (no slot accounts), ok `mounted`
+  when the volume of the slot homes hangs at `/var/agent-workvm` and `/etc/fstab` has its entry (value: the path);
+  fail `not_mounted` when it does not hang there (after a restart without the entry it hangs under `/Volumes`); warn
+  `fstab_missing` when it hangs there but the entry is missing (an installation before HOT-25: the next restart
+  would move it). Both: run `workvm install` again as root; it mounts the volume back and writes the entry.
 - `sync`: ok when nothing waits for an operator; one fail per marker: `device_revoked`, `sync_fatal`
-  (`origin_seq_conflict`, ...), `platform_stopped`, `org_stopped`.
+  (`origin_seq_conflict`, ...), `platform_stopped`, `org_stopped`. An `origin_seq_conflict` a power cut left behind
+  repairs itself (`sync.push`); a `sync_fatal` is therefore a real conflict.
 
 The `sync` failures are the conditions that need an operator (05 section 2.3, decisions/RUN-03.md item 11):
 `agent-runner doctor --clear <name>` removes the persisted marker after the cause was dealt with; the running daemon
@@ -78,6 +84,8 @@ from agent_runner.model.operator import IGNORED, USABLE, Pool, configured
 from agent_runner.sync.http import HubClient, HubRefusal, HubTransportError
 from agent_runner.vm import golden as golden_module
 from agent_runner.vm import lima as lima_module
+from agent_runner.workvm import volume
+from agent_runner.workvm.accounts import HOME_ROOT
 
 OK = "ok"
 WARN = "warn"
@@ -116,6 +124,16 @@ class DoctorOptions:
     wall: Callable[[], float] = time.time
     limactl: lima_module.LimactlRun | None = None
     login_timeout: float = LOGIN_VERSION_TIMEOUT_S
+    is_mount: Callable[[str], bool] = os.path.ismount
+    fstab: Callable[[], str] = field(default_factory=lambda: read_fstab)
+
+
+def read_fstab() -> str:
+    """`/etc/fstab` (world-readable), empty when the file does not exist."""
+    try:
+        return Path(volume.FSTAB).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
 
 
 @dataclass
@@ -356,6 +374,18 @@ def check_operator_github(config: Config) -> Check:
 
 def check_test_mode(test_mode: bool) -> Check:
     return Check("test_mode", WARN, "test_mode_on") if test_mode else Check("test_mode", OK, "off")
+
+
+def check_workvm_volume(config: Config, is_mount: Callable[[str], bool], fstab: Callable[[], str]) -> Check:
+    if config.workvm_slots == 0:
+        return Check("workvm_volume", OK, "off")
+    if config.workvm_slots_self:
+        return Check("workvm_volume", OK, "self")
+    if not is_mount(HOME_ROOT):
+        return Check("workvm_volume", FAIL, "not_mounted", HOME_ROOT)
+    if not volume.has_entry(fstab()):
+        return Check("workvm_volume", WARN, "fstab_missing", HOME_ROOT)
+    return Check("workvm_volume", OK, "mounted", HOME_ROOT)
 
 
 def check_sync(facts: StoreFacts) -> list[Check]:

@@ -22,12 +22,14 @@ from psycopg import sql
 from agent_cli import pg
 from agent_cli.pg import PgError
 from agent_runner.errors import RunnerError
+from agent_runner.host import Host
 from agent_runner.identity import Device, generate_keys, load_identity, write_device, write_keys
 from agent_runner.store import migrate as migrate_module
 from agent_runner.store.cluster import (
     DARWIN_WAL_SYNC_METHOD,
     DATABASE,
     ClusterTools,
+    device_tools,
     durable_wal_sync_method,
     ensure_durable,
     start_store,
@@ -785,7 +787,9 @@ def test_the_durable_wal_sync_method_of_each_system() -> None:
     """macOS needs `F_FULLFSYNC` (fsync_writethrough); elsewhere PostgreSQL's default reaches the medium."""
     assert durable_wal_sync_method("darwin") == DARWIN_WAL_SYNC_METHOD == "fsync_writethrough"
     assert durable_wal_sync_method("linux") is None
-    assert ClusterTools().wal_sync_method == durable_wal_sync_method(sys.platform)
+    assert device_tools().wal_sync_method == durable_wal_sync_method(sys.platform)
+    assert ClusterTools().wal_sync_method is None  # a test's tools on a shared server change nothing
+    assert Host().cluster == device_tools()
 
 
 class CountingTools:
