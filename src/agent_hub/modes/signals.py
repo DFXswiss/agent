@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from agent_hub import signals
@@ -27,7 +27,7 @@ from agent_hub.modes import store
 from agent_hub.modes.choice import announce
 from agent_hub.orgs import rights
 from agent_hub.sessions.effects import Effects
-from agent_hub.sessions.taskstate import HUB, lock_task
+from agent_hub.sessions.taskstate import HUB, TaskRow, lock_task
 
 LOG = logging.getLogger("agent_hub.modes")
 _worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="modes-chooser")
@@ -45,12 +45,10 @@ def revoke_left(connection: Any, org_id: UUID, now: Any, effects: Effects) -> in
     for task_id, mode, chooser, wg_id in rows:
         if rights.can(connection, chooser, rights.WG_WRITE, wg_id=wg_id):
             continue
-        task = lock_task(connection, task_id)
-        if task is not None and store.switch_off(
-            connection, task, mode, actor=HUB, now=now, reason=store.CHOOSER_LEFT
-        ):
-            announce(connection, effects, task)
-            count += 1
+        task = cast(TaskRow, lock_task(connection, task_id))  # the row was just read with its task
+        store.switch_off(connection, task, mode, actor=HUB, now=now, reason=store.CHOOSER_LEFT)
+        announce(connection, effects, task)
+        count += 1
     return count
 
 

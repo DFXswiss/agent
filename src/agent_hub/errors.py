@@ -65,6 +65,8 @@ ERROR_STATUSES: Mapping[str, tuple[int, ...]] = {
     "no_device_available": (409,),
     "invite_registered": (409,),
     "peer_outdated": (409,),
+    "mode_needs": (409,),
+    "mode_needs_instruction": (403,),
     "community_muted": (403,),
     "community_not_member": (409,),
     "community_epoch_exists": (409,),
