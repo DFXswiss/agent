@@ -786,6 +786,36 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   Oberfläche: [ADR-091](adr/091-subscriptions-at-a-glance.md) (KOR-68); Anmeldung auf der Seite „Meine Abos“ („Abo
   hinzufügen“, „Jetzt anmelden“) und Verwaltung im Abschnitt „Claude-Abos“ der Einstellungen.
 
+<a id="e-32"></a>
+
+### E-32 – Nichts läuft lokal: jeder Baustein ist eine wählbare Arbeitsweise der Plattform
+
+- **Datum:** 2026-11-26
+- **Regel:** Auf dem Rechner eines Nutzers läuft und liegt für agent nichts mehr, außer höchstens einer Claude-Sitzung,
+  mit der er agent.dfx.swiss steuert. Alles, was heute lokal läuft oder installiert ist, wird vollständig in
+  agent.dfx.swiss integriert:
+  - das Werkzeug `agent` mit Ledger, Koordinator, A38, KI-Konten, `knock` und Dashboard;
+  - der alte Hub `agent-core`;
+  - die Werkzeuge, mit denen die Plattform selbst gebaut, geprüft, zusammengeführt und ausgerollt wird.
+
+  Jeder dieser Bausteine ist dort eine **Arbeitsweise, die man wählt**: nie erzwungen, nie von selbst aktiv, auch nicht
+  über eine Voreinstellung. Gewählt wird je Sitzung oder Task:
+  - mit einem Satz im Auftrag („halte dich an A38“, „baue Feature xy, nutze den Orchestrator“);
+  - in der Oberfläche;
+  - mit dem Agentenwerkzeug ([E-04](#e-04)).
+
+  Eine gewählte Arbeitsweise wird vollständig umgesetzt. Ohne Wahl arbeitet eine Sitzung wie bisher.
+- **Wortlaut:** „ich will local nichts mehr haben, ausser vielleicht eine claude session mit der ich agent.dfx.swiss
+  ansteuere. alles was heute local läuft und local installiert ist muss vollständig in agent.dfx.swiss integriert
+  werden. wichtig ist, es muss wählbar sein, niemals erzwungen! und auch nicht per default aktiv. aber ich will eine
+  session starten können mit sowas wie: halte dich an A38 und dann wird das vollständig umgesetzt. oder baue feature
+  xy, nutze den Orchestrator“ (zu den Bausteinen „orchestrator, ledger und so“ im Repository agent)
+- **Bezug:** verallgemeinert [E-31](#e-31) („nichts läuft lokal“) von den Abos auf alles. Dazu gehören [E-04](#e-04)
+  (Oberfläche und Werkzeug können dasselbe) und [E-27](#e-27) (ein KI-Agent kann alles). Eine Sitzung führt selbst
+  nichts aus, alles läuft über Plattform-Operationen ([§10 Punkt 3](#k-10-b3)). Der delegierte Hauptorchestrator ist
+  [Idee 34](#k-idee-34).
+- **Umsetzung:** offen – Bestand, Zielbild und Paketplan in KOR-72.
+
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
 **Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und
