@@ -14,7 +14,7 @@ on by itself. Catalogue v1 has no settings, so there is no `--mode-setting` yet.
 
 The hub's refusals become clear next steps (`refusal`): `mode_needs_instruction` (an agent inside a platform session
 switches a mode on only with the operation `task.mode` and a quote of the instruction), `mode_needs` (with `missing`,
-the modes the refusal's detail names as off) and, for `task mode`, `not_found` with the reason `mode_or_task`.
+the modes the refusal's `detail.modes` names as off) and, for `task mode`, `not_found` with the reason `mode_or_task`.
 """
 
 from __future__ import annotations
@@ -32,8 +32,6 @@ from agent_platform.hub import segment
 NAME_RE = re.compile(r"[a-z][a-z0-9_]{0,31}")
 MAX_MODES = 64
 MODE_REFUSALS = ("mode_needs_instruction", "mode_needs")
-# Where the detail of a `mode_needs` refusal may name the modes that are off.
-MISSING_KEYS = ("missing", "needs", "modes")
 
 
 def mode_name(text: str) -> str:
@@ -52,10 +50,10 @@ def mode_names(values: list[str]) -> list[str]:
 
 
 def _missing(detail: Mapping[str, object]) -> list[str]:
-    for key in MISSING_KEYS:
-        value = detail.get(key)
-        if isinstance(value, list) and value and all(isinstance(n, str) and NAME_RE.fullmatch(n) for n in value):
-            return [str(name) for name in value]
+    """The modes a `mode_needs` refusal names as off (`detail.modes`), empty when it names none."""
+    value = detail.get("modes")
+    if isinstance(value, list) and all(isinstance(name, str) and NAME_RE.fullmatch(name) for name in value):
+        return [str(name) for name in value]
     return []
 
 

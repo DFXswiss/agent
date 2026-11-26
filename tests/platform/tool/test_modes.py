@@ -161,7 +161,7 @@ def test_task_mode_refusals(tool: Tool, hub: HubFake, account: User) -> None:
     assert document["next"] == errors.NEXT_FOR_REASON[("hub_refused", "mode_needs_instruction")]
     assert "task.mode" in document["next"]
     # a mode that needs another that is off: the modes the detail names, and the ones already switched on
-    needs = {"error": "mode_needs", "detail": {"missing": ["test"]}}
+    needs = {"error": "mode_needs", "detail": {"modes": ["test"]}}
     hub.hooks[("PUT", path)] = lambda body, request: (409, needs)
     document = tool.run("task", "mode", "on", "--task", task, "--mode", "other", "--mode", "needy")[1]
     assert (document["error"], document["reason"], document["missing"]) == ("hub_refused", "mode_needs", ["test"])
@@ -190,11 +190,11 @@ def test_refusal_reads_the_missing_modes_from_the_detail() -> None:
         error.detail = detail
         return modes.refusal(error).fields["missing"]
 
-    assert needs({"missing": ["a38"]}) == ["a38"]
-    assert needs({"needs": ["a38", "orchestrator"]}) == ["a38", "orchestrator"]
-    assert needs({"modes": ["test"]}) == ["test"]
-    assert needs({"missing": [], "needs": ["Bad"], "modes": "test"}) == []
-    assert needs({"missing": [1]}) == []
+    assert needs({"modes": ["a38", "orchestrator"]}) == ["a38", "orchestrator"]
+    assert needs({"modes": ["Bad"]}) == []
+    assert needs({"modes": [1]}) == []
+    assert needs({"modes": "test"}) == []
+    assert needs({}) == []
     other = PlatformError("hub_refused", hub_error="not_found", status=404)
     assert modes.refusal(other) is other
     assert modes.refusal(other, unknown=True).code == "not_found"
@@ -241,7 +241,7 @@ def test_create_with_modes_and_show_them(
     hub.hooks[("POST", "/v1/tasks")] = lambda body, request: (403, {"error": "mode_needs_instruction"})
     document = tool.run("task", "create", "--wg", wg, "--text", "Hello", "--mode", "test")[1]
     assert (document["error"], document["reason"]) == ("hub_refused", "mode_needs_instruction")
-    needs = {"error": "mode_needs", "detail": {"missing": ["a"]}}
+    needs = {"error": "mode_needs", "detail": {"modes": ["a"]}}
     hub.hooks[("POST", "/v1/tasks")] = lambda body, request: (409, needs)
     document = tool.run("task", "create", "--wg", wg, "--text", "Hello", "--mode", "needy")[1]
     assert (document["reason"], document["missing"]) == ("mode_needs", ["a"])
