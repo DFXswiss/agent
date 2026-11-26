@@ -11,6 +11,8 @@
   "detailed": "detailed",
   "sort": "sort by used",
   "accounts": "Accounts",
+  "total.one": "1 account",
+  "total.many": "all {n}",
   "own": "own sessions",
   "fullest": "fullest window",
   "status.logged_in": "logged in",

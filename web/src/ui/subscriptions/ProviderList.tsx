@@ -1,8 +1,9 @@
 // The provider rows of "My subscriptions" (KOR-68, after the page "Subscriptions" of the local dashboard): per provider
-// a line with the time to the reset, a bar and the used share of the week of its most-used account; opened, the
-// 5-hour window, the week and the week per model at the highest use of the accounts, then every account with its own
-// bar and the age of its measurement, and the age of the provider's newest read. Nothing missing is shown as 0 %.
-// Used by the card of the home page and by the full page.
+// a line with the time to the reset, a bar and the used share of the week as the total of all its accounts ("all 9",
+// `totalWindows`: the mean of the accounts that measured it, the next reset of them – never the fullest account);
+// opened, the 5-hour window, the week and the week per model as such totals, then every account with its own bar and
+// the age of its measurement, and the age of the provider's newest read. Nothing missing is shown as 0 %. Used by the
+// card of the home page and by the full page.
 import { useState } from 'react';
 import {
   ageParts,
@@ -162,6 +163,9 @@ function Provider({
   const [open, setOpen] = useState(false);
   const shown = detailed || open;
   const measured = group.rows.some((row) => row.reading !== null);
+  // the line stands for every account of the provider, never for one of them (an account may carry its name)
+  const total =
+    group.rows.length === 1 ? t('subscriptions.total.one') : t('subscriptions.total.many', { n: group.rows.length });
   return (
     <details
       open={shown}
@@ -182,6 +186,9 @@ function Provider({
             ▶
           </span>
           <span className="truncate font-semibold">{group.name}</span>
+          <span className="shrink-0 text-xs text-gray-600" data-testid="subscriptions.provider.total">
+            {total}
+          </span>
           {group.headlineAt !== null && now - group.headlineAt > OLD_MS && (
             <span className="shrink-0 text-xs font-semibold text-red-800" data-testid="subscriptions.provider.old">
               {t('subscriptions.old', { age: age(group.headlineAt, now) })}
@@ -197,7 +204,11 @@ function Provider({
             <span className={RESET} data-testid="subscriptions.provider.reset">
               {until(group.headline.resetsAt, now)}
             </span>
-            <Bar used={group.headline.usedPercent} label={group.name} testId="subscriptions.provider.bar" />
+            <Bar
+              used={group.headline.usedPercent}
+              label={`${group.name} – ${total}`}
+              testId="subscriptions.provider.bar"
+            />
             <span className={`${USED} font-semibold`} data-testid="subscriptions.provider.used">
               {percent(group.headline.usedPercent)}
             </span>

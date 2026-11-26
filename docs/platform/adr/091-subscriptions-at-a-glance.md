@@ -31,10 +31,17 @@ operator's token files are not records and appear only in `GET /v1/orgs/{org}/qu
 2. **Providers are drivers.** Rows are grouped by provider; a provider is one entry of a list (display name per ID,
    `claude` and `openai` today) and an unknown ID shows itself, so a further provider needs no change of the view.
 3. **Figures.** Percentages are the used share as measured; bars are coloured by what is left – amber from 70 % used
-   (30 % left), red from 90 % used (10 % left). The headline of a provider is the week of its most-used account (else
-   its fullest window); the detail windows show the highest use of each window across the accounts. Nothing missing is
-   shown as 0 %. A measurement older than 60 minutes is marked old. Times to the reset read as the local dashboard's
-   (`5 d 19 h`, `3 h 12 min`, `4 min`, `<1 min`, due); ages as `N s/min/h/d ago`.
+   (30 % left), red from 90 % used (10 % left). The line of a provider shows the total of all its accounts, never its
+   fullest account: each window (5 hours, week, week per model, fullest window) counts the accounts that have a reading
+   of it – its used share is their mean, every account weighted equally (an account without that window does not
+   count), its time the one to the next reset among them. The headline is the total of the week (else the fullest
+   total window), the detail windows are the totals of each window; the line says that it stands for all accounts
+   ("all 9", with one account "1 account"), so it is not taken for an account of the same name. Below, every account
+   keeps its own bar; "sort by used" orders the providers by the headline total. Nothing missing is shown as 0 %. A
+   measurement older than 60 minutes is marked old; the headline is old when one of the readings it counts is. Times
+   to the reset read as the local dashboard's (`5 d 19 h`, `3 h 12 min`, `4 min`, `<1 min`, due); ages as
+   `N s/min/h/d ago`. (Until 2026-11-26 the headline was the week of the most-used account and the windows the highest
+   use across the accounts: with nine subscriptions it read 99 % while about a fifth of the weekly quota was left.)
 4. **Where.** A card on the home page (the situation view of the landing organization, which needs no choice since
    KOR-68 stage 0), collapsed and opened per provider, with a link to the page `/subscriptions` (both switches, the
    table) and from the settings. The card and the page load lazily; the first load of the app does not grow. Without

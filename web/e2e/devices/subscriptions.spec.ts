@@ -39,6 +39,8 @@ test('the readings show per provider, opened, detailed, sorted and in the table'
   await page.goto(`/o/${user.org}`);
   await page.getByTestId('login.submit').click();
   const card = page.getByTestId('subscriptions.card');
+  // the provider line is the total of its accounts; with one account that is its own week
+  await expect(card.getByTestId('subscriptions.provider.total')).toHaveText('1 account');
   await expect(card.getByTestId('subscriptions.provider.used')).toHaveText('82%');
   await expect(card.getByTestId('subscriptions.provider.bar')).toHaveAttribute('data-level', 'warn');
   await card.getByTestId('subscriptions.provider.summary').click();

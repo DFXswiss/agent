@@ -26,6 +26,7 @@ import {
   type QuotaWindow,
   reading,
   type SubscriptionRow,
+  totalWindows,
   untilParts,
   usedLevel,
 } from '../../../src/core/subscriptions/subscriptions';
@@ -569,27 +570,107 @@ describe('providers', () => {
     );
   });
 
-  it('groups by provider with the highest use per window, by ID or by the used share', () => {
+  it('totals a window over several accounts: the mean, every account weighted equally', () => {
+    const totals = totalWindows([
+      rowOf('a', 'claude', [w('seven_day', 99), w('five_hour', 40)], ms(LATER)),
+      rowOf('b', 'claude', [w('seven_day', 60), w('five_hour', 10)], ms(AT)),
+      rowOf('c', 'claude', [w('seven_day', 81), w('weekly:opus', 30)], ms(LATER)),
+    ]);
+    expect(totals).toEqual([
+      { window: 'five_hour', usedPercent: 25, resetsAt: null, accounts: 2, measuredAt: ms(AT) },
+      { window: 'seven_day', usedPercent: 80, resetsAt: null, accounts: 3, measuredAt: ms(AT) },
+      { window: 'weekly:opus', usedPercent: 30, resetsAt: null, accounts: 1, measuredAt: ms(LATER) },
+    ]);
+    // nine accounts, one of them nearly used up: the total, not the fullest account
+    const nine = Array.from({ length: 9 }, (_, n) => rowOf(`s${n}`, 'claude', [w('seven_day', n === 0 ? 99 : 80)]));
+    expect(totalWindows(nine)[0]).toMatchObject({ window: 'seven_day', accounts: 9 });
+    expect(totalWindows(nine)[0]!.usedPercent).toBeCloseTo((99 + 8 * 80) / 9);
+  });
+
+  it('leaves an account without the window out of its total', () => {
+    const totals = totalWindows([
+      rowOf('a', 'claude', [w('five_hour', 90), w('seven_day', 20)]),
+      rowOf('b', 'claude', [w('seven_day', 40)]),
+      rowOf('c', 'claude', [w(FULLEST, 70)]),
+      rowOf('d', 'claude', [], ms(LATER)),
+    ]);
+    expect(totals.map((total) => [total.window, total.usedPercent, total.accounts])).toEqual([
+      ['five_hour', 90, 1],
+      ['seven_day', 30, 2],
+      [FULLEST, 70, 1],
+    ]);
+    // a window repeated in one reading counts once for that account
+    expect(totalWindows([rowOf('a', 'claude', [w('seven_day', 10), w('seven_day', 90)])])[0]).toMatchObject({
+      usedPercent: 10,
+      accounts: 1,
+    });
+  });
+
+  it('has no total when nothing is measured', () => {
+    expect(totalWindows([])).toEqual([]);
+    expect(totalWindows([rowOf('a', 'claude', null), rowOf('b', 'claude', [])])).toEqual([]);
+    expect(providerGroups([rowOf('a', 'claude', null), rowOf('b', 'claude', [])])[0]).toMatchObject({
+      headline: null,
+      headlineAt: null,
+      windows: [],
+    });
+  });
+
+  it('takes the time to the next reset of the counted accounts', () => {
+    const reset = (name: string, used: number, at: string | null): QuotaWindow => ({
+      window: name,
+      usedPercent: used,
+      resetsAt: at === null ? null : ms(at),
+    });
+    const totals = totalWindows([
+      rowOf('a', 'claude', [reset('seven_day', 50, LATER), reset('five_hour', 10, null)]),
+      rowOf('b', 'claude', [reset('seven_day', 50, EARLIER)]),
+      rowOf('c', 'claude', [reset('seven_day', 50, null), reset('five_hour', 10, null)]),
+      // a reset of an account without the window does not count
+      rowOf('d', 'claude', [reset('weekly:opus', 50, '2026-11-24T00:00:00.000Z')]),
+    ]);
+    expect(totals.find((total) => total.window === 'seven_day')?.resetsAt).toBe(ms(EARLIER));
+    expect(totals.find((total) => total.window === 'five_hour')?.resetsAt).toBeNull();
+  });
+
+  it('groups by provider with the total per window, by ID or by the used share of the total', () => {
     const rows = [
       rowOf('c1', 'claude', [w('five_hour', 30), w('seven_day', 50)], ms(AT)),
       rowOf('c2', 'claude', [w('seven_day', 80), w('five_hour', 10)], ms(LATER)),
+      rowOf('c3', 'claude', [w(FULLEST, 99)], ms(EARLIER)),
       rowOf('o1', 'openai', null),
       rowOf('z1', 'zeta', [w(FULLEST, 95)]),
+      rowOf('y1', 'yota', [w('seven_day', 100)]),
+      rowOf('y2', 'yota', [w('seven_day', 20)]),
       rowOf('a1', 'alpha', null),
     ];
     const groups = providerGroups(rows);
-    expect(groups.map((group) => group.provider)).toEqual(['alpha', 'claude', 'openai', 'zeta']);
+    expect(groups.map((group) => group.provider)).toEqual(['alpha', 'claude', 'openai', 'yota', 'zeta']);
     const claude = groups[1]!;
     expect(claude).toMatchObject({
       name: 'Claude',
-      headline: { window: 'seven_day', usedPercent: 80 },
-      windows: [w('five_hour', 30), w('seven_day', 80)],
+      headline: { window: 'seven_day', usedPercent: 65, accounts: 2 },
+      windows: [
+        { window: 'five_hour', usedPercent: 20, accounts: 2 },
+        { window: 'seven_day', usedPercent: 65, accounts: 2 },
+        { window: FULLEST, usedPercent: 99, accounts: 1 },
+      ],
       newest: ms(LATER),
-      headlineAt: ms(LATER),
+      // the oldest reading the headline counts (c3 has no week)
+      headlineAt: ms(AT),
     });
-    expect(claude.rows.map((found) => found.key)).toEqual(['c1', 'c2']);
+    expect(claude.rows.map((found) => found.key)).toEqual(['c1', 'c2', 'c3']);
     expect(groups[2]).toMatchObject({ name: 'ChatGPT', headline: null, headlineAt: null, windows: [], newest: null });
-    expect(providerGroups(rows, true).map((group) => group.provider)).toEqual(['zeta', 'claude', 'alpha', 'openai']);
+    // without a week the fullest total window is the headline
+    expect(groups[4]!.headline).toMatchObject({ window: FULLEST, usedPercent: 95 });
+    // sorted by the total: yota (60 %) after claude (65 %), although one of its accounts is used up
+    expect(providerGroups(rows, true).map((group) => group.provider)).toEqual([
+      'zeta',
+      'claude',
+      'yota',
+      'alpha',
+      'openai',
+    ]);
     expect(providerGroups([])).toEqual([]);
   });
 
