@@ -289,6 +289,7 @@ def run_request(
             cfg.home = home
             cfg.model_upstream_anthropic = "http://127.0.0.1:9"
             cfg.model_catalog = None
+            cfg.login_sandbox = "process"
             for name, value in (config or {}).items():
                 setattr(cfg, name, value)
             env.context.host.env = {"PATH": env_path}

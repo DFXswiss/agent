@@ -135,7 +135,7 @@ def test_an_automatic_login_signs_in_with_the_given_address(
 
     async def check(run: Run) -> None:
         hub = SubscriptionHub(run.env.hub).install()
-        bodies = await run.wait_bodies(2, seconds=60)
+        bodies = await run.wait_bodies(3, seconds=60)
         assert bodies[-1]["automation"] == "failed"
         login.auth.set_scenario(Scenario())
         follow = await run.follow({"code": await asyncio.to_thread(code_for, login, bodies[-1]["url"])})
