@@ -885,3 +885,17 @@ def test_live_upstreams(ctx: Context, node: FakeNode, tmp_path: Path) -> None:
     assert [spawned[0] for spawned in node.spawned].count("tunnels-live") == 2  # an ended tunnel watcher is restarted
     for bad in (None, {"platform_key": 5}, {"platform_key": "short"}):
         assert call(ctx, "POST", "/live/upstreams", bad)[0] == 400
+
+
+def test_mail_deliver(ctx: Context, node: FakeNode) -> None:
+    body = {"to": "a@example.test", "from": "s@example.test", "subject": "Sign in", "text": "https://x.test/l"}
+    assert call(ctx, "POST", "/mail/deliver", body)[0] == 409
+    ctx.doubles["mail"] = Double(node, "mail", 21016, 21016)
+    node.answer = lambda _m, _u, _b: {"status": 200, "body": {"delivered": [{"user": "a@example.test"}]}}
+    assert call(ctx, "POST", "/mail/deliver", {**body, "spam": True}) == (
+        200,
+        {"delivered": [{"user": "a@example.test"}]},
+    )
+    assert node.https[-1][1].endswith("21016/_double/deliver")
+    for bad in (None, {**body, "x": 1}, {**body, "to": ""}, {**body, "html": 1}, {**body, "spam": "yes"}):
+        assert call(ctx, "POST", "/mail/deliver", bad)[0] == 400

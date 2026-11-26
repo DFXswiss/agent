@@ -2,7 +2,7 @@
 // signed client, the background-job runner, the event reader and the live channel of the active org.
 //
 // - `restore()` at start-up: a stored, unexpired session key makes the browser `locked` (signed requests work, but
-//   identity and scope keys live only in memory, section 2.3). A browser that stays signed in (rule E-40, ADR-099)
+//   identity and scope keys live only in memory, section 2.3). A browser that stays signed in (rule E-40, ADR-102)
 //   opens the identity with its device key (`persist/device-key.ts`) and goes on to `unlocked` without the passkey.
 // - `begin(signIn)` stores a new session key (non-extractable, IndexedDB) – first sign-in and renewal alike.
 // - `unlock(identity)` checks the identity against the registered public keys (`GET /v1/me`), loads the profile,
@@ -350,7 +350,7 @@ export class AppSession {
   }
 
   /**
-   * The renewal check of a browser that stays signed in (rule E-40, ADR-099): a session another tab renewed or signed
+   * The renewal check of a browser that stays signed in (rule E-40, ADR-102): a session another tab renewed or signed
    * in for the same user (IndexedDB) is taken over; when this browser's last renewal is an hour old or the session is
    * about to end, `POST /v1/session/renew` (signed by the still valid key) moves its end and the new end is stored for
    * every tab. One tab at a time (`exclusive`); a failure leaves the session as it is (an ended one shows the usual

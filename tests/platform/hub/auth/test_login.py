@@ -1,6 +1,6 @@
 """U-HUB-passkeys (login) and U-HUB-auth (sessions): `POST /v1/passkeys/login/begin|finish`, the session-key
 resolver of the signature gate, `POST /v1/session/end` and `POST /v1/session/renew` (03-api.md sections 1, 4.1, 12;
-04-crypto.md sections 4.9, 5.4; ADR-099).
+04-crypto.md sections 4.9, 5.4; ADR-102).
 
 The certificate is verified against the stored passkey (V1-V11), bound to the ceremony's hub value, the counter
 must not regress, the session lasts at most 43080 s, and the session key then signs every request: expired →
@@ -317,7 +317,7 @@ def test_session_end_needs_a_session(browser: FakeBrowser) -> None:
     assert (response.status_code, response.json()) == (401, {"error": "signature_missing"})
 
 
-# --- renewal (rule E-40, ADR-099) -------------------------------------------------------------------------------------
+# --- renewal (rule E-40, ADR-102) -------------------------------------------------------------------------------------
 
 
 def test_renewal_extends_the_same_session(browser: FakeBrowser, account: Account) -> None:

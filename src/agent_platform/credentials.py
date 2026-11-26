@@ -22,7 +22,7 @@ from agent_platform.errors import PlatformError
 from agent_runner.crypto.credential import new_header, open_credential, seal_credential, verify_credential
 from agent_runner.crypto.encoding import body_json, format_time, parse_json, parse_time
 from agent_runner.crypto.errors import CryptoError
-from agent_runner.crypto.ids import uuid7
+from agent_runner.crypto.ids import is_uuid7, uuid7
 
 KINDS = ("github", "anthropic_api_key", "claude_subscription", "mailbox")
 LOGIN_RE = re.compile(r"[A-Za-z0-9-]{1,39}")
@@ -32,6 +32,11 @@ HOST_RE = re.compile(r"[A-Za-z0-9.-]{1,253}")
 IMAP_USER_RE = re.compile(r"[ -~]{1,256}")
 SCOPE_RE = re.compile(r"[a-z0-9:_-]{1,64}")
 NAME_RE = re.compile(r"[ -;=?-~]{1,255}")
+MAILBOX_NAME_RE = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
+MAILBOX_FIELDS = frozenset({"imap_host", "imap_port", "imap_user", "imap_password", "email"})
+MAILBOX_OPTIONAL = frozenset({"name", "purpose", "use"})
+MAX_PURPOSE = 500
+MAX_RELEASES = 50
 SEED_RE = re.compile(r"[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]")
 SSH_PUBLIC_RE = re.compile(r"ssh-ed25519 [A-Za-z0-9+/]{68}( [!-~]{1,64})?")
 ORIGINS = ("setup_token", "login_token")
@@ -111,16 +116,35 @@ def valid_github(body: dict[str, Any]) -> bool:
     )
 
 
-def valid_mailbox(body: dict[str, Any]) -> bool:
-    password = body.get("imap_password")
+def valid_release(value: object) -> bool:
+    """`use` of a mailbox body: `{wgs}`, distinct workgroup IDs (ADR-099 section 3)."""
+    if not isinstance(value, dict) or set(value) != {"wgs"}:
+        return False
+    wgs = value["wgs"]
     return (
-        set(body) == {"imap_host", "imap_port", "imap_user", "imap_password", "email"}
+        isinstance(wgs, list)
+        and len(wgs) <= MAX_RELEASES
+        and all(is_uuid7(wg) for wg in wgs)
+        and len(set(wgs)) == len(wgs)
+    )
+
+
+def valid_mailbox(body: dict[str, Any]) -> bool:
+    """A body of `contracts/credentials/mailbox.json`; `name`, `purpose` and `use` are optional (ADR-099 section 2)."""
+    password = body.get("imap_password")
+    purpose = body.get("purpose", "-")
+    return (
+        MAILBOX_FIELDS <= set(body) <= MAILBOX_FIELDS | MAILBOX_OPTIONAL
         and _text(body["imap_host"], HOST_RE)
         and _count(body["imap_port"], 1, 65535)
         and _text(body["imap_user"], IMAP_USER_RE)
         and isinstance(password, str)
         and 1 <= len(password) <= 1024
         and is_email(body["email"])
+        and ("name" not in body or _text(body["name"], MAILBOX_NAME_RE))
+        and isinstance(purpose, str)
+        and 1 <= len(purpose) <= MAX_PURPOSE
+        and ("use" not in body or valid_release(body["use"]))
     )
 
 

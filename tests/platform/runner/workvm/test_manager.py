@@ -8,6 +8,7 @@ import io
 import json
 import tarfile
 import time
+from dataclasses import replace
 from datetime import timedelta
 from functools import partial
 from pathlib import Path
@@ -1273,3 +1274,67 @@ def test_the_disk_quota_holds_requests_and_the_pool(world: World) -> None:
 def test_without_a_disk_quota_the_disk_is_not_checked(world: World) -> None:
     world.settings = manager_module.Settings(**{**world.settings.__dict__, "disk_quota_gib": 0})
     assert world.run(request)["created"] is True
+
+
+# -- a restart without the volume of the slot homes (HOT-25) ----------------------------------------------------------
+
+
+def test_a_slot_lima_cannot_list_stops_neither_the_reconciliation_nor_the_sweep(world: World) -> None:
+    async def body(vms: WorkVms) -> int:
+        world.instances["wp-t-wvm-orphan1"] = "Stopped"
+        world.slot_of["wp-t-wvm-orphan1"] = 1
+        world.fail_list = {0}
+        await WorkVms(vms.deps).reconcile()
+        world.instances["wp-t-wvm-orphan2"] = "Stopped"
+        world.slot_of["wp-t-wvm-orphan2"] = 1
+        return await vms.sweep()
+
+    assert world.run(body) == 1
+    assert world.instances == {}
+    assert sum(line.startswith("runner.workvm list_failed slot=0 ") for line in world.logs) == 2
+    assert sum(line == "runner.workvm orphan_deleted slot=1" for line in world.logs) == 2
+
+
+def test_an_orphan_lima_cannot_delete_does_not_stop_the_reconciliation(world: World) -> None:
+    async def body(vms: WorkVms) -> None:
+        world.instances["wp-t-wvm-orphan"] = "Stopped"
+        world.slot_of["wp-t-wvm-orphan"] = 0
+        world.fail = {"delete"}
+        await WorkVms(vms.deps).reconcile()
+
+    world.run(body)
+    assert "wp-t-wvm-orphan" in world.instances
+    assert any(line.startswith("runner.workvm orphan_delete_failed slot=0 ") for line in world.logs)
+
+
+def test_a_work_vm_whose_slot_home_is_gone_counts_as_deleted(world: World) -> None:
+    """The volume hung elsewhere after the restart: the real slot command finds no home and no instance, so the
+    reconciliation deletes the VMs left over without an error and the sweep has nothing to do again."""
+    from agent_runner.vm.lima import Lima  # noqa: PLC0415
+    from agent_runner.workvm.shell import SlotCommand  # noqa: PLC0415
+
+    async def body(vms: WorkVms) -> int:
+        await request(vms)
+        command = SlotCommand(("wpwvm00", "wpwvm01"), home_root=str(world.tmp / "gone"))
+        vms.deps.lima_for = lambda slot: Lima(command.sync_runner(slot), prefix="wp-t-")
+        await WorkVms(vms.deps).reconcile()
+        return await vms.sweep()
+
+    assert world.run(body) == 0
+    assert [row["state"] for row in rows(world)] == ["deleted"]
+    assert not any("delete_failed" in line for line in world.logs)
+
+
+def test_no_work_vm_is_offered_while_the_volume_is_missing(world: World) -> None:
+    async def missing() -> bool:
+        return False
+
+    async def body(vms: WorkVms) -> tuple[str | None, bool, str | None, bool]:
+        assert await vms.check_volume() is True  # the default: in place
+        vms.deps.volume_ok = missing
+        gone = await vms.available(), await vms.check_volume()
+        vms.deps.settings = replace(vms.deps.settings, slots=0)
+        return (*gone, await vms.available(), await vms.check_volume())
+
+    assert world.run(body) == (None, False, None, True)
+    assert world.logs.count("runner.workvm volume_missing") == 1

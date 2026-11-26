@@ -38,7 +38,7 @@ test hub (`scripts/hub_test_server.py` starts it on `--port` with the hub's writ
   access to `wg` (sequence 0, no log entry: people that never sign in) and one open task in `wg` each (numbered by the
   hub's trigger, no sealed events, no session); answers `{"owners": [...]}` in creation order.
 - `POST /users/<id>/sessions/expiring {"seconds"}`: every open browser session of the user ends `seconds` from now
-  (rule E-40, ADR-099: the expiry that a browser which stays signed in renews silently); answers `{"sessions": n}`.
+  (rule E-40, ADR-102: the expiry that a browser which stays signed in renews silently); answers `{"sessions": n}`.
 
 Frames and hints of these changes reach the hub's browsers over the PostgreSQL bus (`hub_stream`), exactly like the
 frames of another hub process (`agent_hub.stream.bus`). Only loopback, only for tests.

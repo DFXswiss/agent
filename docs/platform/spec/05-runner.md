@@ -36,7 +36,7 @@ document differ, this document wins; §4.6 lists the spike defects that MUST NOT
 | `agent-runner enroll --hub URL (--code CODE \| --code-file PATH) [--platform]` | §2.1; `--code-file` reads the code from a file (at most 4 KiB), so it never appears in an argv (§16) |
 | `agent-runner run` | foreground daemon (development, tests, launchd target) |
 | `agent-runner status [--json]` | identity, hub connection, outbox backlog, VMs, sessions, pool, capacity |
-| `agent-runner doctor` | checks: Lima ≥ 2.3, vz available, golden ready, Landlock ABI in golden (from build record), PostgreSQL, login command on the host (`login_cli`: `LOGIN_ARGV[0]` resolved like §11.2; for the default command its `--version`, with a time limit and the login's allow-list env, equals the golden's Claude Code pin, else warn `version_mismatch`; missing or not executable: fail `login_cli_missing`; details in `runbooks/runner-installation.md` §4), hub reachability and pinned key, textfile dir writable, the operator's subscriptions (`operator_subscriptions`: ok `off`/`usable` with the count of usable token files, warn `files_ignored`/`none_usable`/`dir_unusable`; no file name or organization; ADR-052), clock skew < 5 s against hub time, the operator's GitHub token file (`operator_github`: ok `off`/`usable`, warn with the reason; §11.4) |
+| `agent-runner doctor` | checks: Lima ≥ 2.3, vz available, golden ready, Landlock ABI in golden (from build record), PostgreSQL, login command on the host (`login_cli`: `LOGIN_ARGV[0]` resolved like §11.2; for the default command its `--version`, with a time limit and the login's allow-list env, equals the golden's Claude Code pin, else warn `version_mismatch`; missing or not executable: fail `login_cli_missing`; details in `runbooks/runner-installation.md` §4), hub reachability and pinned key, textfile dir writable, the operator's subscriptions (`operator_subscriptions`: ok `off`/`usable` with the count of usable token files, warn `files_ignored`/`none_usable`/`dir_unusable`; no file name or organization; ADR-052), clock skew < 5 s against hub time, the operator's GitHub token file (`operator_github`: ok `off`/`usable`, warn with the reason; §11.4), the volume of the work VM slot homes (`workvm_volume`: ok `off`/`self`/`mounted`, fail `not_mounted`, warn `fstab_missing`; `13-work-vm.md` §6.1, HOT-25) |
 | `agent-runner image build [--claude-version V]` / `image list` / `image retire VERSION` | §3.1 |
 | `agent-runner pool status` | pool VMs and refill state |
 | `agent-runner service install` / `service uninstall` | §1.1 |
@@ -91,6 +91,15 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
   `agent_cli.keys.create_key`), `pg/` (own PostgreSQL cluster managed like `agent_cli.pg`: `initdb --auth=trust`,
   `127.0.0.1` only, own port file, `LC_ALL=C`), `golden/` build records, `log/`, `tmp/` (0700; per-operation
   scratch, wiped at start).
+- Durable commits (HOT-25): a commit may already be on its way to the hub (outbox), so a power cut must not take it.
+  On macOS `fsync` does not empty the drive's write cache (only `F_FULLFSYNC`), and PostgreSQL's default
+  `wal_sync_method` there loses the last commits in a power cut. Every start of the store checks
+  `wal_sync_method = fsync_writethrough` and sets it when it differs (`ALTER SYSTEM` and a reload, no restart: a
+  command that opens the store beside the running daemon never stops its cluster), so new and existing installations
+  run with it after their next start; a value that does not hold stops the daemon
+  (`store_not_durable`). Other systems keep PostgreSQL's default. Cost measured on a runner device (Apple silicon,
+  internal SSD): one writer 0.10 → 3.8–4.8 ms per commit (≈ 9 600 → 210–260 commits/s), eight writers ≈ 16 000 →
+  ≈ 1 100 commits/s through group commit.
 - Schema `runner` (`02-data-model.md` §4). Scope keys are stored encrypted with the storage key and decrypted
   only into memory.
 
@@ -156,8 +165,19 @@ Triggers: every WebSocket hint, every 30 s, after reconnect. Steps (each idempot
   position (`GET /v1/device/state`: `active`, `last_origin_seq == expected − 1`), renumbers its stored items gaplessly
   from `expected` (sealed bytes kept, `04-crypto.md` §5.12), reports the loss (log and audit `runner.alert`
   `{alert:"outbox_items_lost",value:<count>}`) and keeps pushing; unconfirmed → retried (KOR-10). `409
-  origin_seq_conflict` is fatal: stop the `sync` task, keep sessions running, write `runner.alert
-  origin_seq_conflict` to the log and the metrics (`agent_runner_device_sync_fatal 1`), require operator action
+  origin_seq_conflict` after a power cut that cost the store its newest commits (the hub holds items the store lost,
+  and the store gave their numbers to new items) is repaired once per process (HOT-25). The hub does not name the
+  disputed item and the store may still hold items the hub has (`replayed`; their `acked_through` is the hub's
+  position, beyond the batch, and only the batch counts): a conflict on several items is narrowed by pushing single
+  items until one meets it. When no push of this process stored anything yet, that item is `pushed_origin_seq + 1`,
+  and `GET /v1/device/state` (`active`) puts the hub at or past it and at most 500 items ahead of
+  `pushed_origin_seq`, the runner moves its
+  unacknowledged items behind the hub's position (sealed bytes kept), takes it as `pushed_origin_seq`, reports the
+  lost items (log and audit `runner.alert {alert:"outbox_conflict_recovered",value:<count>}`) and keeps pushing; an
+  unconfirmed position is retried. Every other conflict is real – two devices with one identity (it comes after
+  answered pushes, or again), a store restored from an old backup (far behind) – and fatal: stop the `sync` task,
+  keep sessions running, log `runner.sync conflict_fatal reason=after_answer|not_contiguous|hub_behind|too_far` and
+  `runner.alert origin_seq_conflict`, set the metric (`agent_runner_device_sync_fatal 1`), require operator action
   (`agent-runner doctor` explains). `status:"rejected"` items are logged and skipped.
 - Retention (task `retention`, KOR-03): acknowledged outbox items older than 1 h are deleted (a prefix only; the item
   with the highest `origin_seq` always stays; nothing while the hub's position is unknown); `prompt_event` rows whose
@@ -659,6 +679,12 @@ processed (a child: its inherited stamp), for a work VM the acting user when it 
   `suspended`. Next prompt → `resuming` → start with `--resume <claude_session_id>` → deliver. When the workgroup's
   VM is no longer the session's VM (deleted, replaced, another VM), the session moves to it and is restored from its
   newest checkpoint (§6.6) instead of failing `vm_start_failed`.
+- Device restart (HOT-25): a main session still `working` or `idle` in a VM whose row is `stopped` (the VM
+  reconciliation found the instance stopped after the restart, so no agent process of it runs) becomes `suspended`
+  with the reason `device_restart` (a `working` one through `idle`, the only way the hub's state machine leads to
+  `suspended`); one in `agent_starting` or `prompt_delivering` fails `device_shutdown` like an interrupted start –
+  after the VM reconciliation at the start and in every reconcile. The next prompt of a suspended one, or one that
+  already waits, resumes it like any suspended session (its VM is started again, `--resume`).
 - Task closed → all sessions `stopping` → `stopped`; directories kept 7 days, then deleted by control.
 - Failure reasons: the closed list `contracts/enums/session-failure-reasons.json` (`03-api.md` §11):
   `model_access_unavailable`, `vm_start_failed`, `guest_unreachable`, `sandbox_failed`, `agent_start_failed`,
@@ -1318,6 +1344,42 @@ that an organisation requires SSO authorisation of the token (the URL of the hea
 `upstream_error`. Every executor works with both kinds of connection (device flow and existing token, §11.4).
 Every GitHub request carries `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`, timeout
 30 s, no redirects except for tarball downloads (to the codeload host of the configured web URL).
+
+### 12.2 Operations without a VM; `mail.find` (KOR-74, ADR-099)
+
+**Rule.** What can be a platform operation needs no VM. A session gets a work VM or a browser VM only for what really
+needs one (its own code, a build, a test, a page in a browser). Everything the device can do itself with a credential
+the session must not see - reading a mailbox, a GitHub call, asking a person - is an operation executed by the runner
+on the device, recorded and audited like every operation, with the credential opened on the device for that one use.
+A new need of sessions is checked against this rule before a VM tool is offered for it.
+
+`mail.find` (`agent_runner.mail`):
+- **Which mailbox.** `GET /v1/device/mailboxes?wg_id=<session's workgroup>` lists the candidates (the hub's plaintext
+  mirror). A record is used only when it verifies and opens under its owner's `CK`, its **sealed** `use.wgs` names the
+  session's workgroup and its owner has explicit `read`/`write` access there on the verified membership log now. The
+  session names it by `name` or ID; anything else is `not_found` with the names released there and the remedy
+  ("Its owner releases a mailbox in the settings under Mailboxes or with agent-platform mailbox release.").
+- **One look** (`mail.reader`, in a thread, one connection per look): implicit TLS on the mailbox's port with the
+  device's trust store, 30 s per connection and command; `LOGIN`; for `INBOX` and the spam folder (`\Junk` flag, else
+  its name) `EXAMINE`, `UID SEARCH` (`FROM`, `SUBJECT`, `SINCE`/`BEFORE` a day wider than asked), headers of the
+  newest 200 hits (`BODY.PEEK[HEADER]`, `INTERNALDATE`, `RFC822.SIZE`), the exact arrival window, the `limit` newest of
+  all folders; with `body` or `id` the mail up to 1 MiB (`BODY.PEEK[]` partial): the plain-text part or the HTML
+  reduced to text (at most 12 000 characters) and the distinct `http(s)` links (at most 20 of at most 2 000
+  characters); always `LOGOUT`. Nothing is marked read, moved, deleted or sent.
+- **Waiting.** `wait_seconds` > 0: a look every 5 s until a mail matches (arrived at or after `since`; without
+  `since` at or after two minutes before the request) or the wait ends (`messages: []`, `timed_out: true`, no
+  failure). The guest's `request_operation` waits `wait_seconds` + 20 s (at most 320 s) for this type, so the session
+  does not poll; a guest before 0.7.0 answers `pending` after 20 s as for every operation.
+- **Answer** at most 200 KiB (texts of the oldest answered mails are left out first, `text_truncated`).
+- **Failures**: `upstream_error` for a refused sign-in or command (the sentence never carries a server answer),
+  `timeout` (retryable) for a server that does not answer, `not_found` also for an `id` that is gone,
+  `hub_unreachable` (retryable) when the list cannot be read.
+- **Audit**: the outbox item `audit` `mail.read` (target `credential`/the mailbox ID) with `{operation_id, owner_id,
+  folder, count, waited_seconds, timed_out, result}` after every look that reached the mailbox - never an address,
+  subject, text, link or the password. The password lives only in the opened body for the operation and is cleared
+  after it; it is never logged.
+- Many `mail.find` run at once, each in its own thread and connection (bounded by the runner's worker threads); no
+  VM, slot or queue.
 
 ## 13. Subagents (ADR-088, ADR-038)
 

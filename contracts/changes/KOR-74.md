@@ -1,17 +1,32 @@
 # KOR-74 – contract changes
 
-ADR-027 section 3 (additive).
+ADR-027 section 3 (additive). Decision: ADR-099 (sessions read mailboxes through the platform).
 
-## `POST /v1/session/renew` (new)
+## Credential body (`credentials/mailbox.json`)
+- New optional `name` (`[a-z0-9][a-z0-9._-]{0,63}`), `purpose` (1-500 characters) and `use {wgs}` (the workgroups whose
+  sessions may read the mailbox). The kind `mailbox` holds several records per user (at most 100); the primary one is
+  the mailbox of the automatic login.
 
-Rule E-40 ("Angemeldet bleiben", ADR-099): a browser that stays signed in renews its session before it ends, signed
-by the still valid session key. New schemas `api/session-renew.request.json` (empty body, as `session/end`) and
-`api/session-renew.response.json` (`key_id` of the renewed session and its new `expires_at`; for an agent key, which
-does not expire, its key ID and `null`), their fixtures under
-`fixtures/api/session-renew.*`, and the row in `api/INDEX.json` (owner KOR-74; the specification row is
-`tests/platform/contracts/spec/endpoints-kor74.json`).
+## API (`api/INDEX.json`, `api/objects.json`)
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/me/mailboxes` | the caller's mailboxes with their release mirror |
+| `GET/PUT/DELETE /v1/mailboxes/{id}` | one own mailbox record; PUT takes `use {wgs}`, the plaintext mirror of the sealed release |
+| `GET /v1/device/mailboxes?wg_id=` | the mailbox records released to a workgroup, for an eligible device |
 
-## Audit action `auth.session_renew` (new)
+New objects `mailbox_use`, `mailbox_meta`, `mailbox_record`.
 
-Every renewal leaves its own audit row (ADR-063 section 1): `enums/audit-actions.json` (group `auth`) and the detail
-schema `audit/auth.session_renew.json` (`key_id`, as `auth.session_end`) with its fixtures. No existing schema changes.
+## Operation `mail.find` (`ops/`)
+New type `mail.find` (class `read`, no dedupe): parameters `mailbox`, `from`, `subject`, `since`, `until`, `folder`,
+`limit`, `body`, `id`, `wait_seconds`; result `{mailbox, messages, waited_seconds, timed_out}`; new `$defs`
+`mail_message_id`, `mail_message`. `events/objects.json` `body_operation_params` gains its alternative.
+
+## Device request `mailbox.check` (`requests/`)
+Optional `mailbox` (a `credentials/mailbox.json` body): check that mailbox instead of the primary one.
+
+## Audit
+Actions `read.me.mailboxes`, `read.mailbox`, `read.device.mailboxes` and the outbox action `mail.read` (detail
+`{operation_id, owner_id, folder, count, waited_seconds, timed_out, result}`).
+
+## Guest
+Version 0.7.0: the contracts the guest bundles change (`mcp/objects.json` references the operation results).

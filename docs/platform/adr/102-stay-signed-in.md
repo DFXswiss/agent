@@ -1,6 +1,6 @@
-# ADR-099: Stay signed in – the browser's device key opens the identity at start-up, the session renews itself with the still valid session key
+# ADR-102: Stay signed in – the browser's device key opens the identity at start-up, the session renews itself with the still valid session key
 
-Status: Accepted (2026-11-26, KOR-74)
+Status: Accepted (2026-11-26, KOR-76)
 
 Implements [E-40](../KONZEPT.md#e-40) (stay signed in on agent.dfx.swiss after a reload, in a new tab, after closing
 and reopening the tab and after a browser restart, until the user signs out), under [E-25](../KONZEPT.md#e-25) (change
@@ -92,7 +92,7 @@ applied by the hub (the passkey certificate keeps its 12 h bound).
   `ui/settings/sections/passkeys/ThisBrowser.tsx` (texts, renewal on and off), `ui/app/boot.tsx` (device keys and Web
   Locks); catalogs `login.*`, `passkeys.browser.*`.
 - Hub: `agent_hub/auth/sessions.py` (`renew_session`), route in `auth/routes.py`; contracts `api/session-renew.*` and
-  the audit action `auth.session_renew` (`contracts/changes/KOR-74.md`).
+  the audit action `auth.session_renew` (`contracts/changes/KOR-76.md`).
 - Tests: hub `tests/platform/hub/auth/test_login.py` (renewal); web `tests/core/account/session.test.ts` (restore,
   renewal, tabs, sign-out); Playwright `web/e2e/stay-signed-in.spec.ts` (reload, new tab, reopened tab, restarted
   browser, silent renewal of a session about to end – the device double sets the hub's session end, `POST

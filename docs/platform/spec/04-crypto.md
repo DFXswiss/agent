@@ -41,7 +41,7 @@ their vectors: [key model](../key-model.md)** (§11).
 | `KEK_rec` | AES-256 | browser | memory only | never |
 | User identity | X25519 `kem` + Ed25519 `sig` | browser at registration | identity bundle | public keys; bundle only encrypted |
 | Browser session key | P-256, non-extractable | browser per login | IndexedDB (non-extractable) | public key in session certificate |
-| Browser device key | AES-256-GCM, non-extractable | browser: "Stay signed in" (rule E-40, default on) or "Remember this browser" | IndexedDB (non-extractable), with the identity bundle it encrypts | never (ADR-006, ADR-099) |
+| Browser device key | AES-256-GCM, non-extractable | browser: "Stay signed in" (rule E-40, default on) or "Remember this browser" | IndexedDB (non-extractable), with the identity bundle it encrypts | never (ADR-006, ADR-102) |
 | Device identity | X25519 `kem` + Ed25519 `sig` | runner at enrollment | `$AGENT_RUNNER_HOME/keys/device.key` (0600) | public keys |
 | Platform root | Ed25519 | operator CLI (`agent-hub platform init`) | operator (offline file) | public key (config); log entries |
 | Hub response key | Ed25519 seed | operator | hub env `AGENT_HUB_SIGNING_KEY` | yes (it is the hub's own key) |
@@ -324,7 +324,7 @@ public key, 32-byte hub value, expiry), passkey assertion over `SHA-256(statemen
 session key and unlocks the identity. The certificate is unchanged by rule E-40: a browser that stays signed in renews
 its **session** at the hub (`POST /v1/session/renew`, signed by the still valid session key; the hub moves the
 session's end to 30 days from its clock), not the certificate; the certificate's 12 h bound applies to the login only
-([ADR-099](../adr/099-stay-signed-in.md)).
+([ADR-102](../adr/102-stay-signed-in.md)).
 
 ### 4.10 Dedupe tag **(new)**
 
@@ -499,7 +499,7 @@ existing `CK` is wrapped for the org's devices by catch-up (W2).
 4. PRF present → decrypt bundle. PRF absent (exported passkey, non-PRF manager) → offer recovery code (bundle via
    signed `GET /v1/me/bundles/recovery`, no rotation) or the IndexedDB device key; never fail silently
    (`prf_missing` UI state).
-5. **Stay signed in** (rule E-40, [ADR-099](../adr/099-stay-signed-in.md); default on, chosen on `/login`): after the
+5. **Stay signed in** (rule E-40, [ADR-102](../adr/102-stay-signed-in.md); default on, chosen on `/login`): after the
    unlock the browser device key (AES-256-GCM, non-extractable, IndexedDB) encrypts the identity bundle plaintext with
    `AAD = P‖"device-bundle\0"‖user_id` (the format of the "Remember this browser" entry, §2); with the choice off the
    browser's entry of the user is deleted. At start-up a stored, unexpired session key and this entry unlock without a
@@ -720,7 +720,7 @@ Log: `seq_conflict`, `log_empty`, `log_chain`, `log_genesis`, `log_accept`, `log
 | Intercepted invitation code | single use, expiry, revocation, accept visible in the log and the member list | First user of the code wins; channel must be confidential |
 | Active hub or another admin: forced admission (ADR-060) | identities only from root-anchored or invitation-anchored keys (§4.8), the admitter's own anchor in every `admit`, no credential key for orgs without consent, notification and immediate leave | The operator could certify a false identity for an account registered before ADR-060 (the certification of existing accounts rests on the hub's records at that moment unless `--code` is used); the holder of a platform invitation code could have the account of that invitation admitted with keys of its choice together with the hub; an admitter learns the admitted user's display name once it opens the org |
 | Removed member / unpaired device / demoted admin | atomic rotation batch (self-demotion and leaving: background rotation by the remaining admins), immediate refusal at the hub | Content already read |
-| Stolen phone or laptop | UV required on every ceremony; session and device keys non-extractable; 12 h certificates; passkey removal ends every session of the passkey at once | Unlocked open session until expiry or sign-out; a browser that stays signed in (rule E-40, ADR-099) opens without a gesture until the passkey is removed or the session is not used for 30 days – the user's own decision ("Stay signed in", default on; off on shared devices) |
+| Stolen phone or laptop | UV required on every ceremony; session and device keys non-extractable; 12 h certificates; passkey removal ends every session of the passkey at once | Unlocked open session until expiry or sign-out; a browser that stays signed in (rule E-40, ADR-102) opens without a gesture until the passkey is removed or the session is not used for 30 days – the user's own decision ("Stay signed in", default on; off on shared devices) |
 | XSS | CSP, no inline script, keys non-extractable after import | XSS can use keys while the page is open |
 | Compromised Claude Code session | Two sandbox layers (`05-runner.md` §4); no credentials, keys or network in the sandbox | Session can corrupt its own workspace and produce misleading output |
 | Compromised guest agent or VM | VM holds only its workgroup's plaintext and the in-memory model credential of running sessions; no device/scope keys; host only initiates connections | That workgroup's data and the provider credential in use |

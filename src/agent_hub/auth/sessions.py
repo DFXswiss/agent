@@ -4,7 +4,7 @@
 refuses later requests with the key as `401 key_revoked`; the open streams of the session end. An agent that calls it
 is revoked (`agent_hub.agents.revocation`, decisions KOR-24).
 
-`renew_session` keeps a browser signed in (rule E-40, ADR-099): the still valid session key signs the request (the
+`renew_session` keeps a browser signed in (rule E-40, ADR-102): the still valid session key signs the request (the
 gate refused it otherwise: expired → `session_expired`, ended, passkey removed or user disabled → `key_revoked`), and
 the hub moves `expires_at` of that same session to `SESSION_RENEW_SECONDS` from its clock (never earlier than it was).
 The key, its statement and `created_at` stay; the passkey certificate of the login keeps its 12 h bound. Audited as
@@ -29,7 +29,7 @@ from agent_hub.http.context import HubContext
 from agent_hub.stream.publish import close_keys
 
 SESSION_RENEW_SECONDS = 30 * 24 * 3600
-"""How long a renewed browser session lasts from the renewal (ADR-099 section 2): a browser that is not used for this
+"""How long a renewed browser session lasts from the renewal (ADR-102 section 2): a browser that is not used for this
 long needs the passkey again."""
 
 

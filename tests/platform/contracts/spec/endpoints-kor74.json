@@ -1,19 +1,53 @@
 {
-  "description": "Endpoints added by KOR-74 (ADR-099, rule E-40): a browser that stays signed in renews its session with the still valid session key (03-api.md section 4.1).",
+  "description": "Endpoints of mailboxes (ADR-099, KOR-74): the mailboxes of a user with their release, one mailbox record, and the device's read of the mailboxes released to a workgroup.",
   "rights": [
-    "user"
+    "user",
+    "device_eligible"
   ],
   "auth": [
-    "browser"
+    "browser",
+    "device"
   ],
   "endpoints": [
     {
-      "method": "POST",
-      "path": "/v1/session/renew",
+      "method": "GET",
+      "path": "/v1/me/mailboxes",
       "rights": [
         "user"
       ],
-      "section": "4.1"
+      "section": "4.8"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/mailboxes/{id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/mailboxes/{id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/mailboxes/{id}",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/mailboxes",
+      "rights": [
+        "device_eligible"
+      ],
+      "section": "6.1"
     }
   ]
 }
