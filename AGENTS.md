@@ -59,3 +59,8 @@ is absent, implementation uses model slot `first`. The pin is the default from
 `ai-accounts.json` and can be changed explicitly per task with
 `agent task models`. The two PR review pairs remain model slots `first` and
 `second`.
+
+Claude subscriptions of the platform are logged in side by side, each in its own
+login sandbox and with its own mailbox (ADR-098): `agent-platform subscriptions
+add-many --file` adds several at once, and a check for humans is answered by a
+person (`subscriptions check`), never by a model.

@@ -65,7 +65,34 @@ FAILURE_CODES = frozenset(
 )
 REQUEST_FAILED = "request_failed"
 SIGNING_OUTCOMES = ("registered", "scope_missing", "refused")
-PROGRESS_STAGES = frozenset({"browser_started", "email_entered", "magic_link_received", "authorized"})
+PROGRESS_STAGES = frozenset(
+    {
+        "browser_started",
+        "email_entered",
+        "magic_link_received",
+        "authorized",
+        "mail_code_received",
+        "registered",
+        "verified",
+    }
+)
+FALLBACK_REASONS = frozenset(
+    {
+        "disabled",
+        "no_sandbox",
+        "human_check",
+        "consent_missing",
+        "account_missing",
+        "unknown_page",
+        "mail_timeout",
+        "browser_failed",
+    }
+)
+"""Why a login's automation gave up (`authorize.reason`, KOR-73)."""
+IMAGE_DATA_RE = re.compile(r"[A-Za-z0-9+/]+={0,2}")
+IMAGE_DATA_MAX = 136536
+MAX_FRAMES = 100
+MAX_SIDE = 4096
 URL_RE = re.compile(r"https://[!-~]{1,2040}|http://(127\.0\.0\.1|localhost)(:[0-9]{1,5})?(/[!-~]{0,2000})?")
 USER_CODE_RE = re.compile(r"[A-Z0-9-]{4,16}")
 CODE_RE = re.compile(r"[!-~]{1,512}")
@@ -108,14 +135,34 @@ def _github(body: dict[str, Any]) -> bool:
     )
 
 
+def _count(value: object, most: int) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= most
+
+
+def _image(value: object) -> bool:
+    """The picture of a check for humans (`verify.image`, KOR-73): JPEG in base64 with its size."""
+    return (
+        isinstance(value, dict)
+        and _keys(value, {"width", "height", "data"})
+        and _count(value["width"], MAX_SIDE)
+        and _count(value["height"], MAX_SIDE)
+        and isinstance(value["data"], str)
+        and 4 <= len(value["data"]) <= IMAGE_DATA_MAX
+        and IMAGE_DATA_RE.fullmatch(value["data"]) is not None
+    )
+
+
 def _login(body: dict[str, Any]) -> bool:
     step = body.get("step")
     if step == "authorize":
         return (
-            _keys(body, {"step", "url"}, frozenset({"automation"}))
+            _keys(body, {"step", "url"}, frozenset({"automation", "reason"}))
             and _match(body.get("url"), URL_RE)
             and body.get("automation", "failed") == "failed"
+            and body.get("reason", "human_check") in FALLBACK_REASONS
         )
+    if step == "verify":
+        return _keys(body, {"step", "frame", "image"}) and _count(body["frame"], MAX_FRAMES) and _image(body["image"])
     if step == "progress":
         return _keys(body, {"step", "stage"}) and body.get("stage") in PROGRESS_STAGES
     email_valid = "email" not in body or _match(body["email"], EMAIL_RE, 254)
@@ -214,9 +261,11 @@ def submit(
     follows: str = "",
     *,
     org: str | None = None,
+    slot: str | None = None,
 ) -> dict[str, Any]:
-    """Seal and post a request to the device `(id, keys)` (with `org`: the plaintext `org_id` of a company account);
-    the prepared request `{id, kind, device, keys}`."""
+    """Seal and post a request to the device `(id, keys)` (with `org`: the plaintext `org_id` of a company account;
+    with `slot`: the plaintext subject of a root, the subscription of a `claude.login`, so logins of different
+    subscriptions run side by side, ADR-098 section 2); the prepared request `{id, kind, device, keys}`."""
     device, keys = target
     header = {
         "v": 1,
@@ -229,7 +278,9 @@ def submit(
         "enc_alg": ENC_ALG,
     }
     envelope = seal_request(header, keys[0], body_json(body), account.signer.sig)
-    plain = {} if org is None else {"org_id": org}
+    plain: dict[str, Any] = {} if org is None else {"org_id": org}
+    if slot is not None:
+        plain["slot"] = slot
     answer = account.call("POST", "/v1/device-requests", {"envelope": envelope, **plain})
     if answer.get("request_id") != header["id"] or not isinstance(answer.get("state"), str):
         raise unverified("response_invalid")
