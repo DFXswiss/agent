@@ -83,11 +83,16 @@ def test_a_writer_switches_a_mode_on_and_off(ops: Ops, published: MemoryPublishe
     response = _put(ops, task)
     assert response.status_code == 200, response.text
     record = response.json()["mode"]
-    assert (record["mode"], record["way"], record["chosen_by"], record["origin_task"]) == ("test", "web", writer.id, None)
+    assert (record["mode"], record["way"], record["chosen_by"], record["origin_task"]) == (
+        "test",
+        "web",
+        writer.id,
+        None,
+    )
     assert [frame["modes"] for frame in frames(published, "task")] == [[record]]
     assert _reconciles(published) == [ops.scene.device.id]
     [row] = audit_rows(ops.desk, "task.mode_on")
-    assert row[0] == "user" and str(row[1]) == writer.id
+    assert (row[0], str(row[1])) == ("user", writer.id)
     assert row[3] == {
         "mode": "test",
         "version": 1,
@@ -134,7 +139,12 @@ def test_a_mode_whose_needs_are_off_is_refused(ops: Ops, monkeypatch: pytest.Mon
 def test_a_person_chooses_modes_when_creating_a_task(ops: Ops, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(catalog, "CATALOG", (catalog.CATALOG[0], NEEDY))
     writer, task = ops.scene.writer, new_id()
-    body = {"task_id": task, "wg_id": ops.desk.wg, "events": ops.desk.task_events(writer, task), "modes": ["needy", "test"]}
+    body = {
+        "task_id": task,
+        "wg_id": ops.desk.wg,
+        "events": ops.desk.task_events(writer, task),
+        "modes": ["needy", "test"],
+    }
     response = writer.browser.post("/v1/tasks", json=body)
     assert response.status_code == 200, response.text
     assert [item["mode"] for item in response.json()["task"]["modes"]] == ["needy", "test"]
@@ -170,13 +180,14 @@ def test_a_sessions_agent_needs_an_instruction(ops: Ops) -> None:
 
 def _register(ops: Ops, session: str, triggered_by: str | None, op_type: str = "task.mode") -> str:
     body = ops.request(session, op_type)
-    body["triggered_by"] = triggered_by
+    if triggered_by is not None:
+        body["triggered_by"] = triggered_by
     response = ops.register(body)
     assert response.status_code == 200, response.text
     return str(body["operation_id"])
 
 
-def _device_put(ops: Ops, task: str, operation: str, on: bool = True, device: Any = None, mode: str = "test") -> Any:
+def _device_put(ops: Ops, task: str, operation: str, *, on: bool = True, device: Any = None, mode: str = "test") -> Any:
     client = ops.fleet.client(device or ops.device)
     return client.put(f"/v1/device/tasks/{task}/modes/{mode}", json={"on": on, "operation_id": operation})
 
@@ -238,7 +249,10 @@ def test_the_driver_state_is_kept_while_the_mode_is_on(ops: Ops) -> None:
     assert _driver(ops, task, "2026-11-26T10:00:01.000Z").json() == {"on": True}
     assert _driver(ops, task, "2026-11-26T10:00:00.500Z", step="older").json() == {"on": True}
     stored = ops.desk.rows("SELECT driver_state FROM hub.task_mode WHERE task_id = %s", task)[0][0]
-    assert stored["step"] == "woken" and stored["at"] == "2026-11-26T10:00:01.000Z"
+    assert (stored["step"], stored["at"]) == ("woken", "2026-11-26T10:00:01.000Z")
+    assert _driver(ops, task, "2026-11-26T10:00:01.500Z").json() == {"on": True}  # same step: stored, not audited
+    [row] = audit_rows(ops.desk, "task.mode_driver")
+    assert (row[0], str(row[1]), row[3]) == ("device", ops.device.id, {"mode": "test", "step": "woken"})
     assert _driver(ops, new_id(), "2026-11-26T10:00:02.000Z").status_code == 404
     assert _delete(ops, task).status_code == 200
     assert _driver(ops, task, "2026-11-26T10:00:03.000Z").json() == {"on": False}

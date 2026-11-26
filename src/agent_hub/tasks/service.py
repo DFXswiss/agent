@@ -269,7 +269,15 @@ def create_task(
         )
         if modes:
             # only what the person names: nothing is chosen by default (ADR-098 section 2)
-            choose(context, connection, cast(Principal, principal), user, task, modes, outcome.effects)
+            choose(
+                context,
+                connection,
+                principal=cast(Principal, principal),
+                user=user,
+                task=task,
+                names=modes,
+                effects=outcome.effects,
+            )
         outcome.body = {
             "task": rows.task_json(connection, task_id),
             "session": _session_answer(connection, str(session_id)),

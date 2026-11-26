@@ -1,8 +1,8 @@
 {
   "mode": "test",
   "version": 1,
-  "way": "sentence",
+  "way": "web",
   "chosen_by": "0193002d-0000-7000-8000-000000000001",
-  "operation_id": "0193002d-0000-7000-8000-000000000003",
+  "operation_id": null,
   "origin_task": null
 }

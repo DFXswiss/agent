@@ -3245,7 +3245,7 @@
       "request_kind": "query",
       "request": "api/modes-list.request.json",
       "response": "api/modes-list.response.json",
-      "read_resource": null,
+      "read_resource": "modes",
       "streaming": false,
       "owner": "KOR-75"
     },

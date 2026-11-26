@@ -13,7 +13,9 @@ from agent_hub.auth.keys import Principal
 from agent_hub.errors import HubError
 from agent_hub.modes import catalog, choice
 
-USER, AGENT, SESSION, ORIGIN, TASK, CHOOSER = (uuid.UUID(int=index, version=7) for index in range(1, 7))
+USER, AGENT, SESSION, ORIGIN, TASK, CHOOSER = (
+    uuid.UUID(f"0193002d-0000-7000-8000-00000000000{index}") for index in range(1, 7)
+)
 TEST = catalog.find("test", True)
 
 

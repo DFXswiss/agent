@@ -61,7 +61,9 @@ def test_the_mode_goes_off_when_the_chooser_loses_write_access(
     [row] = audit_rows(ops.desk, "task.mode_off")
     assert (row[0], row[1]) == ("hub", None)
     assert row[3] == {"mode": "test", "reason": "chooser_left", "chosen_by": ops.scene.writer.id, "operation_id": None}
-    assert ops.desk.rows("SELECT state, reason FROM hub.task_mode WHERE task_id = %s", task) == [("off", "chooser_left")]
+    assert ops.desk.rows("SELECT state, reason FROM hub.task_mode WHERE task_id = %s", task) == [
+        ("off", "chooser_left")
+    ]
     assert [frame.get("modes") for frame in frames(published, "task")] == [None]
 
 

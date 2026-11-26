@@ -121,6 +121,7 @@ DETAIL_KEYS = frozenset(
         "orgs",
         "paging_required",
         "reason",
+        "modes",
     }
 )
 INTERNAL_ERROR = "unavailable"

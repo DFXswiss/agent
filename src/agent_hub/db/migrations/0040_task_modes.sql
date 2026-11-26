@@ -28,8 +28,7 @@ CREATE TABLE hub.task_mode (
   settings_sealed jsonb       NULL,
   PRIMARY KEY (task_id, mode),
   CHECK (way <> 'sentence' OR op_id IS NOT NULL),
-  CHECK ((way = 'inherited') = (origin_task IS NOT NULL)),
-  CHECK ((state = 'off') = (reason IS NOT NULL))
+  CHECK ((way = 'inherited') = (origin_task IS NOT NULL))
 );
 CREATE INDEX task_mode_chooser ON hub.task_mode (chosen_by) WHERE state = 'on';
 

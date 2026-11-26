@@ -231,6 +231,8 @@
         "claim_invalid",
         "identity_unproven",
         "peer_outdated",
+        "mode_needs",
+        "mode_needs_instruction",
         "account_code_invalid",
         "handover_required",
         "handover_unexpected",
@@ -279,7 +281,9 @@
         "merge_pending",
         "merge_unsupported",
         "workspace_dirty",
-        "device_failed"
+        "device_failed",
+        "mode_not_instructed",
+        "mode_needs"
       ],
       "description": "enums/operation-error-codes.json"
     },

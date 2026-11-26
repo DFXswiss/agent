@@ -12,7 +12,9 @@ from tests.platform.hub.conftest import contracts_registry
 
 def test_catalog_equals_the_contract(repo_root: Path) -> None:
     index = json.loads((repo_root / "contracts/modes/INDEX.json").read_text(encoding="utf-8"))
-    entries = [json.loads((repo_root / "contracts" / item["file"]).read_text(encoding="utf-8")) for item in index["modes"]]
+    entries = [
+        json.loads((repo_root / "contracts" / item["file"]).read_text(encoding="utf-8")) for item in index["modes"]
+    ]
     assert [item["name"] for item in index["modes"]] == [entry["name"] for entry in entries]
     assert catalog.offered(True) == entries
     for entry in entries:

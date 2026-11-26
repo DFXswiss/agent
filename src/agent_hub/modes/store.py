@@ -190,21 +190,32 @@ def switch_off(
     return True
 
 
-def store_driver(connection: Connection, task_id: UUID, name: str, state: dict[str, Any]) -> bool:
-    """Keep the driver state a device reported while the mode is on (a report older than the stored one is ignored);
-    whether the mode is on."""
+def store_driver(
+    connection: Connection, task: TaskRow, name: str, state: dict[str, Any], *, device: UUID, now: datetime
+) -> bool:
+    """Keep the driver state a device reported while the mode is on; whether the mode is on. A report older than the
+    stored one changes nothing; a new step name is audited (`task.mode_driver`), a report within the same step only
+    stored (the drivers' operations carry their own audit, ADR-098 section 4)."""
     row = connection.execute(
         "SELECT driver_state FROM hub.task_mode WHERE task_id = %s AND mode = %s AND state = 'on' FOR UPDATE",
-        (task_id, name),
+        (task.id, name),
     ).fetchone()
     if row is None:
+        unchanged()
         return False
-    stored = row[0]
-    if stored is None or str(stored.get("at", "")) <= str(state["at"]):
-        connection.execute(
-            "UPDATE hub.task_mode SET driver_state = %s WHERE task_id = %s AND mode = %s",
-            (Jsonb(state), task_id, name),
-        )
+    stored = row[0] or {}
+    if str(stored.get("at", "")) > str(state["at"]):
+        unchanged()
+        return True
+    connection.execute(
+        "UPDATE hub.task_mode SET driver_state = %s WHERE task_id = %s AND mode = %s", (Jsonb(state), task.id, name)
+    )
+    if stored.get("step") == state["step"]:
+        unchanged()
+        return True
+    audit(
+        connection, Actor("device", device), "task.mode_driver", task, now, detail={"mode": name, "step": state["step"]}
+    )
     return True
 
 

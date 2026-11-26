@@ -93,7 +93,8 @@ class Step:
 
 
 class Driver(Protocol):
-    reads_github: bool
+    @property
+    def reads_github(self) -> bool: ...
 
     async def step(self, current: Current) -> Step: ...
 
@@ -273,14 +274,14 @@ async def _one(context: Any, mode: TaskMode, driver: Driver, at: datetime, budge
         if driver.reads_github:
             waiting = await budget.take(conn, f"github:{mode.chosen_by}", at)
             if waiting is not None:
-                await _save(conn, mode, step_name, counters, waiting, at)
+                await _save(conn, mode, step=step_name, counters=counters, next_at=waiting, at=at)
                 return False
         outcome = await driver.step(Current(mode.task_id, mode.mode, mode.chosen_by, step_name, counters))
         if outcome.step == step_name and dict(outcome.counters) == counters and not outcome.requests:
             return False
         refs = [await request(conn, session, mode.chosen_by, op_type, params) for op_type, params in outcome.requests]
         later = None if outcome.next_in is None else at + timedelta(seconds=outcome.next_in)
-        await _save(conn, mode, outcome.step, dict(outcome.counters), later, at)
+        await _save(conn, mode, step=outcome.step, counters=dict(outcome.counters), next_at=later, at=at)
     if outcome.wake and refs:
         await wake(context, session.id, refs[-1])
     if not await _report(context, mode, outcome, at):
@@ -294,6 +295,7 @@ async def _one(context: Any, mode: TaskMode, driver: Driver, at: datetime, budge
 async def _save(
     conn: AsyncConnection[Any],
     mode: TaskMode,
+    *,
     step: str,
     counters: dict[str, int],
     next_at: datetime | None,

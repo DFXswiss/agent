@@ -91,7 +91,7 @@ async def _in_transaction[T](context: HubContext, work: Callable[[Any], T]) -> T
     return await asyncio.to_thread(run)
 
 
-@router.get("/v1/modes", auth="browser", right="user")
+@router.get("/v1/modes", auth="browser", right="user", read_resource="modes")
 async def list_modes(context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
     return {"modes": catalog.offered(context.config.modes_test)}
 
@@ -105,7 +105,7 @@ async def put_task_mode(
     def work(connection: Any) -> tuple[Effects, dict[str, Any]]:
         row = task_for_write(connection, user, task_id)
         effects = Effects()
-        choose(context, connection, principal, user, row, [name], effects)
+        choose(context, connection, principal=principal, user=user, task=row, names=[name], effects=effects)
         found = [item for item in store.active(connection, task_id) if item["mode"] == name]
         return effects, found[0]
 
@@ -138,7 +138,7 @@ def _device_task(connection: Any, context: HubContext, device: UUID, task_id: UU
 
 
 def sentence(
-    context: HubContext, connection: Any, device: UUID, task_id: UUID, name: str, body: DeviceModeBody
+    context: HubContext, connection: Any, *, device: UUID, task_id: UUID, name: str, body: DeviceModeBody
 ) -> tuple[Effects, dict[str, Any] | None]:
     """`PUT /v1/device/tasks/{task}/modes/{mode}` in the caller's transaction (module docstring)."""
     task = _device_task(connection, context, device, task_id)
@@ -146,7 +146,11 @@ def sentence(
     found = connection.execute(
         "SELECT task_id, device_id, type, state, triggered_by FROM hub.operation WHERE id = %s", (operation,)
     ).fetchone()
-    if found is None or (found[0], found[1], found[2]) != (task_id, device, MODE_TYPE) or found[3] not in OPEN_OPERATION:
+    if (
+        found is None
+        or (found[0], found[1], found[2]) != (task_id, device, MODE_TYPE)
+        or found[3] not in OPEN_OPERATION
+    ):
         raise HubError("not_found")
     effects, now, actor = Effects(), context.clock(), Actor("device", device)
     record: dict[str, Any] | None = None
@@ -156,7 +160,7 @@ def sentence(
             raise HubError("forbidden")
         mode = offered_mode(context, name)
         choice = Choice(chosen_by=chooser, way=store.SENTENCE, operation_id=operation)
-        record, changed = store.switch_on(connection, task, mode, choice, actor=actor, now=now, on_behalf_of=chooser)
+        record, changed = store.switch_on(connection, task, mode, choice, actor=actor, now=now)
     else:
         changed = store.switch_off(
             connection, task, name, actor=actor, now=now, reason=store.SESSION, operation_id=operation
@@ -171,7 +175,9 @@ async def device_task_mode(
     context: Context, principal: ActiveDevice, task: str, mode: str, body: DeviceModeBody
 ) -> dict[str, Any]:
     device, task_id, name = device_id(principal), path_id(task), mode_name(mode)
-    effects, record = await _in_transaction(context, lambda c: sentence(context, c, device, task_id, name, body))
+    effects, record = await _in_transaction(
+        context, lambda c: sentence(context, c, device=device, task_id=task_id, name=name, body=body)
+    )
     effects.flush()
     return {"mode": record}
 
@@ -183,7 +189,8 @@ async def device_task_mode_driver(
     device, task_id, name = device_id(principal), path_id(task), mode_name(mode)
 
     def work(connection: Any) -> bool:
-        _device_task(connection, context, device, task_id)
-        return store.store_driver(connection, task_id, name, body.driver.model_dump())
+        row = _device_task(connection, context, device, task_id)
+        state = body.driver.model_dump()
+        return store.store_driver(connection, row, name, state, device=device, now=context.clock())
 
     return {"on": await _in_transaction(context, work)}

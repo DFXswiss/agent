@@ -53,9 +53,7 @@ def _created_by(connection: Any, task_id: UUID, agent: object) -> bool:
     return row is not None and row[0] == agent
 
 
-def person_choice(
-    connection: Any, principal: Principal, task_id: UUID, mode: Mode, user: UUID
-) -> tuple[Choice, Actor]:
+def person_choice(connection: Any, principal: Principal, task_id: UUID, mode: Mode, user: UUID) -> tuple[Choice, Actor]:
     """Who switches `mode` on for the task, and how (module docstring)."""
     if principal.kind != "agent":
         return Choice(chosen_by=user, way=store.WEB), Actor("user", user)
@@ -85,6 +83,7 @@ def announce(connection: Any, effects: Effects, task: TaskRow) -> None:
 def choose(
     context: HubContext,
     connection: Any,
+    *,
     principal: Principal,
     user: UUID,
     task: TaskRow,
