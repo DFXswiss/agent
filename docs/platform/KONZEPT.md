@@ -807,11 +807,17 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   - mit dem Agentenwerkzeug ([E-04](#e-04)).
 
   Eine gewählte Arbeitsweise wird vollständig umgesetzt. Ohne Wahl arbeitet eine Sitzung wie bisher.
+
+  Die Zugänge, die diese Bausteine brauchen (Apple-Signatur und Notarisierung, Zugriff auf die Server, Postfächer,
+  Abos), ziehen **ohne Rückfrage** mit auf die Plattform. Dienste auf dem Rechner, die nicht aus dem Repository agent
+  stammen, gehören nicht dazu: Sie werden weder aufgenommen noch umgezogen.
 - **Wortlaut:** „ich will local nichts mehr haben, ausser vielleicht eine claude session mit der ich agent.dfx.swiss
   ansteuere. alles was heute local läuft und local installiert ist muss vollständig in agent.dfx.swiss integriert
   werden. wichtig ist, es muss wählbar sein, niemals erzwungen! und auch nicht per default aktiv. aber ich will eine
   session starten können mit sowas wie: halte dich an A38 und dann wird das vollständig umgesetzt. oder baue feature
-  xy, nutze den Orchestrator“ (zu den Bausteinen „orchestrator, ledger und so“ im Repository agent)
+  xy, nutze den Orchestrator“ (zu den Bausteinen „orchestrator, ledger und so“ im Repository agent). Zu den Zugängen,
+  denen der Orchestrator zuerst eine Freigabe je Zugang vorschalten wollte: „alles sofort umziehen, ohne zu fragen“. Zu
+  den fremden Diensten auf dem Rechner: „nein, nicht in die liste und nicht umziehen“.
 - **Bezug:** verallgemeinert [E-31](#e-31) („nichts läuft lokal“) von den Abos auf alles. Dazu gehören [E-04](#e-04)
   (Oberfläche und Werkzeug können dasselbe) und [E-27](#e-27) (ein KI-Agent kann alles). Eine Sitzung führt selbst
   nichts aus, alles läuft über Plattform-Operationen ([§10 Punkt 3](#k-10-b3)). Der delegierte Hauptorchestrator ist
@@ -821,7 +827,23 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 
 <a id="e-33"></a>
 
-### E-33 – Alle selbst gehosteten GitHub-Actions-Läufe über agent.dfx.swiss
+### E-33 – Plattform-Vorgänge laufen parallel, jeder in seiner eigenen Sandbox
+
+- **Datum:** 2026-11-26
+- **Regel:** Was die Plattform für einen Nutzer erledigt, läuft gleichzeitig, wenn die Vorgänge voneinander unabhängig
+  sind, und jeder in seiner eigenen, abgeschotteten Umgebung. Das gilt wie für Sitzungen, Testläufe und Browser auch für
+  Vorgänge der Plattform selbst, etwa die Anmeldung mehrerer Abos. Es gibt keine Einzelplätze, die solche Vorgänge in eine
+  Reihe zwingen: Was ein Vorgang braucht, gehört zu ihm. So hat jedes Abo sein eigenes Postfach statt eines einzigen je
+  Konto.
+- **Wortlaut:** „agent sollte doch so augebaut sein dass es parallel solche dinge machen kann in parallellen sandboxen“
+  (zur Anmeldung von fünf neuen Abos, die nur nacheinander ging, weil die Plattform nur ein Postfach je Konto hält)
+- **Bezug:** präzisiert [§16 Punkt 1](#k-16-b1) (Hunderte parallele Hauptagenten und temporäre Umgebungen) für die
+  Vorgänge der Plattform; ergänzt [E-31](#e-31) (jedes Abo zentral angemeldet) und [E-32](#e-32).
+- **Umsetzung:** offen – Postfach je Abo und parallele Anmeldungen in KOR-73.
+
+<a id="e-34"></a>
+
+### E-34 – Alle selbst gehosteten GitHub-Actions-Läufe über agent.dfx.swiss
 
 - **Datum:** 2026-11-25
 - **Regel:** Alle selbst gehosteten GitHub-Actions-Läufe der DFX-Organisationen laufen über agent.dfx.swiss; das
@@ -847,9 +869,9 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   [E-11](#e-11) (Freigaben), [E-25](#e-25) (Härtung nur auf Bestellung); [A16](#a-16) (Workflows); [Idee 46](#k-idee-46) und [Idee 47](#k-idee-47) (Abrechnung).
 - **Umsetzung:** offen – Konzept [spec/16-ci-runners.md](spec/16-ci-runners.md); Entscheide offen.
 
-<a id="e-34"></a>
+<a id="e-35"></a>
 
-### E-34 – Eine gemeinsame Kapazität: alle Server des Betreibers gehören agent.dfx.swiss, Runner werden dort bezogen
+### E-35 – Eine gemeinsame Kapazität: alle Server des Betreibers gehören agent.dfx.swiss, Runner werden dort bezogen
 
 - **Datum:** 2026-11-25
 - **Regel:** Es gibt keine eigenen Rechner für selbst gehostete Runner neben der Plattform; die gesamte
@@ -858,7 +880,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   alle meine server kapazitäten an agent geben und wenn ich einen self hostet runner brauche dann diesen via agent
   beziehen“
 - **Bezug:** dass der Runner eine VM aus demselben Pool wie die Arbeits-VMs ist, legte [A21](#a-21) aus; entschieden
-  durch [E-35](#e-35). Ergänzt [E-33](#e-33) und [§3 Punkt 3](#k-3-b3) (DFX stellt eigene Ausführungsserver);
+  durch [E-36](#e-36). Ergänzt [E-34](#e-34) und [§3 Punkt 3](#k-3-b3) (DFX stellt eigene Ausführungsserver);
   ersetzt die Aufteilung der Ausführungsserver in [§3 Punkt 8](#k-3-b8) (initiale Serverzuordnung: ein Server für die
   DFX-Cloud-Sessions), soweit sie Kapazität ausserhalb der Plattform voraussetzt; der Hub-Teil bleibt. Betrifft
   [Idee 38](#k-idee-38) (Gerätewahl nach freier Kapazität), [§7 Punkt 6](#k-7-b6) (kapazitätsbasierte Verteilung)
@@ -868,47 +890,9 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   D-1 offen ([offene Abweichungen](#d-offen)).
 - **Umsetzung:** offen – [spec/16-ci-runners.md](spec/16-ci-runners.md).
 
-<a id="e-32"></a>
+<a id="e-36"></a>
 
-### E-32 – Nichts läuft lokal: jeder Baustein ist eine wählbare Arbeitsweise der Plattform
-
-- **Datum:** 2026-11-26
-- **Regel:** Auf dem Rechner eines Nutzers läuft und liegt für agent nichts mehr, außer höchstens einer Claude-Sitzung,
-  mit der er agent.dfx.swiss steuert. Alles, was heute lokal läuft oder installiert ist, wird vollständig in
-  agent.dfx.swiss integriert:
-  - das Werkzeug `agent` mit Ledger, Koordinator, A38, KI-Konten, `knock` und Dashboard;
-  - der alte Hub `agent-core`;
-  - die Werkzeuge, mit denen die Plattform selbst gebaut, geprüft, zusammengeführt und ausgerollt wird.
-
-  Jeder dieser Bausteine ist dort eine **Arbeitsweise, die man wählt**: nie erzwungen, nie von selbst aktiv, auch nicht
-  über eine Voreinstellung. Gewählt wird je Sitzung oder Task:
-  - mit einem Satz im Auftrag („halte dich an A38“, „baue Feature xy, nutze den Orchestrator“);
-  - in der Oberfläche;
-  - mit dem Agentenwerkzeug ([E-04](#e-04)).
-
-  Eine gewählte Arbeitsweise wird vollständig umgesetzt. Ohne Wahl arbeitet eine Sitzung wie bisher.
-
-  Die Zugänge, die diese Bausteine brauchen (Apple-Signatur und Notarisierung, Zugriff auf die Server, Postfächer,
-  Abos), ziehen **ohne Rückfrage** mit auf die Plattform. Dienste auf dem Rechner, die nicht aus dem Repository agent
-  stammen, gehören nicht dazu: Sie werden weder aufgenommen noch umgezogen.
-- **Wortlaut:** „ich will local nichts mehr haben, ausser vielleicht eine claude session mit der ich agent.dfx.swiss
-  ansteuere. alles was heute local läuft und local installiert ist muss vollständig in agent.dfx.swiss integriert
-  werden. wichtig ist, es muss wählbar sein, niemals erzwungen! und auch nicht per default aktiv. aber ich will eine
-  session starten können mit sowas wie: halte dich an A38 und dann wird das vollständig umgesetzt. oder baue feature
-  xy, nutze den Orchestrator“ (zu den Bausteinen „orchestrator, ledger und so“ im Repository agent). Zu den Zugängen,
-  denen der Orchestrator zuerst eine Freigabe je Zugang vorschalten wollte: „alles sofort umziehen, ohne zu fragen“. Zu
-  den fremden Diensten auf dem Rechner: „nein, nicht in die liste und nicht umziehen“.
-- **Bezug:** verallgemeinert [E-31](#e-31) („nichts läuft lokal“) von den Abos auf alles. Dazu gehören [E-04](#e-04)
-  (Oberfläche und Werkzeug können dasselbe) und [E-27](#e-27) (ein KI-Agent kann alles). Eine Sitzung führt selbst
-  nichts aus, alles läuft über Plattform-Operationen ([§10 Punkt 3](#k-10-b3)). Der delegierte Hauptorchestrator ist
-  [Idee 34](#k-idee-34).
-- **Umsetzung:** offen – Zielbild, Wahl und Abbaupfad [ADR-098](adr/098-working-modes.md) (KOR-72); gebaut wird in
-  den dort in §9 genannten Paketen.
-- **Umsetzung:** offen – Bestand, Zielbild und Paketplan in KOR-72.
-<a id="e-34"></a>
-<a id="e-35"></a>
-
-### E-35 – CI-Jobs teilen die Geräte mit den Arbeitsbereichen
+### E-36 – CI-Jobs teilen die Geräte mit den Arbeitsbereichen
 
 - **Datum:** 2026-11-26
 - **Regel:** CI-Jobs, auch solche mit fremdem PR-Code, laufen auf denselben Geräten wie die Arbeits-VMs der
@@ -918,26 +902,10 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   agent.dfx.swiss wäre aber auch ‚Kapazität von agent‘ und trennt fremden Code von Kundendaten. Was gilt?“ –
   Antwort: „Alles teilen – Du entscheidest jetzt: CI-Jobs laufen auf denselben Geräten wie die
   Agent-Arbeitsbereiche. Wird als dein Entscheid (neue Regel) eingetragen.“
-- **Bezug:** ergänzt [E-34](#e-34); macht [A21](#a-21) zum Entscheid. In Spannung mit der Sicherheitsempfehlung der
+- **Bezug:** ergänzt [E-35](#e-35); macht [A21](#a-21) zum Entscheid. In Spannung mit der Sicherheitsempfehlung der
   Recherche (Trennung fremden Codes vom Klartext der Workgroups): das Gate U bleibt Empfehlung (D-7, D-20 in
   [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)); [E-25](#e-25) (Härtung nur auf Bestellung).
 - **Umsetzung:** offen – [spec/16-ci-runners.md](spec/16-ci-runners.md).
-
-<a id="e-33"></a>
-
-### E-33 – Plattform-Vorgänge laufen parallel, jeder in seiner eigenen Sandbox
-
-- **Datum:** 2026-11-26
-- **Regel:** Was die Plattform für einen Nutzer erledigt, läuft gleichzeitig, wenn die Vorgänge voneinander unabhängig
-  sind, und jeder in seiner eigenen, abgeschotteten Umgebung. Das gilt wie für Sitzungen, Testläufe und Browser auch für
-  Vorgänge der Plattform selbst, etwa die Anmeldung mehrerer Abos. Es gibt keine Einzelplätze, die solche Vorgänge in eine
-  Reihe zwingen: Was ein Vorgang braucht, gehört zu ihm. So hat jedes Abo sein eigenes Postfach statt eines einzigen je
-  Konto.
-- **Wortlaut:** „agent sollte doch so augebaut sein dass es parallel solche dinge machen kann in parallellen sandboxen“
-  (zur Anmeldung von fünf neuen Abos, die nur nacheinander ging, weil die Plattform nur ein Postfach je Konto hält)
-- **Bezug:** präzisiert [§16 Punkt 1](#k-16-b1) (Hunderte parallele Hauptagenten und temporäre Umgebungen) für die
-  Vorgänge der Plattform; ergänzt [E-31](#e-31) (jedes Abo zentral angemeldet) und [E-32](#e-32).
-- **Umsetzung:** offen – Postfach je Abo und parallele Anmeldungen in KOR-73.
 
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
@@ -1026,7 +994,7 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
   Wirkung tragen Operationen, Prüfurteile, Merge-Kriterien und die Treiber der Arbeitsweisen. Umgesetzt mit
   [ADR-098](adr/098-working-modes.md).
 <a id="a-20"></a>
-- **A20 – Eine VM je CI-Job:** Jeder selbst gehostete GitHub-Actions-Job ([E-33](#e-33)) läuft in einer frischen VM,
+- **A20 – Eine VM je CI-Job:** Jeder selbst gehostete GitHub-Actions-Job ([E-34](#e-34)) läuft in einer frischen VM,
   die danach gelöscht wird – Empfehlung der Recherche vom 2026-11-25 und GitHubs Empfehlung für Einmal-Runner, nicht
   Wortlaut des Auftraggebers. Diese Auslegung betrifft nur „eine VM je Job“. Läufe, die das Gerät selbst ändern oder
   prüfen (gerätegebundene Läufe), erfasst sie nicht: Eine VM ohne Freigaben sieht das Gerät nicht, und ein Rückweg aus
@@ -1034,9 +1002,9 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
   ([spec/16-ci-runners.md §1](spec/16-ci-runners.md#1-purpose-and-scope)). Ob sie ausserhalb der Plattform laufen
   dürfen, ist offen (Entscheid D-1, [offene Abweichungen](#d-offen)).
 <a id="a-21"></a>
-- **A21 – Runner als VM aus dem gemeinsamen Pool:** Ein über die Plattform bezogener Runner ([E-34](#e-34)) ist eine
+- **A21 – Runner als VM aus dem gemeinsamen Pool:** Ein über die Plattform bezogener Runner ([E-35](#e-35)) ist eine
   VM, und sie läuft auf denselben Geräten, aus demselben Pool wie die Arbeits-VMs. Die VM folgt aus [A20](#a-20) (eine
-  VM je Job); dass sie auf denselben Geräten läuft, ist entschieden durch [E-35](#e-35) (2026-11-26) und gilt
+  VM je Job); dass sie auf denselben Geräten läuft, ist entschieden durch [E-36](#e-36) (2026-11-26) und gilt
   seither als Regel, nicht mehr als Auslegung ([Teil D](#teil-d--pflege) Punkt 4); der Anker bleibt für Verweise
   ([spec/16-ci-runners.md §6.6](spec/16-ci-runners.md#66-shared-capacity)).
 
@@ -1084,9 +1052,9 @@ Stand 2026-11-26. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber nennt, welche Schalter umgelegt werden (gebaut, [ADR-079](adr/079-no-approval-as-precondition.md); ein Startguthaben gibt es nicht, [E-14](#e-14), entschieden 2026-11-25); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
-| [E-33](#e-33), [A20](#a-20) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)) |
-| [E-34](#e-34), [E-35](#e-35) Gemeinsame Kapazität ([A21](#a-21)) | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions); [§6.6](spec/16-ci-runners.md#66-shared-capacity)) |
-| [E-33](#e-33), [E-34](#e-34) gerätegebundene Läufe | Gerätegebundene Läufe (Deploy) laufen heute auf einem Runner ausserhalb der Plattform; das widerspricht E-33 und E-34, und [A20](#a-20) erfasst sie nicht | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions), D-1) |
+| [E-34](#e-34), [A20](#a-20) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)) |
+| [E-35](#e-35), [E-36](#e-36) Gemeinsame Kapazität ([A21](#a-21)) | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions); [§6.6](spec/16-ci-runners.md#66-shared-capacity)) |
+| [E-34](#e-34), [E-35](#e-35) gerätegebundene Läufe | Gerätegebundene Läufe (Deploy) laufen heute auf einem Runner ausserhalb der Plattform; das widerspricht E-34 und E-35, und [A20](#a-20) erfasst sie nicht | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions), D-1) |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |
 | [A10](#a-10) Subagenten | Ein Subagent endet nach einem Turn und bekommt keine Folge-Anweisung | KOR-45 |
