@@ -309,6 +309,33 @@ def test_sessions_left_working_in_a_stopped_vm_are_suspended(rig: Rig) -> None:
     run(rig, body)
 
 
+def test_a_session_stopped_while_the_stopped_vms_are_looked_at_is_left_stopping(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The listing does not lock: a stop that commits between it and the transition wins (the locked row is
+    `stopping`, which may only end)."""
+
+    async def body(env: Any) -> None:
+        found = await kit(env)
+        svc = make_service(found)
+        sid = await start_one(found, svc)
+        async with env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.session SET state = 'working' WHERE id = %s", (sid,))
+            await conn.execute("UPDATE runner.vm SET state = 'stopped'")
+        real_get = vm_records.get
+
+        async def get_while_stopping(db: Any, vm_id: str) -> Any:
+            async with env.pool.connection() as other:
+                await other.execute("UPDATE runner.session SET state = 'stopping' WHERE id = %s", (sid,))
+            return await real_get(db, vm_id)
+
+        monkeypatch.setattr(vm_records, "get", get_while_stopping)
+        assert await svc.vms_stopped() == 0
+        assert (await found.stored(sid)).state == "stopping"
+
+    run(rig, body)
+
+
 def test_the_guestlink_task_suspends_the_sessions_of_stopped_vms_after_the_start(rig: Rig) -> None:
     async def body(env: Any) -> None:
         found = await kit(env)
