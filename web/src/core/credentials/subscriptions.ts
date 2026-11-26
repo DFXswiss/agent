@@ -378,10 +378,12 @@ export function newRecordBody(input: NewRecord): Record<string, unknown> {
   return body;
 }
 
-/** Writes a new further subscription without a token (module comment); `PUT` with `expected_version` 0. */
+/** Writes a new further subscription without a token (module comment); `PUT` with `expected_version` 0. A record
+ * that exists already (a retry after the write went through) is left as it is. */
 export async function createSubscription(context: RequestsContext, id: string, input: NewRecord): Promise<void> {
   const { userId, identity } = context.store.getState().me;
   if (userId === null || identity === null) refuse('unauthorized');
+  if ((await fetchSubscription(context, id)) !== null) return;
   const body = newRecordBody(input);
   const latest = await currentKey(context, userId, identity);
   const header = newHeader({
@@ -413,14 +415,15 @@ export async function startSubscriptionLogin(
   const mode: LoginMode = input.ownMailbox === true ? 'automatic' : input.mode;
   const body: Record<string, unknown> = { mode, subscription_id: input.subscriptionId };
   if (parallel) body.extended = true;
-  if (input.create !== undefined) await createSubscription(context, input.subscriptionId, input.create);
   for (const field of ['name', 'note', 'email'] as const) {
     const value = trimmed(input[field]);
     if (value !== undefined && (field !== 'email' || mode === 'automatic')) body[field] = value;
   }
   if (mode === 'automatic' && input.account !== undefined) body.account = accountBody(input.account);
   const request = { device, kind: 'claude.login' as const, body };
+  // the body is checked and sealed before the record is written, so a refused body leaves no empty record
   const prepared = await prepareRequest(context, parallel ? { ...request, slot: input.subscriptionId } : request);
+  if (input.create !== undefined) await createSubscription(context, input.subscriptionId, input.create);
   await submitRequest(context, prepared);
   return prepared;
 }

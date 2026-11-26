@@ -49,7 +49,8 @@ export function addInput(
       : { subscriptionId: id, mode: 'manual', name, note };
   }
   const mailbox = mailboxOf(form.mailbox);
-  const account = accountOf(form.account);
+  // registration data count only for an automatic login with its own mailbox
+  const account = mailbox === undefined ? undefined : accountOf(form.account);
   if (mailbox === null || account === null) return null;
   const create = {
     name,

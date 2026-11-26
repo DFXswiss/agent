@@ -159,6 +159,11 @@ describe('the record before its login', () => {
     await createSubscription(t.context, B, { name: 'Other' });
     expect(hub.puts.at(-1)!.body.use).toEqual({ pool: false, orgs: [] });
     expect(await hub.opened(B)).toEqual({ email: null, kind: 'oauth_login', name: 'Other' });
+    // a retry after the write went through leaves the record as it is
+    const writes = hub.puts.length;
+    await createSubscription(t.context, B, { name: 'Changed' });
+    expect(hub.puts).toHaveLength(writes);
+    expect(await hub.opened(B)).toMatchObject({ name: 'Other' });
     t.store.update('me', (me) => ({ ...me, userId: null }));
     await expect(createSubscription(t.context, A, { name: 'x' })).rejects.toMatchObject({ code: 'unauthorized' });
   });

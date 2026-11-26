@@ -86,7 +86,8 @@ function Started({
       const input = {
         subscriptionId: started.subscriptionId,
         mode: own ? ('automatic' as const) : ('manual' as const),
-        ownMailbox: own,
+        // the record again: written when the first attempt did not, left alone when it did
+        create: entry.record,
         ...(entry.account !== undefined && { account: entry.account }),
       };
       setPrepared(await startSubscriptionLogin(app.tasks, device, input, true));

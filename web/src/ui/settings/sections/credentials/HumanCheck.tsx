@@ -26,6 +26,8 @@ export function HumanCheck({
 }) {
   const { t } = useI18n();
   const click = (event: MouseEvent<HTMLButtonElement>) => {
+    // a key press has no point in the picture: only a pointer click is sent (else the relay)
+    if (event.detail === 0) return;
     const box = event.currentTarget.getBoundingClientRect();
     onClick(fraction(event.clientX - box.left, box.width), fraction(event.clientY - box.top, box.height));
   };

@@ -174,7 +174,9 @@ describe('adding one subscription on a parallel device', () => {
     await d.respond(0, { step: 'verify', frame: 1, image: IMAGE });
     const picture = await screen.findByTestId('claude.verify.picture');
     picture.getBoundingClientRect = () => ({ left: 10, top: 20, width: 200, height: 100 }) as DOMRect;
-    fireEvent.click(picture, { clientX: 60, clientY: 70 });
+    fireEvent.click(picture, { clientX: 60, clientY: 70 }); // a key press (detail 0) sends nothing
+    expect(screen.queryByTestId('claude.verify.clicked')).toBeNull();
+    fireEvent.click(picture, { clientX: 60, clientY: 70, detail: 1 });
     expect(await screen.findByTestId('claude.verify.clicked')).toBeVisible();
     expect(await d.opened(1)).toEqual({ click: { x: 0.25, y: 0.5 } });
     expect(d.sent[1]!.posted.slot).toBeUndefined();
@@ -184,7 +186,7 @@ describe('adding one subscription on a parallel device', () => {
     // a picture without a size yet: the click goes to the middle
     const next = screen.getByTestId('claude.verify.picture');
     next.getBoundingClientRect = () => ({ left: 0, top: 0, width: 0, height: 0 }) as DOMRect;
-    fireEvent.click(next);
+    fireEvent.click(next, { detail: 1 });
     await waitFor(() => expect(d.sent).toHaveLength(3));
     expect(await d.opened(2)).toEqual({ click: { x: 0.5, y: 0.5 } });
     fireEvent.click(screen.getByTestId('claude.verify.relay'));
@@ -210,7 +212,7 @@ describe('adding one subscription on a parallel device', () => {
     expect(await d.opened(0)).toMatchObject({ mode: 'manual', extended: true });
     await d.respond(0, { step: 'verify', frame: 1, image: IMAGE });
     d.refuse(new HubError('rate_limited', 429));
-    fireEvent.click(await screen.findByTestId('claude.verify.picture'));
+    fireEvent.click(await screen.findByTestId('claude.verify.picture'), { detail: 1 });
     expect(await screen.findByTestId('claude.code.failed')).toHaveAttribute('data-code', 'rate_limited');
     fireEvent.click(screen.getByTestId('claude.verify.relay'));
     await waitFor(() => expect(screen.getByTestId('claude.code.failed')).toHaveAttribute('data-code', 'rate_limited'));
