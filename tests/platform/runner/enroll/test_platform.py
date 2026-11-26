@@ -136,7 +136,7 @@ def test_successful_enrollment_writes_the_identity_last(config: Config) -> None:
     assert body["kind"] == "platform"
     assert body["pub"] == {"kem": identity.keys.kem_public, "sig": identity.keys.sig_public}
     assert (body["os"], body["arch"], body["agent_version"]) == ("darwin", "arm64", "0.1.0")
-    assert body["capacity"]["vm_memory_budget_mib"] == 65536 - host_reserve_mib(65536, config.memory_reserve_mib)
+    assert body["capacity"]["vm_memory_budget_mib"] == 65536 - host_reserve_mib(config.memory_reserve_mib)
     assert [r.target for r in hub.requests] == ["/v1/config", "/v1/device/enroll"]
     assert hub.violations == []
     with pytest.raises(RunnerError, match="already_enrolled"):

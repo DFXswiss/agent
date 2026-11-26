@@ -224,7 +224,8 @@ def cmd_status(_args: argparse.Namespace, ctx: Any) -> int:
         },
     )
     if found["workvm"] is not None:
-        _workvm_fact(out, config, found["workvm"], physical, sum(memory for state, memory in slots if state in held))
+        workgroup = sum(capacity_module.vm_footprint_mib(memory) for state, memory in slots if state in held)
+        _workvm_fact(out, config, found["workvm"], physical, workgroup)
     for kind, active, waiting in found["kinds"]:  # fewest active first (05-runner.md section 3.8)
         out.fact("status.admission", {"kind": kind, "active": active, "waiting": waiting})
     return EXIT_OK
@@ -234,7 +235,8 @@ def _workvm_fact(out: Any, config: Config, counts: tuple[int, ...], physical: in
     """`runner.status.workvm`: the slots and what the device's admission sees free (ADR-059 addendum 4, 05 §3.8)."""
     held, stopped, waiting, oldest, work_mib, disk_gib = counts
     total = accounts.slot_count(physical, config.memory_reserve_mib)
-    room = physical - capacity_module.host_reserve_mib(physical, config.memory_reserve_mib) - workgroup_mib - work_mib
+    work = work_mib + held * capacity_module.VM_HOST_MIB  # every work VM and pool entry with its host share
+    room = physical - capacity_module.host_reserve_mib(config.memory_reserve_mib) - workgroup_mib - work
     out.fact(
         "status.workvm",
         {

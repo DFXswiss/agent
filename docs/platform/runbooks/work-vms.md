@@ -85,7 +85,8 @@ budget with the workgroup VMs through the device's one admission (05-runner.md �
 instances goes first (sessions or work VMs; `agent-runner status`: `runner.status.admission`), and idle work VMs are
 stopped when a workgroup VM needs their RAM; running work is never ended for it. The CPU bound for every new VM leaves about 1–2 cores free
 (`AGENT_RUNNER_CPU_LOAD_MAX_PERCENT` replaces the rule when set; it replaces `WORKVM_CPU_LOAD_MAX_PERCENT`); the host
-reserve is a quarter of the memory, 4–32 GiB, unless `AGENT_RUNNER_MEMORY_RESERVE_MIB` is set. The disk quota is a physical bound of the volume: choose it
+reserve is the host's base need of 4 GiB plus about 0.2 GiB per VM (05-runner.md §1.3.1), unless
+`AGENT_RUNNER_MEMORY_RESERVE_MIB` replaces the base need. The disk quota is a physical bound of the volume: choose it
 for the disk the device can give work VMs (about 100 GiB each, stopped ones included).
 
 ## 4. Operation

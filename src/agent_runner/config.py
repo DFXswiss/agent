@@ -141,7 +141,7 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
 }
 # name: (minimum, maximum) of a setting that is empty by default; empty = the rule of every device (05-runner.md 1.3)
 _OPTIONAL_INTEGERS: dict[str, tuple[int, int]] = {
-    # the host reserve: empty = a quarter of the memory, at least 4 GiB, at most 32 GiB (`vm.capacity.host_reserve_mib`)
+    # the host reserve: empty = the host's measured base need, 4 GiB; each VM adds its host share (`vm.capacity`)
     "MEMORY_RESERVE_MIB": (0, 4_194_304),
     # the device's one admission (`agent_runner.admission`): a new VM of any kind only while the host's CPU load (1 min,
     # per core) is at most this; empty = about 1-2 cores stay free (`vm.capacity.host_cpu_ratio`)
@@ -183,7 +183,7 @@ class Config:
     vm_disk_gib: int
     pool_size: int
     memory_reserve_mib: int | None
-    """The host reserve when set; None: a quarter of the memory, 4-32 GiB, on every device (`vm.capacity`)."""
+    """The host reserve when set; None: the host's base need on every device (`vm.capacity.host_reserve_mib`)."""
     session_idle_seconds: int
     vm_idle_seconds: int
     textfile_dir: Path | None

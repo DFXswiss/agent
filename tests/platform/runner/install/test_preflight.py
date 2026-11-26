@@ -128,18 +128,3 @@ def test_memory_is_counted_in_whole_gib(kit: Kit) -> None:
     assert by_name(kit)["memory"].ok
     kit.run.answer(MEMSIZE, stdout="-1")
     assert by_name(kit)["memory"].value == "0GiB"
-
-
-@pytest.mark.parametrize(
-    ("answer", "reserve"),
-    [
-        ((0, f"{16 * GIB}\n"), 4096),
-        ((0, f"{64 * GIB}\n"), 16384),
-        ((0, f"{256 * GIB}\n"), 32768),
-        ((0, "many"), 4096),
-        ((1, ""), 4096),
-    ],
-)
-def test_the_memory_reserve_is_a_quarter_within_bounds(kit: Kit, answer: tuple[int, str], reserve: int) -> None:
-    kit.run.answer(MEMSIZE, rc=answer[0], stdout=answer[1])
-    assert preflight.memory_reserve_mib(kit.system) == reserve

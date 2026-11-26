@@ -300,7 +300,7 @@ def test_refill_fills_up_to_pool_size_two_in_parallel(harness: Harness) -> None:
 
 def test_refill_only_into_free_slots(harness: Harness) -> None:
     harness.add_golden()
-    harness.physical_mib = 32768 + 8192
+    harness.physical_mib = 32768 + 8400
 
     async def body(manager: VmManager) -> Any:
         return await manager.refill()

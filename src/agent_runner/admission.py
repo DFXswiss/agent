@@ -2,10 +2,10 @@
 
 Every VM a device starts passes this admission: workgroup VMs with their sessions (`SESSION`), work, browser and test
 VMs (`WORK`), and later the CI VMs of 16-ci-runners.md (`CI`), which plug into it without a second mechanism. It
-admits only what is physically free - RAM above the host reserve (a quarter of the memory, 4-32 GiB, or
-`MEMORY_RESERVE_MIB`), the host's CPU load (about 1-2 cores stay free, or `CPU_LOAD_MAX_PERCENT`), disk, at most
-`MACOS_VMS_MAX` macOS VMs per Mac - in one transaction: `lock` is held from the check to the claim (the row in the
-store, or `pending` while a workgroup VM is being cloned), by every area.
+admits only what is physically free - RAM above the host's base need (4 GiB measured, or `MEMORY_RESERVE_MIB`), each
+VM with its host share (`vm.capacity.vm_footprint_mib`), the host's CPU load (about 1-2 cores stay free, or
+`CPU_LOAD_MAX_PERCENT`), disk, at most `MACOS_VMS_MAX` macOS VMs per Mac - in one transaction: `lock` is held from the
+check to the claim (the row in the store, or `pending` while a workgroup VM is being cloned), by every area.
 
 There is no fixed number and no fixed share for any kind, CI included (decision of the client, 2026-11-26: "wenn es
 nur ci runnerbedarf gibt, dann darf es auch 100% sein ... immer der von dem es am wenigsten aktive gibt"): a kind

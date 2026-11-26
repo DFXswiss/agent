@@ -289,7 +289,7 @@ def test_a_refresh_that_does_not_help_waits_for_its_backoff(harness: Harness) ->
 def test_no_other_workgroups_vm_is_stopped_for_a_refresh(harness: Harness) -> None:
     old = outdated_stopped(harness)
     paused = harness.session(old.id, WG_A, "suspended")
-    harness.physical_mib = 32768 + 8192  # one slot
+    harness.physical_mib = 32768 + 8400  # one slot
 
     async def other(manager: VmManager) -> None:
         await manager.ensure_vm(ORG, WG_B)  # takes the only slot, idle at once
@@ -306,7 +306,7 @@ def test_no_other_workgroups_vm_is_stopped_for_a_refresh(harness: Harness) -> No
 def test_no_free_slot_for_the_new_vm_is_capacity_and_deletes_nothing(harness: Harness) -> None:
     old = outdated_stopped(harness)
     harness.session(old.id, WG_A, "suspended")
-    harness.physical_mib = 32768 + 8192
+    harness.physical_mib = 32768 + 8400
 
     async def other(manager: VmManager) -> None:
         await manager.ensure_vm(ORG, WG_B)
@@ -835,7 +835,7 @@ def test_refresh_attempts_survive_restarts_and_a_vm_that_ran_gets_fresh_ones(har
 def test_a_refresh_without_a_free_slot_counts_no_attempt(harness: Harness) -> None:
     old = outdated_stopped(harness)
     paused = harness.session(old.id, WG_A, "suspended")
-    harness.physical_mib = 32768 + 8192  # one slot
+    harness.physical_mib = 32768 + 8400  # one slot
 
     async def other(manager: VmManager) -> None:
         await manager.ensure_vm(ORG, WG_B)  # takes the only slot

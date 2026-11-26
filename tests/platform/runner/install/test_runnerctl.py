@@ -26,12 +26,12 @@ def manifest(hub: str = HUB) -> Manifest:
 
 def test_the_runner_settings_of_an_own_device(kit: Kit) -> None:
     payload = kit.layout.root / "Library/Application Support/DFXAgentRunner"
-    assert runnerctl.runner_env(kit.system, owner_of(kit.layout), manifest(), 8192) == {
+    # no host reserve: the rule of every device applies (05-runner.md section 1.3)
+    assert runnerctl.runner_env(kit.system, owner_of(kit.layout), manifest()) == {
         "AGENT_RUNNER_HOME": str(kit.layout.root / "Users/alice/.local/share/dfx-agent-runner"),
         "AGENT_RUNNER_HUB_URL": HUB,
         "AGENT_RUNNER_PLATFORM_ROOT_KEY": ROOT_KEY,
         "AGENT_RUNNER_POOL_SIZE": "0",
-        "AGENT_RUNNER_MEMORY_RESERVE_MIB": "8192",
         "AGENT_RUNNER_GOLDEN_TEMPLATE": str(payload / "current/golden-src/images/golden.yaml"),
         "AGENT_RUNNER_LOGIN_AUTOMATION": "off",
         "AGENT_RUNNER_VM_PREFIX": "dfx-",
@@ -39,7 +39,7 @@ def test_the_runner_settings_of_an_own_device(kit: Kit) -> None:
 
 
 def test_a_loopback_hub_is_test_mode(kit: Kit) -> None:
-    env = runnerctl.runner_env(kit.system, owner_of(kit.layout), manifest("http://127.0.0.1:8080"), 4096)
+    env = runnerctl.runner_env(kit.system, owner_of(kit.layout), manifest("http://127.0.0.1:8080"))
     assert env["AGENT_RUNNER_TEST_MODE"] == "1"
     assert env["AGENT_RUNNER_HUB_URL"] == "http://127.0.0.1:8080"
 
@@ -137,7 +137,7 @@ def test_goldens(kit: Kit) -> None:
 
 def enroll_context(kit: Kit) -> runnerctl.Context:
     """The owner made the runner's home; the context carries the runner's settings."""
-    ctx = context(kit, runnerctl.runner_env(kit.system, owner_of(kit.layout), manifest(), 4096))
+    ctx = context(kit, runnerctl.runner_env(kit.system, owner_of(kit.layout), manifest()))
     ctx.home.mkdir(parents=True)
     return ctx
 

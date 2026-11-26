@@ -208,7 +208,7 @@ class Harness:
     clock: Any
     settings: VmSettings = SETTINGS
     # 32 GiB reserve + 4 slots of 8 GiB.
-    physical_mib: int = 32768 + 4 * 8192
+    physical_mib: int = 32768 + 4 * 8400
     now: datetime = NOW
     events: list[dict[str, Any]] = field(default_factory=list)
     logs: list[tuple[str, dict[str, str | int]]] = field(default_factory=list)

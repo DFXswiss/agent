@@ -322,7 +322,7 @@ beste ergebnis wenn wir denen den vorrang geben die noch nicht viele plätze hab
 
 | Resource | Budget of a device | Counted per VM |
 |---|---|---|
-| RAM | Physical RAM − host reserve (a quarter of the memory, 4–32 GiB, or `MEMORY_RESERVE_MIB`; 05 §1.3) | Configured memory, from `starting` until the VM is stopped or deleted; warm pool entries count |
+| RAM | Physical RAM − the host's base need (4 GiB measured, or `MEMORY_RESERVE_MIB`; 05 §1.3.1) | Configured memory plus the VM's host share (its Lima helper, about 0.2 GiB), from `starting` until the VM is stopped or deleted; warm pool entries count |
 | CPU | Host load leaves about 1–2 cores free for macOS, the runner and the VMs' I/O (or `CPU_LOAD_MAX_PERCENT`; every kind) | Configured vCPUs |
 | Disk | Volume quota per workload kind − reserve for image generations | Allocated disk or profile size, plus the pool entry reserve (`13-work-vm.md` §7) |
 | macOS VMs | 2 (§8.4) | 1 per macOS VM of any purpose; Linux VMs of any kind 0 [APPLE-FORUM] |
@@ -417,8 +417,12 @@ unchecked. If the budget is exceeded in operation, admission stops **new** CI VM
 | large | 8 / 16 GiB / 100 GiB | same |
 | xlarge | 16 / 32 GiB / 200 GiB | same |
 
-- The heaviest documented test run fits no current profile (maximum 32 GiB; its budget: [OPS]). Larger profile
-  or splitting the job: decision D-11; keeping the current host is excluded by [E-35](../KONZEPT.md#e-35).
+- The heaviest documented test run, the full backend test, needs about 6 GiB per Jest worker - measured [OPS]
+  (`docs/operations/journal/2026-09-08-dfxci-five-test-w2.md`): `npm test` with `--maxWorkers=2` 12.7 GiB in 458 s,
+  `test:gate:cov` with `--maxWorkers=4` 27.0 GiB in 348 s; the operator's budget plans about 44 GiB for 8 workers
+  (`infrastructure/dfx02/README.md`). With 2-4 workers the job fits the profiles large (16 GiB, 2 workers) to xlarge
+  (32 GiB, 4 workers), or Jest sharding spreads it over several VMs; only 8 workers in one VM need more than 32 GiB
+  (D-11). Keeping the current host is excluded by [E-35](../KONZEPT.md#e-35).
 - The current large script-test job uses 16 workers and has its host to itself [OPS]; a 16-CPU VM does not reproduce
   that 1:1. **To be measured:** M-5.
 

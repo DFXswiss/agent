@@ -278,7 +278,7 @@ def test_vm_state_goes_to_the_outbox_and_the_heartbeat(harness: Harness, fake_cl
             ctx.identity = None
             manager = tasks.manager_for(ctx)
             manager.env.lima = Lima(harness.fake, prefix=PREFIX)
-            manager.env.physical_mib = lambda: 32768 + 4 * 8192
+            manager.env.physical_mib = lambda: 32768 + 4 * 8400
 
             async def idle() -> float:  # the test machine's own load and disk do not decide here
                 return 0.0
@@ -313,9 +313,9 @@ def test_vm_state_goes_to_the_outbox_and_the_heartbeat(harness: Harness, fake_cl
     assert items[-1]["vm_id"] == row.id
     assert items[-1]["wg_id"] == WG_A
     assert notified == (2, 2)  # pushed and the heartbeat brought forward per state change
-    assert capacity == {"vm_memory_budget_mib": capacity["vm_memory_budget_mib"], "vm_memory_used_mib": 8192,
+    assert capacity == {"vm_memory_budget_mib": capacity["vm_memory_budget_mib"], "vm_memory_used_mib": 8400,
                         "vm_slots_total": capacity["vm_slots_total"], "vm_slots_free": capacity["vm_slots_total"] - 1,
-                        "pool_ready": 0, "cpus": os.cpu_count(), "memory_total_mib": 32768 + 4 * 8192,
+                        "pool_ready": 0, "cpus": os.cpu_count(), "memory_total_mib": 32768 + 4 * 8400,
                         "vms_running": 1, "sessions_active": 0, "work_vms_running": 0,
                         **{key: capacity[key] for key in ("disk_free_mib",) if key in capacity}}  # fmt: skip
     assert vms == [{"vm_id": row.id, "state": "running"}]

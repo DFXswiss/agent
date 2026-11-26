@@ -131,7 +131,7 @@ def test_successful_enrollment_stores_log_keys_and_identity(case: Case) -> None:
     )
     assert body["entry"]["body"]["seq"] == 5
     assert body["entry"]["body"]["prev"] == entry_hash(world.spec.log.entries[4])
-    assert body["capacity"]["vm_memory_budget_mib"] == 65536 - host_reserve_mib(65536, case.config.memory_reserve_mib)
+    assert body["capacity"]["vm_memory_budget_mib"] == 65536 - host_reserve_mib(case.config.memory_reserve_mib)
     # the store: platform log, org log with the accept, its head and the entitled package keys only
     assert [r[0] for r in rows(case.dsn, "SELECT seq FROM runner.log_entry ORDER BY seq")] == [0, 1, 2, 3, 4, 5]
     assert rows(case.dsn, "SELECT seq, hash FROM runner.log_head") == [(5, entry_hash(world.spec.log.entries[5]))]

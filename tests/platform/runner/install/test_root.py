@@ -68,7 +68,6 @@ CHMOD = "/bin/chmod"
 RM = "/bin/rm"
 RMDIR = "/bin/rmdir"
 TMUTIL = "/usr/bin/tmutil"
-SYSCTL_MEMORY = ["/usr/sbin/sysctl", "-n", "hw.memsize"]
 PRINT_DISABLED = [LAUNCHCTL, "print-disabled", "system"]
 PKG_INFO = ["/usr/sbin/pkgutil", "--pkg-info", PACKAGE_ID]
 PKG_FORGET = ["/usr/sbin/pkgutil", "--forget", PACKAGE_ID]
@@ -428,9 +427,9 @@ def test_the_context_resolves_the_owner_and_the_runner_settings(kit: Kit) -> Non
     known_user(kit.run)
     ctx = root.context(kit.system, MANIFEST, "alice")
     assert ctx.owner == owner_of(kit.layout)
-    assert ctx.env == runnerctl.runner_env(kit.system, ctx.owner, MANIFEST, 4096)
+    assert ctx.env == runnerctl.runner_env(kit.system, ctx.owner, MANIFEST)
     assert ctx.env["AGENT_RUNNER_HOME"] == str(runner_home(kit.layout))
-    assert kit.run.calls == [STAT_CONSOLE, READ_OWNER, SYSCTL_MEMORY]
+    assert kit.run.calls == [STAT_CONSOLE, READ_OWNER]
 
 
 def test_a_service_account_is_never_the_owner(kit: Kit) -> None:
@@ -480,7 +479,6 @@ def test_postinstall_installs_enrolls_and_publishes(kit: Kit, keys: Keys) -> Non
         [LAUNCHCTL, "bootstrap", "system", str(layout.maintenance_plist)],
         STAT_CONSOLE,
         READ_OWNER,
-        SYSCTL_MEMORY,
         as_owner(MKDIR, "-p", "-m", "0700", str(home)),
         as_owner(CHMOD, "0700", str(home)),
         as_owner(MKDIR, "-p", "-m", "0700", str(home / "log")),
@@ -506,7 +504,7 @@ def test_postinstall_installs_enrolls_and_publishes(kit: Kit, keys: Keys) -> Non
     assert runner["UserName"] == "alice"
     assert runner["EnvironmentVariables"]["AGENT_RUNNER_HOME"] == str(home)
     assert runner["EnvironmentVariables"]["AGENT_RUNNER_POOL_SIZE"] == "0"
-    assert runner["EnvironmentVariables"]["AGENT_RUNNER_MEMORY_RESERVE_MIB"] == "4096"
+    assert "AGENT_RUNNER_MEMORY_RESERVE_MIB" not in runner["EnvironmentVariables"]  # the rule of every device
     assert plistlib.loads(layout.maintenance_plist.read_bytes()) == daemons.maintenance_plist(kit.system)
     assert mode(layout.maintenance_file) == 0o600
     created = [".local", ".local/share", ".lima", "Library/Caches/lima"]
@@ -892,12 +890,11 @@ def test_uninstall_removes_everything_in_order(kit: Kit, keys: Keys) -> None:
     }
     assert seen == ["uninstall"]
     found = owner_of(layout)
-    ctx = runnerctl.Context(kit.system, found, runnerctl.runner_env(kit.system, found, manifest, 4096))
+    ctx = runnerctl.Context(kit.system, found, runnerctl.runner_env(kit.system, found, manifest))
     home = str(runner_home(layout))
     assert kit.run.calls == [
         [LAUNCHCTL, "bootout", f"system/{RUNNER_LABEL}"],
         READ_OWNER,
-        SYSCTL_MEMORY,
         ctx.runner(["uninstall", "--json"]),
         as_owner(RM, "-rf", home),
         as_owner(RMDIR, str(found.home / ".local/share")),

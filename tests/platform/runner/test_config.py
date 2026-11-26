@@ -57,7 +57,7 @@ def test_defaults(base: dict[str, str], runner_home: Path, root_key: str) -> Non
     assert cfg.platform_root_key == root_key
     assert (cfg.vm_cpus, cfg.vm_memory_mib, cfg.vm_disk_gib) == (4, 8192, 20)
     assert cfg.pool_size == 2
-    assert cfg.memory_reserve_mib is None  # the rule of every device: a quarter of the memory, 4-32 GiB
+    assert cfg.memory_reserve_mib is None  # the host's base need on every device (plus a share per VM)
     # no fixed number of sessions or VMs: the free resources decide (`vm.room`, ADR-075 addendum 2)
     assert (cfg.vm_load_max_percent, cfg.retired) == (85, ())
     assert (cfg.session_idle_seconds, cfg.vm_idle_seconds) == (1800, 1800)

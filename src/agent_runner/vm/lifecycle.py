@@ -69,7 +69,7 @@ from agent_runner.guestlink import cursor
 from agent_runner.guestlink.client import GuestClient, Health
 from agent_runner.guestlink.errors import GuestError
 from agent_runner.vm import records
-from agent_runner.vm.capacity import Capacity, lru_victim
+from agent_runner.vm.capacity import Capacity, lru_victim, vm_footprint_mib
 from agent_runner.vm.extensions import Retire
 from agent_runner.vm.golden_switch import GoldenSwitch, judge
 from agent_runner.vm.lima import LimaError, LimaNotFound
@@ -98,7 +98,7 @@ class VmManager:
         # Slots claimed by a running restart or hot-path clone (counted as used until it finished).
         self.reserved = 0
         # the workgroup VMs admitted and still in flight count for every kind (the device's one admission)
-        env.admission.pending = lambda: (self.pool.filling + self.reserved) * env.settings.memory_mib
+        env.admission.pending = lambda: (self.pool.filling + self.reserved) * vm_footprint_mib(env.settings.memory_mib)
         env.admission.counters[SESSION] = self.active
         env.admission.store = env.db
         self._locks: dict[str, asyncio.Lock] = {}
@@ -423,7 +423,7 @@ class VmManager:
             raise RunnerError("capacity_exhausted", "disk")
         capacity = await self.capacity()
         # fewest active first: waiting requests of another kind that go first keep the RAM they need
-        demand = Demand(SESSION, env.settings.memory_mib)
+        demand = Demand(SESSION, vm_footprint_mib(env.settings.memory_mib))  # with its host share
         ahead = await env.admission.ahead_mib(demand, env.admission.hold(SESSION))
         if ahead and capacity.budget_mib - capacity.used_mib - ahead < demand.memory_mib:
             raise RunnerError("capacity_exhausted", "turn")

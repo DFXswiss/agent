@@ -238,13 +238,13 @@ def test_the_capacity_report(harness: Harness) -> None:
 
     without_disk, report = harness.run(rows_only(body), reconcile=False)
     assert without_disk == {
-        "vm_memory_budget_mib": 32768,
-        "vm_memory_used_mib": 8192 + 4096,
+        "vm_memory_budget_mib": 4 * 8400,
+        "vm_memory_used_mib": 8400 + 4096 + 208,
         "vm_slots_total": 4,  # the memory budget alone (no fixed number of VMs)
         "vm_slots_free": 2,
         "pool_ready": 0,
         "cpus": 8,
-        "memory_total_mib": 32768 + 4 * 8192,
+        "memory_total_mib": 32768 + 4 * 8400,
         "vms_running": 1,
         "sessions_active": 1,
         "work_vms_running": 1,

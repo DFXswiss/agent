@@ -65,6 +65,7 @@ from agent_runner.credentials import acting
 from agent_runner.errors import RunnerError
 from agent_runner.operations.extensions import OperationFailed
 from agent_runner.sessions.records import LocalSession
+from agent_runner.vm.capacity import vm_footprint_mib
 from agent_runner.vm.lima import Lima, LimaError
 from agent_runner.workvm import firewall, jobs, records, sync
 from agent_runner.workvm.jobs import JobView, Shell, WorkVmError
@@ -509,7 +510,10 @@ class WorkVms:
         requests of other kinds that go first need - `own` is the request's place), and that free RAM. The disk quota is
         `_disk_fits`; the slot accounts only isolate. Call it under `slot_lock` (the admission's transaction)."""
         room = await self.deps.free_memory_mib()
-        verdict = await self.deps.admission.judge(Demand(WORK, memory_mib), Device(free_mib=room), own)
+        # the VM's memory and its host share (its Lima helper, `vm.capacity.VM_HOST_MIB`), counted at its start
+        verdict = await self.deps.admission.judge(
+            Demand(WORK, vm_footprint_mib(memory_mib)), Device(free_mib=room), own
+        )
         return verdict.admitted, room
 
     async def _free_slot(self) -> int | None:

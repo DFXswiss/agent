@@ -332,7 +332,7 @@ INSTALLED = service.installed
 @pytest.fixture(autouse=True)
 def installed_device(monkeypatch: pytest.MonkeyPatch) -> None:
     """An installed device whose RAM above the reserve (4096 MiB here) holds two standard work VMs: two accounts."""
-    monkeypatch.setattr(service, "physical_memory_mib", lambda: 4096 + 2 * 8192 + 100)
+    monkeypatch.setattr(service, "physical_memory_mib", lambda: 4096 + 2 * 8400 + 100)
     monkeypatch.setattr(service, "installed", lambda slots: True)
 
 
@@ -351,7 +351,7 @@ def test_the_ram_decides_the_accounts_and_the_installation_switches_on(
         return subprocess.CompletedProcess(list(argv), 0 if present[argv[-1]] else 1, "", "")
 
     monkeypatch.setattr(service, "run_command", run)
-    monkeypatch.setattr(service, "physical_memory_mib", lambda: 4096 + 5 * 8192 + 100)
+    monkeypatch.setattr(service, "physical_memory_mib", lambda: 4096 + 5 * 8400 + 100)
     missing = context(tmp_path)
     assert service.workvms_for(missing) is None
     assert service.workvms_for(missing) is None  # not probed again
@@ -597,7 +597,8 @@ def test_free_memory_counts_held_workgroup_vms_and_work_vms(
 
     empty, used = asyncio.run(run())
     assert empty == 65536 - 4096 - 1000
-    assert used == 65536 - 4096 - 1000 - (8192 + 512 + 4096 + 1024) - (8192 + 4096)
+    # every VM with its host share (ADR-075 addendum 4): four workgroup VMs hold a slot, two work VMs their RAM
+    assert used == 65536 - 4096 - 1000 - (8192 + 512 + 4096 + 1024 + 4 * 208) - (8192 + 4096 + 2 * 208)
 
 
 # -- test runs, log capture and credit (KOR-43) ----------------------------------------------------------------------

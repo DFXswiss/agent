@@ -1,7 +1,7 @@
 """VM capacity of the runner device (docs/platform/spec/05-runner.md section 3.4, 03-api.md section 4.6.2, ADR-009).
 
-    budget_mib     = physical RAM - host reserve   (a quarter, 4-32 GiB, or MEMORY_RESERVE_MIB when set)
-    vm_slots_total = floor(budget_mib / VM_MEMORY_MIB)   (no fixed number, ADR-075 addendum 2)
+    budget_mib     = physical RAM - host base need   (4 GiB measured, or MEMORY_RESERVE_MIB when set)
+    vm_slots_total = floor(budget_mib / (VM_MEMORY_MIB + VM_HOST_MIB))   (no fixed number, ADR-075 addendum 2)
     vm_slots_free  = vm_slots_total - (VMs in pool, assigning, running, stopping) - slots of other areas
 
 Stopped VMs use no slot (the host gets their RAM back on stop). VMs being cloned for the pool count as well (they
@@ -100,15 +100,19 @@ def compute(
     other: Usage = NO_USAGE,
 ) -> Capacity:
     """Capacity from the VM rows `(state, memory_mib)` plus `in_flight` VMs being created for the pool, less the slots
-    of `other` areas; the memory budget alone decides the slots (no fixed number, ADR-075 addendum 2). `reserve_mib`
-    None: the host reserve of `host_reserve_mib`."""
-    budget = max(physical_mib - host_reserve_mib(physical_mib, reserve_mib), 0)
-    total = budget // vm_memory_mib
+    of `other` areas; the memory budget alone decides the slots (no fixed number, ADR-075 addendum 2). Every VM costs
+    its memory plus its host share (`VM_HOST_MIB`, its Lima helper on the host); `reserve_mib` None: the host's own
+    base need (`host_reserve_mib`)."""
+    budget = max(physical_mib - host_reserve_mib(reserve_mib), 0)
+    size = vm_footprint_mib(vm_memory_mib)
+    total = budget // size
     occupying = [memory for state, memory in vms if state in SLOT_STATES]
     pool_ready = sum(1 for state, _ in vms if state == "pool")
-    used = sum(occupying) + in_flight * vm_memory_mib + other.memory_mib
-    other_slots = max(other.vms, -(-other.memory_mib // vm_memory_mib))
-    firm = max(other.vms - other.yielding_vms, -(-(other.memory_mib - other.yielding_mib) // vm_memory_mib))
+    other_mib = other.memory_mib + other.vms * VM_HOST_MIB
+    firm_mib = other.memory_mib - other.yielding_mib + (other.vms - other.yielding_vms) * VM_HOST_MIB
+    used = sum(vm_footprint_mib(memory) for memory in occupying) + in_flight * size + other_mib
+    other_slots = max(other.vms, -(-other_mib // size))
+    firm = max(other.vms - other.yielding_vms, -(-firm_mib // size))
     free = max(total - len(occupying) - in_flight - firm, 0)
     now = max(total - len(occupying) - in_flight - other_slots, 0)
     return Capacity(
@@ -151,18 +155,22 @@ def physical_memory_mib(sysconf: Callable[[str], int] = os.sysconf) -> int:
     return sysconf("SC_PHYS_PAGES") * sysconf("SC_PAGE_SIZE") // MIB
 
 
-RESERVE_FLOOR_MIB = 4096
-RESERVE_CEILING_MIB = 32768
-RESERVE_DIVISOR = 4
+HOST_BASE_MIB = 4096
+"""The host's own need without VMs (05-runner.md section 1.3, measured on the platform device under load, 2026-11-26):
+macOS services about 1 GB, the runner's store (PostgreSQL) 1.73 GB, the runner 0.23 GB - about 3 GB, so 4 GiB."""
+VM_HOST_MIB = 208
+"""The host share of every running VM: its Lima helper (`limactl`), measured 1.96 GB for 9 VMs (about 0.2 GiB each)."""
 
 
-def host_reserve_mib(physical_mib: int, setting: int | None = None) -> int:
-    """The host reserve of every device (05-runner.md section 1.3): a quarter of its memory, at least 4 GiB, at most
-    32 GiB - unless `MEMORY_RESERVE_MIB` is set (`setting`). Measured on the platform device under load (512 GB):
-    wired 6.6 GB, every process without the VMs 7.2 GB, the runner 1.5 GB of it; a Mac mini of 32 GB keeps 8 GiB."""
-    if setting is not None:
-        return setting
-    return max(RESERVE_FLOOR_MIB, min(RESERVE_CEILING_MIB, physical_mib // RESERVE_DIVISOR))
+def host_reserve_mib(setting: int | None = None) -> int:
+    """The host reserve of every device: its base need `HOST_BASE_MIB`, the same on every device whatever its RAM
+    (the VMs' own host share is counted with each VM, `vm_footprint_mib`) - unless `MEMORY_RESERVE_MIB` is set."""
+    return HOST_BASE_MIB if setting is None else setting
+
+
+def vm_footprint_mib(memory_mib: int) -> int:
+    """What one VM costs the host: its configured memory plus its host share (counted when the VM is admitted)."""
+    return memory_mib + VM_HOST_MIB
 
 
 CPU_RESERVE_DIVISOR = 8

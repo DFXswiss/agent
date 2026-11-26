@@ -98,14 +98,21 @@ counts as "no limit" (the behaviour before this ADR).
 >   (possible later through `golden_switch`-like moves, but a second mechanism besides the existing order).
 > - Specification: 05-runner.md §3.3 step 3.
 
-> **Addendum 4 (2026-11-26): the host reserve follows the device, no fixed number.** `MEMORY_RESERVE_MIB` was a fixed
-> 32 GiB on platform devices; a Mac mini of 32 GB would have kept nothing for VMs. Every device now uses the rule that
-> own devices had (ADR-074): a quarter of its memory, at least 4 GiB, at most 32 GiB (`vm.capacity.host_reserve_mib`);
-> a set value still replaces it. Measured on the platform device under load (512 GB): wired 6.6 GB, every process
-> without the VMs 7.2 GB, the runner 1.5 GB of it - the rule with its floor and ceiling covers that. The CPU has no
+> **Addendum 4 (2026-11-26): the host reserve is a measured base need plus a share per VM.** `MEMORY_RESERVE_MIB` was
+> a fixed 32 GiB on platform devices; a Mac mini of 32 GB would have kept nothing for VMs. A first correction applied
+> the own devices' quarter rule (ADR-074) to every device; the closer measurement on the platform device replaced it
+> (processes without the VMs about 7.2 GB: `limactl` 1.96 GB for 9 VMs, the store's PostgreSQL 1.73 GB, the runner
+> 0.23 GB, macOS services about 1 GB; wired 6.6 GB, growing with RAM and VMs): the reserve is a base need of 4 GiB
+> (macOS, runner, store - measured, not estimated; `vm.capacity.HOST_BASE_MIB`) on every device, plus the host share of
+> each VM, about 0.2 GiB for its Lima helper (`VM_HOST_MIB` = 208 MiB), which the admission counts when the VM is
+> admitted (`vm_footprint_mib`). A set `MEMORY_RESERVE_MIB` replaces the base need; the installer of own devices no
+> longer writes one. The store's PostgreSQL runs with its defaults (128 MB shared buffers); its 1.73 GB is resident
+> size summed over its processes, the shared buffers counted per process - measured with the same defaults, 8 busy
+> connections show 305 MiB resident but hold 50 MiB (proportional) - so a small device needs no smaller buffers
+> (05-runner.md §1.3.1). The CPU has no
 > fixed reserve either: the admission starts new VMs while about 1-2 cores stay free for macOS, the runner and the
 > VMs' input and output (an eighth of the cores, at least 1, at most 2, `vm.capacity.host_cpu_ratio`);
-> `CPU_LOAD_MAX_PERCENT`, empty by default, replaces that rule when set. 05-runner.md §1.3, §3.4, §3.8.
+> `CPU_LOAD_MAX_PERCENT`, empty by default, replaces that rule when set. 05-runner.md §1.3, §1.3.1, §3.4, §3.8.
 
 ### 2. Capacity report (runner → hub, additive)
 The `capacity` object of the heartbeat gains optional counters: `cpus`, `memory_total_mib`, `disk_free_mib`,

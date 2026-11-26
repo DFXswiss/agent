@@ -10,27 +10,30 @@ from agent_runner.vm import capacity, pool
 from agent_runner.vm.capacity import Candidate, compute, lru_victim
 
 NOW = datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
+HOST = capacity.VM_HOST_MIB
+VM = capacity.vm_footprint_mib(8192)
+"""A VM of 8 GiB costs the host its memory plus its host share (ADR-075 addendum 4)."""
 
 
 def test_budget_and_slot_formula() -> None:
-    # 512 GiB host, 32 GiB reserve, 8 GiB per VM: floor(491520 / 8192) slots.
+    # 512 GiB host, 32 GiB reserve, 8 GiB per VM plus its host share: floor(491520 / 8400) slots.
     result = compute(physical_mib=512 * 1024, reserve_mib=32768, vm_memory_mib=8192, vms=[])
-    assert (result.budget_mib, result.slots_total, result.slots_free, result.used_mib) == (491520, 60, 60, 0)
+    assert (result.budget_mib, result.slots_total, result.slots_free, result.used_mib) == (491520, 58, 58, 0)
     # The slot count is rounded down.
-    assert compute(physical_mib=32768 + 3 * 8192 + 8191, reserve_mib=32768, vm_memory_mib=8192, vms=[]).slots_total == 3
+    assert compute(physical_mib=32768 + 3 * VM + VM - 1, reserve_mib=32768, vm_memory_mib=8192, vms=[]).slots_total == 3
 
 
 def test_slot_states_and_stopped_vms() -> None:
     vms = [("pool", 8192), ("assigning", 8192), ("running", 4096), ("stopping", 8192), ("stopped", 8192)]
-    result = compute(physical_mib=32768 + 10 * 8192, reserve_mib=32768, vm_memory_mib=8192, vms=vms)
+    result = compute(physical_mib=32768 + 10 * VM, reserve_mib=32768, vm_memory_mib=8192, vms=vms)
     assert result.slots_total == 10
-    # Stopped VMs give their RAM back (Spike A): four VMs occupy slots.
+    # Stopped VMs give their RAM back (Spike A): four VMs occupy slots, each with its host share.
     assert result.slots_free == 6
-    assert result.used_mib == 8192 * 3 + 4096
+    assert result.used_mib == 8192 * 3 + 4096 + 4 * HOST
     assert result.pool_ready == 1
     assert result.heartbeat() == {
-        "vm_memory_budget_mib": 81920,
-        "vm_memory_used_mib": 28672,
+        "vm_memory_budget_mib": 10 * VM,
+        "vm_memory_used_mib": 28672 + 4 * HOST,
         "vm_slots_total": 10,
         "vm_slots_free": 6,
         "pool_ready": 1,
@@ -39,10 +42,10 @@ def test_slot_states_and_stopped_vms() -> None:
 
 def test_in_flight_clones_count_and_free_never_negative() -> None:
     result = compute(
-        physical_mib=32768 + 2 * 8192, reserve_mib=32768, vm_memory_mib=8192, vms=[("running", 8192)], in_flight=3
+        physical_mib=32768 + 2 * VM, reserve_mib=32768, vm_memory_mib=8192, vms=[("running", 8192)], in_flight=3
     )
     assert result.slots_free == 0
-    assert result.used_mib == 4 * 8192
+    assert result.used_mib == 4 * VM
     tiny = compute(physical_mib=1024, reserve_mib=32768, vm_memory_mib=8192, vms=[])
     assert (tiny.budget_mib, tiny.slots_total, tiny.slots_free) == (0, 0, 0)
 
@@ -95,13 +98,13 @@ def test_lru_victim_rules() -> None:
 
 def test_the_budget_alone_gives_the_slots_and_other_areas_hold_slots_and_memory() -> None:
     """ADR-075 addendum 2: no fixed number of VMs, the memory budget alone; the VMs of other areas count against it."""
-    host = 32768 + 10 * 8192
+    host = 32768 + 10 * VM
     found = compute(physical_mib=host, reserve_mib=32768, vm_memory_mib=8192, vms=[("running", 8192)])
     assert (found.slots_total, found.slots_free) == (10, 9)
-    # two work VMs of 4 GiB: two slots by count, one by memory -> two slots, 8 GiB used
+    # two work VMs of 4 GiB: two slots by count, two by memory with their host shares -> two slots
     other = capacity.Usage(vms=2, memory_mib=8192)
     shared = compute(physical_mib=host, reserve_mib=32768, vm_memory_mib=8192, vms=[], other=other)
-    assert (shared.slots_free, shared.used_mib, shared.other_vms) == (8, 8192, 2)
+    assert (shared.slots_free, shared.used_mib, shared.other_vms) == (8, 8192 + 2 * HOST, 2)
     # one large work VM of 20 GiB: three slots by memory
     large = compute(physical_mib=host, reserve_mib=32768, vm_memory_mib=8192, vms=[], other=capacity.Usage(1, 20480))
     assert large.slots_free == 7
@@ -111,11 +114,11 @@ def test_the_budget_alone_gives_the_slots_and_other_areas_hold_slots_and_memory(
 
 def test_yielding_usage_takes_no_slot_of_a_workgroup_vm() -> None:
     """ADR-059 addendum 4: work VMs that give way on demand leave `slots_free` alone; `slots_free_now` counts them."""
-    host = 32768 + 4 * 8192
+    host = 32768 + 4 * VM
     work = capacity.Usage(vms=3, memory_mib=3 * 8192, yielding_vms=2, yielding_mib=2 * 8192)  # one run VM is firm
     found = compute(physical_mib=host, reserve_mib=32768, vm_memory_mib=8192, vms=[("running", 8192)], other=work)
     assert (found.slots_free, found.slots_yielding, found.slots_free_now) == (2, 2, 0)
-    assert (found.used_mib, found.other_vms) == (4 * 8192, 3)
+    assert (found.used_mib, found.other_vms) == (4 * VM, 3)
     full = compute(physical_mib=host, reserve_mib=32768, vm_memory_mib=8192, vms=[("running", 8192)] * 4, other=work)
     assert (full.slots_free, full.slots_free_now) == (0, 0)
     assert capacity.Usage(1, 2, 1, 2) + capacity.Usage(3, 4) == capacity.Usage(4, 6, 1, 2)
@@ -127,14 +130,25 @@ def test_cpu_load_per_core() -> None:
     assert capacity.cpu_load_per_core() >= 0.0
 
 
-def test_the_host_reserve_is_a_quarter_of_the_memory_on_every_device() -> None:
-    """ADR-075 addendum 4: no fixed 32 GiB; a quarter of the memory, 4-32 GiB; a set value wins."""
-    assert capacity.host_reserve_mib(32 * 1024) == 8192  # a Mac mini of 32 GB keeps room for VMs
-    assert capacity.host_reserve_mib(512 * 1024) == 32768  # the platform device: covers 7.2 GB measured under load
-    assert capacity.host_reserve_mib(8 * 1024) == 4096  # the floor
-    assert capacity.host_reserve_mib(512 * 1024, 1024) == 1024
+def test_the_host_reserve_is_a_base_need_plus_a_share_per_vm() -> None:
+    """ADR-075 addendum 4: the host's measured base need (4 GiB) on every device, and every VM adds its host share (its
+    Lima helper: 1.96 GB measured for 9 VMs); a set `MEMORY_RESERVE_MIB` replaces the base need."""
+    assert capacity.host_reserve_mib() == capacity.HOST_BASE_MIB == 4096
+    assert capacity.host_reserve_mib(1024) == 1024
+    assert capacity.vm_footprint_mib(8192) == 8192 + capacity.VM_HOST_MIB == 8400
+    assert abs(9 * capacity.VM_HOST_MIB * 1024 * 1024 - 1.96e9) < 0.01e9  # the measurement: about 0.2 GiB each
     mini = capacity.compute(physical_mib=32 * 1024, reserve_mib=None, vm_memory_mib=8192, vms=[])
-    assert (mini.budget_mib, mini.slots_total) == (24 * 1024, 3)
+    assert (mini.budget_mib, mini.slots_total) == (28 * 1024, 3)  # a Mac mini of 32 GB: 3 VMs of 8 GiB
+    big = capacity.compute(physical_mib=512 * 1024, reserve_mib=None, vm_memory_mib=8192, vms=[("running", 8192)])
+    assert (big.slots_total, big.used_mib) == (61, 8400)  # the platform device of 512 GB
+    shared = capacity.compute(
+        physical_mib=64 * 1024,
+        reserve_mib=None,
+        vm_memory_mib=8192,
+        vms=[],
+        other=capacity.Usage(vms=2, memory_mib=8192),
+    )
+    assert shared.used_mib == 8192 + 2 * capacity.VM_HOST_MIB  # VMs of other areas count their host share too
 
 
 def test_about_one_or_two_cores_stay_free() -> None:

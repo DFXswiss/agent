@@ -715,13 +715,14 @@ def test_status_after_a_store_wipe_shows_the_adopted_hub_position(case: Case) ->
 def test_status_shows_the_work_vm_slots(case: Case, monkeypatch: pytest.MonkeyPatch) -> None:
     """ADR-059 addendum 4: held (a VM that is not stopped, a pool entry), free, stopped and waiting, and what the
     device's admission sees free; the slots follow the RAM above the reserve (no fixed number: a former
-    `AGENT_RUNNER_WORKVM_SLOTS` is ignored); the host reserve is a quarter of the memory (ADR-075 addendum 4)."""
-    monkeypatch.setattr(capacity_module, "physical_memory_mib", lambda: 65536)  # reserve 16 GiB: 6 standard VMs
+    `AGENT_RUNNER_WORKVM_SLOTS` is ignored); the host's base need is 4 GiB and every VM adds its host share (ADR-075
+    addendum 4)."""
+    monkeypatch.setattr(capacity_module, "physical_memory_mib", lambda: 65536)  # 60 GiB: 7 VMs of 8 GiB + 208 MiB
     case.env["AGENT_RUNNER_WORKVM_SLOTS"] = "0"
     [unbounded] = lines(case.cli("status")[1], "runner.status.workvm")
-    assert (unbounded["slots"], unbounded["held"], unbounded["disk_quota_gib"]) == ("6", "0", "none")
-    case.env["AGENT_RUNNER_MEMORY_RESERVE_MIB"] = "32768"  # a set reserve replaces the rule
-    assert lines(case.cli("status")[1], "runner.status.workvm")[0]["slots"] == "4"
+    assert (unbounded["slots"], unbounded["held"], unbounded["disk_quota_gib"]) == ("7", "0", "none")
+    case.env["AGENT_RUNNER_MEMORY_RESERVE_MIB"] = "32768"  # a set reserve replaces the base need
+    assert lines(case.cli("status")[1], "runner.status.workvm")[0]["slots"] == "3"
     del case.env["AGENT_RUNNER_WORKVM_SLOTS"]
     case.env["AGENT_RUNNER_WORKVM_DISK_QUOTA_GIB"] = "500"
     now = datetime(2026, 11, 26, 9, tzinfo=UTC)
@@ -747,9 +748,9 @@ def test_status_shows_the_work_vm_slots(case: Case, monkeypatch: pytest.MonkeyPa
     oldest = int(found.pop("oldest_wait_s"))
     load = int(found.pop("cpu_load_pct"))  # of the machine running the test
     cpu_max = str(round(admission.cpu_load_max(None) * 100))  # about 1-2 cores of the test machine stay free
-    assert found == {"slots": "4", "held": "2", "free": "2", "stopped": "2", "waiting": "2",
-                     "memory_free_mib": "16384", "cpu_load_max_pct": cpu_max, "disk_used_gib": "200",
-                     "disk_quota_gib": "500"}  # fmt: skip
+    assert found == {"slots": "3", "held": "2", "free": "1", "stopped": "2", "waiting": "2",
+                     "memory_free_mib": str(32768 - 2 * (8192 + 208)), "cpu_load_max_pct": cpu_max,
+                     "disk_used_gib": "200", "disk_quota_gib": "500"}  # fmt: skip
     assert 90 <= oldest < 150
     assert load >= 0
     # the device's admission per kind: active instances and the queue (a session hold counts while it runs)

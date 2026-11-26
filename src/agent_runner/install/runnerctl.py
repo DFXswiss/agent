@@ -25,15 +25,15 @@ PREFIX = "AGENT_RUNNER_"
 BUSY_STATES = frozenset({"starting", "agent_starting", "working", "prompt_delivering", "stopping"})
 
 
-def runner_env(system: System, owner: Owner, manifest: Manifest, reserve_mib: int) -> dict[str, str]:
-    """The settings of an own device's runner (written into its plist and used for every command)."""
+def runner_env(system: System, owner: Owner, manifest: Manifest) -> dict[str, str]:
+    """The settings of an own device's runner (written into its plist and used for every command). The host reserve
+    is the rule of every device (05-runner.md section 1.3), so it is not written."""
     layout = system.layout
     env = {
         PREFIX + "HOME": str(Layout.runner_home(owner.home)),
         PREFIX + "HUB_URL": manifest.hub,
         PREFIX + "PLATFORM_ROOT_KEY": manifest.platform_root_key,
         PREFIX + "POOL_SIZE": "0",
-        PREFIX + "MEMORY_RESERVE_MIB": str(reserve_mib),
         PREFIX + "GOLDEN_TEMPLATE": str(layout.golden_template()),
         PREFIX + "LOGIN_AUTOMATION": "off",
         PREFIX + "VM_PREFIX": VM_PREFIX,

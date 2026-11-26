@@ -319,7 +319,7 @@ def test_stopped_vm_restarts_without_any_ready_golden(harness: Harness) -> None:
 
 def test_clone_gives_up_a_pool_vm_when_no_slot_is_free(harness: Harness) -> None:
     harness.add_golden()
-    harness.physical_mib = 32768 + 2 * 8192
+    harness.physical_mib = 32768 + 2 * 8400
     harness.settings = settings(pool_size=2)
 
     async def body(manager: VmManager) -> Any:
@@ -336,7 +336,7 @@ def test_clone_gives_up_a_pool_vm_when_no_slot_is_free(harness: Harness) -> None
 
 def test_lru_stop_frees_a_slot(harness: Harness) -> None:
     harness.add_golden()
-    harness.physical_mib = 32768 + 2 * 8192
+    harness.physical_mib = 32768 + 2 * 8400
     harness.settings = settings(pool_size=0)
     a = harness.run(ensure(wg=WG_A))
     harness.now = NOW + timedelta(minutes=1)
@@ -353,7 +353,7 @@ def test_lru_stop_frees_a_slot(harness: Harness) -> None:
 def test_work_vms_give_way_to_a_workgroup_vm(harness: Harness) -> None:
     """ADR-059 addendum 4: the only slot's RAM is held by a work VM that yields; the workgroup VM gets it."""
     harness.add_golden()
-    harness.physical_mib = 32768 + 8192
+    harness.physical_mib = 32768 + 8400
     harness.settings = settings(pool_size=1)
     harness.other = Usage(vms=1, memory_mib=8192, yielding_vms=1, yielding_mib=8192)
 
@@ -371,7 +371,7 @@ def test_work_vms_give_way_to_a_workgroup_vm(harness: Harness) -> None:
 def test_idle_work_vms_give_way_before_another_workgroup_is_stopped(harness: Harness) -> None:
     """Sessions rank before work VMs (05 section 3.8): the only slot is held by work VMs that give way; no LRU stop."""
     harness.add_golden()
-    harness.physical_mib = 32768 + 8192
+    harness.physical_mib = 32768 + 8400
     harness.settings = settings(pool_size=0)
     harness.other = Usage(vms=1, memory_mib=8192)  # held, not yielding (a work VM that is not pooled)
 
@@ -411,7 +411,7 @@ def test_a_waiting_work_vm_with_fewer_active_keeps_its_room_from_a_new_session(h
     from agent_runner.admission import WORK  # noqa: PLC0415
 
     harness.add_golden()
-    harness.physical_mib = 32768 + 2 * 8192  # room for two VMs
+    harness.physical_mib = 32768 + 2 * 8400  # room for two VMs
     harness.settings = settings(pool_size=0)
     first = harness.run(ensure(wg=WG_A))
     harness.session(first.id, WG_A, "working")
@@ -434,7 +434,7 @@ def test_a_waiting_work_vm_with_fewer_active_keeps_its_room_from_a_new_session(h
 
 def test_capacity_exhausted(harness: Harness) -> None:
     harness.add_golden()
-    harness.physical_mib = 32768 + 8192
+    harness.physical_mib = 32768 + 8400
     harness.settings = settings(pool_size=0)
     a = harness.run(ensure(wg=WG_A))
     harness.session(a.id, WG_A, "working")
@@ -450,7 +450,7 @@ def test_capacity_exhausted(harness: Harness) -> None:
 
 def test_lru_victim_whose_lock_is_held_is_skipped(harness: Harness) -> None:
     harness.add_golden()
-    harness.physical_mib = 32768 + 8192
+    harness.physical_mib = 32768 + 8400
     harness.settings = settings(pool_size=0)
     harness.run(ensure(wg=WG_A))
     harness.now = NOW + timedelta(hours=1)
@@ -466,7 +466,7 @@ def test_lru_victim_whose_lock_is_held_is_skipped(harness: Harness) -> None:
 
 def test_lru_victim_that_stopped_meanwhile(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
     harness.add_golden()
-    harness.physical_mib = 32768 + 8192
+    harness.physical_mib = 32768 + 8400
     harness.settings = settings(pool_size=0)
     a = harness.run(ensure(wg=WG_A))
     harness.now = NOW + timedelta(hours=1)
@@ -686,7 +686,7 @@ def test_health_of_a_guest_assigned_elsewhere_and_vanished_rows(harness: Harness
 def test_reconcile(harness: Harness) -> None:
     harness.add_golden()
     harness.settings = settings(pool_size=3)
-    harness.physical_mib = 32768 + 8 * 8192
+    harness.physical_mib = 32768 + 8 * 8400
 
     async def setup(manager: VmManager) -> Any:
         await manager.refill()
@@ -910,7 +910,7 @@ def test_restart_whose_row_changed_meanwhile(harness: Harness, monkeypatch: pyte
 
 def test_slot_from_a_pool_vm_that_was_taken_meanwhile(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
     harness.add_golden()
-    harness.physical_mib = 32768 + 2 * 8192
+    harness.physical_mib = 32768 + 2 * 8400
     harness.settings = settings(pool_size=2)
 
     async def fill(manager: VmManager) -> Any:
@@ -935,7 +935,7 @@ def test_slot_from_a_pool_vm_that_was_taken_meanwhile(harness: Harness, monkeypa
 
 def test_refill_counts_reserved_slots(harness: Harness) -> None:
     harness.add_golden()
-    harness.physical_mib = 32768 + 8192
+    harness.physical_mib = 32768 + 8400
 
     async def body(manager: VmManager) -> Any:
         manager.reserved = 1
@@ -988,7 +988,7 @@ def test_two_clones_never_share_the_last_slot(harness: Harness) -> None:
     # Review of PFM-01: the capacity check awaits the store; without one lock around check and claim two clones of
     # different workgroups both saw the last free slot and both cloned (overbooking the VM memory budget).
     harness.add_golden()
-    harness.physical_mib = 32768 + 2 * 8192
+    harness.physical_mib = 32768 + 2 * 8400
     harness.settings = settings(pool_size=0)
     a = harness.run(ensure(wg=WG_A))
     harness.session(a.id, WG_A, "working")

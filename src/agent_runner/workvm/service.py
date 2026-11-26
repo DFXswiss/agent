@@ -48,7 +48,7 @@ from agent_runner.sessions.records import LocalSession
 from agent_runner.sync import lease
 from agent_runner.sync.http import HubClient, HubTransportError
 from agent_runner.vm import records as vm_records
-from agent_runner.vm.capacity import host_reserve_mib, physical_memory_mib
+from agent_runner.vm.capacity import VM_HOST_MIB, host_reserve_mib, physical_memory_mib, vm_footprint_mib
 from agent_runner.vm.lima import Lima
 from agent_runner.workvm import accounts, firewall, records
 from agent_runner.workvm.browser import Browsers, BrowserSettings
@@ -324,13 +324,14 @@ def workvms_for(context: Any) -> WorkVms | None:
     device_admission = admission.of(context)
 
     async def free_memory_mib() -> int:
-        """RAM above the host reserve that no VM of any kind holds, nor a workgroup VM admitted and in flight."""
+        """RAM above the host's base need that no VM of any kind holds (its memory and its host share), nor a workgroup
+        VM admitted and in flight."""
         held = ("pool", "assigning", "running", "stopping")
-        workgroup = sum(memory for state, memory in await vm_records.slot_rows(db) if state in held)
-        work = await records.memory_in_use(db)
+        workgroup = sum(vm_footprint_mib(memory) for state, memory in await vm_records.slot_rows(db) if state in held)
+        count = len(await records.live(db, *records.MEMORY_STATES)) + len(await records.pool(db))
+        work = await records.memory_in_use(db) + count * VM_HOST_MIB
         in_flight = device_admission.pending()
-        physical = int(physical_memory_mib())
-        return physical - host_reserve_mib(physical, config.memory_reserve_mib) - workgroup - work - in_flight
+        return int(physical_memory_mib()) - host_reserve_mib(config.memory_reserve_mib) - workgroup - work - in_flight
 
     def shell_for(vm: WorkVm) -> VmShell:
         return VmShell(command, vm.slot, vm.lima_name)

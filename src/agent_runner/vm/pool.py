@@ -64,7 +64,7 @@ from agent_runner.guestlink import cursor
 from agent_runner.guestlink.client import GuestClient, Health
 from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.vm import records
-from agent_runner.vm.capacity import NO_USAGE, Capacity, Usage, compute
+from agent_runner.vm.capacity import NO_USAGE, Capacity, Usage, compute, vm_footprint_mib
 from agent_runner.vm.lima import Instance, Lima, LimaError, memory_gib
 from agent_runner.vm.records import GoldenRef, TokenStore, VmRow
 
@@ -503,7 +503,7 @@ class Pool:
         # only room nobody holds or waits for: a warm VM is no reason to make work VMs give way (ADR-059 addendum 4),
         # and the waiting requests of the device's admission keep what they need (05-runner.md section 3.8)
         waiting = sum(ticket.memory_mib for ticket in self.env.admission.live())
-        room = capacity.slots_free_now - -(-waiting // self.env.settings.memory_mib)
+        room = capacity.slots_free_now - -(-waiting // vm_footprint_mib(self.env.settings.memory_mib))
         return max(min(wanted, MAX_PARALLEL_FILLS - self.filling, room), 0)
 
     async def purge(self, golden: GoldenRef | None) -> int:

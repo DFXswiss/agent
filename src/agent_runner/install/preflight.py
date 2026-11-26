@@ -10,7 +10,6 @@ import re
 from dataclasses import dataclass
 
 from agent_runner.install.system import System
-from agent_runner.vm.capacity import host_reserve_mib
 
 MIN_MACOS = (14, 0)
 MIN_MEMORY_GIB = 16
@@ -67,11 +66,3 @@ def run_checks(system: System) -> list[Check]:
 
 def failures(checks: list[Check]) -> list[str]:
     return [check.code for check in checks if not check.ok]
-
-
-def memory_reserve_mib(system: System) -> int:
-    """Host reserve of an own Mac: the rule of every device (a quarter of its memory, 4-32 GiB,
-    `vm.capacity.host_reserve_mib`), written into its environment so the installed runner shows it."""
-    memory = _sysctl(system, "hw.memsize")
-    total_mib = int(memory) // (1024 * 1024) if memory is not None and memory.isdigit() else 0
-    return host_reserve_mib(total_mib)

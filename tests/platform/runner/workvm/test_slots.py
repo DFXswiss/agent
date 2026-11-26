@@ -479,7 +479,7 @@ def test_new_vms_are_admitted_while_the_free_resources_last(world: World) -> Non
 
         vms.deps.admission.cpu_load = cpu
         vms.deps.admission.cpu_load_max = 0.85
-        world.free_mib = 2 * 8192  # room for two work VMs
+        world.free_mib = 2 * 8400  # room for two work VMs
         found: list[Any] = []
         for task_id in (TASK, TASK_B):
             found.append((await vms.request(of(task_id), {}))["created"])
@@ -506,7 +506,7 @@ def test_the_slot_accounts_follow_the_ram() -> None:
     from agent_runner.workvm import accounts  # noqa: PLC0415
 
     reserve = 32768
-    assert accounts.slot_count(reserve + 16 * 8192 + 100, reserve) == 16  # e.g. the platform device: 16
+    assert accounts.slot_count(reserve + 16 * 8400 + 100, reserve) == 16  # e.g. the platform device: 16
     assert accounts.slot_count(reserve + 1000 * 8192, reserve) == accounts.MAX_SLOTS
     assert accounts.slot_count(16384, reserve) == 1  # a small machine still has one
 
@@ -518,7 +518,7 @@ def test_a_waiting_session_with_fewer_active_gets_the_room_first(world: World) -
     from agent_runner.admission import SESSION  # noqa: PLC0415
 
     world.settings = dataclasses.replace(world.settings, queue_seconds=4, slots=4)
-    world.free_mib = 8192  # room for one VM
+    world.free_mib = 8400  # room for one VM
 
     async def body(vms: WorkVms) -> list[Any]:
         sessions_active = 0
@@ -531,9 +531,9 @@ def test_a_waiting_session_with_fewer_active_gets_the_room_first(world: World) -
         await vms.deps.admission.refused(SESSION, 8192)
         with pytest.raises(OperationFailed) as held:
             await vms.request(of(TASK), {})
-        world.free_mib = 2 * 8192
+        world.free_mib = 2 * 8400
         both = (await vms.request(of(TASK), {}))["created"]
-        world.free_mib = 8192
+        world.free_mib = 8400
         sessions_active = 5  # more sessions are active than work VMs: the work request goes first now
         third = (await vms.request(of(TASK_C), {}))["created"]
         await vms.deps.admission.started(SESSION)

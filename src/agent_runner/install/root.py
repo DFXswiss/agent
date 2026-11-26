@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from agent_runner.errors import RunnerError
-from agent_runner.install import daemons, hosttools, owner, preflight, release, runnerctl, update
+from agent_runner.install import daemons, hosttools, owner, release, runnerctl, update
 from agent_runner.install.layout import MAINTENANCE_LABEL, PACKAGE_ID, RUNNER_LABEL, VM_PREFIX, Layout
 from agent_runner.install.release import Manifest
 from agent_runner.install.state import Maintenance, read_json, write_state
@@ -212,7 +212,7 @@ def _started_status(ctx: runnerctl.Context, sleep: Callable[[float], None]) -> r
 
 def context(system: System, manifest: Manifest, recorded: str | None) -> runnerctl.Context:
     found = owner.resolve(system, recorded)
-    env = runnerctl.runner_env(system, found, manifest, preflight.memory_reserve_mib(system))
+    env = runnerctl.runner_env(system, found, manifest)
     return runnerctl.Context(system, found, env)
 
 
@@ -386,7 +386,7 @@ def uninstall(system: System, keys: Sequence[str], *, self_removal: bool = False
     if found is not None and version is not None and layout.python().is_file():
         try:
             manifest = _manifest(system, version, keys, verify_tree=False)
-            env = runnerctl.runner_env(system, found, manifest, preflight.memory_reserve_mib(system))
+            env = runnerctl.runner_env(system, found, manifest)
             runnerctl.uninstall(runnerctl.Context(system, found, env))
             removed.append("runner_data")
         except RunnerError as error:
