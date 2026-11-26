@@ -23,7 +23,7 @@ import { uuid7 } from '../encoding/ids';
 import { bodyJson } from '../encoding/json';
 import { formatTime } from '../encoding/time';
 import { newHeader, sealEvent } from '../crypto/event';
-import { AGENT, epochKey, ORG, type OrgState, USER } from '../log/state';
+import { epochKey, ORG, type OrgState, USER } from '../log/state';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
 import { memoize } from '../store/selectors';
@@ -301,11 +301,14 @@ export async function startAgent(
 
 // --- people ---
 
-/** The users and agents of the org that may be a task's person: active principals, users first, then by ID. */
+/**
+ * The members that may be a task's person: the active users of the org – people and agent accounts (ADR-071) – by ID.
+ * A user's own-identity agent (ADR-082) is no member of its own; the hub refuses it.
+ */
 export function assignablePeople(state: OrgState): string[] {
   return [...state.principals.values()]
-    .filter((p) => (p.kind === USER || p.kind === AGENT) && p.removedSeq === null)
-    .sort((a, b) => Number(a.kind === AGENT) - Number(b.kind === AGENT) || Number(a.id > b.id) - Number(a.id < b.id))
+    .filter((p) => p.kind === USER && p.removedSeq === null)
+    .sort((a, b) => Number(a.id > b.id) - Number(a.id < b.id))
     .map((p) => p.id);
 }
 

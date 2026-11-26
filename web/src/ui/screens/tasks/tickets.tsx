@@ -28,7 +28,8 @@ export function useTopics(org: string): readonly Topic[] {
   useEffect(() => {
     loadTopics(app.tasks, org).catch(() => 0);
   }, [app, org]);
-  return useStore(useMemo(() => selectTopics(org), [org]), app.store);
+  const select = useMemo(() => selectTopics(org), [org]);
+  return useStore(select, app.store);
 }
 
 /** A person a task may name: ID and shown name. */
@@ -57,6 +58,21 @@ export interface GithubSuggestions {
 const unique = (values: readonly string[]): string[] =>
   [...new Map(values.map((value) => [value.toLowerCase(), value])).values()].sort((a, b) => a.localeCompare(b));
 
+/**
+ * A selector of the repository lists of the workgroups of `key` (IDs joined by commas), merged and sorted; it returns
+ * the same array while the lists are equal (a stable snapshot for `useStore`). Create it once per key.
+ */
+export function selectRepositories(key: string): (store: StoreState) => readonly string[] {
+  let last: string[] = [];
+  return (store) => {
+    const next = unique(
+      (key === '' ? [] : key.split(',')).flatMap((wg) => settingsOf(selectCurrent(wg)(store)).repositories),
+    );
+    if (next.join() !== last.join()) last = next;
+    return last;
+  };
+}
+
 /** The suggestions (module comment); pulls the workgroups' settings once. */
 export function useGithubSuggestions(org: string, wgs: readonly string[]): GithubSuggestions {
   const { app } = useAppEnv();
@@ -67,19 +83,8 @@ export function useGithubSuggestions(org: string, wgs: readonly string[]): Githu
       pullOnce(app.tasks, org, wg, { kinds: [SETTINGS_KIND] }).catch(() => 0);
     }
   }, [app, org, key]);
-  const repos = useStore(
-    useMemo(() => {
-      let last: string[] = [];
-      return (store: StoreState) => {
-        const next = unique(
-          (key === '' ? [] : key.split(',')).flatMap((wg) => settingsOf(selectCurrent(wg)(store)).repositories),
-        );
-        if (next.join() !== last.join()) last = next;
-        return last;
-      };
-    }, [key]),
-    app.store,
-  );
+  const select = useMemo(() => selectRepositories(key), [key]);
+  const repos = useStore(select, app.store);
   return useMemo(() => {
     const logins = [
       ...identities.identities.flatMap((item) => (item.status === 'verified' ? [item.account.login] : [])),

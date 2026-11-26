@@ -318,12 +318,12 @@ describe('people', () => {
     const people = assignablePeople(t.world.state);
     expect(people.slice(0, 3).sort()).toEqual([t.ada.id, carl.id, dora.id].sort());
     expect(people).toEqual([...people].sort((a, b) => Number(a > b) - Number(a < b)));
-    // an agent account sorts after the users (ADR-071)
+    // a user's own-identity agent (ADR-082) and a removed member are no person of a task
     const state = t.world.state;
     const agent = { ...state.principals.get(carl.id)!, id: '0000-agent', kind: 'agent', parent: carl.id };
     const removed = { ...state.principals.get(dora.id)!, id: '0000-removed', removedSeq: 3 };
     const principals = new Map([...state.principals, [agent.id, agent], [removed.id, removed]]);
-    expect(assignablePeople({ principals } as unknown as OrgState)).toEqual([...people, agent.id]);
+    expect(assignablePeople({ principals } as unknown as OrgState)).toEqual(people);
   });
 });
 

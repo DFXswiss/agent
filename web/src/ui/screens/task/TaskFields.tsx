@@ -60,11 +60,9 @@ export function TaskFields({
   const { t, error } = useI18n();
   const statusId = useId();
   const topics = useTopics(row.org_id);
-  const meta =
-    useStore(
-      useMemo(() => selectMeta(row.wg_id, row.task_id), [row.wg_id, row.task_id]),
-      app.store,
-    ) ?? EMPTY_META;
+  const { wg_id: wg, task_id: taskId } = row;
+  const select = useMemo(() => selectMeta(wg, taskId), [wg, taskId]);
+  const meta = useStore(select, app.store) ?? EMPTY_META;
   const [editing, setEditing] = useState<TicketValues | null>(null);
   const [busy, setBusy] = useState(false);
   const [code, setCode] = useState<{ readonly kind: 'status' | 'edit'; readonly code: string } | null>(null);
