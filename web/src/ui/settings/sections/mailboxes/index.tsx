@@ -4,15 +4,18 @@
 import { lazy, Suspense } from 'react';
 import type { SettingsSection } from '../../../registries/settings-sections';
 import { useI18n } from '../../../i18n';
+import { ChunkBoundary } from '../../../lazy/ChunkBoundary';
 
 const MailboxesView = lazy(() => import('./MailboxesView'));
 
 export function LazyMailboxesSection() {
   const { t } = useI18n();
   return (
-    <Suspense fallback={<p data-testid="mailboxes.loading">{t('mailboxes.loading')}</p>}>
-      <MailboxesView />
-    </Suspense>
+    <ChunkBoundary fallback={<p data-testid="mailboxes.unavailable">{t('mailboxes.unavailable')}</p>}>
+      <Suspense fallback={<p data-testid="mailboxes.loading">{t('mailboxes.loading')}</p>}>
+        <MailboxesView />
+      </Suspense>
+    </ChunkBoundary>
   );
 }
 

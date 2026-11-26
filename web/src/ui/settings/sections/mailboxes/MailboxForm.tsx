@@ -59,7 +59,7 @@ export function MailboxForm({
   };
   const prefix = `mbform-${id ?? 'new'}`;
   const label = (field: Field) =>
-    field === 'imap_password' && id !== null ? t('mailboxes.imap_password.keep') : t(`mailboxes.${field}`);
+    field === 'imap_password' && id !== null ? t('mailbox.imap_password.keep') : t(`mailbox.${field}`);
   return (
     <form className="flex flex-col gap-2" onSubmit={(event) => void save(event)} data-testid="mbform">
       <div className="grid gap-2 sm:grid-cols-2">
@@ -79,10 +79,10 @@ export function MailboxForm({
           </label>
         ))}
       </div>
-      <p className="text-sm text-gray-600">{t('mailboxes.name.hint')}</p>
+      <p className="text-sm text-gray-600">{t('mailbox.name.hint')}</p>
       {taken && (
         <p role="alert" data-testid="mbform.name.taken">
-          {t('mailboxes.name.taken')}
+          {t('mailbox.name.taken')}
         </p>
       )}
       <div className="flex flex-wrap gap-2">
@@ -92,15 +92,15 @@ export function MailboxForm({
           disabled={!formReady(values, items, id) || state.kind === 'saving'}
           data-testid="mbform.save"
         >
-          {t('mailboxes.save')}
+          {t('mailbox.save')}
         </button>
         <button type="button" className={BUTTON} onClick={onClose} data-testid="mbform.cancel">
-          {t('mailboxes.cancel')}
+          {t('mailbox.cancel')}
         </button>
       </div>
       {state.kind === 'error' && (
         <p role="alert" data-testid="mbform.failed" data-code={state.code}>
-          {t('mailboxes.save-failed', { reason: reason(state.code) })}
+          {t('mailbox.save-failed', { reason: reason(state.code) })}
         </p>
       )}
     </form>

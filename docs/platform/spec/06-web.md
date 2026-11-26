@@ -965,7 +965,8 @@ login" on the primary one; "Add a mailbox" (name, purpose, address, IMAP host, p
 (the password field stays empty to keep the stored one), "Release" (checkboxes of the workgroups the user has access
 to; the sealed `use {wgs}` and its plaintext mirror), "Check" (device request `mailbox.check` with the mailbox body,
 sealed to the device) and "Remove" (one confirmation). Sessions of a released workgroup read the mailbox with
-`mail.find`; the password never leaves the record and the device.
+`mail.find`; the password never leaves the record and the device. The view and its texts (area `mailbox`) are a chunk
+of their own loaded when the settings show the section, so the first load keeps its budget.
 
 ### 8.3 Connected agents (KOR-24, `11-agent-access.md`)
 

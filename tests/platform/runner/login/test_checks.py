@@ -216,6 +216,31 @@ def test_an_unreachable_mailbox_is_upstream_unreachable(store_dsn: str, tmp_path
     )
 
 
+def test_a_mailbox_sent_with_the_request_is_checked(
+    store_dsn: str, tmp_path: Path, doubles: Callable[..., Login]
+) -> None:
+    # ADR-099 section 9: any mailbox of the store, sealed to the device inside the request; no stored record needed
+    login = doubles()
+    _check(
+        store_dsn,
+        tmp_path,
+        {"mailbox": {**mailbox_body(login), "name": "signup", "use": {"wgs": []}}},
+        {"step": "done", "valid": True},
+        kind="mailbox.check",
+    )
+
+
+@pytest.mark.parametrize("mailbox", [{"imap_host": "x"}, "not a mailbox"])
+def test_a_malformed_mailbox_of_the_request_is_refused(store_dsn: str, tmp_path: Path, mailbox: Any) -> None:
+    _check(
+        store_dsn,
+        tmp_path,
+        {"mailbox": mailbox},
+        {"step": "failed", "code": "upstream_error"},
+        kind="mailbox.check",
+    )
+
+
 @pytest.mark.parametrize(
     ("body", "records", "code"), [({"x": 1}, {}, "upstream_error"), ({}, {}, "credential_missing")]
 )

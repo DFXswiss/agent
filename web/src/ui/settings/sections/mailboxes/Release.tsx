@@ -36,7 +36,7 @@ export function WorkgroupName({ org, wg }: { readonly org: string | undefined; r
   // a workgroup outside the user's organizations (left, or not read yet): only the start of its ID
   if (org === undefined) return <>{wg.slice(0, 8)}</>;
   const workgroup = directory.workgroups.get(wg) ?? wg.slice(0, 8);
-  return <>{t('mailboxes.workgroup', { workgroup, org: directory.orgName ?? org.slice(0, 8) })}</>;
+  return <>{t('mailbox.workgroup', { workgroup, org: directory.orgName ?? org.slice(0, 8) })}</>;
 }
 
 export function Release({ item, onSaved }: { readonly item: Mailbox; readonly onSaved: () => void }) {
@@ -63,8 +63,8 @@ export function Release({ item, onSaved }: { readonly item: Mailbox; readonly on
   };
   return (
     <fieldset className="flex flex-col gap-1" data-testid="mbrelease">
-      <legend>{t('mailboxes.release.label')}</legend>
-      {shown.length === 0 && <p data-testid="mbrelease.none">{t('mailboxes.release.none')}</p>}
+      <legend>{t('mailbox.release.label')}</legend>
+      {shown.length === 0 && <p data-testid="mbrelease.none">{t('mailbox.release.none')}</p>}
       {shown.map((wg) => (
         <label key={wg} className="flex min-h-11 items-center gap-2">
           <input
@@ -83,16 +83,16 @@ export function Release({ item, onSaved }: { readonly item: Mailbox; readonly on
         onClick={() => void save()}
         data-testid="mbrelease.save"
       >
-        {t('mailboxes.release.save')}
+        {t('mailbox.release.save')}
       </button>
       {state.kind === 'saved' && (
         <p role="status" data-testid="mbrelease.saved">
-          {t('mailboxes.saved')}
+          {t('mailbox.saved')}
         </p>
       )}
       {state.kind === 'error' && (
         <p role="alert" data-testid="mbrelease.failed" data-code={state.code}>
-          {t('mailboxes.save-failed', { reason: reason(state.code) })}
+          {t('mailbox.save-failed', { reason: reason(state.code) })}
         </p>
       )}
     </fieldset>

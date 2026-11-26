@@ -17,10 +17,10 @@ type Open = 'none' | 'edit' | 'release' | 'check' | 'remove';
 function Released({ wgs }: { readonly wgs: readonly string[] }) {
   const { t } = useI18n();
   const releasable = useReleasable();
-  if (wgs.length === 0) return <p data-testid="mbcard.released">{t('mailboxes.released.none')}</p>;
+  if (wgs.length === 0) return <p data-testid="mbcard.released">{t('mailbox.released.none')}</p>;
   return (
     <div data-testid="mbcard.released">
-      <p>{t('mailboxes.released')}</p>
+      <p>{t('mailbox.released')}</p>
       <ul className="ml-4 list-disc">
         {wgs.map((wg) => (
           <li key={wg} data-testid={`mbcard.released.${wg}`}>
@@ -68,10 +68,10 @@ export function MailboxCard({
       data-testid={`mbcard.${item.id}`}
       data-name={item.name ?? ''}
     >
-      <h4 className="font-semibold">{item.name ?? t('mailboxes.unnamed')}</h4>
+      <h4 className="font-semibold">{item.name ?? t('mailbox.unnamed')}</h4>
       {item.primary && (
         <p className="self-start rounded bg-gray-100 px-2 text-sm" data-testid="mbcard.primary">
-          {t('mailboxes.primary')}
+          {t('mailbox.primary')}
         </p>
       )}
       {verified ? (
@@ -88,15 +88,15 @@ export function MailboxCard({
         </>
       ) : (
         <p role="alert" data-testid="mbcard.unverifiable" data-code={item.code}>
-          {t('mailboxes.unverifiable', { reason: reason(String(item.code)) })}
+          {t('mailbox.unverifiable', { reason: reason(String(item.code)) })}
         </p>
       )}
       {open === 'none' && (
         <div className="flex flex-wrap gap-2">
-          {verified && action('edit', 'mbcard.edit', t('mailboxes.edit'))}
-          {verified && action('release', 'mbcard.release', t('mailboxes.release'))}
-          {verified && action('check', 'mbcard.check', t('mailboxes.check'))}
-          {action('remove', 'mbcard.remove', t('mailboxes.remove'))}
+          {verified && action('edit', 'mbcard.edit', t('mailbox.edit'))}
+          {verified && action('release', 'mbcard.release', t('mailbox.release'))}
+          {verified && action('check', 'mbcard.check', t('mailbox.check'))}
+          {action('remove', 'mbcard.remove', t('mailbox.remove'))}
         </div>
       )}
       {open === 'edit' && (
@@ -114,27 +114,27 @@ export function MailboxCard({
         <>
           <Release item={item} onSaved={onChanged} />
           <button type="button" className={BUTTON} onClick={() => setOpen('none')} data-testid="mbcard.release.close">
-            {t('mailboxes.close')}
+            {t('mailbox.close')}
           </button>
         </>
       )}
       {open === 'check' && <MailboxCheck id={item.id} onClose={() => setOpen('none')} />}
       {open === 'remove' && (
         <div className="flex flex-col gap-2" role="alertdialog" data-testid="mbcard.confirm">
-          <p>{t('mailboxes.remove.confirm')}</p>
+          <p>{t('mailbox.remove.confirm')}</p>
           <div className="flex flex-wrap gap-2">
             <button type="button" className={PRIMARY} onClick={() => void remove()} data-testid="mbcard.remove.yes">
-              {t('mailboxes.remove')}
+              {t('mailbox.remove')}
             </button>
             <button type="button" className={BUTTON} onClick={() => setOpen('none')} data-testid="mbcard.remove.no">
-              {t('mailboxes.cancel')}
+              {t('mailbox.cancel')}
             </button>
           </div>
         </div>
       )}
       {failure !== null && (
         <p role="alert" data-testid="mbcard.failed" data-code={failure}>
-          {t('mailboxes.save-failed', { reason: reason(failure) })}
+          {t('mailbox.save-failed', { reason: reason(failure) })}
         </p>
       )}
     </article>

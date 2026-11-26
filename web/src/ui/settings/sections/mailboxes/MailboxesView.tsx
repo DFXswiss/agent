@@ -4,6 +4,7 @@
 // device and delete. Records are opened and sealed in the browser under the user's `CK` (`core/credentials/mailboxes`);
 // the password never reaches this UI. Loaded on demand by `index.tsx`, so it is not part of the first load.
 import { useCallback, useEffect, useState } from 'react';
+import '../../../../core/i18n/lazy/mailbox';
 import { loadMailboxes, type Mailbox } from '../../../../core/credentials/mailboxes';
 import { requestErrorCode } from '../../../../core/requests/client';
 import { useI18n } from '../../../i18n';
@@ -39,7 +40,7 @@ export function MailboxesSection() {
   const items = state.kind === 'error' ? [] : (state.items ?? []);
   return (
     <section className="flex flex-col gap-3" data-testid="mailboxes.section">
-      <p className="text-sm text-gray-600">{t('mailboxes.intro')}</p>
+      <p className="text-sm text-gray-600">{t('mailbox.intro')}</p>
       {adding ? (
         <MailboxForm
           item={null}
@@ -52,25 +53,25 @@ export function MailboxesSection() {
         />
       ) : (
         <button type="button" className={PRIMARY} onClick={() => setAdding(true)} data-testid="mailboxes.add">
-          {t('mailboxes.add')}
+          {t('mailbox.add')}
         </button>
       )}
       {state.kind === 'loading' && state.items === null && (
         <p aria-live="polite" data-testid="mailboxes.loading">
-          {t('mailboxes.loading')}
+          {t('mailbox.loading')}
         </p>
       )}
       {state.kind === 'error' && (
         <>
           <p role="alert" data-testid="mailboxes.failed" data-code={state.code}>
-            {t('mailboxes.load-failed', { reason: reason(state.code) })}
+            {t('mailbox.load-failed', { reason: reason(state.code) })}
           </p>
           <button type="button" className={BUTTON} onClick={reload} data-testid="mailboxes.retry">
-            {t('mailboxes.retry')}
+            {t('mailbox.retry')}
           </button>
         </>
       )}
-      {state.kind === 'ready' && items.length === 0 && <p data-testid="mailboxes.empty">{t('mailboxes.empty')}</p>}
+      {state.kind === 'ready' && items.length === 0 && <p data-testid="mailboxes.empty">{t('mailbox.empty')}</p>}
       {items.map((item) => (
         <MailboxCard key={item.id} item={item} items={items} onChanged={reload} />
       ))}

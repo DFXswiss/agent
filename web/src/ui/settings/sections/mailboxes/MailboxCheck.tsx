@@ -27,19 +27,19 @@ function Result({ prepared }: { readonly prepared: PreparedRequest }) {
     return (
       <p aria-live="polite" data-testid={`${ID}.waiting`} data-read-error={readError ?? ''}>
         {readError === null
-          ? t('mailboxes.check.waiting')
-          : t('mailboxes.check.read-failed', { reason: reason(readError) })}
+          ? t('mailbox.check.waiting')
+          : t('mailbox.check.read-failed', { reason: reason(readError) })}
       </p>
     );
   if (progress.step === 'failed')
     return (
       <p role="alert" data-testid={`${ID}.failed`} data-code={progress.code}>
-        {t('mailboxes.check.failed', { reason: reason(progress.code) })}
+        {t('mailbox.check.failed', { reason: reason(progress.code) })}
       </p>
     );
   return (
     <p role="status" data-testid={`${ID}.result`} data-valid={progress.valid}>
-      {progress.valid ? t('mailboxes.check.valid') : t('mailboxes.check.invalid')}
+      {progress.valid ? t('mailbox.check.valid') : t('mailbox.check.invalid')}
     </p>
   );
 }
@@ -60,17 +60,17 @@ export function MailboxCheck({ id, onClose }: { readonly id: string; readonly on
   return (
     <section className="flex flex-col gap-3 rounded border border-gray-300 p-4" data-testid={ID}>
       {phase.kind === 'pick' && (
-        <DevicePicker testId={ID} startLabel={t('mailboxes.check.start')} onPick={(device) => void start(device)} />
+        <DevicePicker testId={ID} startLabel={t('mailbox.check.start')} onPick={(device) => void start(device)} />
       )}
-      {phase.kind === 'starting' && <p data-testid={`${ID}.starting`}>{t('mailboxes.check.starting')}</p>}
+      {phase.kind === 'starting' && <p data-testid={`${ID}.starting`}>{t('mailbox.check.starting')}</p>}
       {phase.kind === 'error' && (
         <p role="alert" data-testid={`${ID}.failed`} data-code={phase.code}>
-          {t('mailboxes.check.failed', { reason: reason(phase.code) })}
+          {t('mailbox.check.failed', { reason: reason(phase.code) })}
         </p>
       )}
       {phase.kind === 'request' && <Result prepared={phase.prepared} />}
       <button type="button" className={BUTTON} onClick={onClose} data-testid={`${ID}.close`}>
-        {t('mailboxes.close')}
+        {t('mailbox.close')}
       </button>
     </section>
   );
