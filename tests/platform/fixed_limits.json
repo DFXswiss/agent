@@ -748,7 +748,8 @@
    "MAX_PACKAGE": "time"
   },
   "src/agent_runner/login/automation.py": {
-   "MAX_EMAIL": "size"
+   "MAX_EMAIL": "size",
+   "MAX_STEPS": "retry"
   },
   "src/agent_runner/login/capture.py": {
    "MAX_URL": "size"
@@ -758,6 +759,10 @@
    "MAX_FILE": "size",
    "MAX_SCOPES": "answer",
    "rate_limit_tier": "size"
+  },
+  "src/agent_runner/login/pages.py": {
+   "MAX_BOXES": "answer",
+   "URL_LIMIT": "size"
   },
   "src/agent_runner/login/pty.py": {
    "MAX_OUTPUT": "size"
@@ -932,6 +937,7 @@
    "MAX_SEQ": "integer"
   },
   "src/agent_runner/requests/service.py": {
+   "MAX_SLOTS": "rate",
    "MAX_WAITING": "time",
    "MISSING_LIMIT": "page"
   },
@@ -1640,6 +1646,7 @@
    "/$defs/vm_upgrade/properties/sessions/maxItems": "answer"
   },
   "contracts/credentials/claude_subscription.json": {
+   "/$defs/mailbox/properties/imap_port/maximum": "integer",
    "/properties/scopes/maxItems": "answer",
    "/properties/use/properties/orgs/maxItems": "open"
   },
@@ -1842,6 +1849,16 @@
    "/$defs/body_vm_state/properties/cpus/maximum": "integer",
    "/$defs/operator_subscription/properties/windows/maxItems": "answer",
    "/$defs/quota_window/properties/used_percent/maximum": "integer"
+  },
+  "contracts/requests/claude.login.request.json": {
+   "/oneOf/0/properties/account/properties/consents/maxItems": "answer",
+   "/oneOf/2/properties/click/properties/x/maximum": "integer",
+   "/oneOf/2/properties/click/properties/y/maximum": "integer"
+  },
+  "contracts/requests/claude.login.response.json": {
+   "/oneOf/2/properties/frame/maximum": "answer",
+   "/oneOf/2/properties/image/properties/height/maximum": "size",
+   "/oneOf/2/properties/image/properties/width/maximum": "size"
   },
   "contracts/requests/github.connect.response.json": {
    "/oneOf/0/properties/expires_in/maximum": "integer",

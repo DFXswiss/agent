@@ -355,6 +355,7 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | action:task-waiting | `github connect --from-gh`, `github connect --token` (the waiting card's next step `github connect` needs a person at GitHub's device page; an access step at GitHub - install, approval, SSO - needs the account at GitHub) | outside |
 | action:github-token | `github connect --from-gh` (the GitHub CLI login of this computer), `github connect --token` (any existing token) | built |
 | action:github-connect | `github connect --from-gh` (the GitHub CLI login of this computer), `github connect --token` (any existing token; the device page needs a person at GitHub) | outside |
+| next:human_only | `subscriptions check --relay` (gives the automation up: link and code); the check for humans of the provider's sign-in page is answered by a person by design and never by a model (ADR-099 §4) | outside |
 | action:github-accounts | `github connect --from-gh`, `github connect --token` (a further own account through an existing token; the device page needs a person at GitHub) | outside |
 | action:github-company-accounts | `github connect --org --token` (a company account through an existing token, e.g. the operator's or a dedicated account's; the device page needs a person at GitHub) | outside |
 | next:not_paired | `register --own-account`, `recover --hub` | built |

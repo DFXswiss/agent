@@ -30,3 +30,8 @@ Architecture: [ADR-099](../adr/099-parallel-subscription-logins.md). Rule: [E-33
     titles, e-mail input with "Continue with email", code input, `/oauth/authorize` allow button, the callback code)
     come from the double, which was rebuilt to the real shapes, and from public knowledge of the provider's pages.
     The first live login in operation shows whether a cue needs adjusting.
+11. **`AGENTS.md` at the repository root stays unchanged**: it is a legacy file (R-P.2, `test_legacy_untouched`). The
+    agent guidance for the new commands lives in `docs/platform/agents.md` (and its copy for the web) and in the tool's
+    `guide.md`; the parity rows are in `agent-parity.md`.
+12. **The check for humans is a step for a person** (`agent-parity.md`, table "Without a person", kind `outside`): it
+    belongs to the provider's sign-in page; without a person `subscriptions check --relay` gives the automation up.
