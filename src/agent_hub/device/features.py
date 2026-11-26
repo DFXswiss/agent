@@ -30,7 +30,7 @@ profile to a task while an active device assigned to a workgroup of the org has 
 platform role `support` (the hub refuses to append them while an active device - of the org, or for the platform log
 of any kind - has not announced it: an older runner would stop at the unknown type or value).
 
-`platform.analysis` (KOR-53, ADR-095 section 2): the runner answers the read tools `get_usage`, `list_audit`,
+`platform.analysis` (KOR-53, ADR-097 section 2): the runner answers the read tools `get_usage`, `list_audit`,
 `list_workgroup_operations` and `get_metrics` from the device routes of the workgroup. The hub creates an analysis task
 only while every active device assigned to a workgroup of the org has announced it and `agent.profiles`
 (`agent_hub.analysis.request`, `409 peer_outdated`).

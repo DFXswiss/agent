@@ -1,4 +1,4 @@
-// E2E-71 (07-testing.md section 2.1; KOR-53, ADR-095; concept idea 33, section 8 points 5 and 6, rules E-05, E-19):
+// E2E-73 (07-testing.md section 2.1; KOR-53, ADR-097; concept idea 33, section 8 points 5 and 6, rules E-05, E-19):
 // "Optimize processes" starts a read-only analysis task over the usage, audit, operations and metrics its people may
 // read; a person adopts the report.
 // 1. Ada (admin of her organization) has the default workgroup and workgroup B with a task that renamed itself (one
@@ -39,7 +39,7 @@ import {
 import { PageUser } from '../../../web/e2e/helpers/user.ts';
 
 const scenario = JSON.parse(
-  readFileSync(new URL('../scenarios/e2e-71-process-analysis.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../scenarios/e2e-73-process-analysis.json', import.meta.url), 'utf8'),
 ) as { variables: Record<string, string> } & Record<string, unknown>;
 const ADA_NAME = 'Ada kz71-name-a6v2';
 const BOB_NAME = 'Bob kz71-name-b9c4';
@@ -121,14 +121,14 @@ async function promptIn(page: Page, wg: string, prompt: string): Promise<string>
   return sendPrompt(page, prompt);
 }
 
-test('@E2E-71 @needs-vm process analysis reads only what its people may read, changes nothing and is adopted by a person', async ({
+test('@E2E-73 @needs-vm process analysis reads only what its people may read, changes nothing and is adopted by a person', async ({
   page,
   browser,
   e2e,
   orchestrator,
   authenticator,
 }) => {
-  test.skip(e2e.topology !== 't1', 'E2E-71 runs on T1 (07-testing.md section 2.1)');
+  test.skip(e2e.topology !== 't1', 'E2E-73 runs on T1 (07-testing.md section 2.1)');
   test.setTimeout(1_200_000);
   await platformDevice(orchestrator);
   await poolReady(orchestrator, 2);

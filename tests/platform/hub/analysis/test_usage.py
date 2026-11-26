@@ -1,4 +1,4 @@
-"""U-HUB-analysis (usage): `GET /v1/device/workgroups/{wg}/usage` (ADR-095 section 4). The sessions of the workgroup
+"""U-HUB-analysis (usage): `GET /v1/device/workgroups/{wg}/usage` (ADR-097 section 4). The sessions of the workgroup
 started in the period with their whole counters, charges, runtime and operation counts, per task (default) or per
 session, newest first and paged; the total of the period only on the first page; `device:wg`."""
 

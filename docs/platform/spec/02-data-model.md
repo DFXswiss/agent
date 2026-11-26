@@ -95,7 +95,7 @@ timestamptz NULL and `session.dfx_choice` bool default false (the wait of a sess
 `model_quota_exhausted`) and `task_attention.wait_until` timestamptz NULL (the time a `quota_wait` / `quota_choice`
 record continues by itself).
 
-Process analysis (KOR-53, [ADR-095](../adr/095-process-analysis.md), migration `0037_process_analysis`):
+Process analysis (KOR-53, [ADR-097](../adr/097-process-analysis.md), migration `0039_process_analysis`):
 `task.analysis` jsonb NULL (`{scope: org|wg, since, until}` of an analysis task, plaintext metadata of the request);
 indexes `session (wg_id, created_at DESC, id DESC)`, `operation (wg_id, created_at DESC, id DESC)` and `audit (wg_id,
 seq DESC) WHERE wg_id IS NOT NULL` for the session reads of one workgroup's usage, operations and audit.

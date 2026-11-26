@@ -1,4 +1,4 @@
-"""Usage, audit, operations and metrics of one workgroup (KOR-53, ADR-095 sections 3 and 4): the arguments of the
+"""Usage, audit, operations and metrics of one workgroup (KOR-53, ADR-097 sections 3 and 4): the arguments of the
 session read tools `get_usage`, `list_audit`, `list_workgroup_operations` and `get_metrics` (03-api.md section 8.1)
 and the hub's device routes `GET /v1/device/workgroups/{wg}/usage|audit|operations|metrics` (right `device:wg`,
 03-api.md section 6.1).
@@ -13,7 +13,7 @@ and the hub's device routes `GET /v1/device/workgroups/{wg}/usage|audit|operatio
   a row that does not match is dropped; an audit row must belong to the session's organization and to the read
   workgroup. Unknown operation error codes and a usage row's `model_id` outside the runner's model-ID form
   (`MODEL_ID_RE`, as `model/catalog.py`) become null instead.
-- **No free text through the audit** (ADR-095 section 3). An audit row's `action` has at most `MAX_ACTION` characters
+- **No free text through the audit** (ADR-097 section 3). An audit row's `action` has at most `MAX_ACTION` characters
   and `MAX_ACTION_SEGMENTS` dotted segments, else the row (or group) is dropped. Its `detail` reaches the model only as
   flat tokens: keys `DETAIL_KEY_RE`, values integers, booleans, null or strings of `TOKEN_RE` (no `@`, so no
   addresses; short, so no sentences); other entries are dropped and of the rest the first `MAX_DETAIL_KEYS` by key

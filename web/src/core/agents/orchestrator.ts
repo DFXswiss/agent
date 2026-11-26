@@ -46,7 +46,7 @@ type Client = Pick<SignedClient, 'request'>;
 export const POLL_MS = 1_000;
 export const WAIT_MS = 60_000;
 /** The reasons the hub names for a session that cannot become the main orchestrator (`analysis`: a session of an
- *  analysis task, ADR-095 section 2). */
+ *  analysis task, ADR-097 section 2). */
 export const REASONS = ['not_main', 'not_private', 'not_platform', 'not_running', 'analysis'] as const;
 export const PAIRING_STATES = ['open', 'confirmed', 'active'] as const;
 

@@ -202,7 +202,7 @@ def test_tools_list_dereferences_the_input_schema(mcp: McpClient, session: Sessi
 def test_tools_list_names_exactly_the_tools_of_the_contract(
     mcp: McpClient, session: Session, contracts_dir: Path
 ) -> None:
-    """The listed tools are the enum of ``tools-list.result.json``, the workgroup reads of ADR-095 section 3
+    """The listed tools are the enum of ``tools-list.result.json``, the workgroup reads of ADR-097 section 3
     included."""
     document = json.loads((contracts_dir / "mcp" / "tools-list.result.json").read_text(encoding="utf-8"))
     names = document["properties"]["tools"]["items"]["properties"]["name"]["enum"]

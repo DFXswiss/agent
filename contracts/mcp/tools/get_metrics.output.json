@@ -2,6 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/mcp/tools/get_metrics.output.json",
   "title": "platform tool get_metrics output",
-  "description": "Result (JSON text of the content item) of the platform tool get_metrics (03-api.md section 8.1, ADR-095 section 3).",
+  "description": "Result (JSON text of the content item) of the platform tool get_metrics (03-api.md section 8.1, ADR-097 section 3).",
   "$ref": "../objects.json#/$defs/output_get_metrics"
 }

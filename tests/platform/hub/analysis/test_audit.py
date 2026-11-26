@@ -1,4 +1,4 @@
-"""U-HUB-analysis (audit): `GET /v1/device/workgroups/{wg}/audit` (ADR-095 section 4). The audit rows of the
+"""U-HUB-analysis (audit): `GET /v1/device/workgroups/{wg}/audit` (ADR-097 section 4). The audit rows of the
 workgroup newest first, filtered by period, action or action group, task and session, paged by the cursor of the
 audit view; with `group_by=action` the counts per action and result instead (largest first, bounded, `truncated`).
 Rows of other workgroups and of the organization level never appear."""

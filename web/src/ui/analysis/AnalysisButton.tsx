@@ -1,4 +1,4 @@
-// "Optimize processes" (ADR-095 sections 6 and 7): the button of the situation view (scope `org`) and of the workgroup
+// "Optimize processes" (ADR-097 sections 6 and 7): the button of the situation view (scope `org`) and of the workgroup
 // view (scope `wg`), rendered by the screens only for a person who may write a workgroup (resp. this one). It opens a
 // dialog: the workgroup the task lives in (the writable workgroups; default as the screen passes it), the period
 // (presets of `core/analysis/`, default 7 days), who will read the report, and "Start". The task is created through

@@ -17,7 +17,7 @@ made here:
   record). A subagent's call is denied by rule 2 as before.
   Rule 1b (13-work-vm.md section 13.7): ``WebSearch`` is allowed when the model access of the session's current start
   (``session_access``, recorded in the session's meta file) is in ``WEB_SEARCH_ACCESS`` and the rights profile of that
-  start (``session_profile``) does not withhold it (``profiles.disallowed_tools``: the profile ``analysis``, ADR-095
+  start (``session_profile``) does not withhold it (``profiles.disallowed_tools``: the profile ``analysis``, ADR-097
   section 2); else it is denied by rule 2 (``tool_forbidden``), journaled and audited like every denial.
 * op ``hook.post_tool_use {session_id, body}`` - journals ``session.tool`` for ``Write``/``Edit`` (05 section 5.5);
   other tools come from the transcript (GST-05)

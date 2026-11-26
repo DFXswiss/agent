@@ -15,7 +15,7 @@ Web search (13-work-vm.md section 13.7): Claude Code's own ``WebSearch`` runs at
 settings (shared by every session of the VM) allow it; the command line offers it (``--tools``) only to a session whose
 model access is in ``policy.WEB_SEARCH_ACCESS`` and lists it in ``--disallowedTools`` for every other access, and the
 PreToolUse policy allows it by the same access (rule 1b). A rights profile may withhold it as well
-(``profiles.disallowed_tools``, ADR-095 section 2): then it is neither offered nor listed twice.
+(``profiles.disallowed_tools``, ADR-097 section 2): then it is neither offered nor listed twice.
 
 The command line never carries a prompt (HOT-09): Claude Code would start the turn at once, while its MCP servers
 still connect in the background, so the turn would run without the platform tools. Every first prompt is delivered
@@ -63,7 +63,7 @@ class Launch:
     mcp_configs: tuple[str, ...] = ()
     """Further ``--mcp-config`` files after the platform's (absolute paths of the image)."""
     disallowed: tuple[str, ...] = ()
-    """Tools the session's rights profile does not offer (``profiles.disallowed_tools``, ADR-094, ADR-095)."""
+    """Tools the session's rights profile does not offer (``profiles.disallowed_tools``, ADR-094, ADR-097)."""
 
 
 class AgentDriver(Protocol):

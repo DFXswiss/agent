@@ -1,4 +1,4 @@
-"""MCP tool ``get_metrics`` (03-api.md §8.1, ADR-095 §3, read scope ADR-089).
+"""MCP tool ``get_metrics`` (03-api.md §8.1, ADR-097 §3, read scope ADR-089).
 
 A read tool: forwarded to the runner as ``platform.query`` with the handler limit of 10 s; the runner reads the hub's
 device route of the workgroup and checks the scope and the rights of the task owner and of the instructing person at

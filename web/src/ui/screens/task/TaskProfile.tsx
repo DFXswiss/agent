@@ -2,7 +2,7 @@
 // profile's name; writers of the workgroup choose a profile of the workgroup or none, saved with
 // `PUT /v1/tasks/{task}/agent-profile` (it applies at once to the task's sessions and their subagents; `409
 // peer_outdated` when a device of the organization runs an older runner). The profile of an analysis task is never
-// widened (ADR-095 section 2): it shows no change button but the reason and a link to start an ordinary task.
+// widened (ADR-097 section 2): it shows no change button but the reason and a link to start an ordinary task.
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { isAnalysis } from '../../../core/analysis/analysis';

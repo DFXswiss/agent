@@ -4,7 +4,7 @@
 //    `lh` = the verified head, a fresh `task_id`. The prepared body is kept by the caller: a retry sends the identical
 //    request (same IDs, same bytes), which the hub answers `replayed` (03-api.md section 1). An optional GitHub
 //    identity chosen for the task goes along as `github_identity` (ADR-078 section 3; without it: automatic). An
-//    analysis task (ADR-095, `core/analysis/`) brings its fixed `title` instead of the derived one and its plaintext
+//    analysis task (ADR-097, `core/analysis/`) brings its fixed `title` instead of the derived one and its plaintext
 //    `analysis` (scope and period) for the body.
 // 2. `ensureDevice` (step 1 of the first-task flow): if the workgroup has no assigned device, an admin of an org with
 //    platform access (ADR-026; in a private org the single member is the admin) assigns the first platform candidate
@@ -151,7 +151,7 @@ export async function sealWg(
   return sealEvent(key, header, bodyJson(body), identity.sig.privateKey);
 }
 
-/** The plaintext `analysis` of `POST /v1/tasks` (ADR-095 section 1). */
+/** The plaintext `analysis` of `POST /v1/tasks` (ADR-097 section 1). */
 export interface TaskAnalysis {
   readonly scope: 'org' | 'wg';
   readonly since: string;
@@ -174,7 +174,7 @@ export interface PreparedTask {
     readonly placement?: { readonly device_id: string; readonly vm_id?: string };
     /** The GitHub identity chosen for the task (ADR-078 section 3); absent for "automatic". */
     readonly github_identity?: string;
-    /** Scope and period of an analysis task (ADR-095 section 1); absent for every other task. */
+    /** Scope and period of an analysis task (ADR-097 section 1); absent for every other task. */
     readonly analysis?: TaskAnalysis;
   };
 }

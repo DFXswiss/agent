@@ -18,7 +18,7 @@
         "org",
         "wg"
       ],
-      "description": "the scope of an analysis task (ADR-095 section 1); absent for every other task"
+      "description": "the scope of an analysis task (ADR-097 section 1); absent for every other task"
     }
   },
   "required": [

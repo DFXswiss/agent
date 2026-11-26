@@ -11,7 +11,7 @@
   (``State.save_session``); the token itself stays in memory until the unit gets it as environment (through the
   root-only launch file and ``systemd-run``'s environment, never on a command line)
 * the harness file ``/run/agent-guest/harness/<id>.md`` (``harness.py``; the name of the start's ``profile`` decides
-  about its block ``## Process analysis``, ADR-095)
+  about its block ``## Process analysis``, ADR-097)
 * journal ``session.state sandbox_ready`` with ``harness_version``
 
 The agent starts (``SessionManager.start``, 05 section 6.1 step 5) once the runner provisioned the model credential:

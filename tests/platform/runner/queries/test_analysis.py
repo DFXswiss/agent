@@ -1,4 +1,4 @@
-"""U-RUN-queries process analysis reads (KOR-53, ADR-095 section 3; 03-api.md section 8.1): `get_usage`, `list_audit`,
+"""U-RUN-queries process analysis reads (KOR-53, ADR-097 section 3; 03-api.md section 8.1): `get_usage`, `list_audit`,
 `list_workgroup_operations` and `get_metrics` through the real read path (journal record -> handler -> tool ->
 `platform.read` event, audit, answer) in the fixture org of `kit.py`, with the hub's device routes of
 `analysis_kit.AnalysisHub`. Each tool reads one workgroup under the read scope of ADR-089 (own, another readable,

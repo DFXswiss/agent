@@ -21,7 +21,7 @@ The context block has a fixed structure (decisions/GST-02.md):
    of this module
 3. ``## Session``: what the guest knows itself (session and task ID, parent session and depth, model, resource limits)
 4. ``## Platform tools``: every MCP tool of 03-api.md section 8.1 with one example call
-5. ``## Process analysis`` (only for a main session, depth 0, whose rights profile is ``analysis``; ADR-095 section 1):
+5. ``## Process analysis`` (only for a main session, depth 0, whose rights profile is ``analysis``; ADR-097 section 1):
    this session is the process analysis of its task and follows the section "Process analysis" of the rules. Its
    subagents carry the profile's name but get no such block. The block is not a fact line: the profile of an
    analysis task never changes, so it never needs a notice
@@ -73,7 +73,7 @@ CHANGED_SENTENCE = "Facts of this session changed since your instructions were w
 """The sentence of a notice that has changed facts but no sentence of its own."""
 
 ANALYSIS_PROFILE = "analysis"
-"""The built-in rights profile of a process analysis (ADR-095 section 2)."""
+"""The built-in rights profile of a process analysis (ADR-097 section 2)."""
 ANALYSIS_BRIEF = (
     'This session is the process analysis of its task. Follow the section "Process analysis" of the rules: read with'
     " the platform tools, answer with the report of six sections and change nothing."

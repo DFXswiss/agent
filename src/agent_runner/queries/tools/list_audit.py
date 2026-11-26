@@ -1,5 +1,5 @@
 """`list_audit {workgroup_id?, since?, until?, action?, task_id?, session_id?, group_by?, before?, limit? <= 200}`
-(03-api.md section 8.1, ADR-095 section 3): the audit rows of one workgroup the session may read (`workgroup_id`,
+(03-api.md section 8.1, ADR-097 section 3): the audit rows of one workgroup the session may read (`workgroup_id`,
 default the session's; `ReadScope.readable`, ADR-089) from `GET /v1/device/workgroups/{wg}/audit`, newest first, one
 page with the hub's cursor; `action` is an action or a dotted group (`operation`). With `group_by` `action` the counts
 per action and result of the filtered rows instead (largest first, at most 200 groups, `truncated`). Rows of another

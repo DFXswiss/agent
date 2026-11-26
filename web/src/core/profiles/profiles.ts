@@ -14,7 +14,7 @@ import { putTasks, type SessionEntry } from '../store/slices/tasks';
 export const NAME_RE = /^[a-z][a-z0-9_-]{0,39}$/;
 export const REACHES = ['task', 'workgroup', 'all'] as const;
 export type Reach = (typeof REACHES)[number];
-/** The built-in roles (derived from the operation classes by the hub; `analysis`: ADR-095 section 2). */
+/** The built-in roles (derived from the operation classes by the hub; `analysis`: ADR-097 section 2). */
 export const ROLES = ['read_only', 'development', 'security', 'review', 'merge', 'analysis'] as const;
 
 export interface AgentProfile {

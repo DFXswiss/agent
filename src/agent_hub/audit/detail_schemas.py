@@ -1956,13 +1956,6 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["model_access", "model_id", "locale"],
     },
-    "task.agent_profile": {
-        "properties": {
-            "profile": [{"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$"}, {"type": "null"}],
-            "reads": [{"type": "string", "enum": ["task", "workgroup", "all"]}, {"type": "null"}],
-        },
-        "required": ["profile", "reads"],
-    },
     "support.name": {"properties": {}, "required": []},
     "support.people": {
         "properties": {"change": [{"type": "string", "enum": ["joined", "left"]}]},
@@ -2010,6 +2003,13 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "ct_bytes": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}],
         },
         "required": ["kind", "scope", "scope_seq", "ct_bytes"],
+    },
+    "task.agent_profile": {
+        "properties": {
+            "profile": [{"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,39}$"}, {"type": "null"}],
+            "reads": [{"type": "string", "enum": ["task", "workgroup", "all"]}, {"type": "null"}],
+        },
+        "required": ["profile", "reads"],
     },
     "task.close": {"properties": {"by": [{"type": "string", "enum": ["user", "hub"]}]}, "required": ["by"]},
     "task.create": {

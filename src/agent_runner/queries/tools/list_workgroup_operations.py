@@ -1,5 +1,5 @@
 """`list_workgroup_operations {workgroup_id?, since?, until?, type?, state?, group_by?, before?, limit? <= 200}`
-(03-api.md section 8.1, ADR-095 section 3): the operations of every task of one workgroup the session may read
+(03-api.md section 8.1, ADR-097 section 3): the operations of every task of one workgroup the session may read
 (`workgroup_id`, default the session's; `ReadScope.readable`, ADR-089) from
 `GET /v1/device/workgroups/{wg}/operations`, newest first, one page with the hub's cursor. With `group_by` `type` the
 counts per type, state and error code instead (largest first, at most 200 groups, `truncated`). Rows are checked and

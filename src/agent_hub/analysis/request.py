@@ -1,4 +1,4 @@
-"""The analysis of `POST /v1/tasks` (KOR-53, ADR-095 sections 1 and 2): a task of the kind "analysis".
+"""The analysis of `POST /v1/tasks` (KOR-53, ADR-097 sections 1 and 2): a task of the kind "analysis".
 
 - `parse(value, now)`: the request's `analysis {scope: "org"|"wg", since?, until?}` checked against the hub's time:
   `until` (default now) at most `FUTURE_SLACK` after now, `since` (default `DEFAULT_DAYS` before `until`) before

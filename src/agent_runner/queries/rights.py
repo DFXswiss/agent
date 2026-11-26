@@ -78,7 +78,7 @@ ANALYSIS_PROFILE = "analysis"
 
 
 class FiguresOnly(ReadRefused):
-    """A session with the profile `analysis` reads another workgroup only as figures (ADR-095 section 7): usage,
+    """A session with the profile `analysis` reads another workgroup only as figures (ADR-097 section 7): usage,
     operations, metrics, audit counts and workgroup names, never tasks, chat, whiteboards, members or audit rows."""
 
     def __init__(self, wg_id: str) -> None:

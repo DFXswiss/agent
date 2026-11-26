@@ -1,4 +1,4 @@
-"""`get_usage {workgroup_id?, since, until?, by?, before?, limit? <= 200}` (03-api.md section 8.1, ADR-095 section 3):
+"""`get_usage {workgroup_id?, since, until?, by?, before?, limit? <= 200}` (03-api.md section 8.1, ADR-097 section 3):
 the usage of one workgroup the session may read (`workgroup_id`, default the session's; `ReadScope.readable`, ADR-089)
 from `GET /v1/device/workgroups/{wg}/usage` - one row per task (`by` `task`, the default) or per session started in
 the period, newest first, with requests, tokens, provider cost and charged amount in micro-USD, runtime and operation

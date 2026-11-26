@@ -79,7 +79,7 @@ def test_subagent_default_model_and_restart_notice() -> None:
 
 
 def test_the_main_session_of_an_analysis_is_told_to_follow_the_brief() -> None:
-    """ADR-095 section 1: the block follows the tool list (before a restart notice) for depth 0 and the profile
+    """ADR-097 section 1: the block follows the tool list (before a restart notice) for depth 0 and the profile
     ``analysis`` only; it is no fact line, so it never changes a session notice."""
     text = harness.render(RULES, facts(profile_name="analysis", restarted=True), CONTEXT)
     block = text.split("## Platform tools\n\n", 1)[1].split("\n\n## Process analysis\n\n", 1)[1]

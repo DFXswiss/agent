@@ -4,7 +4,7 @@
 //   (preselected with the default workgroup; only workgroups with `wg:write`) and the prompt field. The suggestion
 //   chips are shown while the organization has no task yet, otherwise behind "Suggestions". A user without write
 //   access anywhere sees a short note instead (controls the rights do not allow are not rendered, section 1). Next to
-//   it "Optimize processes" (ADR-095 section 6): an analysis of the organization, in the default workgroup unless
+//   it "Optimize processes" (ADR-097 section 6): an analysis of the organization, in the default workgroup unless
 //   chosen otherwise.
 // - The counters: "Waiting for me", "Stuck", "Running", "Finished today" (since local midnight), and below them the
 //   organization's subscriptions ("Subscriptions: n available · m used up – next release 14:05", ADR-081 section 6),

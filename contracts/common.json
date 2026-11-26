@@ -708,7 +708,7 @@
                 "not_running",
                 "not_requested"
               ],
-              "description": "orchestrator_unavailable: why the session cannot become the main orchestrator (ADR-082 section 9.6, 11-agent-access.md section 11; `analysis`: a session of an analysis task, ADR-095 section 2); forbidden with `analysis`: the profile of an analysis task is only narrowed (ADR-095 section 2)"
+              "description": "orchestrator_unavailable: why the session cannot become the main orchestrator (ADR-082 section 9.6, 11-agent-access.md section 11; `analysis`: a session of an analysis task, ADR-097 section 2); forbidden with `analysis`: the profile of an analysis task is only narrowed (ADR-097 section 2)"
             }
           },
           "additionalProperties": false

@@ -165,7 +165,7 @@
               "type": "null"
             }
           ],
-          "description": "the scope and period of an analysis task (ADR-095 section 1), null for every other task"
+          "description": "the scope and period of an analysis task (ADR-097 section 1), null for every other task"
         }
       },
       "required": [
@@ -2380,7 +2380,7 @@
     },
     "analysis": {
       "type": "object",
-      "description": "the analysis of a task of the kind analysis (ADR-095 section 1)",
+      "description": "the analysis of a task of the kind analysis (ADR-097 section 1)",
       "properties": {
         "scope": {
           "type": "string",

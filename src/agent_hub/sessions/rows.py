@@ -17,7 +17,7 @@ ADR-094 section 1): a child without one works with what its parent has. The hand
 task row names the task's `number` in its organization and `name_event_id`, the newest `task.agent_name` event of the
 task (the main agent's name, null without one); a session row its `agent_path` (null for a main session).
 `analysis` marks an analysis task with its scope and period (`{scope, since, until}`, null for every other task;
-ADR-095 section 1).
+ADR-097 section 1).
 """
 
 from __future__ import annotations

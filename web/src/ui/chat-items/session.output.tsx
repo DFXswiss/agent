@@ -2,7 +2,7 @@
 // lazily, plain text until then and when the chunk cannot be loaded); a cut message says so. A very long message
 // shows `CLIP_CHARS` characters at a time, the rest behind "Show more" (HOT-05); the Markdown is built only once the
 // row comes near the viewport (ADR-086 section 1), before that the message's first line is shown. An output of an
-// analysis task offers "Adopt" (its whole text into a whiteboard, ADR-095 section 5).
+// analysis task offers "Adopt" (its whole text into a whiteboard, ADR-097 section 5).
 import { lazy, Suspense } from 'react';
 import { isRecord } from '../../core/registry';
 import type { TimelineItem } from '../../core/chat/timeline';

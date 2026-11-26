@@ -1,5 +1,5 @@
 """U-HUB-analysis (request): the `analysis` of `POST /v1/tasks` checked against the hub's time - scope, period
-defaults and bounds, the stored record, the fields a repetition must repeat and the profile snapshot (ADR-095
+defaults and bounds, the stored record, the fields a repetition must repeat and the profile snapshot (ADR-097
 sections 1 and 2)."""
 
 from __future__ import annotations

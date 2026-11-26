@@ -1,4 +1,4 @@
-// U-WEB-analysis (ADR-095 sections 1, 5 and 6): the period presets, the fixed title and prompt against the vectors of
+// U-WEB-analysis (ADR-097 sections 1, 5 and 6): the period presets, the fixed title and prompt against the vectors of
 // contracts/tasks/analysis.json (the same text as the agent tool), the analysis task through the ordinary send path,
 // the recognition of an analysis task and "Adopt" into the workgroup or organization whiteboard as the person.
 import { readFileSync } from 'node:fs';

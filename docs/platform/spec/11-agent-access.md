@@ -506,7 +506,7 @@ a local orchestrator and is replaced by a new pairing of either form, `agent_one
 no other active user member (so the session's events are readable only by the user, the user's agent and the executing
 devices, ADR-082 §9.6), an active platform device, state `working` or `idle` (the VM runs and can draw keys). The hub
 refuses everything else with `409 orchestrator_unavailable` (`detail.reason` `not_main`, `analysis` – a session of an
-analysis task, which only reads, ADR-095 §2 –, `not_private`, `not_platform`, `not_running`; registering keys also
+analysis task, which only reads, ADR-097 §2 –, `not_private`, `not_platform`, `not_running`; registering keys also
 `not_requested`); the session page offers the step only to the
 task owner of a running main session for which `GET /v1/sessions/{id}/orchestrator` says `available`.
 

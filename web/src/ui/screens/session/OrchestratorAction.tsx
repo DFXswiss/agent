@@ -2,7 +2,7 @@
 // 9.6): offered only to the task owner, only for a running main session (`working`, `idle`), and only when the hub
 // says the session may become it (`GET /v1/sessions/{id}/orchestrator`: a session of the owner's private organization
 // on a platform device; any other session is refused there too). A session that is the main orchestrator already says
-// so instead; a session of an analysis task says why it cannot become it (ADR-095 section 2). The dialog
+// so instead; a session of an analysis task says why it cannot become it (ADR-097 section 2). The dialog
 // (`OrchestratorDialog`) asks the session's runner for keys, checks them and runs the confirmation. It is imported
 // statically: it lies in the lazy chunk of the session screen anyway, and an import inside one chunk has no chunk of
 // its own whose integrity the import could check (`src/core/assets/integrity.ts`).

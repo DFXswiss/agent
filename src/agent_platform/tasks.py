@@ -184,7 +184,7 @@ def task_create(
     """A new task with its first prompt in workgroup `wg` (on the chosen device and VM and with the chosen GitHub
     identity, if any; without a device choice an admin's workgroup without a device gets one first, `ensure_device`).
     `title` replaces the title derived from the prompt and `analysis` makes it an analysis task (`agent_platform.
-    optimize`, ADR-095 section 1)."""
+    optimize`, ADR-097 section 1)."""
     org = find_org(account, _id(wg))
     prompt = _prompt(text)
     fixed = derive_title(prompt) if title is None else title

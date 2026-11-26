@@ -33,7 +33,7 @@ export interface TaskRow {
   readonly number?: number;
   /** The hub's newest `task.agent_name` event of the task (ADR-095 section 2); absent before KOR-52. */
   readonly name_event_id?: string | null;
-  /** Scope and period of an analysis task (ADR-095 section 1; `core/analysis/`); null or absent for any other. */
+  /** Scope and period of an analysis task (ADR-097 section 1; `core/analysis/`); null or absent for any other. */
   readonly analysis?: unknown;
 }
 

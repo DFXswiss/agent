@@ -1,7 +1,7 @@
 """U-GST-policy rule 1b (13-work-vm.md section 13.7, decision KOR-44 point 11): Claude Code's own ``WebSearch`` is
 allowed for a session whose model access is ``api_key`` or ``subscription`` and denied by rule 2 for the platform
 access (and for an unknown access); ``WebFetch`` stays denied for every access. A session with the rights profile
-``analysis`` (ADR-095 section 2) is denied it by rule 2 whatever its access."""
+``analysis`` (ADR-097 section 2) is denied it by rule 2 whatever its access."""
 
 from __future__ import annotations
 

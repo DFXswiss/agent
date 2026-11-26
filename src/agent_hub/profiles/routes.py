@@ -17,7 +17,7 @@ task's live sessions get `reconcile {}`. A changed definition reaches the organi
 Assigning a profile (never clearing one) passes the feature gate `agent.profiles` of the organization's devices
 (`409 peer_outdated`): only the runner can check reads and the work VM and browser tools.
 Every change is audited (`agent_profile.set`, `agent_profile.delete`, `task.agent_profile`); a repetition without
-change is not. The profile of an analysis task (ADR-095 section 2) is never widened or cleared: only a profile within
+change is not. The profile of an analysis task (ADR-097 section 2) is never widened or cleared: only a profile within
 its snapshot is assigned, anything else is `403 forbidden` with detail `{"reason": "analysis"}`. The narrower snapshot
 keeps the name `analysis` (its types and reach are the chosen profile's), so the marker of the analysis holds.
 """
@@ -266,7 +266,7 @@ def set_task_profile(
     current = connection.execute("SELECT agent_profile, analysis FROM hub.task WHERE id = %s", (task.id,)).fetchone()
     if current[1] is not None:
         if profile is None or not model.within(profile, model.from_json(current[0])):
-            # an analysis task always reads only: only a narrower profile (ADR-095 section 2)
+            # an analysis task always reads only: only a narrower profile (ADR-097 section 2)
             raise HubError("forbidden", detail={"reason": "analysis"})
         profile = model.Profile(model.ANALYSIS, profile.operations, profile.reads)  # it stays marked as one
     wanted = None if profile is None else profile.as_json()

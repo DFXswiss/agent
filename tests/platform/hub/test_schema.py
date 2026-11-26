@@ -282,7 +282,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("model_consent", BOOL),  # KOR-50, migration 0025 (ADR-081)
         ("agent_profile", J),  # KOR-51, migration 0036 (ADR-094)
         ("number", BI),  # KOR-52, migration 0037 (ADR-095)
-        ("analysis", J),  # KOR-53, migration 0037 (ADR-095)
+        ("analysis", J),  # KOR-53, migration 0039 (ADR-097)
     ],
     # 2.4.4 the numbering of an org's tasks (KOR-52, migration 0037)
     "task_counter": [("org_id", U), ("last", BI)],
@@ -986,7 +986,7 @@ def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns:
         ("task", "(org_id, owner_id, last_activity_at DESC, id DESC) WHERE (state <> 'closed'::text)"),  # KOR-52
         ("audit", "(on_behalf_of, seq DESC) WHERE (on_behalf_of IS NOT NULL)"),
         ("event", "(task_id, scope_seq DESC) WHERE (kind = 'task.agent_name'::text)"),
-        ("session", "(wg_id, created_at DESC, id DESC)"),  # KOR-53, migration 0037 (ADR-095)
+        ("session", "(wg_id, created_at DESC, id DESC)"),  # KOR-53, migration 0039 (ADR-097)
         ("operation", "(wg_id, created_at DESC, id DESC)"),
         ("audit", "(wg_id, seq DESC) WHERE (wg_id IS NOT NULL)"),
     ],

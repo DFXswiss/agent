@@ -45,7 +45,7 @@ registration runs in one transaction:
    `triggered_by`). An accepted `subagent.request` creates the child session (`agent_hub.operations.children`; its
    `github_identity` is the registration's, else the parent session's, its `triggered_by` the registration's, ADR-083
    section 2, its `agent_profile` the snapshot of `child_profile`, ADR-094 section 1,
-   named `analysis` on an analysis task, ADR-095 section 2) and answers its ID, and when the registration named a
+   named `analysis` on an analysis task, ADR-097 section 2) and answers its ID, and when the registration named a
    `child_profile` the child's effective profile (`child_profile`). A `subagent.request` naming
    a `github_identity` passes the feature gate of the org first (`409 peer_outdated`, nothing stored).
 

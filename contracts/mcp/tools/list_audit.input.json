@@ -2,6 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/mcp/tools/list_audit.input.json",
   "title": "platform tool list_audit input",
-  "description": "Arguments of the platform tool list_audit (03-api.md section 8.1, ADR-095 section 3).",
+  "description": "Arguments of the platform tool list_audit (03-api.md section 8.1, ADR-097 section 3).",
   "$ref": "../objects.json#/$defs/input_list_audit"
 }

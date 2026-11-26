@@ -1,4 +1,4 @@
-// The badge "Analysis" of an analysis task (ADR-095 section 6) in task rows, the situation view's entries and the task
+// The badge "Analysis" of an analysis task (ADR-097 section 6) in task rows, the situation view's entries and the task
 // page; nothing for any other task.
 import { isAnalysis } from '../../core/analysis/analysis';
 import type { TaskRow } from '../../core/store/slices/tasks';

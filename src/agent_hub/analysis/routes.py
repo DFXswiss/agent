@@ -1,4 +1,4 @@
-"""Device routes of the process analysis reads (KOR-53, ADR-095 section 4; 03-api.md section 6.1).
+"""Device routes of the process analysis reads (KOR-53, ADR-097 section 4; 03-api.md section 6.1).
 
 Routes (right `device:wg`, read resource `device.workgroup.<name>`), query parameters in brackets:
 

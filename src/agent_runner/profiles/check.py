@@ -11,7 +11,7 @@
   it to every workgroup and task they read (`queries.rights.ReadScope.outside_reach`); `read_profile` adds the
   profile's name (`analysis` reads other workgroups only as figures, `queries.rights.FiguresOnly`). `read_refusal(reach,
   tool, arguments)` refuses at once what reads beyond the reach as a whole: the members of the whole organization for
-  reach `workgroup` and `task`, `list_tasks`, the workgroup-wide reads of ADR-095 (`WORKGROUP_WIDE`: usage, audit,
+  reach `workgroup` and `task`, `list_tasks`, the workgroup-wide reads of ADR-097 (`WORKGROUP_WIDE`: usage, audit,
   operations and metrics of a workgroup) and the organization and workgroup whiteboards for reach `task`. The names of
   the organization's workgroups (`list_workgroups`) stay readable: they are organization metadata every member sees.
 """

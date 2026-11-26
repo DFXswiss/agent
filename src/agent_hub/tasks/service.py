@@ -133,7 +133,7 @@ class Given:
     github_identity: UUID | None
     requested: tuple[UUID, str | None] | None
     analysis: dict[str, Any] | None = None
-    """The analysis fields the request named (scope, and `since`/`until` when given; ADR-095 section 1): a repetition
+    """The analysis fields the request named (scope, and `since`/`until` when given; ADR-097 section 1): a repetition
     names the same values (an omitted time is not compared, its default moves with the hub's time)."""
 
 
@@ -193,7 +193,7 @@ def create_task(
 ) -> Outcome:
     """`POST /v1/tasks` (module docstring); `requested` is the chosen device and VM of the request, `author` the
     author of the events (the user's own-identity agent, ADR-082; default the user), `analysis` the request's
-    analysis (ADR-095)."""
+    analysis (ADR-097)."""
     now = context.clock()
     given = Given(
         github_identity=github_identity, requested=requested, analysis=None if analysis is None else dict(analysis)

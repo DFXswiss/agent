@@ -255,7 +255,7 @@ ANALYSIS = {"name": "analysis", "operations": ["human.question", "subagent.reque
 def test_an_analysis_session_gets_the_brief_and_no_web_search(
     manager: sessions.SessionManager, session_paths: sessions.Paths, depth: int, brief: bool
 ) -> None:
-    """ADR-095 sections 1 and 2: the main session of the profile ``analysis`` is told to follow the brief, its
+    """ADR-097 sections 1 and 2: the main session of the profile ``analysis`` is told to follow the brief, its
     subagents are not; neither is offered the model's own web search, also with a subscription access."""
     body = request(
         parent_session_id=PARENT if depth else None,

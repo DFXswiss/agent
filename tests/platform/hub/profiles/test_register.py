@@ -117,7 +117,7 @@ def test_the_device_state_names_the_effective_profiles(ops: Ops) -> None:
 
 
 def test_a_child_of_an_analysis_task_stays_marked_as_one(ops: Ops) -> None:
-    """ADR-095 section 2: a child started with a narrower profile of its own keeps the name `analysis`, so the
+    """ADR-097 section 2: a child started with a narrower profile of its own keeps the name `analysis`, so the
     guest's checks keyed on the name (no web search) hold along the chain; a child of an ordinary task keeps its
     profile's name."""
     task, session = ops.session()

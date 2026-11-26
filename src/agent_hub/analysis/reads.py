@@ -1,4 +1,4 @@
-"""Usage, audit, operations and metrics of one workgroup for devices (KOR-53, ADR-095 section 4; 03-api.md section 6.1).
+"""Usage, audit, operations and metrics of one workgroup for devices (KOR-53, ADR-097 section 4; 03-api.md section 6.1).
 
 `GET /v1/device/workgroups/{wg}/usage|audit|operations|metrics` (right `device:wg`: the device is assigned to the
 workgroup; an unknown or foreign workgroup is `404 not_found`). They serve the session read tools `get_usage`,

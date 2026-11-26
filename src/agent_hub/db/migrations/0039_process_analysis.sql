@@ -1,4 +1,4 @@
--- 0037_process_analysis: the analysis task of "Prozesse optimieren" (KOR-53, ADR-095).
+-- 0039_process_analysis: the analysis task of "Prozesse optimieren" (KOR-53, ADR-097).
 --
 -- `task.analysis` marks an analysis task and keeps its scope and period `{{scope: 'org'|'wg', since, until}}` (plaintext
 -- metadata of the request; NULL for every other task). The indexes bound the session reads of usage, operations and

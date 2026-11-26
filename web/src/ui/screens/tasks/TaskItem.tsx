@@ -3,7 +3,7 @@
 // several workgroups (KOR-32), the state badge, the owner's display name (the signed author of the task's first
 // user-written `task.meta`; the hub's `owner_id` is ignored, KOR-04) and the last activity as absolute local time with a
 // relative label as secondary text. An analysis task carries the badge
-// "Analysis" (ADR-095 section 6).
+// "Analysis" (ADR-097 section 6).
 //
 // The row is the content of a `WindowedList` row (ADR-086 section 1): everything it shows comes in its item (the list
 // reads titles and owners with one selector), it is memoized with `sameTaskItem`, and the time formats are created

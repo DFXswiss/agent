@@ -77,7 +77,7 @@ ROLE_CLASSES: Mapping[str, frozenset[str]] = MappingProxyType(
         "analysis": frozenset({READ, DELEGATE, ASK}),
     }
 )
-"""The built-in roles by the classes they allow (ADR-094 section 2; `analysis`: the process analysis, ADR-095 section
+"""The built-in roles by the classes they allow (ADR-094 section 2; `analysis`: the process analysis, ADR-097 section
 2 - the classes of `read_only`, and the session start names the analysis brief of the harness)."""
 
 ANALYSIS = "analysis"
@@ -114,7 +114,7 @@ BUILTIN: Mapping[str, Profile] = MappingProxyType(
 
 
 def analysis(reads: str) -> Profile:
-    """The snapshot an analysis task gets at its creation (ADR-095 section 2): the built-in `analysis` with the reach
+    """The snapshot an analysis task gets at its creation (ADR-097 section 2): the built-in `analysis` with the reach
     `reads` (`all` for an analysis of the organization, `workgroup` for one of the task's workgroup)."""
     return Profile(ANALYSIS, BUILTIN[ANALYSIS].operations, reads)
 

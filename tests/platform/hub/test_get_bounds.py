@@ -57,7 +57,7 @@ BOUNDS: dict[str, str] = {
     "/v1/device/state": "structural: the device's assignments, sessions and VMs, bounded by its capacity",
     "/v1/device/tasks/{task}": "capped:100",
     "/v1/device/workgroups/{wg}/tasks": "paged",
-    # KOR-53 (ADR-095 section 4): the analysis reads of one workgroup; `group_by` answers at most 200 groups
+    # KOR-53 (ADR-097 section 4): the analysis reads of one workgroup; `group_by` answers at most 200 groups
     "/v1/device/workgroups/{wg}/usage": "paged",
     "/v1/device/workgroups/{wg}/audit": "paged",
     "/v1/device/workgroups/{wg}/operations": "paged",

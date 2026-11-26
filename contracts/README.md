@@ -34,7 +34,7 @@ and the end-to-end orchestrator refuses to start when the two checkouts differ (
 | `model-catalog.example.json` | example catalog with the platform default (data, not a schema) | CTR-02 |
 | `vectors/`, `tools/make_vectors.py` | crypto test vectors and their generator | CRY-01/CRY-02 |
 | `tasks/title.json` | cases of the task title derivation (`06-web.md` section 4.2): `prompt` → `title`, the whitespace and line-break sets in `about`; hand-maintained data (no generator), consumed by the web core and the runner | WCR-01 |
-| `tasks/analysis.json` | the fixed title and prompt of an analysis task per language (ADR-095 sections 1 and 6) and their vectors; hand-maintained data, consumed by the web core and the agent tool | KOR-53 |
+| `tasks/analysis.json` | the fixed title and prompt of an analysis task per language (ADR-097 sections 1 and 6) and their vectors; hand-maintained data, consumed by the web core and the agent tool | KOR-53 |
 | `fixtures/<schema path without .json>/{valid,invalid}/*.json` | examples per schema | the owner of the schema |
 | `tools/validate.mjs`, `package.json` | TypeScript-side harness (Ajv) | CTR-01 |
 | `changes/<package id>.md` | note of every later contract change (ADR-027 section 3) | the changing package |

@@ -40,7 +40,7 @@ def test_the_tools_a_profile_does_not_offer() -> None:
 
 
 def test_the_analysis_is_not_offered_web_search() -> None:
-    """ADR-095 section 2: the profile ``analysis`` hides the model's own web search besides the tools of its types;
+    """ADR-097 section 2: the profile ``analysis`` hides the model's own web search besides the tools of its types;
     a profile without the name keeps it."""
     analysis = {"name": "analysis", "operations": ["human.question", "subagent.request"], "reads": "workgroup"}
     hidden = profiles.disallowed_tools(analysis)

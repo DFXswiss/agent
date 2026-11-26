@@ -2,6 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/mcp/tools/get_usage.input.json",
   "title": "platform tool get_usage input",
-  "description": "Arguments of the platform tool get_usage (03-api.md section 8.1, ADR-095 section 3).",
+  "description": "Arguments of the platform tool get_usage (03-api.md section 8.1, ADR-097 section 3).",
   "$ref": "../objects.json#/$defs/input_get_usage"
 }

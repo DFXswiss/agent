@@ -5,7 +5,7 @@ absent: no profile, every right). The guest is the third of three checks (hub, r
 
 * ``disallowed_tools(profile)``: the tools the agent is not offered at all (``--disallowedTools``): the work VM tools
   without ``workvm.request`` and the browser tools without ``browser.open`` among the allowed types, and the model's
-  own ``WebSearch`` for the profile ``analysis`` (ADR-095 section 2: it holds metadata of several workgroups and needs
+  own ``WebSearch`` for the profile ``analysis`` (ADR-097 section 2: it holds metadata of several workgroups and needs
   no outside source);
 * ``refusal(profile, op_type)``: the local error of an operation the profile does not allow (``rights_denied``); the
   control process marks such a request ``local_check: "rejected"`` when it records it (``control_routes/pending.py``),
@@ -23,7 +23,7 @@ from agent_guest.policy import PLATFORM_PREFIX, PLATFORM_TOOLS, WEB_SEARCH_TOOL
 
 TOOL_TYPES: Mapping[str, str] = {"workvm_": "workvm.request", "browser_": "browser.open"}
 NO_WEB_SEARCH = frozenset({"analysis"})
-"""Profiles whose sessions are not offered the model's own web search (ADR-095 section 2)."""
+"""Profiles whose sessions are not offered the model's own web search (ADR-097 section 2)."""
 
 
 def operations(profile: Mapping[str, Any] | None) -> frozenset[str] | None:

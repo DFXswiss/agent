@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/device-workgroup-operations.response.json",
   "title": "GET /v1/device/workgroups/{wg}/operations response",
-  "description": "Body of a successful response to GET /v1/device/workgroups/{wg}/operations (03-api.md section 6.1, ADR-095 section 4).",
+  "description": "Body of a successful response to GET /v1/device/workgroups/{wg}/operations (03-api.md section 6.1, ADR-097 section 4).",
   "anyOf": [
     {
       "type": "object",

@@ -1,5 +1,5 @@
 {
-  "description": "Endpoints of the process analysis (ADR-095, KOR-53): the device reads of usage, audit, operations and metrics of one workgroup.",
+  "description": "Endpoints of the process analysis (ADR-097, KOR-53): the device reads of usage, audit, operations and metrics of one workgroup.",
   "rights": [
     "device:wg"
   ],

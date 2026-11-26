@@ -890,7 +890,7 @@ class HubFake:
         row |= {"state_reason": None, "created_at": now_ms_text(), "last_activity_at": now_ms_text(), "closed_at": None}
         placement = body.get("placement")
         row["placement"] = None if placement is None else {"vm_id": None, **placement}
-        row["analysis"] = body.get("analysis")  # ADR-095 section 1: null for every other task
+        row["analysis"] = body.get("analysis")  # ADR-097 section 1: null for every other task
         created = {"task": row, "session": {"session_id": uuid7()}, "events": []}
         self.tasks[task] = {"task": row, "sessions": [], "transitions": [], "created": created}
         return 200, created

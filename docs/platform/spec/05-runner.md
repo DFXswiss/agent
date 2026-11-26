@@ -1366,7 +1366,7 @@ not offer the excluded tools and records an excluded operation as locally reject
 profile. Merges (`github.merge`), verdicts (`review.verdict`) and the workgroup's merge criteria and separation of
 duties are §12.1 and 03-api.md §9.
 
-**Process analysis** (KOR-53, [ADR-095](../adr/095-process-analysis.md)): the read tools `get_usage`, `list_audit`,
+**Process analysis** (KOR-53, [ADR-097](../adr/097-process-analysis.md)): the read tools `get_usage`, `list_audit`,
 `list_workgroup_operations` and `get_metrics` (03-api.md §8.1) are answered like `list_tasks`: the arguments are
 checked again, the workgroup (`workgroup_id`, default the session's) must be readable by the read scope (owner ∩
 instructing human, device assigned, within the profile's reach), then the runner asks the hub's device route of that

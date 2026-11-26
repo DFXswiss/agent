@@ -1,5 +1,5 @@
 {
-  "description": "The fixed title and prompt of an analysis task (ADR-095 sections 1 and 6), the same in the web client (web/src/core/analysis/) and the agent tool (src/agent_platform/optimize.py). `templates`: per language the title and the prompt with the placeholders {scope}, {since} and {until}; `scopes`: per language the text of the scope `org` and of the scope `wg` (with {name}, the workgroup's name). Times are ISO-8601 UTC with milliseconds. Hand-maintained data (no generator); `cases` are the vectors both sides test.",
+  "description": "The fixed title and prompt of an analysis task (ADR-097 sections 1 and 6), the same in the web client (web/src/core/analysis/) and the agent tool (src/agent_platform/optimize.py). `templates`: per language the title and the prompt with the placeholders {scope}, {since} and {until}; `scopes`: per language the text of the scope `org` and of the scope `wg` (with {name}, the workgroup's name). Times are ISO-8601 UTC with milliseconds. Hand-maintained data (no generator); `cases` are the vectors both sides test.",
   "templates": {
     "en": {
       "title": "Optimize processes",

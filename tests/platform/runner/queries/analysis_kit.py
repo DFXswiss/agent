@@ -1,4 +1,4 @@
-"""Test kit of the process analysis reads (KOR-53, ADR-095 sections 3 and 4): the hub's device routes
+"""Test kit of the process analysis reads (KOR-53, ADR-097 sections 3 and 4): the hub's device routes
 `GET /v1/device/workgroups/{wg}/usage|audit|operations|metrics` installed on the rig's hub next to `kit.TaskHub`.
 
 `AnalysisHub` answers every route from `answers[resource](wg, query)` (default: contract-valid rows of the asked

@@ -1,4 +1,4 @@
-"""U-HUB-analysis (metrics): `GET /v1/device/workgroups/{wg}/metrics` (ADR-095 section 4). The monitoring series of
+"""U-HUB-analysis (metrics): `GET /v1/device/workgroups/{wg}/metrics` (ADR-097 section 4). The monitoring series of
 a session, workgroup VM or work VM of the workgroup by the rules of `GET /v1/monitoring/series`, at most 1000 points;
 an entity of another workgroup (or none) is `404 not_found`."""
 

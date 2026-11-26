@@ -49,7 +49,7 @@ READ_TOOLS = (
     "get_task_messages",
     "get_whiteboard",
     "list_operations",
-    # ADR-095 section 3 (KOR-53)
+    # ADR-097 section 3 (KOR-53)
     "get_usage",
     "list_audit",
     "list_workgroup_operations",
@@ -207,7 +207,7 @@ def test_invalid_arguments_are_params_invalid_and_not_forwarded(
         ("get_whiteboard", "org-with-workgroup", {"level": "org", "workgroup_id": TASK_ID}),
         ("get_whiteboard", "task-with-workgroup", {"level": "task", "task_id": TASK_ID, "workgroup_id": TASK_ID}),
         ("list_members", "org-with-workgroup", {"scope": "org", "workgroup_id": TASK_ID}),
-        # ADR-095 section 3
+        # ADR-097 section 3
         ("list_audit", "group-by-type", {"group_by": "type"}),
         ("list_workgroup_operations", "group-by-action", {"group_by": "action"}),
         (
@@ -263,7 +263,7 @@ def test_valid_arguments_are_forwarded_and_answered(
     assert len(runner.seen) == len(records)
 
 
-# ADR-095 section 3: the four workgroup reads, with arguments and answers of their own (also without fixtures).
+# ADR-097 section 3: the four workgroup reads, with arguments and answers of their own (also without fixtures).
 WORKGROUP_ID = "01a1ee56-5e00-7003-8f1b-340691d99f31"
 WORKGROUP_READS: tuple[tuple[str, dict[str, Any], dict[str, Any]], ...] = (
     (

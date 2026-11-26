@@ -1,4 +1,4 @@
-"""U-HUB-analysis (create): `POST /v1/tasks` with `analysis` (ADR-095 sections 1 and 2). The task stores its scope
+"""U-HUB-analysis (create): `POST /v1/tasks` with `analysis` (ADR-097 sections 1 and 2). The task stores its scope
 and period, gets the snapshot of the built-in profile `analysis` in the creating transaction (reach `all` for scope
 `org`, `workgroup` for scope `wg`), carries `analysis` in its row and in the audit detail of `task.create`, passes the
 feature gate `agent.profiles` and `platform.analysis` of every device of the organization, and a repetition must name

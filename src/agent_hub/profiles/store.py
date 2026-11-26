@@ -5,7 +5,7 @@
   reserved, so an own profile never shadows a role.
 - **Assignments** are snapshots: `task.agent_profile` for the task's main sessions, `session.agent_profile` for a child
   that was started with a profile of its own (NULL: the child takes what its parent has). On an analysis task
-  (ADR-095 section 2) every snapshot is named `analysis` (`for_task`), so the marker holds along the whole chain.
+  (ADR-097 section 2) every snapshot is named `analysis` (`for_task`), so the marker holds along the whole chain.
 - **Effective profile** of a session: the intersection of the task's snapshot and every snapshot along the session's
   chain of parents (itself included): the operation types all of them allow and the narrowest reach, named after the
   innermost snapshot. A restriction set on the task or on any ancestor therefore applies at once to every session
@@ -97,7 +97,7 @@ def effective(connection: Connection, session_id: UUID | str) -> Profile | None:
 
 
 def for_task(connection: Connection, task_id: UUID | str, profile: Profile) -> Profile:
-    """The snapshot of `profile` for a child of the task: on an analysis task (ADR-095 section 2) it keeps the name
+    """The snapshot of `profile` for a child of the task: on an analysis task (ADR-097 section 2) it keeps the name
     `analysis` with the profile's types and reach, so the marker holds along the whole chain of sessions."""
     marked = cast(
         tuple[bool],

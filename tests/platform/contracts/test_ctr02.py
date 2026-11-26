@@ -258,7 +258,7 @@ SPEC_TOOLS = {
     "request_operation": ("type params idempotency_key", "operation_id status result error duplicate_of"),
     "get_operation": ("operation_id wait_seconds", "operation_id status result error duplicate_of"),
     "list_operations": ("limit", "operations=operation_id,type,state,error_code,created_at"),
-    # ADR-095 section 3 (contracts/changes/KOR-53.md): the analysis reads of one workgroup; the alternatives of
+    # ADR-097 section 3 (contracts/changes/KOR-53.md): the analysis reads of one workgroup; the alternatives of
     # list_audit and list_workgroup_operations (rows or groups) are in SPEC_NESTED
     "get_usage": (
         "workgroup_id since until by before limit",
@@ -413,7 +413,7 @@ SPEC_NESTED = {
     " subagent_max_total subagent_max_runtime_seconds",
     ("mcp/objects.json", "/$defs/output_get_task/properties/sessions/items"): "id state depth parent_session_id",
     ("mcp/objects.json", "/$defs/output_get_task/properties/operations/items"): "id type state",
-    # ADR-095 section 3 (KOR-53): the rows of the analysis reads
+    # ADR-097 section 3 (KOR-53): the rows of the analysis reads
     ("mcp/objects.json", "/$defs/output_get_usage/properties/total/anyOf/0"): "sessions tasks requests input_tokens"
     " output_tokens cache_read_tokens cache_write_tokens cost_micro_usd charged_micro_usd runtime_ms operations"
     " failed_operations",

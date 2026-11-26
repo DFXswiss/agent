@@ -40,7 +40,7 @@
     },
     "analysis": {
       "type": "object",
-      "description": "a task of the kind analysis (ADR-095 section 1): its scope and period (default the last 7 days)",
+      "description": "a task of the kind analysis (ADR-097 section 1): its scope and period (default the last 7 days)",
       "properties": {
         "scope": {
           "type": "string",

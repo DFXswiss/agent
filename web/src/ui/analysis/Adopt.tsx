@@ -1,4 +1,4 @@
-// "Adopt" of an analysis report (ADR-095 section 5): on every output of an analysis task the person may write the
+// "Adopt" of an analysis report (ADR-097 section 5): on every output of an analysis task the person may write the
 // output's whole text as a new entry of the task's workgroup whiteboard or of the organization whiteboard – only the
 // boards the person may write are offered, and nothing is shown without one. The small dialog names who will read
 // the entry (the organization level repeats the sentence of section 7 for all members of the organization); the entry

@@ -1,6 +1,6 @@
 // Task list of a workgroup (06-web.md section 5.1, route `/o/:org/w/:wg`, right `wg:read`): newest activity first
 // with the decrypted title, state, owner and last activity; a state filter; a windowed list with "Load more"; the composer at the top
-// for users with `wg:write`, who also get "Optimize processes" (an analysis of this workgroup, ADR-095 section 6); a
+// for users with `wg:write`, who also get "Optimize processes" (an analysis of this workgroup, ADR-097 section 6); a
 // link to the workgroup settings (WEB-09). The list is the shared task table (`TaskTable.tsx`, also used by the task
 // overview of the organization). A workgroup the user cannot read is "not
 // found" (existence is not revealed, 03-api.md section 1).

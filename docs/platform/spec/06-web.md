@@ -345,7 +345,7 @@ The home of an organization shows where people are needed, across all workgroups
   "Subagent `#42.1` of `<name> #42` on behalf of `<person>`" (`actors` of the response; the name when the task's
   name is in the store, else the handle); the filter "On behalf of" (`on_behalf_of`).
 
-### 4.0b "Prozesse optimieren" (KOR-53, [ADR-095](../adr/095-process-analysis.md))
+### 4.0b "Prozesse optimieren" (KOR-53, [ADR-097](../adr/097-process-analysis.md))
 
 The situation view and the workgroup view (§5.1) show the button "Prozesse optimieren" to a person who may write a
 workgroup (there: this workgroup). It opens a dialog with the workgroup (default: the default workgroup in the

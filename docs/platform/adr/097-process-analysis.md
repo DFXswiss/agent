@@ -1,4 +1,4 @@
-# ADR-095: Process analysis – a button starts a read-only analysis task over authorised usage, audit, operations and metrics
+# ADR-097: Process analysis – a button starts a read-only analysis task over authorised usage, audit, operations and metrics
 
 Status: Accepted (2026-11-26, after a review of the draft with fresh context; its findings are worked in)
 

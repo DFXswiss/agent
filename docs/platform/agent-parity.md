@@ -191,8 +191,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | wg-merge-criteria | screens/wg-settings (merge criteria and separate duties, ADR-094 sections 5 and 6) | `wg settings --wg --merge-verdicts --merge-verdict-profile --merge-checks-green --merge-approvals --separate-duties` | done |
 | review-verdicts | task-tabs/operations (review verdicts and security reports of a task) | `review verdicts --task` | done |
 | session-role | screens/home, task-tabs/sessions (the role of every session in the session tree) | `task show --task` (the session rows carry their rights profile) | done |
-| process-analysis | screens/home, screens/tasks (button "Prozesse optimieren" and its dialog: workgroup, period, the sentence on who reads the report; an analysis task, ADR-095) | `optimize --org\|--wg --in --days --since --until --language` | done |
-| analysis-adopt | screens/task, chat-items/session.output (chat output of an analysis task: "Übernehmen" onto the whiteboard of the workgroup or the organization, ADR-095 §5) | `optimize adopt --task --level --notify` | done |
+| process-analysis | screens/home, screens/tasks (button "Prozesse optimieren" and its dialog: workgroup, period, the sentence on who reads the report; an analysis task, ADR-097) | `optimize --org\|--wg --in --days --since --until --language` | done |
+| analysis-adopt | screens/task, chat-items/session.output (chat output of an analysis task: "Übernehmen" onto the whiteboard of the workgroup or the organization, ADR-097 §5) | `optimize adopt --task --level --notify` | done |
 
 ## Routes
 

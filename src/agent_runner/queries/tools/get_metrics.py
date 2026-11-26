@@ -1,4 +1,4 @@
-"""`get_metrics {workgroup_id?, entity_kind, entity_id, metric, since, until?, step}` (03-api.md section 8.1, ADR-095
+"""`get_metrics {workgroup_id?, entity_kind, entity_id, metric, since, until?, step}` (03-api.md section 8.1, ADR-097
 section 3): the monitoring series of a session, workgroup VM or work VM of one workgroup the session may read
 (`workgroup_id`, default the session's; `ReadScope.readable`, ADR-089) from `GET /v1/device/workgroups/{wg}/metrics`
 (the rules of `GET /v1/monitoring/series`), at most 1000 points `[bucket start, value]`. An entity that is not of the

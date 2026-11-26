@@ -29,7 +29,7 @@ A running main session of the user becomes the user's main orchestrator. The flo
 
 `allowed` (ADR-082 section 9.6): a main session (`not_main`) of a task in the owner's private organization - private,
 created by the owner and with no other active user member (`not_private`), of a task that is no analysis
-(`analysis`, ADR-095 section 2: the orchestrator would hold the user's full agent access) - on an active platform device
+(`analysis`, ADR-097 section 2: the orchestrator would hold the user's full agent access) - on an active platform device
 (`not_platform`), in a state in which its VM runs, `working` or `idle` (`not_running`). Registering keys also needs
 a request the session has not answered yet (`not_requested`); the same keys registered again after their pairing
 expired unconfirmed open it anew, a pairing confirmed but not claimed by its deadline no longer holds the session.
@@ -93,7 +93,7 @@ class SessionFacts:
     private: bool
     platform: bool
     analysis: bool = False
-    """The session belongs to an analysis task (ADR-095 section 2): it never becomes the main orchestrator."""
+    """The session belongs to an analysis task (ADR-097 section 2): it never becomes the main orchestrator."""
 
 
 def facts(connection: Connection, session_id: UUID, *, lock: bool = False) -> SessionFacts:

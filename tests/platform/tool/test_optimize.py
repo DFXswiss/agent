@@ -1,4 +1,4 @@
-"""`optimize` and `optimize adopt` (ADR-095 sections 1, 5, 6 and 7): the analysis task with its fixed, sealed title
+"""`optimize` and `optimize adopt` (ADR-097 sections 1, 5, 6 and 7): the analysis task with its fixed, sealed title
 and prompt and the plaintext `analysis` field, the period's defaults and bounds, the language vectors of
 `contracts/tasks/analysis.json`, and the newest output written onto a whiteboard as the user."""
 

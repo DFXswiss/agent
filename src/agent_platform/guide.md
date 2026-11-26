@@ -375,7 +375,7 @@ a window of `--limit` bytes from `--offset` (`next_offset` goes on; `truncated` 
 `bytes` were kept), or with `--output FILE` the whole kept log. It also reads the full output of a long work VM command
 (its `j-…` job id from `session workvm`). A log that does not match its run is refused (`hub_refused`).
 
-**Process analysis** (the button "Prozesse optimieren" of the web client, ADR-095): a task that only reads the
+**Process analysis** (the button "Prozesse optimieren" of the web client, ADR-097): a task that only reads the
 usage, audit, operations and metrics of the workgroups your user may read and answers with proposals; it changes
 nothing.
 

@@ -345,7 +345,7 @@ def test_a_session_outside_the_rule_is_refused(world: World, fleet: Fleet) -> No
     main = build(world, fleet)
     _, child = insert_session(world.hub, main.draft, main.user, main.device, parent=main.session, task=main.task)
     cases.append((Scene(world, fleet, main.user, main.draft, main.device, main.task, child), "not_main"))
-    # ADR-095 section 2: a session of an analysis task never holds the user's full agent access
+    # ADR-097 section 2: a session of an analysis task never holds the user's full agent access
     analysis = build(world, fleet)
     execute(
         world.hub,

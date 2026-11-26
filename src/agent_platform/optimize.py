@@ -1,4 +1,4 @@
-"""Process analysis of the agent tool (ADR-095 sections 1, 5, 6 and 7; twin of the web client's `core/analysis/`).
+"""Process analysis of the agent tool (ADR-097 sections 1, 5, 6 and 7; twin of the web client's `core/analysis/`).
 
 - `optimize (--org ORG | --wg WG) [--in WG] [--days N | --since T] [--until T] [--language en|de]` creates the
   analysis task with `POST /v1/tasks` as `task create` does (`tasks.task_create`), with the fixed title and prompt of
@@ -193,7 +193,7 @@ def register(tree: Tree) -> None:
         tree.commands,
         "optimize",
         _start,
-        "start a process analysis: a read-only task that proposes improvements (ADR-095)",
+        "start a process analysis: a read-only task that proposes improvements (ADR-097)",
         writes=True,
         example="agent-platform optimize --org <org_id> [--in <wg_id>] [--days 7] [--language en|de]",
         words="prozesse optimieren prozessanalyse auswertung verbesserungsvorschläge optimize processes improvements",

@@ -148,7 +148,7 @@ def test_task_profile_refusals(ops: Ops) -> None:
 
 
 def _analysis_task(ops: Ops, reads: str) -> str:
-    """A task of the kind analysis with the snapshot its creation stores (ADR-095 section 2)."""
+    """A task of the kind analysis with the snapshot its creation stores (ADR-097 section 2)."""
     task, _session = ops.session()
     snapshot = {**BUILTIN["analysis"].as_json(), "reads": reads}
     ops.desk.execute(

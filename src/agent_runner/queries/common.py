@@ -10,7 +10,7 @@
 - `scope_of(call)`: the read scope of the call (`rights.read_scope` with the instructing human captured on arrival).
 - `workgroup(call, scope, found)`: the workgroup a read selects with its optional `workgroup_id` argument (default:
   the session's workgroup) after `ReadScope.readable`; a workgroup this device does not serve is refused with its
-  name (`NotServed`). `figures=True` for the reads of figures (ADR-095), which a session of the profile `analysis`
+  name (`NotServed`). `figures=True` for the reads of figures (ADR-097), which a session of the profile `analysis`
   may make in another workgroup (`rights.FiguresOnly`).
 - `known_task(context, scope, task_id)`: the task with its readable workgroup, as the hub says (`device_api.task`;
   `not_found` otherwise), within the reach of the session's rights profile (`ReadScope.outside_reach`, ADR-094); a

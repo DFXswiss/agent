@@ -1,6 +1,6 @@
 """U-HUB-analysis (read log): every read of `GET /v1/device/workgroups/{wg}/usage|audit|operations|metrics` is a hub
 read-log row `read.device.workgroup.<resource>` of the device, naming the workgroup read, its refusals included
-(ADR-095 section 3)."""
+(ADR-097 section 3)."""
 
 from __future__ import annotations
 

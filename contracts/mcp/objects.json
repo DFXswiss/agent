@@ -2737,7 +2737,7 @@
       "properties": {
         "workgroup_id": {
           "$ref": "../common.json#/$defs/uuid",
-          "description": "the workgroup to read (ADR-095 section 3, read scope of ADR-089); default: the session's workgroup"
+          "description": "the workgroup to read (ADR-097 section 3, read scope of ADR-089); default: the session's workgroup"
         },
         "since": {
           "$ref": "../common.json#/$defs/time"
@@ -2976,7 +2976,7 @@
       "properties": {
         "workgroup_id": {
           "$ref": "../common.json#/$defs/uuid",
-          "description": "the workgroup to read (ADR-095 section 3, read scope of ADR-089); default: the session's workgroup"
+          "description": "the workgroup to read (ADR-097 section 3, read scope of ADR-089); default: the session's workgroup"
         },
         "since": {
           "$ref": "../common.json#/$defs/time"
@@ -3110,7 +3110,7 @@
                   },
                   "detail": {
                     "type": "object",
-                    "description": "flat tokens only (ADR-095 section 3)",
+                    "description": "flat tokens only (ADR-097 section 3)",
                     "propertyNames": {
                       "pattern": "^[a-z_]{1,64}$"
                     },
@@ -3215,7 +3215,7 @@
       "properties": {
         "workgroup_id": {
           "$ref": "../common.json#/$defs/uuid",
-          "description": "the workgroup to read (ADR-095 section 3, read scope of ADR-089); default: the session's workgroup"
+          "description": "the workgroup to read (ADR-097 section 3, read scope of ADR-089); default: the session's workgroup"
         },
         "since": {
           "$ref": "../common.json#/$defs/time"
@@ -3378,7 +3378,7 @@
       "properties": {
         "workgroup_id": {
           "$ref": "../common.json#/$defs/uuid",
-          "description": "the workgroup to read (ADR-095 section 3, read scope of ADR-089); default: the session's workgroup"
+          "description": "the workgroup to read (ADR-097 section 3, read scope of ADR-089); default: the session's workgroup"
         },
         "entity_kind": {
           "type": "string",

@@ -1,4 +1,4 @@
-"""U-HUB-analysis (operations): `GET /v1/device/workgroups/{wg}/operations` (ADR-095 section 4). The operations of
+"""U-HUB-analysis (operations): `GET /v1/device/workgroups/{wg}/operations` (ADR-097 section 4). The operations of
 every task of the workgroup newest first (`created_at`, then ID), filtered by period, type and state, paged; with
 `group_by=type` the counts per type, state and error code instead."""
 

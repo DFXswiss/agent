@@ -155,7 +155,7 @@ MANDATORY = [
     "need a decision in that commit",
     "Do not merge or close the pull request unless your instruction asks for it",
     "never look for another way",
-    # ADR-095 sections 5 and 7: the fixed brief of the process analysis
+    # ADR-097 sections 5 and 7: the fixed brief of the process analysis
     "## Process analysis",
     "The prompt names the scope (the organization or one workgroup) and the period; take both from it.",
     "`get_usage`, `list_workgroup_operations` and `list_audit` - first with `group_by`",

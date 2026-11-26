@@ -1,4 +1,4 @@
-// Process analysis (ADR-095 sections 1, 5 and 6): a button starts a read-only analysis task; its report can be adopted
+// Process analysis (ADR-097 sections 1, 5 and 6): a button starts a read-only analysis task; its report can be adopted
 // into a whiteboard.
 //
 // - `PERIODS` / `DEFAULT_DAYS`: the period presets in days (1, 7, 30, 90; default 7); `period(context, days)` is

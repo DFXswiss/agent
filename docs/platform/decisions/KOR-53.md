@@ -4,7 +4,7 @@ Package: "Prozesse optimieren" – a button starts an analysis task that only re
 [Idee 33](../KONZEPT.md#k-idee-33), [§2](../KONZEPT.md#k-2) point 5, [§8 point 5](../KONZEPT.md#k-8-b5),
 [§8 point 6](../KONZEPT.md#k-8-b6); rules [E-04](../KONZEPT.md#e-04), [E-05](../KONZEPT.md#e-05),
 [E-11](../KONZEPT.md#e-11), [E-19](../KONZEPT.md#e-19); interpretation [A4](../KONZEPT.md#a-4). Design:
-[ADR-095](../adr/095-process-analysis.md), reviewed with fresh context before the build (three high, seven medium and
+[ADR-097](../adr/097-process-analysis.md), reviewed with fresh context before the build (three high, seven medium and
 five low findings; all worked into the ADR or answered below).
 
 1. **An analysis is an ordinary task with `analysis`.** §2 point 5 asks for a task; chat, costs, attention and
@@ -53,6 +53,6 @@ five low findings; all worked into the ADR or answered below).
     `truncated` on every cut; reads without `since` limited to 92 days; usage by task aggregates only the page's
     tasks; a hub that answers more than asked makes the read `unavailable` (cutting would lose rows silently); the web search also refused by the guest's hook for
     `analysis`; the agent tool leaves the "not in the future" check to the hub. Recorded, not changed: workgroup VM
-    samples follow the VM's current workgroup (ADR-095 §7); an older hub answers an unknown route with the same
+    samples follow the VM's current workgroup (ADR-097 §7); an older hub answers an unknown route with the same
     `404 not_found` as a route, so a new runner in front of an old hub reads empty lists – the rollout is hub first
-    (ADR-095), and an analysis task cannot be created on an old hub at all.
+    (ADR-097), and an analysis task cannot be created on an old hub at all.
