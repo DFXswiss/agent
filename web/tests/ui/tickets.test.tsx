@@ -385,9 +385,9 @@ describe('the fields panel of the task page', () => {
 describe('suggestions and people', () => {
   it('suggests the GitHub accounts and repositories, unique and sorted, and survives failed reads', async () => {
     const { t, research } = await world();
-    putEvents(t.store, research, [
-      event(t, research, 1, { kind: 'settings.workgroup', wg: research }, {
-        repositories: ['acme/web', 'DFXswiss/agent'],
+    putEvents(t.store, t.wg, [
+      event(t, t.wg, 5, { kind: 'settings.workgroup', wg: t.wg }, {
+        repositories: ['acme/web', 'DFXswiss/agent', 'dfxswiss/agent'],
         protected_branches: [],
         pr_draft_default: true,
       }),
@@ -414,10 +414,10 @@ describe('suggestions and people', () => {
     const repo = screen.getByTestId('tickets.capture.github-repo');
     const values = (input: HTMLElement) =>
       [...document.getElementById(input.getAttribute('list')!)!.querySelectorAll('option')].map((node) => node.value);
-    // both workgroups' lists, one entry per repository (any case), sorted
-    await waitFor(() => expect(values(repo)).toEqual(['acme/web', 'DFXswiss/agent']));
+    // the workgroups' lists (the second one's read failed), one entry per repository in any case, sorted
+    await waitFor(() => expect(values(repo)).toEqual(['acme/web', 'dfxswiss/agent']));
     // the verified account, the company login and the repositories' owners
-    expect(values(org)).toEqual(['acme', 'DFXswiss', 'Zed']);
+    expect(values(org)).toEqual(['acme', 'dfxswiss', 'Zed']);
   });
 
   it('offers no person before the log is verified and no repository without a workgroup', async () => {
