@@ -1,9 +1,10 @@
 """`POST /hub/subagent-limits`: restart the hub with other subagent limits (ADR-088 section 2; KOR-45, E2E-24, E2E-68).
 
-Body `{"depth"?, "running"?, "total"?, "runtime_seconds"?}`: each a whole number 0-1000000 (0 = no limit) sets
+Body `{"depth"?, "total"?, "runtime_seconds"?}`: each a whole number 0-1000000 (0 = no limit) sets
 `AGENT_HUB_SUBAGENT_MAX_<NAME>` for the restarted hub; a name left out goes back to the hub's default, so `{}` restores
-every default. The database, the relays and the runners stay (they reconnect and read the new values with the device
-state). Answers the limits the hub now publishes in `GET /v1/config`.
+every default. How many subagents run at once is no setting (ADR-075 addendum 2). The database, the relays and the
+runners stay (they reconnect and read the new values with the device state). Answers the limits the hub now publishes
+in `GET /v1/config`.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ from orchestrator.control import Route, RouteError
 
 VARIABLES = {
     "depth": "AGENT_HUB_SUBAGENT_MAX_DEPTH",
-    "running": "AGENT_HUB_SUBAGENT_MAX_RUNNING",
     "total": "AGENT_HUB_SUBAGENT_MAX_TOTAL",
     "runtime_seconds": "AGENT_HUB_SUBAGENT_MAX_RUNTIME_SECONDS",
 }

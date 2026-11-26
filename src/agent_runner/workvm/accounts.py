@@ -1,6 +1,7 @@
 """Slot accounts of the work VMs (docs/platform/spec/13-work-vm.md section 6.1, ADR-059).
 
-Pure builders of what `agent-runner workvm install` (root) runs: the slot account names and SSH ports, the `dscl`
+Pure builders of what `agent-runner workvm install` (root) runs: the number of slot accounts (`slot_count`: the RAM
+decides), the slot account names and SSH ports, the `dscl`
 commands of the group and the accounts, their homes on the APFS volume `AgentWorkVM`, the `limactl` wrapper and the
 sudoers rule that lets the runner account run only that wrapper as a slot account. Commands that read the machine
 take an injected `run(argv, timeout) -> CompletedProcess` (legacy injection style, 07-testing.md section 1).
@@ -89,6 +90,17 @@ def _prefix(prefix: str) -> str:
     if not _PREFIX_RE.fullmatch(prefix):
         raise _invalid("prefix")
     return prefix
+
+
+SMALLEST_VM_MIB = 8192
+"""RAM of the smallest work VM (`standard`, `manager.SIZES`)."""
+
+
+def slot_count(physical_mib: int, reserve_mib: int) -> int:
+    """The number of slot accounts (ADR-059 addendum 4): as many as the RAM above the reserve could ever hold standard
+    work VMs (at least 1, at most `MAX_SLOTS`, the range of the pinned ports and the store), so the accounts - isolation
+    units - never limit before the free resources do. There is no setting for it."""
+    return max(1, min(MAX_SLOTS, (physical_mib - reserve_mib) // SMALLEST_VM_MIB))
 
 
 def slot_accounts(prefix: str, count: int, ssh_port_base: int) -> list[tuple[int, str, int]]:

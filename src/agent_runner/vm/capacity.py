@@ -1,13 +1,16 @@
 """VM capacity of the runner device (docs/platform/spec/05-runner.md section 3.4, 03-api.md section 4.6.2, ADR-009).
 
     budget_mib     = physical RAM - MEMORY_RESERVE_MIB
-    vm_slots_total = floor(budget_mib / VM_MEMORY_MIB), at most MAX_VMS when set (ADR-075)
+    vm_slots_total = floor(budget_mib / VM_MEMORY_MIB)   (no fixed number, ADR-075 addendum 2)
     vm_slots_free  = vm_slots_total - (VMs in pool, assigning, running, stopping) - slots of other areas
 
 Stopped VMs use no slot (the host gets their RAM back on stop). VMs being cloned for the pool count as well (they
 are not in the store yet), so a refill never overbooks. VMs of other runner areas (e.g. work VMs) are reported by
 their `<area>/capacity.py:USAGE` providers as a `Usage` (VM count and memory); they hold their memory and
-`max(count, ceil(memory / VM_MEMORY_MIB))` slots (ADR-075 section 2, decisions/KOR-41.md). `Capacity.heartbeat()` is
+`max(count, ceil(memory / VM_MEMORY_MIB))` slots (ADR-075 section 2, decisions/KOR-41.md) - except the part they
+report as yielding (work VMs, ADR-059 addendum 4): workgroup VMs come first, so `slots_free` does not count it and a
+workgroup VM that needs that room gets it through the areas' `RECLAIM` (`slots_yielding`, `slots_free_now`; the pool
+refill uses only `slots_free_now`). `Capacity.heartbeat()` is
 the base `capacity` object of the device row (02-data-model.md section 2.1, also the enrollment body);
 `capacity_low` is the warning threshold of 03-api.md section 4.6.2.
 
@@ -37,9 +40,18 @@ class Usage:
 
     vms: int = 0
     memory_mib: int = 0
+    yielding_vms: int = 0
+    """Of `vms`, those the area gives back when a workgroup VM needs the room (its `RECLAIM`, ADR-059 addendum 4)."""
+    yielding_mib: int = 0
+    """Their memory (part of `memory_mib`)."""
 
     def __add__(self, other: Usage) -> Usage:
-        return Usage(self.vms + other.vms, self.memory_mib + other.memory_mib)
+        return Usage(
+            self.vms + other.vms,
+            self.memory_mib + other.memory_mib,
+            self.yielding_vms + other.yielding_vms,
+            self.yielding_mib + other.yielding_mib,
+        )
 
 
 NO_USAGE = Usage()
@@ -54,6 +66,14 @@ class Capacity:
     pool_ready: int
     other_vms: int = 0
     """VMs of other runner areas (`work_vms_running`)."""
+    slots_yielding: int = 0
+    """Slots of `slots_free` that VMs of other areas still hold but give back on demand (work VMs, ADR-059 addendum 4):
+    a workgroup VM may take them after `RECLAIM`; a speculative start (the pool) uses `slots_free_now`."""
+
+    @property
+    def slots_free_now(self) -> int:
+        """Free slots without asking another area to give room back."""
+        return max(self.slots_free - self.slots_yielding, 0)
 
     @property
     def capacity_low(self) -> bool:
@@ -77,20 +97,19 @@ def compute(
     vm_memory_mib: int,
     vms: Sequence[tuple[str, int]],
     in_flight: int = 0,
-    max_vms: int = 0,
     other: Usage = NO_USAGE,
 ) -> Capacity:
-    """Capacity from the VM rows `(state, memory_mib)` plus `in_flight` VMs being created for the pool, at most
-    `max_vms` slots (0: the budget alone), less the slots of `other` areas."""
+    """Capacity from the VM rows `(state, memory_mib)` plus `in_flight` VMs being created for the pool, less the slots
+    of `other` areas; the memory budget alone decides the slots (no fixed number, ADR-075 addendum 2)."""
     budget = max(physical_mib - reserve_mib, 0)
     total = budget // vm_memory_mib
-    if max_vms:
-        total = min(total, max_vms)
     occupying = [memory for state, memory in vms if state in SLOT_STATES]
     pool_ready = sum(1 for state, _ in vms if state == "pool")
     used = sum(occupying) + in_flight * vm_memory_mib + other.memory_mib
     other_slots = max(other.vms, -(-other.memory_mib // vm_memory_mib))
-    free = max(total - len(occupying) - in_flight - other_slots, 0)
+    firm = max(other.vms - other.yielding_vms, -(-(other.memory_mib - other.yielding_mib) // vm_memory_mib))
+    free = max(total - len(occupying) - in_flight - firm, 0)
+    now = max(total - len(occupying) - in_flight - other_slots, 0)
     return Capacity(
         budget_mib=budget,
         used_mib=used,
@@ -98,6 +117,7 @@ def compute(
         slots_free=free,
         pool_ready=pool_ready,
         other_vms=other.vms,
+        slots_yielding=free - now,
     )
 
 
@@ -107,6 +127,14 @@ async def own_usage(_context: Any) -> Usage:
 
 
 USAGE = own_usage
+
+
+async def own_reclaim(_context: Any, _need_mib: int) -> int:
+    """The VM area's own `RECLAIM`: its VMs are the ones the room is given back to."""
+    return 0
+
+
+RECLAIM = own_reclaim
 
 
 def disk_free_mib(path: str, usage: Callable[[str], Any] = shutil.disk_usage) -> int | None:
@@ -120,6 +148,13 @@ def disk_free_mib(path: str, usage: Callable[[str], Any] = shutil.disk_usage) ->
 def physical_memory_mib(sysconf: Callable[[str], int] = os.sysconf) -> int:
     """Installed RAM of this machine in MiB."""
     return sysconf("SC_PHYS_PAGES") * sysconf("SC_PAGE_SIZE") // MIB
+
+
+def cpu_load_per_core(
+    loadavg: Callable[[], tuple[float, float, float]] = os.getloadavg, cpus: Callable[[], int | None] = os.cpu_count
+) -> float:
+    """The host's CPU load: the 1-minute load average per core (1.0 = every core busy; work VMs, ADR-059 addendum 4)."""
+    return loadavg()[0] / (cpus() or 1)
 
 
 @dataclass(frozen=True)

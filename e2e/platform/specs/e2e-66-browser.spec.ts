@@ -1,5 +1,5 @@
 // E2E-66 (KOR-44; docs/platform/spec/13-work-vm.md section 13, ADR-085): the platform browser. The runner offers work
-// VMs in self mode (TEST_MODE, three slots, a warm pool of two, browser idle time 60 s); the orchestrator serves a
+// VMs in self mode (TEST_MODE, no fixed number of VMs, a warm pool of two, browser idle time 60 s); the orchestrator serves a
 // small sign-in site on the device's loopback, which a browser VM reaches as `host.lima.internal` (self mode has no
 // host filter; the outside boundary of a browser VM is the work VM's and is checked by the attack suite, WVM).
 //
@@ -56,8 +56,7 @@ test('@E2E-66 @needs-vm @needs-workvm the platform browser signs in, downloads, 
   await orchestrator.loadScenario('model', scenario);
   await platformDevice(orchestrator);
   await orchestrator.call('POST', '/runners/workvm', {
-    slots: 3,
-    max_per_task: 2,
+    enable: true,
     pool_size: 2,
     browser_idle_seconds: 60,
   });

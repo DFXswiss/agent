@@ -9,7 +9,7 @@ sessions (`hub.session` with that `vm_id` in a state of `OCCUPYING`); the sessio
 device without a VM yet are its *pending* sessions. A device assigned only through the organization (`org_device`, no
 explicit assignment batch delivered its keys) needs the wraps of the workgroup's and the org's current keys for itself
 (`key_wrap`) and, for a task, of its owner's current credential key (`with_owner`), else it counts with `keys`
-False. The workgroup's allowance of new VMs is `AGENT_HUB_VMS_PER_WG` minus its live VMs on all devices.
+False. No fixed number bounds the workgroup's VMs (ADR-075 addendum 2): the devices' free resources decide.
 
 Refusals for lack of capacity (KOR-14, ADR-049; a session the device ended `failed` with `capacity_exhausted`):
 
@@ -41,7 +41,6 @@ from uuid import UUID
 import psycopg
 
 from agent_hub.billing import credit
-from agent_hub.scheduler import settings
 from agent_hub.scheduler.core import (
     NO_DEVICE,
     OTHER,
@@ -82,10 +81,9 @@ class Pin:
 
 @dataclass(frozen=True)
 class Inputs:
-    """The candidates, the workgroup's allowance of new VMs (None = no limit) and whether a chosen device counts."""
+    """The candidates and whether a chosen device counts."""
 
     candidates: list[Candidate]
-    allowance: int | None
     pinned: bool = False
 
 
@@ -188,15 +186,6 @@ def with_owner(connection: Connection, found: list[Candidate], owner: UUID | str
     ]
 
 
-def allowance(connection: Connection, wg_id: UUID | str) -> int | None:
-    """`AGENT_HUB_VMS_PER_WG` minus the workgroup's live VMs on all devices (None without a limit)."""
-    limit = settings.vms_per_wg()
-    if limit is None:
-        return None
-    row = connection.execute("SELECT count(*) FROM hub.vm WHERE wg_id = %s AND state <> 'deleted'", (wg_id,)).fetchone()
-    return limit - int(row[0]) if row is not None else limit
-
-
 def pinned(found: list[Candidate], pin: Pin | None) -> tuple[list[Candidate], bool]:
     """The candidates restricted to a chosen device while it is one (a chosen VM only while it is live there)."""
     if pin is None:
@@ -220,7 +209,7 @@ def inputs(
     """The scheduler's inputs for a new session of the workgroup (module docstring)."""
     found = with_owner(connection, candidates(connection, wg_id, now, online_seconds), owner)
     found, is_pinned = pinned(found, pin)
-    return Inputs(found, allowance(connection, wg_id), is_pinned)
+    return Inputs(found, is_pinned)
 
 
 def without_device(connection: Connection, wg_id: UUID | str) -> NoPlacement:
@@ -260,4 +249,4 @@ def decide(
     found = inputs(connection, wg_id, now, online_seconds, pin=pin, owner=owner)
     if not found.candidates:
         return without_device(connection, wg_id)
-    return choose(found.candidates, found.allowance, pinned=found.pinned)
+    return choose(found.candidates, pinned=found.pinned)

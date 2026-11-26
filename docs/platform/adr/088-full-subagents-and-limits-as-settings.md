@@ -86,6 +86,15 @@ message when one is reached, reporting caps never make monitoring blind), rules 
   (the session). Changing a value is an operator setting like the other hub limits (ADR-075 §1), so the browser gains
   no new action.
 
+> **Addendum (2026-11-26): no number of running children.** ADR-075 addendum 2 removes every fixed number of what
+> may run at once, `AGENT_HUB_SUBAGENT_MAX_RUNNING` included: an older hub environment that sets it starts, the value
+> is ignored and named once. How many children run is decided by the measured room of their VM (`vm.room`, ADR-075
+> addendum 1; the former `AGENT_RUNNER_SESSIONS_PER_VM` is gone as well): a VM without free resources refuses a child or
+> the resume of a suspended one with `limit_exceeded` and the sentence "The computer of this task has no free
+> resources for one more session right now (its RAM or CPU is used up). …". Depth, total and runtime stay settings.
+> For older peers the hub keeps publishing `subagent_max_running`, always 0 (no limit); the runner reads it past and
+> its harness line says "no limit of running subagents".
+
 ### 3. Reporting never cuts
 - The guest's `GET /v1/health` and `GET /v1/metrics` list **every** session of the VM (the 64 cap and the runner's
   refusal of more are gone; the contracts drop the `maxItems`).

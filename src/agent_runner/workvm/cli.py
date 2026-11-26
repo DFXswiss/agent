@@ -20,7 +20,10 @@ watcher and its LaunchDaemon, the fail-closed anchor `com.apple/000.agent.workvm
 `install` and `install --plan` first run `firewall.preflight`: without Apple's hook in the running main ruleset the
 installation is refused (`workvm_firewall_unhooked`). Egress is the device's own Cloudflare client (see `firewall`).
 Every written file belongs to root:wheel. One fact per step: `runner.workvm.install step=<step> ...`, then
-`runner.workvm.install result=ok slots=<n>`.
+`runner.workvm.install result=ok slots=<n>`. The number of slot accounts is what the RAM above `MEMORY_RESERVE_MIB`
+could hold in standard work VMs (`accounts.slot_count`, ADR-059 addendum 4; no setting): the accounts are isolation
+units, not a limit; the free resources decide how many VMs run. After more RAM or a smaller reserve, `install` again
+adds the missing accounts.
 
 `render`, `check` and `status` read the slot UIDs with `/usr/bin/id -u`; `check` and `status` read the filter through
 `sudo -n` (the exact read commands of the sudoers rule) unless run as root and print
@@ -58,6 +61,7 @@ from agent_runner.config import Config
 from agent_runner.errors import RunnerError
 from agent_runner.identity import ensure_private_dir
 from agent_runner.vm import cli as vm_cli
+from agent_runner.vm.capacity import physical_memory_mib
 from agent_runner.workvm import accounts, firewall, image, service
 
 EXIT_OK = 0
@@ -184,14 +188,17 @@ def _root(ctx: Any) -> bool:
 
 
 def _require_slots(config: Config) -> None:
-    if config.workvm_slots == 0:
-        raise RunnerError("workvm_not_configured", "WORKVM_SLOTS")
     if config.workvm_slots_self:
         raise RunnerError("workvm_slots_self", "WORKVM_SLOTS_SELF")
 
 
+def _slot_count(config: Config) -> int:
+    """What the RAM above the reserve could hold in standard work VMs (ADR-059 addendum 4, no fixed number)."""
+    return accounts.slot_count(physical_memory_mib(), config.memory_reserve_mib)
+
+
 def _slot_accounts(config: Config) -> list[tuple[int, str, int]]:
-    return accounts.slot_accounts(config.vm_prefix, config.workvm_slots, config.workvm_ssh_port_base)
+    return accounts.slot_accounts(config.vm_prefix, _slot_count(config), config.workvm_ssh_port_base)
 
 
 def _uid(run: firewall.Run, account: str) -> int | None:
@@ -259,17 +266,18 @@ def cmd_firewall_check(_args: argparse.Namespace, ctx: Any) -> int:
 def cmd_status(_args: argparse.Namespace, ctx: Any) -> int:
     config: Config = ctx.config(require=frozenset())
     run = default_machine().run
+    count = _slot_count(config)
     found, missing = ([], []) if config.workvm_slots_self else _lookup(config, run)
     ctx.out.fact(
         "workvm.status",
         {
-            "slots": config.workvm_slots,
+            "slots": count,
             "self": config.workvm_slots_self,
             "accounts": len(found),
             "missing": len(missing),
         },
     )
-    if config.workvm_slots and not config.workvm_slots_self:
+    if not config.workvm_slots_self:
         _boundary(ctx, run, found, ("accounts_missing",) if missing else ())
     return EXIT_OK
 
@@ -544,8 +552,6 @@ def _image_log(config: Config) -> Callable[[str], None]:
 
 def cmd_image_build(args: argparse.Namespace, ctx: Any) -> int:
     config: Config = ctx.config(require=frozenset())
-    if config.workvm_slots == 0:
-        raise RunnerError("workvm_not_configured", "WORKVM_SLOTS")
     ensure_private_dir(config.home)
     ensure_private_dir(config.tmp_dir)
 

@@ -1,12 +1,15 @@
 """Production wiring of the work VMs (docs/platform/spec/13-work-vm.md sections 6 and 7).
 
-`workvms_for(context)` builds the daemon's `WorkVms` once (None on a device without work VM slots or before
-enrollment). Slots are the accounts `<prefix>wvm00 …` (`accounts.slot_accounts`), or the runner's own account in
-`TEST_MODE` with `WORKVM_SLOTS_SELF`. The boundary check (`boundary_ok`) renders the pf anchor for the slot accounts
-and compares it with the live filter (`firewall.check`, read through `sudo -n` with the exact read commands sudoers
-allows), cached for `BOUNDARY_TTL` seconds. The boundary holds whether or not the device's Cloudflare client is up;
-without it the work VMs have no internet (`internet` false). Self mode needs no filter (refused outside `TEST_MODE`
-by the configuration).
+`workvms_for(context)` builds the daemon's `WorkVms` once (None before enrollment and on a device where `agent-runner
+workvm install` did not run: its first slot account is missing). Slots are the accounts `<prefix>wvm00 …`
+(`accounts.slot_accounts`; their number `accounts.slot_count`: the RAM decides, no setting, ADR-059 addendum 4), or
+the runner's own account in `TEST_MODE` with `WORKVM_SLOTS_SELF`. A new VM is admitted by the device's one admission
+(`agent_runner.admission.of(context)`, shared with the workgroup VMs: rank, CPU, the RAM above the reserve that every
+VM and every admitted workgroup VM in flight leave) and the disk quota. The boundary check (`boundary_ok`) renders the
+pf anchor for the slot accounts and compares it with the live filter (`firewall.check`, read through `sudo -n` with the
+exact read commands sudoers allows), cached for `BOUNDARY_TTL` seconds. The boundary holds whether or not the device's
+Cloudflare client is up; without it the work VMs have no internet (`internet` false). Self mode needs no filter (refused
+outside `TEST_MODE` by the configuration).
 
 The lease of the tools with internet egress (`Deps.hub_lease`, ADR-087 section 4) is `sync.lease.held` over the
 daemon's hub client and the last desired state.
@@ -36,6 +39,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from agent_runner import admission
 from agent_runner.billing import state as billing_state
 from agent_runner.errors import RunnerError
 from agent_runner.sessions.events import session_event
@@ -55,6 +59,7 @@ from agent_runner.workvm.shell import SlotCommand, VmShell
 from agent_runner.workvm.testrun import Store, TestRuns, read_output
 
 ATTRIBUTE = "_workvms"
+ABSENT_ATTRIBUTE = "_workvms_absent"
 RUNS_ATTRIBUTE = "_testruns"
 BROWSERS_ATTRIBUTE = "_browsers"
 MIB = 1024 * 1024
@@ -277,6 +282,11 @@ class Bases:
         return name
 
 
+def installed(slots: Sequence[tuple[int, str, int]]) -> bool:
+    """The work VMs of this device are installed: the first slot account exists (`agent-runner workvm install`)."""
+    return run_command(["/usr/bin/id", "-u", slots[0][1]], 10.0).returncode == 0
+
+
 def _logger(context: Any) -> Any:
     def line(text: str) -> None:
         context.log.write(text + "\n")
@@ -295,39 +305,44 @@ def workvms_for(context: Any) -> WorkVms | None:
     if found is not None:
         return found
     config = context.config
-    if config.workvm_slots == 0:
+    if getattr(context, ABSENT_ATTRIBUTE, False):
+        return None
+    count = accounts.slot_count(physical_memory_mib(), config.memory_reserve_mib)
+    slots = accounts.slot_accounts(config.vm_prefix, count, config.workvm_ssh_port_base)
+    if not config.workvm_slots_self and not installed(slots):
+        setattr(context, ABSENT_ATTRIBUTE, True)  # not installed: no work VMs until the next start
         return None
     from agent_runner.sessions.service import service_for  # noqa: PLC0415 - the service imports the extension points
 
     service = service_for(context)
     if service is None:
         return None
-    slots = accounts.slot_accounts(config.vm_prefix, config.workvm_slots, config.workvm_ssh_port_base)
     command = SlotCommand(() if config.workvm_slots_self else tuple(account for _, account, _ in slots))
     db = service.env.db
     wall = service.env.wall
+    device_admission = admission.of(context)
 
     async def free_memory_mib() -> int:
+        """RAM above the host reserve that no VM of any kind holds, nor a workgroup VM admitted and in flight."""
         held = ("pool", "assigning", "running", "stopping")
         workgroup = sum(memory for state, memory in await vm_records.slot_rows(db) if state in held)
         work = await records.memory_in_use(db)
-        return int(physical_memory_mib()) - int(config.memory_reserve_mib) - workgroup - work
+        in_flight = device_admission.pending()
+        return int(physical_memory_mib()) - int(config.memory_reserve_mib) - workgroup - work - in_flight
 
     def shell_for(vm: WorkVm) -> VmShell:
         return VmShell(command, vm.slot, vm.lima_name)
 
     settings = Settings(
-        slots=config.workvm_slots,
+        slots=count,
         max_size=config.workvm_max_size,
         idle_seconds=config.workvm_idle_seconds,
         queue_seconds=config.workvm_queue_seconds,
-        max_per_task=config.workvm_max_per_task,
-        max_per_org=config.workvm_max_per_org,
-        max_per_owner=config.workvm_max_per_owner,
         ssh_port_base=config.workvm_ssh_port_base,
         test_mode=config.test_mode,
         pool_size=config.workvm_pool_size,
         disk_quota_gib=config.workvm_disk_quota_gib,
+        keep_stopped_seconds=config.workvm_keep_stopped_seconds,
     )
 
     async def emit(identity: Identity, kind: str, body: Mapping[str, Any]) -> None:
@@ -366,6 +381,7 @@ def workvms_for(context: Any) -> WorkVms | None:
         ),
         boundary_ok=Boundary(config, slots),
         free_memory_mib=free_memory_mib,
+        admission=device_admission,
         log=_logger(context),
         emit=emit,
         sleep=context.host.sleep,

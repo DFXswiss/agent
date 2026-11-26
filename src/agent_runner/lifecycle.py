@@ -97,6 +97,8 @@ def run_daemon(
             raise RunnerError("migration_failed", result.step)
         specs = registry.tasks(host.package)
         hooks = registry.shutdown_hooks(host.package)
+        for name in config.retired:  # a fixed capacity limit of an older runner.env: once per start, then ignored
+            announce("config.ignored", {"name": name, "reason": "fixed_limit_removed"})
         announce("run", {"tasks": len(specs), "enrolled": "yes" if identity is not None else "no"})
         return asyncio.run(_serve(config, identity=identity, host=host, dsn=dsn, specs=specs, hooks=hooks))
     finally:

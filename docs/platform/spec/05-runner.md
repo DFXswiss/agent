@@ -48,6 +48,11 @@ decrypted content (repository rule). Exit codes: 0 ok, 1 failure, 2 usage.
 ### 1.3 Configuration (`AGENT_RUNNER_*`, fail-closed)
 
 Loaded once at start; a missing required or invalid value exits with `config_invalid <NAME>` (no value echoed).
+The former fixed numbers of what may run at once - `SESSIONS_PER_VM`, `MAX_VMS`, `WORKVM_SLOTS`,
+`WORKVM_MAX_PER_TASK`, `WORKVM_MAX_PER_OWNER` and `WORKVM_MAX_PER_ORG` - no longer exist (ADR-075 addendum 2): set
+in an older `runner.env` they are ignored, never `config_invalid`, and the start names each once
+(`runner.config.ignored name=<NAME> reason=fixed_limit_removed`). The device admission (§3.8) decides by free RAM,
+CPU and disk.
 
 | Name | Default | Notes |
 |---|---|---|
@@ -57,8 +62,8 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `VM_CPUS` / `VM_MEMORY_MIB` / `VM_DISK_GIB` | 4 / 8192 / 20 | per workgroup VM |
 | `POOL_SIZE` | 2 | 0 disables the pool (clone path only) |
 | `MEMORY_RESERVE_MIB` | 32768 | host reserve excluded from the VM budget |
-| `SESSIONS_PER_VM` | 16 | occupying sessions per VM (states `requested` … `stopping` without `suspended`); 0 = no limit; reported in every capacity report (ADR-075) |
-| `MAX_VMS` | 0 | VMs of the device that occupy a slot; 0 = only the memory budget decides; caps `vm_slots_total` (ADR-075) |
+| `VM_LOAD_MAX_PERCENT` | 85 | a running workgroup VM takes one more session only while its own free resources last: its 1-minute load per vCPU is at most this (10–100) and its free RAM is enough (§3.3 step 2, `vm.room`) |
+| `CPU_LOAD_MAX_PERCENT` | 85 | the device admission (§3.8) starts a new VM of any kind only while the host's 1-minute load per core is at most this (10–100) |
 | `SESSION_IDLE_SECONDS` / `VM_IDLE_SECONDS` | 1800 / 1800 | |
 | `TEXTFILE_DIR` | empty = textfile sink off | node_exporter textfile directory (08 §3) |
 | `MODEL_CATALOG` | packaged `model-catalog.json` | §10.5 |
@@ -68,6 +73,7 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `OPERATOR_GITHUB_TOKEN_FILE` / `OPERATOR_GITHUB_USERS` | empty / empty | the operator's own GitHub token (absolute path) and the operator's user ID (exactly one UUID; more is `config_invalid` `OPERATOR_GITHUB_USERS:one_user_only`, HOT-14); both or neither, platform devices only, refused on org devices (`config_invalid`); the file is checked at each read (§11.4, KOR-27, ADR-053) |
 | `BROWSER_IDLE_SECONDS` / `BROWSER_LIVE_MAX_KBPS` / `BROWSER_SEARCH_URL` | 600 / 3000 / empty | KOR-44: idle teardown of a platform browser session (60–3600, `browser.open` may set its own), the cap of the live picture's bandwidth (100–100000 kbit/s), the prepared search switch (an http(s) URL template with `{q}`; empty = off, question F9; 13-work-vm.md §13) |
 | `LOG_MAX_MIB` | 256 | KOR-43: the kept output of one test run or long work VM job, its last part (1–1000000; 13-work-vm.md §12.3) |
+| `WORKVM_IDLE_SECONDS` / `WORKVM_KEEP_STOPPED_SECONDS` | 600 / 86400 | work VMs (ADR-059 addendum 4, §3.7): an idle work VM is stopped and gives its slot back (60–604800); a stopped one keeps its disk that long (600–2592000); the other `WORKVM_*` settings: 13-work-vm.md |
 | `CONTEXT_INTERVAL_SECONDS` / `CONTEXT_CACHE_MIB` / `CONTEXT_WORKSPACE_MIB` / `CONTEXT_TRANSCRIPT_MIB` | 600 / 20480 / 4096 / 4096 | context checkpoints (§6.6, KOR-33): interval while working (30–86400), local encrypted cache cap (every object; the newest of each task is always kept), workspace above the limit is left out, transcript above the limit cannot be checkpointed |
 | `CONTEXT_WAIT_SECONDS` | 180 | how long a restore waits for the final checkpoint of the session it continues and retries transient hub failures (0–3600, §6.6) |
 | `OPERATOR_GITHUB_TOKEN_FILE` / `OPERATOR_GITHUB_USERS` / `OPERATOR_GITHUB_ORG` | empty / empty / empty | the operator's GitHub token (absolute path), the approved user IDs (comma-separated UUIDs) and the organization that owns the operator's account (an org UUID, KOR-47, ADR-078 §7); the file needs the users or the organization, each of them needs the file; platform devices only, refused on org devices (`config_invalid`); the file is checked at each read (§11.4, KOR-27, ADR-053) |
@@ -265,8 +271,15 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
   VM of a session is chosen under the in-process lock of its workgroup, and the session row names its VM before the
   lock is released, so two starts never both take the last place of a VM. Order (deterministic): (1) the VM the hub
   names (`vm_id_pref`, a user's choice) when it is a live VM of the workgroup; (2) for a subagent the VM of its parent,
-  for a main session with `resume_from` the VM of that session – both regardless of the limit; (3) a running VM of
-  the workgroup with room (`SESSIONS_PER_VM` minus its occupying sessions): most room first, then the smallest VM ID;
+  for a main session with `resume_from` the VM of that session – both regardless of their room; (3) a running VM of
+  the workgroup with free resources of its own for one more session - no fixed number of sessions per VM (ADR-075
+  addendum 2) -, measured on the VM (`vm.room`: the guest's `GET /v1/metrics`, 2 s; `MemAvailable` less what one more
+  session needs - the mean `memory.current` of its sessions, at least 512 MiB - leaves 10 % of the VM's RAM, and the
+  load per vCPU is at most `VM_LOAD_MAX_PERCENT`; a VM that does not answer counts as having room, since its own
+  sandbox limits still hold; log `runner.vm.session_room`), smallest VM ID first.
+  The same measurement decides whether a subagent fits on its parent's VM (`subagents.limits.vm_room_refusal`). No
+  VM with room: the order goes on unchanged (stopped VM, new VM on a free slot, else `capacity_exhausted` and the
+  hub places the next attempt, ADR-013, ADR-049);
   (4) a stopped VM of the workgroup with room (restart; replaced by a VM of the newest golden instead when it may
   move, §3.6 – the new VM first, then the old one is deleted), smallest VM ID; (5) a new VM
   from the pool, else a clone, when a slot is free (§3.4) – without a ready golden yet (a device just added still
@@ -275,14 +288,16 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
 
 ### 3.4 Capacity
 
-`budget_mib = physical RAM − MEMORY_RESERVE_MIB`; `vm_slots_total = floor(budget_mib / VM_MEMORY_MIB)`, at most
-`MAX_VMS` when set;
-`vm_slots_free = vm_slots_total − (VMs in pool, assigning, running, stopping)`. Stopped VMs do not consume
-slots (RAM is returned on stop; Spike A high-water-mark finding). Reported in every heartbeat (`capacity`,
-`02-data-model.md` §2.1). If a session needs a VM and `vm_slots_free = 0`: stop the least recently used idle
-VM of another workgroup (no running or suspended session younger than `VM_IDLE_SECONDS`), else fail the request
-with `capacity_exhausted` (the hub then re-schedules: a new main session of the task, `03-api.md` §4.6.2, ADR-049;
-the refused session ID is never started again). A device without a ready golden and without a VM (a new one that
+`budget_mib = physical RAM − MEMORY_RESERVE_MIB`; `vm_slots_total = floor(budget_mib / VM_MEMORY_MIB)` - the memory
+budget alone, no fixed number of VMs (ADR-075 addendum 2);
+`vm_slots_free = vm_slots_total − (VMs in pool, assigning, running, stopping) − the slots other areas hold`. Stopped
+VMs do not consume slots (RAM is returned on stop; Spike A high-water-mark finding). Reported in every heartbeat
+(`capacity`, `02-data-model.md` §2.1). A session needing a new VM goes through the device admission (§3.8): CPU load
+and disk first, then a free slot - when only idle work VMs hold it, they give way (`RECLAIM`, §3.7); else a pool VM is
+given up, idle work VMs are stopped, or the least recently used idle VM of another workgroup (no running or suspended
+session younger than `VM_IDLE_SECONDS`) is stopped; else the request fails with `capacity_exhausted` (the hub then
+re-schedules: a new main session of the task, `03-api.md` §4.6.2, ADR-049; the refused session ID is never started
+again). A device without a ready golden and without a VM (a new one that
 still builds its first golden, ADR-074 amendment KOR-67) reports `vm_slots_free = 0` and `pool_ready = 0`, so the hub
 places nothing on it until the golden is ready.
 
@@ -290,7 +305,8 @@ The capacity report also carries (all optional for the hub, ADR-075): `cpus` and
 `disk_free_mib` of the volume holding `$LIMA_HOME`, `vms_running`, `sessions_active` (occupying sessions),
 `work_vms_running` (VMs of other runner areas, e.g. work VMs; areas report them through
 `<area>/capacity.py:USAGE`, which returns their VM count and the memory they hold, both counted against the
-budget), and the settings `sessions_per_vm` and `vms_max`. The enrollment body keeps the five base counters. The
+budget). The former settings `sessions_per_vm` and `vms_max` are no longer reported (the hub treats their absence
+as no limit). The enrollment body keeps the five base counters. The
 live channel announces `log.org_assign` and `vm.choice` (`Agent-Features`, ADR-075).
 
 ### 3.5 Lifecycle rules
@@ -355,6 +371,108 @@ with `vm_upgrade_version` ≥ 2); those sessions move and continue without the s
 checkpoint of the session or its task, else fresh). The requests taken over are kept in
 `runner.golden_switch_request`, so a request still listed after a restart is no new one. Without a request such a VM
 stays as it is, and a start of the workgroup restarts it (§3.3 step 4).
+
+### 3.7 Work VM slots (ADR-059 addendum 4)
+
+Work VMs (13-work-vm.md) run in slots, one macOS account with its own Lima home and pinned SSH port each (13 §6.1).
+The slot assignment of `agent_runner/workvm/manager.py` is the only mechanism that hands out and frees slots; a slot
+counts only while its VM is needed, and **the free resources, not a fixed number, decide how many run**:
+
+- **Slot accounts** (`workvm.accounts.slot_count`): as many as the RAM above `MEMORY_RESERVE_MIB` could ever hold
+  standard work VMs (`(RAM - reserve) / 8192`, at least 1, at most 100 - the port range of the accounts) - isolation
+  units, not a number of what may run: they never limit before the resources do. `agent-runner workvm install` creates
+  them (again after more RAM: it adds the missing ones); the daemon offers work VMs once the first slot account exists
+  (checked at the first use, once per daemon). The former `WORKVM_SLOTS` and `WORKVM_MAX_PER_TASK`/`_OWNER`/`_ORG` are
+  gone (§1.3).
+- **Admission** (`WorkVms._fits`, for every new or restarted work VM, browser VM, test run VM and the work VM pool): the
+  device admission (§3.8) with the rank `work`: the VM's RAM fits into the RAM above the reserve that the workgroup VMs
+  (also those being started) and the work VMs leave, the host's 1-minute load per core is at most
+  `CPU_LOAD_MAX_PERCENT`, the disk quota `WORKVM_DISK_QUOTA_GIB` holds, no session waits on the device, and a slot
+  account is free. Otherwise the request waits in the queue (below).
+- **Sessions first**: the running task and session work VMs and the work VM pool are reported as yielding
+  (`Usage.yielding_vms`/`yielding_mib`, `workvm/capacity.py:USAGE`): they take no workgroup slot (`vm_slots_free` of
+  the capacity report is not reduced by them; `work_vms_running` still counts them). A workgroup VM start (§3.4
+  `_free_slot`) whose slot is free only because of them asks the areas' `RECLAIM` for `VM_MEMORY_MIB`
+  (`vm.slot_from_work_vms released_mib=`): `WorkVms.give_way` drops ready work VM pool entries, then stops idle work
+  VMs (no job and no call in progress; `workvm.state` `stopped`, reason `idle`, disk kept), least recently used first
+  (`runner.workvm gave_way need_mib= released_mib=`). Running work is never ended for it: a VM with a job or a call in
+  progress keeps running, and the session waits for room or is placed again by the hub. The workgroup pool refill
+  uses only room nobody holds (`Capacity.slots_free_now`). Run and browser VMs are not yielding. A work VM never runs
+  on another device than its session (ADR-059 decision 11): a request that does not fit waits; the hub places new
+  sessions by the reported capacity.
+
+- **Held** by a work VM in `starting`, `running`, `stopping` or `deleting` and by a warm pool entry
+  (`workvm.records.SLOT_STATES`; unique index `workvm_slot_held`, migration `0038_workvm_slots`). A `stopped` VM keeps
+  its disk in its slot's Lima home and holds neither the slot nor RAM.
+- **Settings**: `WORKVM_IDLE_SECONDS` (default 600, 60–604800) and `WORKVM_KEEP_STOPPED_SECONDS` (default 86400,
+  600–2592000).
+- **Freed at once** when the task is closed (reconcile step `workvm`, `task_closed`) or the session ends (observer of
+  `session.state`, `session_ended`; the task VM when no session of the task is active any more).
+- **Freed when idle**: every minute the idle pass stops (`limactl stop`, `workvm.state` `stopped`, reason `idle`) a
+  task or session VM with no tool call for `WORKVM_IDLE_SECONDS`, no running job (`workvm-job list`) and no call in
+  progress. Idle is the runner's activity record (the start and the end of every call), never CPU. Run and browser VMs
+  belong to their owner (13 §12, §13) and are not stopped here.
+- **Stopped VMs**: the next tool call or `workvm.request` of the session starts it again with its disk (`created`
+  again, `created:false`). It starts only in its own slot (its disk is in that slot's Lima home; the host filter opens
+  only that slot's port for it): it waits in the queue until that slot is free and its RAM fits; a ready pool entry in
+  that slot gives the slot back. A VM that does not start is deleted (`failed`) and the call obtains a new one; a
+  call whose stopped VM still waits when the queue time ends answers `unavailable` ("The stopped work VM could not
+  start yet: …") and the VM stays stopped. A stopped VM is deleted after `WORKVM_KEEP_STOPPED_SECONDS` (`idle`), with
+  its session or task (above), when the disk quota needs its space for a waiting request (the oldest first, `idle`),
+  and at a restart. Every deletion is a `workvm.state` `deleted` event with its reason: nothing goes silently.
+- **New VMs** take the free slot with the fewest stopped VMs (then the lowest number), so the own slot of a stopped VM
+  is mostly free when it is needed.
+- **Queue** (`WORKVM_QUEUE_SECONDS`, 13 §2): requests wait in the order they came in. A request goes when every
+  request before it is a stopped VM whose own slot another VM holds (it could not start now anyway); a request that got
+  its slot keeps the ones behind it waiting until its VM runs. Every slot, RAM or place in the queue that becomes free
+  (a deletion, a stop, a pool entry dropped, a request leaving) wakes the waiting requests at once; the 2 s poll stays.
+  The waiting requests are mirrored in `runner.workvm_wait` (ticket, order, own slot of a stopped VM, since) for the
+  status; the mirror is display only.
+- **Reconciliation at start** (task `workvm`, before the first pass): every VM left over from before the restart is
+  deleted (`restart`, KONZEPT idea 44), every own `wvm-` instance without a row too, and the mirror rows of requests
+  of the old process are removed (`runner.workvm waits_cleared count=`).
+- **Slot pass** (task `workvm`, every minute after the idle pass): per slot `limactl list` (a slot whose listing fails
+  is skipped this time, `runner.workvm slot_check_failed slot= code=`), then for every row that is not `deleting` (the
+  sweep's) and not being started, stopped or deleted right now:
+  - instance missing → deleted (`failed`; its open runs `lost`);
+  - `starting` without a request that starts it → deleted (`failed`);
+  - `running`/`stopping` but the instance does not run → `stopped` (`workvm.state` `stopped`, reason `failed`; disk
+    kept); a run or browser VM is deleted instead (its owner obtains a new one);
+  - `stopping` and the instance runs (an interrupted stop) → `running` again (the idle pass decides);
+  - a `running` or `stopped` task VM whose task has no active session on the device, or session VM whose session is
+    final or unknown → deleted (`session_ended`; the end was missed).
+  Log `runner.workvm slot_released workvm_id= state= cause=instance_missing|start_interrupted|not_running|sessions_ended`
+  and `slot_settled`.
+- **Visible**: the chat shows `stopped` with reason `idle` as one quiet line ("Arbeits-VM angehalten, ungenutzt –
+  startet bei Bedarf neu"); the metrics `agent_runner_workvm_slots{state}` (`held`, `free`),
+  `agent_runner_workvm_requests_waiting` and `agent_runner_workvm_stopped` (08 §3); `workvm_status` reports a stopped
+  VM as `stopped`; the capacity metrics `agent_runner_workvm_memory_free_bytes`, `agent_runner_workvm_cpu_load_ratio`
+  and `agent_runner_workvm_disk_used_bytes` (08 §3); `agent-runner status` prints `runner.status.workvm slots= held=
+  free= stopped= waiting= oldest_wait_s= memory_free_mib= cpu_load_pct= cpu_load_max_pct= disk_used_gib=
+  disk_quota_gib=<n|none>`.
+
+### 3.8 Device admission
+
+ADR-059 addendum 4, ADR-075 addendum 2, 16-ci-runners.md §6.6. One admission per device decides for every kind of VM whether it may start now (`agent_runner/admission.py`,
+`admission.of(context)`, one instance per daemon). There is no second mechanism and **no fixed number of what may run**
+for the kinds of agent: the free resources decide.
+
+- **Kinds and rank**: `session` (workgroup VMs with their sessions) before `work` (work, browser and test run VMs)
+  before `ci` (later CI VMs, 16 §6.6). A new request of a lower rank does not start while one of a higher rank waits:
+  a work VM request waiting in the queue counts (`Admission.waits`), and so does a session the device refused for lack
+  of capacity, until the hub's next attempt comes back (at most `REFUSAL_HOLD_S`, 120 s) or a session VM starts.
+- **One transaction**: the workgroup VM area and the work VM area take the same lock (`Admission.lock`;
+  `Pool.slot_lock` and `WorkVms.slot_lock` are this lock) from the check to the row that holds the capacity. RAM of
+  workgroup VMs being started or filled into the pool counts while they start (`Admission.pending`).
+- **Checks** (`Admission.judge`, reasons `rank`, `cpu`, `memory`, `disk`, `cap`, `macos`): the host's 1-minute load per
+  core is at most `CPU_LOAD_MAX_PERCENT` (default 85); the VM's RAM fits into the RAM above `MEMORY_RESERVE_MIB` that
+  the running VMs of every kind leave; the disk it needs is free; an upper bound of its kind holds (`Cap`: a share of
+  the RAM budget and of the CPUs; **only CI has one**, the kinds of agent have none); at most **2 macOS VMs per Mac**
+  (`MACOS_VMS_MAX`, Apple's licence, 16 §8.4) - the only fixed number.
+- **Running work is never ended** to make room. What gives way to a higher rank: warm pool entries, then idle work
+  VMs (§3.7, stopped with their disk, started again on demand).
+- A workgroup VM refused here fails its session with `capacity_exhausted` (`cpu`, `disk`, or no slot), the hub places
+  the next attempt; a work VM request waits in its queue (§3.7).
 
 ## 4. Sandbox (two independent layers, ADR-008)
 
@@ -1357,9 +1475,10 @@ A new need of sessions is checked against this rule before a VM tool is offered 
 
 ## 13. Subagents (ADR-088, ADR-038)
 
-- Created only after hub acceptance of `subagent.request` (the limits depth, running and total are settings of the
-  hub, ADR-088 §2, enforced in check H4; the runner pre-checks them with the values of the device state's `limits`
-  and the room of the parent's VM).
+- Created only after hub acceptance of `subagent.request` (the limits depth and total are settings of the hub,
+  ADR-088 §2, enforced in check H4; the runner pre-checks them with the values of the device state's `limits` and the
+  measured room of the parent's VM, `vm.room`). How many children run at once is no fixed number (ADR-075 addendum
+  2): the free resources decide; an older hub's `subagent_max_running` is read past.
 - Same VM, new sandbox, `depth = parent.depth + 1`, `parent_session_id` set, same task, same model access as the
   parent unless `model_id` given and allowed. Initial prompt = `"Purpose: <purpose>\n\n<prompt>"` (prompt ID = the
   operation ID: the child's first instruction); harness adds "You are a subagent session of session <parent> for task
@@ -1373,7 +1492,7 @@ A new need of sessions is checked against this rule before a VM tool is offered 
   like a main session (never while an instruction waits) and resumed with its conversation by the next instruction.
 - **Instructions.** `subagent.instruct {session_id, prompt}` gives a child of the requesting session its next
   instruction (runner pre-check: a child of this session in the same task that has not ended, else `not_found`; a
-  suspended child is resumed, so `subagent_max_running` and the VM's room are checked, `limit_exceeded`).
+  suspended child is resumed, so the VM's measured room is checked, `limit_exceeded`).
   Instructions of one child (`runner.subagent_instruction`, the request first) are handed over one at a time in the
   order of their creation, one per turn: the next waits until the child accepted the previous one and that turn
   ended. The executor resumes a suspended child, registers the prompt at the guest with the child's sender line

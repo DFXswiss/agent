@@ -26,7 +26,7 @@ from agent_runner.vm.lima import LimaError
 from agent_runner.workvm import firewall, records
 from agent_runner.workvm import manager as manager_module
 from agent_runner.workvm.jobs import ShellResult, WorkVmError
-from agent_runner.workvm.manager import NO_LEASE, NO_VM, CallFailed, WorkVms, sizes_fit
+from agent_runner.workvm.manager import NO_LEASE, NO_VM, CallFailed, Waiter, WorkVms, sizes_fit
 
 from .kit import CHILD, SESSION, START, TASK, TASK_B, Job, World, pack_tar, session
 
@@ -122,20 +122,19 @@ def test_requests_that_cannot_be_served(world: World, change: dict[str, Any], co
     assert caught.value.retryable is False
 
 
-@pytest.mark.parametrize("limit", ["max_per_task", "max_per_org", "max_per_owner"])
-def test_limits_per_task_org_and_owner(world: World, limit: str) -> None:
-    world.settings = manager_module.Settings(**{**world.settings.__dict__, limit: 1})
+def test_no_fixed_number_per_task_organization_or_owner(world: World) -> None:
+    """ADR-075 addendum 2: one owner and organization get as many VMs as the free resources admit."""
+    world.settings = manager_module.Settings(**{**world.settings.__dict__, "slots": 6})
 
-    async def body(vms: WorkVms) -> None:
-        await request(vms, {}, session(task_id=TASK))
-        same_task = limit == "max_per_task"
-        await request(
-            vms, {"scope": "session"} if same_task else {}, session(CHILD, task_id=TASK if same_task else TASK_B)
-        )
+    async def body(vms: WorkVms) -> list[bool]:
+        found = [(await request(vms, {}, session(task_id=TASK)))["created"]]
+        found.append((await request(vms, {"scope": "session"}, session(CHILD, task_id=TASK)))["created"])
+        for index in range(4):  # more than the former 4 per task, 8 per owner would allow together with these
+            task = f"0193000a-0000-7000-8000-0000000001{index:02d}"
+            found.append((await request(vms, {}, session(task[:-2] + "ff", task_id=task)))["created"])
+        return found
 
-    with pytest.raises(OperationFailed) as caught:
-        world.run(body)
-    assert caught.value.code == "limit_exceeded"
+    assert world.run(body) == [True] * 6
 
 
 def test_a_request_waits_in_the_queue_until_capacity_is_free(world: World) -> None:
@@ -167,11 +166,12 @@ def test_a_request_gives_up_after_the_queue_time(world: World) -> None:
 
 def test_a_queued_request_waits_for_the_one_before_it(world: World) -> None:
     async def body(vms: WorkVms) -> int:
-        vms.queue.append("earlier")
+        earlier = Waiter("0" * 16)
+        vms.queue.append(earlier)
 
         def leave(w: World) -> None:
-            if "earlier" in vms.queue:
-                vms.queue.remove("earlier")
+            if earlier in vms.queue:
+                vms.queue.remove(earlier)
 
         world.on_sleep = leave
         await request(vms)
@@ -504,7 +504,9 @@ def test_ensure_running_accepts_only_running_vms(world: World) -> None:
     assert world.run(body) == ["workvm_gone", "workvm_gone"]
 
 
-def test_idle_pass_tears_down_only_idle_vms_without_running_jobs(world: World) -> None:
+def test_idle_pass_stops_only_idle_vms_without_running_jobs(world: World) -> None:
+    """ADR-059 addendum 4: an idle VM is stopped (slot and RAM free, disk kept), never one with a running job."""
+
     async def body(vms: WorkVms) -> list[list[str]]:
         created = await request(vms)
         first = await vms.idle_pass()
@@ -515,22 +517,22 @@ def test_idle_pass_tears_down_only_idle_vms_without_running_jobs(world: World) -
         busy = await vms.idle_pass()
         world.helper.jobs.clear()
         world.helper_fail["list"] = ShellResult(1, b"", False)  # an unreadable job list counts as no job
-        world.fail.add("delete")
-        removed = await vms.idle_pass()
-        assert (await records.get(vms.deps.db, created["workvm_id"])).state == "deleting"  # type: ignore[union-attr]
-        world.fail.discard("delete")
-        assert await vms.sweep() == 1  # KOR-43: a failed deletion is repeated by the sweep
-        assert (await records.get(vms.deps.db, created["workvm_id"])).state == "deleted"  # type: ignore[union-attr]
-        return [first, busy, removed]
+        stopped = await vms.idle_pass()
+        vm = await records.get(vms.deps.db, created["workvm_id"])
+        assert vm is not None
+        assert vm.state == "stopped"
+        assert await records.used_slots(vms.deps.db) == set()
+        return [first, busy, stopped]
 
-    first, busy, removed = world.run(body)
+    first, busy, stopped = world.run(body)
     assert first == []
     assert busy == []
-    assert len(removed) == 1
-    assert any("delete_failed" in line for line in world.logs)
-    deleted = [body for _, kind, body in world.events if kind == "workvm.state" and body["state"] == "deleted"]
-    assert deleted[0]["reason"] == "idle"
-    assert deleted[0]["runtime_ms"] == 1202000
+    assert len(stopped) == 1
+    [state] = [body for _, kind, body in world.events if kind == "workvm.state" and body["state"] == "stopped"]
+    assert state["reason"] == "idle"
+    assert state["runtime_ms"] == 1202000
+    assert ("stop", 0) in world.calls
+    assert not any(operation == "delete" for operation, _ in world.calls)
     lost = [body for _, kind, body in world.events if kind == "workvm.run" and body["state"] == "lost"]
     assert len(lost) == 1
     assert lost[0]["command"] == "sleep 100"
@@ -900,7 +902,7 @@ def test_a_failing_wait_for_capacity_leaves_the_queue(world: World) -> None:
 
     world.on_sleep = boom
 
-    async def body(vms: WorkVms) -> list[str]:
+    async def body(vms: WorkVms) -> list[Waiter]:
         with pytest.raises(RuntimeError):
             await request(vms)
         return list(vms.queue)
@@ -1062,7 +1064,7 @@ def test_the_pool_keeps_the_ram_of_one_request_and_never_takes_from_a_waiting_on
         world.free_mib = 2 * 8192 - 1
         low = await vms.pool_pass()
         world.free_mib = 1_000_000
-        vms.queue.append("waiting")
+        vms.queue.append(Waiter("0" * 16))
         queued = await vms.pool_pass()
         vms.queue.clear()
         return low, queued, await vms.pool_pass() + await vms.pool_pass()
@@ -1180,11 +1182,12 @@ def test_a_waiting_standard_request_takes_a_ready_entry_at_the_head(world: World
 
     async def body(vms: WorkVms) -> dict[str, Any]:
         await vms.pool_pass()
-        vms.queue.append("earlier")
+        earlier = Waiter("0" * 16)
+        vms.queue.append(earlier)
 
         def leave(_w: World) -> None:
-            if "earlier" in vms.queue:
-                vms.queue.remove("earlier")
+            if earlier in vms.queue:
+                vms.queue.remove(earlier)
 
         world.on_sleep = leave
         return await request(vms)

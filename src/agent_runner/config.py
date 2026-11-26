@@ -47,8 +47,7 @@ NAMES = (
     "VM_DISK_GIB",
     "POOL_SIZE",
     "MEMORY_RESERVE_MIB",
-    "SESSIONS_PER_VM",
-    "MAX_VMS",
+    "VM_LOAD_MAX_PERCENT",
     "SESSION_IDLE_SECONDS",
     "VM_IDLE_SECONDS",
     "TEXTFILE_DIR",
@@ -76,16 +75,14 @@ NAMES = (
     "OPERATOR_GITHUB_USERS",
     "OPERATOR_GITHUB_ORG",
     # Work VMs (docs/platform/spec/13-work-vm.md, ADR-059)
-    "WORKVM_SLOTS",
     "WORKVM_SLOTS_SELF",
     "WORKVM_MAX_SIZE",
     "WORKVM_IDLE_SECONDS",
+    "WORKVM_KEEP_STOPPED_SECONDS",
+    "CPU_LOAD_MAX_PERCENT",
     "WORKVM_POOL_SIZE",
     "WORKVM_DISK_QUOTA_GIB",
     "WORKVM_QUEUE_SECONDS",
-    "WORKVM_MAX_PER_TASK",
-    "WORKVM_MAX_PER_ORG",
-    "WORKVM_MAX_PER_OWNER",
     "WORKVM_SSH_PORT_BASE",
     "WORKVM_TEMPLATE",
     "LOG_MAX_MIB",
@@ -103,6 +100,11 @@ NAMES = (
     "BROWSER_LIVE_MAX_KBPS",
     "BROWSER_SEARCH_URL",
 )
+RETIRED_NAMES = frozenset(
+    {"WORKVM_SLOTS", "WORKVM_MAX_PER_TASK", "WORKVM_MAX_PER_ORG", "WORKVM_MAX_PER_OWNER", "SESSIONS_PER_VM", "MAX_VMS"}
+)
+"""Fixed capacity limits that no longer exist (the free resources decide, ADR-075 addendum 2): set in an older
+`runner.env` they are ignored - no `config_invalid` - and named once in the log at the start (`Config.retired`)."""
 # Required for the daemon (`run`, `service install`); commands that never talk to the hub load without them.
 HUB_NAMES = frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"})
 
@@ -113,19 +115,19 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     "VM_DISK_GIB": (20, 5, 65_536),
     "POOL_SIZE": (2, 0, 64),
     "MEMORY_RESERVE_MIB": (32768, 0, 4_194_304),
-    # ADR-075 section 1: occupying sessions per VM and VMs of the device that occupy a slot; 0 = no such limit
-    "SESSIONS_PER_VM": (16, 0, 1_000_000),
-    "MAX_VMS": (0, 0, 1_000_000),
+    # a running workgroup VM takes one more session while its load per vCPU is at most this (`vm.room`)
+    "VM_LOAD_MAX_PERCENT": (85, 10, 100),
     "SESSION_IDLE_SECONDS": (1800, 60, 604_800),
     "VM_IDLE_SECONDS": (1800, 60, 604_800),
-    "WORKVM_SLOTS": (0, 0, 100),
-    "WORKVM_IDLE_SECONDS": (1800, 60, 604_800),
+    # ADR-059 addendum 4: an idle work VM is stopped (slot and RAM free, disk kept), a stopped one deleted later.
+    "WORKVM_IDLE_SECONDS": (600, 60, 604_800),
+    "WORKVM_KEEP_STOPPED_SECONDS": (86_400, 600, 2_592_000),
+    # the device's one admission (`agent_runner.admission`): a new VM of any kind only while the host's CPU load
+    # (1 min, per core) is at most this
+    "CPU_LOAD_MAX_PERCENT": (85, 10, 100),
     "WORKVM_POOL_SIZE": (1, 0, 16),
     "WORKVM_DISK_QUOTA_GIB": (0, 0, 1_000_000),
     "WORKVM_QUEUE_SECONDS": (900, 0, 86_400),
-    "WORKVM_MAX_PER_TASK": (4, 1, 100),
-    "WORKVM_MAX_PER_ORG": (16, 1, 100),
-    "WORKVM_MAX_PER_OWNER": (8, 1, 100),
     "WORKVM_SSH_PORT_BASE": (47200, 1024, 65_435),
     # KOR-43 logs of test runs and long work VM jobs (ADR-080 section 3): the kept bytes of one log (its last part).
     "LOG_MAX_MIB": (256, 1, 1_000_000),
@@ -213,10 +215,12 @@ class Config:
     """A transcript above this size cannot be checkpointed (audited, never silent)."""
     context_wait_seconds: int = 180
     """How long a restore waits for the final checkpoint of the session it continues and retries the hub."""
-    sessions_per_vm: int = 16
-    """Occupying sessions per VM, 0 = no limit (KOR-41, ADR-075 section 1)."""
-    max_vms: int = 0
-    """VMs of the device that occupy a slot, 0 = only the memory budget decides (KOR-41, ADR-075 section 1)."""
+    vm_load_max_percent: int = 85
+    """A running workgroup VM takes one more session while its load per vCPU is at most this (`vm.room`)."""
+    cpu_load_max_percent: int = 85
+    """The device's one admission: a new VM of any kind only while the host's load per core is at most this."""
+    retired: tuple[str, ...] = ()
+    """Names of `RETIRED_NAMES` set in the environment: ignored, named once in the log at the start."""
     github_oauth_client_id: str | None = None
     """Public client ID of the OAuth App whose device flow "Connect GitHub" prefers (KOR-65, ADR-015 addendum)."""
     github_app_slug: str | None = None
@@ -247,17 +251,14 @@ class Config:
     def tmp_dir(self) -> Path:
         return self.home / "tmp"
 
-    workvm_slots: int = 0
     workvm_slots_self: bool = False
     workvm_max_size: str = "large"
-    workvm_idle_seconds: int = 1800
+    workvm_idle_seconds: int = 600
+    workvm_keep_stopped_seconds: int = 86_400
     workvm_pool_size: int = 1
     workvm_disk_quota_gib: int = 0
     workvm_queue_seconds: int = 900
-    workvm_max_per_task: int = 4
-    workvm_max_per_org: int = 16
     log_max_mib: int = 256
-    workvm_max_per_owner: int = 8
     workvm_ssh_port_base: int = 47200
     workvm_template: Path | None = None
 
@@ -302,8 +303,9 @@ def load_config(
     """
     check_platform(platform)
     for key in sorted(env):
-        if key.startswith(PREFIX) and key[len(PREFIX) :] not in NAMES:
+        if key.startswith(PREFIX) and key[len(PREFIX) :] not in (*NAMES, *RETIRED_NAMES):
             raise RunnerError("config_invalid", key[len(PREFIX) :])
+    retired = tuple(sorted(name for name in RETIRED_NAMES if PREFIX + name in env))
 
     def raw(name: str) -> str:
         return env.get(PREFIX + name, "")
@@ -338,8 +340,9 @@ def load_config(
         vm_disk_gib=integers["VM_DISK_GIB"],
         pool_size=integers["POOL_SIZE"],
         memory_reserve_mib=integers["MEMORY_RESERVE_MIB"],
-        sessions_per_vm=integers["SESSIONS_PER_VM"],
-        max_vms=integers["MAX_VMS"],
+        vm_load_max_percent=integers["VM_LOAD_MAX_PERCENT"],
+        cpu_load_max_percent=integers["CPU_LOAD_MAX_PERCENT"],
+        retired=retired,
         session_idle_seconds=integers["SESSION_IDLE_SECONDS"],
         vm_idle_seconds=integers["VM_IDLE_SECONDS"],
         textfile_dir=_optional(raw("TEXTFILE_DIR"), "TEXTFILE_DIR", require, lambda v: _absolute(v, "TEXTFILE_DIR")),
@@ -394,16 +397,13 @@ def load_config(
 
 
 class _WorkVmSettings(TypedDict):
-    workvm_slots: int
     workvm_slots_self: bool
     workvm_max_size: str
     workvm_idle_seconds: int
+    workvm_keep_stopped_seconds: int
     workvm_pool_size: int
     workvm_disk_quota_gib: int
     workvm_queue_seconds: int
-    workvm_max_per_task: int
-    workvm_max_per_org: int
-    workvm_max_per_owner: int
     workvm_ssh_port_base: int
     workvm_template: Path | None
     log_max_mib: int
@@ -423,16 +423,13 @@ def _workvm(
         raise RunnerError("config_invalid", "WORKVM_MAX_SIZE")
     template = _optional(raw("WORKVM_TEMPLATE"), "WORKVM_TEMPLATE", require, lambda v: _file(v, "WORKVM_TEMPLATE"))
     return {
-        "workvm_slots": integers["WORKVM_SLOTS"],
         "workvm_slots_self": slots_self,
         "workvm_max_size": max_size,
         "workvm_idle_seconds": integers["WORKVM_IDLE_SECONDS"],
+        "workvm_keep_stopped_seconds": integers["WORKVM_KEEP_STOPPED_SECONDS"],
         "workvm_pool_size": integers["WORKVM_POOL_SIZE"],
         "workvm_disk_quota_gib": integers["WORKVM_DISK_QUOTA_GIB"],
         "workvm_queue_seconds": integers["WORKVM_QUEUE_SECONDS"],
-        "workvm_max_per_task": integers["WORKVM_MAX_PER_TASK"],
-        "workvm_max_per_org": integers["WORKVM_MAX_PER_ORG"],
-        "workvm_max_per_owner": integers["WORKVM_MAX_PER_OWNER"],
         "log_max_mib": integers["LOG_MAX_MIB"],
         "workvm_ssh_port_base": integers["WORKVM_SSH_PORT_BASE"],
         "workvm_template": template,

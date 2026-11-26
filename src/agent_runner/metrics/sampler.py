@@ -162,7 +162,15 @@ class Sampler:
             held_scopes=int(held[1]),
         )
         workvms = await workvm.entries(context, self.tools, at, self.line)
-        return Snapshot(wall=wall, at=at, device=summary, vms=vms, sessions=tuple(entries), workvms=workvms)
+        return Snapshot(
+            wall=wall,
+            at=at,
+            device=summary,
+            vms=vms,
+            sessions=tuple(entries),
+            workvms=workvms,
+            workvm_slots=await workvm.slots(context),
+        )
 
     def hub_sessions(self, entries: tuple[SessionEntry, ...]) -> list[SessionEntry]:
         """Sessions for the hub: running ones every round, an ended one once (its final values)."""

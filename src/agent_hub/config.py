@@ -50,12 +50,10 @@ CONTEXT_KEEP = "AGENT_HUB_CONTEXT_KEEP"
 CONTEXT_ORG_BYTES = "AGENT_HUB_CONTEXT_ORG_BYTES"
 LOG_KEEP = "AGENT_HUB_LOG_KEEP"
 LOG_ORG_BYTES = "AGENT_HUB_LOG_ORG_BYTES"
-VMS_PER_WG = "AGENT_HUB_VMS_PER_WG"
 CAPACITY_REFUSALS = "AGENT_HUB_CAPACITY_REFUSALS"
 REFUSAL_HOLD_SECONDS = "AGENT_HUB_REFUSAL_HOLD_SECONDS"
 DEVICE_FAILOVER_SECONDS = "AGENT_HUB_DEVICE_FAILOVER_SECONDS"
 SUBAGENT_MAX_DEPTH = "AGENT_HUB_SUBAGENT_MAX_DEPTH"
-SUBAGENT_MAX_RUNNING = "AGENT_HUB_SUBAGENT_MAX_RUNNING"
 SUBAGENT_MAX_TOTAL = "AGENT_HUB_SUBAGENT_MAX_TOTAL"
 SUBAGENT_MAX_RUNTIME_SECONDS = "AGENT_HUB_SUBAGENT_MAX_RUNTIME_SECONDS"
 
@@ -83,23 +81,21 @@ KNOWN_VARIABLES = frozenset(
         CONTEXT_ORG_BYTES,
         LOG_KEEP,
         LOG_ORG_BYTES,
-        VMS_PER_WG,
         CAPACITY_REFUSALS,
         REFUSAL_HOLD_SECONDS,
         DEVICE_FAILOVER_SECONDS,
         SUBAGENT_MAX_DEPTH,
-        SUBAGENT_MAX_RUNNING,
         SUBAGENT_MAX_TOTAL,
         SUBAGENT_MAX_RUNTIME_SECONDS,
     }
 )
+RETIRED_VARIABLES = frozenset({"AGENT_HUB_VMS_PER_WG", "AGENT_HUB_SUBAGENT_MAX_RUNNING"})
+"""Fixed numbers of what may run at once that no longer exist (ADR-075 addendum 2): set in an older configuration they
+are ignored - no start failure - and named once at the start (`HubConfig.retired`, `serve`)."""
 
 DEFAULT_PORT = 8788
 DEFAULT_DEVICE_ONLINE_SECONDS = 30
 MAX_DEVICE_ONLINE_SECONDS = 3600
-DEFAULT_VMS_PER_WG = 100
-"""Live VMs of one workgroup over all devices (ADR-075 section 1; 0 = no limit)."""
-MAX_VMS_PER_WG = 1_000_000
 DEFAULT_CAPACITY_REFUSALS = 3
 """Refusals in a row after which the next attempt is held back (ADR-075 section 7, ADR-049)."""
 MAX_CAPACITY_REFUSALS = 1000
@@ -123,8 +119,6 @@ DEFAULT_LOG_ORG_BYTES = 100 * GIB
 MAX_CONTEXT_BYTES = 2**53 - 1
 DEFAULT_SUBAGENT_MAX_DEPTH = 5
 """Nesting depth of subagents (ADR-088 section 2; main session 0; 0 = no limit)."""
-DEFAULT_SUBAGENT_MAX_RUNNING = 50
-"""Children of one task that have not ended and are not suspended (ADR-088 section 2; 0 = no limit)."""
 DEFAULT_SUBAGENT_MAX_TOTAL = 0
 """Children of one task in total (ADR-088 section 2; 0 = no limit)."""
 DEFAULT_SUBAGENT_MAX_RUNTIME_SECONDS = 0
@@ -153,19 +147,20 @@ LIMITS: Mapping[str, int] = MappingProxyType(
 
 @dataclass(frozen=True)
 class SubagentLimits:
-    """The subagent limits of this hub (ADR-088 section 2): one setting each, 0 = no limit. The hub enforces depth,
-    running and total (check H4) and publishes all four in `GET /v1/config` and the device state section `limits`, the
-    one source of every runner."""
+    """The subagent limits of this hub (ADR-088 section 2): one setting each, 0 = no limit. The hub enforces depth and
+    total (check H4) and publishes them with the runtime in `GET /v1/config` and the device state section `limits`, the
+    one source of every runner. How many run at once is no fixed number (ADR-075 addendum 2): the devices' free
+    resources decide; `subagent_max_running` stays in the contracts for older runners and clients and is always 0
+    (no limit)."""
 
     max_depth: int = DEFAULT_SUBAGENT_MAX_DEPTH
-    max_running: int = DEFAULT_SUBAGENT_MAX_RUNNING
     max_total: int = DEFAULT_SUBAGENT_MAX_TOTAL
     max_runtime_seconds: int = DEFAULT_SUBAGENT_MAX_RUNTIME_SECONDS
 
     def published(self) -> dict[str, int]:
         return {
             "subagent_max_depth": self.max_depth,
-            "subagent_max_running": self.max_running,
+            "subagent_max_running": 0,
             "subagent_max_total": self.max_total,
             "subagent_max_runtime_seconds": self.max_runtime_seconds,
         }
@@ -257,14 +252,15 @@ class HubConfig:
     """`AGENT_HUB_LOG_ORG_BYTES`: the sealed log bytes of all tasks of one organisation (apart from the checkpoints)."""
     downloads_dir: Path | None = None
     """`AGENT_HUB_DOWNLOADS_DIR`: the download area of an own device (ADR-074 section 7); None = no downloads."""
-    vms_per_wg: int = DEFAULT_VMS_PER_WG
     capacity_refusals: int = DEFAULT_CAPACITY_REFUSALS
     refusal_hold_seconds: int = DEFAULT_REFUSAL_HOLD_SECONDS
     device_failover_seconds: int = DEFAULT_DEVICE_FAILOVER_SECONDS
     """`AGENT_HUB_DEVICE_FAILOVER_SECONDS`: a device offline this long has failed (ADR-087 section 1; default 300, at
     least twice `device_online_seconds`)."""
     subagent_limits: SubagentLimits = DEFAULT_SUBAGENT_LIMITS
-    """`AGENT_HUB_SUBAGENT_MAX_DEPTH`, `…_RUNNING`, `…_TOTAL`, `…_RUNTIME_SECONDS` (ADR-088 section 2)."""
+    """`AGENT_HUB_SUBAGENT_MAX_DEPTH`, `…_TOTAL`, `…_RUNTIME_SECONDS` (ADR-088 section 2)."""
+    retired: tuple[str, ...] = ()
+    """Names of `RETIRED_VARIABLES` set in the environment: ignored, named once at the start."""
 
     def signer(self) -> HubSigner:
         """The hub's response and checkpoint signer (reused `agent_core.signing.HubSigner`)."""
@@ -548,7 +544,10 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
     unknown = sorted(
         name
         for name in environ
-        if name.startswith(PREFIX) and name not in KNOWN_VARIABLES and not name.startswith(TEST_PREFIX)
+        if name.startswith(PREFIX)
+        and name not in KNOWN_VARIABLES
+        and name not in RETIRED_VARIABLES
+        and not name.startswith(TEST_PREFIX)
     )
     if unknown:
         raise ConfigError(f"{unknown[0]} is not a hub setting")
@@ -599,7 +598,6 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
         log_keep=_bounded_int(environ, LOG_KEEP, DEFAULT_LOG_KEEP, _SECONDS_RE, MAX_LOG_KEEP),
         log_org_bytes=_bounded_int(environ, LOG_ORG_BYTES, DEFAULT_LOG_ORG_BYTES, _BYTES_RE, MAX_CONTEXT_BYTES),
         downloads_dir=_downloads_dir(environ),
-        vms_per_wg=_setting(environ, VMS_PER_WG, DEFAULT_VMS_PER_WG, MAX_VMS_PER_WG),
         capacity_refusals=_bounded_int(
             environ, CAPACITY_REFUSALS, DEFAULT_CAPACITY_REFUSALS, _SECONDS_RE, MAX_CAPACITY_REFUSALS
         ),
@@ -609,7 +607,6 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
         device_failover_seconds=_failover_seconds(environ),
         subagent_limits=SubagentLimits(
             max_depth=_setting(environ, SUBAGENT_MAX_DEPTH, DEFAULT_SUBAGENT_MAX_DEPTH, MAX_SUBAGENT_SETTING),
-            max_running=_setting(environ, SUBAGENT_MAX_RUNNING, DEFAULT_SUBAGENT_MAX_RUNNING, MAX_SUBAGENT_SETTING),
             max_total=_setting(environ, SUBAGENT_MAX_TOTAL, DEFAULT_SUBAGENT_MAX_TOTAL, MAX_SUBAGENT_SETTING),
             max_runtime_seconds=_setting(
                 environ,
@@ -618,4 +615,5 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
                 MAX_SUBAGENT_RUNTIME_SECONDS,
             ),
         ),
+        retired=tuple(sorted(name for name in environ if name in RETIRED_VARIABLES)),
     )

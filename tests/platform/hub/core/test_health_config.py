@@ -46,7 +46,7 @@ def test_config(hub: HubHarness) -> None:
     assert body["limits"] == {
         **LIMITS,
         "subagent_max_depth": 5,
-        "subagent_max_running": 50,
+        "subagent_max_running": 0,  # no number running at once (ADR-075 addendum 2)
         "subagent_max_total": 0,
         "subagent_max_runtime_seconds": 0,
     }

@@ -1,11 +1,12 @@
-"""`POST /runners/workvm` (`{"slots": n, "max_per_task": m, "pool_size": p, "browser_idle_seconds": s}`): work VMs on
-every runner for the work VM scenario (docs/platform/spec/13-work-vm.md, ADR-059). Self mode in TEST_MODE
-(`AGENT_RUNNER_WORKVM_SLOTS_SELF`: the runner's own account and Lima home, no host filter). For each runner the run's
-work image cache (`Context.workvm_image`, ensured before the run) is cloned once to `<runner prefix>wimg-e2e` (a run
+"""`POST /runners/workvm` (`{"enable": bool, "pool_size": p, "browser_idle_seconds": s}`): work VMs on every runner
+for the work VM scenario (docs/platform/spec/13-work-vm.md, ADR-059). Self mode in TEST_MODE
+(`AGENT_RUNNER_WORKVM_SLOTS_SELF`: the runner's own account and Lima home, no host filter). No fixed number of work
+VMs exists (ADR-075 addendum 2): the device admission decides by free RAM, CPU and disk. For each runner the run's work
+image cache (`Context.workvm_image`, ensured before the run) is cloned once to `<runner prefix>wimg-e2e` (a run
 instance: deleted with the run's other VMs) and registered `ready` in the runner's store; the settings are
 environment variables the runner reads at start, so a runner whose settings change is restarted (same home: identity
-and store stay). `{"slots": 0}` takes the settings away again. `browser_idle_seconds` (60-3600) sets the idle teardown
-of platform browser sessions (KOR-44). Answers `{runner: {"image": name | null, "restarted": bool}}`."""
+and store stay). `{"enable": false}` takes the settings away again. `browser_idle_seconds` (60-3600) sets the idle
+teardown of platform browser sessions (KOR-44). Answers `{runner: {"image": name | null, "restarted": bool}}`."""
 
 from __future__ import annotations
 
@@ -18,13 +19,11 @@ from orchestrator.services import Runner
 
 BASE_SUFFIX = "wimg-e2e"
 VARIABLES = {
-    "slots": "AGENT_RUNNER_WORKVM_SLOTS",
-    "max_per_task": "AGENT_RUNNER_WORKVM_MAX_PER_TASK",
     "pool_size": "AGENT_RUNNER_WORKVM_POOL_SIZE",
     "browser_idle_seconds": "AGENT_RUNNER_BROWSER_IDLE_SECONDS",
 }
 SELF = "AGENT_RUNNER_WORKVM_SLOTS_SELF"
-LIMITS = {"slots": (0, 4), "max_per_task": (1, 100), "pool_size": (0, 4), "browser_idle_seconds": (60, 3600)}
+LIMITS = {"pool_size": (0, 4), "browser_idle_seconds": (60, 3600)}
 STEP_TIMEOUT_S = 300.0
 REGISTER = """import sys
 from datetime import UTC, datetime
@@ -38,20 +37,25 @@ with psycopg.connect(f"host=127.0.0.1 port={port} user=agent dbname=agent_runner
         (sys.argv[2], datetime.now(UTC)),
     )
 """
+USAGE = 'body must be {"enable": true|false, "pool_size"?: n, "browser_idle_seconds"?: n}'
 
 
-def _settings(body: Any) -> dict[str, int]:
-    if not isinstance(body, dict) or not set(body) <= set(VARIABLES) or "slots" not in body:
-        raise RouteError(
-            400, "invalid", 'body must be {"slots": n, "max_per_task"?: n, "pool_size"?: n, "browser_idle_seconds"?: n}'
-        )
+def _settings(body: Any) -> tuple[bool, dict[str, int]]:
+    if (
+        not isinstance(body, dict)
+        or not set(body) <= {"enable", *VARIABLES}
+        or not isinstance(body.get("enable"), bool)
+    ):
+        raise RouteError(400, "invalid", USAGE)
     out = {}
     for key, value in body.items():
+        if key == "enable":
+            continue
         low, high = LIMITS[key]
         if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
             raise RouteError(400, "invalid", f"{key} must be {low}..{high}")
         out[key] = value
-    return out
+    return body["enable"], out
 
 
 def _prepare(ctx: Context, runner: Runner) -> str:
@@ -72,8 +76,7 @@ def _prepare(ctx: Context, runner: Runner) -> str:
 
 
 def post_workvm(ctx: Context, _params: dict[str, str], body: Any) -> tuple[int, Any]:
-    settings = _settings(body)
-    enable = settings["slots"] > 0
+    enable, settings = _settings(body)
     if enable and not ctx.workvm_image:
         raise RouteError(409, "no_work_image", "no work image in this run (a spec with @needs-workvm ensures it)")
     out: dict[str, Any] = {}

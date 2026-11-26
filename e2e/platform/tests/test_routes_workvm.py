@@ -23,26 +23,26 @@ def prepared(context: Context) -> Context:
 
 
 def test_invalid_bodies(ctx: Context) -> None:  # noqa: F811
-    bodies: list[Any] = [None, [], {}, {"slots": 1, "other": 1}, {"slots": 5}, {"slots": True}]
-    for body in [*bodies, {"slots": 1, "pool_size": 9}]:
+    bodies: list[Any] = [None, [], {}, {"enable": True, "other": 1}, {"enable": 1}, {"slots": 2}]
+    for body in [*bodies, {"enable": True, "pool_size": 9}, {"enable": True, "max_per_task": 1}]:
         status, answer = call(ctx, "POST", "/runners/workvm", body)
         assert status == 400, body
         assert answer["error"] == "invalid"
 
 
 def test_no_work_image_in_the_run(ctx: Context) -> None:  # noqa: F811
-    status, answer = call(ctx, "POST", "/runners/workvm", {"slots": 2})
+    status, answer = call(ctx, "POST", "/runners/workvm", {"enable": True})
     assert (status, answer["error"]) == (409, "no_work_image")
 
 
 def test_enable_clones_registers_and_restarts_then_disable(ctx: Context) -> None:  # noqa: F811
     prepared(ctx)
-    body: dict[str, Any] = {"slots": 2, "max_per_task": 1, "pool_size": 1}
+    body: dict[str, Any] = {"enable": True, "pool_size": 1}
     status, answer = call(ctx, "POST", "/runners/workvm", body)
     assert (status, answer) == (200, {"runner-1": {"image": BASE, "restarted": True}})
     env = ctx.runners["runner-1"].env
-    assert env["AGENT_RUNNER_WORKVM_SLOTS"] == "2"
-    assert env["AGENT_RUNNER_WORKVM_MAX_PER_TASK"] == "1"
+    # no fixed number of work VMs (ADR-075 addendum 2): the device admission decides
+    assert "AGENT_RUNNER_WORKVM_SLOTS" not in env
     assert env["AGENT_RUNNER_WORKVM_POOL_SIZE"] == "1"
     assert env["AGENT_RUNNER_WORKVM_SLOTS_SELF"] == "1"
     argvs = runs(ctx)
@@ -54,33 +54,37 @@ def test_enable_clones_registers_and_restarts_then_disable(ctx: Context) -> None
     assert call(ctx, "POST", "/runners/workvm", body)[1] == {"runner-1": {"image": BASE, "restarted": False}}
     assert not any(argv[1] == "clone" for argv in runs(ctx)[before:])
     # disabled: every variable goes, the runner restarts
-    assert call(ctx, "POST", "/runners/workvm", {"slots": 0})[1] == {"runner-1": {"image": None, "restarted": True}}
+    assert call(ctx, "POST", "/runners/workvm", {"enable": False})[1] == {
+        "runner-1": {"image": None, "restarted": True}
+    }
     assert not any(name.startswith("AGENT_RUNNER_WORKVM_") for name in env)
 
 
 def test_a_stopped_runner_is_not_restarted(ctx: Context) -> None:  # noqa: F811
     prepared(ctx)
     ctx.runner_node.alive_names.discard("runner-1")  # type: ignore[attr-defined]
-    assert call(ctx, "POST", "/runners/workvm", {"slots": 1})[1] == {"runner-1": {"image": BASE, "restarted": False}}
+    assert call(ctx, "POST", "/runners/workvm", {"enable": True})[1] == {
+        "runner-1": {"image": BASE, "restarted": False}
+    }
 
 
 def test_clone_and_register_failures(ctx: Context) -> None:  # noqa: F811
     prepared(ctx)
     ctx.runner_node.runs[f"{IMAGE} {BASE}"] = {"rc": 1, "stdout": "", "stderr": "no space"}  # type: ignore[attr-defined]
-    status, answer = call(ctx, "POST", "/runners/workvm", {"slots": 1})
+    status, answer = call(ctx, "POST", "/runners/workvm", {"enable": True})
     assert status == 500
     assert "clone failed: no space" in answer["detail"]
     ctx.runner_node.runs[f"{IMAGE} {BASE}"] = {"rc": 0, "stdout": "", "stderr": ""}  # type: ignore[attr-defined]
     ctx.runner_node.runs[f"/h/r1 {BASE}"] = {"rc": 1, "stdout": "", "stderr": "no store"}  # type: ignore[attr-defined]
-    status, answer = call(ctx, "POST", "/runners/workvm", {"slots": 1})
+    status, answer = call(ctx, "POST", "/runners/workvm", {"enable": True})
     assert status == 500
     assert "register failed: no store" in answer["detail"]
 
 
 def test_browser_idle_seconds(ctx: Context) -> None:  # noqa: F811
     prepared(ctx)
-    assert call(ctx, "POST", "/runners/workvm", {"slots": 1, "browser_idle_seconds": 59})[0] == 400
-    status, _answer = call(ctx, "POST", "/runners/workvm", {"slots": 1, "browser_idle_seconds": 60})
+    assert call(ctx, "POST", "/runners/workvm", {"enable": True, "browser_idle_seconds": 59})[0] == 400
+    status, _answer = call(ctx, "POST", "/runners/workvm", {"enable": True, "browser_idle_seconds": 60})
     assert status == 200
     assert ctx.runners["runner-1"].env["AGENT_RUNNER_BROWSER_IDLE_SECONDS"] == "60"
 

@@ -254,8 +254,10 @@ shared pool of [E-35](../KONZEPT.md#e-35) and [E-36](../KONZEPT.md#e-36) (§6.6)
  └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-- Pool: warm, unassigned clones of the current CI image per class, like the work VM pool (`13-work-vm.md` §7). A VM
-  never serves two jobs.
+- Pool: at most **one** warm, unassigned clone of a current CI image per device in total, not one per class, like
+  the work VM pool (`13-work-vm.md` §7); it is taken for the class it was cloned for and refilled for the class the
+  controller expects next. Its RAM counts in the device admission (§6.6) and it gives way first. A VM never serves
+  two jobs.
 - Handover: the JIT configuration goes after boot over vsock SSH on stdin, never in argv or cloud-init; the work
   image already forbids Lima parameters (`13-work-vm.md` §4, `images/workvm.yaml:3-5`). The client README demands:
   "Treat JIT configs as secrets until consumed" [SCALESET].
@@ -307,15 +309,20 @@ the work VM) is not carried over unchecked.
 There is one pool ([E-35](../KONZEPT.md#e-35) and [E-36](../KONZEPT.md#e-36)): every pool device offers its capacity
 to agent VMs and CI VMs, and none is kept for CI; CI jobs, also with foreign PR code, run on the same devices as the
 work VMs, and an own CI device, even inside the platform, is excluded by E-36. Parameter names below are
-placeholders; a value is named only where the specification already sets one. Every other value is **to be measured** and then set (D-10, D-22).
+placeholders where the runner does not have them yet; a value is named only where the specification already sets one.
+Every other value is **to be measured** and then set (D-10, D-22).
 
-**Resources.** One admission per device counts all workload kinds. Today it counts RAM only
-([05 §3.4](05-runner.md#34-capacity)); work VMs also have a disk check (`13-work-vm.md` §7).
+**One admission per device.** Exactly one admission decides on a device for every kind of VM: workgroup VMs with
+their sessions, work, browser and test VMs, and later CI VMs ([05 §3.8](05-runner.md#38-device-admission),
+`agent_runner/admission.py`). It counts free RAM after `MEMORY_RESERVE_MIB`, the CPU load and the disk in one
+transaction. CI plugs into this admission as one more kind; there is no second mechanism. The agent kinds have no
+fixed number and no fixed share: what is free decides ([ADR-075](../adr/075-resource-choice.md) addendum 2). Only CI
+has upper bounds of its own (below).
 
 | Resource | Budget of a device | Counted per VM |
 |---|---|---|
 | RAM | Physical RAM − `MEMORY_RESERVE_MIB` (as today) | Configured memory, from `starting` until the VM is stopped or deleted; warm pool entries count |
-| CPU | (cores − `HOST_CPU_RESERVE`) × `CPU_RATIO` per workload kind; ratio for CI 1 (no overcommit) or measured (D-10) | Configured vCPUs |
+| CPU | Host load per core below `CPU_LOAD_MAX_PERCENT` (as today, every kind); for CI in addition the cores × `MAX_SHARE` | Configured vCPUs (for the CI bound) |
 | Disk | Volume quota per workload kind − reserve for image generations | Allocated disk or profile size, plus the pool entry reserve (`13-work-vm.md` §7) |
 | macOS VMs | 2 (§8.4) | 1 per macOS VM of any purpose; Linux VMs of any kind 0 [APPLE-FORUM] |
 | Slot accounts | Accounts installed per workload kind and class | 1 per VM that uses one |
@@ -325,40 +332,45 @@ placeholders; a value is named only where the specification already sets one. Ev
   **to be measured** (M-19, M-20).
 - All checks and the reservation are one transaction, so that two requests never take the same capacity.
 
-**Shares and reservation.** Per device and workload kind:
-- `MIN_SHARE` – capacity the kind gets back first; while unused, another kind may borrow it.
-- `MAX_SHARE` – upper bound of the kind, so that CI cannot fill a device.
-- `HEADROOM_INTERACTIVE` – capacity never lent to CI, because a CI VM is not interrupted and borrowed capacity
-  returns only at a job's end. It keeps the start target of [§3 Punkt 6](../KONZEPT.md#k-3-b6) reachable.
-- How long lent capacity stays away is bounded by the wall-clock limit of the job (§6.2).
+**Bounds of CI.** The admission can hold an upper bound per kind; for now only CI uses it, the agent kinds have none.
+All three are settings of the device:
+- `MAX_SHARE` – the share of the device's RAM budget and of its CPUs that CI VMs may hold together, so that CI
+  cannot fill a device; default **50 %** until D-10 and D-22 are measured.
+- `CI_ORG_SHARE` and `CI_CLASS_SHARE` – what one GitHub organisation or one class may hold of CI's part while another
+  waits (fairness, below).
+- A CI VM is not interrupted, so capacity it holds returns only at a job's end; that time is bounded by the
+  wall-clock limit of the job (§6.2).
 - A macOS VM reduces the Linux capacity of its device by its vCPUs, RAM and disk like any other VM.
 
-**Priority and displacement.**
+**Priority and displacement.** A rank instead of fixed shares: **sessions** (workgroup VMs) before **work, browser
+and test VMs** before **CI**.
 1. A running session, work VM job, test run or CI job is **never stopped silently** to make room. The existing stops
    (idle stop, credit, boundary failure, closed task) keep their reasons and stay visible.
-2. What may give way, in this order: warm pool entries of CI, other warm pool entries, idle agent VMs under the
-   existing idle rule ([05 §3.4](05-runner.md#34-capacity)). Whether CI demand may trigger the last step: D-22.
-3. A request that does not fit **waits; the budget is not exceeded**. CI jobs wait at GitHub (at most 24 h, §3.1): the
+2. A new request of a lower rank does not start while a request of a higher rank waits on the device (one refused for
+   lack of capacity counts as waiting until the hub places its next attempt, at most a short hold).
+3. What may give way to a higher rank, in this order: the warm pool entry of CI, other warm pool entries, idle agent
+   VMs under the existing idle rule ([05 §3.7](05-runner.md#37-work-vm-slots-adr-059-addendum-4)): stopped, disk kept, started again on
+   demand. Whether CI demand may trigger the last step: D-22.
+4. A request that does not fit **waits; the budget is not exceeded**. CI jobs wait at GitHub (at most 24 h, §3.1): the
    controller takes a job only for capacity it has reserved, because an untaken job is queued again after 60 s (§3.1).
    How the scale-set client limits the offered capacity is **to be measured** (M-8). Work VMs keep their queue
    (`13-work-vm.md` §7); sessions keep `capacity_exhausted` and the new placement by the hub, with the clear message
    of [E-02](../KONZEPT.md#e-02).
-4. Order for freed capacity between kinds: proposal interactive, then work, then CI, with `MIN_SHARE` protecting
-   every kind from starving (D-22).
+5. Freed capacity goes to the waiting requests by rank (sessions, then work, browser and test VMs, then CI), within a
+   rank in arrival order. CI cannot starve the agent kinds (`MAX_SHARE`); the agent kinds take what is free.
 
 **Fairness.**
 - Between the GitHub organisations and between classes: `CI_ORG_SHARE` and `CI_CLASS_SHARE` limit what one of them
   holds while another waits; within them FIFO with the oldest waiting age as alarm (§11.2). GitHub's own assignment
   order inside a scale set is not controlled by the platform (§3.2).
-- Between organizations of the platform: CI of the operator must not use up the capacity that customers pay for; this
-  is what `MIN_SHARE` of the agent kinds expresses. The organization RAM share of work VMs is specified but not built
-  (`13-work-vm.md` §7).
+- Between organizations of the platform: CI of the operator must not use up the capacity that customers pay for;
+  the rank and CI's `MAX_SHARE` express that.
 - One wide workflow (matrix) counts as many jobs and is bounded by the same shares.
 
 **Placement.** Deterministic, like [Idee 38](../KONZEPT.md#k-idee-38):
 1. Filter: device online and not draining; image of the profile present; class allowed (for class U as decided in D-7/D-20, §9.3);
    D-24 respected; macOS profile only with a macOS counter below 2 and a fitting host version (§10.2).
-2. Filter: CPU **and** RAM **and** disk of the profile fit within the shares, after the headroom.
+2. Filter: CPU **and** RAM **and** disk of the profile fit within CI's shares, and no request of a higher rank waits.
 3. Order: for Linux jobs, devices without use for a macOS profile first, so that macOS-capable capacity stays free;
    then the most free capacity of the scarcest resource; then the smallest device ID. **Assumption:** this order is
    good enough; packing large profiles (fragmentation) is **to be measured** (M-20).

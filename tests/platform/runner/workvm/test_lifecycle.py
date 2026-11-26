@@ -110,49 +110,61 @@ def test_a_paused_session_with_a_running_job_keeps_its_vm(world: World, active: 
     assert (busy, unreadable, len(idle)) == ([], [], 1)
 
 
-def test_a_stopped_vm_is_deleted_after_the_idle_time_and_gives_its_slot_to_a_waiting_request(world: World) -> None:
-    async def body(vms: WorkVms) -> None:
+def test_stopped_vms_hold_no_slot_and_are_deleted_after_the_keep_time(world: World) -> None:
+    """ADR-059 addendum 4: both slots hold only stopped VMs, so a third task gets a slot at once; a stopped VM keeps
+    its disk for `WORKVM_KEEP_STOPPED_SECONDS`, then it is deleted (`idle`)."""
+
+    async def body(vms: WorkVms) -> tuple[dict[str, Any], list[str], list[str]]:
         await vms.request(session(), {})
         await vms.request(session(CHILD, task_id=TASK_B), {})
         for vm in await records.live(vms.deps.db, "running"):
             await vms.stop(vm, reason="session_paused")
-        assert await vms.idle_pass() == []
-        # both slots hold stopped VMs: a new request takes the oldest one's slot
+        assert await records.used_slots(vms.deps.db) == set()
         third = session("0193000a-0000-7000-8000-0000000000c3", task_id="0193000a-0000-7000-8000-0000000000c4")
-        await vms.request(third, {})
+        created = await vms.request(third, {})
         world.now += timedelta(seconds=vms.deps.settings.idle_seconds)
-        removed = await vms.idle_pass()  # the remaining stopped VM and the now idle running one
-        assert len(removed) == 2
+        first = await vms.idle_pass()  # the third VM is idle now: stopped; the stopped ones are kept
+        world.now += timedelta(seconds=vms.deps.settings.keep_stopped_seconds)
+        second = await vms.idle_pass()  # all three stood the keep time
+        return created, first, second
 
-    world.run(body)
-    assert Counter(row["delete_reason"] for row in rows(world)) == {"session_paused": 2, "idle": 1}
+    created, first, second = world.run(body)
+    assert created["created"] is True
+    assert world.sleeps == []  # nothing waited
+    assert first == [created["workvm_id"]]
+    assert len(second) == 3
+    assert Counter(row["delete_reason"] for row in rows(world)) == {"idle": 3}
 
 
-def test_resume_without_memory_or_with_a_failing_start_gives_a_new_vm(world: World) -> None:
-    async def body(vms: WorkVms) -> list[bool]:
+def test_resume_waits_for_its_slot_and_memory_and_a_failing_start_gives_a_new_vm(world: World) -> None:
+    world.settings = dataclasses.replace(world.settings, queue_seconds=4)
+
+    async def body(vms: WorkVms) -> list[Any]:
         first = await vms.request(session(), {})
         vm = await records.get(vms.deps.db, first["workvm_id"])
         assert vm is not None
         await vms.stop(vm, reason="session_paused")
         world.free_mib = 1024
-        assert await vms._resume(vm) is None
+        with pytest.raises(OperationFailed) as waited:
+            await vms._resume(vm)  # its RAM does not fit: it waits and keeps its disk
+        kept = await records.get(vms.deps.db, vm.id)
+        assert kept is not None
         world.free_mib = 1_000_000
-        second = await vms.request(session(), {})
-        vm2 = await records.get(vms.deps.db, second["workvm_id"])
-        assert vm2 is not None
-        await vms.stop(vm2, reason="session_paused")
         world.fail.add("start")
-        gone = await vms._resume(vm2)
+        gone = await vms._resume(vm)  # the start fails: deleted, the caller gets a new VM
         world.fail.discard("start")
-        third = await vms.request(session(), {})
-        current = await records.get(vms.deps.db, third["workvm_id"])
+        second = await vms.request(session(), {})
+        current = await records.get(vms.deps.db, second["workvm_id"])
         assert current is not None
-        running = await vms._resume(current)
+        running = await vms._resume(current)  # not stopped (any more): returned as it is
         deleted = await vms._resume(vm)
-        return [gone is None, running is not None, deleted is None, second["created"]]
+        return [waited.value.code, kept.state, gone, running, deleted, second["created"]]
 
-    assert world.run(body) == [True, True, True, True]
-    assert Counter(row["delete_reason"] for row in rows(world)) == {"session_paused": 2, None: 1}
+    code, kept, gone, running, deleted, created = world.run(body)
+    assert (code, kept, gone, deleted, created) == ("timeout", "stopped", None, None, True)
+    assert running.state == "running"
+    assert Counter(row["delete_reason"] for row in rows(world)) == {"failed": 1, None: 1}
+    assert any("resume_failed" in line for line in world.logs)
 
 
 def test_a_failing_stop_deletes_the_vm(world: World) -> None:
@@ -208,8 +220,8 @@ def test_closing_a_task_deletes_every_vm_of_it(world: World) -> None:
     assert states(world).count(("deleted", "task_closed")) == 1  # the run VM writes no work VM event
 
 
-def test_run_vms_skip_the_per_task_limit_and_the_idle_pass(world: World) -> None:
-    world.settings = dataclasses.replace(world.settings, max_per_task=1, slots=3)
+def test_run_vms_skip_the_idle_pass(world: World) -> None:
+    world.settings = dataclasses.replace(world.settings, slots=3)
 
     async def body(vms: WorkVms) -> list[str]:
         await vms.request(session(), {})

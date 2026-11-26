@@ -13,6 +13,7 @@ from typing import Any, cast
 
 import pytest
 
+from agent_runner.admission import Admission
 from agent_runner.sessions.extensions import StateObserver
 from agent_runner.sessions.records import FINAL, LocalSession
 from agent_runner.workvm import service, session_state
@@ -27,7 +28,7 @@ STATES = ["created", "starting", "working", "waiting", "stopping", "stopped", "f
 
 class RecordingWorkVms(WorkVms):
     def __init__(self, gate: asyncio.Event | None = None) -> None:
-        super().__init__(cast(Deps, SimpleNamespace()))
+        super().__init__(cast(Deps, SimpleNamespace(admission=Admission())))
         self.ended: list[LocalSession] = []
         self.paused: list[tuple[LocalSession, str, bool]] = []
         self.reasons: list[str] = []

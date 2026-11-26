@@ -369,9 +369,6 @@ class World:
             max_size="large",
             idle_seconds=600,
             queue_seconds=10,
-            max_per_task=4,
-            max_per_org=16,
-            max_per_owner=8,
             ssh_port_base=47200,
             test_mode=True,
         )

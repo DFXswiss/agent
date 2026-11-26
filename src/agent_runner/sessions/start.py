@@ -5,8 +5,8 @@
 0. local row `requested` (a session already known locally is never started twice);
 1. `vm_assigning`: `VmManager.ensure_vm` in the order of ADR-075 section 4 (the hub's `vm_id_pref`, then the VM
    of the parent session for a subagent or of the `resume_from` session, then a running VM of the workgroup with
-   room -> a stopped one with room, or its golden replacement -> pool -> clone when the hub allows a new VM
-   (`vm_new_allowed`)); the session row names its VM from then on and every later transition carries it;
+   room -> a stopped one with room, or its golden replacement -> pool -> clone); the session row names its VM from
+   then on and every later transition carries it;
 2. `vm_ready`: guest health assigned to this workgroup; the journal task starts reading the VM;
 3. model access and its credential (`model.access`: the owner's subscription or API key, or the platform key);
 4. `sandbox_ready`: `POST /v1/sessions` (harness context, model, initial prompt with its sender line, limits; then
@@ -295,7 +295,6 @@ class Starter:
                 desired.wg_id,
                 session_id=desired.session_id,
                 prefer=prefer,
-                new_allowed=desired.vm_new_allowed,
             )
         except RunnerError as exc:
             raise StartFailed(exc.code if exc.code in VM_REASONS else "vm_start_failed") from None

@@ -144,21 +144,17 @@ def test_start_runs_steps_one_to_five_with_transitions_and_contract_requests(rig
 
 def test_the_vm_preferences_of_a_start(rig: Rig) -> None:
     """ADR-075 section 4: the hub's `vm_id_pref` first, then the VM of the parent (subagent) or of the `resume_from`
-    session; `vm_new_allowed` is passed on; the session is booked on the chosen VM."""
+    session; the session is booked on the chosen VM."""
 
     async def body(env: Any) -> None:
         found = await kit(env)
         starter = Starter(found.session_env)
         assert (await starter.start(desired())).started
         first = await found.stored(session_id())
-        assert found.vms.calls[-1] == {"session_id": session_id(), "prefer": [], "new_allowed": True}
-        pinned = desired(2, vm_id_pref="vm-0000abcd", resume_from=session_id(), vm_new_allowed=False)
+        assert found.vms.calls[-1] == {"session_id": session_id(), "prefer": []}
+        pinned = desired(2, vm_id_pref="vm-0000abcd", resume_from=session_id())
         assert (await starter.start(pinned)).started
-        assert found.vms.calls[-1] == {
-            "session_id": session_id(2),
-            "prefer": ["vm-0000abcd", first.vm_id],
-            "new_allowed": False,
-        }
+        assert found.vms.calls[-1] == {"session_id": session_id(2), "prefer": ["vm-0000abcd", first.vm_id]}
         child = desired(3, depth=1, parent_session_id=session_id(2))
         assert (await starter.start(child)).started
         assert found.vms.calls[-1]["prefer"] == [first.vm_id]
@@ -446,7 +442,7 @@ def test_the_session_context_takes_the_settings_of_the_desired_state(rig: Rig) -
         found.session_env.desired = {"limits": {"api": 1, **limits, "subagent_max_runtime_seconds": 0}}
         assert (await Starter(found.session_env).start(desired())).started
         context = call(found, "create_session")["harness"]["context_markdown"]
-        line = "depth 3, 4 running at a time, 5 per task, no runtime limit"
+        line = "depth 3, no limit of running subagents, 5 per task, no runtime limit"  # ADR-075 addendum 2
         assert f"- Subagent limits (settings of the platform): {line}" in context.splitlines()
 
     run(rig, body)

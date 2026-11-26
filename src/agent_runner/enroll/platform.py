@@ -151,7 +151,6 @@ def enrollment_body(
         reserve_mib=config.memory_reserve_mib,
         vm_memory_mib=config.vm_memory_mib,
         vms=[],
-        max_vms=config.max_vms,
     )
     return {
         "device_id": device_id,

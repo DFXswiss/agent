@@ -76,7 +76,6 @@ def ensure(
             AGENT_RUNNER_HOME=str(home),
             AGENT_RUNNER_VM_PREFIX=CACHE_PREFIX,
             AGENT_RUNNER_TEST_MODE="1",
-            AGENT_RUNNER_WORKVM_SLOTS="1",
             AGENT_RUNNER_WORKVM_SLOTS_SELF="1",
         )
         built = run([python, "-m", "agent_runner", "workvm", "image", "build", "--name", sha12], env)

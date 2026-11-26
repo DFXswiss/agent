@@ -514,7 +514,7 @@ class Browsers:
     ) -> tuple[BrowserRow, WorkVm]:
         """A new browser session with a running browser (`browser.state` `starting`, then `open`)."""
         begun = self.clock()
-        await self.workvms.check_new(session, scope=BROWSER_SCOPE, size="standard")
+        await self.workvms.check_new(session, size="standard")
         opened = self.now()
         draft = BrowserRow(
             browser_id=new_browser_id(),

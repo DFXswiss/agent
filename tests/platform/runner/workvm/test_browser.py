@@ -216,19 +216,15 @@ def test_close_tears_the_vm_down_and_names_how_the_last_one_ended(world: World) 
 
 @pytest.mark.parametrize(
     ("change", "code"),
-    [("credit", "credit_exhausted"), ("boundary", "workvm_unavailable"), ("org", "limit_exceeded")],
+    [("credit", "credit_exhausted"), ("boundary", "workvm_unavailable")],
 )
 def test_open_fails_formally_before_anything_starts(world: World, change: str, code: str) -> None:
     if change == "credit":
         world.exhausted.add(ORG)
-    elif change == "boundary":
-        world.boundary = False
     else:
-        world.settings = dataclasses.replace(world.settings, max_per_org=1)
+        world.boundary = False
 
     async def body(vms: WorkVms) -> None:
-        if change == "org":
-            await vms.request(session(CHILD, task_id=TASK_B), {})
         await make(vms).open(ctx({}))
 
     with pytest.raises(OperationFailed) as caught:
@@ -238,8 +234,8 @@ def test_open_fails_formally_before_anything_starts(world: World, change: str, c
     assert browser_rows(world) == []
 
 
-def test_a_browser_vm_does_not_count_against_the_per_task_limit(world: World) -> None:
-    world.settings = dataclasses.replace(world.settings, max_per_task=1)
+def test_a_browser_vm_beside_a_task_vm_needs_only_free_resources(world: World) -> None:
+    """No fixed number of browser or work VMs (ADR-075 addendum 2)."""
 
     async def body(vms: WorkVms) -> dict[str, Any]:
         await vms.request(session(), {})

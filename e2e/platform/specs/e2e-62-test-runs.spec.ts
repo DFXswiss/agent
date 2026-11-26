@@ -1,5 +1,5 @@
 // E2E-62 (KOR-43; docs/platform/spec/13-work-vm.md section 12, ADR-080): test runs as platform operations. The runner
-// offers work VMs in self mode (TEST_MODE, three slots, a warm pool of two) from the run's work image cache. The
+// offers work VMs in self mode (TEST_MODE, no fixed number of VMs, a warm pool of two) from the run's work image cache. The
 // session checks out a repository through the platform, runs one command in its work VM (an implicit start that
 // announces itself), then runs the tests with the operation `test.run`: the first run fails and prints more than
 // 1 MiB, the session fixes the code, the second run passes in a fresh VM, and the session opens a draft pull request.
@@ -83,7 +83,7 @@ test('@E2E-62 @needs-vm @needs-workvm tests run red then green in fresh VMs, the
     ]),
   );
   await platformDevice(orchestrator);
-  await orchestrator.call('POST', '/runners/workvm', { slots: 3, max_per_task: 2, pool_size: 2 });
+  await orchestrator.call('POST', '/runners/workvm', { enable: true, pool_size: 2 });
   await poolReady(orchestrator);
   await expect
     .poll(

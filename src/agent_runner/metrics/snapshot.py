@@ -11,6 +11,7 @@ from agent_runner.metrics.device import DeviceValues
 from agent_runner.metrics.session import SessionEntry
 from agent_runner.metrics.workvm import WorkvmEntry
 from agent_runner.vm.capacity import Capacity
+from agent_runner.workvm.manager import SlotState
 
 # VM states (02-data-model.md section 2.4 without `deleted`) and the ones in which the VM must answer its guest probe.
 VM_STATES = ("pool", "assigning", "running", "stopping", "stopped")
@@ -72,3 +73,5 @@ class Snapshot:
     sessions: tuple[SessionEntry, ...]
     workvms: tuple[WorkvmEntry, ...] = ()
     """The work VMs of the device (KOR-29, `agent_runner.metrics.workvm`)."""
+    workvm_slots: SlotState | None = None
+    """The work VM slots (ADR-059 addendum 4); None on a device without work VMs."""

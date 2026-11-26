@@ -25,12 +25,12 @@ Settings = Callable[..., None]
 
 @pytest.fixture(autouse=True)
 def settings(ops: Ops) -> Iterator[Settings]:
-    """The hub's subagent settings for the test: depth 2, 3 running, 10 per task unless changed."""
+    """The hub's subagent settings for the test: depth 2, 10 per task unless changed."""
     state = ops.hub.app.state
     original = state.hub
 
     def change(**values: int) -> None:
-        chosen = {"max_depth": 2, "max_running": 3, "max_total": 10, **values}
+        chosen = {"max_depth": 2, "max_total": 10, **values}
         state.hub = replace(original, config=replace(original.config, subagent_limits=SubagentLimits(**chosen)))
 
     change()
@@ -133,42 +133,40 @@ def test_grandchild_and_depth_limit(ops: Ops) -> None:
     assert ops.desk.rows("SELECT count(*) FROM hub.session WHERE origin_operation_id = %s", operation) == [(0,)]
 
 
-def test_running_limit(ops: Ops) -> None:
+def test_no_number_of_running_children(ops: Ops) -> None:
+    """ADR-075 addendum 2: how many children run at once is no fixed number; the devices' free resources decide."""
     task, session = ops.session()
-    _children(ops, task, session, ["working", "requested", "stopping", "stopped", "failed"])
-    assert ops.decide(session, SUBAGENT)[1] == {"state": "denied", "error_code": "limit_exceeded"}
-    ops.desk.execute("UPDATE hub.session SET state = 'stopped' WHERE task_id = %s AND state = 'stopping'", task)
+    _children(ops, task, session, ["working"] * 6 + ["requested", "stopping"])
     assert ops.decide(session, SUBAGENT)[1]["state"] == "accepted"
-
-
-def test_suspended_children_do_not_run(ops: Ops) -> None:
-    task, session = ops.session()
-    _children(ops, task, session, ["working", "working", "suspended", "suspended"])
     assert ops.decide(session, SUBAGENT)[1]["state"] == "accepted"
-    assert ops.decide(session, SUBAGENT)[1] == {"state": "denied", "error_code": "limit_exceeded"}
+    assert ops.decide(session, SUBAGENT)[1] == {"state": "denied", "error_code": "limit_exceeded"}  # total 10
 
 
 def test_0_is_no_limit(ops: Ops, settings: Settings) -> None:
     task, session = ops.session()
-    _children(ops, task, session, ["working"] * 3 + ["stopped"] * 7)
+    _children(ops, task, session, ["working"] * 3 + ["stopped"] * 6)
     deep = _children(ops, task, session, ["working"], depth=2)[0]
     assert ops.decide(deep, SUBAGENT)[1] == {"state": "denied", "error_code": "limit_exceeded"}
-    settings(max_depth=0, max_running=0, max_total=0)
+    settings(max_depth=0, max_total=0)
     grandchild = ops.decide(deep, SUBAGENT)[1]["child_session_id"]
     assert ops.desk.rows("SELECT depth FROM hub.session WHERE id = %s", grandchild) == [(3,)]
-    settings(max_running=0)
+    settings(max_depth=0)
     assert ops.decide(session, SUBAGENT)[1] == {"state": "denied", "error_code": "limit_exceeded"}  # total 10
-    settings(max_total=0, max_running=20)
+    settings(max_total=0)
     assert ops.decide(session, SUBAGENT)[1]["state"] == "accepted"
 
 
 def test_the_default_settings_are_generous(ops: Ops, settings: Settings) -> None:
     task, session = ops.session()
     settings(**{name: value for name, value in vars(SubagentLimits()).items() if name != "max_runtime_seconds"})
-    _children(ops, task, session, ["working"] * 48 + ["stopped"] * 100)
+    _children(ops, task, session, ["working"] * 100 + ["stopped"] * 100)
     deep = _children(ops, task, session, ["working"], depth=4)[0]
-    assert ops.decide(deep, SUBAGENT)[1]["state"] == "accepted"  # depth 5, the 50th running child
-    assert ops.decide(session, SUBAGENT)[1] == {"state": "denied", "error_code": "limit_exceeded"}
+    assert ops.decide(deep, SUBAGENT)[1]["state"] == "accepted"  # depth 5, any number of running children
+    assert ops.decide(session, SUBAGENT)[1]["state"] == "accepted"
+    assert ops.decide(_children(ops, task, session, ["working"], depth=5)[0], SUBAGENT)[1] == {
+        "state": "denied",
+        "error_code": "limit_exceeded",
+    }
 
 
 def test_total_limit(ops: Ops) -> None:
@@ -185,7 +183,7 @@ def test_limits_are_per_task(ops: Ops) -> None:
     assert ops.decide(other, SUBAGENT)[1]["state"] == "accepted"
 
 
-def test_budget_hook(ops: Ops) -> None:
+def test_budget_hook(ops: Ops, settings: Settings) -> None:
     task, session = ops.session()
     asked: list[Any] = []
 
@@ -198,18 +196,18 @@ def test_budget_hook(ops: Ops) -> None:
     assert asked == [(ops.desk.org, session, ops.hub.clock())]
     assert ops.slot_holder("b") is None
     assert ops.decide(session, "github.comment")[1] == {"state": "accepted"}
-    _children(ops, task, session, ["working"] * 3)
+    _children(ops, task, session, ["working"] * 10)
     assert ops.decide(session, SUBAGENT)[1] == {"state": "denied", "error_code": "limit_exceeded"}
     assert len(asked) == 1
     limits.configure(lambda _request: True)
-    ops.desk.execute("UPDATE hub.session SET state = 'stopped' WHERE parent_session_id = %s", session)
+    settings(max_total=11)
     assert ops.decide(session, SUBAGENT)[1]["state"] == "accepted"
 
 
 def test_h4_before_h5(ops: Ops) -> None:
     task, session = ops.session()
     holder, _answer = ops.decide(session, SUBAGENT, dedupe="same")
-    _children(ops, task, session, ["working"] * 2)
+    _children(ops, task, session, ["working"] * 9)
     assert ops.decide(session, SUBAGENT, dedupe="same")[1] == {"state": "denied", "error_code": "limit_exceeded"}
     assert ops.slot_holder("same") == holder
 

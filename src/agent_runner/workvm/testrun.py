@@ -2,8 +2,9 @@
 
 `TestRuns.execute` is the executor of `test.run`. One run:
 
-1. **Checks** (the operation fails, nothing ran): credit on a platform device (`credit_exhausted`), size cap, a ready
-   work image and boundary (`workvm_unavailable`), the organization and owner VM limits (`limit_exceeded`).
+1. **Checks** (the operation fails, nothing ran): credit on a platform device (`credit_exhausted`), size cap of the
+   one VM, a ready work image and boundary (`workvm_unavailable`); no number of VMs per organization or owner - the
+   run VM waits in the queue until the free resources admit it (ADR-075 addendum 2).
 2. **Workspace**: the guest exports the session workspace; its digest (SHA-256 over the export manifest) together with
    `kind`, `command`, `cwd`, `size` and `timeout_seconds` is the **duplicate key**: a request of the same session with
    the same key while a run is queued, starting or running joins that run (same `run_id`, same result). A finished
@@ -189,7 +190,7 @@ class TestRuns:
     async def execute(self, ctx: OperationContext) -> dict[str, Any]:
         session, params = ctx.session, ctx.params
         size = str(params.get("size", "standard"))
-        await self.workvms.check_new(session, scope=RUN_SCOPE, size=size)
+        await self.workvms.check_new(session, size=size)
         with tempfile.TemporaryDirectory(dir=self.workvms.deps.scratch) as scratch:
             exported = Path(scratch) / "export.tar"
             # one export and registration per session at a time: two identical requests arriving together join

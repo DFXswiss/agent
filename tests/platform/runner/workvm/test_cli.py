@@ -156,10 +156,16 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeMachine:
     return machine
 
 
+@pytest.fixture(autouse=True)
+def two_slot_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A device whose RAM above the default reserve (32 GiB) holds two standard work VMs: two slot accounts."""
+    monkeypatch.setattr(workvm_cli, "physical_memory_mib", lambda: 32768 + 2 * 8192 + 100)
+
+
 @pytest.fixture
 def cli(make_host: Callable[..., Any], runner_home: Path) -> Callable[..., tuple[int, str, str]]:
     def call(*argv: str, euid: int = 0, **env: str) -> tuple[int, str, str]:
-        values = {"AGENT_RUNNER_HOME": str(runner_home), "AGENT_RUNNER_WORKVM_SLOTS": "2", **env}
+        values = {"AGENT_RUNNER_HOME": str(runner_home), **env}
         captured = make_host(values, geteuid=lambda: euid)
         code = run_cli(["workvm", *argv], captured.host)
         return code, captured.stdout.getvalue(), captured.stderr.getvalue()
@@ -198,6 +204,20 @@ def test_install_creates_everything(fake: FakeMachine, cli: Callable[..., tuple[
     assert (firewall.PFCTL, "-f", firewall.PF_CONF) not in fake.calls  # the main ruleset is never loaded
     assert (firewall.PFCTL, "-a", firewall.ANCHOR, "-f", firewall.ANCHOR_PATH) in fake.calls
     assert (firewall.LAUNCHCTL, "bootstrap", "system", firewall.DAEMON_PATH) in fake.calls
+
+
+def test_install_creates_the_accounts_the_ram_can_use(
+    fake: FakeMachine, cli: Callable[..., tuple[int, str, str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-059 addendum 4, ADR-075 addendum 2: as many slot accounts as the RAM above the reserve holds standard VMs;
+    an old WORKVM_SLOTS changes nothing."""
+    monkeypatch.setattr(workvm_cli, "physical_memory_mib", lambda: 32768 + 3 * 8192)
+    code, out, _ = cli(*INSTALL, AGENT_RUNNER_WORKVM_SLOTS="1")
+    assert code == 0
+    assert "runner.workvm.install step=accounts count=3 created=3" in out.splitlines()
+    assert out.splitlines()[-1] == "runner.workvm.install result=ok slots=3"
+    code, out, _ = cli("status", euid=501)
+    assert out.splitlines()[0] == "runner.workvm.status slots=3 self=no accounts=0 missing=3"
 
 
 def test_install_keeps_what_exists(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
@@ -242,7 +262,6 @@ def test_install_refuses_a_lima_config_it_cannot_give(
     "case",
     [
         (INSTALL, {}, 501, "runner.error code=workvm_root_required"),
-        (INSTALL, {"AGENT_RUNNER_WORKVM_SLOTS": "0"}, 0, "runner.error code=workvm_not_configured name=WORKVM_SLOTS"),
         (
             INSTALL,
             {"AGENT_RUNNER_WORKVM_SLOTS_SELF": "1", "AGENT_RUNNER_TEST_MODE": "1"},
@@ -344,9 +363,11 @@ def test_render_and_check_need_the_accounts(
 
 
 @pytest.mark.parametrize("command", ["render", "check"])
-def test_render_and_check_need_slots(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]], command: str) -> None:
-    code, _, err = cli("firewall", command, AGENT_RUNNER_WORKVM_SLOTS="0")
-    assert (code, err) == (1, "runner.error code=workvm_not_configured name=WORKVM_SLOTS\n")
+def test_render_and_check_refuse_self_mode(
+    fake: FakeMachine, cli: Callable[..., tuple[int, str, str]], command: str
+) -> None:
+    code, _, err = cli("firewall", command, AGENT_RUNNER_WORKVM_SLOTS_SELF="1", AGENT_RUNNER_TEST_MODE="1")
+    assert (code, err) == (1, "runner.error code=workvm_slots_self name=WORKVM_SLOTS_SELF\n")
 
 
 def test_render_refuses_a_bad_egress(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
@@ -415,11 +436,9 @@ def test_status_with_missing_accounts(fake: FakeMachine, cli: Callable[..., tupl
     assert not any(call[:2] == SUDO for call in fake.calls)
 
 
-def test_status_self_mode_and_no_slots(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
+def test_status_self_mode(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
     code, out, _ = cli("status", AGENT_RUNNER_WORKVM_SLOTS_SELF="1", AGENT_RUNNER_TEST_MODE="1")
     assert (code, out) == (0, "runner.workvm.status slots=2 self=yes accounts=0 missing=0\n")
-    code, out, _ = cli("status", AGENT_RUNNER_WORKVM_SLOTS="0")
-    assert (code, out) == (0, "runner.workvm.status slots=0 self=no accounts=0 missing=0\n")
     assert fake.calls == []
 
 
@@ -654,7 +673,11 @@ def test_plan_facts_of_every_step_kind() -> None:
     ("env", "euid", "error"),
     [
         ({}, 501, "runner.error code=workvm_root_required"),
-        ({"AGENT_RUNNER_WORKVM_SLOTS": "0"}, 0, "runner.error code=workvm_not_configured name=WORKVM_SLOTS"),
+        (
+            {"AGENT_RUNNER_WORKVM_SLOTS_SELF": "1", "AGENT_RUNNER_TEST_MODE": "1"},
+            0,
+            "runner.error code=workvm_slots_self name=WORKVM_SLOTS_SELF",
+        ),
     ],
 )
 def test_uninstall_refusals(
@@ -706,7 +729,6 @@ def image_cli(
         values = {
             "AGENT_RUNNER_HOME": str(runner_home),
             "AGENT_RUNNER_VM_PREFIX": "wp-c-",
-            "AGENT_RUNNER_WORKVM_SLOTS": "2",
             "AGENT_RUNNER_WORKVM_TEMPLATE": str(template),
             **env,
         }
@@ -759,12 +781,6 @@ def test_image_build_failure_is_logged(image_cli: Any, runner_home: Path) -> Non
     assert log.stat().st_mode & 0o777 == 0o600
     assert image_cli.fake.instances == {}
     assert image_cli("list")[1] == "runner.workvm.images count=0\n"
-
-
-def test_image_build_needs_slots(image_cli: Any) -> None:
-    code, out, err = image_cli("build", AGENT_RUNNER_WORKVM_SLOTS="0")
-    assert (code, out, err) == (1, "", "runner.error code=workvm_not_configured name=WORKVM_SLOTS\n")
-    assert image_cli.fake.calls == []
 
 
 def test_image_list_without_store(image_cli: Any) -> None:

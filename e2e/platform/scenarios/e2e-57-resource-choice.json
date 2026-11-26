@@ -1,6 +1,6 @@
 {
   "name": "e2e-57-resource-choice",
-  "description": "E2E-57: a task waits for a device and starts after the assignment from the task view, a device for the whole organization, a second VM when the first is full, waiting for room, a chosen device.",
+  "description": "E2E-57: a task waits for a device and starts after the assignment from the task view, a device for the whole organization, a second task in the same VM while its resources last, a chosen device.",
   "steps": [
     {
       "id": "wait",
@@ -48,24 +48,7 @@
         "content": [
           {
             "type": "text",
-            "text": "Second VM kz47-answer-g7h8j9."
-          }
-        ]
-      }
-    },
-    {
-      "id": "queued",
-      "expect": {
-        "user_text_contains": "E2E47-QUEUED",
-        "has_tools": true,
-        "has_tool_result": false,
-        "stream": true
-      },
-      "reply": {
-        "content": [
-          {
-            "type": "text",
-            "text": "Room again kz47-answer-k1l2m3."
+            "text": "Same VM kz47-answer-g7h8j9."
           }
         ]
       }

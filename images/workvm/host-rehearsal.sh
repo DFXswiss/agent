@@ -82,8 +82,11 @@ if [ -n "$installed" ]; then
   exit 2
 fi
 
-AGENT_RUNNER_HOME=$home AGENT_RUNNER_VM_PREFIX=$prefix AGENT_RUNNER_WORKVM_SLOTS=1
-export AGENT_RUNNER_HOME AGENT_RUNNER_VM_PREFIX AGENT_RUNNER_WORKVM_SLOTS
+# One slot account: no fixed number exists (ADR-075 addendum 2), the RAM above the reserve decides how many accounts
+# `workvm install` creates, so the reserve leaves room for exactly one standard work VM (8192 MiB).
+physical_mib=$(($(sysctl -n hw.memsize) / 1048576))
+AGENT_RUNNER_HOME=$home AGENT_RUNNER_VM_PREFIX=$prefix AGENT_RUNNER_MEMORY_RESERVE_MIB=$((physical_mib - 8192))
+export AGENT_RUNNER_HOME AGENT_RUNNER_VM_PREFIX AGENT_RUNNER_MEMORY_RESERVE_MIB
 
 exec 3>&1 >>"$log/rehearsal.log" 2>&1
 failed=0

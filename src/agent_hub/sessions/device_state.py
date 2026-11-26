@@ -14,9 +14,9 @@
     on whatever VM or device it starts the session (03-api.md section 4.6.3, ADR-072 sections 5 and 7). Old runners
     ignore the field; without it a new runner reports the emergency path.
 - per session, only when set: the chosen VM of its task (`vm_id_pref`, ADR-075 section 6, while it is a live VM of the
-  workgroup on this device; a subagent has none) and `vm_new_allowed: false` while the workgroup has reached
-  `AGENT_HUB_VMS_PER_WG` live VMs on all devices (the runner then takes no new VM for it; absent means true) and
-  `task_closed: true` while its task is closed (the runner deletes the task's work VMs at once, ADR-080 section 5);
+  workgroup on this device; a subagent has none) and `task_closed: true` while its task is closed (the runner deletes
+  the task's work VMs at once, ADR-080 section 5). `vm_new_allowed` is no longer sent: no fixed number of VMs per
+  workgroup exists (ADR-075 addendum 2; absent means true);
 - per session, always: `github_identity` / `task_github_identity`, the GitHub identities chosen for the session and its
   task (ADR-078 section 3, null without a choice); `fallback`, the owner's crossing rules of model access
   (`{own_to_dfx, operator_to_platform}`, defaults false/true without settings), and `model_consent`, the task's
@@ -37,7 +37,6 @@ from typing import Any
 
 from agent_hub.contexts import store as contexts
 from agent_hub.device.state import Section, StateRequest
-from agent_hub.scheduler import load
 from agent_hub.sessions import prompts
 from agent_hub.sessions.derive import STOPPING
 
@@ -61,14 +60,6 @@ def _pinned(request: StateRequest, task_id: str, object_id: object) -> dict[str,
     return contexts.complete_checkpoint(request.connection, task_id, str(object_id))
 
 
-def _new_vm_allowed(request: StateRequest, wg_id: str, known: dict[str, bool]) -> bool:
-    """`vm_new_allowed` of the workgroup (module docstring), once per workgroup."""
-    if wg_id not in known:
-        left = load.allowance(request.connection, wg_id)
-        known[wg_id] = left is None or left > 0
-    return known[wg_id]
-
-
 def provide(request: StateRequest) -> Mapping[str, Any]:
     """The four fields for the device of `request` (module docstring)."""
     rows = request.connection.execute(
@@ -84,7 +75,6 @@ def provide(request: StateRequest) -> Mapping[str, Any]:
         (request.device_id,),
     ).fetchall()
     sessions: list[dict[str, Any]] = []
-    allowed: dict[str, bool] = {}
     for row in rows:
         if not request.view.reads_wg(row[3]):
             continue
@@ -106,8 +96,6 @@ def provide(request: StateRequest) -> Mapping[str, Any]:
         }
         if row[10] is not None:
             item["vm_id_pref"] = row[10]
-        if not _new_vm_allowed(request, str(row[3]), allowed):
-            item["vm_new_allowed"] = False
         if row[13]:
             item["task_closed"] = True
         if row[6] == 0:

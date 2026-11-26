@@ -2,7 +2,9 @@
 
 `runner.workvm` holds one row per work VM the runner created (scope `task`, `session`, `run` for the fresh VM of one
 test run, migration 0022, or `browser` for the VM of a platform browser session, migration 0028); the partial unique
-indexes make "one live task VM per task", "one live session VM per session" and "one live VM per slot" database rules.
+indexes make "one live task VM per task", "one live session VM per session" and "one VM per slot that is not stopped"
+(migration 0038: a stopped VM keeps its disk but gives its slot back) database rules. `runner.workvm_wait` mirrors the
+requests that wait for a slot (for `agent-runner status`).
 `runner.workvm_mirror` keeps the SHA-256 manifest of the workspace files last mirrored into a VM (per VM, session and
 root directory), so the next mirror sends only changed files. `runner.workvm_image` lists the work images (`ready`: the
 newest one is cloned).
@@ -33,6 +35,8 @@ COLUMNS = (
 LIVE_STATES = ("starting", "running", "stopping", "stopped", "deleting")
 MEMORY_STATES = ("starting", "running", "stopping", "deleting")
 """States in which a work VM holds its RAM (a stopped VM gives it back, 05-runner.md section 3.4)."""
+SLOT_STATES = MEMORY_STATES
+"""States in which a work VM holds its slot (a stopped VM gives it back, 05-runner.md section 3.7, migration 0038)."""
 
 
 @dataclass(frozen=True)
@@ -103,21 +107,6 @@ async def live(db: Any, *states: str) -> list[WorkVm]:
     return [WorkVm(**row) for row in rows]
 
 
-async def counts(db: Any, *, task_id: str, org_id: str, owner_id: str | None) -> tuple[int, int, int]:
-    """Live VMs of the task (without its run and browser VMs), of the organization and of the owner (spec 11 section 2
-    limits, ADR-080 section 2, ADR-085 section 2)."""
-    rows = await _rows(
-        db,
-        "SELECT count(*) FILTER (WHERE task_id = %s AND scope NOT IN ('run', 'browser')) AS task,"
-        " count(*) FILTER (WHERE org_id = %s) AS org,"
-        " count(*) FILTER (WHERE owner_id IS NOT DISTINCT FROM %s) AS owner"
-        " FROM runner.workvm WHERE state <> 'deleted'",
-        (task_id, org_id, owner_id),
-    )
-    row = rows[0]
-    return int(row["task"]), int(row["org"]), int(row["owner"])
-
-
 def _values(vm: WorkVm) -> tuple[Any, ...]:
     return (
         vm.id,
@@ -179,11 +168,27 @@ async def update(db: Any, workvm_id: str, *, expect: Sequence[str] | None = None
 
 
 async def used_slots(db: Any) -> set[int]:
-    """Slots of live work VMs and of pool entries."""
+    """Slots held now: by a work VM that is not stopped (`SLOT_STATES`) and by pool entries (migration 0038)."""
     rows = await _rows(
-        db, "SELECT slot FROM runner.workvm WHERE state <> 'deleted' UNION SELECT slot FROM runner.workvm_pool"
+        db,
+        "SELECT slot FROM runner.workvm WHERE state = ANY(%s) UNION SELECT slot FROM runner.workvm_pool",
+        (list(SLOT_STATES),),
     )
     return {int(row["slot"]) for row in rows}
+
+
+async def vm_slots(db: Any) -> set[int]:
+    """Slots held by a work VM that is not stopped (without pool entries)."""
+    rows = await _rows(db, "SELECT slot FROM runner.workvm WHERE state = ANY(%s)", (list(SLOT_STATES),))
+    return {int(row["slot"]) for row in rows}
+
+
+async def parked(db: Any) -> dict[int, int]:
+    """Stopped work VMs per slot (their disks stay in the slot's Lima home; they hold no slot)."""
+    rows = await _rows(
+        db, "SELECT slot, count(*) AS n FROM runner.workvm WHERE state = 'stopped' GROUP BY slot ORDER BY slot"
+    )
+    return {int(row["slot"]): int(row["n"]) for row in rows}
 
 
 async def disk_in_use(db: Any, pool_disk_gib: int) -> int:
@@ -327,6 +332,35 @@ async def set_image(db: Any, name: str, state: str, at: datetime) -> None:
             " ON CONFLICT (name) DO UPDATE SET state = excluded.state",
             (name, state, at),
         )
+
+
+async def wait_add(db: Any, ticket: str, slot: int | None, at: datetime) -> None:
+    """Record a request that waits for a slot (`slot`: the own slot a stopped VM waits for)."""
+    async with db.connection() as conn:
+        await conn.execute(
+            "INSERT INTO runner.workvm_wait (ticket, slot, since) VALUES (%s, %s, %s)", (ticket, slot, at)
+        )
+
+
+async def wait_remove(db: Any, ticket: str) -> None:
+    async with db.connection() as conn:
+        await conn.execute("DELETE FROM runner.workvm_wait WHERE ticket = %s", (ticket,))
+
+
+async def wait_clear(db: Any, *, keep: Sequence[str] = ()) -> int:
+    """Remove the waiting requests except `keep` (the ones of this daemon); returns how many were left over."""
+    rows = await _rows(db, "DELETE FROM runner.workvm_wait WHERE ticket <> ALL(%s) RETURNING ticket", (list(keep),))
+    return len(rows)
+
+
+async def session_live(db: Any, session_id: str) -> bool:
+    """The session exists on this device and is not final (`stopped`, `failed`)."""
+    rows = await _rows(
+        db,
+        "SELECT count(*) AS n FROM runner.session WHERE id = %s AND state NOT IN ('stopped', 'failed')",
+        (session_id,),
+    )
+    return int(rows[0]["n"]) > 0
 
 
 async def active_sessions(db: Any, task_id: str, *, except_id: str | None = None) -> int:

@@ -221,7 +221,7 @@ def target(
         others = [item for item in others if item.device_id in own]
     if not others:
         return None
-    decision = choose(others, found.allowance, pinned=found.pinned)
+    decision = choose(others, pinned=found.pinned)
     return decision if isinstance(decision, Placement) else None
 
 

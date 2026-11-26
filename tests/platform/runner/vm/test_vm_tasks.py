@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from agent_runner import registry
+from agent_runner import admission, registry
 from agent_runner.errors import RunnerError
 from agent_runner.store.pool import open_pool
 from agent_runner.sync import extensions, outbox
@@ -118,7 +118,7 @@ def test_idle_task_probes_every_5_s_and_stops_idle_vms_every_60_s(fake_clock: An
 def test_manager_for_builds_one_manager(fake_clock: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = SimpleNamespace(
         vm_prefix=PREFIX, vm_cpus=4, vm_memory_mib=8192, vm_disk_gib=20, pool_size=2, memory_reserve_mib=32768,
-        vm_idle_seconds=1800, home=tmp_path / "home", sessions_per_vm=8, max_vms=5,
+        vm_idle_seconds=1800, home=tmp_path / "home", vm_load_max_percent=85, cpu_load_max_percent=80,
     )  # fmt: skip
     ctx = context(fake_clock)
     ctx.config = config
@@ -131,7 +131,8 @@ def test_manager_for_builds_one_manager(fake_clock: Any, tmp_path: Path, monkeyp
     assert manager.env.lima.prefix == PREFIX
     assert manager.env.tokens.directory == tmp_path / "home" / "vm"
     assert manager.env.settings.pool_size == 2
-    assert (manager.env.settings.sessions_per_vm, manager.env.settings.max_vms) == (8, 5)
+    assert manager.env.admission is admission.of(ctx)  # the device's one admission, shared with the work VMs
+    assert manager.env.admission.cpu_load_max == 0.8
     assert manager.env.cpus() == os.cpu_count()
 
     async def usage() -> Usage:
@@ -271,12 +272,20 @@ def test_vm_state_goes_to_the_outbox_and_the_heartbeat(harness: Harness, fake_cl
             ctx.pool = db
             ctx.config = SimpleNamespace(
                 vm_prefix=PREFIX, vm_cpus=4, vm_memory_mib=8192, vm_disk_gib=20, pool_size=1,
-                memory_reserve_mib=32768, vm_idle_seconds=1800, home=tmp_path / "home", sessions_per_vm=16, max_vms=0,
+                memory_reserve_mib=32768, vm_idle_seconds=1800, home=tmp_path / "home",
+                vm_load_max_percent=85, cpu_load_max_percent=85,
             )  # fmt: skip
             ctx.identity = None
             manager = tasks.manager_for(ctx)
             manager.env.lima = Lima(harness.fake, prefix=PREFIX)
             manager.env.physical_mib = lambda: 32768 + 4 * 8192
+
+            async def idle() -> float:  # the test machine's own load and disk do not decide here
+                return 0.0
+
+            manager.env.admission.cpu_load = idle
+            disk_free = manager.env.disk_free_mib
+            manager.env.disk_free_mib = lambda: None if disk_free() is None else 1_000_000
             await manager.reconcile()
             await manager.refill()
             unenrolled = ctx.log.getvalue()
@@ -307,8 +316,7 @@ def test_vm_state_goes_to_the_outbox_and_the_heartbeat(harness: Harness, fake_cl
     assert capacity == {"vm_memory_budget_mib": capacity["vm_memory_budget_mib"], "vm_memory_used_mib": 8192,
                         "vm_slots_total": capacity["vm_slots_total"], "vm_slots_free": capacity["vm_slots_total"] - 1,
                         "pool_ready": 0, "cpus": os.cpu_count(), "memory_total_mib": 32768 + 4 * 8192,
-                        "vms_running": 1, "sessions_active": 0, "work_vms_running": 0, "sessions_per_vm": 16,
-                        "vms_max": 0,
+                        "vms_running": 1, "sessions_active": 0, "work_vms_running": 0,
                         **{key: capacity[key] for key in ("disk_free_mib",) if key in capacity}}  # fmt: skip
     assert vms == [{"vm_id": row.id, "state": "running"}]
     sections = extensions.heartbeat_sections()
@@ -327,6 +335,24 @@ def test_the_usage_of_other_areas_is_summed_and_checked() -> None:
     with pytest.raises(RunnerError) as caught:
         asyncio.run(tasks.usage_of(None, [wrong])())
     assert (caught.value.code, caught.value.name) == ("registry_invalid", "capacity")
+
+
+def test_the_other_areas_give_room_back_in_turn_until_it_is_enough() -> None:
+    """ADR-059 addendum 4: a workgroup VM asks the areas' `RECLAIM` hooks for the RAM it needs."""
+    asked: list[tuple[str, int]] = []
+
+    def area(name: str, gives: int) -> Any:
+        async def give(context: Any, need_mib: int) -> int:
+            asked.append((name, need_mib))
+            return gives
+
+        return give
+
+    reclaim = tasks.reclaim_of("ctx", [area("vm", 0), area("workvm", 6144), area("other", 4096), area("last", 1)])
+    assert asyncio.run(reclaim(8192)) == 10240
+    assert asked == [("vm", 8192), ("workvm", 8192), ("other", 2048)]
+    assert asyncio.run(tasks.reclaim_of("ctx", [])(8192)) == 0
+    assert registry.capacity_reclaimers()  # the vm and workvm areas register one each
 
 
 def test_pool_task_reconciles_only_once(fake_clock: Any) -> None:

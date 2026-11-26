@@ -9,11 +9,15 @@ import { useI18n } from '../i18n';
 import { EventTime } from '../task-tabs/chat/EventTime';
 import { Invalid } from './workvm.run';
 
-/** "Work VM created", "Work VM stopped (session paused)", "Work VM deleted (idle)", … */
+/**
+ * "Work VM created", "Work VM stopped (session paused)", "Work VM deleted (idle)", … A VM stopped because it was
+ * unused (`stopped`, reason `idle`, ADR-059 addendum 4) reads "Work VM stopped, unused – starts again when needed".
+ */
 export function useStateTitle(): (vm: WorkvmState) => string {
   const { t } = useI18n();
   return (vm) => {
     if (vm.state === 'created' || vm.state === 'starting') return t(`workvm.state.${vm.state}`);
+    if (vm.state === 'stopped' && vm.reason === 'idle') return t('workvm.state.stopped.idle');
     if (vm.reason === null) return t(`workvm.state.${vm.state}.plain`);
     return t(`workvm.state.${vm.state}`, { reason: t(`workvm.state.reason.${vm.reason}`) });
   };

@@ -35,7 +35,7 @@ EMPTY_SECTIONS: dict[str, Any] = {
     "limits": {
         "api": 1,
         "subagent_max_depth": 5,
-        "subagent_max_running": 50,
+        "subagent_max_running": 0,  # no number running at once (ADR-075 addendum 2)
         "subagent_max_total": 0,
         "subagent_max_runtime_seconds": 0,
     },
@@ -53,7 +53,7 @@ def test_the_limits_section_carries_the_subagent_settings(fleet: Fleet) -> None:
     device, _ = fleet.platform_device()
     app_state = fleet.hub.app.state
     original = app_state.hub
-    settings = SubagentLimits(max_depth=0, max_running=7, max_total=100, max_runtime_seconds=3600)
+    settings = SubagentLimits(max_depth=0, max_total=100, max_runtime_seconds=3600)
     app_state.hub = replace(original, config=replace(original.config, subagent_limits=settings))
     try:
         answer = fleet.client(device).get("/v1/device/state").json()
@@ -62,7 +62,7 @@ def test_the_limits_section_carries_the_subagent_settings(fleet: Fleet) -> None:
     assert answer["limits"] == {
         "api": 1,
         "subagent_max_depth": 0,
-        "subagent_max_running": 7,
+        "subagent_max_running": 0,
         "subagent_max_total": 100,
         "subagent_max_runtime_seconds": 3600,
     }

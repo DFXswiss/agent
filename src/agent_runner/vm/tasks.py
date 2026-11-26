@@ -23,12 +23,12 @@ import json
 import os
 from typing import Any, cast
 
-from agent_runner import registry
+from agent_runner import admission, registry
 from agent_runner.errors import RunnerError
 from agent_runner.metrics.device import lima_home
 from agent_runner.registry import TaskSpec
 from agent_runner.sync.runtime import runtime
-from agent_runner.vm import lima
+from agent_runner.vm import lima, room
 from agent_runner.vm.capacity import NO_USAGE, Usage, disk_free_mib, physical_memory_mib
 from agent_runner.vm.extensions import Retire, retire_hooks
 from agent_runner.vm.lifecycle import VmManager
@@ -62,6 +62,19 @@ def usage_of(context: Any, providers: list[Any]) -> Any:
     return other_usage
 
 
+def reclaim_of(context: Any, providers: list[Any]) -> Any:
+    """Ask the other areas' `RECLAIM` in turn to give back `need_mib` for a workgroup VM (ADR-059 addendum 4)."""
+
+    async def reclaim(need_mib: int) -> int:
+        released = 0
+        for give in providers:
+            if released < need_mib:
+                released += int(await give(context, need_mib - released))
+        return released
+
+    return reclaim
+
+
 def build_manager(context: Any) -> VmManager:
     config = context.config
     log = functools.partial(_line, context)
@@ -90,9 +103,12 @@ def build_manager(context: Any) -> VmManager:
         clock=context.host.clock,
         stopping=context.stopping.is_set,
         other_usage=usage_of(context, registry.capacity_usages()),
+        reclaim=reclaim_of(context, registry.capacity_reclaimers()),
+        admission=admission.of(context),
         cpus=os.cpu_count,
         disk_free_mib=functools.partial(disk_free_mib, home),
     )
+    env.session_room = room.checker(env, load_max=config.vm_load_max_percent / 100)
     return VmManager(env, retire=Retire(context, retire_hooks(), log))
 
 

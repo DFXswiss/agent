@@ -323,8 +323,6 @@ export async function spawnRunner(
     readonly pool_size?: number;
     readonly session_idle_seconds?: number;
     readonly vm_idle_seconds?: number;
-    readonly sessions_per_vm?: number;
-    readonly max_vms?: number;
     /** A pool of the operator's subscriptions (one token file; which orgs use it comes from the platform log). */
     readonly operator_subscriptions?: boolean;
   } = {},

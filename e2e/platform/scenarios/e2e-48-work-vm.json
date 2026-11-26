@@ -1,6 +1,6 @@
 {
   "name": "e2e-48-work-vm",
-  "description": "E2E-48 (KOR-29): the session checks out a repository, gets a work VM, runs the failing tests, fixes the code, runs them green and opens a draft pull request through the platform; a follow-up starts a service in the same VM, reads its page with the browser, shows the VM's status and hits the per-task limit with a clear refusal. Every result is checked by the next step's expectation.",
+  "description": "E2E-48 (KOR-29): the session checks out a repository, gets a work VM, runs the failing tests, fixes the code, runs them green and opens a draft pull request through the platform; a follow-up starts a service in the same VM, reads its page with the browser, shows the VM's status and asks for a VM above the device's size limit and gets a clear refusal (no fixed number of VMs per task, ADR-075 addendum 2). Every result is checked by the next step's expectation.",
   "steps": [
     {
       "id": "checkout",
@@ -274,7 +274,8 @@
             "input": {
               "type": "workvm.request",
               "params": {
-                "scope": "session"
+                "scope": "session",
+                "size": "xlarge"
               }
             }
           }
@@ -290,7 +291,7 @@
         "content": [
           {
             "type": "text",
-            "text": "The page says: Hello kz48-page-r5t8y2u4. A second work VM is above the limit of this task kz48-answer-p8o2i6u3."
+            "text": "The page says: Hello kz48-page-r5t8y2u4. A work VM of size xlarge is above the limit of this device kz48-answer-p8o2i6u3."
           }
         ]
       }

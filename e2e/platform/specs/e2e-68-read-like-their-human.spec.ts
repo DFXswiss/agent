@@ -13,9 +13,10 @@
 //   answers each in a turn of its own (its requests carry its earlier turns), stays `idle` between them, the parent
 //   reads each answer with `get_subagent_result` (the `instruction_id` of the instruction it answers) and gets one
 //   `subagent.finished` ping per turn; `subagent.stop` ends it (`stopped`).
-// - Limits as settings: the hub runs with a running limit of 1 (orchestrator route, restored at the end); a second
-//   child while the first is alive ends `limit_exceeded` (runner pre-check `rejected` or hub `denied`) with the
-//   sentence naming the setting `subagent_max_running`; the task's attention record is `blocked/limit_reached`.
+// - Limits as settings: the hub runs with a limit of 1 child per task (orchestrator route, restored at the end; how
+//   many run at once is no setting, ADR-075 addendum 2); a second child ends `limit_exceeded` (runner pre-check
+//   `rejected` or hub `denied`) with the sentence naming the setting `subagent_max_total`; the task's attention record
+//   is `blocked/limit_reached`.
 // - No canary reaches the hub in plaintext. Runs on T1.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures/test.ts';
@@ -161,9 +162,9 @@ test('@E2E-68 @R-8.7 @R-8.8 @R-8.9 @R-13.4 @R-13.8 @needs-vm a session reads wha
 }) => {
   test.skip(e2e.topology !== 't1', 'E2E-68 runs on T1 (07-testing.md section 2.1)');
   test.setTimeout(1_500_000);
-  // The hub restarts with the running limit 1 before anything else runs (the runners reconnect and take it with the
+  // The hub restarts with the limit of 1 child per task before anything else runs (the runners reconnect and take it with the
   // device state); every other limit keeps its default.
-  expect(await setLimits(orchestrator, { running: 1 })).toMatchObject({ subagent_max_running: 1 });
+  expect(await setLimits(orchestrator, { total: 1 })).toMatchObject({ subagent_max_total: 1 });
   try {
     await orchestrator.loadScenario('model', scenario);
     const device = await platformDevice(orchestrator);
@@ -204,12 +205,12 @@ test('@E2E-68 @R-8.7 @R-8.8 @R-8.9 @R-13.4 @R-13.8 @needs-vm a session reads wha
     await followUp(bob.page, BOB);
     await expectAnswerInChat(bob.page, 'Workgroup B is not readable for this instruction kz67-answer-bob-r8w2.');
 
-    // 3. and 4. Ada's next instruction: a child with three follow-ups, then a second child over the running limit.
+    // 3. and 4. Ada's next instruction: a child with three follow-ups, then a second child over the limit per task.
     await followUp(page, SUB);
     await expect(
       page
         .getByTestId('chat.output')
-        .filter({ hasText: 'The limit of running helpers is reached kz67-answer-limit-p9e3.' }),
+        .filter({ hasText: 'The limit of helpers per task is reached kz67-answer-limit-p9e3.' }),
     ).toBeVisible({ timeout: 480_000 });
     const children = await orchestrator.hubQuery<{ id: string; parent_session_id: string; state: string }>(
       `SELECT id, parent_session_id, state FROM hub.session WHERE task_id = '${uuid(taskA)}' AND depth = 1`,
@@ -350,8 +351,8 @@ test('@E2E-68 @R-8.7 @R-8.8 @R-8.9 @R-13.4 @R-13.8 @needs-vm a session reads wha
     expect(['rejected', 'denied']).toContain(second.value.status);
     const error = second.value.error as { code: string; message: string };
     expect(error.code).toBe('limit_exceeded');
-    expect(error.message).toContain('1 running subagent');
-    expect(error.message).toContain('(setting subagent_max_running)');
+    expect(error.message).toContain('1 subagent');
+    expect(error.message).toContain('(setting subagent_max_total)');
 
     // 5. Zero knowledge at the hub.
     await expectNoPlaintext(orchestrator, CANARIES);

@@ -1,20 +1,21 @@
 """VM lifecycle of the runner (docs/platform/spec/05-runner.md sections 3.2-3.5 and 6.1 step 1, 03-api.md section
 4.6.2, ADR-009).
 
-`VmManager.ensure_vm(org_id, wg_id, session_id=..., prefer=[...], new_allowed=...)` returns a running VM of the
+`VmManager.ensure_vm(org_id, wg_id, session_id=..., prefer=[...])` returns a running VM of the
 workgroup for a session, in the deterministic order of ADR-075 section 4 (05-runner.md section 3.3):
 
 1. the VMs of `prefer` in their order - the hub's `vm_id_pref` (a user's choice), then the VM of the parent session
    (subagent) or of the `resume_from` session - when it is a live VM of **this** workgroup, regardless of the limit:
    running -> use it, stopped -> restart it (no golden replacement: the choice, or the work, lives there);
-2. a running VM of the workgroup with room (`SESSIONS_PER_VM` minus its occupying sessions, unbounded with 0): most
-   room first, then the smallest VM ID;
-3. a stopped VM of the workgroup with room, smallest VM ID -> restart it (`limactl start`, health `assigned` to this
+2. a running VM of the workgroup with free resources of its own for one more session (`env.session_room`, measured
+   on the VM: `vm.room`; no fixed number of sessions per VM, ADR-075 addendum 2), smallest VM ID first;
+3. a stopped VM of the workgroup, smallest VM ID -> restart it (`limactl start`, health `assigned` to this
    workgroup), unless its golden is not the newest ready one, no retire hook keeps it (`vm.extensions`: e.g. context
    checkpoints still due, KOR-33) and it may move (`golden_switch.judge`: every session on it is a paused main session
    with a complete checkpoint, ADR-093): then a new VM (pool or clone, as in 4.) replaces it and only then it is
-   deleted (a replacement, allowed even when the hub allows no new VM; a failed clone leaves it as it is);
-4. a new VM when the hub allows one (`new_allowed`, the hub's `vm_new_allowed`): warm pool (`Pool.take`), else clone
+   deleted (a failed clone leaves it as it is);
+4. a new VM (no fixed number of VMs per workgroup; an older hub's `vm_new_allowed` is read past, ADR-075 addendum 2):
+   warm pool (`Pool.take`), else clone
    + start on the hot path (`Provisioner.create`); while the device has no ready golden yet (a device just added
    builds it, KOR-67) this is `capacity_exhausted` (`golden`): the hub places the next attempt and the task waits
    instead of failing. Such a device reports no free slot in its heartbeat (`report`), so the hub places nothing on
@@ -59,10 +60,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
-import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import timedelta
 
+from agent_runner.admission import SESSION
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink import cursor
 from agent_runner.guestlink.client import GuestClient, Health
@@ -76,8 +77,6 @@ from agent_runner.vm.pool import HEALTH_CALL_S, Pool, Provisioner, VmEnv, failur
 from agent_runner.vm.records import GoldenRef, VmRow
 
 UNHEALTHY_LIMIT = 3
-# Reported in every capacity report: this runner chooses VMs itself and reads `device_assign_org` (ADR-075).
-UNBOUNDED = sys.maxsize
 STOPPED_STATES = ("stopped", "stopping")
 # A session start never waits longer than this for the startup reconciliation (task `vm-pool`).
 RECONCILE_WAIT_S = 60.0
@@ -98,6 +97,8 @@ class VmManager:
         self.pool = Pool(env, self.provisioner, on_change=self.wake_refill, reserved=lambda: self.reserved)
         # Slots claimed by a running restart or hot-path clone (counted as used until it finished).
         self.reserved = 0
+        # the workgroup VMs admitted and still in flight count for every kind (the device's one admission)
+        env.admission.pending = lambda: (self.pool.filling + self.reserved) * env.settings.memory_mib
         self._locks: dict[str, asyncio.Lock] = {}
         self._reconciled = asyncio.Event()
         self._refill_wanted = asyncio.Event()
@@ -153,9 +154,7 @@ class VmManager:
             "vms_running": vms,
             "sessions_active": sessions,
             "work_vms_running": capacity.other_vms,
-            "sessions_per_vm": env.settings.sessions_per_vm,
-            "vms_max": env.settings.max_vms,
-        }
+        }  # no `sessions_per_vm` / `vms_max`: there are no fixed numbers any more (a hub reads absent as none)
         for name, value in (("cpus", env.cpus()), ("disk_free_mib", env.disk_free_mib())):
             if value is not None:
                 report[name] = value
@@ -178,7 +177,6 @@ class VmManager:
         *,
         session_id: str | None = None,
         prefer: Sequence[str] = (),
-        new_allowed: bool = True,
     ) -> VmRow:
         """A running VM of the workgroup, booked for `session_id` (see the module docstring for the order)."""
         try:
@@ -186,12 +184,12 @@ class VmManager:
         except TimeoutError:
             raise RunnerError("vm_start_failed", "reconcile") from None
         async with self.lock(wg_id):
-            row = await self._choose(org_id, wg_id, prefer, new_allowed=new_allowed)
+            row = await self._choose(org_id, wg_id, prefer)
             if session_id is not None:
                 await records.assign_session(self.env.db, session_id, row.id)
             return row
 
-    async def _choose(self, org_id: str, wg_id: str, prefer: Sequence[str], *, new_allowed: bool) -> VmRow:
+    async def _choose(self, org_id: str, wg_id: str, prefer: Sequence[str]) -> VmRow:
         env = self.env
         live = await records.of_workgroup(env.db, wg_id)
         by_id = {row.id: row for row in live}
@@ -203,24 +201,15 @@ class VmManager:
             if found is not None and found.state in STOPPED_STATES:
                 return await self._restart(found)
             env.log("vm.preference_skipped", {"vm_id": vm_id, "wg_id": wg_id})
-        limit = env.settings.sessions_per_vm
-        occupied = await records.occupancy(env.db, wg_id)
-
-        def room(row: VmRow) -> int:
-            return UNBOUNDED if limit == 0 else limit - occupied.get(row.id, 0)
-
-        running = [row for row in live if row.state == "running" and room(row) > 0]
-        if running:
-            chosen = min(running, key=lambda row: (-room(row), row.id))
-            await self.touch(chosen.id)
-            return chosen
+        # no fixed number of sessions per VM: a running VM's own free resources decide (`vm.room`, ADR-075 addendum 2)
+        for row in sorted((row for row in live if row.state == "running"), key=lambda row: row.id):
+            if await env.session_room(row):
+                await self.touch(row.id)
+                return row
         golden = await records.ready_golden(env.db)
-        stopped = [row for row in live if row.state in STOPPED_STATES and room(row) > 0]
+        stopped = [row for row in live if row.state in STOPPED_STATES]
         if stopped:
             return await self._from_stopped(stopped[0], golden)
-        if not new_allowed:
-            # the hub's workgroup limit (`AGENT_HUB_VMS_PER_WG`): no further VM for this session
-            raise RunnerError("capacity_exhausted", "vm_new_allowed")
         if golden is None:
             raise RunnerError("capacity_exhausted", "golden")
         return await self._new_vm(golden, org_id, wg_id)
@@ -410,14 +399,37 @@ class VmManager:
             release()
 
     async def _free_slot(self, wg_id: str | None, *, evict: bool = True) -> None:
+        """The device's one admission for a workgroup VM (rank `SESSION`, 05-runner.md section 3.8): a refusal holds
+        back new VMs of lower ranks while the hub places the session again."""
+        try:
+            await self._take_slot(wg_id, evict=evict)
+        except RunnerError:
+            self.env.admission.refused(SESSION)
+            raise
+        self.env.admission.started(SESSION)
+
+    async def _take_slot(self, wg_id: str | None, *, evict: bool) -> None:
         env = self.env
+        if not await env.admission.cpu_ok():
+            raise RunnerError("capacity_exhausted", "cpu")
+        disk = env.disk_free_mib()
+        if disk is not None and disk < env.settings.disk_gib * 1024:
+            raise RunnerError("capacity_exhausted", "disk")
         capacity = await self.capacity()
         if capacity.slots_free > 0:
+            if capacity.slots_free_now == 0:  # the work VM pool holds the room: it gives way (ADR-059 addendum 4)
+                released = await env.reclaim(env.settings.memory_mib)
+                env.log("vm.slot_from_work_vms", {"released_mib": released})
             return
         for candidate in await records.live(env.db, "pool"):
             if await env.delete(candidate, expect=("pool",)) is not None:
                 env.log("vm.slot_from_pool", {"vm_id": candidate.id})
                 return
+        # sessions rank before work VMs: idle ones give way (running work is never ended)
+        released = await env.reclaim(env.settings.memory_mib)
+        if released >= env.settings.memory_mib:
+            env.log("vm.slot_from_work_vms", {"released_mib": released})
+            return
         if not evict:
             raise RunnerError("capacity_exhausted")
         victim = lru_victim(

@@ -2,9 +2,10 @@
 
 The hub is untrusted (00-overview.md section 3, B2): only the fields the session step needs are read and each is
 checked; a malformed list fails the step (`wire.ResponseInvalid`). Whether the device may act on a session is decided
-against the verified membership log by the step, never by this list. `resume_from`, `vm_id_pref` and `vm_new_allowed`
-(ADR-075 section 4) are optional: absent, there is no previous session, no preferred VM, and a new VM is allowed. A
-preferred VM is only a preference: the VM manager takes it only when it is a live VM of the session's workgroup.
+against the verified membership log by the step, never by this list. `resume_from` and `vm_id_pref` (ADR-075 section 4)
+are optional: absent, there is no previous session and no preferred VM. A preferred VM is only a preference: the VM
+manager takes it only when it is a live VM of the session's workgroup. An older hub's `vm_new_allowed` is read past: no
+fixed number of VMs per workgroup exists (ADR-075 addendum 2).
 """
 
 from __future__ import annotations
@@ -51,7 +52,6 @@ class Desired:
     model_id_pref: str | None
     resume_from: str | None = None
     vm_id_pref: str | None = None
-    vm_new_allowed: bool = True
 
 
 def _text(value: object, what: str, allowed: frozenset[str] | None = None, *, maximum: int = 128) -> str:
@@ -71,9 +71,6 @@ def parse(item: object) -> Desired:
     vm = data.get("vm_id_pref")
     if vm is not None and (not isinstance(vm, str) or not _VM_ID_RE.fullmatch(vm)):
         raise wire.ResponseInvalid("sessions")
-    new_allowed = data.get("vm_new_allowed", True)
-    if not isinstance(new_allowed, bool):
-        raise wire.ResponseInvalid("sessions")
     return Desired(
         session_id=wire.uuid_text(data.get("session_id"), "sessions"),
         task_id=wire.uuid_text(data.get("task_id"), "sessions"),
@@ -87,7 +84,6 @@ def parse(item: object) -> Desired:
         model_id_pref=None if model is None else _text(model, "sessions"),
         resume_from=None if resume is None else wire.uuid_text(resume, "sessions"),
         vm_id_pref=vm,
-        vm_new_allowed=new_allowed,
     )
 
 

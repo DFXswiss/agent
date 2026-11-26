@@ -53,7 +53,8 @@ change.
    other's files (review finding M7). A subagent that should test its parent's state receives the files through its
    own workspace.
 8. **Temporary ([KONZEPT ideas 27](../KONZEPT.md#k-idee-27), 28, 44; addendum 2).** A work VM lives as long as the session needs it: it is torn
-   down on `workvm.release`, after `WORKVM_IDLE_SECONDS` without a call or running job (default 1800 s), when its
+   down on `workvm.release`, after `WORKVM_IDLE_SECONDS` without a call or running job (default 1800 s; since
+   addendum 4 the idle VM is stopped and gives its slot back, default 600 s), when its
    session ends (scope `session`) or when no session of the task is active any more (scope `task`), when the task is
    closed, and always also after errors. There is no resume: after a failure of the device or the runner every left
    over work VM is deleted; the next command obtains a fresh one. The session may request a new VM at any time.
@@ -75,6 +76,86 @@ change.
    execution devices: the hub already assigns workgroups to devices (ADR-013), and work VMs are local to the device of
    the requesting session, so capacity grows with every added device; placement of a work VM on another device than
    its session is not part of this package (it would need the workspace mirror across devices).
+
+### Addendum 4 (2026-11-26): idle work VMs give their slot back
+**Finding in operation (2026-11-26).** The platform device allows 4 work VMs at a time (`WORKVM_SLOTS=4`). All 4 slots
+were assigned, but only 2 VMs computed; the other two held 5.0 and 2.8 GB at 0–1 % CPU. Sessions waited for a slot
+for their tests ("Die Work-VM wartet noch auf Zuteilung (Status pending)"). In the morning the work VMs of closed
+tasks kept their slots; five parallel tasks waited more than eight minutes until the slots were freed by hand. The
+hardware had room (CPU about 17 %, 96 % of the RAM free): the bottleneck was the slot assignment alone. Causes in the
+code: a stopped VM held its slot (database rule "one live VM per slot"), an idle VM held its slot for 30 minutes
+before it was deleted, a VM whose session end or task close the runner missed waited for that idle time as well, and
+a row whose instance was gone or whose start was interrupted held its slot until the next restart.
+
+**Decision.** The slot assignment of this ADR (decision 11, `agent_runner/workvm/`) stays the only mechanism; no
+second one. A slot counts only while its work VM is needed, and how many work VMs run is decided by the free
+resources, not by a fixed number (points 7-9):
+1. **At once** when the task is closed or its session ends (decision 8, unchanged: reconcile step `workvm`,
+   observer of the session states).
+2. **After the idle time** (`WORKVM_IDLE_SECONDS`, now default 600 instead of 1800, settable 60–604800): no tool call,
+   no running job and no call in progress for that long - measured by the runner's own activity record, not by CPU.
+   The VM is **stopped**, not deleted (`limactl stop`, `workvm.state` `stopped` with reason `idle`): its disk stays in
+   its slot's Lima home, it holds neither the slot nor RAM, and the next call or `workvm.request` starts it again with
+   everything it had (decision 8's "temporary" now means: a stopped VM is deleted after
+   `WORKVM_KEEP_STOPPED_SECONDS`, default 86400, settable 600–2592000, when its session ends, when its task is closed,
+   or when the disk quota needs its space - each visible as `workvm.state` `deleted` with its reason). Nothing is lost
+   silently: a VM that cannot start again is deleted with reason `failed` and the call gets a new one; the session's
+   workspace and checkpoints (ADR-072, HOT-24) are untouched by all of this.
+3. **Slots only for VMs that are not stopped.** The database rule becomes "one VM per slot that is not stopped"
+   (migration `0038_workvm_slots`). A stopped VM starts again only in its own slot (its disk lives in that slot
+   account's Lima home and the slot's pinned SSH port is the only one the host filter opens for it); a new VM prefers
+   the free slot with the fewest stopped VMs, so that slot is mostly free when it is needed.
+4. **Queue.** Waiting requests take a slot that becomes free at once (the release wakes them, the 2 s poll stays as a
+   fallback) and in the order they came in; a stopped VM whose own slot another VM holds cannot start anyway and does
+   not hold up the requests behind it. The waiting requests are mirrored in `runner.workvm_wait` for the status.
+5. **Reconciliation.** At start (unchanged: every VM left over is deleted, [KONZEPT idea 44](../KONZEPT.md#k-idee-44); now also the mirror of the
+   waiting requests is cleared) and every minute (`slot_pass`): each row is compared with the instances Lima lists for
+   its slot - an instance that is gone, a start nobody finishes, a VM that no longer runs, a stop that was interrupted
+   - and with the sessions of the device (a task or session VM whose sessions all ended goes, `session_ended`). A slot
+   can therefore never stay held.
+6. **Visible.** The chat shows the `stopped`/`idle` event as one quiet line ("Arbeits-VM angehalten, ungenutzt –
+   startet bei Bedarf neu"), the metrics `agent_runner_workvm_slots{state="held"|"free"}`,
+   `agent_runner_workvm_requests_waiting`, `agent_runner_workvm_stopped` and what the admission sees free (RAM, CPU
+   load, disk; 08-monitoring.md §3), and `agent-runner status` the fact `runner.status.workvm` with the same values.
+
+7. **No fixed number of work VMs** (decisions of the client the same day: "4 Plätze, alle belegt, künftig 16 – das
+   verstehe ich nicht, warum einen deckel", then "diese anderen deckel alle restlos entfernen, der platz soll für das
+   gebraucht werden was halt gebraucht wird"). `WORKVM_SLOTS` and `WORKVM_MAX_PER_TASK`/`_OWNER`/`_ORG` are removed
+   (ADR-075 addendum 2: an older `runner.env` that sets them starts, the values are ignored and named once). A device
+   admits a new work, browser or test run VM as long as its free resources last - RAM above `MEMORY_RESERVE_MIB` that
+   the workgroup VMs and the work VMs leave, the host's 1-minute load per core at most `CPU_LOAD_MAX_PERCENT` (default
+   85), the disk quota `WORKVM_DISK_QUOTA_GIB` - and no session waits on the device (point 8). Short of any of them
+   the request waits in the queue as before. The slot accounts stay - they are the isolation boundary of the host
+   filter (one account, one pinned SSH port per VM) - but their number follows the RAM: as many as the RAM above the
+   reserve could ever hold standard work VMs (at most 100, the accounts' port range), so they never limit before the
+   resources do. A device offers work VMs once `agent-runner workvm install` created them.
+8. **One admission per device, sessions first.** The work VMs use the device's one admission (05-runner.md §3.8,
+   `agent_runner/admission.py`) that also admits the workgroup VMs and later CI VMs, in one transaction (one lock). Its
+   rank is: sessions before work, browser and test VMs before CI; a new request of a lower rank does not start while a
+   higher one waits. The running task and session VMs and the warm work VM pool count as *yielding* in the capacity
+   report, so the hub's free workgroup slots (`vm_slots_free`) are not reduced by them and sessions are placed as if
+   they were not there; when a workgroup VM then needs their RAM, the VM area asks for it
+   (`<area>/capacity.py:RECLAIM`) and the work VMs give way at once - the pool first, then idle VMs (no job and no call
+   in progress; stopped, `idle`, their disks stay and they start again when there is room), least recently used first.
+   **Running work is never ended silently**: a VM with a job or a call in progress keeps running, and the session
+   waits for room or is placed again by the hub (ADR-049). The warm workgroup pool never makes them give way (a warm
+   VM is speculative). Run VMs of `test.run` and browser VMs belong to their run or browser session and do not yield.
+   Hub traffic: new VMs are admitted only below the CPU bound, and each slot account's traffic stays capped by the
+   host filter (`BANDWIDTH_MBIT`).
+9. **Another device of the workgroup.** A work VM still runs on the device of its session (decision 11: the workspace
+   mirror is local); a request that does not fit waits. Because work VMs no longer reduce the free workgroup slots and
+   the device reports its work VMs (`work_vms_running`), the hub keeps placing new sessions on the devices with room.
+   Placing a work VM on another device than its session stays outside this ADR.
+
+Specification: 05-runner.md §3.7 and §3.8, 13-work-vm.md §2, §6.1 and §7, 16-ci-runners.md §6.2 and §6.6. Not changed:
+the guest and the harness text (it still says "after 30 minutes without use"; the rule it gives - keep what must
+survive in the workspace - stays true).
+
+**Alternatives considered.** Deleting idle VMs earlier (no stop): loses what the session installed and makes the
+next command wait for a fresh clone. Moving a stopped VM's disk to another slot's account: a copy across macOS
+accounts, slower than waiting for the own slot. Idle by CPU: a session that thinks for a while before its next
+command would lose its VM; a busy service would hold a slot nobody uses. A second watchdog beside the slot
+assignment: two mechanisms that can disagree (excluded by the task).
 
 ### Addendum 2 (complete concept, 2026-11-23 19:30)
 The complete [KONZEPT](../KONZEPT.md#k-titel) (47 ideas) describes temporary test VMs (idea 27: "Lint, Prettier, Unit- und

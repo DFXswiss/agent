@@ -194,6 +194,16 @@ def test_capacity_usages(area_package: Callable[[dict[str, str]], str]) -> None:
     assert (caught.value.code, caught.value.name) == ("registry_invalid", "a.capacity")
 
 
+def test_capacity_reclaimers(area_package: Callable[[dict[str, str]], str]) -> None:
+    source = "async def USAGE(context):\n    return context\n\n\nasync def RECLAIM(context, need):\n    return need\n"
+    pkg = area_package({"b/capacity.py": source, "a/capacity.py": source})
+    assert len(registry.capacity_reclaimers(pkg)) == 2
+    bad = area_package({"a/capacity.py": "RECLAIM = 5\n"})
+    with pytest.raises(RunnerError) as caught:
+        registry.capacity_reclaimers(bad)
+    assert (caught.value.code, caught.value.name) == ("registry_invalid", "a.capacity")
+
+
 def test_runner_error_shape() -> None:
     error = RunnerError("config_invalid", "HUB_URL")
     assert str(error) == "config_invalid HUB_URL"

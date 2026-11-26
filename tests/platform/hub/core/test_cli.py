@@ -60,6 +60,23 @@ def test_configuration_error(clean_environ: pytest.MonkeyPatch, capsys: pytest.C
     assert TEST_HUB_SEED[2:] not in error
 
 
+def test_a_retired_fixed_limit_is_named_once_and_the_hub_starts(
+    clean_environ: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """ADR-075 addendum 2: an older configuration with `AGENT_HUB_VMS_PER_WG` starts; the setting is ignored."""
+    set_environ(clean_environ, hub_environ(AGENT_HUB_VMS_PER_WG="100"))
+    started: list[Any] = []
+
+    def serve(config: Any) -> int:
+        started.append(config)
+        return 0
+
+    clean_environ.setattr(cli, "serve", serve)
+    assert cli.main(["serve"]) == 0
+    assert capsys.readouterr().err == "agent-hub: config.ignored name=AGENT_HUB_VMS_PER_WG reason=fixed_limit_removed\n"
+    assert started[0].retired == ("AGENT_HUB_VMS_PER_WG",)
+
+
 def test_owner_database_stops_the_start(clean_environ: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     set_environ(clean_environ, hub_environ(AGENT_HUB_OWNER_DATABASE="postgresql://x"))
     assert cli.main([]) == cli.EXIT_CONFIG

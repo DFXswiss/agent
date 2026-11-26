@@ -74,27 +74,55 @@ def rows_only(body: Any) -> Any:
     return run
 
 
+def measured(manager: VmManager, full: set[str]) -> None:
+    """The VMs' measured room (`vm.room`, ADR-075 addendum 2): no room on the VMs of `full`."""
+
+    async def session_room(row: Any) -> bool:
+        return row.id not in full
+
+    manager.env.session_room = session_room
+
+
+def holds_one(harness: Harness, manager: VmManager) -> None:
+    """The measured room of a VM that takes exactly one session (a session booked on it uses it up)."""
+
+    async def session_room(row: Any) -> bool:
+        booked = harness.sql("SELECT count(*) AS n FROM runner.session WHERE vm_id = %s", (row.id,))
+        return int(booked[0]["n"]) == 0
+
+    manager.env.session_room = session_room
+
+
 def test_a_full_vm_gets_a_second_vm_and_the_choice_is_deterministic(harness: Harness) -> None:
     harness.add_golden()
-    harness.settings = settings(pool_size=0, sessions_per_vm=2)
+    harness.settings = settings(pool_size=0)
     sessions = [new_session(harness) for _ in range(5)]
+    full: set[str] = set()
 
     async def body(manager: VmManager) -> Any:
-        return [await manager.ensure_vm(ORG, WG_A, session_id=sid) for sid in sessions[:3]]
+        measured(manager, full)
+        first = await manager.ensure_vm(ORG, WG_A, session_id=sessions[0])
+        second = await manager.ensure_vm(ORG, WG_A, session_id=sessions[1])
+        full.add(first.id)  # its measured resources take no further session
+        third = await manager.ensure_vm(ORG, WG_A, session_id=sessions[2])
+        return first, second, third
 
     first, second, third = harness.run(body)
     assert first.id == second.id != third.id
     assert [vm_of(harness, sid) for sid in sessions[:3]] == [first.id, first.id, third.id]
     assert [argv[0] for argv, _ in harness.fake.calls].count("clone") == 2
-    # one place free on each VM: equal room -> the smallest VM ID
-    end(harness, sessions[0])
-    fourth = harness.run(lambda manager: manager.ensure_vm(ORG, WG_A, session_id=sessions[3]))
+    # room on both VMs: the smallest VM ID
+    full.clear()
+
+    async def again(manager: VmManager, session: str) -> Any:
+        measured(manager, full)
+        return await manager.ensure_vm(ORG, WG_A, session_id=session)
+
+    fourth = harness.run(lambda manager: again(manager, sessions[3]))
     assert fourth.id == min(first.id, third.id)
-    # two places on the first VM, one on the other: most room first
-    end(harness, sessions[1])
-    end(harness, sessions[3])
-    fifth = harness.run(lambda manager: manager.ensure_vm(ORG, WG_A, session_id=sessions[4]))
-    assert fifth.id == first.id
+    full.add(min(first.id, third.id))
+    fifth = harness.run(lambda manager: again(manager, sessions[4]))
+    assert fifth.id == max(first.id, third.id)
     deleted = harness.run(lambda manager: manager.delete_workgroup(WG_A))
     assert sorted(row.id for row in deleted) == sorted([first.id, third.id])
     assert harness.live() == []
@@ -102,10 +130,11 @@ def test_a_full_vm_gets_a_second_vm_and_the_choice_is_deterministic(harness: Har
 
 def test_two_concurrent_starts_never_share_the_last_place(harness: Harness) -> None:
     harness.add_golden()
-    harness.settings = settings(pool_size=0, sessions_per_vm=1)
+    harness.settings = settings(pool_size=0)
     one, two = new_session(harness), new_session(harness)
 
     async def body(manager: VmManager) -> Any:
+        holds_one(harness, manager)
         return await asyncio.gather(
             manager.ensure_vm(ORG, WG_A, session_id=one), manager.ensure_vm(ORG, WG_A, session_id=two)
         )
@@ -115,47 +144,57 @@ def test_two_concurrent_starts_never_share_the_last_place(harness: Harness) -> N
     assert {vm_of(harness, one), vm_of(harness, two)} == {first.id, second.id}
 
 
-def test_most_room_first_then_the_smallest_id_and_no_limit(harness: Harness) -> None:
-    harness.settings = settings(sessions_per_vm=3)
+def test_the_smallest_id_with_measured_room_first_and_no_number_of_sessions(harness: Harness) -> None:
+    full: set[str] = set()
 
     async def body(manager: VmManager) -> Any:
+        measured(manager, full)
         await add_row(manager, "vm-00000002")
         await add_row(manager, "vm-00000001")
-        harness.session("vm-00000001", WG_A, "working")
-        harness.session("vm-00000001", WG_A, "idle")
-        harness.session("vm-00000002", WG_A, "working")
-        harness.session("vm-00000002", WG_A, "suspended")  # keeps its sandbox but occupies no place
-        harness.session("vm-00000002", WG_A, "stopped")
-        roomy = await manager.ensure_vm(ORG, WG_A)
-        manager.env.settings = settings(sessions_per_vm=0)
-        unbounded = await manager.ensure_vm(ORG, WG_A)
-        return roomy.id, unbounded.id
+        for _ in range(11):  # e.g. eleven tasks on one VM: no number refuses the twelfth
+            harness.session("vm-00000001", WG_A, "working")
+        first = await manager.ensure_vm(ORG, WG_A)
+        full.add("vm-00000001")
+        second = await manager.ensure_vm(ORG, WG_A)
+        return first.id, second.id
 
-    assert harness.run(rows_only(body), reconcile=False) == ("vm-00000002", "vm-00000001")
+    assert harness.run(rows_only(body), reconcile=False) == ("vm-00000001", "vm-00000002")
+
+
+def test_without_room_the_existing_order_goes_on(harness: Harness) -> None:
+    """No fixed number of sessions per VM: a running VM whose measured resources take no more session is passed over;
+    then the existing order of 05 section 3.3 applies (here: no stopped VM and no ready golden for a new VM)."""
+    full = {"vm-00000001", "vm-00000002"}
+
+    async def body(manager: VmManager) -> Any:
+        measured(manager, full)
+        await add_row(manager, "vm-00000001")
+        await add_row(manager, "vm-00000002")
+        with pytest.raises(RunnerError) as caught:
+            await manager.ensure_vm(ORG, WG_A)
+        return caught.value.code, caught.value.name
+
+    assert harness.run(rows_only(body), reconcile=False) == ("capacity_exhausted", "golden")
 
 
 def test_preferences_come_first_and_only_vms_of_the_workgroup_count(harness: Harness) -> None:
-    harness.settings = settings(sessions_per_vm=1)
+    full = {"vm-00000001"}
 
     async def body(manager: VmManager) -> Any:
+        measured(manager, full)
         await add_row(manager, "vm-00000001")
         await add_row(manager, "vm-00000002")
         await add_row(manager, "vm-00000003", wg=WG_B)
         await add_row(manager, "vm-00000004", state="assigning")
         harness.session("vm-00000001", WG_A, "working")
         booked = new_session(harness)
-        # a full preferred VM is taken regardless of the limit, and the session is booked on it
-        full = await manager.ensure_vm(ORG, WG_A, session_id=booked, prefer=["vm-00000001"])
+        # a full preferred VM is taken regardless of its room, and the session is booked on it
+        chosen = await manager.ensure_vm(ORG, WG_A, session_id=booked, prefer=["vm-00000001"])
         # a VM of another workgroup, an unknown VM and one that is not running or stopped are skipped
         skipped = await manager.ensure_vm(ORG, WG_A, prefer=["vm-00000003", "vm-0000dead", "vm-00000004"])
-        harness.session("vm-00000002", WG_A, "working")
-        with pytest.raises(RunnerError) as limit:
-            await manager.ensure_vm(ORG, WG_A, new_allowed=False)
-        return full.id, vm_of(harness, booked), skipped.id, limit.value
+        return chosen.id, vm_of(harness, booked), skipped.id
 
-    full, booked, skipped, limit = harness.run(rows_only(body), reconcile=False)
-    assert (full, booked, skipped) == ("vm-00000001", "vm-00000001", "vm-00000002")
-    assert (limit.code, limit.name) == ("capacity_exhausted", "vm_new_allowed")
+    assert harness.run(rows_only(body), reconcile=False) == ("vm-00000001", "vm-00000001", "vm-00000002")
     skips = [fields["vm_id"] for name, fields in harness.logs if name == "vm.preference_skipped"]
     assert skips == ["vm-00000003", "vm-0000dead", "vm-00000004"]
 
@@ -174,16 +213,14 @@ def test_a_preferred_stopped_vm_is_restarted_even_with_an_older_golden(harness: 
     kept = harness.run(lambda manager: manager.ensure_vm(ORG, WG_A, prefer=[old.id]))
     assert (kept.id, kept.state, kept.golden_version) == (old.id, "running", GOLDEN)
     harness.run(lambda manager: manager.stop_vm(old.id))
-    # without the preference the older golden is replaced, also when the hub allows no further VM
-    replaced = harness.run(lambda manager: manager.ensure_vm(ORG, WG_A, new_allowed=False))
+    # without the preference the older golden is replaced
+    replaced = harness.run(lambda manager: manager.ensure_vm(ORG, WG_A))
     assert replaced.id != old.id
     assert replaced.golden_version == newer
     assert [row["id"] for row in harness.live()] == [replaced.id]
 
 
 def test_the_capacity_report(harness: Harness) -> None:
-    harness.settings = settings(sessions_per_vm=4, max_vms=3)
-
     async def body(manager: VmManager) -> Any:
         await add_row(manager, "vm-00000001")
         await add_row(manager, "vm-00000002", state="stopped")
@@ -203,16 +240,14 @@ def test_the_capacity_report(harness: Harness) -> None:
     assert without_disk == {
         "vm_memory_budget_mib": 32768,
         "vm_memory_used_mib": 8192 + 4096,
-        "vm_slots_total": 3,
-        "vm_slots_free": 1,
+        "vm_slots_total": 4,  # the memory budget alone (no fixed number of VMs)
+        "vm_slots_free": 2,
         "pool_ready": 0,
         "cpus": 8,
         "memory_total_mib": 32768 + 4 * 8192,
         "vms_running": 1,
         "sessions_active": 1,
         "work_vms_running": 1,
-        "sessions_per_vm": 4,
-        "vms_max": 3,
     }
     assert report == {**without_disk, "disk_free_mib": 51200}
 
@@ -220,12 +255,11 @@ def test_the_capacity_report(harness: Harness) -> None:
 def test_a_device_without_a_ready_golden_reports_no_room(harness: Harness) -> None:
     """KOR-67: a device that still builds its first golden (no VM either) offers no slot, so the hub places nothing on
     it and the task waits or runs elsewhere; once the golden is ready its slots count again."""
-    harness.settings = settings(sessions_per_vm=4, max_vms=3)
 
     async def body(manager: VmManager) -> Any:
         return await manager.report()
 
     before = harness.run(rows_only(body), reconcile=False)
-    assert (before["vm_slots_free"], before["pool_ready"], before["vm_slots_total"]) == (0, 0, 3)
+    assert (before["vm_slots_free"], before["pool_ready"], before["vm_slots_total"]) == (0, 0, 4)
     harness.add_golden()
-    assert harness.run(rows_only(body), reconcile=False)["vm_slots_free"] == 3
+    assert harness.run(rows_only(body), reconcile=False)["vm_slots_free"] == 4
