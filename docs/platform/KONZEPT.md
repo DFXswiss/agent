@@ -852,7 +852,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 
 - **Datum:** 2026-11-25
 - **Regel:** Es gibt keine eigenen Rechner für selbst gehostete Runner neben der Plattform; die gesamte
-  Rechenkapazität des Betreibers gehört agent.dfx.swiss, und ein Runner wird bei Bedarf über die Plattform bezogen.
+  Serverkapazität des Betreibers gehört agent.dfx.swiss, und ein Runner wird bei Bedarf über die Plattform bezogen.
 - **Wortlaut:** „heute haben wir server für agent und server für self hostet runner, das ist inneffizient, ich will
   alle meine server kapazitäten an agent geben und wenn ich einen self hostet runner brauche dann diesen via agent
   beziehen“
@@ -1089,9 +1089,9 @@ Stand 2026-11-26. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber nennt, welche Schalter umgelegt werden (gebaut, [ADR-079](adr/079-no-approval-as-precondition.md); ein Startguthaben gibt es nicht, [E-14](#e-14), entschieden 2026-11-25); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
-| [E-33](#e-33), [A19](#a-19) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Entscheide des Auftraggebers ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)), danach Bau |
-| [E-34](#e-34), [E-35](#e-35) Gemeinsame Kapazität ([A20](#a-20)) | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | wie [E-33](#e-33) ([spec/16-ci-runners.md §6.6](spec/16-ci-runners.md#66-shared-capacity)) |
-| [E-33](#e-33), [E-34](#e-34) gerätegebundene Läufe | Gerätegebundene Läufe (Deploy) laufen heute auf einem Runner ausserhalb der Plattform; das widerspricht E-33 und E-34, und [A19](#a-19) erfasst sie nicht | Entscheid D-1 des Auftraggebers ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)) |
+| [E-33](#e-33), [A19](#a-19) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)) |
+| [E-34](#e-34), [E-35](#e-35) Gemeinsame Kapazität ([A20](#a-20)) | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions); [§6.6](spec/16-ci-runners.md#66-shared-capacity)) |
+| [E-33](#e-33), [E-34](#e-34) gerätegebundene Läufe | Gerätegebundene Läufe (Deploy) laufen heute auf einem Runner ausserhalb der Plattform; das widerspricht E-33 und E-34, und [A19](#a-19) erfasst sie nicht | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions), D-1) |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |
 | [A10](#a-10) Subagenten | Ein Subagent endet nach einem Turn und bekommt keine Folge-Anweisung | KOR-45 |

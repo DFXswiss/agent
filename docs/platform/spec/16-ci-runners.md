@@ -1,7 +1,8 @@
 # 16 – CI runners: GitHub Actions jobs in throw-away VMs
 
-Rules [E-33](../KONZEPT.md#e-33), [E-34](../KONZEPT.md#e-34), [E-35](../KONZEPT.md#e-35). Status: concept – not
-built; open decisions in §13.
+Rules [E-33](../KONZEPT.md#e-33), [E-34](../KONZEPT.md#e-34), [E-35](../KONZEPT.md#e-35). Also touched:
+[E-32](../KONZEPT.md#e-32) (nothing of agent runs on a user's computer except at most one Claude session; it excludes
+work devices as pool devices, §10.2, D-25). Status: concept – not built; open decisions in §13.
 
 This document is the complete concept for running the self-hosted GitHub Actions jobs of the DFX organisations
 through agent.dfx.swiss, on the same devices as its work VMs ([E-34](../KONZEPT.md#e-34) and
@@ -196,7 +197,7 @@ shared pool of [E-34](../KONZEPT.md#e-34) and [E-35](../KONZEPT.md#e-35) (§6.6)
 
 | Class | Examples | Runner group | Secrets | Egress | Cache | Pool |
 |---|---|---|---|---|---|---|
-| **U** untrusted | every job that executes code not yet on a protected branch, public or private: fork PRs, same-repository PR tests, pushes to unprotected branches | own group, only the repositories that need it | none | strictest (decision D-8) | read-only (image pre-warm, read-only proxy); never writes a shared cache | own; recommended only on a pool device that has passed gate U (§9.3; open, D-7, D-20); never a slot account of another class or workload kind; whether U may run at the same time as T/P on one device: D-24 |
+| **U** untrusted | every job that executes code not yet on a protected branch, public or private: fork PRs, same-repository PR tests, pushes to unprotected branches | own group, only the repositories that need it | none – a requirement on the repository, not something runner group, scale set or VM pool can enforce; without the preconditions of §9.6, U jobs from the same repository are **not** secret-free | strictest (decision D-8) | read-only (image pre-warm, read-only proxy); never writes a shared cache | own; recommended only on a pool device that has passed gate U (§9.3; open, D-7, D-20); never a slot account of another class or workload kind; whether U may run at the same time as T/P on one device: D-24 |
 | **B** bot-trusted | the A38 guard, PR base hygiene checks | own group, base-branch workflows only | only the token the guard needs | runner minimum set, PyPI and setup-python downloads (or both pre-warmed in the image) | none | own |
 | **T** trusted build | image builds on protected branches; tests on pushes to and scheduled runs of a protected branch | own group, protected triggers only | builds: short-lived registry credentials, environment protection where the plan offers it; tests: none | registries, package mirrors | writable layer cache per class and repository | own |
 | **P** privileged | infrastructure plans and applies from protected branches, tunnel tokens | own group, protected workflow refs only; migrated last (§12 stage 7) | provider credentials after a credential concept (§12 stage 7) | runner minimum set plus provider APIs only | none | own |
@@ -669,7 +670,19 @@ Today there is no dependency cache across runs (`13-work-vm.md` §12.2). Compari
 ### 9.6 Secrets per class
 - The platform puts no credential into work VMs ([ADR-059](../adr/059-work-vm-on-request.md)); CI hands over the JIT
   configuration, `GITHUB_TOKEN` and workflow secrets – a new data class.
-- U: never secrets. B: only what the guard needs. T/P: only with environment protection where the plan offers it;
+- U: never secrets – as a **requirement on the repository**, not as a property of the runner. GitHub withholds
+  secrets only from fork PRs; workflows of PRs from the same repository and of pushes to unprotected branches receive
+  repository and organisation secrets and a `GITHUB_TOKEN` with the default permissions [GH-SECRETS], [GH-SECURE].
+  Runner group, scale set and VM pool (§5) cannot prevent that; the VM receives `GITHUB_TOKEN` in any case (B4,
+  §6.5). Preconditions per repository that runs U jobs:
+  - secrets only in environments that are bound to protected branches;
+  - organisation secrets only for the repositories that need them;
+  - `GITHUB_TOKEN` read-only by default ("Workflow permissions"), write rights only per job where needed.
+
+  Without these preconditions, U jobs from the same repository are **not** secret-free. Whether the plan offers
+  environment protection for the repositories concerned is part of D-9; ordering and checking the preconditions is
+  part of D-20; the current settings per repository are part of the stage 0 inventory (§12.2).
+- B: only what the guard needs. T/P: only with environment protection where the plan offers it;
   short-lived credentials. Signing keys never in PR VMs; signed releases on a separate way.
 - The token that creates JIT runners needs organisation admin for runners [GH-REST]; it stays with the controller /
   key signer; only `encoded_jit_config` enters the VM.
@@ -738,7 +751,8 @@ operator's machines become pool devices at which time is D-25:
 | Pool device with macOS VMs | In addition this section; RAM for the pilot value of two macOS VMs above the host reserve (arithmetic: 32 + 2 × 16 = 64 GiB) plus the agent share; the Linux capacity they cost is a question of shares (D-22) |
 | Pool device that already runs sessions | CI only after M-19 and within the shares (§6.6) |
 | CI machine that changes into the pool | Host version ≥ guest (macOS VMs), runner services removed, set up anew before it holds workgroup plaintext (§12.3); heavy jobs: D-11 |
-| Machine with another role (production services, hub, work device) | Not assessed here; D-25 |
+| Machine with another role (production services, hub) | Not assessed here; D-25 |
+| Work device (a user's computer) | Excluded by [E-32](../KONZEPT.md#e-32): nothing of agent runs on it except at most one Claude session; no pool device |
 
 ### 10.3 The pool as a whole
 - A profile that only one pool device can run (macOS, large sizes, class U if gate U is ordered) has a
@@ -827,7 +841,7 @@ Present: 15 s sampling and textfile (`05-runner.md` §14, sinks in `08-monitorin
 
 | Stage | Content | Exit |
 |---|---|---|
-| 0 | Inventory of real runners, plans, organisations, labels; clear the label gap of §1.5; amd64 need | – |
+| 0 | Inventory of real runners, plans, organisations, labels; secret, environment and `GITHUB_TOKEN` settings per repository against the U preconditions of §9.6; clear the label gap of §1.5; amd64 need | – |
 | 1 | Test organisation/repository, option A, one VM class, attack and failure tests on a pool device to which no workgroup is assigned yet; admission of §6.6 built | Uninstall the app |
 | 2 | Shadow operation: copy of a light check (e.g. Dockerfile lint) with a new label, not required, trusted triggers only; M-19 and M-20 on a device with agent VMs of a test workgroup | Switch the workflow off |
 | Gate U (recommendation) | D-7 and D-20 put to the client; if ordered: interface boundary, `hostLoopback: false`, M-6 and M-21 passed, M-18 for macOS guests (§9.3) | No class U job on the device |
@@ -883,7 +897,7 @@ single option, the row says so. Everything else is open. The tendency is the fac
 | D-6 | Public fork PRs (Linux and macOS) and who approves | (a) not self-hosted; (b) only after A38 approval in U; (c) all in U | open; the service never approves itself |
 | D-7 | pf residual risk | (a) accept for CI, per class (U, B, T, P); (b) `hostLoopback: false` + interface/VLAN boundary before start; (c) own physical network in addition. Includes: how the interface boundary is built | (b); for class U recommended as gate U (§9.3) |
 | D-8 | Egress: rule on outgoing addresses and destination list (only free Cloudflare plans, [E-10](../KONZEPT.md#e-10); §9.4) | (a) adopt E-10's rule on outgoing addresses; (b) own CI rule – must work without a paid plan; (c) domain allow-list through a proxy – must work without a paid plan | open |
-| D-9 | GitHub plan | (a) Team for runner groups; (b) Free with repository runners – cannot meet §5 within one repository: then a repository may carry only one class, otherwise (b) is not viable; (c) Enterprise | open |
+| D-9 | GitHub plan | (a) Team for runner groups; (b) Free with repository runners – cannot meet §5 within one repository: then a repository may carry only one class, otherwise (b) is not viable; (c) Enterprise; in each case: does the plan offer environments bound to protected branches for the repositories with U jobs (§9.6)? | open |
 | D-10 | CPU and runtime invariant | (a) no overcommit; (b) measured quota per class; does the 20 % invariant apply to VM pools? Which CPU ratio holds for agent VMs on the same device? | open, after M-5/M-9/M-19 |
 | D-11 | Heavy jobs | (a) larger profile; (b) split jobs; (c) keep the current large host – excluded as a machine outside the platform (E-34), and as an own CI device inside it (E-35) | open between (a) and (b) |
 | D-12 | Model in KONZEPT | (a) infrastructure workload without task; (b) technical organisation/workgroup; (c) own product next to the platform – **excluded by [E-34](../KONZEPT.md#e-34)**; plus the CI-guest clarification of §7.3 and the job audit of §6.4 | open |
@@ -894,12 +908,12 @@ single option, the row says so. Everything else is open. The tendency is the fac
 | D-17 | RealUnit goldens | where they run today; whether they move into VMs | clarify first (§8.5) |
 | D-18 | Experimental Lima feature in production | yes, pinned with spike; no | depends on M-12, M-16 |
 | D-19 | macOS tool | Lima; Tart; Anka/Orka; GitHub-hosted; dedicated Mac without VM (excluded by E-34 as an own machine; deviates from A19, §8.6) | Lima, Tart as fallback (§8.6) |
-| D-20 | Hardening order ([E-25](../KONZEPT.md#e-25)) | order the hardening expressly: which of §9.3–§9.7 and of the separation per class of §5 (own runner group, scale set, VM pool and slot accounts per class) the client orders before which stage; includes the recommended gate U (§9.3) with its two build parts: order it, order parts of it, or not | order gate U before stage 3; proposed default: class U does not start before this decision |
+| D-20 | Hardening order ([E-25](../KONZEPT.md#e-25)) | order the hardening expressly: which of §9.3–§9.7 and of the separation per class of §5 (own runner group, scale set, VM pool and slot accounts per class) the client orders before which stage; includes the recommended gate U (§9.3) with its two build parts: order it, order parts of it, or not; includes the repository preconditions for class U (§9.6: secrets only in environments bound to protected branches, organisation secrets only where needed, `GITHUB_TOKEN` read-only by default) | order gate U before stage 3; proposed default: class U does not start before this decision, and not in a repository that misses the §9.6 preconditions |
 | D-21 | Legal review of the Apple licences | 2B(iii) for the installation type (DFU/IPSW), governing law, intra-group charging, Xcode in a guest | review on the original text before the macOS pilot |
 | D-22 | Shares of the pool (§6.6) | values of `MIN_SHARE`, `MAX_SHARE`, `HEADROOM_INTERACTIVE`, organisation and class shares, `LATENCY_BUDGET`, `POOL_FAILURE_RESERVE`; order between workload kinds; may CI demand stop idle agent VMs? how much Linux capacity may the pilot device give up for macOS VMs? | open, after M-19/M-20 |
 | D-23 | Where CI placement is decided | (a) each device offers only its own free capacity to GitHub; (b) one leading controller for all devices; (c) hub (metadata rule, D-3) | open, after M-8 |
 | D-24 | Class U at the same time as T/P on one device | (a) allowed with separate slot accounts; (b) never at the same time; (c) U only on some pool devices, which still carry agent VMs (a device for CI alone is excluded by [E-35](../KONZEPT.md#e-35)) | open |
-| D-25 | Which operator machines become pool devices, and when | machines with production services, the hub device, small machines, work devices: (a) all, in an order; (b) machines with another role stay outside as no runner machines | open; E-34 names the whole capacity |
+| D-25 | Which operator machines become pool devices, and when | machines with production services, the hub device, small machines: (a) all, in an order; (b) machines with another role stay outside as no runner machines; work devices are excluded by [E-32](../KONZEPT.md#e-32) and are no option | open; E-34 names the whole server capacity |
 | D-26 | Trust class model (§5) | (a) the five classes U, B, T, P, H of §5; (b) fewer classes; (c) another split | (a) (research 1 §4.2) |
 
 ## 14. Measurements before building
@@ -983,6 +997,7 @@ quotations are excerpts and are to be checked against the original before any le
 | GH-ACCESS | https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access |
 | GH-GROUPS | https://docs.github.com/en/actions/concepts/runners/runner-groups |
 | GH-SECURE | https://docs.github.com/en/actions/reference/security/secure-use |
+| GH-SECRETS | https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions (cited 2026-11-26: secrets and forks; "Workflow permissions" for the `GITHUB_TOKEN` default) |
 | GH-CACHE | https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching |
 | GH-FORK-APPROVE | https://docs.github.com/en/actions/how-tos/manage-workflow-runs/approve-runs-from-forks |
 | GH-BILLING | https://docs.github.com/en/billing/concepts/product-billing/github-actions |
