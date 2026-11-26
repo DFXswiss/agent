@@ -275,7 +275,7 @@ row adds `R-` rows with their tests and replaces the row here.
 
 Younger than the concept; where they contradict it, the rule holds. Wording, date and reference in
 [`KONZEPT.md`](../KONZEPT.md#teil-b--regeln-und-entscheide-des-auftraggebers); a new rule is entered there first. The
-interpretations A1–A19 (part C) have no rows of their own; the rows above and below cite them where they apply.
+interpretations A1–A20 (part C) have no rows of their own; the rows above and below cite them where they apply.
 
 | ID | Ref | Rule (short) | Status | Where |
 |---|---|---|---|---|
@@ -317,6 +317,8 @@ interpretations A1–A19 (part C) have no rows of their own; the rows above and 
 | E-30 | [E-30](../KONZEPT.md#e-30) | All self-hosted GitHub Actions runs of the DFX organisations run through agent.dfx.swiss, each job in a fresh VM deleted afterwards; jobs that change the device itself are a stated exception. | offen | concept [16-ci-runners.md](16-ci-runners.md), decisions open (§13 there) |
 | E-30 | [E-30](../KONZEPT.md#e-30) | All self-hosted GitHub Actions runs of the DFX organisations run through agent.dfx.swiss. | offen | concept [16-ci-runners.md](16-ci-runners.md), decisions open (§13 there); note: one VM per job and the exception of host-bound jobs are interpretation [A19](../KONZEPT.md#a-19) |
 | E-31 | [E-31](../KONZEPT.md#e-31) | One shared capacity: no own machines for self-hosted runners next to the platform; the operator's whole computing capacity belongs to agent.dfx.swiss, and a runner is obtained on request as a VM from the same pool as the work VMs. | offen | concept [16-ci-runners.md](16-ci-runners.md) (§6.6 there) |
+| E-30 | [E-30](../KONZEPT.md#e-30) | All self-hosted GitHub Actions runs of the DFX organisations run through agent.dfx.swiss. | offen | concept [16-ci-runners.md](16-ci-runners.md), decisions open (§13 there); note: one VM per job is interpretation [A19](../KONZEPT.md#a-19); host-bound jobs are not covered by it and are an open deviation (decision D-1 there, [KONZEPT part D](../KONZEPT.md#d-offen)) |
+| E-31 | [E-31](../KONZEPT.md#e-31) | One shared capacity: no own machines for self-hosted runners next to the platform; the operator's whole computing capacity belongs to agent.dfx.swiss, and a runner is obtained through the platform. | offen | concept [16-ci-runners.md](16-ci-runners.md) (§6.6 there); note: a runner as a VM from the same pool as the work VMs is interpretation [A20](../KONZEPT.md#a-20); host-bound jobs: decision D-1 there, [KONZEPT part D](../KONZEPT.md#d-offen) |
 
 ## R-P Assignment guardrails (`PROJECT.md`)
 

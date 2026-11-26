@@ -368,6 +368,8 @@ bearing on keys).
 | [E-33](KONZEPT.md#e-33) | Platform operations in parallel, each in its own isolated environment; a mailbox credential belongs to its subscription (KOR-73 decides its keys). | none | – |
 | [E-30](KONZEPT.md#e-30) | Self-hosted CI runs through the platform (concept): CI VMs hold no scope key and no device key; the CI app key never lies in a VM or at the hub. | none | – |
 | [E-31](KONZEPT.md#e-31) | One shared capacity: a device holds the keys of the workgroups it serves, whatever else runs on it. | none | – |
+| [E-30](KONZEPT.md#e-30) | Self-hosted CI runs through the platform (concept): CI VMs (concept) hold no scope key and no device key; placement of the CI app key is open (spec/16 D-4; recommendation: never in a VM or at the hub). | decision needed | KM-37 |
+| [E-31](KONZEPT.md#e-31) | One shared capacity: the rule itself names no key; with [A20](KONZEPT.md#a-20) a pool device holds the keys of the workgroups it serves while CI VMs run on it (data access of the device, as for idea 35). | decision needed | [§6](#6-where-plaintext-lies) |
 | [A1](KONZEPT.md#a-1) | Subagents have the parent's rights and no keys. | carried | [§1](#1-principals) |
 | [A2](KONZEPT.md#a-2) | Conflict fix by merge commit. | none | – |
 | [A3](KONZEPT.md#a-3) | The hardening is built: the agent has its own identity as a sub-principal and is rotated out on revocation (ADR-082); the rekey of the user's identity for copies made before is a decision of the owner. | decision needed | KM-28, KM-30, KM-39 |
@@ -386,7 +388,8 @@ bearing on keys).
 | [A16](KONZEPT.md#a-16) | Workflow files are not blocked. | none | – |
 | [A17](KONZEPT.md#a-17) | Protected branches. | none | – |
 | [A18](KONZEPT.md#a-18) | Blocked attempts are logged. | none | – |
-| [A19](KONZEPT.md#a-19) | One throw-away VM per CI job. | none | – |
+| [A19](KONZEPT.md#a-19) | One throw-away VM per CI job; no bearing of its own on keys (the keys around CI VMs: row E-30). | none | – |
+| [A20](KONZEPT.md#a-20) | A runner is a VM from the same pool as the work VMs: the pool device holds the keys of the workgroups it serves while CI VMs run on it. | decision needed | [§6](#6-where-plaintext-lies) |
 
 ## 11. Gaps and the requirements on the follow-up packages
 

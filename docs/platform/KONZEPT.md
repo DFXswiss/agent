@@ -20,7 +20,7 @@ Punkt), `#e-01` (Regel E-01), `#a-1` (Auslegung A1). Anker werden nie umbenannt 
 |---|---|
 | [A – Das Konzept](#teil-a--das-konzept) | Vollständige Konzeptfassung mit 47 Ideen, im Wortlaut |
 | [B – Regeln und Entscheide](#teil-b--regeln-und-entscheide-des-auftraggebers) | Regeln E-01 … mit Datum, Wortlaut, Bezug und Umsetzung |
-| [C – Auslegungen](#teil-c--auslegungen-bis-der-auftraggeber-anders-entscheidet) | A1–A19 |
+| [C – Auslegungen](#teil-c--auslegungen-bis-der-auftraggeber-anders-entscheidet) | A1–A20 |
 | [D – Pflege](#teil-d--pflege) | Wie eine neue Vorgabe eingetragen wird; offene Abweichungen |
 
 ## Teil A – Das Konzept
@@ -796,9 +796,12 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   als Auftrag zum Konzept: „was muss beachtet werden damit agent.dfx.swiss github runner dienstleistungen erbringen
   kann? dann das gesamte Konzept vollständig dokumentieren inkl allem, auch die Lösung für MacOs RUnner inkl der
   Abklärungen von Lizenzen und technischer Machbarkeit, anforderungen an Hardware und co. Das volle SetUp“
-- **Bezug:** ergänzt [Idee 27](#k-idee-27) (Wegwerf-VM je Testlauf, [A9](#a-9)); die VM je Job und die
-  gerätegebundenen Läufe legt [A19](#a-19) aus. In Spannung, Auflösung offen
-  ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)): [Grundprinzip](#k-gp),
+- **Bezug:** ergänzt [Idee 27](#k-idee-27) (Wegwerf-VM je Testlauf, [A9](#a-9)); die VM je Job legt [A19](#a-19)
+  aus. In Spannung zu dieser Regel stehen die gerätegebundenen Läufe (Deploy), die heute auf einem Runner ausserhalb
+  der Plattform laufen; ob sie das dürfen, ist offen (Entscheid D-1 in
+  [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions), [offene Abweichungen](#d-offen)). Ebenfalls
+  in Spannung, Auflösung offen ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)):
+  [Grundprinzip](#k-gp),
   [§2 Punkt 5](#k-2-b5) und [§16 Punkt 2](#k-16-b2) (ein CI-Job ist keine Nutzeranfrage und gehört zu keiner
   Workgroup); [§3 Punkt 5](#k-3-b5) (VM je Workgroup, nach [A19](#a-19) je Job); [§5](#k-5) (der Hub sieht keine
   Inhalte);
@@ -814,17 +817,19 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 
 - **Datum:** 2026-11-25
 - **Regel:** Es gibt keine eigenen Rechner für selbst gehostete Runner neben der Plattform; die gesamte
-  Rechenkapazität des Betreibers gehört agent.dfx.swiss, und ein Runner wird bei Bedarf als VM über die Plattform
-  bezogen, aus demselben Pool wie die Arbeits-VMs.
+  Rechenkapazität des Betreibers gehört agent.dfx.swiss, und ein Runner wird bei Bedarf über die Plattform bezogen.
 - **Wortlaut:** „heute haben wir server für agent und server für self hostet runner, das ist inneffizient, ich will
   alle meine server kapazitäten an agent geben und wenn ich einen self hostet runner brauche dann diesen via agent
   beziehen“
-- **Bezug:** ergänzt [E-30](#e-30) und [§3 Punkt 3](#k-3-b3) (DFX stellt eigene Ausführungsserver); ersetzt die
+- **Bezug:** dass der Runner eine VM aus demselben Pool wie die Arbeits-VMs ist, legt [A20](#a-20) aus. Ergänzt
+  [E-30](#e-30) und [§3 Punkt 3](#k-3-b3) (DFX stellt eigene Ausführungsserver); ersetzt die
   Aufteilung der Ausführungsserver in [§3 Punkt 8](#k-3-b8) (initiale Serverzuordnung: ein Server für die
   DFX-Cloud-Sessions), soweit sie Kapazität ausserhalb der Plattform voraussetzt; der Hub-Teil bleibt. Betrifft
   [Idee 38](#k-idee-38) (Gerätewahl nach freier Kapazität), [§7 Punkt 6](#k-7-b6) (kapazitätsbasierte Verteilung)
   und [E-02](#e-02) (klare Meldung bei erreichter Kapazität). In Spannung zu [E-25](#e-25) (Härtung nur auf
-  Bestellung), Auflösung offen ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)).
+  Bestellung), Auflösung offen ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)). In Spannung
+  zu dieser Regel stehen auch die gerätegebundenen Läufe (Deploy) auf einem Runner ausserhalb der Plattform; Entscheid
+  D-1 offen ([offene Abweichungen](#d-offen)).
 - **Umsetzung:** offen – [spec/16-ci-runners.md](spec/16-ci-runners.md).
 
 <a id="e-32"></a>
@@ -889,6 +894,8 @@ KOR-72 vom 2026-11-26. Sie gelten für alle Arbeiten, bis er
 anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Aussage gilt, [E-01](#e-01)).
 Auftraggeber am selben Abend mitgeteilt), A8–A18 aus dem Restplan vom 2026-11-24, A19 aus dem CI-Konzept vom
 2026-11-25. Sie gelten für alle Arbeiten, bis er anders entscheidet; dahinter steht die Rangfolge (die jüngere
+Auftraggeber am selben Abend mitgeteilt), A8–A18 aus dem Restplan vom 2026-11-24, A19 und A20 aus dem CI-Konzept
+vom 2026-11-25. Sie gelten für alle Arbeiten, bis er anders entscheidet; dahinter steht die Rangfolge (die jüngere
 ausdrückliche Aussage gilt, [E-01](#e-01)).
 
 <a id="a-1"></a>
@@ -971,9 +978,17 @@ ausdrückliche Aussage gilt, [E-01](#e-01)).
   [ADR-098](adr/098-working-modes.md).
 - **A19 – Eine VM je CI-Job:** Jeder selbst gehostete GitHub-Actions-Job ([E-30](#e-30)) läuft in einer frischen VM,
   die danach gelöscht wird – Empfehlung der Recherche vom 2026-11-25 und GitHubs Empfehlung für Einmal-Runner, nicht
-  Wortlaut des Auftraggebers. Ausgenommen sind Läufe, die das Gerät selbst ändern oder prüfen: Eine VM ohne Freigaben
-  sieht das Gerät nicht, und ein Rückweg aus der VM auf das Gerät höbe die Trennung auf
-  ([spec/16-ci-runners.md §1](spec/16-ci-runners.md#1-purpose-and-scope)).
+  Wortlaut des Auftraggebers. Diese Auslegung betrifft nur „eine VM je Job“. Läufe, die das Gerät selbst ändern oder
+  prüfen (gerätegebundene Läufe), erfasst sie nicht: Eine VM ohne Freigaben sieht das Gerät nicht, und ein Rückweg aus
+  der VM auf das Gerät höbe die Trennung auf
+  ([spec/16-ci-runners.md §1](spec/16-ci-runners.md#1-purpose-and-scope)). Ob sie ausserhalb der Plattform laufen
+  dürfen, ist offen (Entscheid D-1, [offene Abweichungen](#d-offen)).
+<a id="a-20"></a>
+- **A20 – Runner als VM aus dem gemeinsamen Pool:** Ein über die Plattform bezogener Runner ([E-31](#e-31)) ist eine
+  VM, und sie läuft auf denselben Geräten, aus demselben Pool wie die Arbeits-VMs – nicht Wortlaut des Auftraggebers.
+  Begründung: folgt aus [A19](#a-19) (eine VM je Job) und dem Wortlaut „alle meine server kapazitäten an agent“, der
+  keine Kapazität für einen getrennten Runner-Pool lässt
+  ([spec/16-ci-runners.md §6.6](spec/16-ci-runners.md#66-shared-capacity)).
 
 ## Teil D – Pflege
 
@@ -1020,7 +1035,8 @@ Stand 2026-11-26. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
 | [E-30](#e-30), [A19](#a-19) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Entscheide des Auftraggebers ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)), danach Bau |
-| [E-31](#e-31) Gemeinsame Kapazität | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | wie [E-30](#e-30) ([spec/16-ci-runners.md §6.6](spec/16-ci-runners.md#66-shared-capacity)) |
+| [E-31](#e-31), [A20](#a-20) Gemeinsame Kapazität | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | wie [E-30](#e-30) ([spec/16-ci-runners.md §6.6](spec/16-ci-runners.md#66-shared-capacity)) |
+| [E-30](#e-30), [E-31](#e-31) gerätegebundene Läufe | Gerätegebundene Läufe (Deploy) laufen heute auf einem Runner ausserhalb der Plattform; das widerspricht E-30 und E-31, und [A19](#a-19) erfasst sie nicht | Entscheid D-1 des Auftraggebers ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)) |
 | [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |

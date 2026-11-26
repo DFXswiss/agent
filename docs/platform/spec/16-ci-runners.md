@@ -3,8 +3,10 @@
 Rules [E-30](../KONZEPT.md#e-30), [E-31](../KONZEPT.md#e-31). Status: concept – not built; open decisions in §13.
 
 This document is the complete concept for running the self-hosted GitHub Actions jobs of the DFX organisations
-through agent.dfx.swiss, on the same devices as its work VMs ([E-31](../KONZEPT.md#e-31)). Beyond these two rules and
-the interpretation [A19](../KONZEPT.md#a-19) (one VM per job) it decides nothing: every choice is listed in §13 with its options and the factual tendency of the research; every
+through agent.dfx.swiss, on the same devices as its work VMs ([E-31](../KONZEPT.md#e-31) with
+[A20](../KONZEPT.md#a-20)). Beyond these two rules and the interpretations [A19](../KONZEPT.md#a-19) (one VM per job)
+and A20 it decides nothing: recommendations (such as the trust classes of §5) are marked as such, and every choice is
+listed in §13 with its options and the factual tendency of the research; every
 number that is not yet known is listed in §14. Sources are given in square brackets and
 resolved in §16; repository paths are relative to `DFXswiss/agent`. "[OPS]" stands for the operator's infrastructure
 documentation (an internal repository; the concrete assignment of devices, labels and repositories is kept there and
@@ -15,8 +17,8 @@ not repeated here).
 ### 1.1 What "all self-hosted runs" means
 - Every job of a repository in a DFX organisation whose `runs-on` today names a self-hosted label runs, after the
   migration (§12), on a runner that agent.dfx.swiss starts for exactly this one job in a fresh VM and deletes
-  afterwards ([E-30](../KONZEPT.md#e-30), VM per job: [A19](../KONZEPT.md#a-19)). The host-bound jobs of §1.3 are the
-  exception.
+  afterwards ([E-30](../KONZEPT.md#e-30), VM per job: [A19](../KONZEPT.md#a-19)). The host-bound jobs of §1.3 are
+  not covered by A19: open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)).
 - Organisations in scope: the DFX organisations on GitHub, each with its own installation of the CI app (§4). The
   exact list of organisations, repositories and labels is the inventory of stage 0 (§12) and is kept in [OPS].
 - Public repositories with self-hosted CI according to [OPS] include `DFXswiss/backend` and `DFXswiss/realunit-app`;
@@ -32,7 +34,7 @@ not repeated here).
 | Linux, build | container image builds and publishing | Linux CI VM, trust class T (§5) | Needs Docker/Buildx and short-lived registry credentials only |
 | macOS | iOS/macOS app builds, iOS simulator, golden (pixel) tests, script tests that need real macOS tools | macOS CI VM (§8), at most 2 per device | Needs Xcode or macOS/BSD tools |
 | Privileged | infrastructure plans and applies, tunnel token handling | Linux CI VM, class P, last (§12) | Not host-bound in principle: state and provider credentials need a place and a credential concept first (§12 stage 7; current state: [OPS]) |
-| Host-bound | deploy jobs in which a device sets itself up, drift checks of a device, reconcile/ensure jobs against one device, key generation and connector installation on a device | **No VM** – minimal deploy runner per device or signed pull deployment (§12) | See 1.3 |
+| Host-bound | deploy jobs in which a device sets itself up, drift checks of a device, reconcile/ensure jobs against one device, key generation and connector installation on a device | **No VM** – open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)); options: minimal deploy runner per device, signed pull deployment or another way (§13 D-1) | See 1.3 |
 
 ### 1.3 Why host-bound jobs cannot run in a VM
 - A deploy job of this kind installs operator keys and user-session settings on the device itself [OPS]. A CI VM has
@@ -42,10 +44,11 @@ not repeated here).
   [00 §3](00-overview.md#3-trust-boundaries)).
 - The operator's model "every device deploys itself" is documented with reasons; an SSH fan-out from a central host
   was rejected [OPS].
-- Consequence: these jobs stay on a minimal deploy runner per device (class H, under the requirements of §5) or move to
-  a signed pull deployment without an Actions runner (§13 D-1).
-- Note: they are the only exception ([A19](../KONZEPT.md#a-19)), and they need no capacity in the sense of [E-31](../KONZEPT.md#e-31). Either way
-  a device only changes itself; no machine is kept for them, and they take no VM from the pool.
+- Consequence: these jobs cannot move into a CI VM. Today they run on a deploy runner outside the platform, which
+  contradicts [E-30](../KONZEPT.md#e-30) and [E-31](../KONZEPT.md#e-31); [A19](../KONZEPT.md#a-19) does not cover
+  them. Open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)): the options include a minimal deploy
+  runner per device (class H, under the requirements of §5) as an exception and a signed pull deployment without an
+  Actions runner (§13 D-1).
 
 ### 1.4 Linux and macOS share
 - Most jobs are Linux jobs. The macOS share is probably small: most script tests inspected use stubs; only a few need
@@ -184,19 +187,23 @@ hub). Decision D-2 (§13).
 
 ## 5. Trust classes
 
-Labels are chosen by the workflow author and are therefore **no security boundary**. Every class has its own runner
+**Recommendation, not decided** (research 1 §4.2; class model: decision D-26, separation per class: D-20). Labels are
+chosen by the workflow author and are therefore **no security boundary**. Every class has its own runner
 group (with repository and workflow policies), its own scale set and its own VM pool; classes share no labels and no
 writable cache. "VM pool" means separate warm VMs and slot accounts per class; the devices below them are the one
-shared pool of [E-31](../KONZEPT.md#e-31) (§6.6).
+shared pool of [E-31](../KONZEPT.md#e-31) with [A20](../KONZEPT.md#a-20) (§6.6).
 
 | Class | Examples | Runner group | Secrets | Egress | Cache | Pool |
 |---|---|---|---|---|---|---|
 | **U** untrusted | every job that executes code not yet on a protected branch, public or private: fork PRs, same-repository PR tests, pushes to unprotected branches | own group, only the repositories that need it | none | strictest (decision D-8) | read-only (image pre-warm, read-only proxy); never writes a shared cache | own; recommended only on a pool device that has passed gate U (§9.3; open, D-7, D-20); never a slot account of another class or workload kind; whether U may run at the same time as T/P on one device: D-24 |
-| **B** bot-trusted | the A38 guard, PR base hygiene checks | own group, base-branch workflows only | only the token the guard needs | GitHub API | none | own |
+| **B** bot-trusted | the A38 guard, PR base hygiene checks | own group, base-branch workflows only | only the token the guard needs | runner minimum set, PyPI and setup-python downloads (or both pre-warmed in the image) | none | own |
 | **T** trusted build | image builds on protected branches; tests on pushes to and scheduled runs of a protected branch | own group, protected triggers only | builds: short-lived registry credentials, environment protection where the plan offers it; tests: none | registries, package mirrors | writable layer cache per class and repository | own |
-| **P** privileged | infrastructure plans and applies from protected branches, tunnel tokens | own group or host, migrated last | provider credentials after a credential concept (§12 stage 7) | provider APIs only | none | own |
+| **P** privileged | infrastructure plans and applies from protected branches, tunnel tokens | own group, protected workflow refs only; migrated last (§12 stage 7) | provider credentials after a credential concept (§12 stage 7) | runner minimum set plus provider APIs only | none | own |
 | **H** host | deploy, drift, reconcile on a device | required: own group, only the one repository and its protected workflow refs, no PR trigger | only what the device's own jobs need | only what the device's own jobs need | – | **no VM** (§1.3) |
 
+- Egress is in addition to the runner minimum set of §9.4; all egress values are subject to D-8. Class B: the guard
+  installs Python with `actions/setup-python` and PyYAML with pip (`.github/actions/a38-guard/action.yml:51,64`).
+- Class P: until stage 7 (§12) these jobs stay on the manual way of that stage, never on the host of a pool device.
 - Class H on a pool device: the deploy runner is persistent and runs on the host, and neither a label nor a changed
   `runs-on` in a PR may reach it; hence the own group. If D-9 gives no groups, the recommendation for pool devices is
   the signed pull deployment (D-1 (c)) instead of a deploy runner. Both stay open (D-1, D-9).
@@ -211,7 +218,7 @@ shared pool of [E-31](../KONZEPT.md#e-31) (§6.6).
 | Component | Runs on | Task |
 |---|---|---|
 | CI controller (listener) | Pool device, own macOS account (**recommendation**, decision D-3) | One scale-set session per organisation and class; long poll to GitHub, outbound only; asks the VM manager for a VM per assigned job; requests the JIT configuration |
-| Key signer | Pool device or a separate signer | Holds the CI app key; signs app JWTs for the controller; the key never enters a VM or the hub |
+| Key signer | Pool device or a separate signer | Holds the CI app key; signs app JWTs for the controller; recommendation: the key never enters a VM or the hub (open, D-4) |
 | VM manager | Pool device (runner area of `agent-runner`, reusing the work VM machinery) | Pool, APFS clone, slot account, pf anchor, start, handover, teardown, sweep (`13-work-vm.md` §6, §7) |
 | Admission | Pool device, one per device for all workload kinds | CPU, RAM, disk and macOS VM budget of the device (§6.6); no VM of any kind starts without it |
 | CI VM | Pool device | Linux (`ci-linux-arm64`) or macOS CI image; GitHub `run.sh` with the JIT configuration; one job |
@@ -502,8 +509,8 @@ Is internal charging between group companies already a service?
 | USB | Pass-through in Apple's macOS 27 sample [APPLE-RUN-MACOS]; off for CI |
 | Start without login | Tart: since macOS 15 an unlocked login keychain is needed [TART-FAQ]. Whether this also affects Lima as a LaunchDaemon: **To be measured** (M-12) – open point |
 
-Care: update the host before the guest; rebuild the image on every macOS and Xcode release, at least monthly, with
-digest and fallback version (recommendation, research 2 §3).
+Care: update the host before the guest; rebuild the image on every macOS, Xcode and runner security release, and at
+the latest every two to three weeks (§3.3), with digest and fallback version (recommendation, research 2 §3).
 
 ### 8.4 Enforcement of the licence limit
 - Hard counter: at most **2 macOS VMs per pool device**, counting **every** macOS VM – CI jobs, image builds and
@@ -583,7 +590,7 @@ The recommendation flips (research 2 §7):
 | Approval is no test result (`:156,182`) | Monitoring separates "approved" from "green" |
 | Head/base are checked again before the POST; a residual race remains (`:184`) | VM isolation must hold even after a wrong approval |
 | Same-repository PRs get no fork approval (`:159`) | Approval is no general protection |
-| Workflow changes are policy migrations (`:124,130`) | Every label change needs maintainer approval where A38 is enforced |
+| Workflow changes are policy migrations (`:124,130`) | Label changes need maintainer approval, except a guard-docs change set that touches only `.github/workflows/a38-guard.yml` and/or markdown (`docs/a38-guard.md:124`); the pool B switch therefore needs its own review |
 
 ### 9.3 Guest → host isolation
 - Present: slot account per VM, pf anchor fail-closed, no mounts and no forwards (`13-work-vm.md` §6.1, §6.2, §6.5).
@@ -619,7 +626,7 @@ The recommendation flips (research 2 §7):
     and the work image are separate images; a clone shares blocks only with its own read-only image.
   - Side channels (shared CPU caches, memory bandwidth, timing of disk and network) remain between VMs of one host. No
     countermeasure was researched; the effect is **unsure** and the risk is listed in §15. D-24 covers co-residency
-    of classes, not of workload kinds, which E-31 sets.
+    of classes, not of workload kinds, which E-31 with A20 sets.
   - Exhaustion: CI has quotas for CPU, RAM, disk and slot accounts (§6.6), its own APFS volume with quota, a wall-clock
     limit per job, and a limit on egress. Work VMs have no bandwidth limit today (`13-work-vm.md` §6.2), so one is
     needed for CI (`CI_EGRESS_LIMIT`, to be measured, M-7).
@@ -632,8 +639,10 @@ The recommendation flips (research 2 §7):
 - Minimum set for runners: GitHub API, `*.actions.githubusercontent.com`, `codeload`, results and blob storage,
   release and package domains [GH-RUNNER-REF]; GitHub requires at least 70 kbit/s and port 443 outbound
   [GH-RUNNER-REF]. Pure IP lists do not fit these wildcards (conclusion of research 1).
-- Whether [E-10](../KONZEPT.md#e-10) (shared provider addresses only, free Cloudflare plans only) applies to CI VMs,
-  or an own CI rule, or a domain allow-list through a proxy: decision D-8. Volume and IP allow-lists of target services
+- Only free Cloudflare plans come into question: [E-10](../KONZEPT.md#e-10) excludes paid plans also for other
+  purposes, so CI VMs too. Open is only whether E-10's rule on outgoing addresses (shared provider addresses only)
+  applies to CI VMs, or an own CI rule, or a domain allow-list through a proxy, and the destination list: decision
+  D-8. Volume and IP allow-lists of target services
   are to be checked; the tunnel MTU is 1300 (`13-work-vm.md` §6.3). **To be measured:** M-7.
 
 ### 9.5 Caches
@@ -657,8 +666,8 @@ Today there is no dependency cache across runs (`13-work-vm.md` §12.2). Compari
   short-lived credentials. Signing keys never in PR VMs; signed releases on a separate way.
 - The token that creates JIT runners needs organisation admin for runners [GH-REST]; it stays with the controller /
   key signer; only `encoded_jit_config` enters the VM.
-- The app key never lies in a VM or at the hub; recommendation: a separate account, better an external signer (§6.1,
-  D-4).
+- Recommendation (open, D-4): the app key never lies in a VM or at the hub; a separate account, better an external
+  signer (§6.1).
 
 ### 9.7 Supply chain
 - Manipulated runner, apt or image packages: SHA pins, SBOM, signature, staged rollout (D-15).
@@ -694,7 +703,7 @@ named by role. The concrete assignment to the fleet is kept in the operator's in
 | RAM | Host reserve (default 32 GiB, [ADR-009](../adr/009-vm-start-under-ten-seconds.md)) plus the agent VMs plus the CI profile sizes of §7.2; RAM figures are no CI capacity: the RAM slots are for both workloads together (budgets per device: [OPS]) |
 | Disk | Golden, work and CI images with two generations each, warm-pool clones of both workloads, Docker layers per running VM; 50 GiB reserve per pool entry and disk admission against a volume quota (`13-work-vm.md` §7); one APFS volume with quota per workload kind (`13-work-vm.md` §6.1) |
 | Isolation | Work boundary installed (`13-work-vm.md` §6), CI slot accounts apart from the work slots; for class U the interface boundary of gate U is recommended (§9.3; open, D-7, D-20) |
-| Enrollment | Enrolled and certified as execution device ([05 §2.1](05-runner.md#21-enrollment), [device certification](../runbooks/device-certification.md)); no other runner service on it except the deploy runner of §1.3, and that only in the group of class H (§5); without groups pull deployment is recommended (D-1 (c), D-9) |
+| Enrollment | Enrolled and certified as execution device ([05 §2.1](05-runner.md#21-enrollment), [device certification](../runbooks/device-certification.md)); no other runner service on it except, if D-1 allows one, the deploy runner of §1.3, and that only in the group of class H (§5); without groups pull deployment is recommended (D-1 (c), D-9) |
 | Network | Egress path of §9.4; parallel image pulls through the tunnel (M-7) |
 | Continuous operation | Restart without login (LaunchDaemon), no sleep (as for runner devices) |
 | Nested virtualization | Not needed: Docker runs natively in the Linux guest. If ever needed: vz on M3 or newer with macOS 15 or newer, off by default [LIMA-TPL-2.3]; **Assumption:** the current Apple-silicon generation of the fleet meets this |
@@ -802,7 +811,8 @@ Present: 15 s sampling and textfile (`05-runner.md` §14, sinks in `08-monitorin
 3. The runner policy, its exception markers and its exact-match contract test in the infrastructure repository
    [OPS].
 4. The canonical preflight of the image builds replaced [OPS].
-5. A38 inventory and policy approval where A38 is enforced (§9.2).
+5. A38 inventory and policy approval where A38 is enforced; a guard-docs change set (only
+   `.github/workflows/a38-guard.yml` and/or markdown) needs none, so the pool B switch needs its own review (§9.2).
 6. Runtime tables of the CI runner policy measured again [OPS].
 
 ### 12.2 Stages (research 1 §8)
@@ -832,7 +842,7 @@ for them:
 |---|---|---|
 | a | Inventory: which labels and host-bound jobs the machine serves; data on it (state, caches, credentials, §1.2) moved or declared dispensable | – |
 | b | Reduce its runner slots while stages 3 to 6 move its jobs; no label served by old and new runners except on purpose (§11.3) | Slots back |
-| c | Remove the runner services, their accounts, caches and credentials; only the deploy runner of §1.3 stays (or pull deployment, D-1). Check for class H (§5): its group admits only the one repository and the protected workflow refs, no workflow with a PR trigger, and a test PR with a changed `runs-on` does not reach it | Reinstall the services |
+| c | Remove the runner services, their accounts, caches and credentials; only the deploy runner of §1.3 stays until D-1 is decided (open deviation). Check for class H (§5): its group admits only the one repository and the protected workflow refs, no workflow with a PR trigger, and a test PR with a changed `runs-on` does not reach it | Reinstall the services |
 | d | Operating system to the required version (§10.2); the device is set up anew before it holds workgroup plaintext (recommendation); then work boundary and CI slot accounts installed | – |
 | e | Enroll and certify as execution device; first without workgroups, with class B/T load; then M-19 and M-20 with agent VMs of a test workgroup | Decertify |
 | f | Both workloads within the shares; class U as decided in D-7/D-20 (recommendation: only after gate U on this device) | Share of the kind to 0 |
@@ -845,24 +855,26 @@ host-bound. Machines with other roles: D-25.
 M-18, M-9), (5) pilot with one trusted DFX repository, (6) decision on Xcode and RealUnit (D-16, D-17).
 
 ### 12.5 Host-bound jobs
-Stay on a minimal deploy runner per device (class H, under the requirements of §5) or move to a signed pull deployment
-without an Actions runner (D-1). They need no capacity in the sense of [E-31](../KONZEPT.md#e-31) (§1.3).
+Open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)): today they run on a deploy runner outside the
+platform, against [E-30](../KONZEPT.md#e-30) and [E-31](../KONZEPT.md#e-31) (§1.3). The options – among them a minimal
+deploy runner per device (class H, under the requirements of §5) as an exception and a signed pull deployment without
+an Actions runner – are listed in D-1.
 
 ## 13. Open decisions
 
-**Decided is only D-5, by [E-31](../KONZEPT.md#e-31);** where E-31 excludes a single option, the row says so. Everything
+**Decided is only D-5, by [E-31](../KONZEPT.md#e-31) and [A20](../KONZEPT.md#a-20);** where E-31 excludes a single option, the row says so. Everything
 else is open. The tendency is the factual assessment of the research reports, not a choice.
 
 | ID | Decision | Options | Tendency (not decided) |
 |---|---|---|---|
-| D-1 | Scope | (a) Linux, not host-bound only; (b) plus macOS VMs; (c) host-bound jobs to signed pull deployment | (a) first, (b) after the spike; (c) separately, on pool devices recommended if D-9 gives no runner groups (§5) |
+| D-1 | Scope, and host-bound jobs (§1.3; not covered by [A19](../KONZEPT.md#a-19); open deviation, [KONZEPT part D](../KONZEPT.md#d-offen)) | (a) Linux, not host-bound only; (b) plus macOS VMs. Host-bound jobs: (c) signed pull deployment without an Actions runner; (d) minimal deploy runner per device outside the platform as an exception to [E-30](../KONZEPT.md#e-30) and [E-31](../KONZEPT.md#e-31), class H (§5); (e) another way the client names. Whether such jobs may run outside the platform at all is part of this decision | (a) first, (b) after the spike; host-bound jobs: no choice made, all of (c)–(e) open; on pool devices without runner groups (D-9) §5 recommends (c) rather than (d) |
 | D-2 | Trigger | (a) `actions/scaleset`; (b) webhook + JIT; (c) polling + JIT; (d) fixed JIT stock | (a) |
 | D-3 | Location of the controller | (a) inside `agent-runner`; (b) sidecar with its own account; (c) separate host (not as a machine outside the pool, E-31); (d) hub with KONZEPT change | (b) |
-| D-4 | Owner of the CI app and of the key that creates JIT runners | operator; separate service account; external signer | separate from the user app ([ADR-015](../adr/015-github-app-device-flow-rest-only.md)); key never in VM or hub |
-| D-5 | Hardware | Were: (a) share the productive runner device; (b) idle runner device as own CI host; (c) repurpose the current macOS CI hosts; (d) mixed | **Decided by [E-31](../KONZEPT.md#e-31) (2026-11-25): one shared pool.** The research's tendency to an own CI host (separation from workgroup plaintext) is rejected; reason: E-31. What follows for class U is open (D-7, D-20; recommendation: gate U, §9.3). Shares: D-22 |
+| D-4 | Owner of the CI app and of the key that creates JIT runners, and where that key lies | operator; separate service account; external signer | separate from the user app ([ADR-015](../adr/015-github-app-device-flow-rest-only.md)); key never in VM or hub |
+| D-5 | Hardware | Were: (a) share the productive runner device; (b) idle runner device as own CI host; (c) repurpose the current macOS CI hosts; (d) mixed | **Decided by [E-31](../KONZEPT.md#e-31) (2026-11-25) and [A20](../KONZEPT.md#a-20): one shared pool.** The research's tendency to an own CI host (separation from workgroup plaintext) is rejected; reason: E-31 and A20. What follows for class U is open (D-7, D-20; recommendation: gate U, §9.3). Shares: D-22 |
 | D-6 | Public fork PRs (Linux and macOS) and who approves | (a) not self-hosted; (b) only after A38 approval in U; (c) all in U | open; the service never approves itself |
 | D-7 | pf residual risk | (a) accept for CI, per class (U, B, T, P); (b) `hostLoopback: false` + interface/VLAN boundary before start; (c) own physical network in addition. Includes: how the interface boundary is built | (b); for class U recommended as gate U (§9.3) |
-| D-8 | Egress | (a) adopt [E-10](../KONZEPT.md#e-10); (b) own CI rule; (c) domain allow-list through a proxy | open |
+| D-8 | Egress: rule on outgoing addresses and destination list (only free Cloudflare plans, [E-10](../KONZEPT.md#e-10); §9.4) | (a) adopt E-10's rule on outgoing addresses; (b) own CI rule – must work without a paid plan; (c) domain allow-list through a proxy – must work without a paid plan | open |
 | D-9 | GitHub plan | (a) Team for runner groups; (b) Free with repository runners – cannot meet §5 within one repository: then a repository may carry only one class, otherwise (b) is not viable; (c) Enterprise | open |
 | D-10 | CPU and runtime invariant | (a) no overcommit; (b) measured quota per class; does the 20 % invariant apply to VM pools? Which CPU ratio holds for agent VMs on the same device? | open, after M-5/M-9/M-19 |
 | D-11 | Heavy jobs | (a) larger profile; (b) split jobs; (c) keep the current large host – excluded by E-31 as a machine outside the pool | open between (a) and (b) |
@@ -874,12 +886,13 @@ else is open. The tendency is the factual assessment of the research reports, no
 | D-17 | RealUnit goldens | where they run today; whether they move into VMs | clarify first (§8.5) |
 | D-18 | Experimental Lima feature in production | yes, pinned with spike; no | depends on M-12, M-16 |
 | D-19 | macOS tool | Lima; Tart; Anka/Orka; GitHub-hosted; dedicated Mac without VM (excluded by E-31 as an own machine; deviates from A19, §8.6) | Lima, Tart as fallback (§8.6) |
-| D-20 | Hardening order ([E-25](../KONZEPT.md#e-25)) | order the hardening expressly: which of §9.3–§9.7 the client orders before which stage; includes the recommended gate U (§9.3) with its two build parts: order it, order parts of it, or not | order gate U before stage 3; proposed default: class U does not start before this decision |
+| D-20 | Hardening order ([E-25](../KONZEPT.md#e-25)) | order the hardening expressly: which of §9.3–§9.7 and of the separation per class of §5 (own runner group, scale set, VM pool and slot accounts per class) the client orders before which stage; includes the recommended gate U (§9.3) with its two build parts: order it, order parts of it, or not | order gate U before stage 3; proposed default: class U does not start before this decision |
 | D-21 | Legal review of the Apple licences | 2B(iii) for the installation type (DFU/IPSW), governing law, intra-group charging, Xcode in a guest | review on the original text before the macOS pilot |
 | D-22 | Shares of the pool (§6.6) | values of `MIN_SHARE`, `MAX_SHARE`, `HEADROOM_INTERACTIVE`, organisation and class shares, `LATENCY_BUDGET`, `POOL_FAILURE_RESERVE`; order between workload kinds; may CI demand stop idle agent VMs? how much Linux capacity may the pilot device give up for macOS VMs? | open, after M-19/M-20 |
 | D-23 | Where CI placement is decided | (a) each device offers only its own free capacity to GitHub; (b) one leading controller for all devices; (c) hub (metadata rule, D-3) | open, after M-8 |
 | D-24 | Class U at the same time as T/P on one device | (a) allowed with separate slot accounts; (b) never at the same time; (c) U only on some pool devices, which still carry agent VMs | open |
 | D-25 | Which operator machines become pool devices, and when | machines with production services, the hub device, small machines, work devices: (a) all, in an order; (b) machines with another role stay outside as no runner machines | open; E-31 names the whole capacity |
+| D-26 | Trust class model (§5) | (a) the five classes U, B, T, P, H of §5; (b) fewer classes; (c) another split | (a) (research 1 §4.2) |
 
 ## 14. Measurements before building
 
@@ -1027,8 +1040,8 @@ quotations are excerpts and are to be checked against the original before any le
   [ADR-062](../adr/062-prepaid-credit-and-usage-billing.md).
 - Decisions and checks: [HOT-20](../decisions/HOT-20.md), [KOR-59](../decisions/KOR-59.md),
   [own-device manual check](../manual-checks/own-device.md), [M0 measurements](../measurements/M0.md).
-- Outside `docs/platform/`: `docs/a38-guard.md`, `images/workvm.yaml`, `images/workvm/provision.sh`,
-  `.github/workflows/platform-runner.yml`, `.github/workflows/a38-guard.yml`, `.github/a38.json`.
+- Outside `docs/platform/`: `docs/a38-guard.md`, `.github/actions/a38-guard/action.yml`, `images/workvm.yaml`,
+  `images/workvm/provision.sh`, `.github/workflows/platform-runner.yml`, `.github/workflows/a38-guard.yml`, `.github/a38.json`.
 
 ### 16.5 Operator documentation
 [OPS]: the operator's internal infrastructure repository (runner policy, CI runner policy, fleet inventory, host
