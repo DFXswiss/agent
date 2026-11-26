@@ -605,7 +605,16 @@ in time is `messages: []` with `timed_out: true`, not a failure. Do not poll: on
 for a sign-in mail and read its link:
 
 ```json
-{"type": "mail.find", "params": {"mailbox": "signup", "from": "noreply@example.com", "subject": "sign in", "wait_seconds": 300, "body": true}}
+{
+  "type": "mail.find",
+  "params": {
+    "mailbox": "signup",
+    "from": "noreply@example.com",
+    "subject": "sign in",
+    "wait_seconds": 300,
+    "body": true
+  }
+}
 ```
 
 The answer is `{mailbox, messages: [{id, folder, from, to, subject, date, size, text, links}], waited_seconds,

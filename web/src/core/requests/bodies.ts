@@ -192,14 +192,13 @@ export interface MailboxBody {
 const codePoints = (value: unknown, min: number, max: number): boolean =>
   typeof value === 'string' && [...value].length >= min && [...value].length <= max;
 
-/** The release of a mailbox: at most `MAX_MAILBOX_WGS` distinct workgroup IDs. */
+/** The release of a mailbox: at most `MAX_MAILBOX_WGS` workgroup IDs (the clients write each once). */
 export const isMailboxUse = (value: unknown): value is { readonly wgs: readonly string[] } =>
   isRecord(value) &&
   keysAre(value, ['wgs']) &&
   Array.isArray(value.wgs) &&
   value.wgs.length <= MAX_MAILBOX_WGS &&
-  value.wgs.every(isUuid7) &&
-  new Set(value.wgs).size === value.wgs.length;
+  value.wgs.every(isUuid7);
 
 /** The body exactly as `contracts/credentials/mailbox.json` allows it (`name`, `purpose`, `use` optional). */
 export const isMailboxBody = (value: unknown): value is MailboxBody =>

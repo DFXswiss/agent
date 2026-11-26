@@ -47,3 +47,7 @@ Package: sessions read mailboxes through the platform, without a VM and without 
 14. **Rights profiles** need no test of their own for `mail.find`: the type is in `classes.json` (class `read`) and
     the generic checks of ADR-094 in guest, runner and hub refuse every type outside a profile; the contract tests
     keep `classes.json`, the hub's copy and `INDEX.json` equal.
+15. **The single-mailbox forms from before** (`credentials set-mailbox` keeps name, purpose and release of the stored
+    primary mailbox; the web's older form "Postfach für den automatischen Login" writes only the five fields it knows):
+    a primary mailbox saved there loses its sealed release, so its sessions stop reading it until it is released again
+    in "Mailboxes" – it hides a mailbox, never lends one. Changing that form is left to KOR-73, which reworks it.

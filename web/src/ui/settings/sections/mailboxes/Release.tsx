@@ -33,8 +33,10 @@ export function WorkgroupName({ org, wg }: { readonly org: string | undefined; r
   const known = org ?? '';
   const verified = useStore((state) => orgEntry(state.orgs, known).log !== null, app.store);
   const directory = useDirectory(known, verified);
+  // a workgroup outside the user's organizations (left, or not read yet): only the start of its ID
+  if (org === undefined) return <>{wg.slice(0, 8)}</>;
   const workgroup = directory.workgroups.get(wg) ?? wg.slice(0, 8);
-  return <>{t('mailboxes.workgroup', { workgroup, org: directory.orgName ?? known.slice(0, 8) })}</>;
+  return <>{t('mailboxes.workgroup', { workgroup, org: directory.orgName ?? org.slice(0, 8) })}</>;
 }
 
 export function Release({ item, onSaved }: { readonly item: Mailbox; readonly onSaved: () => void }) {

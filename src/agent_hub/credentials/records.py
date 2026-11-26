@@ -17,7 +17,7 @@ only the metadata of 04-crypto.md section 7 (owner, kind, version, epoch). Every
    another record is `409 id_conflict`.
 
 **GitHub identities (ADR-078) and subscriptions (ADR-090).** An owner may hold up to `MAX_RECORDS[kind]` records of a
-kind in `MULTI_KINDS` (`github`, and for users `claude_subscription` and `mailbox`, ADR-099); each other kind stays one record per owner. The
+kind in `MULTI_KINDS` (`github`; users: `claude_subscription`, `mailbox`); other kinds are one record per owner. The
 owner is a user (`owner_kind = user`, sealed under the user's `CK`) or an organization (`org`, a company record; never
 primary). A company record is sealed under the **org credential key** (the `cred` scope of the org, KM-35), whose only
 readers are the org's devices assigned to a workgroup: the admin who writes it creates the next epoch with every write
@@ -31,7 +31,7 @@ promoted). `put_identity` / `delete_identity` address one record of a kind in `M
 `github` record) (`agent_hub.github`, `agent_hub.subscriptions`): a new user `github` record becomes primary only when
 the user has no primary record, a new `claude_subscription` record never (ADR-090 section 1: measure only until its
 owner switches it on, and no endpoint moves its mark); more than `MAX_RECORDS[kind]` records of one owner are
-`size_exceeded`.
+`size_exceeded`. A user's first `mailbox` record becomes primary too (ADR-099 section 2).
 
 `delete_record` removes the row (hard delete: nothing of the record remains; the audit keeps kind and version). `rotate`
 applies a `CK` rotation atomically: the new epoch (current + 1, else `409 version_conflict`), its wraps (W3 of
