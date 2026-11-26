@@ -4,7 +4,7 @@
 // `owner/name` fills an empty organisation with its owner) and urgency (preset normal).
 import { useId, useState } from 'react';
 import { sendErrorCode } from '../../../core/tasks/send';
-import { createTopic, type Urgency, URGENCIES } from '../../../core/tasks/tickets';
+import { createTopic, type Topic, type Urgency, URGENCIES } from '../../../core/tasks/tickets';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 import { useGithubSuggestions, usePeople, useTopics } from './tickets';
@@ -56,18 +56,23 @@ export function TicketForm({
   const { t, error } = useI18n();
   const id = useId();
   const people = usePeople(org);
-  const topics = useTopics(org);
+  const known = useTopics(org);
   const suggestions = useGithubSuggestions(org, wgs);
   const [creating, setCreating] = useState(false);
   const [topicName, setTopicName] = useState('');
+  const [made, setMade] = useState<Topic | null>(null);
   const [busy, setBusy] = useState(false);
   const [code, setCode] = useState<string | null>(null);
+  // a topic created here is a choice before its sealed event is read back
+  const topics = made === null || known.some((topic) => topic.id === made.id) ? known : [...known, made];
   const set = (patch: Partial<TicketValues>) => onChange({ ...values, ...patch });
   const create = async () => {
     setBusy(true);
     setCode(null);
     try {
-      const topic = await createTopic(app.tasks, org, topicName);
+      const name = topicName.trim();
+      const topic = await createTopic(app.tasks, org, name);
+      setMade({ id: topic, name });
       set({ topic });
       setCreating(false);
       setTopicName('');

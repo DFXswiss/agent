@@ -203,7 +203,8 @@ describe('ticket filters and rows', () => {
     ]);
     mount(t, `/o/${t.org}/w/${t.wg}`, [{ path: '/o/:org/w/:wg', element: <TaskListScreen /> }]);
     await waitFor(() => expect(screen.getAllByTestId('tasks.row')).toHaveLength(2));
-    const [alpha, beta] = screen.getAllByTestId('tasks.row');
+    // newest first: the same activity time, then the higher task ID ("b" before "a")
+    const [beta, alpha] = screen.getAllByTestId('tasks.row');
     expect(within(alpha!).getByTestId('tasks.row.status')).toHaveTextContent('To do');
     expect(within(alpha!).getByTestId('tasks.row.urgency')).toHaveTextContent('Urgency: High');
     expect(within(alpha!).getByTestId('tasks.row.person')).toHaveTextContent('Person: Ada');
@@ -285,7 +286,8 @@ describe('the fields panel of the task page', () => {
     await waitFor(() => expect(screen.queryByTestId('task.fields.form')).toBeNull());
     // refusals keep the form open; cancel closes it
     fireEvent.click(screen.getByTestId('task.fields.edit'));
-    fireEvent.change(screen.getByTestId('task.fields.form.title'), { target: { value: 'Two\nlines' } });
+    // a title longer than 120 characters (an input field drops line breaks itself)
+    fireEvent.change(screen.getByTestId('task.fields.form.title'), { target: { value: 'x'.repeat(121) } });
     fireEvent.click(screen.getByTestId('task.fields.save'));
     expect(await screen.findByTestId('task.fields.error')).toHaveTextContent('Check the fields');
     fireEvent.change(screen.getByTestId('task.fields.form.title'), { target: { value: 'Alpha' } });

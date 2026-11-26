@@ -83,6 +83,23 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     count: 1,
     reason: 'native <option>s of the company GitHub accounts of the org (each connected by an admin)',
   },
+  // captured tasks (E-41, ADR-100)
+  'src/ui/screens/tasks/TicketForm.tsx': {
+    count: 5,
+    reason:
+      "native <option>s of a task's fields: the members of the org (its membership, complete by design like GET " +
+      '/v1/orgs/{org}), its topics (the newest TOPIC_PAGES pages of topic.profile), the GitHub suggestions (the ' +
+      "user's GitHub accounts and the workgroup's repository list, at most 500 by its schema) and the four urgencies",
+  },
+  'src/ui/screens/tasks/TicketFilters.tsx': {
+    count: 1,
+    reason: 'native <option>s of the filters: the three statuses, the four urgencies, the members and topics as above',
+  },
+  'src/ui/screens/tasks/CaptureForm.tsx': {
+    count: 1,
+    reason: 'native <option>s of the workgroups the user may write (administrative grants, as the analysis dialog)',
+  },
+  'src/ui/screens/task/TaskFields.tsx': { count: 1, reason: 'the three statuses of a task (closed list)' },
   'src/ui/composer/DeviceChoice.tsx': {
     count: 2,
     reason:
