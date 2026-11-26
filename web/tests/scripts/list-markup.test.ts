@@ -26,6 +26,14 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     reason: 'subscriptions of the user (at most 40, ADR-090)',
   },
   'src/ui/subscriptions/UseEditor.tsx': { count: 1, reason: 'organisations the user belongs to (a handful)' },
+  'src/ui/subscriptions/AddSeveral.tsx': {
+    count: 2,
+    reason: 'the rows and the progress of one batch of subscriptions (at most 40, ADR-090, ADR-098)',
+  },
+  'src/ui/subscriptions/fields.tsx': {
+    count: 2,
+    reason: 'the three consents of a new account and the organisations the user belongs to (a handful)',
+  },
   'src/ui/settings/SettingsScreen.tsx': { count: 1, reason: 'settings sections of the registry (a handful)' },
   'src/ui/screens/task/Tabs.tsx': { count: 1, reason: 'task tabs of the registry (a handful)' },
   'src/ui/screens/workgroups/WorkgroupsScreen.tsx': {

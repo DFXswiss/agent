@@ -2,6 +2,9 @@
 // itself (an online one that announced `subscriptions`, `subscriptionDevices`), the `claude.login` request names the
 // subscription (and, for a new one, its label and note); then the relay of the credentials section runs
 // (`LoginRequest`: open the link, paste the code, done). The token is created on the device and never reaches this page.
+// KOR-73 (ADR-098): with a device that runs logins side by side the record may be written first (own mailbox, use), the
+// login carries the subscription as its slot and may register a new account; a login that needs this is refused for
+// an older device (`no_device_available`).
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { type LoginInput, startSubscriptionLogin, subscriptionDevices } from '../../core/credentials/subscriptions';
 import { type PreparedRequest, requestErrorCode } from '../../core/requests/client';
@@ -10,6 +13,7 @@ import { useReason } from '../settings/sections/github/reason';
 import { BUTTON } from '../settings/sections/credentials/DevicePicker';
 import { LoginRequest } from '../settings/sections/credentials/LoginFlow';
 import { useAppEnv } from '../shell/context';
+import '../../core/i18n/lazy/subscription-login';
 
 type Phase =
   | { readonly kind: 'starting' }
@@ -39,7 +43,7 @@ export function SubscriptionLogin({
       .then(async (found) => {
         if (closed) return;
         if (found.preselected === null) return setPhase({ kind: 'none' });
-        const prepared = await startSubscriptionLogin(app.tasks, found.preselected, first.current);
+        const prepared = await startSubscriptionLogin(app.tasks, found.preselected, first.current, found.parallel);
         if (!closed) setPhase({ kind: 'request', prepared });
       })
       .catch((error: unknown) => {

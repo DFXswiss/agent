@@ -1,6 +1,7 @@
 // One Claude subscription with its actions (KOR-69, ADR-090): status and address; "Log in now" for one that is not
 // logged in (or "Log in again"), label and note, use, log out and remove. The primary subscription (own sessions) is
-// shown only; it is changed in the credentials section. No token is ever shown.
+// shown only; it is changed in the credentials section. No token is ever shown. KOR-73 (ADR-098 section 1): its own
+// mailbox (address shown, set, removed, checked); a subscription with one logs in automatically from it.
 import { type FormEvent, useState } from 'react';
 import {
   logoutSubscription,
@@ -17,9 +18,11 @@ import { BUTTON, PRIMARY } from '../settings/sections/credentials/DevicePicker';
 import { useReason } from '../settings/sections/github/reason';
 import { useAppEnv } from '../shell/context';
 import { SubscriptionLogin } from './SubscriptionLogin';
+import { SubscriptionMailbox } from './SubscriptionMailbox';
 import { UseEditor } from './UseEditor';
+import '../../core/i18n/lazy/subscription-login';
 
-type Open = 'none' | 'login' | 'edit' | 'use' | 'remove';
+type Open = 'none' | 'login' | 'edit' | 'use' | 'mailbox' | 'remove';
 
 export function SubscriptionCard({ item, onChanged }: { readonly item: Subscription; readonly onChanged: () => void }) {
   const { app } = useAppEnv();
@@ -57,6 +60,11 @@ export function SubscriptionCard({ item, onChanged }: { readonly item: Subscript
       <h4 className="font-semibold">{title}</h4>
       {item.email !== null && <p className="text-sm">{item.email}</p>}
       {item.note !== null && <p className="text-sm text-gray-700">{item.note}</p>}
+      {item.mailbox !== null && (
+        <p className="text-sm" data-testid="subcard.mailbox">
+          {t('subscription-login.mailbox.of', { email: item.mailbox })}
+        </p>
+      )}
       <p data-testid="subcard.status" data-status={item.status}>
         {t(`subscription-login.status.${item.status}`)}
       </p>
@@ -78,6 +86,14 @@ export function SubscriptionCard({ item, onChanged }: { readonly item: Subscript
           </button>
           <button type="button" className={BUTTON} onClick={() => setOpen('use')} data-testid="subcard.use">
             {t('subscription-login.use.open')}
+          </button>
+          <button
+            type="button"
+            className={BUTTON}
+            onClick={() => setOpen('mailbox')}
+            data-testid="subcard.mailbox.open"
+          >
+            {t('subscription-login.mailbox')}
           </button>
           {item.status !== 'not_logged_in' && (
             <button
@@ -106,7 +122,7 @@ export function SubscriptionCard({ item, onChanged }: { readonly item: Subscript
       )}
       {open === 'login' && (
         <SubscriptionLogin
-          input={{ subscriptionId: item.id, mode: 'manual' }}
+          input={{ subscriptionId: item.id, mode: 'manual', ownMailbox: item.mailbox !== null }}
           onDone={() => {
             setOpen('none');
             onChanged();
@@ -149,6 +165,9 @@ export function SubscriptionCard({ item, onChanged }: { readonly item: Subscript
             {t('subscription-login.close')}
           </button>
         </>
+      )}
+      {open === 'mailbox' && (
+        <SubscriptionMailbox id={item.id} email={item.mailbox} onChanged={onChanged} onClose={() => setOpen('none')} />
       )}
       {open === 'remove' && (
         <div className="flex flex-col gap-2" role="alertdialog" data-testid="subcard.confirm">

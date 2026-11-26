@@ -4,6 +4,7 @@
 import type { SettingsSection } from '../../../registries/settings-sections';
 import { useI18n } from '../../../i18n';
 import { SubscriptionManager } from '../../../subscriptions/SubscriptionManager';
+import '../../../../core/i18n/lazy/subscription-login';
 
 export function SubscriptionLoginsSection() {
   const { t } = useI18n();

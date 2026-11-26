@@ -3,9 +3,19 @@
 // the authorization link (opened in a new tab), the user pastes the code shown there, which goes to the device as a
 // follow-up request; the device stores the subscription token itself (CK-encrypted) and answers with the account's
 // e-mail. Automatic: the device's progress is shown; if the automation fails (`login_automation_failed`) the relay
-// continues with the link it sends. The token never reaches this page.
+// continues with the link it sends. The token never reaches this page. KOR-73 (ADR-098 section 4): a check for humans
+// in the device's login sandbox is shown as its picture (`HumanCheck`); the owner's click goes to the device, "sign in
+// myself" gives the automation up; the reason why the automation gave up is named with the link.
 import { type FormEvent, useEffect, useState } from 'react';
-import { type LoginMode, loginProgress, sendCode, startLogin } from '../../../../core/credentials/login';
+import {
+  type LoginMode,
+  loginProgress,
+  sendClick,
+  sendCode,
+  sendRelay,
+  startLogin,
+} from '../../../../core/credentials/login';
+import type { AutomationReason } from '../../../../core/requests/bodies';
 import { AUTOMATION_FAILED } from '../../../../core/credentials/login';
 import { CODE_RE } from '../../../../core/requests/bodies';
 import { type PreparedRequest, requestErrorCode } from '../../../../core/requests/client';
@@ -13,7 +23,9 @@ import { useI18n } from '../../../i18n';
 import { useAppEnv } from '../../../shell/context';
 import { useReason } from '../github/reason';
 import { BUTTON, DevicePicker, PRIMARY } from './DevicePicker';
+import { HumanCheck } from './HumanCheck';
 import { useRequestView } from './useRequestView';
+import '../../../../core/i18n/lazy/login-check';
 
 type Phase =
   | { readonly kind: 'pick' }
@@ -24,11 +36,13 @@ type Phase =
 function Authorize({
   url,
   automationFailed,
+  reason,
   sent,
   onCode,
 }: {
   readonly url: string;
   readonly automationFailed: boolean;
+  readonly reason: AutomationReason | null;
   readonly sent: boolean;
   readonly onCode: (code: string) => void;
 }) {
@@ -44,6 +58,11 @@ function Authorize({
       {automationFailed && (
         <p role="alert" data-testid="claude.automation-failed" data-code={AUTOMATION_FAILED}>
           {error(AUTOMATION_FAILED).title}. {error(AUTOMATION_FAILED).action}
+        </p>
+      )}
+      {reason !== null && (
+        <p data-testid="claude.automation-reason" data-reason={reason}>
+          {t(`login-check.reason.${reason}`)}
         </p>
       )}
       <p>{t('credentials.claude.authorize.intro')}</p>
@@ -90,6 +109,8 @@ export function LoginRequest({
   const reason = useReason();
   const [followUp, setFollowUp] = useState<PreparedRequest | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  // the frame the owner last clicked into (a new frame shows the outcome)
+  const [clickedFrame, setClickedFrame] = useState<number | null>(null);
   const original = useRequestView(prepared);
   const follow = useRequestView(followUp);
   const progress = original.view === null ? { step: 'waiting' as const } : loginProgress(original.view, follow.view);
@@ -101,6 +122,23 @@ export function LoginRequest({
     setSendError(null);
     try {
       setFollowUp(await sendCode(app.tasks, prepared, code));
+    } catch (error) {
+      setSendError(requestErrorCode(error));
+    }
+  };
+  const click = async (frame: number, x: number, y: number) => {
+    setSendError(null);
+    try {
+      await sendClick(app.tasks, prepared, x, y);
+      setClickedFrame(frame);
+    } catch (error) {
+      setSendError(requestErrorCode(error));
+    }
+  };
+  const relay = async () => {
+    setSendError(null);
+    try {
+      await sendRelay(app.tasks, prepared);
     } catch (error) {
       setSendError(requestErrorCode(error));
     }
@@ -122,8 +160,18 @@ export function LoginRequest({
         <Authorize
           url={progress.url}
           automationFailed={progress.automationFailed}
+          reason={progress.reason}
           sent={followUp !== null}
           onCode={(code) => void send(code)}
+        />
+      )}
+      {progress.step === 'verify' && (
+        <HumanCheck
+          frame={progress.frame}
+          image={progress.image}
+          clicked={clickedFrame === progress.frame}
+          onClick={(x, y) => void click(progress.frame, x, y)}
+          onRelay={() => void relay()}
         />
       )}
       {progress.step === 'done' && (

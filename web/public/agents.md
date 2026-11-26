@@ -584,6 +584,15 @@ agent-platform quotas [--org <org_id>]                           # with --org: o
 agent-platform subscriptions list                                # every Claude subscription: status, use, remaining quota
 agent-platform subscriptions add --name "Team" [--note "..."]    # logged in on a platform device; answers the link
 agent-platform subscriptions add --name "Mail" --automatic [--email <address>]  # through the mailbox, no browser
+agent-platform subscriptions add --name "Ada" --automatic --org <org_id>   # side by side: its own slot, used by that org
+printf '%s' "$PASSWORD" | agent-platform subscriptions add --name "Ada" --mailbox-host imap.example.com --mailbox-user ada@example.com --mailbox-email ada@example.com --mailbox-password-stdin   # its own mailbox
+agent-platform subscriptions add --name "Ben" --automatic --register-name "Ben Example" --birth-date 1990-04-01 --consent terms --consent age   # a new account; only consents the account holder gave
+agent-platform subscriptions add-many --file subscriptions.json --wait 120   # several at once, each in its own sandbox; one result each
+agent-platform subscriptions check --request <request_id> --out frame.jpg   # a check for humans: the picture for a person
+agent-platform subscriptions check --request <request_id> --click 0.31,0.52   # the person's click (signed as the user; never a model)
+agent-platform subscriptions check --request <request_id> --relay   # give the automation up: link and code instead
+printf '%s' "$PASSWORD" | agent-platform subscriptions mailbox --id <subscription_id> --mailbox-host imap.example.com --mailbox-user me --mailbox-email me@example.com --mailbox-password-stdin
+agent-platform subscriptions mailbox --id <subscription_id> --check   # or --clear: the single mailbox is used again
 agent-platform subscriptions login --id <subscription_id>        # log it in again ("not_logged_in", refused token)
 agent-platform subscriptions rename --id <subscription_id> --name "Review"
 agent-platform subscriptions note --id <subscription_id> --note "..."   # or --clear
