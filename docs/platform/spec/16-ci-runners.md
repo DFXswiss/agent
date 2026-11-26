@@ -631,13 +631,20 @@ The recommendation flips (research 2 §7):
   belongs to the slot account, so such an escape can also leave an `override.yaml` for that slot's later VMs. Slot
   accounts are reused between jobs within a class; an escaped class U job could thus influence later U jobs in the same
   slot, also of other repositories. `_config` is not the only carrier: an escaped job controls the whole slot account,
-  i.e. its home `/var/agent-workvm/<account>` (0700, `13-work-vm.md` §6.1), so it can also leave background processes
-  or other files there. The work VM boundary stops slot processes only when the pf hook is lost (`13-work-vm.md`
-  §6.3, `:192-193`), not between jobs. A root-owned or read-only `_config` is no remedy: `limactl start` then fails with
+  its home `/var/agent-workvm/<account>` (0700, `13-work-vm.md` §6.1) and its other per-account state (crontab and
+  `at` jobs, `/private/var/folders/…`, files it owns in `/tmp`), so it can also leave background processes or other
+  files there. On macOS an account's crontab lies outside the home (`/usr/lib/cron/tabs/<account>`), as do its `at`
+  jobs; a crontab entry starts again after the account's processes were killed, survives recreating the home and,
+  since it is bound to the account name, also survives recreating an account with the same slot name. The work VM
+  boundary stops slot processes only when the pf hook is lost (`13-work-vm.md` §6.3, `:192-193`), not between jobs.
+  A root-owned or read-only `_config` is no remedy: `limactl start` then fails with
   `_config/networks.yaml: permission denied`, which is why HOT-18 replaced the root-owned `_config`
   (`docs/platform/decisions/HOT-18.md` point 5, `src/agent_runner/workvm/accounts.py:21-24`). **Recommendation**
-  (part of D-20, not decided): CI VMs get a fresh slot account per job; where a slot account is reused, before every
-  reuse kill all processes of the account and recreate its home completely (including the Lima home and `_config`).
+  (part of D-20, not decided): CI VMs get a fresh slot account per job – a new account name and a new UID, never a
+  reused name; where a slot account is reused, before every reuse and before its next start kill all processes of the
+  account, remove its crontab and `at` jobs, delete every file it owns outside its home (`/private/var/folders/…`,
+  `/tmp`) and recreate its home completely (including the Lima home and `_config`); alternatively cron and `at` are
+  denied to slot accounts (`cron.deny`, `at.deny`), the cleanup of files outside the home stays.
 - Separation between agent VMs and CI VMs on one device:
   - Slot accounts, Lima homes and pf rules are separate per workload kind and, within CI, per class; an account is
     never reused across them.
@@ -961,7 +968,7 @@ single option, the row says so. Everything else is open. The tendency is the fac
 | Deploy runner reached by other workflows | Class H runs persistently on the host of a pool device; a label or a changed `runs-on` in a PR targets it | Own group with one repository and protected workflow refs, no PR trigger; without groups pull deployment (§5, D-1 (c), D-9); check in §12.3 step c |
 | CI load displaces sessions | CI VMs hold capacity or slow the device; session starts wait or fail | Shares, headroom, latency budget, stop of new CI VMs (§6.6, M-19); displacement metrics (§11.2) |
 | Co-residency of foreign code with workgroup plaintext (**carried knowingly**) | CI jobs with foreign PR code run on the devices that hold workgroup plaintext; this is the client's decision ([E-35](../KONZEPT.md#e-35)), not an oversight, and no own CI device separates them | The client carries this risk by E-35; the countermeasures stay a recommendation: gate U (§9.3; open, D-7, D-20), separation rules of §9.3, D-24 |
-| Side channel between workloads | Foreign code and workgroup plaintext on one host: CPU caches, timing, hypervisor bug | Nothing writable shared, separate slot accounts (§9.3); the rest is a residual risk of E-34 and E-35, carried knowingly by the client (E-35), named again with D-20. Residual risk: after an escape the slot account (its Lima `_config` with an `override.yaml`, background processes, other files in its home) can carry over into later jobs of the same slot; recommended a fresh slot account per job, or before every reuse killing all the account's processes and recreating its home completely – a root-owned `_config` breaks `limactl start` (HOT-18) (§9.3; open, D-20). The escape from the VM itself (hypervisor bug) stays a residual risk |
+| Side channel between workloads | Foreign code and workgroup plaintext on one host: CPU caches, timing, hypervisor bug | Nothing writable shared, separate slot accounts (§9.3); the rest is a residual risk of E-34 and E-35, carried knowingly by the client (E-35), named again with D-20. Residual risk: after an escape the slot account (its Lima `_config` with an `override.yaml`, background processes, other files in its home, and per-account state outside the home: crontab and `at` jobs, `/private/var/folders/…`, its files in `/tmp`; a crontab entry restarts after the processes are killed and, bound to the account name, survives recreating the home or an account of the same name) can carry over into later jobs of the same slot; recommended a fresh slot account per job (new name and new UID, never a reused name), or before every reuse killing all the account's processes, removing its crontab and `at` jobs, deleting its files outside the home and recreating its home completely, alternatively denying cron and `at` to slot accounts (`cron.deny`, `at.deny`) – a root-owned `_config` breaks `limactl start` (HOT-18) (§9.3; open, D-20). The escape from the VM itself (hypervisor bug) stays a residual risk |
 | Pool failure hits both workloads | Device, egress, update or boundary failure stops sessions and CI together | Failure reserve, rolling maintenance (one device at a time), repair way without CI (§11.3) |
 | Mixing U and T | A JIT runner takes another matching job | Groups per class, repository/workflow policy, no shared labels (§5) |
 | Theft of the app key | Key in the runner process or a VM | Own account or signer, organisation runner permission only, rotation (D-4) |
