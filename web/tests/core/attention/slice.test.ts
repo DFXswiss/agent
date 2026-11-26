@@ -8,16 +8,23 @@ import {
   attentionGroup,
   type AttentionRow,
   before,
-  type Category,
+  CATEGORIES,
   FRAME_MS,
   flushAttention,
   frames,
   groupFailed,
   groupLoading,
   groupPage,
+  inList,
   isAttentionRow,
   isCategory,
   isSummary,
+  type ListKind,
+  type Overview,
+  OVERVIEW_CATEGORIES,
+  OVERVIEW_LIST,
+  overviewOf,
+  OVERVIEWS,
   putSummary,
   queueAttention,
   staleRow,
@@ -25,10 +32,10 @@ import {
 import { setActiveOrg } from '../../../src/core/store/slices/session';
 import { at, record } from './rows';
 
-const ids = (store: Store, category: Category, org = 'o') =>
+const ids = (store: Store, category: ListKind, org = 'o') =>
   attentionGroup(store.getState().attention, org, category).ids;
 
-function page(store: Store, category: Category, rows: AttentionRow[], nextBefore: string | null = null, first = true) {
+function page(store: Store, category: ListKind, rows: AttentionRow[], nextBefore: string | null = null, first = true) {
   groupPage(store, { org: 'o', category, rows, nextBefore, first });
 }
 
@@ -58,9 +65,20 @@ describe('validation', () => {
     expect(isAttentionRow(null)).toBe(false);
     expect(isCategory('done')).toBe(true);
     expect(isCategory('idle')).toBe(false);
-    const summary = { needs_decision: 1, needs_decision_mine: 0, blocked: 2, working: 3, done_since: 4 };
+    const summary = {
+      needs_decision: 1,
+      needs_decision_mine: 0,
+      blocked: 2,
+      working: 3,
+      done_since: 4,
+      open_working: 3,
+      open_waiting: 1,
+      open_no_agent: 5,
+    };
     expect(isSummary(summary)).toBe(true);
     expect(isSummary({ ...summary, working: -1 })).toBe(false);
+    expect(isSummary({ ...summary, open_no_agent: undefined })).toBe(false);
+    expect(isSummary({ ...summary, open_waiting: 1.5 })).toBe(false);
     expect(isSummary([])).toBe(false);
   });
 });
@@ -105,7 +123,16 @@ describe('groups', () => {
     expect(attentionGroup(store.getState().attention, 'o', 'working').code).toBe('forbidden');
     groupLoading(store, 'o', 'blocked');
     expect(attentionGroup(store.getState().attention, 'o', 'blocked').code).toBeNull();
-    const summary = { needs_decision: 1, needs_decision_mine: 1, blocked: 0, working: 0, done_since: 0 };
+    const summary = {
+      needs_decision: 1,
+      needs_decision_mine: 1,
+      blocked: 0,
+      working: 0,
+      done_since: 0,
+      open_working: 0,
+      open_waiting: 1,
+      open_no_agent: 0,
+    };
     putSummary(store, 'o', summary);
     expect(store.getState().attention.summaries.o).toEqual(summary);
   });
@@ -189,6 +216,60 @@ describe('groups', () => {
     // a page row a newer frame moved to another category meanwhile stays out of the page's group
     page(store, 'needs_decision', [record('q', { since: at(1), updated_at: at(1), seq: 1 })]);
     expect(ids(store, 'needs_decision')).toEqual([]);
+  });
+});
+
+describe('the overview of the open tasks', () => {
+  it('puts every record of an open task into exactly one number and a closed one into none', () => {
+    const cases: [Partial<AttentionRow>, Overview | null][] = [
+      [{ category: 'working', reason: 'working' }, 'working'],
+      [{ category: 'working', reason: 'queued' }, 'working'],
+      [{ category: 'working', reason: 'quota_wait' }, 'working'],
+      [{ category: 'needs_decision', reason: 'question' }, 'waiting'],
+      [{ category: 'needs_decision', reason: 'approval' }, 'waiting'],
+      [{ category: 'needs_decision', reason: 'device_missing' }, 'waiting'],
+      [{ category: 'blocked', reason: 'session_failed' }, 'no_agent'],
+      [{ category: 'done', reason: 'idle' }, 'no_agent'],
+      // a reason a later release adds stays in its category's number
+      [{ category: 'done', reason: 'captured' }, 'no_agent'],
+      [{ category: 'done', reason: 'closed' }, null],
+      [{ category: 'archived', reason: 'idle' }, null],
+    ];
+    for (const [fields, expected] of cases) expect(overviewOf(record('t', fields))).toBe(expected);
+    // the categories split into the three numbers without overlap
+    const owners = OVERVIEWS.flatMap((name) => OVERVIEW_CATEGORIES[name]);
+    expect([...owners].sort()).toEqual([...CATEGORIES].sort());
+    expect(OVERVIEW_LIST).toEqual({ working: 'working', waiting: 'needs_decision', no_agent: 'no_agent' });
+    expect(inList('no_agent', record('t', { category: 'blocked' }))).toBe(true);
+    expect(inList('no_agent', record('t', { category: 'done', reason: 'closed' }))).toBe(false);
+    expect(inList('blocked', record('t', { category: 'blocked' }))).toBe(true);
+  });
+
+  it('keeps the list "No agent" newest first and moves records in and out of it', () => {
+    vi.useFakeTimers();
+    const store = createStore();
+    setActiveOrg(store, 'o');
+    groupPage(store, {
+      org: 'o',
+      category: 'no_agent',
+      rows: [
+        record('idle', { category: 'done', reason: 'idle', since: at(2) }),
+        record('closed', { category: 'done', reason: 'closed', since: at(3) }),
+        record('stuck', { category: 'blocked', reason: 'session_failed', since: at(4) }),
+        record('run', { category: 'working', reason: 'working', since: at(5) }),
+      ],
+      nextBefore: null,
+      first: true,
+    });
+    expect(ids(store, 'no_agent')).toEqual(['stuck', 'idle']);
+    expect(before('no_agent', record('a', { since: at(2) }), record('b', { since: at(1) }))).toBe(true);
+    // the stuck task runs again, the idle one is closed, a new task lies idle
+    queueAttention(store, record('stuck', { category: 'working', reason: 'working', since: at(6), updated_at: at(6) }));
+    queueAttention(store, record('idle', { category: 'done', reason: 'closed', since: at(2), updated_at: at(7) }));
+    queueAttention(store, record('new', { category: 'done', reason: 'idle', since: at(8), updated_at: at(8) }));
+    vi.advanceTimersByTime(FRAME_MS);
+    expect(ids(store, 'no_agent')).toEqual(['new']);
+    vi.useRealTimers();
   });
 });
 

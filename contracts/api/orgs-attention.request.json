@@ -7,7 +7,16 @@
   "properties": {
     "category": {
       "$ref": "../common.json#/$defs/attention_category",
-      "description": "required; needs_decision is ordered since ASC, task_id ASC, the other categories since DESC, task_id DESC"
+      "description": "required unless overview is given; needs_decision is ordered since ASC, task_id ASC, the other categories since DESC, task_id DESC"
+    },
+    "overview": {
+      "type": "string",
+      "enum": [
+        "working",
+        "waiting",
+        "no_agent"
+      ],
+      "description": "instead of category: the open tasks of one overview of the start page (working: category working; waiting: needs_decision, ordered like it; no_agent: blocked and done without done/closed, since DESC, task_id DESC)"
     },
     "mine": {
       "type": "string",
@@ -29,8 +38,35 @@
       "description": "default 50, max 100"
     }
   },
-  "required": [
-    "category"
+  "oneOf": [
+    {
+      "description": "one category",
+      "properties": {
+        "category": true,
+        "mine": true,
+        "since": true,
+        "before": true,
+        "limit": true
+      },
+      "required": [
+        "category"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "description": "one overview of the open tasks (contracts/changes/HOME-COUNTS.md)",
+      "properties": {
+        "overview": true,
+        "mine": true,
+        "since": true,
+        "before": true,
+        "limit": true
+      },
+      "required": [
+        "overview"
+      ],
+      "additionalProperties": false
+    }
   ],
   "additionalProperties": false
 }

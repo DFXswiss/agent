@@ -9,8 +9,12 @@ active member with an unrevoked access; archived workgroups stay readable) - in 
   owns) and `since` (records that entered their category at or after it). The cursor `next_before` has the form of
   the task lists (`agent_hub.device.tasks.encode_cursor`: the `since` of the page's last row and its task ID) and
   continues in the list order.
+  With `overview` instead of `category` the list holds the open tasks of one overview (`working`, `waiting`,
+  `no_agent`; `agent_hub.attention.derive.OVERVIEW`): the records of its categories without `done/closed`, in the
+  order of these categories (they share it).
 - `summary`: `needs_decision`, `needs_decision_mine`, `blocked`, `working` and `done_since` (the `done` records with
-  `since` at or after the parameter, default the last 24 hours).
+  `since` at or after the parameter, default the last 24 hours), and the overview of the open tasks: `open_working`,
+  `open_waiting` and `open_no_agent` (every open task in exactly one of them, `overview_counts`).
 """
 
 from __future__ import annotations
@@ -21,7 +25,17 @@ from uuid import UUID
 
 import psycopg
 
-from agent_hub.attention.derive import ASCENDING, BLOCKED, CATEGORIES, DONE, NEEDS_DECISION, WORKING
+from agent_hub.attention.derive import (
+    ASCENDING,
+    BLOCKED,
+    CATEGORIES,
+    CLOSED,
+    DONE,
+    NEEDS_DECISION,
+    OVERVIEW,
+    WORKING,
+    overview_of,
+)
 from agent_hub.attention.store import ROW_COLUMNS, ROW_FIELDS, attention_json
 from agent_hub.device.tasks import decode_cursor, encode_cursor
 from agent_hub.sessions import rows
@@ -50,16 +64,22 @@ def list_attention(
     org: UUID,
     user: UUID,
     *,
-    category: str,
+    category: str | None,
     mine: bool,
     since: datetime | None,
     before: str | None,
     limit: int,
+    overview: str | None = None,
 ) -> dict[str, Any]:
-    """One category of the org's records with their task rows (module docstring); the caller checked `org:member`."""
-    ascending = CATEGORIES[category][0] == ASCENDING
-    clauses = ["a.org_id = %s", "a.category = %s", "a.wg_id = ANY(%s)"]
-    params: list[Any] = [org, category, readable_workgroups(connection, org, user)]
+    """One category - or one overview of the open tasks (`overview`, instead of `category`) - of the org's records with
+    their task rows (module docstring); the caller checked `org:member` and passes exactly one of both."""
+    categories = [cast(str, category)] if overview is None else list(OVERVIEW[overview])
+    ascending = CATEGORIES[categories[0]][0] == ASCENDING  # the categories of an overview share their order
+    clauses = ["a.org_id = %s", "a.category = ANY(%s)", "a.wg_id = ANY(%s)"]
+    params: list[Any] = [org, categories, readable_workgroups(connection, org, user)]
+    if overview is not None:
+        clauses.append("NOT (a.category = %s AND a.reason = %s)")
+        params.extend([DONE, CLOSED])
     if mine:
         clauses.append("a.owner_id = %s")
         params.append(user)
@@ -86,9 +106,26 @@ def list_attention(
     return {"items": items, "next_before": None if last is None else encode_cursor(last[5], last[0])}
 
 
+def overview_counts(connection: Connection, org: UUID, wgs: list[UUID]) -> dict[str, int]:
+    """The open tasks of the workgroups by overview (`agent_hub.attention.derive.overview_of`): every record of an open
+    task counts in exactly one of `open_working`, `open_waiting` and `open_no_agent`."""
+    counts = dict.fromkeys(OVERVIEW, 0)
+    found = connection.execute(
+        "SELECT category, reason, count(*) FROM hub.task_attention WHERE org_id = %s AND wg_id = ANY(%s)"
+        " GROUP BY category, reason",
+        (org, wgs),
+    ).fetchall()
+    for category, reason, count in found:
+        name = overview_of(category, reason)
+        if name is not None:
+            counts[name] += int(count)
+    return {f"open_{name}": count for name, count in counts.items()}
+
+
 def summary(connection: Connection, org: UUID, user: UUID, since: datetime | None, now: datetime) -> dict[str, int]:
     """The counters over the readable workgroups (module docstring); the caller checked `org:member`."""
     done_after = now - DONE_WINDOW if since is None else since
+    wgs = readable_workgroups(connection, org, user)
     row = connection.execute(
         "SELECT count(*) FILTER (WHERE category = %(nd)s), count(*) FILTER (WHERE category = %(nd)s"
         " AND owner_id = %(user)s), count(*) FILTER (WHERE category = %(blocked)s),"
@@ -102,9 +139,10 @@ def summary(connection: Connection, org: UUID, user: UUID, since: datetime | Non
             "done": DONE,
             "user": user,
             "org": org,
-            "wgs": readable_workgroups(connection, org, user),
+            "wgs": wgs,
             "after": done_after,
         },
     ).fetchone()
     names = ("needs_decision", "needs_decision_mine", "blocked", "working", "done_since")
-    return dict(zip(names, (int(value) for value in cast(tuple[int, ...], row)), strict=True))
+    counters = dict(zip(names, (int(value) for value in cast(tuple[int, ...], row)), strict=True))
+    return {**counters, **overview_counts(connection, org, wgs)}

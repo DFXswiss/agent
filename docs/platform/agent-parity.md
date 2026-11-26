@@ -80,6 +80,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | org-create | screens/home | `org create` | done |
 | attention-view | screens/home | `status --attention --org` | done |
 | attention-list | screens/home | `task list --org --state --mine --limit` | done |
+| home-overview | screens/home (the three numbers of the open tasks at the top of the start page over every organization: in progress, waiting for a question, no agent; contracts/changes/HOME-COUNTS.md) | `status --overview --org` | done |
+| home-overview-list | screens/home (a number of the overview: exactly its tasks, `?show=working\|waiting\|no_agent`; the states `working`, `waiting`, `no-agent` of the tool) | `task list --org --state` | done |
 | agents-by-person | screens/home (switch "By situation \| By person", ADR-095 section 5: one row per person, a person's paged main agents with name, handle, state, GitHub identity and subagents) | `agents people --org --after --limit`, `agents list --org --owner --before --limit`, `task list --wg --by-person` | done |
 | agent-tree | screens/home (a main agent's tree on demand: handles, purposes, states, GitHub identities, ADR-095 sections 5 and 6) | `agents show --task` | done |
 | agent-rename | screens/home, screens/task ("Rename" of a main agent for writers of its workgroup: a sealed `task.agent_name`, or back to the automatic name, ADR-095 section 2) | `agents rename --task --name --automatic` | done |
@@ -256,8 +258,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/notifications/read` | notifications-read |
 | `GET /v1/operations/{operation}` | operations, triggered-by |
 | `POST /v1/orgs` | org-create |
-| `GET /v1/orgs/{org}/attention` | attention-view, attention-list |
-| `GET /v1/orgs/{org}/attention/summary` | attention-view |
+| `GET /v1/orgs/{org}/attention` | attention-view, attention-list, home-overview-list |
+| `GET /v1/orgs/{org}/attention/summary` | attention-view, home-overview |
 | `GET /v1/orgs/{org}/people/agents` | agents-by-person |
 | `GET /v1/orgs/{org}/main-agents` | agents-by-person |
 | `GET /v1/orgs/{org}/audit` | audit, task-model-switch, audit-agent-actor |

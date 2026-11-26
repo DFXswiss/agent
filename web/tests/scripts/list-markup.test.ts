@@ -173,6 +173,12 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     reason: 'native <option>s of the org workgroups (the candidates are a Picker)',
   },
   'src/ui/screens/devices/parts.tsx': { count: 1, reason: 'the fixed expiry choices (EXPIRY_HOURS)' },
+  'src/ui/screens/home/Overview.tsx': {
+    count: 2,
+    reason:
+      'the three numbers of the open tasks (closed list) and the other organisations of the user with tasks in the ' +
+      'shown number (a handful)',
+  },
   'src/ui/screens/home/HomeScreen.tsx': {
     count: 4,
     reason:
