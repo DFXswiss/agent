@@ -807,6 +807,9 @@
   "src/agent_runner/model/provision.py": {
    "MAX_KEY_BYTES": "size"
   },
+  "src/agent_runner/model/revocation.py": {
+   "MAX_TRIES": "retry"
+  },
   "src/agent_runner/model/uncounted.py": {
    "MAX_ITEMS": "page"
   },
