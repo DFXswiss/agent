@@ -374,6 +374,29 @@ runs (`run_id` `tr-…`, `state` `running|passed|failed|error|timed_out|cancelle
 a window of `--limit` bytes from `--offset` (`next_offset` goes on; `truncated` means only the last `stored_bytes` of
 `bytes` were kept), or with `--output FILE` the whole kept log. It also reads the full output of a long work VM command
 (its `j-…` job id from `session workvm`). A log that does not match its run is refused (`hub_refused`).
+
+**Process analysis** (the button "Prozesse optimieren" of the web client, ADR-095): a task that only reads the
+usage, audit, operations and metrics of the workgroups your user may read and answers with proposals; it changes
+nothing.
+
+```sh
+agent-platform optimize --org <org_id> [--in <wg_id>] [--days 7] [--language en|de]   # the organization
+agent-platform optimize --wg <wg_id> [--since <time>] [--until <time>]                # one workgroup
+agent-platform optimize adopt --task <task_id> [--level workgroup|org] [--notify]     # the report onto a whiteboard
+```
+
+`optimize` creates the analysis task like `task create`, with a fixed title and prompt (`--language`, default `en`)
+and the period: `--days` (1-92, default 7) before `--until` (default now), or `--since`/`--until` as ISO-8601 times
+with a time zone, at most 92 days. `--org` analyses the organization from its default workgroup (or `--in`), `--wg`
+one workgroup from that workgroup. The answer is the one of `task create` plus `analysis` (`scope`, `since`,
+`until`) and, for `--org`, a `notice`: the report is visible to all members of the task's workgroup and may contain
+totals of all workgroups your user can read – tell your user before you start it, and choose a smaller workgroup
+with `--in` when they want fewer readers. Follow it with `task wait`. `optimize adopt` writes the newest output of an
+analysis task as a whiteboard entry of the task's workgroup (default) or of the organization (`--level org`, admins;
+its `notice` says that every member of the organization reads it), signed as your user; any other task is refused
+(`not_analysis`), a task without an answer yet with `no_output`. `peer_outdated` names the devices that must update
+first.
+
 **Pull requests** (the pull requests your user's tasks created, and those linked to a task by their address):
 
 ```sh

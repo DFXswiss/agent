@@ -63,6 +63,7 @@ SESSION_ALLOWED: tuple[tuple[str, ...], ...] = (
     ("device", "rename"),
     ("device", "invite"),
     ("task",),
+    ("optimize",),
     ("member",),
     ("whiteboard",),
     ("session",),

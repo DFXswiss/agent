@@ -178,22 +178,29 @@ def task_create(
     vm: str | None = None,
     *,
     github_identity: str | None = None,
+    title: str | None = None,
+    analysis: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """A new task with its first prompt in workgroup `wg` (on the chosen device and VM and with the chosen GitHub
-    identity, if any; without a device choice an admin's workgroup without a device gets one first, `ensure_device`)."""
+    identity, if any; without a device choice an admin's workgroup without a device gets one first, `ensure_device`).
+    `title` replaces the title derived from the prompt and `analysis` makes it an analysis task (`agent_platform.
+    optimize`, ADR-095 section 1)."""
     org = find_org(account, _id(wg))
     prompt = _prompt(text)
+    fixed = derive_title(prompt) if title is None else title
     placement = _placement(device, vm)
     chosen = {} if github_identity is None else {"github_identity": _id(github_identity)}
     assigned = ensure_device(account, org, wg) if placement is None else None
     task = uuid7()
     events = [
-        _seal(account, (org, wg, task), "task.meta", {"title": derive_title(prompt)}),
+        _seal(account, (org, wg, task), "task.meta", {"title": fixed}),
         _seal(account, (org, wg, task), "prompt", {"attachments": [], "text": prompt}),
     ]
     body: dict[str, object] = {"task_id": task, "wg_id": wg, "events": events, **chosen}
     if placement is not None:
         body["placement"] = placement
+    if analysis is not None:
+        body["analysis"] = analysis
     try:
         answer = account.call("POST", "/v1/tasks", body)
     except PlatformError as error:
@@ -205,7 +212,7 @@ def task_create(
         "org_id": org,
         "wg_id": wg,
         "task_id": task,
-        "title": derive_title(prompt),
+        "title": fixed,
         "session_id": session.get("session_id") if isinstance(session, dict) else None,
         "placement": placement,
         **chosen,

@@ -154,6 +154,18 @@ NEXT_FOR_REASON: dict[tuple[str, str], str] = {
         "The workgroup is already released to DFX support with this access (`access`): see `wg support list`; "
         "`wg support grant` with the other access changes it, `wg support revoke` ends it."
     ),
+    ("invalid_argument", "period_invalid"): (
+        "The period of an analysis is `--days` (1-92) or `--since`, with an optional `--until`: ISO-8601 times with a "
+        "time zone, `since` before `until`, at most 92 days, ending at most one minute from now."
+    ),
+    ("invalid_argument", "not_analysis"): (
+        "This task is no analysis task: `optimize adopt` takes the output of a task started with "
+        "`agent-platform optimize`. Write any other text with `agent-platform whiteboard add`."
+    ),
+    ("invalid_argument", "no_output"): (
+        "The analysis has no output yet: wait for it with `agent-platform task wait --task <task_id>`, then run the "
+        "command again."
+    ),
     ("device_request_failed", "github_not_connected"): (
         "No GitHub connection may read this pull request: connect one with `agent-platform github connect --from-gh` "
         "or `agent-platform github connect --token -`, then run the command again."

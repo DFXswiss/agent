@@ -191,6 +191,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | wg-merge-criteria | screens/wg-settings (merge criteria and separate duties, ADR-094 sections 5 and 6) | `wg settings --wg --merge-verdicts --merge-verdict-profile --merge-checks-green --merge-approvals --separate-duties` | done |
 | review-verdicts | task-tabs/operations (review verdicts and security reports of a task) | `review verdicts --task` | done |
 | session-role | screens/home, task-tabs/sessions (the role of every session in the session tree) | `task show --task` (the session rows carry their rights profile) | done |
+| process-analysis | screens/home, screens/tasks (button "Prozesse optimieren" and its dialog: workgroup, period, the sentence on who reads the report; an analysis task, ADR-095) | `optimize --org\|--wg --in --days --since --until --language` | done |
+| analysis-adopt | screens/task, chat-items/session.output (chat output of an analysis task: "Übernehmen" onto the whiteboard of the workgroup or the organization, ADR-095 §5) | `optimize adopt --task --level --notify` | done |
 
 ## Routes
 
@@ -206,7 +208,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `PUT /v1/github-identities/{identity}` | github-company-accounts, github-rewrap |
 | `DELETE /v1/github-identities/{identity}` | github-accounts, github-company-accounts |
 | `PUT /v1/github-identities/{identity}/primary` | github-accounts |
-| `POST /v1/events` | wg-settings, workgroups-rename, whiteboard-write, devices-profile, org-join, agent-rename |
+| `POST /v1/events` | wg-settings, workgroups-rename, whiteboard-write, devices-profile, org-join, agent-rename, analysis-adopt |
 | `POST /v1/invites/lookup` | register, org-join |
 | `GET /v1/me` | me-view, passkey-list, notifications-list, credential-rotate |
 | `GET /v1/me/agents` | agents-list |
@@ -289,7 +291,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/sessions/{session}/orchestrator` | session-orchestrator |
 | `POST /v1/sessions/{session}/orchestrator` | session-orchestrator |
 | `GET /v1/stream` | session-follow, platform-browser |
-| `POST /v1/tasks` | task-create, task-github-identity |
+| `POST /v1/tasks` | task-create, task-github-identity, process-analysis |
 | `GET /v1/tasks/{task}` | task-view, task-runtime |
 | `GET /v1/tasks/{task}/charges` | task-charges, consumption-per-person |
 | `POST /v1/tasks/{task}/close` | task-close |

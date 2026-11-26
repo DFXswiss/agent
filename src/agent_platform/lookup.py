@@ -149,6 +149,8 @@ def walk(parser: argparse.ArgumentParser, path: tuple[str, ...] = ()) -> Iterato
     """Every command of the tree as (`group command`, its parser), in the order of the tree."""
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
+            if cast(Parser, parser).doc is not None:  # a command with commands of its own (`optimize`, `adopt`)
+                yield " ".join(path), cast(Parser, parser)
             for name, sub in action.choices.items():
                 yield from walk(sub, (*path, name))
             return
