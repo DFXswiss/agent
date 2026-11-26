@@ -27,7 +27,7 @@ export interface TaskRow {
   readonly placement?: { readonly device_id: string; readonly vm_id: string | null } | null;
   /** The GitHub identity chosen for the task (ADR-078 section 3); absent from hubs before KOR-47. */
   readonly github_identity?: string | null;
-  /** The rights profile of the task's main sessions (ADR-093 section 1); absent from hubs before KOR-51. */
+  /** The rights profile of the task's main sessions (ADR-094 section 1); absent from hubs before KOR-51. */
   readonly agent_profile?: unknown;
 }
 
@@ -49,7 +49,7 @@ export interface SessionRow {
   readonly ended_at?: string | null;
   /** The person whose instruction created the session (ADR-083 section 2); absent from an older hub. */
   readonly triggered_by?: string | null;
-  /** The rights profile a child was started with (ADR-093 section 1; `profiles.sessionRole`). */
+  /** The rights profile a child was started with (ADR-094 section 1; `profiles.sessionRole`). */
   readonly agent_profile?: unknown;
 }
 

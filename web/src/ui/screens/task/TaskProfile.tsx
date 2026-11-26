@@ -1,4 +1,4 @@
-// The rights profile of a task (ADR-093 sections 1 and 7): "Every right" without one (the default, E-11), else the
+// The rights profile of a task (ADR-094 sections 1 and 7): "Every right" without one (the default, E-11), else the
 // profile's name; writers of the workgroup choose a profile of the workgroup or none, saved with
 // `PUT /v1/tasks/{task}/agent-profile` (it applies at once to the task's sessions and their subagents; `409
 // peer_outdated` when a device of the organization runs an older runner).

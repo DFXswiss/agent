@@ -1,4 +1,4 @@
-"""U-GST-profiles (KOR-51, ADR-093 section 3): the guest is the third check of a rights profile - the platform tools a
+"""U-GST-profiles (KOR-51, ADR-094 section 3): the guest is the third check of a rights profile - the platform tools a
 profile excludes are not offered (``--disallowedTools``), and an operation the profile does not allow is recorded as
 locally rejected (``rights_denied``) when the API process hands it to the control process, so the runner never
 executes it. Without a profile nothing changes."""
@@ -82,7 +82,7 @@ def test_the_stored_profile(tmp_path: Path, context: ControlContext, monkeypatch
 
 
 def test_every_platform_tool_has_a_class_in_the_contract() -> None:
-    """E-19: a new platform tool without a class fails here (ADR-093 section 2); the guest and the runner map the work
+    """E-19: a new platform tool without a class fails here (ADR-094 section 2); the guest and the runner map the work
     VM and browser tools to the type the contract names, every other tool needs no type of its own."""
     tools = json.loads((CONTRACTS / "ops" / "classes.json").read_text(encoding="utf-8"))["tools"]
     assert set(tools) == set(PLATFORM_TOOLS)

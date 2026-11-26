@@ -681,7 +681,7 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
         None,
     ),
     "github.request_connection": ("", "login", "", None),
-    # profile: ADR-093 section 1 (contracts/changes/KOR-51.md)
+    # profile: ADR-094 section 1 (contracts/changes/KOR-51.md)
     "subagent.request": ("purpose prompt model_id github_identity profile", "session_id", "session prompt", 600),
     # ADR-088 section 1: duplicate protection through the idempotency key only
     "subagent.instruct": ("session_id prompt", "session_id instruction_id", "", None),
@@ -721,7 +721,7 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
         "",
         None,
     ),
-    # ADR-093 section 4 (contracts/changes/KOR-51.md)
+    # ADR-094 section 4 (contracts/changes/KOR-51.md)
     "github.list_reviews": ("repo number github_identity", "number head_sha reviews verdicts truncated", "", None),
     "github.get_checks": ("repo ref github_identity", "sha state check_runs statuses truncated", "", None),
     "review.verdict": (

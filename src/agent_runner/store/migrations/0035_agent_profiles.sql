@@ -1,4 +1,4 @@
--- Rights profiles of the device's sessions (KOR-51, ADR-093 section 3; `profiles/state.py`).
+-- Rights profiles of the device's sessions (KOR-51, ADR-094 section 3; `profiles/state.py`).
 --
 -- `profile_state` keeps the last section `agent_profiles` of the desired state (one row): the effective profile of
 -- every session the hub placed on the device and what each profile name resolves to per assigned workgroup. A

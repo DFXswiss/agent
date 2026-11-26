@@ -1,5 +1,5 @@
-"""The rights profiles the hub sent, kept in the store (ADR-093 section 3; section `agent_profiles` of
-`GET /v1/device/state`; runner migration `0034_agent_profiles`).
+"""The rights profiles the hub sent, kept in the store (ADR-094 section 3; section `agent_profiles` of
+`GET /v1/device/state`; runner migration `0035_agent_profiles`).
 
 - `store(conn, desired)` (reconcile step `agent_profiles`): keeps the section of the last desired state. A
   malformed section fails the step (`wire.ResponseInvalid`); a desired state without it (an older hub, which knows no

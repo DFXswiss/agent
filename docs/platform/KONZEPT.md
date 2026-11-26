@@ -796,7 +796,7 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
 - **A1 – Hilfs-KIs:** Subagenten dürfen dasselbe wie ihr Hauptagent ([E-11](#e-11) ist jünger als
   [Idee 26](#k-idee-26) und [Idee 31](#k-idee-31)). Rechteprofile und Rollen ([Idee 42](#k-idee-42)) kommen als
   freiwillig einstellbare Einschränkung, nicht als Voreinstellung. Umgesetzt mit
-  [ADR-093](adr/093-rights-profiles-and-agent-roles.md) (KOR-51).
+  [ADR-094](adr/094-rights-profiles-and-agent-roles.md) (KOR-51).
 <a id="a-2"></a>
 - **A2 – „Konflikte beheben“:** Der PR-Branch wird per Merge-Commit aktualisiert, nichts wird überschrieben
   ([Idee 41](#k-idee-41)). Rebase mit `--force-with-lease` nur nach ausdrücklichem Entscheid.

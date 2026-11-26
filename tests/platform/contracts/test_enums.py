@@ -174,7 +174,7 @@ KOR48_AUDIT = "pr.linked pr.unlinked"
 # ADR-087 section 2 (contracts/changes/KOR-58.md): the hub marks and clears the interruption of a session.
 KOR58_AUDIT = "session.interrupted session.interruption_ended"
 KOR51_AUDIT = "agent_profile.set agent_profile.delete task.agent_profile"
-"""Rights profiles (ADR-093): own profiles of an org or a workgroup, the profile of a task."""
+"""Rights profiles (ADR-094): own profiles of an org or a workgroup, the profile of a task."""
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 03-api.md section 4.6.2, ADR-075 section 7: reasons of a waiting task beyond the session failure reasons
 SPEC_WAITING_REASONS = "no_device platform_access_required wg_vm_limit placement_full placement_offline keys_pending"

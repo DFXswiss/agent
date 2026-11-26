@@ -18,7 +18,7 @@ steps 4-5; 04-crypto.md sections 4.10 and 5.12; ADR-012).
   `credentials.acting`, HOT-14); left out without one;
 - `github_identity`: for `github.*` types the identity the pre-check resolved, for `subagent.request` the child
   session's identity of its parameter (`attribution`); left out without one;
-- `child_profile` (KOR-51, ADR-093 section 3): for `subagent.request` the profile its parameter `profile` names, as
+- `child_profile` (KOR-51, ADR-094 section 3): for `subagent.request` the profile its parameter `profile` names, as
   `profiles.check` checked it; left out without one. The hub's answer then carries the child's effective profile
   (`child_profile`, `Decision.child_profile`).
 

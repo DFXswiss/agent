@@ -308,7 +308,7 @@ class _Start:
     mcp_configs: tuple[str, ...] = ()
     """Further MCP configurations of the agent (the orchestrator's second server after the claim, 05 section 17.5)."""
     profile: Mapping[str, Any] | None = None
-    """The session's rights profile (ADR-093 section 3), None without."""
+    """The session's rights profile (ADR-094 section 3), None without."""
 
 
 @dataclass
@@ -1116,7 +1116,7 @@ class SessionManager:
         return access if isinstance(access, str) else None
 
     def profile(self, session_id: str) -> dict[str, Any] | None:
-        """The rights profile of the session's current start (ADR-093 section 3), None without one."""
+        """The rights profile of the session's current start (ADR-094 section 3), None without one."""
         found = self._meta(session_id).get("profile")
         return found if isinstance(found, dict) else None
 

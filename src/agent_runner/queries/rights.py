@@ -113,7 +113,7 @@ class ReadScope:
     """The instructing human of the read's turn (None: unknown)."""
     task_id: str = ""
     reach: str = "all"
-    """The reach of the session's rights profile (ADR-093 section 3): `workgroup` and `task` read no other workgroup,
+    """The reach of the session's rights profile (ADR-094 section 3): `workgroup` and `task` read no other workgroup,
     `task` no other task (`outside_reach`)."""
 
     def outside_reach(self, wg_id: str, task_id: str | None = None) -> None:

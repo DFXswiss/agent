@@ -1,4 +1,4 @@
-"""U-HUB-profiles: check H2b of the registration (ADR-093 sections 1 and 3) - no profile keeps every right (A1, E-11),
+"""U-HUB-profiles: check H2b of the registration (ADR-094 sections 1 and 3) - no profile keeps every right (A1, E-11),
 a profile limits the types of a session, a child is started with a profile within its parent's and never more, a
 child without one has its parent's rights, a restriction on the task reaches children started before it, and the
 section `agent_profiles` of the device state."""

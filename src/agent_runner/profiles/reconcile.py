@@ -1,6 +1,6 @@
 """Reconcile step of the profiles area: `agent_profiles` (order 46: after the desired state was read and the logs and
 wraps were verified, before the sessions start) keeps the section `agent_profiles` of the desired state in the store
-(`state.store`, ADR-093 section 3). Without a desired state (pending device, hub not reached) the stored one stays."""
+(`state.store`, ADR-094 section 3). Without a desired state (pending device, hub not reached) the stored one stays."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""U-RUN-profiles (KOR-51, ADR-093 section 3): the pipeline checks every operation against the session's effective
+"""U-RUN-profiles (KOR-51, ADR-094 section 3): the pipeline checks every operation against the session's effective
 profile before anything else (a refusal is registered `rejected` with `rights_denied` and a sentence), checks the
 profile a `subagent.request` names and registers it as `child_profile`, and keeps the child's profile the hub answers.
 Without a profile nothing changes (A1, E-11)."""

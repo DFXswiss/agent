@@ -534,7 +534,7 @@ sessions and their usage, rows are memoized. The reachability of the sessions' d
 (`useDevicePresence`: pages of the device list until every shown device is found, the list ends or the hub's cap of
 10 000 is read), not per row. Every row, and every node of the situation view's agent tree (§4.0), shows the role of
 the session: the name of the rights profile it works with (its own, else its parent's, else its task's; a built-in role
-in the catalog's words; nothing without a profile, KOR-51, ADR-093 §7).
+in the catalog's words; nothing without a profile, KOR-51, ADR-094 §7).
 
 ### 5.4 Operations tab
 
@@ -806,7 +806,7 @@ screen says so. Private organizations are only created from a platform invitatio
 
 ## 8. Integrations and settings
 
-### 8.0 Rights profiles and merge rules (KOR-51, ADR-093)
+### 8.0 Rights profiles and merge rules (KOR-51, ADR-094)
 
 - The workgroup settings list the rights profiles usable in the workgroup (built-in roles, the organization's and
   the workgroup's own, each with its types and read reach); writers add or delete a workgroup profile, admins an

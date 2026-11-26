@@ -64,7 +64,7 @@ MAX_PER_PAGE = 100
 MAX_PAGE = 1000
 MAX_DECISIONS = 1000
 EVIDENCE_ITEMS = 50
-"""Items of `review.verdict` `evidence` (one message, ADR-093 section 4)."""
+"""Items of `review.verdict` `evidence` (one message, ADR-094 section 4)."""
 EVIDENCE_REF_LENGTH = 1000
 CHOICES = ("head", "base", "deleted", "edited")
 ISSUE_TITLE_MAX = 256
@@ -146,7 +146,7 @@ _RUN_ID_RE = re.compile(r"tr-[0-9a-f]{12}")
 
 
 def _evidence(value: object) -> bool:
-    """`review.verdict` `evidence`: at most 50 `{kind, ref}` (one message, ADR-093 section 4)."""
+    """`review.verdict` `evidence`: at most 50 `{kind, ref}` (one message, ADR-094 section 4)."""
     return (
         isinstance(value, list)
         and len(value) <= EVIDENCE_ITEMS
@@ -212,7 +212,7 @@ TYPES: Mapping[str, TypeRules] = {
     "github.merge_base": TypeRules(
         {"repo": REPO, "number": _number, "discard": BOOL, "github_identity": UUID}, ("repo", "number")
     ),
-    # ADR-093 section 4 (KOR-51)
+    # ADR-094 section 4 (KOR-51)
     "github.list_reviews": TypeRules({"repo": REPO, "number": _number, "github_identity": UUID}, ("repo", "number")),
     "github.get_checks": TypeRules({"repo": REPO, "ref": REF, "github_identity": UUID}, ("repo", "ref")),
     "github.merge": TypeRules(

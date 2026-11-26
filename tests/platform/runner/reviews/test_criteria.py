@@ -1,4 +1,4 @@
-"""U-RUN-reviews (KOR-51, ADR-093 sections 5 and 6): the formal merge criteria as a pure function - without criteria
+"""U-RUN-reviews (KOR-51, ADR-094 sections 5 and 6): the formal merge criteria as a pure function - without criteria
 nothing is required, verdicts count only on exactly the head, from sessions with the criteria's profile, never the
 merging session's or, with separate duties, a writing session's, one per session; a rejection blocks; checks and
 GitHub approvals."""

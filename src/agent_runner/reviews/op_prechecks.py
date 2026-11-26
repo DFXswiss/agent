@@ -1,4 +1,4 @@
-"""Pre-checks of this area's operation types (`<area>/op_prechecks.py:PRECHECKS`; ADR-093 sections 4 and 6).
+"""Pre-checks of this area's operation types (`<area>/op_prechecks.py:PRECHECKS`; ADR-094 sections 4 and 6).
 
 - `review.verdict`: with `separate_duties` set in the workgroup, a session that made or pushed the head itself may not
   give a verdict on it (`rights_denied`). Whether it wrote other commits of the pull request is decided at the merge,
