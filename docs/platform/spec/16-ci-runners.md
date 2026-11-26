@@ -18,9 +18,9 @@ not repeated here).
 
 ### 1.1 What "all self-hosted runs" means
 - Every job of a repository in a DFX organisation whose `runs-on` today names a self-hosted label runs, after the
-  migration (§12), on a runner that agent.dfx.swiss starts for exactly one job (whichever matching job GitHub assigns
-  to it, §3.2) in a fresh VM and deletes afterwards ([E-34](../KONZEPT.md#e-34), VM per job: [A20](../KONZEPT.md#a-20)). The host-bound jobs of §1.3 are
-  not covered by A20: open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)).
+  migration (§12), on a runner that agent.dfx.swiss starts for exactly one job (by the assumption of §3.2, any
+  matching job GitHub assigns to it) in a fresh VM and deletes afterwards ([E-34](../KONZEPT.md#e-34), VM per job:
+  [A20](../KONZEPT.md#a-20)). The host-bound jobs of §1.3 are not covered by A20: open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)).
 - Organisations in scope: the DFX organisations on GitHub, each with its own installation of the CI app (§4). The
   exact list of organisations, repositories and labels is the inventory of stage 0 (§12) and is kept in [OPS].
 - Public repositories documented with self-hosted CI in [OPS] include `DFXswiss/backend` and `DFXswiss/realunit-app`
@@ -941,7 +941,7 @@ single option, the row says so. Everything else is open. The tendency is the fac
 | D-22 | Shares of the pool (§6.6) | values of `MIN_SHARE`, `MAX_SHARE`, `HEADROOM_INTERACTIVE`, organisation and class shares, `LATENCY_BUDGET`, `POOL_FAILURE_RESERVE`; order between workload kinds; may CI demand stop idle agent VMs? how much Linux capacity may the pilot device give up for macOS VMs? | open, after M-19/M-20 |
 | D-23 | Where CI placement is decided | (a) each device offers only its own free capacity to GitHub; (b) one leading controller for all devices; (c) hub (metadata rule, D-3) | open, after M-8 |
 | D-24 | Class U at the same time as T/P on one device | (a) allowed with separate slot accounts; (b) never at the same time; (c) U only on some pool devices, which still carry agent VMs (a device for CI alone is excluded by [E-36](../KONZEPT.md#e-36)) | open |
-| D-25 | Which operator machines become pool devices, and when | machines with production services, the hub device, small machines: (a) all, in an order; (b) machines with another role stay outside as no runner machines (contradicts [E-35](../KONZEPT.md#e-35); only with a new rule of the client); work devices are excluded by [E-32](../KONZEPT.md#e-32) and are no option | open; E-35 names the whole server capacity |
+| D-25 | Which operator machines become pool devices, and when | machines with production services, the hub device, small machines: (a) all, in an order; (b) machines with another role stay outside as no runner machines (for machines with production services this contradicts [E-35](../KONZEPT.md#e-35) and needs a new rule of the client; keeping the hub device out of the CI pool does not, its capacity already belongs to agent.dfx.swiss); work devices are excluded by [E-32](../KONZEPT.md#e-32) and are no option | open; E-35 names the whole server capacity |
 | D-26 | Trust class model (§5) | (a) the five classes U, B, T, P, H of §5; (b) fewer classes; (c) another split | (a) (research 1 §4.2) |
 
 ## 14. Measurements before building

@@ -903,7 +903,7 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   Antwort: gewählte Option „Alles teilen“ (Kontext, nicht Worte des Auftraggebers: der Text dieser Option in der
   Frage sagte, dass er damit entscheidet, CI-Jobs laufen auf denselben Geräten wie die Agent-Arbeitsbereiche, und dass
   das als sein Entscheid, als neue Regel, eingetragen wird)
-- **Bezug:** ergänzt [E-35](#e-35); macht [A21](#a-21) zum Entscheid. In Spannung mit der Sicherheitsempfehlung der
+- **Bezug:** ergänzt [E-35](#e-35); macht den Geräte-Teil von [A21](#a-21) zum Entscheid (die VM bleibt Auslegung [A20](#a-20)). In Spannung mit der Sicherheitsempfehlung der
   Recherche (Trennung fremden Codes vom Klartext der Workgroups): das Gate U bleibt Empfehlung (D-7, D-20 in
   [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)); [E-25](#e-25) (Härtung nur auf Bestellung).
 - **Umsetzung:** offen – [spec/16-ci-runners.md](spec/16-ci-runners.md).
