@@ -1,6 +1,7 @@
 """Daemon start and runner removal (docs/platform/spec/05-runner.md sections 1.1, 1.2, 1.4).
 
-`run_daemon`: prepare the home (0700; `log/`; `tmp/` wiped), start the own PostgreSQL cluster, apply the store
+`run_daemon`: report each retired setting that is still set (`runner.config_ignored name=POOL_SIZE pool_size=1`, once
+per start), prepare the home (0700; `log/`; `tmp/` wiped), start the own PostgreSQL cluster, apply the store
 migrations, open the pool, run the supervisor with the discovered tasks and shutdown hooks, then close the pool and
 stop the cluster.
 
@@ -20,7 +21,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from agent_runner import registry, service
-from agent_runner.config import Config
+from agent_runner.config import POOL_SIZE, Config
 from agent_runner.errors import RunnerError
 from agent_runner.host import Host
 from agent_runner.identity import Identity, ensure_private_dir, remove_identity
@@ -88,6 +89,9 @@ def run_daemon(
     """
     if host.geteuid() == 0:
         raise RunnerError("run_as_root")
+    for name in config.ignored:
+        # A retired setting from an old runner.env or plist: not read, the fixed value applies (ADR-009 addendum).
+        announce("config_ignored", {"name": name, "pool_size": POOL_SIZE})
     prepare_home(config)
     dsn = start_store(config.pg_dir, host.cluster)
     try:

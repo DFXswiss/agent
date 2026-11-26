@@ -675,7 +675,7 @@ def test_status_of_a_working_device(case: Case) -> None:
     assert by_name["runner.status.session"] == [
         {"session_id": pid("s1"), "state": "working", "wg_id": pid("wg"), "vm_id": "vm-00000001", "depth": 0}
     ]
-    assert by_name["runner.status.pool"] == [{"size": 2, "ready": 1}]
+    assert by_name["runner.status.pool"] == [{"size": 1, "ready": 1}]
     assert "SECRET" not in out
 
 

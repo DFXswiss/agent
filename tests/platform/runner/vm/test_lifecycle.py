@@ -318,13 +318,12 @@ def test_stopped_vm_restarts_without_any_ready_golden(harness: Harness) -> None:
 
 def test_clone_gives_up_a_pool_vm_when_no_slot_is_free(harness: Harness) -> None:
     harness.add_golden()
-    harness.physical_mib = 32768 + 2 * 8192
-    harness.settings = settings(pool_size=2)
+    harness.physical_mib = 32768 + 8192  # one slot, held by the one pool VM of the fixed pool size
 
     async def body(manager: VmManager) -> Any:
         return await manager.refill()
 
-    harness.run(body)
+    assert harness.run(body) == 1
     harness.sql("UPDATE runner.golden SET state = 'retired'")
     harness.add_golden("g2", minute=5)
 
@@ -602,7 +601,7 @@ def test_health_of_a_guest_assigned_elsewhere_and_vanished_rows(harness: Harness
 
 def test_reconcile(harness: Harness) -> None:
     harness.add_golden()
-    harness.settings = settings(pool_size=3)
+    harness.settings = settings(pool_size=3)  # several pool VMs (more than the runner's 1) for every kind of leftover
     harness.physical_mib = 32768 + 8 * 8192
 
     async def setup(manager: VmManager) -> Any:
@@ -828,7 +827,7 @@ def test_restart_whose_row_changed_meanwhile(harness: Harness, monkeypatch: pyte
 def test_slot_from_a_pool_vm_that_was_taken_meanwhile(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
     harness.add_golden()
     harness.physical_mib = 32768 + 2 * 8192
-    harness.settings = settings(pool_size=2)
+    harness.settings = settings(pool_size=2)  # two pool VMs (more than the runner's 1) to see the second one taken
 
     async def fill(manager: VmManager) -> Any:
         return await manager.refill()

@@ -32,7 +32,6 @@ def runner_env(system: System, owner: Owner, manifest: Manifest, reserve_mib: in
         PREFIX + "HOME": str(Layout.runner_home(owner.home)),
         PREFIX + "HUB_URL": manifest.hub,
         PREFIX + "PLATFORM_ROOT_KEY": manifest.platform_root_key,
-        PREFIX + "POOL_SIZE": "0",
         PREFIX + "MEMORY_RESERVE_MIB": str(reserve_mib),
         PREFIX + "GOLDEN_TEMPLATE": str(layout.golden_template()),
         PREFIX + "LOGIN_AUTOMATION": "off",

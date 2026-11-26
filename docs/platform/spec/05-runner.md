@@ -55,7 +55,7 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `HUB_URL` | required | `https://` (tests: `http://127.0.0.1…` allowed only with `AGENT_RUNNER_TEST_MODE=1`) |
 | `PLATFORM_ROOT_KEY` | required | b64u Ed25519 public key |
 | `VM_CPUS` / `VM_MEMORY_MIB` / `VM_DISK_GIB` | 4 / 8192 / 20 | per workgroup VM |
-| `POOL_SIZE` | 2 | 0 disables the pool (clone path only) |
+| `POOL_SIZE` | retired | no longer read: the warm pool is fixed at 1 on every device (§3.2, ADR-009 addendum of 2026-11-26); a set value is no `config_invalid`, the daemon reports it once at start (`runner.config_ignored name=POOL_SIZE pool_size=1`) and uses 1 |
 | `MEMORY_RESERVE_MIB` | 32768 | host reserve excluded from the VM budget |
 | `SESSIONS_PER_VM` | 16 | occupying sessions per VM (states `requested` … `stopping` without `suspended`); 0 = no limit; reported in every capacity report (ADR-075) |
 | `MAX_VMS` | 0 | VMs of the device that occupy a slot; 0 = only the memory budget decides; caps `vm_slots_total` (ADR-075) |
@@ -84,6 +84,7 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `LOGIN_AUTOMATION` | `on` for platform devices (platform install profile), `off` for org devices | `on` enables §11.3 (needs the `login` extra; the platform install profile includes it) |
 | `GOLDEN_TEMPLATE` | `images/golden.yaml` of the checkout | the build also reads `images/`, `src/agent_guest/` and `contracts/` next to the template; missing → `golden_source_missing` (KOR-03) |
 | `TEST_MODE` | `0` | allows loopback HTTP and double upstreams; MUST be `0` in production (doctor warns) |
+| `TEST_POOL_EMPTY` | `0` | `1` holds the warm pool empty for the clone-path tests of the E2E suite (E2E-07, PERF-02); only with `TEST_MODE=1`, otherwise `config_invalid`; no production setting (ADR-009 addendum) |
 
 ### 1.4 Files and store
 
@@ -246,8 +247,11 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
   timeout 30 s).
 - Assignment (hot path): pick a pool VM → `POST /v1/assign {vm_id, org_id, wg_id}` → `runner.vm` row
   `assigning` → `running`; outbox `vm_state`. Measured target 0.1 s (Spike A: 0.09–0.13 s).
-- Refill: asynchronous after every assignment and every 60 s, up to `POOL_SIZE`, at most 2 clones in parallel,
-  only while capacity allows (§3.4). A refill clone never delays a hot-path request.
+- Pool size: exactly **1** ready pool VM on every device - platform devices and own devices, existing and new ones.
+  The size is fixed in the code (`agent_runner.config.POOL_SIZE`), not a setting (§1.3; ADR-009 addendum of
+  2026-11-26).
+- Refill: asynchronous after every assignment and every 60 s, back up to 1 pool VM, only while capacity allows (§3.4).
+  A refill clone never delays a hot-path request.
 - Fallback when the pool is empty: clone + start on the hot path (Spike A: 4.3–6.0 s incl. load with 100 VMs).
   Restart of a stopped workgroup VM: `limactl start` (Spike A: 4.1–5.9 s). Cold boot from the cloud image is
   never in the hot path.
@@ -1420,7 +1424,8 @@ An own Mac becomes an org device through one signed, versioned package (`agent_r
 | Agent way | `install/admin.py`, `agent_platform/ownmac.py` | One `osascript … with administrator privileges` with a constant root script (package copied, digest checked on the copy, request and owner moved into the spool, `installer`). |
 
 Settings of an own device's runner (plist `EnvironmentVariables`): `HOME=~/.local/share/dfx-agent-runner`, the
-manifest's `HUB_URL` and `PLATFORM_ROOT_KEY`, `POOL_SIZE=0`, `MEMORY_RESERVE_MIB` as above, `GOLDEN_TEMPLATE` of the
+manifest's `HUB_URL` and `PLATFORM_ROOT_KEY`, `MEMORY_RESERVE_MIB` as above (no pool setting: the warm pool is 1 like
+on every device, §3.2), `GOLDEN_TEMPLATE` of the
 payload, `LOGIN_AUTOMATION=off`, `VM_PREFIX=dfx-` (`TEST_MODE=1` only for a test build whose hub is loopback HTTP).
 
 A verified `remove` of the device in every org whose log it holds is persisted as `device_removed` (§2.2 step 4,

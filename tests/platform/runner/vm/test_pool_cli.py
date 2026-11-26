@@ -64,9 +64,25 @@ def test_status_without_store(status: Any) -> None:
     code, out, err = status()
     assert (code, err) == (0, "")
     assert out.splitlines() == [
-        "runner.pool size=2 ready=0 golden=none refill=no_golden",
+        "runner.pool size=1 ready=0 golden=none refill=no_golden",
         "runner.capacity budget_mib=32768 used_mib=0 slots_total=4 slots_free=4 pool_ready=0 capacity_low=no",
     ]
+
+
+@pytest.mark.parametrize("left_over", ["0", "4"])
+def test_status_ignores_a_left_over_pool_setting(status: Any, left_over: str) -> None:
+    """ADR-009 addendum: an old AGENT_RUNNER_POOL_SIZE is no config_invalid and does not change the size of 1."""
+    status.exists["value"] = False
+    code, out, err = status(AGENT_RUNNER_POOL_SIZE=left_over)
+    assert (code, err) == (0, "")
+    assert out.splitlines()[0] == "runner.pool size=1 ready=0 golden=none refill=no_golden"
+
+
+def test_status_while_a_test_holds_the_pool_empty(status: Any) -> None:
+    status.exists["value"] = False
+    code, out, err = status(AGENT_RUNNER_TEST_MODE="1", AGENT_RUNNER_TEST_POOL_EMPTY="1")
+    assert (code, err) == (0, "")
+    assert out.splitlines()[0] == "runner.pool size=0 ready=0 golden=none refill=disabled"
 
 
 def test_status_with_pool_vms(status: Any) -> None:
@@ -88,14 +104,14 @@ def test_status_with_pool_vms(status: Any) -> None:
         " created_at=2026-11-21T12:00:00Z instance=Running",
         "runner.pool.vm vm_id=vm-00000002 lima_name=wp-cli-arp-00000012 golden_version=g1"
         " created_at=2026-11-21T12:00:01Z instance=missing",
-        "runner.pool size=2 ready=2 golden=g1 refill=full",
+        "runner.pool size=1 ready=2 golden=g1 refill=full",
         "runner.capacity budget_mib=32768 used_mib=16384 slots_total=4 slots_free=2 pool_ready=2 capacity_low=no",
     ]
 
 
 def test_refill_states() -> None:
     assert cli_pool.refill_state(0, 0, "g", 1) == "disabled"
-    assert cli_pool.refill_state(2, 0, None, 1) == "no_golden"
-    assert cli_pool.refill_state(2, 2, "g", 0) == "full"
-    assert cli_pool.refill_state(2, 1, "g", 1) == "pending"
-    assert cli_pool.refill_state(2, 1, "g", 0) == "no_capacity"
+    assert cli_pool.refill_state(1, 0, None, 1) == "no_golden"
+    assert cli_pool.refill_state(1, 1, "g", 0) == "full"
+    assert cli_pool.refill_state(1, 0, "g", 1) == "pending"
+    assert cli_pool.refill_state(1, 0, "g", 0) == "no_capacity"

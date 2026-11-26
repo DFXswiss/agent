@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from agent_runner import registry
+from agent_runner.config import POOL_SIZE
 from agent_runner.errors import RunnerError
 from agent_runner.store.pool import open_pool
 from agent_runner.sync import extensions, outbox
@@ -117,8 +118,8 @@ def test_idle_task_probes_every_5_s_and_stops_idle_vms_every_60_s(fake_clock: An
 
 def test_manager_for_builds_one_manager(fake_clock: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = SimpleNamespace(
-        vm_prefix=PREFIX, vm_cpus=4, vm_memory_mib=8192, vm_disk_gib=20, pool_size=2, memory_reserve_mib=32768,
-        vm_idle_seconds=1800, home=tmp_path / "home", sessions_per_vm=8, max_vms=5,
+        vm_prefix=PREFIX, vm_cpus=4, vm_memory_mib=8192, vm_disk_gib=20, memory_reserve_mib=32768,
+        vm_idle_seconds=1800, home=tmp_path / "home", sessions_per_vm=8, max_vms=5, pool_size=POOL_SIZE,
     )  # fmt: skip
     ctx = context(fake_clock)
     ctx.config = config
@@ -130,7 +131,7 @@ def test_manager_for_builds_one_manager(fake_clock: Any, tmp_path: Path, monkeyp
     assert isinstance(manager, VmManager)
     assert manager.env.lima.prefix == PREFIX
     assert manager.env.tokens.directory == tmp_path / "home" / "vm"
-    assert manager.env.settings.pool_size == 2
+    assert manager.env.settings.pool_size == POOL_SIZE == 1
     assert (manager.env.settings.sessions_per_vm, manager.env.settings.max_vms) == (8, 5)
     assert manager.env.cpus() == os.cpu_count()
 
@@ -270,7 +271,7 @@ def test_vm_state_goes_to_the_outbox_and_the_heartbeat(harness: Harness, fake_cl
             pusher, ws = FakePusher(), FakeWs()
             ctx.pool = db
             ctx.config = SimpleNamespace(
-                vm_prefix=PREFIX, vm_cpus=4, vm_memory_mib=8192, vm_disk_gib=20, pool_size=1,
+                vm_prefix=PREFIX, vm_cpus=4, vm_memory_mib=8192, vm_disk_gib=20, pool_size=POOL_SIZE,
                 memory_reserve_mib=32768, vm_idle_seconds=1800, home=tmp_path / "home", sessions_per_vm=16, max_vms=0,
             )  # fmt: skip
             ctx.identity = None

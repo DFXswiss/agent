@@ -54,7 +54,8 @@ def test_defaults(base: dict[str, str], runner_home: Path, root_key: str) -> Non
     assert cfg.hub_url == "http://127.0.0.1:9"
     assert cfg.platform_root_key == root_key
     assert (cfg.vm_cpus, cfg.vm_memory_mib, cfg.vm_disk_gib) == (4, 8192, 20)
-    assert cfg.pool_size == 2
+    assert cfg.pool_size == 1
+    assert (cfg.ignored, cfg.test_pool_empty) == ((), False)
     assert cfg.memory_reserve_mib == 32768
     assert (cfg.sessions_per_vm, cfg.max_vms) == (16, 0)
     assert (cfg.session_idle_seconds, cfg.vm_idle_seconds) == (1800, 1800)
@@ -217,7 +218,6 @@ INTEGER_CASES = {
     "VM_CPUS": (1, 256),
     "VM_MEMORY_MIB": (1024, 4_194_304),
     "VM_DISK_GIB": (5, 65_536),
-    "POOL_SIZE": (0, 64),
     "MEMORY_RESERVE_MIB": (0, 4_194_304),
     "SESSIONS_PER_VM": (0, 1_000_000),
     "MAX_VMS": (0, 1_000_000),
@@ -237,9 +237,41 @@ def test_integers(name: str, base: dict[str, str]) -> None:
         refused(base, name)
 
 
-def test_pool_zero_disables_pool(base: dict[str, str]) -> None:
-    base["AGENT_RUNNER_POOL_SIZE"] = "0"
-    assert load(base).pool_size == 0
+def test_pool_size_is_fixed_at_one() -> None:
+    """ADR-009 addendum (2026-11-26): the warm pool is 1 on every device, a constant and no setting."""
+    assert config_module.POOL_SIZE == 1
+    assert "POOL_SIZE" not in NAMES
+    assert "POOL_SIZE" not in config_module._INTEGERS
+    assert config_module.RETIRED_NAMES == ("POOL_SIZE",)
+
+
+@pytest.mark.parametrize("value", ["0", "1", "2", "4", "64", "65", "-1", "abc", ""])
+@pytest.mark.parametrize("kind", [None, "org", "platform"])
+def test_retired_pool_size_is_ignored(value: str, kind: str | None, base: dict[str, str]) -> None:
+    """A left-over AGENT_RUNNER_POOL_SIZE (any value, every device kind) is no config_invalid and is not read."""
+    base["AGENT_RUNNER_POOL_SIZE"] = value
+    cfg = load(base, device_kind=kind)
+    assert cfg.ignored == ("POOL_SIZE",)
+    assert cfg.pool_size == 1
+    assert "AGENT_RUNNER_POOL_SIZE" not in environment(cfg)
+
+
+def test_test_pool_empty_holds_the_pool_empty_in_test_mode_only(base: dict[str, str]) -> None:
+    """The E2E clone-path tests (E2E-07, PERF-02) hold the pool empty; outside test mode that is refused."""
+    base["AGENT_RUNNER_TEST_POOL_EMPTY"] = "1"
+    cfg = load(base)
+    assert (cfg.test_pool_empty, cfg.pool_size) == (True, 0)
+    env = environment(cfg)
+    assert env["AGENT_RUNNER_TEST_POOL_EMPTY"] == "1"
+    assert load(env) == cfg
+    base["AGENT_RUNNER_TEST_POOL_EMPTY"] = "0"
+    assert load(base).pool_size == 1
+    base["AGENT_RUNNER_TEST_POOL_EMPTY"] = "yes"
+    refused(base, "TEST_POOL_EMPTY")
+    base["AGENT_RUNNER_TEST_POOL_EMPTY"] = "1"
+    base["AGENT_RUNNER_TEST_MODE"] = "0"
+    base["AGENT_RUNNER_HUB_URL"] = "https://hub.example.org"
+    refused(base, "TEST_POOL_EMPTY")
 
 
 @pytest.mark.parametrize("value", ["0", "1"])
@@ -536,7 +568,6 @@ def test_environment_round_trip_everything(base: dict[str, str], tmp_path: Path,
             "AGENT_RUNNER_VM_CPUS": "8",
             "AGENT_RUNNER_VM_MEMORY_MIB": "16384",
             "AGENT_RUNNER_VM_DISK_GIB": "40",
-            "AGENT_RUNNER_POOL_SIZE": "0",
             "AGENT_RUNNER_MEMORY_RESERVE_MIB": "1024",
             "AGENT_RUNNER_SESSIONS_PER_VM": "0",
             "AGENT_RUNNER_MAX_VMS": "3",

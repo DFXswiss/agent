@@ -32,7 +32,8 @@ anyway: a VM of a daemon killed with SIGKILL, or of a clone whose queued work it
 deletion took it; neither has a row, and the startup reconciliation deletes it before any other VM work
 (`VmManager.reconcile`).
 
-`Pool` keeps up to `POOL_SIZE` neutral running clones: `refill()` (asynchronous, at most 2 clones in parallel, only
+`Pool` keeps `POOL_SIZE` (fixed 1 on every device, `agent_runner.config.POOL_SIZE`, ADR-009 addendum) neutral running
+clones: `refill()` (asynchronous, at most 2 clones in parallel, only
 while a slot is free, never on the hot path), `take(...)` (hot path: the oldest pool VM of the ready golden, `POST
 /v1/assign`, row `assigning` -> `running`) and `purge(...)` (pool VMs of a retired golden are deleted).
 
@@ -57,7 +58,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from agent_runner.config import Config
+from agent_runner.config import POOL_SIZE, Config
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink import cursor
 from agent_runner.guestlink.client import GuestClient, Health
@@ -143,13 +144,15 @@ class VmSettings:
     cpus: int
     memory_mib: int
     disk_gib: int
-    pool_size: int
     memory_reserve_mib: int
     vm_idle_seconds: int
     sessions_per_vm: int = 16
     """Occupying sessions per VM, 0 = no limit (ADR-075 section 1)."""
     max_vms: int = 0
     """Slots at most, 0 = the memory budget alone (ADR-075 section 1)."""
+    pool_size: int = POOL_SIZE
+    """`Config.pool_size`: the fixed `POOL_SIZE` (1, ADR-009 addendum), 0 only while an E2E test holds the pool empty
+    (`TEST_POOL_EMPTY`, test mode). Unit tests also build settings with other values to isolate a scenario."""
 
     @classmethod
     def from_config(cls, config: Config) -> VmSettings:

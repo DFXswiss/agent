@@ -66,8 +66,9 @@ SAMPLE_INTERVAL_S = 0.5
 IDLE_SCENARIO = Path(__file__).with_name("idle-scenario.json")
 IDLE_NAME = "idle"
 ERRORS = (ServiceError, NodeError, vms.VmError, OSError)
-# Warm pool per runner when a selected spec needs VMs and E2E_POOL_SIZE is not set (07-testing.md section 5.2).
-VM_POOL_SIZE = 2
+# Warm pool per runner when a selected spec needs VMs and E2E_POOL_SIZE is not set (07-testing.md section 5.2): the
+# runner's own pool, fixed at 1 (ADR-009 addendum).
+VM_POOL_SIZE = 1
 # Live runs (07-testing.md section 6): the operator's secrets arrive in `E2E_LIVE_*` variables (Playwright gets them,
 # the artefact scan looks for them), the operator's non-secret live settings in `AGENT_LIVE_*` variables (Playwright
 # only, e.g. the GitHub test repository: its name appears in results and is no secret), and HTTPS to the live

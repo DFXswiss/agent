@@ -37,6 +37,7 @@ def build(world: World, **changes: object) -> RunConfig:
         ({"AGENT_RUNNER_VM_PREFIX": "nodash"}, "end with '-'"),
         ({"AGENT_RUNNER_SRC": "/nonexistent"}, "is not an agent checkout"),
         ({"E2E_POOL_SIZE": "-1"}, "E2E_POOL_SIZE must be a non-negative integer"),
+        ({"E2E_POOL_SIZE": "2"}, "E2E_POOL_SIZE must be 0 (pool held empty) or 1 (the runner's fixed pool)"),
         ({"E2E_RUNNERS": "5"}, "E2E_RUNNERS must be 1..4"),
         ({"E2E_VM_MEMORY_BUDGET_MIB": "lots"}, "E2E_VM_MEMORY_BUDGET_MIB must be a number"),
         ({"E2E_WEB_MINIFY": "yes"}, "E2E_WEB_MINIFY must be 0 or 1"),

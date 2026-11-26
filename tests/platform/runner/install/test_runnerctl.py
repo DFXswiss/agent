@@ -30,12 +30,17 @@ def test_the_runner_settings_of_an_own_device(kit: Kit) -> None:
         "AGENT_RUNNER_HOME": str(kit.layout.root / "Users/alice/.local/share/dfx-agent-runner"),
         "AGENT_RUNNER_HUB_URL": HUB,
         "AGENT_RUNNER_PLATFORM_ROOT_KEY": ROOT_KEY,
-        "AGENT_RUNNER_POOL_SIZE": "0",
         "AGENT_RUNNER_MEMORY_RESERVE_MIB": "8192",
         "AGENT_RUNNER_GOLDEN_TEMPLATE": str(payload / "current/golden-src/images/golden.yaml"),
         "AGENT_RUNNER_LOGIN_AUTOMATION": "off",
         "AGENT_RUNNER_VM_PREFIX": "dfx-",
     }
+
+
+def test_an_own_device_sets_no_pool_setting(kit: Kit) -> None:
+    """The warm pool is fixed at 1 on every device (ADR-009 addendum): the installation writes no pool setting."""
+    env = runnerctl.runner_env(kit.system, owner_of(kit.layout), manifest(), 8192)
+    assert not any("POOL_SIZE" in name for name in env)
 
 
 def test_a_loopback_hub_is_test_mode(kit: Kit) -> None:

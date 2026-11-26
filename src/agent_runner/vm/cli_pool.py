@@ -3,11 +3,12 @@
 Facts (codes, counts and names of the runner itself; never a token or hash):
 
     runner.pool.vm vm_id=... lima_name=... golden_version=... created_at=... instance=Running|Stopped|missing
-    runner.pool size=<POOL_SIZE> ready=<n> golden=<version|none> refill=<state>
+    runner.pool size=1 ready=<n> golden=<version|none> refill=<state>
     runner.capacity budget_mib=... used_mib=... slots_total=... slots_free=... pool_ready=... capacity_low=yes|no
 
-`refill` is `disabled` (POOL_SIZE 0), `no_golden` (no ready golden), `full` (pool complete), `no_capacity` (no free
-slot) or `pending` (the daemon will add VMs). The command reads the store like `image list` (a stopped cluster is
+`size` is the fixed `POOL_SIZE` (1, ADR-009 addendum; 0 only while an E2E test holds the pool empty with
+`TEST_POOL_EMPTY` in test mode). `refill` is `disabled` (held empty), `no_golden` (no ready golden), `full` (pool
+complete), `no_capacity` (no free slot) or `pending` (the daemon will add VMs). The command reads the store like `image list` (a stopped cluster is
 started for the command) and needs no hub configuration.
 """
 

@@ -24,6 +24,20 @@ KONZEPT §3: on the first task of a new organization/workgroup, VM and session m
 - Claude Code start-up and prompt acceptance inside the sandbox are not yet measured end to end (Spike A measured `claude --version` only; guest services, socket forwarding, TUI start under Landlock and the hub round trips are not included). M0 measures the TUI start under Landlock and the clone path end to end; M1 must prove the budget. The clone path margin is thin (≈ 6 s measured + unmeasured steps) – recorded as a risk.
 - Workgroup VMs keep their golden version for their lifetime and are replaced by a fresh clone when idle-stopped after a newer golden exists and no session is suspended.
 
+## Addendum (2026-11-26): pool fixed at 1
+Decision of the client of 2026-11-26: the warm pool is **fixed at 1** - on every device, platform devices and own
+devices, existing and new ones. It is no longer a setting: the size is a constant in the code
+(`agent_runner.config.POOL_SIZE`), `AGENT_RUNNER_POOL_SIZE` is not read any more. This replaces "default 2,
+configurable" above, the 4 of the platform device and the "no warm pool" (`POOL_SIZE=0`) of own devices (ADR-074 §4);
+the installation of an own device sets no pool setting.
+- A device whose `runner.env` or plist still sets `AGENT_RUNNER_POOL_SIZE` starts anyway (no `config_invalid`); the
+  daemon reports it once at start (`runner.config_ignored name=POOL_SIZE pool_size=1`) and keeps one pool VM.
+- Refill as before (after every assignment and every 60 s), back up to one ready VM; the second task of a burst takes
+  the clone path, which stays below ten seconds (Spike A: 4.3–6.0 s).
+- An own device keeps one more running VM than before (its memory counts against the capacity budget above).
+- The clone path is still measured (PERF-02, E2E-07): the E2E suite holds the pool empty with `TEST_POOL_EMPTY=1`,
+  which the runner accepts only in test mode (`TEST_MODE=1`, never in production; otherwise `config_invalid`).
+
 ## Alternatives considered
 Cold start (too slow), snapshots (unsupported), pausing VMs (no RAM gain, unsupported), one shared VM per device (violates per-workgroup VM).
 

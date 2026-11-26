@@ -1,9 +1,11 @@
 """`POST /pool/drain` (`{"size": n}`, default 0): empty the warm pool of every runner and keep it at `n` VMs, for the
-clone-path tests (E2E-07, PERF-02) and to restore the pool afterwards (`{"size": 2}`).
+clone-path tests (E2E-07, PERF-02) and to restore the pool afterwards (`{"size": 1}`). The runner's pool is fixed at 1
+(ADR-009 addendum), so `n` is 0 (held empty) or 1.
 
 Per runner: the daemon is stopped (it would refill at once), the pool VMs it reports (`agent-runner pool status`,
 lines `runner.pool.vm … lima_name=…`) are deleted with `limactl delete -f` (only names with the runner's VM prefix),
-`AGENT_RUNNER_POOL_SIZE` becomes `n` and the daemon starts again; its start-up reconciliation marks the rows of the
+`pool_env` holds the pool empty (`AGENT_RUNNER_TEST_POOL_EMPTY=1`, test mode only) or lets it refill to 1 and the
+daemon starts again; its start-up reconciliation marks the rows of the
 vanished instances deleted (05-runner.md section 3.5). That runs after the daemon's `enrolled=` line, so the route
 polls `pool status` until it lists none of the deleted instances and at most `n` VMs (ACC-M2: E2E-07 read a stale
 ready VM in the whole suite); a pool that does not settle within `SETTLE_TIMEOUT_S` fails the route. Workgroup VMs are
@@ -18,9 +20,10 @@ from typing import Any
 
 from orchestrator.context import Context
 from orchestrator.control import Route, RouteError
+from orchestrator.services import pool_env
 
 POOL_VM_FACT = "runner.pool.vm "
-MAX_SIZE = 8
+MAX_SIZE = 1
 DELETE_TIMEOUT_S = 300.0
 SETTLE_TIMEOUT_S = 120.0
 SETTLE_POLL_S = 0.5
@@ -69,7 +72,7 @@ def post_drain(ctx: Context, _params: dict[str, str], body: Any) -> tuple[int, A
         deleted = [vm for vm in pool_status(name, runner) if prefix and vm.startswith(prefix)]
         for vm in deleted:
             ctx.runner_node.run(["limactl", "delete", "-f", vm], timeout=DELETE_TIMEOUT_S)
-        runner.env["AGENT_RUNNER_POOL_SIZE"] = str(size)
+        pool_env(runner.env, size)
         if running:
             runner.start()
             settle(name, runner, deleted, size)

@@ -125,7 +125,9 @@ is kept on the Mac after a task ran."
 
 Resource defaults of an own device (ordinary runner settings in its plist): no warm pool (`POOL_SIZE=0`, the clone
 path stays below the ten seconds of [§3 point 6](../KONZEPT.md#k-3-b6)), memory reserve a quarter of the physical
-memory (4–32 GiB), mailbox login automation off (as every org device).
+memory (4–32 GiB), mailbox login automation off (as every org device). Superseded for the pool on 2026-11-26
+([ADR-009 addendum](009-vm-start-under-ten-seconds.md#addendum-2026-11-26-pool-fixed-at-1)): the pool is fixed at 1 on
+every device, own devices included, and the plist sets no pool setting.
 
 ### 5. Removal without a terminal
 - `agent-platform device remove --this-computer`: unpairs the device in the org log (`remove` with the rotations, as

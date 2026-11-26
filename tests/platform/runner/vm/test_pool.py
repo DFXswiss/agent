@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from agent_runner.config import POOL_SIZE
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.client import GuestClient, Health
 from agent_runner.guestlink.errors import GuestUnauthorized
@@ -36,13 +37,16 @@ def test_format_time_and_settings_from_config() -> None:
     assert format_time(datetime(2026, 11, 21, 12, 0, 1, 234567, tzinfo=UTC)) == "2026-11-21T12:00:01.234Z"
 
     class Config:
-        vm_cpus, vm_memory_mib, vm_disk_gib, pool_size, memory_reserve_mib, vm_idle_seconds = 2, 4096, 30, 3, 1024, 60
+        vm_cpus, vm_memory_mib, vm_disk_gib, memory_reserve_mib, vm_idle_seconds = 2, 4096, 30, 1024, 60
         sessions_per_vm, max_vms = 0, 7
+        pool_size = POOL_SIZE  # `Config.pool_size`: fixed, no setting (ADR-009 addendum)
 
-    assert VmSettings.from_config(Config()) == VmSettings(  # type: ignore[arg-type]
-        cpus=2, memory_mib=4096, disk_gib=30, pool_size=3, memory_reserve_mib=1024, vm_idle_seconds=60,
+    settings = VmSettings.from_config(Config())  # type: ignore[arg-type]
+    assert settings == VmSettings(
+        cpus=2, memory_mib=4096, disk_gib=30, memory_reserve_mib=1024, vm_idle_seconds=60,
         sessions_per_vm=0, max_vms=7,
     )  # fmt: skip
+    assert settings.pool_size == POOL_SIZE == 1
 
 
 def test_selftest_provisioning_is_a_valid_yq_append() -> None:
@@ -275,7 +279,30 @@ def test_store_failure_after_provisioning_removes_the_instance(harness: Harness)
 # -- refill, take, purge ----------------------------------------------------------------------------------------
 
 
+def test_the_pool_is_one_vm_and_is_refilled_to_one(harness: Harness) -> None:
+    """ADR-009 addendum: the runner's settings keep exactly one pool VM; after an assignment the refill brings the
+    pool back to one, never more, even with plenty of free slots."""
+    harness.add_golden()
+    assert harness.settings.pool_size == POOL_SIZE == 1
+
+    async def body(manager: VmManager) -> Any:
+        first = await manager.refill()
+        again = await manager.refill()
+        taken = await manager.pool.take(GOLDEN_REF, ORG, WG_A)
+        refilled = await manager.refill()
+        capacity = await manager.capacity()
+        return first, again, taken, refilled, capacity
+
+    first, again, taken, refilled, capacity = harness.run(body)
+    assert (first, again, refilled) == (1, 0, 1)
+    assert taken is not None and taken.state == "running"
+    assert capacity.pool_ready == 1
+    assert capacity.slots_free > 0
+    assert sorted(row["state"] for row in harness.vms()) == ["pool", "running"]
+
+
 def test_refill_fills_up_to_pool_size_two_in_parallel(harness: Harness) -> None:
+    # A larger size than the runner ever uses (it is fixed at 1), only to see the two clones in flight.
     harness.add_golden()
     harness.settings = VmSettings(**{**SETTINGS.__dict__, "pool_size": 3})
     in_flight: list[int] = []

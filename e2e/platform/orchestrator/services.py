@@ -340,6 +340,19 @@ def write_platform_key(node: Node, path: str, key: str) -> None:
         raise ServiceError(f"platform key file not written: {done['stderr'].strip()[-300:]}")
 
 
+POOL_HOLD_EMPTY = "AGENT_RUNNER_TEST_POOL_EMPTY"
+"""The runner's warm pool is fixed at 1 (ADR-009 addendum); in test mode this variable holds it empty."""
+
+
+def pool_env(env: dict[str, str], size: int) -> dict[str, str]:
+    """Size 0 holds the runner's pool empty (test mode only); 1 is the runner's own fixed pool. Changes `env`."""
+    if size == 0:
+        env[POOL_HOLD_EMPTY] = "1"
+    else:
+        env.pop(POOL_HOLD_EMPTY, None)
+    return env
+
+
 def runner_env(
     environ: Mapping[str, str],
     config: RunConfig,
@@ -359,7 +372,7 @@ def runner_env(
             "AGENT_RUNNER_PLATFORM_ROOT_KEY": root_key,
             "AGENT_RUNNER_TEST_MODE": "1",
             "AGENT_RUNNER_VM_PREFIX": config.runner_prefix(index),
-            "AGENT_RUNNER_POOL_SIZE": str(config.pool_size),
+            **pool_env({}, config.pool_size),
             "AGENT_RUNNER_VM_MEMORY_MIB": str(config.vm_memory_mib),
             "AGENT_RUNNER_MODEL_UPSTREAM_ANTHROPIC": model_url,
             "AGENT_RUNNER_MODEL_UPSTREAM_OPENROUTER": model_url,
