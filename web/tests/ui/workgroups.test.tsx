@@ -163,6 +163,18 @@ describe('workgroup screen', () => {
       { vm_id: 'vm-cccccccc', state: 'running', sessions: 0, upgrade: status({ state: 'switching' }) },
       { vm_id: 'vm-dddddddd', state: 'stopped', sessions: 0, upgrade: status({}) },
       { vm_id: 'vm-eeeeeeee', state: 'running', sessions: 0, upgrade: null },
+      {
+        vm_id: 'vm-ffffffff',
+        state: 'stopped',
+        sessions: 0,
+        upgrade: status({
+          holds: [
+            { reason: 'checkpoint_impossible', session_id: s1, since, checkpoint_at: '2026-11-24T08:00:00.000Z' },
+            { reason: 'checkpoint_impossible', session_id: s2, since },
+          ],
+          sessions: [s1, s2],
+        }),
+      },
     ];
     w.client.on(`GET /v1/workgroups/${w.world.defaultWg}`, () => ({ devices: [], placement: null }));
     w.client.on(`GET /v1/workgroups/${one}`, () => ({ devices: [{ device_id: dev1.id, online: true, vms }] }));
@@ -180,7 +192,7 @@ describe('workgroup screen', () => {
     names(w, {}, { [one]: 'One' });
     mount(w, at, `/o/${w.org}/workgroups`);
     const row = () => screen.getAllByTestId('workgroups.item').find((item) => item.dataset.wg === one)!;
-    await waitFor(() => expect(within(row()).getAllByTestId('workgroups.vm-switch.item')).toHaveLength(4));
+    await waitFor(() => expect(within(row()).getAllByTestId('workgroups.vm-switch.item')).toHaveLength(5));
     const item = (vm: string) =>
       within(row())
         .getAllByTestId('workgroups.vm-switch.item')
@@ -221,6 +233,19 @@ describe('workgroup screen', () => {
     fireEvent.click(screen.getByTestId('workgroups.vm-switch.dialog.confirm'));
     await waitFor(() => expect(screen.queryByTestId('workgroups.vm-switch.dialog')).toBeNull());
     expect(within(item('vm-dddddddd')).queryByTestId('workgroups.vm-switch.requested')).toBeNull();
+    // HOT-24: sessions that can never be saved on this VM hold it; the confirmation names what continues without it
+    const never = within(item('vm-ffffffff')).getAllByTestId('workgroups.vm-switch.hold');
+    expect(never.map((node) => node.dataset.reason)).toEqual(['checkpoint_impossible', 'checkpoint_impossible']);
+    expect(never[0]).toHaveTextContent('Session 000000a1 cannot be saved on this VM');
+    expect(never[0]).toHaveTextContent('Without a switch by hand the VM stays on its version');
+    expect(screen.queryByTestId('workgroups.vm-switch.dialog.without')).toBeNull();
+    fireEvent.click(within(item('vm-ffffffff')).getByTestId('workgroups.vm-switch.open'));
+    expect(screen.getByTestId('workgroups.vm-switch.dialog.without')).toHaveTextContent(
+      'Continue without the state of this VM',
+    );
+    const without = screen.getAllByTestId('workgroups.vm-switch.dialog.without.item');
+    expect(without[0]).toHaveTextContent('Session 000000a1: from its save of');
+    expect(without[1]).toHaveTextContent('Session 000000b2: fresh – it reads the messages of its task');
   });
 
   it('says loading before the log and not found for a non-member', async () => {

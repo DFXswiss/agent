@@ -3,7 +3,9 @@
 // - `upgradeOf`: the `upgrade` of a VM in `GET /v1/workgroups/{wg}` (contract `vm_upgrade`): the golden it moves to,
 //   `waiting` or `switching`, the holds (who or what keeps it on the old golden, since when) and the paused sessions
 //   that move with it. Malformed: null (nothing shown). A hold reason this client does not know is kept as `unknown`,
-//   so a held VM never reads as "moves by itself".
+//   so a held VM never reads as "moves by itself". `checkpoint_impossible` (HOT-24) names a session that can never be
+//   saved on this VM; its `checkpoint_at` is the save it would continue from after a switch by hand (null: fresh).
+// - `withoutState`: those sessions - the ones a switch by hand continues without the state of the old VM.
 // - `outdatedVms`: the VMs of the workgroup's devices that report an upgrade, in device and VM order.
 // - `switchStatus`: `switching`, `moves` (waiting without holds: it moves at the next pass) or `held`.
 // - `requestVmSwitch`: `POST /v1/workgroups/{wg}/vms/{vm}/switch` with `{}` (members with administration rights; the
@@ -19,6 +21,7 @@ export const HOLD_REASONS = [
   'checkpoint_due',
   'checkpoint_missing',
   'workspace_incomplete',
+  'checkpoint_impossible',
   'capacity',
   'switch_failed',
 ] as const;
@@ -29,6 +32,7 @@ export interface VmUpgradeHold {
   readonly reason: HoldReason;
   readonly session_id: string | null;
   readonly since: string;
+  readonly checkpoint_at: string | null;
 }
 
 export interface VmUpgrade {
@@ -47,6 +51,7 @@ const holdOf = (value: unknown): VmUpgradeHold | null => {
     reason: KNOWN.has(value.reason) ? (value.reason as HoldReason) : 'unknown',
     session_id: typeof value.session_id === 'string' ? value.session_id : null,
     since: value.since,
+    checkpoint_at: typeof value.checkpoint_at === 'string' ? value.checkpoint_at : null,
   };
 };
 
@@ -65,6 +70,20 @@ export function upgradeOf(value: unknown): VmUpgrade | null {
     holds,
     sessions,
   };
+}
+
+/** A session a switch by hand continues without the state of the old VM, with the save it continues from. */
+export interface WithoutState {
+  readonly session_id: string;
+  readonly checkpoint_at: string | null;
+}
+
+export function withoutState(upgrade: VmUpgrade): WithoutState[] {
+  return upgrade.holds.flatMap((hold) =>
+    hold.reason === 'checkpoint_impossible' && hold.session_id !== null
+      ? [{ session_id: hold.session_id, checkpoint_at: hold.checkpoint_at }]
+      : [],
+  );
 }
 
 /** An outdated VM of the workgroup with its device. */
