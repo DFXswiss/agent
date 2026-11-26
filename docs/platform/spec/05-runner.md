@@ -274,12 +274,14 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
   for a main session with `resume_from` the VM of that session – both regardless of their room; (3) a running VM of
   the workgroup with free resources of its own for one more session - no fixed number of sessions per VM (ADR-075
   addendum 2) -, measured on the VM (`vm.room`: the guest's `GET /v1/metrics`, 2 s; `MemAvailable` less what one more
-  session needs - the mean `memory.current` of its sessions, at least 512 MiB - leaves 10 % of the VM's RAM, and the
-  load per vCPU is at most `VM_LOAD_MAX_PERCENT`; a VM that does not answer counts as having room, since its own
-  sandbox limits still hold; log `runner.vm.session_room`), smallest VM ID first.
-  The same measurement decides whether a subagent fits on its parent's VM (`subagents.limits.vm_room_refusal`). No
-  VM with room: the order goes on unchanged (stopped VM, new VM on a free slot, else `capacity_exhausted` and the
-  hub places the next attempt, ADR-013, ADR-049);
+  session needs - measured, no fixed number: the largest `memory.current` among its sessions that have not ended - leaves
+  10 % of the VM's RAM, and the load per vCPU is at most `VM_LOAD_MAX_PERCENT`; a VM that does not answer counts as
+  having room, since its own sandbox limits still hold; log `runner.vm.session_room`), smallest VM ID first.
+  The same measurement decides whether a subagent fits on its parent's VM (`subagents.limits.vm_room_refusal`). A VM
+  keeps the size it started with (it does not grow, ADR-075 addendum 3), so its fixed RAM and its sessions' measured
+  use decide how many sessions it takes (DFX workgroup VM, 8 GiB, sessions of 350-510 MB: about 13-15). No VM with
+  room: the order goes on unchanged - a stopped VM, then a further VM of the workgroup on a free slot of the device
+  (§3.4, §3.8), else `capacity_exhausted` and the hub places the next attempt, ADR-013, ADR-049;
   (4) a stopped VM of the workgroup with room (restart; replaced by a VM of the newest golden instead when it may
   move, §3.6 – the new VM first, then the old one is deleted), smallest VM ID; (5) a new VM
   from the pool, else a clone, when a slot is free (§3.4) – without a ready golden yet (a device just added still

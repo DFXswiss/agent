@@ -38,7 +38,8 @@ counts as "no limit" (the behaviour before this ADR).
 > addendum 4, "kein fester Deckel"; at the time 11 tasks of the DFX workgroup ran in one VM): `SESSIONS_PER_VM` is
 > only an optional upper bound for special cases, **empty (0) by default**. A running VM takes one more session while
 > its own free resources last, measured on the VM (`agent_runner.vm.room`: the guest's `GET /v1/metrics` - RAM
-> available less the mean `memory.current` of its sessions, at least 512 MiB, must leave 10 % of the VM's RAM; the load
+> available less the mean `memory.current` of its sessions, at least 512 MiB (since addendum 3: the largest measured
+> session, no floor), must leave 10 % of the VM's RAM; the load
 > per vCPU at most `VM_LOAD_MAX_PERCENT`, default 85). A VM that does not answer is judged by the bound alone. The same
 > measurement decides whether a subagent fits on its parent's VM. When no running VM has room, the existing order of
 > section 4 and of the scheduler applies unchanged - a stopped VM, then a new VM on a free slot of the device, else
@@ -73,6 +74,29 @@ counts as "no limit" (the behaviour before this ADR).
 > single requests (subagent depth and total per task stay settings, ADR-088). The only fixed number of the device
 > admission is Apple's: at most 2 macOS VMs per Mac (16-ci-runners.md §8.4); CI has no share of its own either
 > (16-ci-runners.md §6.6: `MIN_SHARE`, `MAX_SHARE`, `HEADROOM_INTERACTIVE`, `CI_ORG_SHARE`, `CI_CLASS_SHARE` dropped).
+
+> **Addendum 3 (2026-11-26): a full workgroup VM gets a further VM, it does not grow.** Measurement in the DFX
+> workgroup VM (26.11., 18:34): 4 vCPU, 8 GiB RAM, 20 GiB disk; 7 active Claude sessions of about 350-510 MB each at
+> about 3 % of a CPU (they mostly wait for the model); 3.6 GB in use, 4.3 GB available, no swap, no OOM, memory
+> pressure 0, load 1.4 on 4 vCPU. At that use the VM's memory runs short at about 13-15 sessions - because of the VM's
+> fixed size, not of the device's free resources.
+>
+> - **What one more session needs is measured, no number:** the largest `memory.current` among the VM's sessions that
+>   have not ended (`agent_runner.vm.room`; the former floor of 512 MiB per session and the mean are gone). A session
+>   costs little CPU, so in practice the VM's RAM decides; the load per vCPU (`VM_LOAD_MAX_PERCENT`) stays the second
+>   check.
+> - **Decision: a further VM of the workgroup, no growing.** When no running VM of the workgroup has room, the existing
+>   order of section 4 applies: a stopped VM of the workgroup, then a further VM on a free slot of the device, admitted
+>   by the device admission (05-runner.md §3.8), else `capacity_exhausted` and the hub places the next attempt on a
+>   device where it fits (ADR-013, ADR-049). The VM is not grown: Lima with Apple's Virtualization framework fixes a
+>   VM's RAM and CPUs when it starts - `limactl edit --memory/--cpus` works only on a stopped instance, and the
+>   framework has no memory hot-plug (its balloon device can only give back memory below the size the VM started
+>   with). Growing would mean stopping the VM and with it every session running there, which the rule "running work is
+>   never ended" forbids.
+> - **Not chosen:** starting every VM larger and shrinking it with the balloon (Lima does not expose the balloon, and
+>   the host would count the full size against its budget); restarting a VM with more RAM once it has no session
+>   (possible later through `golden_switch`-like moves, but a second mechanism besides the existing order).
+> - Specification: 05-runner.md §3.3 step 3.
 
 ### 2. Capacity report (runner → hub, additive)
 The `capacity` object of the heartbeat gains optional counters: `cpus`, `memory_total_mib`, `disk_free_mib`,
