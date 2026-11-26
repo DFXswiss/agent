@@ -193,6 +193,11 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | session-role | screens/home, task-tabs/sessions (the role of every session in the session tree) | `task show --task` (the session rows carry their rights profile) | done |
 | process-analysis | screens/home, screens/tasks (button "Prozesse optimieren" and its dialog: workgroup, period, the sentence on who reads the report; an analysis task, ADR-097) | `optimize --org\|--wg --in --days --since --until --language` | done |
 | analysis-adopt | screens/task, chat-items/session.output (chat output of an analysis task: "Übernehmen" onto the whiteboard of the workgroup or the organization, ADR-097 §5) | `optimize adopt --task --level --notify` | done |
+| modes-catalogue | screens/home, screens/tasks, screens/task (the working modes offered in the task form field "Arbeitsweisen" and on the task page, with title and what each needs; listing chooses nothing, ADR-098 §1) | `modes list` | done |
+| task-modes-choose | screens/home, screens/tasks (task form field "Arbeitsweisen", empty by default: the modes chosen with the task, ADR-098 §§2-3) | `task create --mode` | done |
+| task-mode-on | screens/task (switch a working mode on for the task; a mode that needs another offers to choose both, ADR-098 §§2-3) | `task mode on --task --mode` | done |
+| task-mode-off | screens/task (the chip of an active mode with "Ausschalten", ADR-098 §3) | `task mode off --task --mode` | done |
+| task-modes-view | screens/task (the chips of the active modes with who chose them and how, ADR-098 §3) | `task show --task` | done |
 
 ## Routes
 
@@ -291,8 +296,8 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/sessions/{session}/orchestrator` | session-orchestrator |
 | `POST /v1/sessions/{session}/orchestrator` | session-orchestrator |
 | `GET /v1/stream` | session-follow, platform-browser |
-| `POST /v1/tasks` | task-create, task-github-identity, process-analysis |
-| `GET /v1/tasks/{task}` | task-view, task-runtime |
+| `POST /v1/tasks` | task-create, task-github-identity, process-analysis, task-modes-choose |
+| `GET /v1/tasks/{task}` | task-view, task-runtime, task-modes-view |
 | `GET /v1/tasks/{task}/charges` | task-charges, consumption-per-person |
 | `POST /v1/tasks/{task}/close` | task-close |
 | `GET /v1/tasks/{task}/logs/{object}` | test-runs |
@@ -327,6 +332,9 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `PUT /v1/orgs/{org}/agent-profiles/{name}` | agent-profiles |
 | `DELETE /v1/orgs/{org}/agent-profiles/{name}` | agent-profiles |
 | `PUT /v1/tasks/{task}/agent-profile` | task-agent-profile |
+| `GET /v1/modes` | modes-catalogue, task-modes-choose, task-mode-on |
+| `PUT /v1/tasks/{task}/modes/{mode}` | task-mode-on |
+| `DELETE /v1/tasks/{task}/modes/{mode}` | task-mode-off |
 
 ## Without a person
 
@@ -378,3 +386,4 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | next:claude_unreadable | `claude connect` | outside |
 | next:mac_unsupported | `device assign` (a DFX execution device needs no Mac; fixing the Mac itself – macOS update, free space – is the Mac's, not the platform's) | outside |
 | next:admin_cancelled | `device assign` (a DFX execution device; the administrator dialog of an own Mac belongs to macOS, ADR-074) | outside |
+| next:mode_needs_instruction | `task mode on --task --mode` (the agent of an account outside a platform session, also of an account of an agent alone; a session switches a mode on with the operation task.mode and a quote of the instruction it was given, ADR-098 §3) | built |
