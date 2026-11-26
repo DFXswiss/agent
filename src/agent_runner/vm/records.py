@@ -8,7 +8,10 @@ a VM belongs to one workgroup for its life, and the VM of a session is the `vm_i
 sessions per VM).
 
 `runner.golden_switch` records a VM replaced by one of a newer golden while sessions on it were paused (`record_switch`,
-`switched_to`; ADR-093), `sessions_on` lists the sessions on a VM that are not stopped or failed.
+`switched_to`; ADR-093), `sessions_on` lists the sessions on a VM that are not stopped or failed. The switch keeps its
+attempts (`attempt`, `put_attempt`, `forget_attempt(s)`, `prune_attempts`: `runner.golden_switch_attempt`) and the
+requests by hand it took over (`switch_requests`, `take_requests`, `request_time`: `runner.golden_switch_request`)
+across restarts; `mark_reported` and `hold_reported`: which holds a hub showed, since when (HOT-24).
 
 The control token itself is kept in `$AGENT_RUNNER_HOME/vm/<vm_id>.token` (0600, directory 0700, written once and
 atomically) and in memory; `TokenStore.read` refuses a file whose hash differs from the row (`vm_token_invalid`).
@@ -314,6 +317,104 @@ async def hold_times(
 
 async def forget_holds(db: Any, vm_id: str) -> None:
     await _execute(db, "DELETE FROM runner.golden_switch_hold WHERE vm_id = %s", (vm_id,))
+
+
+@dataclass(frozen=True)
+class Attempt:
+    """Attempts of one kind (`refresh`, `failure`) of the switch of a VM, with the reason and the next time."""
+
+    count: int
+    reason: str
+    next_at: datetime
+
+
+async def attempt(db: Any, vm_id: str, kind: str) -> Attempt | None:
+    rows = await _rows(
+        db,
+        "SELECT count, reason, next_at FROM runner.golden_switch_attempt WHERE vm_id = %s AND kind = %s",
+        (vm_id, kind),
+    )
+    return Attempt(**rows[0]) if rows else None
+
+
+async def put_attempt(db: Any, vm_id: str, kind: str, found: Attempt) -> None:
+    await _execute(
+        db,
+        "INSERT INTO runner.golden_switch_attempt (vm_id, kind, count, reason, next_at) VALUES (%s, %s, %s, %s, %s)"
+        " ON CONFLICT (vm_id, kind) DO UPDATE SET count = EXCLUDED.count, reason = EXCLUDED.reason,"
+        " next_at = EXCLUDED.next_at",
+        (vm_id, kind, found.count, found.reason, found.next_at),
+    )
+
+
+async def forget_attempt(db: Any, vm_id: str, kind: str) -> None:
+    await _execute(db, "DELETE FROM runner.golden_switch_attempt WHERE vm_id = %s AND kind = %s", (vm_id, kind))
+
+
+async def forget_attempts(db: Any, vm_id: str) -> None:
+    await _execute(db, "DELETE FROM runner.golden_switch_attempt WHERE vm_id = %s", (vm_id,))
+
+
+async def prune_attempts(db: Any, live: Sequence[str]) -> None:
+    """The attempts of VMs that are no longer live go."""
+    await _execute(db, "DELETE FROM runner.golden_switch_attempt WHERE NOT (vm_id = ANY(%s))", (list(live),))
+
+
+async def switch_requests(db: Any) -> list[str]:
+    """The VMs requested by hand that the switch took over, oldest first."""
+    rows = await _rows(db, "SELECT vm_id FROM runner.golden_switch_request ORDER BY requested_at, vm_id")
+    return [str(row["vm_id"]) for row in rows]
+
+
+async def take_requests(db: Any, wanted: Sequence[tuple[str, datetime | None]], now: datetime) -> list[str]:
+    """Store the requested VMs with the hub's time of their request (`wanted`; the others are removed); returns the
+    ones that are new or requested again (a newer time), whose attempts are forgotten (such a request tries at once).
+    A request without a time (a hub before HOT-24) is stored with `now` once and never counts as new again while it
+    is listed."""
+    async with db.connection() as conn, conn.transaction():
+        await conn.execute(
+            "DELETE FROM runner.golden_switch_request WHERE NOT (vm_id = ANY(%s))", ([vm for vm, _ in wanted],)
+        )
+        new: list[str] = []
+        for vm_id, at in wanted:
+            cur = await conn.execute(
+                "INSERT INTO runner.golden_switch_request (vm_id, requested_at) VALUES (%s, %s) ON CONFLICT (vm_id)"
+                " DO UPDATE SET requested_at = EXCLUDED.requested_at"
+                " WHERE %s AND runner.golden_switch_request.requested_at < EXCLUDED.requested_at",
+                (vm_id, now if at is None else at, at is not None),
+            )
+            if cur.rowcount == 1:
+                new.append(vm_id)
+                await conn.execute("DELETE FROM runner.golden_switch_attempt WHERE vm_id = %s", (vm_id,))
+        return new
+
+
+async def request_time(db: Any, vm_id: str) -> datetime | None:
+    """When the VM was requested by hand (the hub's time of the newest request), None when it is not."""
+    rows = await _rows(db, "SELECT requested_at FROM runner.golden_switch_request WHERE vm_id = %s", (vm_id,))
+    return rows[0]["requested_at"] if rows else None
+
+
+async def hold_reported(db: Any, vm_id: str) -> dict[tuple[str, str], datetime]:
+    """When each recorded cause of the VM was first reported to a hub that shows it as it is (`reported_at`)."""
+    rows = await _rows(
+        db,
+        "SELECT reason, session_key, reported_at FROM runner.golden_switch_hold WHERE vm_id = %s"
+        " AND reported_at IS NOT NULL",
+        (vm_id,),
+    )
+    return {(row["reason"], row["session_key"]): row["reported_at"] for row in rows}
+
+
+async def mark_reported(db: Any, vm_id: str, keys: Sequence[tuple[str, str]], at: datetime) -> None:
+    """The causes `keys` of the VM were reported (the first time counts)."""
+    if keys:
+        await _execute(
+            db,
+            "UPDATE runner.golden_switch_hold SET reported_at = %s WHERE vm_id = %s AND reported_at IS NULL"
+            " AND (reason, session_key) IN (SELECT * FROM unnest(%s::text[], %s::text[]))",
+            (at, vm_id, [key[0] for key in keys], [key[1] for key in keys]),
+        )
 
 
 async def switched_to(db: Any, old_vm_id: str) -> str | None:

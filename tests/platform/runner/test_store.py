@@ -256,12 +256,18 @@ TABLES = {
         "restore_started",
         "restore_failed",
         "checkpoint_state",  # 0034 (KOR-70, ADR-093)
+        "impossible_reason",  # 0037 (HOT-24, ADR-093 addendum)
+        "impossible_turns",
+        "impossible_vm_id",
     ],
     # 0031 (KOR-57, ADR-082 section 6): the main orchestrator in a session of this device
     "orchestrator": ["session_id", "pairing_id", "state", "registered_at", "handed_over_at"],
     # 0034 (KOR-70, ADR-093): the switch of workgroup VMs to the newest golden
     "golden_switch": ["old_vm_id", "new_vm_id", "golden_version", "switched_at"],
-    "golden_switch_hold": ["vm_id", "reason", "session_key", "since"],
+    "golden_switch_hold": ["vm_id", "reason", "session_key", "since", "reported_at"],  # reported_at: 0037
+    # 0037 (HOT-24): the switch's attempts and the requests it took over survive restarts
+    "golden_switch_attempt": ["vm_id", "kind", "count", "reason", "next_at"],
+    "golden_switch_request": ["vm_id", "requested_at"],
     "context_object": [
         "object_id",
         "task_id",

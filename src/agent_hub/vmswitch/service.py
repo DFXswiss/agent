@@ -4,12 +4,12 @@
   `wg:read` and `org:admin` of the workgroup's organization (the member with administration rights; `404 not_found`
   without `wg:read`, `403 forbidden` without `org:admin`). The VM must be a live VM of the workgroup (`404 not_found`
   otherwise). When its device last reported it outdated (`hub.vm.upgrade`), the request is stored
-  (`switch_requested_at`, kept when already set; `switch_requested_by`) and the device is woken (hint `reconcile`,
-  after the commit); a current VM (`upgrade` NULL) stores nothing. Either way the write is audited
-  (`vm.switch_requested {vm_id, device_id, requested}`). The answer is the preview: the VM's status as reported,
-  `requested` and `requested_at`.
+  (`switch_requested_at`, the time of the newest request - a repeated request confirms the holds shown now, HOT-24;
+  `switch_requested_by`) and the device is woken (hint `reconcile`, after the commit); a current VM (`upgrade` NULL)
+  stores nothing. Either way the write is audited (`vm.switch_requested {vm_id, device_id, requested}`). The answer
+  is the preview: the VM's status as reported, `requested` and `requested_at`.
 - `requested(connection, device)`: the VMs of the device with a request that are still live and outdated, oldest
-  request first (the desired state's `vm_switch`).
+  request first, with the time of the request (the desired state's `vm_switch` and `vm_switch_at`).
 - `apply_report(connection, body)`: what a `vm_state` report adds (`outbox.py`): `upgrade` when present (NULL ends a
   request), `replaced_by` with the workgroup default (`wg_placement.vm_id`) and task choices (`task.placement_vm_id`)
   that named the replaced VM moved to its successor, so a member's choice survives the switch.
@@ -52,7 +52,7 @@ def request_switch(
     device, golden, upgrade, requested_at = row
     wake = None
     if upgrade is not None:
-        requested_at = requested_at or now
+        requested_at = now  # the newest confirmation: it covers the holds the member saw (HOT-24)
         connection.execute(
             "UPDATE hub.vm SET switch_requested_at = %s, switch_requested_by = %s WHERE id = %s",
             (requested_at, user, vm),
@@ -85,13 +85,13 @@ def request_switch(
     return answer, wake
 
 
-def requested(connection: Connection, device: UUID) -> list[str]:
-    """The desired state's `vm_switch` for `device` (module docstring)."""
+def requested(connection: Connection, device: UUID) -> list[tuple[str, datetime]]:
+    """The desired state's `vm_switch` for `device` with the time of each request (module docstring)."""
     return [
-        str(found[0])
+        (str(found[0]), found[1])
         for found in connection.execute(
-            "SELECT id FROM hub.vm WHERE device_id = %s AND switch_requested_at IS NOT NULL AND upgrade IS NOT NULL"
-            " AND state <> 'deleted' ORDER BY switch_requested_at, id LIMIT %s",
+            "SELECT id, switch_requested_at FROM hub.vm WHERE device_id = %s AND switch_requested_at IS NOT NULL"
+            " AND upgrade IS NOT NULL AND state <> 'deleted' ORDER BY switch_requested_at, id LIMIT %s",
             (device, REQUESTED_MAX),
         )
     ]

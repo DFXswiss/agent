@@ -232,7 +232,7 @@ class VmManager:
             golden is None
             or row.golden_version == golden.version
             or await self.retire.pending(row)
-            or (await judge(env, self.retire, row)).holds
+            or (await judge(env, self.retire, row)).blocking(await self.golden_switch.forced(row))
         ):
             return await self._restart(row)
         env.log("vm.golden_replaced", {"vm_id": row.id, "golden_version": golden.version})

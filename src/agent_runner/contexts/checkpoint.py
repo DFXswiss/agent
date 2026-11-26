@@ -22,12 +22,18 @@ coalesced:
    of the workgroup (`runner.scope_key`), written to the cache; the manifest is signed with the device key and the
    object recorded `sealed` together with the content hash (one transaction); the upload task is woken.
 
-Export failures: a guest refusal (`not_found`: no such session any more; `state_conflict`: no conversation yet;
-`size_exceeded`: transcript over its limit) drops this request with a log line; an unreachable guest or a missing
-epoch key postpones it with backoff, at most `MAX_ATTEMPTS` times. A refused archive (`ArchiveInvalid`) is dropped -
-among them `context_incomplete`, a conversation without a complete turn: nothing to save yet (the guest's export
-waits for a quiet transcript and refuses such a conversation itself, `state_conflict`; this check also holds against
-an older guest).
+Export failures: a guest refusal (`not_found`: no such session - or a guest without the export route, which answers
+the same, HOT-24; `state_conflict`: no conversation yet; `size_exceeded`: transcript over its limit) drops this request
+with a log line; an unreachable guest or a missing epoch key postpones it with backoff, at most `MAX_ATTEMPTS` times.
+A refused archive (`ArchiveInvalid`) is dropped - among them `context_incomplete`, a conversation without a complete
+turn: nothing to save yet (the guest's export waits for a quiet transcript and refuses such a conversation itself,
+`state_conflict`; this check also holds against an older guest). A guest refusal `unavailable` (a passing fault of
+the guest) is postponed like an unreachable guest. What a drop means is stored (`store.drop_due`, HOT-24, ADR-093
+addendum): `nothing` for `state_conflict`/`context_incomplete` of a session that never had a checkpoint here (nothing
+to save: it holds no VM); `impossible` with the reason (`export_refused:not_found` - also a guest without the export
+route -, `export_refused:size_exceeded`) for a refusal that stays as long as the guest stays - the session is not made
+due again until it worked again; `dropped` for everything else (the session or its VM is gone, the attempts ran out,
+another refusal), which a later request may still end.
 
 **Upload** (`upload`, `upload_round`, its own loop in the daemon task so a long upload never delays an export):
 `PUT /v1/device/contexts/{object}/chunks/{i}` from the first chunk the hub has not confirmed, then `POST .../commit`;
@@ -107,13 +113,46 @@ def inspect_file(path: Path, limits: Any) -> archive.Context:
 
 
 class _Stop(Exception):
-    """No checkpoint now: the request is dropped, postponed with backoff, or waits for its VM."""
+    """No checkpoint now: the request is dropped (with its outcome and the reason an `impossible` one is stored with,
+    `store.drop_due`), postponed with backoff, or waits for its VM."""
 
-    def __init__(self, why: str, *, postpone: bool = False, wait: bool = False) -> None:
+    def __init__(
+        self,
+        why: str,
+        *,
+        postpone: bool = False,
+        wait: bool = False,
+        outcome: str = "dropped",
+        reason: str | None = None,
+    ) -> None:
         super().__init__(why)
         self.why = why
         self.postpone = postpone
         self.wait = wait
+        self.outcome = outcome
+        self.reason = reason
+
+
+NOTHING_REFUSALS = frozenset({"state_conflict"})
+"""Guest refusals of an export that mean: no complete turn to save yet."""
+NOTHING_ARCHIVES = frozenset({"context_incomplete"})
+"""Archive refusals that mean the same."""
+IMPOSSIBLE_REFUSALS = frozenset({"not_found", "size_exceeded"})
+"""Guest refusals that stay as long as the guest stays: the guest does not know the session or has no export route
+(both `not_found`), or the transcript is over its limit (it only grows). HOT-24."""
+RETRY_REFUSALS = frozenset({"unavailable"})
+"""Guest refusals of a passing fault (a file that changed while it was read, an error of the handler): postponed."""
+
+
+def _ended(code: str, why: str, *, nothing: frozenset[str], first: bool) -> _Stop:
+    """A request that ends for good: `nothing` to save (no complete turn, and the session never had a checkpoint,
+    `first`), `impossible` on this VM for a refusal in `IMPOSSIBLE_REFUSALS`, else `dropped` (HOT-24, ADR-093
+    addendum)."""
+    if code in nothing and first:
+        return _Stop(why, outcome="nothing")
+    if code in IMPOSSIBLE_REFUSALS:
+        return _Stop(why, outcome="impossible", reason=f"export_refused:{code}")
+    return _Stop(why)
 
 
 @dataclass
@@ -149,7 +188,9 @@ class Checkpointer:
             except _Stop as stop:
                 if stop.wait:
                     return "waiting"
-                return await (self._postpone(due, stop.why) if stop.postpone else self._drop(due, stop.why))
+                if stop.postpone:
+                    return await self._postpone(due, stop.why)
+                return await self._drop(due, stop.why, stop.outcome, stop.reason)
         if stored is None:
             return "identical"
         self.env.upload_wake.set()
@@ -171,24 +212,14 @@ class Checkpointer:
         scratch = Path(tempfile.mkdtemp(dir=env.scratch, prefix="ctx-"))
         try:
             tar = scratch / "context.tar"
-            try:
-                with tar.open("wb") as out:
-                    async with await env.sessions.client(vm) as guest:
-                        await guest.export_context(
-                            sid,
-                            out.write,
-                            workspace_max_bytes=env.workspace_bytes,
-                            transcript_max_bytes=env.transcript_bytes,
-                        )
-            except GuestRefused as refused:
-                raise _Stop(f"export_refused error={refused.error}") from None
-            except GuestError as failed:
-                raise _Stop(f"export_failed error={failed.code}", postpone=True) from None
+            await self._export(due, vm, tar)
             limits = archive.limits_for(env.transcript_bytes, env.workspace_bytes)
             try:
                 found = await asyncio.to_thread(inspect_file, tar, limits)
             except archive.ArchiveInvalid as invalid:
-                raise _Stop(f"archive_invalid code={invalid.code}") from None
+                why = f"archive_invalid code={invalid.code}"
+                first = await self._first(due)
+                raise _ended(invalid.code, why, nothing=NOTHING_ARCHIVES, first=first) from None
             if found.session_id != sid or found.task_id != session.task_id:
                 raise _Stop("archive_invalid code=context_invalid")
             if found.content_sha256 == due.archive_sha256:
@@ -233,6 +264,27 @@ class Checkpointer:
             f" bytes={stored.bytes} workspace={found.workspace_state} omitted={found.workspace_omitted}"
         )
         return stored
+
+    async def _export(self, due: DueSession, vm: Any, tar: Path) -> None:
+        """Stream the guest's archive of the session into `tar`; `_Stop` when the guest refuses or fails."""
+        env = self.env
+        try:
+            with tar.open("wb") as out:
+                async with await env.sessions.client(vm) as guest:
+                    await guest.export_context(
+                        due.session_id,
+                        out.write,
+                        workspace_max_bytes=env.workspace_bytes,
+                        transcript_max_bytes=env.transcript_bytes,
+                    )
+        except GuestRefused as refused:
+            why = f"export_refused error={refused.error}"
+            if refused.error in RETRY_REFUSALS:
+                raise _Stop(why, postpone=True) from None
+            first = await self._first(due)
+            raise _ended(refused.error, why, nothing=NOTHING_REFUSALS, first=first) from None
+        except GuestError as failed:
+            raise _Stop(f"export_failed error={failed.code}", postpone=True) from None
 
     def _seal(self, session: records.LocalSession, key: tuple[int, bytes], tar: Path) -> StoredObject:
         """Compress, seal and cache the archive (runs in a worker thread)."""
@@ -288,11 +340,20 @@ class Checkpointer:
             created_at=env.now(),
         )
 
-    async def _drop(self, due: DueSession, why: str) -> str:
+    async def _drop(self, due: DueSession, why: str, outcome: str = "dropped", reason: str | None = None) -> str:
         async with self.env.sessions.transaction() as conn:
-            await store.drop_due(conn, due.session_id, due_at=due.due_at, at=self.env.now())
-        self.env.line(f"checkpoint_dropped session_id={due.session_id} {why}")
+            await store.drop_due(
+                conn, due.session_id, due_at=due.due_at, at=self.env.now(), outcome=outcome, reason=reason
+            )
+        self.env.line(f"checkpoint_dropped session_id={due.session_id} {why} outcome={outcome}")
         return "dropped"
+
+    async def _first(self, due: DueSession) -> bool:
+        """Whether the session never had a checkpoint here (no archive hash and no cached object of it)."""
+        if due.archive_sha256 is not None:
+            return False
+        async with self.env.sessions.transaction() as conn:
+            return not await store.has_object(conn, due.session_id)
 
     async def _postpone(self, due: DueSession, why: str) -> str:
         if due.attempts + 1 >= MAX_ATTEMPTS:
@@ -336,9 +397,10 @@ class Checkpointer:
         return results
 
     async def vm_pending(self, vm_id: str) -> bool:
-        """Whether a checkpoint of a session on the VM is still due (a stopped VM is then not replaced)."""
+        """Whether a checkpoint of a session on the VM that worked is still due (a stopped VM is then not replaced; a
+        session that never worked has nothing to save, HOT-24)."""
         async with self.env.sessions.transaction() as conn:
-            return bool(await store.due_on_vm(conn, vm_id))
+            return bool(await store.due_on_vm(conn, vm_id, worked=True))
 
     # -- upload --------------------------------------------------------------------------------------------------
 

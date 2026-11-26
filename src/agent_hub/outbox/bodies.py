@@ -254,7 +254,7 @@ class SessionTransitionBody(Strict):
 
 
 class VmUpgradeHold(Strict):
-    """`vm_upgrade_hold` (ADR-093 section 1)."""
+    """`vm_upgrade_hold` (ADR-093 section 1; `checkpoint_impossible` and `checkpoint_at`: addendum HOT-24)."""
 
     reason: Literal[
         "session_active",
@@ -262,15 +262,18 @@ class VmUpgradeHold(Strict):
         "checkpoint_due",
         "checkpoint_missing",
         "workspace_incomplete",
+        "checkpoint_impossible",
         "capacity",
         "switch_failed",
     ]
     session_id: Uuid7 | None = None
     since: Time
+    checkpoint_at: Time | None = None
+    """HOT-24: with `checkpoint_impossible`, the checkpoint the session would continue from after a switch by hand."""
 
     @model_validator(mode="after")
     def _optional(self) -> VmUpgradeHold:
-        _absent_not_null(self, ("session_id",))
+        _absent_not_null(self, ("session_id", "checkpoint_at"))
         return self
 
 
@@ -280,7 +283,7 @@ class VmUpgrade(Strict):
     golden_version: VersionText
     golden_built_at: Time | None
     state: Literal["waiting", "switching"]
-    holds: Annotated[list[VmUpgradeHold], Field(max_length=16)]
+    holds: Annotated[list[VmUpgradeHold], Field(max_length=64)]
     sessions: Annotated[list[Uuid7], Field(max_length=64)]
 
 
