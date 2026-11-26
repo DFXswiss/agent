@@ -1273,3 +1273,40 @@ def test_the_disk_quota_holds_requests_and_the_pool(world: World) -> None:
 def test_without_a_disk_quota_the_disk_is_not_checked(world: World) -> None:
     world.settings = manager_module.Settings(**{**world.settings.__dict__, "disk_quota_gib": 0})
     assert world.run(request)["created"] is True
+
+
+# -- login VMs (KOR-73, ADR-098 section 3) ------------------------------------------------------------------------
+
+
+def test_login_vms_need_no_session_count_for_no_limit_are_not_billed_and_go_with_the_login(world: World) -> None:
+    from agent_runner.workvm import billing_vms  # noqa: PLC0415
+
+    world.settings = manager_module.Settings(**{**world.settings.__dict__, "max_per_org": 1, "max_per_owner": 1})
+
+    async def body(vms: WorkVms) -> tuple[Any, Any, list[Any], Any]:
+        first = await vms.obtain_login("0193000a-0000-7000-8000-0000000000a1")
+        second = await vms.obtain_login("0193000a-0000-7000-8000-0000000000a2")
+        task_vm = await request(vms)  # the organization and owner limits of 1 still leave room for it
+        async with vms.deps.db.connection() as conn:
+            billed = await billing_vms.VMS(None, conn)
+        await vms.delete(first, reason="login_ended")
+        return first, second, billed, task_vm
+
+    first, second, billed, task_vm = world.run(body)
+    assert (first.scope, first.session_id, first.task_id, first.owner_id) == (
+        "login",
+        "0193000a-0000-7000-8000-0000000000a1",
+        manager_module.NO_ID,
+        None,
+    )
+    assert second.slot != first.slot
+    assert [vm.vm_id for vm in billed] == [task_vm["workvm_id"]]
+    states = {row["id"]: row["state"] for row in rows(world)}
+    assert (states[first.id], states[second.id]) == ("deleted", "running")
+
+
+def test_no_login_vm_without_a_ready_image(world: World) -> None:
+    world.image = None
+    with pytest.raises(OperationFailed) as caught:
+        world.run(lambda vms: vms.obtain_login("0193000a-0000-7000-8000-0000000000a1"))
+    assert caught.value.code == "workvm_unavailable"

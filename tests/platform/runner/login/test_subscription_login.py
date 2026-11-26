@@ -115,6 +115,16 @@ def test_a_login_of_the_primary_record_through_its_id_is_refused(
         {"mode": "manual", "email": "x@example.com"},
         {"mode": "automatic", "email": "no-at-sign"},
         {"mode": "automatic", "email": 5},
+        {"mode": "manual", "account": {"name": "Ada"}},
+        {"mode": "automatic", "account": "Ada"},
+        {"mode": "automatic", "account": {"name": ""}},
+        {"mode": "automatic", "account": {"name": "Ada", "phone": "1"}},
+        {"mode": "automatic", "account": {"name": "Ada", "consents": ["payment"]}},
+        {"mode": "automatic", "account": {"name": "Ada", "consents": ["age", "age"]}},
+        {"mode": "automatic", "account": {"name": "Ada", "consents": "age"}},
+        {"mode": "automatic", "account": {"name": "Ada", "birth_date": "1990-13-01"}},
+        {"mode": "automatic", "account": {"name": "Ada", "birth_date": 1990}},
+        {"mode": "automatic", "extended": False},
     ],
 )
 def test_malformed_subscription_fields_end_upstream_error(

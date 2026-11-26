@@ -18,7 +18,7 @@ from collections.abc import Callable
 from email import message_from_bytes
 from email import policy as email_policy
 from email.message import Message
-from typing import Any
+from typing import Any, cast
 
 from agent_cli.account_login import (
     DATE_SLACK_SECONDS,
@@ -40,9 +40,7 @@ def code_in(message: Message) -> str | None:
     for part in message.walk():
         if part.get_content_type() not in ("text/html", "text/plain"):
             continue
-        payload = part.get_payload(decode=True)
-        if not isinstance(payload, bytes):
-            continue
+        payload = cast(bytes, part.get_payload(decode=True))  # a text part always decodes to bytes
         found = CODE_RE.search(re.sub(r"<[^>]{0,200}>", " ", payload.decode("latin-1")))
         if found is not None:
             return found.group(1)

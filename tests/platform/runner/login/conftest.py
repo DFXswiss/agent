@@ -275,8 +275,10 @@ def run_request(
     records: dict[str, Json] | None = None,
     config: dict[str, Any] | None = None,
     env_path: str = "",
+    before: Callable[[Env], None] | None = None,
 ) -> None:
-    """Run one root request of `kind` with `body` through the service; `check(run)` drives follow-ups and asserts."""
+    """Run one root request of `kind` with `body` through the service; `check(run)` drives follow-ups and asserts;
+    `before(env)` prepares the hub before the root is processed."""
 
     async def main() -> None:
         async with kit_env(dsn) as env:
@@ -298,6 +300,8 @@ def run_request(
                 await env.add_ck()
             for kind_name, record_body in (records or {}).items():
                 env.hub.records[(ALICE, kind_name)] = make_record(record_body, kind=kind_name)
+            if before is not None:
+                before(env)
             service = service_for(env.context)
             assert service is not None
             root = env.hub.add_request(seal_request(kind, body))

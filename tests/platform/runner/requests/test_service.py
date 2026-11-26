@@ -13,6 +13,7 @@ import pytest
 from agent_runner.crypto.ids import uuid7
 from agent_runner.orgs import audit
 from agent_runner.reconcile.wire import ResponseInvalid
+from agent_runner.requests import service as service_module
 from agent_runner.requests.hints import HANDLERS as HINTS
 from agent_runner.requests.reconcile import STEPS
 from agent_runner.requests.service import Flow, RequestService, service_for
@@ -282,6 +283,44 @@ def test_a_newer_root_of_the_same_user_and_kind_replaces_the_running_flow_and_an
         hold.set()
         await settle(service)
         assert env.hub.bodies(newer) == [{"step": "device_code"}, {"step": "done"}]
+
+    run(store_dsn, body)
+
+
+def test_logins_of_different_subscriptions_run_side_by_side_up_to_the_slot_limit(
+    store_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """KOR-73, ADR-098 section 2: the slot is the decrypted `subscription_id`; a root of the same slot replaces the
+    running flow, a root of a new slot while `MAX_SLOTS` flows run is `busy`."""
+    monkeypatch.setattr(service_module, "MAX_SLOTS", 3)
+    hold = asyncio.Event()
+
+    async def handler(flow: Flow) -> None:
+        await flow.respond({"step": "progress", "stage": "browser_started"})
+        await hold.wait()
+        await flow.respond({"step": "done"}, final=True)
+
+    async def body(env: Env) -> None:
+        service = make_service(env, {"claude.login": handler})
+        slots = [uuid7() for _ in range(3)]
+        roots = [
+            env.hub.add_request(seal_request("claude.login", {"mode": "manual", "subscription_id": slot}, ts=WALL - 9))
+            for slot in slots
+        ]
+        for root in roots:
+            await service.process(root)
+        await until(lambda: all(env.hub.bodies(root) for root in roots), "three flows started")
+        assert len([flow for flow in service.flows.values() if not flow.finished]) == 3
+        fourth = env.hub.add_request(seal_request("claude.login", {"mode": "manual", "subscription_id": uuid7()}))
+        await service.process(fourth)
+        assert env.hub.bodies(fourth) == [{"step": "failed", "code": "busy"}]
+        assert f"busy request_id={fourth} reason=slots" in env.log()
+        again = env.hub.add_request(seal_request("claude.login", {"mode": "manual", "subscription_id": slots[1]}))
+        await service.process(again)
+        await until(lambda: is_state(env, roots[1], ("abandoned", 1)), "the flow of the slot replaced")
+        hold.set()
+        await settle(service)
+        assert [env.hub.bodies(root)[-1] for root in (roots[0], roots[2], again)] == [{"step": "done"}] * 3
 
     run(store_dsn, body)
 
