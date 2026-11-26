@@ -134,6 +134,30 @@ def test_most_room_first_then_the_smallest_id_and_no_limit(harness: Harness) -> 
     assert harness.run(rows_only(body), reconcile=False) == ("vm-00000002", "vm-00000001")
 
 
+def test_without_a_bound_the_vms_own_resources_decide_and_the_existing_order_goes_on(harness: Harness) -> None:
+    """No fixed number of sessions per VM: a running VM whose measured resources take no more session is passed over;
+    then the existing order of 05 section 3.3 applies (here: the other running VM, else a new VM)."""
+    harness.settings = settings(sessions_per_vm=0)
+    full = {"vm-00000001"}
+
+    async def body(manager: VmManager) -> Any:
+        async def session_room(row: Any) -> bool:
+            return row.id not in full
+
+        manager.env.session_room = session_room
+        await add_row(manager, "vm-00000001")
+        await add_row(manager, "vm-00000002")
+        for _ in range(11):  # e.g. eleven tasks on one VM: no number refuses the twelfth
+            harness.session("vm-00000002", WG_A, "working")
+        other = await manager.ensure_vm(ORG, WG_A)
+        full.add("vm-00000002")
+        with pytest.raises(RunnerError) as caught:
+            await manager.ensure_vm(ORG, WG_A, new_allowed=False)  # no room anywhere, no new VM allowed
+        return other.id, caught.value.code
+
+    assert harness.run(rows_only(body), reconcile=False) == ("vm-00000002", "capacity_exhausted")
+
+
 def test_preferences_come_first_and_only_vms_of_the_workgroup_count(harness: Harness) -> None:
     harness.settings = settings(sessions_per_vm=1)
 

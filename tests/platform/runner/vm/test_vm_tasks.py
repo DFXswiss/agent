@@ -118,7 +118,7 @@ def test_idle_task_probes_every_5_s_and_stops_idle_vms_every_60_s(fake_clock: An
 def test_manager_for_builds_one_manager(fake_clock: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = SimpleNamespace(
         vm_prefix=PREFIX, vm_cpus=4, vm_memory_mib=8192, vm_disk_gib=20, pool_size=2, memory_reserve_mib=32768,
-        vm_idle_seconds=1800, home=tmp_path / "home", sessions_per_vm=8, max_vms=5,
+        vm_idle_seconds=1800, home=tmp_path / "home", sessions_per_vm=8, max_vms=5, vm_load_max_percent=85,
     )  # fmt: skip
     ctx = context(fake_clock)
     ctx.config = config
@@ -272,6 +272,7 @@ def test_vm_state_goes_to_the_outbox_and_the_heartbeat(harness: Harness, fake_cl
             ctx.config = SimpleNamespace(
                 vm_prefix=PREFIX, vm_cpus=4, vm_memory_mib=8192, vm_disk_gib=20, pool_size=1,
                 memory_reserve_mib=32768, vm_idle_seconds=1800, home=tmp_path / "home", sessions_per_vm=16, max_vms=0,
+                vm_load_max_percent=85,
             )  # fmt: skip
             ctx.identity = None
             manager = tasks.manager_for(ctx)

@@ -28,7 +28,7 @@ from agent_runner.errors import RunnerError
 from agent_runner.metrics.device import lima_home
 from agent_runner.registry import TaskSpec
 from agent_runner.sync.runtime import runtime
-from agent_runner.vm import lima
+from agent_runner.vm import lima, room
 from agent_runner.vm.capacity import NO_USAGE, Usage, disk_free_mib, physical_memory_mib
 from agent_runner.vm.extensions import Retire, retire_hooks
 from agent_runner.vm.lifecycle import VmManager
@@ -107,6 +107,7 @@ def build_manager(context: Any) -> VmManager:
         cpus=os.cpu_count,
         disk_free_mib=functools.partial(disk_free_mib, home),
     )
+    env.session_room = room.checker(env, load_max=config.vm_load_max_percent / 100)
     return VmManager(env, retire=Retire(context, retire_hooks(), log))
 
 

@@ -174,8 +174,38 @@ def test_the_room_of_a_vm(store_dsn: str) -> None:
                     "The computer of this task is full: 2 sessions run in it,"
                 )
                 context.config.sessions_per_vm = 0
-                assert await limits.vm_room_refusal(context, conn, "vm-0000000c") is None
+                assert await limits.vm_room_refusal(context, conn, "vm-0000000c") is None  # no VM manager here
         finally:
             await pool.close()
 
     asyncio.run(main())
+
+
+def test_without_the_bound_the_vms_measured_resources_decide(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No fixed number of sessions per VM: a child fits on its parent's VM while the VM's free resources last."""
+    from agent_runner.vm import tasks as vm_tasks  # noqa: PLC0415
+
+    assert limits.VM_MANAGER_KEY == vm_tasks.MANAGER_KEY
+    rows = {
+        "vm-0000000a": SimpleNamespace(id="vm-0000000a", state="running"),
+        "vm-0000000b": SimpleNamespace(id="vm-0000000b", state="running"),
+        "vm-0000000c": SimpleNamespace(id="vm-0000000c", state="stopped"),
+    }
+
+    async def get(db: Any, vm_id: str) -> Any:
+        return rows.get(vm_id)
+
+    async def session_room(row: Any) -> bool:
+        return row.id == "vm-0000000a"
+
+    monkeypatch.setattr(vm_records, "get", get)
+    context: Any = SimpleNamespace(config=SimpleNamespace(sessions_per_vm=0))
+    vars(context)[limits.VM_MANAGER_KEY] = SimpleNamespace(env=SimpleNamespace(db=None, session_room=session_room))
+
+    def refusal(vm_id: str) -> str | None:
+        return asyncio.run(limits.vm_room_refusal(context, None, vm_id))  # type: ignore[arg-type]
+
+    assert refusal("vm-0000000a") is None  # room measured
+    assert str(refusal("vm-0000000b")).startswith("The computer of this task has no free resources")
+    assert refusal("vm-0000000c") is None  # not running: its start decides
+    assert refusal("vm-0000000d") is None  # unknown VM

@@ -57,7 +57,8 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `VM_CPUS` / `VM_MEMORY_MIB` / `VM_DISK_GIB` | 4 / 8192 / 20 | per workgroup VM |
 | `POOL_SIZE` | 2 | 0 disables the pool (clone path only) |
 | `MEMORY_RESERVE_MIB` | 32768 | host reserve excluded from the VM budget |
-| `SESSIONS_PER_VM` | 16 | occupying sessions per VM (states `requested` … `stopping` without `suspended`); 0 = no limit; reported in every capacity report (ADR-075) |
+| `SESSIONS_PER_VM` | empty (0) | optional upper bound of occupying sessions per VM (states `requested` … `stopping` without `suspended`) for special cases; empty or 0 = none: a running VM takes one more session while its own free resources last (§3.3 step 2, `vm.room`); reported in every capacity report (ADR-075) |
+| `VM_LOAD_MAX_PERCENT` | 85 | a running workgroup VM takes one more session only while its 1-minute load per vCPU is at most this (10–100, `vm.room`) |
 | `MAX_VMS` | 0 | VMs of the device that occupy a slot; 0 = only the memory budget decides; caps `vm_slots_total` (ADR-075) |
 | `SESSION_IDLE_SECONDS` / `VM_IDLE_SECONDS` | 1800 / 1800 | |
 | `TEXTFILE_DIR` | empty = textfile sink off | node_exporter textfile directory (08 §3) |
@@ -268,7 +269,14 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
   lock is released, so two starts never both take the last place of a VM. Order (deterministic): (1) the VM the hub
   names (`vm_id_pref`, a user's choice) when it is a live VM of the workgroup; (2) for a subagent the VM of its parent,
   for a main session with `resume_from` the VM of that session – both regardless of the limit; (3) a running VM of
-  the workgroup with room (`SESSIONS_PER_VM` minus its occupying sessions): most room first, then the smallest VM ID;
+  the workgroup with room: within the optional bound `SESSIONS_PER_VM` (minus its occupying sessions; empty = none)
+  and with free resources of its own for one more session, measured on the VM (`vm.room`: the guest's `GET
+  /v1/metrics`, 2 s; `MemAvailable` less what one more session needs - the mean `memory.current` of its sessions, at
+  least 512 MiB - leaves 10 % of the VM's RAM, and the load per vCPU is at most `VM_LOAD_MAX_PERCENT`; a VM that does
+  not answer is judged by the bound alone; log `runner.vm.session_room`): most room first, then the smallest VM ID.
+  The same measurement decides whether a subagent fits on its parent's VM (`subagents.limits.vm_room_refusal`). No
+  VM with room: the order goes on unchanged (stopped VM, new VM on a free slot, else `capacity_exhausted` and the
+  hub places the next attempt, ADR-013, ADR-049);
   (4) a stopped VM of the workgroup with room (restart; replaced by a VM of the newest golden instead when it may
   move, §3.6 – the new VM first, then the old one is deleted), smallest VM ID; (5) a new VM
   from the pool, else a clone, when a slot is free (§3.4) – without a ready golden yet (a device just added still

@@ -11,8 +11,9 @@ no copy: it reads the section of the desired state of the last reconcile (`Sessi
 - `depth_refusal`, `running_refusal`, `total_refusal`: the sentence of a refusal (`limit_exceeded`) that names the
   limit, its value and the setting; None within the limit, without limits or for a limit of 0.
 - `vm_room_refusal(context, conn, vm_id)`: the parent's VM already has `AGENT_RUNNER_SESSIONS_PER_VM` occupying
-  sessions (`vm.records.ACTIVE_SESSION_STATES`, the placement's count; 0 = no limit), so a child (or a resumed child)
-  would not fit.
+  sessions (`vm.records.ACTIVE_SESSION_STATES`, the placement's count), so a child (or a resumed child) would not
+  fit; without that optional bound (empty or 0, the default) the VM's own free resources decide (`vm.room`, measured
+  through the daemon's VM manager).
 - `denied_message(found)`: the sentence of a hub `denied` `limit_exceeded` of `subagent.request` with the current
   limits (the hub's answer does not name the limit).
 - `values(found)`: `(depth, running, total, runtime)` for the harness line, None each when unknown.
@@ -41,6 +42,8 @@ OLD_GUEST_MAX_DEPTH = 2
 OLD_GUEST_MAX_PARALLEL = 3
 OLD_GUEST_MAX_TOTAL = 10
 VM_SETTING = "AGENT_RUNNER_SESSIONS_PER_VM"
+VM_MANAGER_KEY = "_vm_manager"
+"""`vm.tasks.MANAGER_KEY` (not imported, like `SERVICE_ATTRIBUTE`; a test compares them)."""
 
 
 @dataclass(frozen=True)
@@ -126,7 +129,7 @@ async def vm_room_refusal(context: Any, conn: AsyncConnection[Any], vm_id: str |
         return None
     limit = int(context.config.sessions_per_vm)
     if limit == 0:
-        return None
+        return await _measured_refusal(context, vm_id)
     cursor = await conn.execute(
         "SELECT count(*) FROM runner.session WHERE vm_id = %s AND state = ANY(%s)", (vm_id, list(ACTIVE_SESSION_STATES))
     )
@@ -139,6 +142,23 @@ async def vm_room_refusal(context: Any, conn: AsyncConnection[Any], vm_id: str |
         f"The computer of this task is full: {_plural(occupied, 'session')} {'runs' if occupied == 1 else 'run'} in"
         " it, the limit of this device"
         f" (setting {VM_SETTING}). Stop a subagent with subagent.stop or wait until one ends."
+    )
+
+
+async def _measured_refusal(context: Any, vm_id: str) -> str | None:
+    """Without the bound: the VM's own free resources (`vm.room`, measured through the daemon's VM manager; nothing is
+    refused where there is none) decide whether a child fits on its parent's VM."""
+    from agent_runner.vm import records as vm_records  # noqa: PLC0415 - the session start reads this module
+
+    manager = vars(context).get(VM_MANAGER_KEY)
+    if manager is None:
+        return None
+    row = await vm_records.get(manager.env.db, vm_id)
+    if row is None or row.state != "running" or await manager.env.session_room(row):
+        return None
+    return (
+        "The computer of this task has no free resources for one more session right now (its RAM or CPU is used up)."
+        " Stop a subagent with subagent.stop or wait until one ends."
     )
 
 

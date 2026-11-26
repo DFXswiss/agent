@@ -34,6 +34,18 @@ Status: Accepted (2026-11-24)
 settings in every capacity report, so the hub schedules with the device's own values; a runner that reports none
 counts as "no limit" (the behaviour before this ADR).
 
+> **Addendum (2026-11-26): no fixed number of sessions per VM.** Decision of the client (the same day as ADR-059
+> addendum 4, "kein fester Deckel"; at the time 11 tasks of the DFX workgroup ran in one VM): `SESSIONS_PER_VM` is
+> only an optional upper bound for special cases, **empty (0) by default**. A running VM takes one more session while
+> its own free resources last, measured on the VM (`agent_runner.vm.room`: the guest's `GET /v1/metrics` - RAM
+> available less the mean `memory.current` of its sessions, at least 512 MiB, must leave 10 % of the VM's RAM; the load
+> per vCPU at most `VM_LOAD_MAX_PERCENT`, default 85). A VM that does not answer is judged by the bound alone. The same
+> measurement decides whether a subagent fits on its parent's VM. When no running VM has room, the existing order of
+> section 4 and of the scheduler applies unchanged - a stopped VM, then a new VM on a free slot of the device, else
+> `capacity_exhausted` and the hub places the next attempt (section 7, ADR-013, ADR-049); no new rule. The device
+> reports `sessions_per_vm` 0, which the hub's scheduler already reads as "no limit". Specification: 05-runner.md
+> §1.3 and §3.3 step 2.
+
 ### 2. Capacity report (runner → hub, additive)
 The `capacity` object of the heartbeat gains optional counters: `cpus`, `memory_total_mib`, `disk_free_mib`,
 `vms_running`, `sessions_active`, `work_vms_running` (the work VMs of the runner's other areas, reported through the

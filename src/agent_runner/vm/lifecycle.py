@@ -7,8 +7,9 @@ workgroup for a session, in the deterministic order of ADR-075 section 4 (05-run
 1. the VMs of `prefer` in their order - the hub's `vm_id_pref` (a user's choice), then the VM of the parent session
    (subagent) or of the `resume_from` session - when it is a live VM of **this** workgroup, regardless of the limit:
    running -> use it, stopped -> restart it (no golden replacement: the choice, or the work, lives there);
-2. a running VM of the workgroup with room (`SESSIONS_PER_VM` minus its occupying sessions, unbounded with 0): most
-   room first, then the smallest VM ID;
+2. a running VM of the workgroup with room: within the optional bound `SESSIONS_PER_VM` (minus its occupying
+   sessions; empty or 0, the default, = no bound) and with free resources of its own for one more session
+   (`env.session_room`, measured on the VM: `vm.room`): most room first, then the smallest VM ID;
 3. a stopped VM of the workgroup with room, smallest VM ID -> restart it (`limactl start`, health `assigned` to this
    workgroup), unless its golden is not the newest ready one, no retire hook keeps it (`vm.extensions`: e.g. context
    checkpoints still due, KOR-33) and it may move (`golden_switch.judge`: every session on it is a paused main session
@@ -209,7 +210,8 @@ class VmManager:
         def room(row: VmRow) -> int:
             return UNBOUNDED if limit == 0 else limit - occupied.get(row.id, 0)
 
-        running = [row for row in live if row.state == "running" and room(row) > 0]
+        bounded = [row for row in live if row.state == "running" and room(row) > 0]
+        running = [row for row in bounded if await env.session_room(row)]  # the VM's own free resources (`vm.room`)
         if running:
             chosen = min(running, key=lambda row: (-room(row), row.id))
             await self.touch(chosen.id)

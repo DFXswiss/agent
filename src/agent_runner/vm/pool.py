@@ -133,6 +133,10 @@ async def _no_reclaim(_need_mib: int) -> int:
     return 0
 
 
+async def _room_by_bound(_row: VmRow) -> bool:
+    return True
+
+
 def _token() -> str:
     return secrets.token_urlsafe(32)
 
@@ -150,8 +154,9 @@ class VmSettings:
     pool_size: int
     memory_reserve_mib: int
     vm_idle_seconds: int
-    sessions_per_vm: int = 16
-    """Occupying sessions per VM, 0 = no limit (ADR-075 section 1)."""
+    sessions_per_vm: int = 0
+    """Optional upper bound of occupying sessions per VM, 0 (the default) = none: the VM's free resources decide
+    (`vm.room`; ADR-075 section 1)."""
     max_vms: int = 0
     """Slots at most, 0 = the memory budget alone (ADR-075 section 1)."""
 
@@ -198,6 +203,9 @@ class VmEnv:
     other_usage: Callable[[], Awaitable[Usage]] = _no_usage
     reclaim: Callable[[int], Awaitable[int]] = _no_reclaim
     """Ask the other areas to give back the MiB a workgroup VM needs (their `RECLAIM`, ADR-059 addendum 4)."""
+    session_room: Callable[[VmRow], Awaitable[bool]] = _room_by_bound
+    """Whether a running VM's own free resources take one more session (`vm.room.checker`; default: the optional
+    bound `SESSIONS_PER_VM` alone decides)."""
     # Host facts of the capacity report (None: unknown, the counter is left out).
     cpus: Callable[[], int | None] = _unknown
     disk_free_mib: Callable[[], int | None] = _unknown
