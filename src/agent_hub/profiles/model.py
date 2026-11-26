@@ -55,6 +55,7 @@ CLASSES: Mapping[str, str] = MappingProxyType(
         "subagent.instruct": DELEGATE,
         "subagent.request": DELEGATE,
         "subagent.stop": DELEGATE,
+        "task.mode": WRITE,
         "task.set_title": WRITE,
         "test.run": RUN,
         "workvm.release": RUN,

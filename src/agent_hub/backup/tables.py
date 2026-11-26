@@ -117,6 +117,8 @@ RULES: tuple[TableRule, ...] = (
     # exported rather than derived again (a missing row is derived by the job `attention.backfill`)
     TableRule("task_attention", ORG_ROWS),
     TableRule("task_transition", "task_id = ANY(%(tasks)s)", append_only=True),
+    # the working modes of the org's tasks (ADR-098 section 3)
+    TableRule("task_mode", "task_id = ANY(%(tasks)s)"),
     TableRule("session", ORG_ROWS),
     TableRule("session_transition", "session_id = ANY(%(sessions)s)", append_only=True),
     TableRule("vm", "wg_id = ANY(%(wgs)s) OR (wg_id IS NULL AND device_id = ANY(%(devices)s))"),

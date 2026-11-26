@@ -47,6 +47,7 @@ OPERATION_TYPES = frozenset(
         "review.verdict",
         "security.report",
         "github.merge",
+        "task.mode",
     }
 )
 SUBAGENT_REQUEST = "subagent.request"

@@ -12,6 +12,8 @@ AUDIT_ACTIONS = frozenset(
         "agent_profile.set",
         "agent_profile.delete",
         "task.agent_profile",
+        "task.mode_on",
+        "task.mode_off",
         "read.workgroup.agent_profiles",
         "log.support_grant",
         "log.support_revoke",

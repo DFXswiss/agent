@@ -145,7 +145,8 @@
             "$ref": "../common.json#/$defs/task_mode"
           },
           "maxItems": 64,
-          "description": "the working modes that are on for the task, by name (ADR-098 section 3); empty without. Absent from older hubs."
+          "minItems": 1,
+          "description": "the working modes that are on for the task, by name (ADR-098 section 3); absent while none is on (and from older hubs)"
         },
         "number": {
           "type": "integer",

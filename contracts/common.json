@@ -668,6 +668,15 @@
               "minItems": 1,
               "maxItems": 64
             },
+            "modes": {
+              "type": "array",
+              "description": "mode_needs: the working modes that must be on first (ADR-098 section 2)",
+              "items": {
+                "$ref": "#/$defs/mode_name"
+              },
+              "minItems": 1,
+              "maxItems": 16
+            },
             "quota": {
               "type": "object",
               "description": "the limit a context checkpoint reached (quota_exceeded, ADR-072 section 6): per checkpoint or per organisation, in sealed bytes",

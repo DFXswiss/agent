@@ -58,6 +58,7 @@ SUBAGENT_MAX_DEPTH = "AGENT_HUB_SUBAGENT_MAX_DEPTH"
 SUBAGENT_MAX_RUNNING = "AGENT_HUB_SUBAGENT_MAX_RUNNING"
 SUBAGENT_MAX_TOTAL = "AGENT_HUB_SUBAGENT_MAX_TOTAL"
 SUBAGENT_MAX_RUNTIME_SECONDS = "AGENT_HUB_SUBAGENT_MAX_RUNTIME_SECONDS"
+MODES_TEST = "AGENT_HUB_MODES_TEST"
 
 TEST_PREFIX = "AGENT_HUB_TEST_"
 KNOWN_VARIABLES = frozenset(
@@ -91,6 +92,7 @@ KNOWN_VARIABLES = frozenset(
         SUBAGENT_MAX_RUNNING,
         SUBAGENT_MAX_TOTAL,
         SUBAGENT_MAX_RUNTIME_SECONDS,
+        MODES_TEST,
     }
 )
 
@@ -265,6 +267,8 @@ class HubConfig:
     least twice `device_online_seconds`)."""
     subagent_limits: SubagentLimits = DEFAULT_SUBAGENT_LIMITS
     """`AGENT_HUB_SUBAGENT_MAX_DEPTH`, `…_RUNNING`, `…_TOTAL`, `…_RUNTIME_SECONDS` (ADR-088 section 2)."""
+    modes_test: bool = False
+    """`AGENT_HUB_MODES_TEST` (`1`): the hub offers the catalogue's test modes (KOR-75; E2E and development only)."""
 
     def signer(self) -> HubSigner:
         """The hub's response and checkpoint signer (reused `agent_core.signing.HubSigner`)."""
@@ -538,6 +542,13 @@ def load_model_catalog(path: Path) -> ModelCatalog:
         raise ConfigError(f"{MODEL_CATALOG} is not a valid model catalog: {error}") from None
 
 
+def _modes_test(environ: Mapping[str, str]) -> bool:
+    value = _value(environ, MODES_TEST)
+    if value not in (None, "0", "1"):
+        raise ConfigError(f"{MODES_TEST} must be 0 or 1")
+    return value == "1"
+
+
 def load_config(environ: Mapping[str, str]) -> HubConfig:
     """The configuration of the hub process from the environment; raises `ConfigError` on the first problem.
 
@@ -618,4 +629,5 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
                 MAX_SUBAGENT_RUNTIME_SECONDS,
             ),
         ),
+        modes_test=_modes_test(environ),
     )

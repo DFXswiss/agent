@@ -2028,6 +2028,39 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["identity_id"],
     },
+    "task.mode_off": {
+        "properties": {
+            "mode": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}],
+            "reason": [{"type": "string", "enum": ["person", "session", "chooser_left"]}],
+            "chosen_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ],
+            "operation_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
+        "required": ["mode", "reason", "chosen_by", "operation_id"],
+    },
+    "task.mode_on": {
+        "properties": {
+            "mode": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}],
+            "version": [{"type": "integer", "minimum": 1, "maximum": 1000000}],
+            "way": [{"type": "string", "enum": ["web", "tool", "sentence", "inherited"]}],
+            "chosen_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ],
+            "operation_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+            "origin_task": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
+        "required": ["mode", "version", "way", "chosen_by", "operation_id", "origin_task"],
+    },
     "task.model_consent": {"properties": {"changed": [{"type": "boolean"}]}, "required": ["changed"]},
     "task.placement": {
         "properties": {
