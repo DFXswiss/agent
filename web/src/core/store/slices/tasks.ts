@@ -7,6 +7,7 @@
 // The slice also exports `frames` (the live-channel frames it applies, `core/net/frames.ts`).
 import { parseTime } from '../../encoding/time';
 import { isRecord } from '../../registry';
+import { matchesFilter } from '../../tasks/filters';
 import type { Slice, Store } from '../store';
 
 /** `task_row` of the contracts (02-data-model.md section 2.4). */
@@ -35,6 +36,14 @@ export interface TaskRow {
   readonly name_event_id?: string | null;
   /** Scope and period of an analysis task (ADR-097 section 1; `core/analysis/`); null or absent for any other. */
   readonly analysis?: unknown;
+  /** `todo`, `inProgress` or `completed` (ADR-100 section 1); absent from an older hub (`tickets.taskStatus`). */
+  readonly status?: string;
+  /** `low`, `normal`, `high` or `urgent` (ADR-100); absent from an older hub (normal). */
+  readonly urgency?: string;
+  /** The person of the task, a user or agent of the org (ADR-100); null or absent: nobody. */
+  readonly assignee_id?: string | null;
+  /** The topic of the task (ADR-100 section 3); null or absent: none. */
+  readonly topic_id?: string | null;
 }
 
 /** The fields of `session_row` the client uses (the row is kept as received). */
@@ -240,7 +249,7 @@ function placeInLists(lists: TasksState['lists'], tasks: TasksState['tasks'], ro
   let next = lists;
   for (const [key, list] of Object.entries(lists)) {
     if (list.wg !== row.wg_id) continue;
-    const matches = list.state === null || list.state === row.state;
+    const matches = matchesFilter(list.state, row);
     const present = list.ids.includes(row.task_id);
     if (matches === present && !matches) continue;
     const ids = matches ? newestFirst(tasks, [...list.ids, row.task_id]) : list.ids.filter((id) => id !== row.task_id);

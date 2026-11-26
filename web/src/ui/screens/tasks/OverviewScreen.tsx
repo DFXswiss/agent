@@ -1,12 +1,16 @@
 // Task overview of an organization (KOR-32, route `/o/:org/tasks`, right `org:member`): every task of the workgroups
 // the user can read (from the verified membership log; the others are never requested), newest activity first, with
 // title, workgroup, state, owner and last activity. Filters: state (hub side), workgroup (only that list is loaded),
-// "only mine" and the title search (in the browser: titles are encrypted; bounded per request, `scan.ts`). The empty
-// state says how a task is created.
+// "only mine" and the title search (in the browser: titles are encrypted; bounded per request, `scan.ts`), and the
+// ticket filters of ADR-100 (`TicketFilters.tsx`). "Capture task" records a task without an agent in a writable
+// workgroup (E-41). The empty state says how a task is created.
 // Filters live in the screen's state, not in the URL: a search text in the address would reach the hub on a reload.
 import { useId, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { readableWorkgroups } from '../../../core/tasks/overview';
+import { writableWorkgroups } from '../../../core/tasks/send';
+import { CaptureForm } from './CaptureForm';
+import { hubKey, NO_FILTERS, type TicketFilterValues, TicketFilters, ticketFiltered } from './TicketFilters';
 import { useI18n } from '../../i18n';
 import { useDirectory, useOrgView } from './hooks';
 import { StateFilter, TaskTable } from './TaskTable';
@@ -22,6 +26,7 @@ export function OverviewScreen() {
   const [chosen, setChosen] = useState('');
   const [mine, setMine] = useState(false);
   const [search, setSearch] = useState('');
+  const [tickets, setTickets] = useState<TicketFilterValues>(NO_FILTERS);
   // until the log is verified and the user is known
   const loading = (
     <p className="p-4" data-testid="tasks.loading">
@@ -33,13 +38,15 @@ export function OverviewScreen() {
   const readable = readableWorkgroups(state, userId);
   // a workgroup that is no longer readable (rights changed meanwhile) falls back to all
   const wg = readable.includes(chosen) ? chosen : '';
-  const filtered = filter !== null || wg !== '' || mine || search.trim() !== '';
+  const filtered = filter !== null || wg !== '' || mine || search.trim() !== '' || ticketFiltered(tickets);
   const reset = () => {
     setFilter(null);
     setChosen('');
     setMine(false);
     setSearch('');
+    setTickets(NO_FILTERS);
   };
+  const writable = writableWorkgroups(state, userId);
   const name = (id: string) => {
     const label = directory.workgroups.get(id) ?? t('tasks.wg.unnamed');
     return state.writable(id) ? label : t('tasks.overview.archived', { name: label });
@@ -53,6 +60,7 @@ export function OverviewScreen() {
         </h1>
         <p className="text-sm text-gray-700">{t('tasks.overview.intro')}</p>
       </div>
+      <CaptureForm org={org} wgs={writable} name={name} />
       <div className="flex flex-wrap items-end gap-x-4 gap-y-2" data-testid="tasks.filters">
         <div className="flex w-full flex-col gap-1 sm:w-auto">
           <label htmlFor={searchId} className="text-sm">
@@ -99,13 +107,16 @@ export function OverviewScreen() {
           {t('tasks.filter.mine')}
         </label>
       </div>
+      <TicketFilters org={org} values={tickets} onChange={setTickets} />
       <TaskTable
         org={org}
         listId="tasks.overview"
         wgs={wg === '' ? readable : [wg]}
-        state={filter}
+        state={hubKey(filter, tickets)}
         mine={mine ? userId : null}
         search={search}
+        githubOrg={tickets.githubOrg}
+        githubRepo={tickets.githubRepo}
         showWorkgroup
         empty={
           filtered ? (

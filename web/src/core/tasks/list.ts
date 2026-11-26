@@ -1,5 +1,6 @@
 // The task list of a workgroup (06-web.md section 5.1, 03-api.md section 4.6): `GET /v1/workgroups/{wg}/tasks`
-// newest first by latest activity (`order=activity`, KOR-32) with an optional state filter, page by page (`before` = the previous page's `next_before`, infinite
+// newest first by latest activity (`order=activity`, KOR-32) with optional hub filters (state and the ticket fields of
+// ADR-100, `filters.ts`; `filter` is the list's key), page by page (`before` = the previous page's `next_before`, infinite
 // scroll). Rows enter the `tasks` slice; later changes arrive as `task` frames and move rows between the loaded lists.
 // Titles are encrypted: `titles` pulls the `task.meta` events of tasks whose title is not in the store yet (newest
 // pages per workgroup, bounded per call).
@@ -21,6 +22,7 @@ import type { Store, StoreState } from '../store/store';
 import { type PagedList, pagesKey } from './paged-list';
 import type { TasksContext } from './pull';
 import { selectTitle, TITLE_KIND } from './directory';
+import { filterParams } from './filters';
 import { sendErrorCode } from './send';
 
 /** Rows per page (the hub's default list size, 03-api.md section 1). */
@@ -45,7 +47,7 @@ export const selectListRows =
 /** The request target of a page. */
 export function listTarget(wg: string, filter: string | null, before: string | null): string {
   const params = new URLSearchParams();
-  if (filter !== null) params.set('state', filter);
+  filterParams(filter, params);
   if (before !== null) params.set('before', before);
   params.set('limit', String(PAGE_SIZE));
   params.set('order', 'activity');

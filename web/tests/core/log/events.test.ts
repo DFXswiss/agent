@@ -95,6 +95,24 @@ describe('reader checks', () => {
     ).toBe('author_not_writer');
   });
 
+  it('lets any member write a topic with a UUID ref and empty wg and task (ADR-100 section 3)', async () => {
+    const ref = await idOf('topic');
+    const topic = await sealed(bob, { kind: 'topic.profile', scope: 'org', scope_id: world.org, ref });
+    expect((await checkEvent(topic, world.log!)).rule.right).toBe('org_member');
+    await checkEventHub(topic, world.log!, T0, null, null);
+    const noRef = await sealed(bob, { kind: 'topic.profile', scope: 'org', scope_id: world.org, ref: 'x' });
+    expect(await code(checkEvent(noRef, world.log!))).toBe('header_invalid');
+    const withTask = await sealed(bob, {
+      kind: 'topic.profile',
+      scope: 'org',
+      scope_id: world.org,
+      ref,
+      task: await idOf('task'),
+    });
+    expect(await code(checkEvent(withTask, world.log!))).toBe('header_invalid');
+    expect(await codeOf(() => kindRule('topic.profile', 'org', 'device'))).toBe('kind_not_allowed');
+  });
+
   it('refuses an unknown combination (kind_not_allowed) and a foreign org (header_invalid)', async () => {
     expect(await codeOf(() => kindRule('prompt', 'wg', 'device'))).toBe('kind_not_allowed');
     const event = await sealed(bob, { kind: 'prompt', task: await idOf('task') });

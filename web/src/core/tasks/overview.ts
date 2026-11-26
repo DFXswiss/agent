@@ -11,7 +11,9 @@
 // - "Load more" loads the next page of the list that holds the cut-off (the binding list) until at least one page more
 //   of merged rows is shown or no list has a further page.
 // - "Only mine" (the signed owner or an agent of the user, never the hub's `owner_id`) and the title search run in
-//   the browser over the merged rows, because titles are encrypted.
+//   the browser over the merged rows, because titles are encrypted; so do the GitHub organisation and repository of
+//   a captured task (sealed in its `task.meta`, ADR-100 section 2). Status, urgency, person and topic are hub filters
+//   (the list key, `filters.ts`).
 import { parseTime } from '../encoding/time';
 import { type OrgState, WG } from '../log/state';
 import { workgroupOrder } from '../org/members';
@@ -19,6 +21,7 @@ import { orgEntry } from '../store/slices/orgs';
 import { type TaskList, taskList, type TaskRow, type TasksState } from '../store/slices/tasks';
 import type { StoreState } from '../store/store';
 import { selectOwner, selectTitle } from './directory';
+import { selectMeta } from './tickets';
 import { loadTasks, PAGE_SIZE } from './list';
 import type { TasksContext } from './pull';
 
@@ -37,7 +40,18 @@ export interface OverviewQuery {
   readonly mine: string | null;
   /** Title search (case-insensitive part of the title; empty: no search). */
   readonly search: string;
+  /** GitHub organisation of the sealed `task.meta` (case-insensitive, whole login; empty or absent: any; ADR-100). */
+  readonly githubOrg?: string;
+  /** Repository `owner/name` of the sealed `task.meta` (case-insensitive, whole name; empty or absent: any). */
+  readonly githubRepo?: string;
 }
+
+/** Whether the browser-side filters of `query` are set (search, only mine, GitHub organisation or repository). */
+export const clientFiltered = (query: Pick<OverviewQuery, 'mine' | 'search' | 'githubOrg' | 'githubRepo'>): boolean =>
+  query.mine !== null ||
+  query.search.trim() !== '' ||
+  (query.githubOrg ?? '').trim() !== '' ||
+  (query.githubRepo ?? '').trim() !== '';
 
 export interface Overview {
   /** `loading` while a list has not answered its first page yet. */
@@ -97,8 +111,15 @@ export function overview(state: StoreState, query: OverviewQuery): Overview {
   const sorted = all.sort((a, b) => (after(a, b) ? 1 : -1));
   const merged = binding === null ? sorted : cut === null ? [] : sorted.filter((row) => !after(row, cut));
   const needle = searchText(query.search);
+  const org = (query.githubOrg ?? '').trim().toLowerCase();
+  const repo = (query.githubRepo ?? '').trim().toLowerCase();
   const rows = merged.filter((row) => {
     if (query.mine !== null && mineOf(state, query.org, row) !== query.mine) return false;
+    if (org !== '' || repo !== '') {
+      const meta = selectMeta(row.wg_id, row.task_id)(state);
+      if (org !== '' && meta?.github_org.toLowerCase() !== org) return false;
+      if (repo !== '' && meta?.github_repo.toLowerCase() !== repo) return false;
+    }
     if (needle === '') return true;
     const title = selectTitle(row.wg_id, row.task_id, row.title_event_id)(state);
     return title.status === 'verified' && searchText(title.text).includes(needle);

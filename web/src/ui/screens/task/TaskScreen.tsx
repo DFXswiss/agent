@@ -9,6 +9,8 @@
 // The task's GitHub identity is shown below it; writers change it (`TaskIdentity.tsx`, ADR-078). Below the title the
 // name and handle of the task's main agent, with "Rename" for writers (`TaskAgent.tsx`, ADR-095).
 // An analysis task carries the badge "Analysis" next to its state (ADR-097 section 6).
+// Below the header the ticket fields with "Edit", the status as a choice and, for a task without an agent, "Start
+// agent" (`TaskFields.tsx`, E-41, ADR-100 section 7).
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { closeTask, loadChat } from '../../../core/chat/actions';
@@ -30,6 +32,7 @@ import { ContextNotice } from './ContextNotice';
 import { DeviceFailureNotice } from './DeviceFailureNotice';
 import { ModelSwitchLine } from './ModelSwitchLine';
 import { TaskAgent } from './TaskAgent';
+import { TaskFields } from './TaskFields';
 import { activeTab, Tabs } from './Tabs';
 import { TaskIdentity } from './TaskIdentity';
 import { TaskProfile } from './TaskProfile';
@@ -174,6 +177,7 @@ function TaskView({ row }: { readonly row: TaskRow }) {
         </div>
         {writer && <TaskMenu task={row} />}
       </header>
+      <TaskFields row={row} writer={writer} directory={directory} />
       <ContextNotice sessionId={row.main_session_id} />
       <DeviceFailureNotice row={row} />
       <ModelSwitchLine row={row} />

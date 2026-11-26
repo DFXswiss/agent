@@ -12,12 +12,14 @@ import { formatNumber } from '../../../core/i18n';
 import type { ListId } from '../../../core/lists/ids';
 import { TASK_STATES } from '../../../core/tasks/countdown';
 import { PAGE_SIZE } from '../../../core/tasks/list';
-import { loadOverview, loadOverviewMore, selectOverview } from '../../../core/tasks/overview';
+import { clientFiltered, loadOverview, loadOverviewMore, selectOverview } from '../../../core/tasks/overview';
+import { taskAssignee, taskTopic } from '../../../core/tasks/tickets';
 import { useLiveReload } from '../../hooks/useLiveReload';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { WindowedList } from '../../lists/WindowedList';
-import { knownPersonName } from '../../names/names';
+import { knownPersonName, personName } from '../../names/names';
+import { topicLabel, useTopics } from './tickets';
 import { useAppEnv } from '../../shell/context';
 import { useNow } from '../../countdown/useNow';
 import { useDirectory, useOrgView, useRowInfo, useTitles } from './hooks';
@@ -33,12 +35,15 @@ export interface TaskTableProps {
   readonly listId?: ListId;
   /** The workgroups to list (only ones the user can read). */
   readonly wgs: readonly string[];
-  /** State filter (null: all states). */
+  /** The hub filters as a list key (`core/tasks/filters.ts`: the state alone, or with the ticket fields; null: all). */
   readonly state: string | null;
   /** Only the tasks of this owner (null: everyone's). */
   readonly mine?: string | null;
   /** Title search (empty: none). */
   readonly search?: string;
+  /** GitHub organisation and repository of the sealed `task.meta` (empty: any; ADR-100). */
+  readonly githubOrg?: string;
+  readonly githubRepo?: string;
   /** Show the workgroup of each row (lists of several workgroups). */
   readonly showWorkgroup?: boolean;
   /** What an empty list says. */
@@ -52,6 +57,8 @@ export function TaskTable({
   state,
   mine = null,
   search = '',
+  githubOrg = '',
+  githubRepo = '',
   showWorkgroup = false,
   empty,
 }: TaskTableProps) {
@@ -59,10 +66,14 @@ export function TaskTable({
   const { t, error } = useI18n();
   const { state: orgState } = useOrgView(org);
   const directory = useDirectory(org, orgState !== null);
+  const topics = useTopics(org);
   // the same array while the workgroups are the same (the lists load again only when they or the state change)
   const wgsKey = JSON.stringify(wgs);
   const lists = useMemo(() => JSON.parse(wgsKey) as string[], [wgsKey]);
-  const query = useMemo(() => ({ org, wgs: lists, state, mine, search }), [org, lists, state, mine, search]);
+  const query = useMemo(
+    () => ({ org, wgs: lists, state, mine, search, githubOrg, githubRepo }),
+    [org, lists, state, mine, search, githubOrg, githubRepo],
+  );
   const select = useMemo(() => selectOverview(query), [query]);
   const view = useStore(select, app.store);
   const rows = view.rows;
@@ -74,13 +85,15 @@ export function TaskTable({
     void loadOverview(app.tasks, lists, state);
   }, [app, lists, state]);
   useLiveReload(app.store, () => void loadOverview(app.tasks, query.wgs, query.state, true));
-  const filtering = mine !== null || search.trim() !== '';
+  const filtering = clientFiltered(query);
   const scan = useSearchScan(app.tasks, query, view, filtering);
   const unnamed = t('tasks.wg.unnamed');
   const items = useMemo(
     () =>
       rows.map((row): TaskItemData => {
         const { title, owner } = info.get(row.task_id)!;
+        const assignee = taskAssignee(row);
+        const topic = taskTopic(row);
         return {
           org,
           row,
@@ -88,9 +101,11 @@ export function TaskTable({
           owner: knownPersonName(t, directory, owner) ?? null,
           workgroup: showWorkgroup ? (directory.workgroups.get(row.wg_id) ?? unnamed) : null,
           now,
+          assignee: assignee === null ? null : personName(t, directory, assignee),
+          topic: topic === null ? null : topicLabel(t, topics, topic),
         };
       }),
-    [rows, info, directory, org, showWorkgroup, unnamed, now, t],
+    [rows, info, directory, org, showWorkgroup, unnamed, now, t, topics],
   );
   // "Load more" of the plain list; while filtering, "Search further" loads the next pages instead
   const paging = !filtering;
