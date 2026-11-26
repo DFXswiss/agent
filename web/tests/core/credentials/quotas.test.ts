@@ -1,7 +1,14 @@
 // U-WEB-credentials (WEB-10): quota bars from `GET /v1/me/quotas` (newest read per window, ordered 5 h, week, per
 // model) and the per-task usage totals of the usage strip (tokens, cost with basis, context share of the main session).
 import { describe, expect, it } from 'vitest';
-import { barShare, loadQuotas, quotaBar, quotaBars } from '../../../src/core/credentials/quotas';
+import {
+  barShare,
+  freePercent,
+  loadQuotas,
+  orderedWindows,
+  quotaBar,
+  quotaBars,
+} from '../../../src/core/credentials/quotas';
 import { applyFrame, frameHandlers } from '../../../src/core/net/frames';
 import { HubError } from '../../../src/core/net/signedFetch';
 import { createStore } from '../../../src/core/store';
@@ -71,8 +78,28 @@ describe('quota bars', () => {
       ['weekly:a-model', 42.5],
       ['weekly:b-model', 42.5],
     ]);
-    expect(barShare(bars[0]!)).toBe(0.5);
-    expect(barShare({ ...bars[0]!, usedPercent: 140 })).toBe(1);
+    // what is left, for the meter: before the reset
+    const before = Date.parse('2026-11-21T14:00:00.000Z');
+    expect(barShare(bars[0]!, before)).toBe(0.5);
+    expect(barShare({ ...bars[0]!, usedPercent: 140 }, before)).toBe(0);
+  });
+
+  it('shows what is left: 100 % less the used share, at least 0 %, free again once the reset has passed', () => {
+    const reset = Date.parse('2026-11-21T15:00:00.000Z');
+    expect([0, 13, 82, 99.5, 100, 130].map((used) => freePercent(used, reset, reset - 1))).toEqual([
+      100, 87, 18, 0.5, 0, 0,
+    ]);
+    expect(freePercent(100, reset, reset)).toBe(100);
+    expect(freePercent(100, reset, reset + 1)).toBe(100);
+    // an unknown reset never frees it
+    expect(freePercent(100, null, reset + 1)).toBe(0);
+  });
+
+  it('orders windows 5 hours, week, week per model', () => {
+    const windows = (names: string[]) => names.map((window) => ({ window }));
+    expect(
+      orderedWindows(windows(['weekly:b', 'weekly:a', 'seven_day', 'weekly:a', 'five_hour'])).map((w) => w.window),
+    ).toEqual(['five_hour', 'seven_day', 'weekly:a', 'weekly:a', 'weekly:b']);
   });
 
   it('loads into the slice, refuses malformed answers, writes nothing after a sign-out', async () => {

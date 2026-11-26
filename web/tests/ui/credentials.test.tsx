@@ -582,7 +582,9 @@ describe('model access', () => {
 });
 
 describe('quotas', () => {
-  it('shows bars with reset times, "not available" without rows, failures and reloads', async () => {
+  it('shows bars of what is left with reset times, "not available" without rows, failures and reloads', async () => {
+    // before the 5-hour reset (a window whose reset has passed is free again)
+    vi.useFakeTimers({ now: Date.parse('2026-11-21T12:30:00.000Z'), toFake: ['Date'] });
     const t = await world();
     let answer: () => unknown = () => ({
       quotas: [
@@ -607,12 +609,15 @@ describe('quotas', () => {
     t.client.on('GET /v1/me/quotas', () => answer());
     mount(t, [{ path: '/settings', element: <QuotasSection /> }], '/settings');
     expect(screen.getByTestId('quotas.loading')).toBeVisible();
-    expect(await screen.findByTestId('quotas.bar.five_hour.used')).toHaveTextContent('42%');
+    expect(await screen.findByTestId('quotas.bar.five_hour.free')).toHaveTextContent('58% free');
+    expect(screen.getByTestId('quotas.bar.five_hour.meter')).toHaveAttribute('value', '0.58');
     expect(screen.getByTestId('quotas.bar.five_hour')).toHaveTextContent('5 hours');
     expect(screen.getByTestId('quotas.bar.five_hour.reset')).toHaveTextContent(/^Resets /);
     expect(screen.getByTestId('quotas.bar.weekly:claude-opus-4-1')).toHaveTextContent('Week, claude-opus-4-1');
     expect(screen.getByTestId('quotas.bar.weekly:claude-opus-4-1.reset')).toHaveTextContent('Reset time unknown');
-    expect(screen.getByTestId('quotas.bar.weekly:claude-opus-4-1.meter')).toHaveAttribute('value', '1');
+    // 120 % used: nothing left
+    expect(screen.getByTestId('quotas.bar.weekly:claude-opus-4-1.meter')).toHaveAttribute('value', '0');
+    expect(screen.getByTestId('quotas.bar.weekly:claude-opus-4-1.free')).toHaveTextContent('0% free');
     answer = () => {
       throw new HubError('unavailable', 503);
     };

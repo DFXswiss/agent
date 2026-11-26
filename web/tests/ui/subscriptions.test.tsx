@@ -110,12 +110,23 @@ const operatorSub = (label: string, used: number | null, fetched: string | null,
   fetched_at: fetched,
 });
 
-/** Every kind of row: own, further, not logged in, not readable, not measured, unverifiable, operator. */
+/** The hub's `state` of a subscription (ADR-081 section 6, `agent_hub.models.quotas`). */
+const state = (usable: boolean, binding: string | null, release: number | null = null) => ({
+  usable,
+  binding,
+  release: release === null ? null : iso(release),
+});
+
+/** Every kind of row: own, further, not logged in, not readable, not measured, unverifiable, operator. The states are
+ *  those the hub derives from the readings. */
 async function fullWorld(): Promise<CredWorld> {
   const t = await world();
   t.client.on(LIST, () => ({
     subscriptions: [
-      item(1, { reading: measured([win('seven_day', 95, NOW + 30_000)], { fetched_at: OLD }) }),
+      item(1, {
+        reading: measured([win('seven_day', 95, NOW + 30_000)], { fetched_at: OLD }),
+        state: state(true, 'seven_day'),
+      }),
       item(2, {
         primary: true,
         reading: measured([
@@ -123,10 +134,16 @@ async function fullWorld(): Promise<CredWorld> {
           win('seven_day', 50, NOW + 27 * 3600_000),
           win('weekly:opus', 75, null),
         ]),
+        state: state(true, 'seven_day'),
       }),
       item(3),
-      item(4, { reading: measured([], { unreadable: true, device_id: null }) }),
-      item(5, { reading: measured([win('five_hour', 72, NOW - 1000), win('seven_day', 10, NOW + 5 * 60_000)]) }),
+      // not readable: the hub counts it as usable, as the summary of ADR-081 section 6 does
+      item(4, { reading: measured([], { unreadable: true, device_id: null }), state: state(true, null) }),
+      // the 5 hours have reset since the reading: free again, the week binds
+      item(5, {
+        reading: measured([win('five_hour', 72, NOW - 1000), win('seven_day', 10, NOW + 5 * 60_000)]),
+        state: state(true, 'seven_day'),
+      }),
       item(6),
       item(7, { updated_at: 'never' }),
     ],
@@ -206,8 +223,8 @@ describe('the card of the home page', () => {
     expect(within(provider).getByTestId('subscriptions.provider.summary')).toHaveTextContent('Claude');
     // seven records and two token files: the line stands for all of them
     expect(within(provider).getByTestId('subscriptions.provider.total')).toHaveTextContent('all 9');
-    // Team, own sessions, Gamma and team-a have something left in their binding window; the others are not measured
-    expect(within(provider).getByTestId('subscriptions.provider.usable')).toHaveTextContent('usable now: 4 of 9');
+    // the hub's states: Team, own sessions, Beta (not readable), Gamma and team-a are usable; the others have no state
+    expect(within(provider).getByTestId('subscriptions.provider.usable')).toHaveTextContent('usable now: 5 of 9');
     // no account waits for a release
     expect(within(provider).queryByTestId('subscriptions.provider.release')).toBeNull();
     // what is left of the week of the three accounts that measured it: (5 + 50 + 90) / 3, the next reset of them
@@ -220,8 +237,8 @@ describe('the card of the home page', () => {
     expect(screen.queryByTestId('subscriptions.provider.details')).toBeNull();
     toggle(provider, true);
     const details = await screen.findByTestId('subscriptions.provider.details');
-    // (80 + 28) / 2 left
-    expect(within(details).getByTestId('subscriptions.window.five_hour')).toHaveTextContent('5hdue54% free');
+    // (80 + 100) / 2 left: Gamma's 5 hours have reset since its reading
+    expect(within(details).getByTestId('subscriptions.window.five_hour')).toHaveTextContent('5hdue90% free');
     expect(within(details).getByTestId('subscriptions.window.five_hour.bar')).toHaveAttribute('data-level', 'ok');
     expect(within(details).getByTestId('subscriptions.window.seven_day')).toHaveTextContent('Week<1 min48.3% free');
     expect(within(details).getByTestId('subscriptions.window.weekly:opus')).toHaveTextContent('Week opus25% free');
@@ -254,8 +271,14 @@ describe('the review of KOR-68', () => {
     const t = await world();
     t.client.on(LIST, () => ({
       subscriptions: [
-        item(1, { reading: measured([win('seven_day', 130, NOW + 3600_000)], { fetched_at: OLD }) }),
-        item(2, { reading: measured([win('seven_day', 90, null)], { device_id: null }) }),
+        item(1, {
+          reading: measured([win('seven_day', 130, NOW + 3600_000)], { fetched_at: OLD }),
+          state: state(false, 'seven_day', NOW + 3600_000),
+        }),
+        item(2, {
+          reading: measured([win('seven_day', 90, null)], { device_id: null }),
+          state: state(true, 'seven_day'),
+        }),
       ],
     }));
     await serveRecord(t, 1, { ...SUBSCRIPTION, name: 'One' });
@@ -302,12 +325,17 @@ describe('what is left of each subscription and the window that binds it', () =>
             win('seven_day', 13, NOW + 4 * 86400_000),
             win('weekly:opus', 40, null),
           ]),
+          state: state(false, 'five_hour', FIVE_DONE),
         }),
         // the week used up
-        item(2, { reading: measured([win('five_hour', 30, NOW + 60 * 60_000), win('seven_day', 100, WEEK_DONE)]) }),
+        item(2, {
+          reading: measured([win('five_hour', 30, NOW + 60 * 60_000), win('seven_day', 100, WEEK_DONE)]),
+          state: state(false, 'seven_day', WEEK_DONE),
+        }),
         // free; its earlier reset is no release
         item(3, {
           reading: measured([win('five_hour', 10, NOW + 30 * 60_000), win('seven_day', 20, NOW + 3 * 86400_000)]),
+          state: state(true, 'seven_day'),
         }),
       ],
     }));
@@ -372,9 +400,11 @@ describe('what is left of each subscription and the window that binds it', () =>
       ['five_hour', 'no', '90% free', '30 min', 'ok'],
       ['seven_day', 'yes', '80% free', '3 d 0 h', 'ok'],
     ]);
-    // a used-up account without a known reset is not usable now, without a time
+    // exhausted without a known release (an observed limit without one): not usable now, without a time
     cleanup();
-    t.client.on(LIST, () => ({ subscriptions: [item(1, { reading: measured([win('seven_day', 100, null)]) })] }));
+    t.client.on(LIST, () => ({
+      subscriptions: [item(1, { reading: measured([win('seven_day', 60, null)]), state: state(false, 'seven_day') })],
+    }));
     mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/');
     toggle(await screen.findByTestId('subscriptions.provider'), true);
     expect(await screen.findByTestId('subscriptions.account.blocked')).toHaveTextContent(/^not usable now$/);
@@ -544,11 +574,12 @@ describe('the page', () => {
       ['own sessions – Week opus', 'warn'],
     ]);
     // the 5 hours bind (28 % left against 90 % of the week): amber
+    // Gamma: its 5 hours (72 % used) have reset since the reading – free again –, the week binds
     expect(lines(id(5))).toEqual([
-      ['five_hour', 'yes', '5hbindingdue28% free'],
-      ['seven_day', 'no', 'Week5 min90% free'],
+      ['five_hour', 'no', '5hdue100% free'],
+      ['seven_day', 'yes', 'Weekbinding5 min90% free'],
     ]);
-    expect(within(account(id(5))).getAllByTestId('subscriptions.account.bar')[0]).toHaveAttribute('data-level', 'warn');
+    expect(within(account(id(5))).getAllByTestId('subscriptions.account.bar')[0]).toHaveAttribute('data-level', 'ok');
     // Team: 5 % left of the week, red but usable
     expect(lines(id(1))).toEqual([['seven_day', 'yes', 'Weekbinding<1 min5% free']]);
     expect(within(account(id(1))).getByTestId('subscriptions.account.bar')).toHaveAttribute('data-level', 'low');

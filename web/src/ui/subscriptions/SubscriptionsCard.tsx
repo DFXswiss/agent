@@ -40,7 +40,7 @@ export function SubscriptionsCard() {
           </Link>
         </div>
       ) : (
-        <ProviderList groups={providerGroups(rows)} now={now} />
+        <ProviderList groups={providerGroups(rows, now)} now={now} />
       )}
     </section>
   );

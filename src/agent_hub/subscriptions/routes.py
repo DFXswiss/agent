@@ -2,7 +2,7 @@
 
 | Route | Right |
 |---|---|
-| `GET /v1/me/subscriptions` | `user`: every own subscription with its newest reading (`store.rows_for`) |
+| `GET /v1/me/subscriptions` | `user`: every own subscription with its newest reading and state (`store.rows_for`) |
 | `GET /v1/subscriptions/{id}` | `user`: an own subscription record |
 | `PUT /v1/subscriptions/{id}` | `user`: an own further subscription (never the primary record) |
 | `DELETE /v1/subscriptions/{id}` | `user`: an own subscription record (also the primary one) |
@@ -122,7 +122,8 @@ def _primary(connection: Any, record_id: UUID) -> bool:
 @router.get("/v1/me/subscriptions", auth="browser", right="user", read_resource="me.subscriptions")
 async def get_subscriptions(context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
     user = user_id(principal)
-    return {"subscriptions": await _in_transaction(context, lambda c: store.rows_for(c, user))}
+    now = context.clock()
+    return {"subscriptions": await _in_transaction(context, lambda c: store.rows_for(c, user, now))}
 
 
 @router.get("/v1/subscriptions/{id}", auth="browser", right="user", read_resource="subscription")

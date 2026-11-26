@@ -2260,6 +2260,16 @@
               "type": "null"
             }
           ]
+        },
+        "state": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/subscription_state"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2273,7 +2283,46 @@
         "reading"
       ],
       "additionalProperties": false,
-      "description": "a subscription of the caller with its newest reading (null before the first one)"
+      "description": "a subscription of the caller with its newest reading (null before the first one) and the state the hub derives from it (null without a reading)"
+    },
+    "subscription_state": {
+      "type": "object",
+      "properties": {
+        "usable": {
+          "type": "boolean"
+        },
+        "binding": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "five_hour",
+                "seven_day"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "release": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "usable",
+        "binding",
+        "release"
+      ],
+      "additionalProperties": false,
+      "description": "the state of a subscription by the rule of the summary of GET /v1/orgs/{org}/quotas (ADR-081 section 6, ADR-091 section 3): usable now, the window of the whole subscription that binds it (the one with the highest use, a window whose reset has passed counting 0, the week on a tie; null without one) and the release of an exhausted one (null when unknown)"
     },
     "agent_path": {
       "type": "string",

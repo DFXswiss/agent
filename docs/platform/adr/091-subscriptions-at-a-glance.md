@@ -30,24 +30,35 @@ operator's token files are not records and appear only in `GET /v1/orgs/{org}/qu
    new table, and the files are being replaced by records.
 2. **Providers are drivers.** Rows are grouped by provider; a provider is one entry of a list (display name per ID,
    `claude` and `openai` today) and an unknown ID shows itself, so a further provider needs no change of the view.
-3. **Figures: what is left.** E-30 asks for the remaining quota, so every figure – shares, bars, the table – is what
-   is LEFT of a window ("82% free"): 100 % less the used share the devices measure, never below 0 %. Bars are filled
-   as far as something is left and coloured by it – amber at 30 % left or less, red at 10 % or less.
+3. **Figures: what is left, by the existing parts.** Nothing is computed a second time; the page and its card put the
+   existing parts together:
+   - **What is left** (`freePercent` of `web/src/core/credentials/quotas.ts`, shared by the page, the card and the
+     settings sections "My own subscription" and "Model access and quotas"): E-30 asks for the remaining quota, so
+     every figure – shares, bars, the table – is what is LEFT of a window ("82% free"): 100 % less the used share, never
+     below 0 %; a window whose reset has passed is free again (as the pool's load of the local dashboard counts it).
+     Bars are filled as far as something is left and coloured by it – amber at 30 % left or less, red at 10 % or less.
+     The windows are ordered and named as `quotas.ts` reads them (5 hours, week, week per model).
+   - **State of a subscription** – usable or exhausted, its binding window, its release – is the hub's, by the one rule
+     of ADR-081 §6 (`agent_hub.models.quotas`: `binding_window`, `subscription_state`), extended from the own and the
+     operator's subscriptions to every subscription record: `GET /v1/me/subscriptions` names it per record (`state`);
+     a token file brings its state and `until` from `GET /v1/orgs/{org}/quotas`. The binding window is the window of
+     the whole subscription with the highest use (a window whose reset has passed counts 0; the week on a tie; a week
+     per model binds only its model); a subscription is exhausted until the latest reset of its full windows (or by
+     its latest observed limit); an unreadable one counts as usable, as in that summary.
    - **Provider line.** The total of all its accounts, never its fullest account: each window (5 hours, week, week per
      model, fullest window) counts the accounts that have a reading of it – what is left is the mean of their shares
      left, every account weighted equally (an account without that window does not count), its time the one to the
      next reset among them. The headline is the total of the week (else the fullest total window), the detail windows
      are the totals of each window. The line says that it stands for all accounts ("all 9", with one account "1
-     account"), so it is not taken for an account of the same name, how many accounts can be used now ("usable now: 3
-     of 9": logged in, readable and with something left in their binding window) and, when an account waits for one,
-     the next release ("next release 14:05 (in 1 h 30 min)": the earliest reset of the binding window of an account
-     with nothing left in it).
+     account"), so it is not taken for an account of the same name, how many accounts the hub counts as usable now
+     ("usable now: 3 of 9") and, when one waits for a known one, the next release ("next release 14:05 (in 1 h 30
+     min)", the time written as the counter writes it), counted over the hub's states of the listed rows as the summary
+     of ADR-081 §6 counts them – only the browser knows which rows are listed (names are sealed; a token file named
+     like a record is that record).
    - **Every subscription** shows the source and time of its measurement and ALL its windows (5 hours, week, week per
-     model; a token file only its fullest), each with share left, bar and time to its reset. The window that binds it
-     now is marked ("binding"): of the 5-hour window and the week the one with the least left (the week on a tie; with
-     only one of them that one; with neither the window with the least left). A week per model binds only that model,
-     never the subscription. With nothing left in its binding window the subscription is marked "not usable now until
-     14:05 (in 1 h 30 min)" – also when its week is nearly free.
+     model; a token file only its binding one), each with share left, bar and time to its reset. The hub's binding
+     window is marked ("binding"); an exhausted subscription is marked "not usable now until 14:05 (in 1 h 30 min)" –
+     also when its week is nearly free.
    - **Table.** Per subscription the share left ("Free") and the reset of every window.
    - "least free first" orders the providers by what is left of their headline. Nothing missing is shown as 0 %. A
      measurement older than 60 minutes is marked old; the headline is old when one of the readings it counts is. Times

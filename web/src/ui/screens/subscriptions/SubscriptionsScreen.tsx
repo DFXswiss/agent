@@ -7,7 +7,8 @@
 // settings section "Claude subscriptions".
 import { useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
-import { freeOf, providerGroups, providerName, type SubscriptionRow } from '../../../core/subscriptions/subscriptions';
+import { freePercent } from '../../../core/credentials/quotas';
+import { providerGroups, providerName, type SubscriptionRow } from '../../../core/subscriptions/subscriptions';
 import { useNow } from '../../countdown/useNow';
 import { useStore } from '../../hooks/useStore';
 import { useAppEnv } from '../../shell/context';
@@ -95,7 +96,7 @@ function Row({
           ? '—'
           : windows.map((window) => (
               <span key={window.window} className="block whitespace-nowrap">
-                {windowName(window.window)}: {percent(freeOf(window.usedPercent))}
+                {windowName(window.window)}: {percent(freePercent(window.usedPercent, window.resetsAt, now))}
               </span>
             ))}
       </td>
@@ -216,7 +217,7 @@ export function SubscriptionsScreen() {
               {t('subscriptions.sort')}
             </label>
           </div>
-          <ProviderList groups={providerGroups(rows, sorted)} now={now} detailed={detailed} />
+          <ProviderList groups={providerGroups(rows, now, sorted)} now={now} detailed={detailed} />
           <Table rows={rows} now={now} onChanged={reload} />
         </>
       )}

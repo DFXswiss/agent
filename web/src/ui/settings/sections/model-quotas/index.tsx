@@ -1,7 +1,8 @@
 // Settings section "Model access and quotas" of the active organization (ADR-081 section 6, `GET
 // /v1/orgs/{org}/quotas`): the summary ("Subscriptions: n available · m used up – next release 14:05"), the user's own
 // subscription (its windows, or honestly "not readable"), the operator's subscriptions when the organization may use
-// them (state, used share or "quota not readable", release), the last observed limit time of each, and whether DFX
+// them (state, what is left of the binding window – `freePercent`, as on the page "My subscriptions" – or "quota not
+// readable", release), the last observed limit time of each, and whether DFX
 // access over OpenRouter is available. Read when the organization changes and on "Reload". The organization is named
 // and can be chosen in place (`ActiveOrg`, KOR-68).
 import { useCallback, useEffect, useState } from 'react';
@@ -13,7 +14,9 @@ import {
   SUBSCRIPTION_STATES,
   subscriptionShare,
 } from '../../../../core/credentials/orgQuotas';
+import { barShare } from '../../../../core/credentials/quotas';
 import { formatPercent } from '../../../../core/monitoring/units';
+import { useNow } from '../../../countdown/useNow';
 import { requestErrorCode } from '../../../../core/requests/client';
 import type { SettingsSection } from '../../../registries/settings-sections';
 import { useStore } from '../../../hooks/useStore';
@@ -39,7 +42,8 @@ function LimitLine({ limited, testId }: { readonly limited: Limited; readonly te
 function Subscription({ row }: { readonly row: OperatorSubscription }) {
   const { t, locale } = useI18n();
   const clock = useClock();
-  const share = subscriptionShare(row);
+  const now = useNow(false);
+  const share = subscriptionShare(row, now);
   const known = (SUBSCRIPTION_STATES as readonly string[]).includes(row.state);
   const release = row.state === 'exhausted' && row.until !== null ? row.until : row.resetsAt;
   return (
@@ -59,9 +63,11 @@ function Subscription({ row }: { readonly row: OperatorSubscription }) {
           className="h-3 w-full"
           min={0}
           max={1}
-          high={0.8}
+          low={0.1}
+          high={0.3}
+          optimum={1}
           value={share}
-          aria-label={t('model.org.used', { percent: formatPercent(share, locale) })}
+          aria-label={t('model.org.free', { percent: formatPercent(share, locale) })}
           data-testid="model-quotas.subscription.meter"
         />
       )}
@@ -85,6 +91,7 @@ function Subscription({ row }: { readonly row: OperatorSubscription }) {
 function Details({ quotas }: { readonly quotas: OrgQuotas }) {
   const { t, locale } = useI18n();
   const clock = useClock();
+  const now = useNow(false);
   const { own, operator } = quotas;
   return (
     <>
@@ -100,7 +107,7 @@ function Details({ quotas }: { readonly quotas: OrgQuotas }) {
                 {bar.model === null
                   ? t(`model.quotas.window.${bar.window}`)
                   : t('model.quotas.window.model', { model: bar.model })}
-                : {t('model.org.used', { percent: formatPercent(Math.min(bar.usedPercent, 100) / 100, locale) })}
+                : {t('model.org.free', { percent: formatPercent(barShare(bar, now), locale) })}
                 {bar.resetsAt !== null && ` · ${t('model.org.reset', { time: clock(bar.resetsAt) })}`}
               </li>
             ))}

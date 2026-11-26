@@ -4,17 +4,15 @@
 // the accounts that measured it, the next reset of them – never the fullest account), how many accounts are usable
 // now and the next release; opened, the 5-hour window, the week and the week per model as such totals, then every
 // account with the source and age of its measurement and ALL its windows, each with share left, bar and time to the
-// reset – the window that binds it now (`bindingOf`) marked, an account with nothing left in it marked "not usable
-// now until …" –, and the age of the provider's newest read. Nothing missing is shown as 0 %. Used by the card of the
+// reset (`freePercent`, as the settings sections) – the window that binds it now marked and an exhausted account
+// marked "not usable now until …", both by the hub's state (`Usage`, ADR-081 section 6) –, and the age of the
+// provider's newest read. Nothing missing is shown as 0 %. Used by the card of the
 // home page and by the full page.
 import { useState } from 'react';
-import { formatClock, localTimeZone } from '../../core/i18n/format';
+import { freePercent } from '../../core/credentials/quotas';
 import {
   ageParts,
-  bindingOf,
-  exhaustedBy,
   freeLevel,
-  freeOf,
   FULLEST,
   type ProviderGroup,
   type QuotaWindow,
@@ -22,6 +20,7 @@ import {
   untilParts,
 } from '../../core/subscriptions/subscriptions';
 import { useI18n } from '../i18n';
+import { useClock } from '../settings/sections/model-quotas/summary';
 import '../../core/i18n/lazy/subscriptions';
 
 /** Older than this, a measurement is marked old. */
@@ -47,14 +46,15 @@ const FREE = 'text-right text-sm whitespace-nowrap tabular-nums';
 /** Texts of the area with the time to a reset, the age of a read and the name of a window. */
 export function useTexts() {
   const { t, locale } = useI18n();
+  // the release time as the counter and the section "Model access and quotas" write it (ADR-081 section 6)
+  const clock = useClock();
   const until = (at: number | null, now: number): string => {
     if (at === null) return '';
     const parts = untilParts(at, now);
     return t(`subscriptions.until.${parts.kind}`, { a: parts.a, b: parts.b });
   };
   /** A release time: the time of day (with the date when it is not today) and the time until it. */
-  const release = (key: string, at: number, now: number): string =>
-    t(key, { at: formatClock(at, { locale, timeZone: localTimeZone(), now }), in: until(at, now) });
+  const release = (key: string, at: number, now: number): string => t(key, { at: clock(at), in: until(at, now) });
   const age = (at: number, now: number): string => {
     const parts = ageParts(at, now);
     return t(`subscriptions.age.${parts.unit}`, { n: parts.value });
@@ -142,7 +142,7 @@ function AccountWindow({
   readonly now: number;
 }) {
   const { t, until, windowName, freeText } = useTexts();
-  const free = freeOf(window.usedPercent);
+  const free = freePercent(window.usedPercent, window.resetsAt, now);
   const name = windowName(window.window);
   const tint = binding ? (free === 0 ? 'bg-red-50' : 'bg-gray-50') : '';
   return (
@@ -176,9 +176,9 @@ function AccountWindow({
 
 function Account({ row, now }: { readonly row: SubscriptionRow; readonly now: number }) {
   const { t, age, release, rowName } = useTexts();
-  // the window that binds the account now (none without a reading)
-  const binding = bindingOf(row)?.binding.window ?? null;
-  const exhausted = exhaustedBy(row);
+  // the hub's state (ADR-081 section 6): the window that binds the account now, and whether it is used up
+  const binding = row.usage?.binding ?? null;
+  const exhausted = row.usage?.state === 'exhausted' ? row.usage : null;
   const windows = row.reading?.windows ?? [];
   const read = row.reading?.fetchedAt ?? null;
   const name = rowName(row);
@@ -209,9 +209,9 @@ function Account({ row, now }: { readonly row: SubscriptionRow; readonly now: nu
           )}
           {exhausted !== null && (
             <span className="block font-semibold text-red-800" data-testid="subscriptions.account.blocked">
-              {exhausted.resetsAt === null
+              {exhausted.release === null
                 ? t('subscriptions.blocked.open')
-                : release('subscriptions.blocked', exhausted.resetsAt, now)}
+                : release('subscriptions.blocked', exhausted.release, now)}
             </span>
           )}
         </span>
