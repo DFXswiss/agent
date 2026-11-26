@@ -2,8 +2,10 @@
 
 Both commands run as their own process, as in operation, on a database with large data: 2000 events of 1 MiB
 ciphertext each (2 GiB, more than any fixed block of rows can hold within the limit), and an audit chain of 100 000
-rows with large details. The peak resident memory of the process (`ru_maxrss`, what the OOM killer of a container
-counts) must stay below `PEAK_LIMIT`, which is far below the data each command reads. The child gets only the hub's
+rows with large details. The peak resident memory of the process (what the OOM killer of a container counts) must
+stay below `PEAK_LIMIT`, which is far below the data each command reads. The child reports `VmHWM` of
+`/proc/self/status`: the peak of its own program only. `ru_maxrss` is no measure here, because on Linux it keeps the
+peak of the parent across `exec` (a pytest worker after thousands of tests). The child gets only the hub's
 environment, so it runs the command alone (without the test's coverage tracer).
 """
 
@@ -41,7 +43,12 @@ import resource, sys
 from agent_hub.cli import main
 code = main(sys.argv[1:])
 sys.stdout.flush()
-print(f"maxrss {resource.getrusage(resource.RUSAGE_SELF).ru_maxrss}", file=sys.stderr)
+try:
+    with open("/proc/self/status") as status:
+        peak = next(int(line.split()[1]) * 1024 for line in status if line.startswith("VmHWM:"))
+except OSError:  # no procfs (macOS): ru_maxrss counts bytes there
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+print(f"peak {peak}", file=sys.stderr)
 sys.exit(code)
 """
 
@@ -55,10 +62,10 @@ def child(database: HubDatabase, *args: str) -> subprocess.Popen[bytes]:
 
 
 def peak_bytes(stderr: bytes) -> int:
-    """The child's `ru_maxrss` (KiB on Linux) in bytes."""
-    found = [line for line in stderr.decode().splitlines() if line.startswith("maxrss ")]
+    """The peak resident memory the child reported, in bytes."""
+    found = [line for line in stderr.decode().splitlines() if line.startswith("peak ")]
     assert len(found) == 1, stderr
-    return int(found[0].split()[1]) * 1024
+    return int(found[0].split()[1])
 
 
 def fill_events(database: HubDatabase) -> str:
