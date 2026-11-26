@@ -4,7 +4,8 @@ Status: Accepted (2026-11-26)
 
 ## Context
 - Rule [E-33](../KONZEPT.md#e-33) (the client, 2026-11-26): platform operations run side by side, each in its own
-  sandbox, no single slots; every subscription has its own mailbox. To five new subscriptions: "die 5 personen haben noch kein abo, also man muss nicht nur anmelden sondern auch registrieren, und
+  sandbox, no single slots; every subscription has its own mailbox. To five new subscriptions: "die 5 personen haben
+  noch kein abo, also man muss nicht nur anmelden sondern auch registrieren, und
   ich will dass du alles erledigst". Also [E-31](../KONZEPT.md#e-31) (every subscription logged in centrally, measured,
   used where the owner switches it on), [E-04](../KONZEPT.md#e-04)/[E-27](../KONZEPT.md#e-27) (everything without a
   browser too), [E-25](../KONZEPT.md#e-25) (no protection layers nobody ordered).
