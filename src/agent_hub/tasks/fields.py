@@ -25,6 +25,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.attention import store as attention_store
 from agent_hub.audit.recorder import unchanged
 from agent_hub.errors import HubError
 from agent_hub.http.context import HubContext
@@ -123,6 +124,8 @@ def update(
     elif status is not None:
         if task.state == CLOSED:
             task = write_state(connection, task, IDLE, None, now, actor=actor, effects=effects)
+            # reopened without an agent: the record leaves `done/closed` (no agent works on it, ADR-101)
+            attention_store.refresh(connection, task.id, now, effects)
         connection.execute("UPDATE hub.task SET status = %s WHERE id = %s", (status, task.id))
     connection.execute(
         "UPDATE hub.task SET last_activity_at = GREATEST(last_activity_at, %s) WHERE id = %s", (now, task.id)

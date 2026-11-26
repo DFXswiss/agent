@@ -195,7 +195,11 @@ by_urgency:{low,normal,high,urgent},total}` over the tasks of the workgroups of 
 (`wg`: one of them; an unreadable one `404`), with the filters of `GET /v1/workgroups/{wg}/tasks`; the counters per
 status ignore `status` and those per urgency ignore `urgency` (facets), `total` applies both.
 `GET /v1/workgroups/{wg}/tasks` also takes `order=urgency`: urgency rank descending (`urgent` first), then latest
-activity, then task ID, with its own cursor.
+activity, then task ID, with its own cursor. Both routes take `overview=working|waiting|no_agent`: the open tasks of
+one of the start page's three groups, read from the task's attention record (`agent_hub.attention.derive.OVERVIEW`:
+`working`; `needs_decision`; `blocked` and `done` except `done/closed`); the counts answer `by_overview {working,
+waiting,no_agent}` (ignoring the `overview` filter). A captured task has the record `done/idle` and counts as
+`no_agent`.
 
 Session rows (`GET /v1/tasks/{task}`, `GET /v1/sessions/{session}`, the `session` frame, the device API) carry `agent_path` (a subagent's
 place below its main agent, the handle `#<task number>.<agent_path>`; null for a main session; KOR-52, ADR-095 §1)

@@ -51,6 +51,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from agent_hub.analysis import request as analysis_request
+from agent_hub.attention import store as attention_store
 from agent_hub.audit.chain import ACTING_AGENT
 from agent_hub.audit.recorder import unchanged
 from agent_hub.crypto.errors import CryptoError
@@ -298,6 +299,8 @@ def create_task(
         audit(connection, actor, "task.create", task, now, detail=detail)
         outcome = Outcome(body={}, stored=stored)
         if decision is None:
+            # a captured task's attention record: `done/idle`, no agent works on it (ADR-100 section 6, ADR-101)
+            attention_store.refresh(connection, task_id, now, outcome.effects)
             outcome.effects.org_frame(org_id, "task", rows.task_json(connection, task_id) or {})
             outcome.body = {
                 "task": rows.task_json(connection, task_id),

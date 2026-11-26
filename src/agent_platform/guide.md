@@ -310,6 +310,7 @@ agent-platform task start --task <task_id>
 agent-platform topic list --org <org_id>
 agent-platform topic create --org <org_id> --name "Payments"
 agent-platform task overview --status todo --urgency high --order urgency
+agent-platform task overview --overview no-agent   # open tasks: working | waiting (a question) | no-agent
 # the task dashboard: every task you may read in all organizations (or --org / --wg), with the counters per status
 # and urgency (counts); the same filters, --search and --order work for task list --wg|--org
 ```

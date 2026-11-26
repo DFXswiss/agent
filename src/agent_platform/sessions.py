@@ -368,10 +368,23 @@ def _counts(account: Account, org: str, query: Dashboard) -> dict[str, Any]:
     return answer
 
 
+OVERVIEW_KEYS = ("working", "waiting", "no_agent")
+OVERVIEW_HELP = "only open tasks: in progress (working), waiting for a question (waiting), without an agent (no-agent)"
+
+
 def _summed(found: list[dict[str, Any]]) -> dict[str, Any]:
     by_status = {name: sum(int(item["by_status"].get(name, 0)) for item in found) for name in tickets.STATUSES}
     by_urgency = {name: sum(int(item["by_urgency"].get(name, 0)) for item in found) for name in tickets.URGENCIES}
-    return {"by_status": by_status, "by_urgency": by_urgency, "total": sum(int(item.get("total", 0)) for item in found)}
+    # the open tasks per overview of the start page (an older hub answers none: zero)
+    by_overview = {
+        name: sum(int((item.get("by_overview") or {}).get(name, 0)) for item in found) for name in OVERVIEW_KEYS
+    }
+    return {
+        "by_status": by_status,
+        "by_urgency": by_urgency,
+        "by_overview": by_overview,
+        "total": sum(int(item.get("total", 0)) for item in found),
+    }
 
 
 def task_overview(account: Account, query: Dashboard) -> dict[str, Any]:
@@ -423,6 +436,7 @@ def dashboard_filters(args: Any) -> tickets.Filters | None:
         topic=args.topic,
         github_org=args.github_org,
         github_repo=args.repo,
+        overview=args.overview,
     )
     return None if found == tickets.Filters() else found
 
@@ -516,6 +530,7 @@ def register(tree: Tree) -> None:
     sub.add_argument("--topic", help="only tasks of this topic (from `topic list`, or none)")
     sub.add_argument("--github-org", help="only tasks of this GitHub organisation")
     sub.add_argument("--repo", help="only tasks of this repository (owner/name)")
+    sub.add_argument("--overview", choices=tickets.OVERVIEWS, help=OVERVIEW_HELP)
     sub.add_argument("--order", choices=tickets.ORDERS, help="activity (default), created or urgency")
     group = tree.group("session", "sessions of tasks")
     sub = tree.command(

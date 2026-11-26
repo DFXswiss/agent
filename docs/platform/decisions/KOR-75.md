@@ -32,3 +32,8 @@ Owner rule [E-41](../KONZEPT.md#e-41) with interpretation [A22](../KONZEPT.md#a-
     counter the urgency filter: the number on a counter is the number of rows a click on it gives. The sealed filters
     narrow only the list.
 11. **"Prio" is the urgency of E-41**, no second field.
+12. **The start page's three groups are a filter of the dashboard, from one rule.** In progress, waiting for a question
+    and no agent come from `OVERVIEW` / `overview_of` in `agent_hub.attention.derive` over the attention records – the
+    identical definition the start-page package carries; whoever is merged first lays it down, the other builds on it.
+    A captured task that was never started therefore needs its attention record: it gets `done/idle` (no change to
+    the derivation; before, the record was skipped for a task without a session) and counts under "No agent".

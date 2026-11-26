@@ -38,6 +38,15 @@
           "const": "none"
         }
       ]
+    },
+    "overview": {
+      "type": "string",
+      "enum": [
+        "working",
+        "waiting",
+        "no_agent"
+      ],
+      "description": "the overview of the open tasks as in GET /v1/workgroups/{wg}/tasks"
     }
   },
   "additionalProperties": false

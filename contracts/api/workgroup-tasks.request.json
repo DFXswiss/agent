@@ -54,6 +54,15 @@
         }
       ],
       "description": "only tasks of this topic, or none: only tasks without a topic (ADR-100 section 5)"
+    },
+    "overview": {
+      "type": "string",
+      "enum": [
+        "working",
+        "waiting",
+        "no_agent"
+      ],
+      "description": "only the open tasks of one overview of the start page, read from their attention record (agent_hub.attention.derive.OVERVIEW: working = category working, waiting = needs_decision, no_agent = blocked and done without done/closed; ADR-101 section 1)"
     }
   },
   "additionalProperties": false

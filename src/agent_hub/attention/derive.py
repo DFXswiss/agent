@@ -26,6 +26,9 @@
 The mappings are tables: a later package adds a reason by a row here and in `contracts/enums/attention.json` (the
 contract test compares `CATEGORIES` with the enum). Only `needs_decision` and `blocked` records carry a ref; a record
 of `working` or `done` names no object (a phase change inside `working` is no new occasion).
+
+The overview of the open tasks (`OVERVIEW`, `overview_of`) reads only these records: `working` is "In progress",
+`needs_decision` "Waiting for a person", `blocked` and `done/idle` "No agent"; `done/closed` is not open.
 """
 
 from __future__ import annotations
@@ -136,6 +139,30 @@ QUOTA_WAIT: Outcome = (WORKING, "quota_wait")
 RUNNING_OPERATION_STATES = ("accepted", "executing")
 WG_WIDE = frozenset({"device_missing", "device_unreachable", "no_capacity", "device_failed"})
 """Reasons that concern a whole workgroup (one notification per owner, workgroup and reason, ADR-076 section 5)."""
+CLOSED = "closed"
+OVERVIEW_WORKING, OVERVIEW_WAITING, OVERVIEW_NO_AGENT = "working", "waiting", "no_agent"
+OVERVIEW: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        # an agent works: a session runs, starts, waits in the queue or for model quota and goes on by itself
+        OVERVIEW_WORKING: (WORKING,),
+        # a person must answer, approve or decide (a question, an approval, a connection, credit, a device, quota)
+        OVERVIEW_WAITING: (NEEDS_DECISION,),
+        # no agent works and nobody is asked: the session failed or ended, the task lies idle and is not closed
+        OVERVIEW_NO_AGENT: (BLOCKED, DONE),
+    }
+)
+"""The overview of the open tasks (the start page's three numbers): overview → the categories it counts. Every record
+falls into exactly one overview except `done/closed` (a closed task is not open); see `overview_of`."""
+
+
+def overview_of(category: str, reason: str) -> str | None:
+    """The overview of a record (`OVERVIEW`), None for a closed task (and for a category this release does not know)."""
+    if category == DONE and reason == CLOSED:
+        return None
+    for name, categories in OVERVIEW.items():
+        if category in categories:
+            return name
+    return None
 
 
 @dataclass(frozen=True)
@@ -261,7 +288,7 @@ def _by_state(inputs: Inputs) -> Attention:
 def derive(inputs: Inputs) -> Attention:
     """The attention record of a task (module docstring)."""
     if inputs.task_state == "closed":
-        return Attention(DONE, "closed")
+        return Attention(DONE, CLOSED)
     if inputs.task_state == "failed":
         reason = inputs.main_reason or inputs.task_reason or ""
         return _session(FAILED_REASONS.get(reason, FAILED_DEFAULT), inputs.main_id)

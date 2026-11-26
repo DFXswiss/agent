@@ -7,7 +7,7 @@
 // The slice also exports `frames` (the live-channel frames it applies, `core/net/frames.ts`).
 import { parseTime } from '../../encoding/time';
 import { isRecord } from '../../registry';
-import { comesAfter, matchesFilter, orderOf } from '../../tasks/filters';
+import { byOverview, comesAfter, matchesFilter, orderOf } from '../../tasks/filters';
 import type { Slice, Store } from '../store';
 
 /** `task_row` of the contracts (02-data-model.md section 2.4). */
@@ -260,8 +260,9 @@ function placeInLists(lists: TasksState['lists'], tasks: TasksState['tasks'], ro
   let next = lists;
   for (const [key, list] of Object.entries(lists)) {
     if (list.wg !== row.wg_id) continue;
-    const matches = matchesFilter(list.state, row);
     const present = list.ids.includes(row.task_id);
+    // a list by overview keeps the rows it holds and takes no new one: the row does not say its overview (ADR-101)
+    const matches = matchesFilter(list.state, row) && (present || !byOverview(list.state));
     if (matches === present && !matches) continue;
     const ids = matches
       ? inListOrder(tasks, [...list.ids, row.task_id], list.state)

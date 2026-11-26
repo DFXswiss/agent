@@ -103,8 +103,12 @@ nothing else). Clients write the full current set of fields on every change. Old
 - The device routes and the session tools are unchanged: a session works on its task as before.
 
 ### 6. Readers that assumed an agent
-The situation view derives no attention record for a task without a session (`attention.refresh` and the backfill skip
-it), and the main agents of a person (ADR-095 §5) count only tasks with a main session – a captured task is no agent.
+A captured task gets the attention record its state gives without any change to the derivation: `done/idle` (rule 6,
+task `idle` without a main session) – no agent works on it and nobody is asked. In the overview of the open tasks
+(the start page's three numbers and the dashboard of [ADR-101](101-task-dashboard.md), one rule `OVERVIEW` in
+`agent_hub.attention.derive`) it therefore counts under "No agent". The record is derived when the task is captured,
+when its status reopens it, and by the backfill for a task captured before. The main agents of a person (ADR-095 §5)
+count only tasks with a main session – a captured task is no agent.
 
 ### 7. Clients
 - **Web.** The task list of a workgroup and the overview get "Capture task" beside the composer: title, description,

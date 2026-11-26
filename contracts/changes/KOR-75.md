@@ -23,5 +23,7 @@ Task dashboard (ADR-101, delivered with E-41), additive as well:
 
 - `api/orgs-tasks-counts.{request,response}.json`, `api/INDEX.json`: `GET /v1/orgs/{org}/tasks/counts` (`org:member`)
   with the list filters and `wg`; answer `{by_status, by_urgency, total}`.
-- `api/workgroup-tasks.request.json`: `order` also `urgency`.
+- `api/workgroup-tasks.request.json`: `order` also `urgency`; `overview` (`working`, `waiting`, `no_agent`: the start
+  page's three groups of the open tasks, from the attention record), also on `api/orgs-tasks-counts.request.json`.
+- `api/orgs-tasks-counts.response.json`: `by_overview {working, waiting, no_agent}` (required).
 - `audit/read.org.tasks.counts.json` (new read action, `enums/audit-actions.json`).

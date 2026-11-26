@@ -1,10 +1,12 @@
-// The counters of the task dashboard (ADR-101 section 1): per status and per urgency the number of tasks of the
-// shown organizations under the hub filters of the list (`core/tasks/counts.ts`). A click on a counter sets that
-// filter, a click on the chosen one clears it. They load again when a filter changes, when a row of the shown
-// workgroups appears or changes its status or urgency (a live row frame), and after a reconnect (KOR-11).
+// The counters of the task dashboard (ADR-101 section 1): the open tasks in the start page's three groups (in
+// progress, waiting for a question, no agent), and per status and per urgency the number of tasks of the shown
+// organizations under the hub filters of the list (`core/tasks/counts.ts`). A click on a counter sets that filter, a
+// click on the chosen one clears it. They load again when a filter changes, when a row of the shown workgroups appears
+// or changes its state, status or urgency (a live row frame), and after a reconnect (KOR-11).
 import { useEffect, useMemo, useState } from 'react';
 import { formatNumber } from '../../../core/i18n';
 import { loadCounts, selectCountsSignature, sumCounts, type TaskCounts } from '../../../core/tasks/counts';
+import { OVERVIEWS } from '../../../core/tasks/filters';
 import { STATUSES, URGENCIES } from '../../../core/tasks/tickets';
 import { useLiveReload } from '../../hooks/useLiveReload';
 import { useStore } from '../../hooks/useStore';
@@ -54,19 +56,29 @@ const BUTTON =
 
 export interface TaskCountersProps {
   readonly loaded: Loaded;
-  /** The chosen status and urgency ("" = any). */
+  /** The chosen overview, status and urgency ("" = any). */
+  readonly overview: string;
   readonly status: string;
   readonly urgency: string;
+  readonly onOverview: (overview: string) => void;
   readonly onStatus: (status: string) => void;
   readonly onUrgency: (urgency: string) => void;
 }
 
-export function TaskCounters({ loaded, status, urgency, onStatus, onUrgency }: TaskCountersProps) {
+export function TaskCounters({
+  loaded,
+  overview,
+  status,
+  urgency,
+  onOverview,
+  onStatus,
+  onUrgency,
+}: TaskCountersProps) {
   const { t, locale } = useI18n();
   const { counts, failed } = loaded;
   const count = (value: number | undefined) => (value === undefined ? '–' : formatNumber(value, locale));
   const group = (
-    name: 'status' | 'urgency',
+    name: 'overview' | 'status' | 'urgency',
     values: readonly string[],
     chosen: string,
     numbers: Readonly<Record<string, number>> | undefined,
@@ -99,6 +111,8 @@ export function TaskCounters({ loaded, status, urgency, onStatus, onUrgency }: T
       <p className="text-sm text-gray-700" data-testid="dashboard.counts.total" data-count={counts?.total ?? ''}>
         {t('tasks.dashboard.total', { count: count(counts?.total) })}
       </p>
+      {/* the start page's three groups of the open tasks first (in progress, waiting for a question, no agent) */}
+      {group('overview', OVERVIEWS, overview, counts?.byOverview, onOverview)}
       {group('status', STATUSES, status, counts?.byStatus, onStatus)}
       {group('urgency', URGENCIES, urgency, counts?.byUrgency, onUrgency)}
       {failed && (

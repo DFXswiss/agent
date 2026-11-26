@@ -7,10 +7,12 @@
 // loads the next page on request only (no automatic infinite scroll). Titles and owners come from one selector for the
 // list (`useRowInfo`); the rows are memoized on their content. The title search and "only mine" load at most
 // `SCAN_PAGES` further pages per request and then say how many tasks were searched (`scan.ts`).
-import { type ReactNode, useEffect, useId, useMemo } from 'react';
+import { type ReactNode, useEffect, useId, useMemo, useRef } from 'react';
 import { formatNumber } from '../../../core/i18n';
 import type { ListId } from '../../../core/lists/ids';
 import { TASK_STATES } from '../../../core/tasks/countdown';
+import { selectCountsSignature } from '../../../core/tasks/counts';
+import { byOverview } from '../../../core/tasks/filters';
 import { PAGE_SIZE } from '../../../core/tasks/list';
 import { clientFiltered, loadOverview, loadOverviewMore, selectOverview } from '../../../core/tasks/overview';
 import { taskAssignee, taskTopic } from '../../../core/tasks/tickets';
@@ -88,6 +90,19 @@ export function TaskTable({
   useEffect(() => {
     void loadOverview(app.tasks, lists, state);
   }, [app, lists, state]);
+  // a list by overview of the open tasks loads again when a row of its workgroups appears or changes its state (a row
+  // does not carry its attention record, so the store cannot move it between such lists itself; ADR-101)
+  const selectSignature = useMemo(
+    () => selectCountsSignature(byOverview(state) ? lists.join(',') : ''),
+    [state, lists],
+  );
+  const signature = useStore(selectSignature, app.store);
+  const seen = useRef(signature);
+  useEffect(() => {
+    if (signature === seen.current) return;
+    seen.current = signature;
+    void loadOverview(app.tasks, lists, state, true);
+  }, [app, lists, state, signature]);
   useLiveReload(app.store, () => void loadOverview(app.tasks, query.wgs, query.state, true));
   const filtering = clientFiltered(query);
   const scan = useSearchScan(app.tasks, query, view, filtering);

@@ -1,7 +1,7 @@
 """The jobs of the attention area (ADR-076 section 4, ADR-027 section 4 `<area>/jobs.py:JOBS`).
 
 `attention.backfill` runs every `INTERVAL_SECONDS` and derives the record of every task that has none (the tasks
-created before migration 0017, a lost row; a captured task without a session has none, ADR-100) with
+created before migration 0017, a lost row, a captured task of before ADR-101) with
 `agent_hub.attention.store.refresh`, at most `BATCH` tasks per
 transaction (each takes the audit lock, so a batch is kept short), until none is left. It is idempotent: a task with
 a record is never selected, and a refresh of the same state writes nothing. A backfilled record announces nothing
@@ -32,7 +32,7 @@ def _batch(context: Any) -> int:
     with context.pool.connection() as connection, connection.transaction():
         found = connection.execute(
             "SELECT t.id FROM hub.task t WHERE NOT EXISTS (SELECT 1 FROM hub.task_attention a WHERE a.task_id = t.id)"
-            " AND EXISTS (SELECT 1 FROM hub.session s WHERE s.task_id = t.id) ORDER BY t.id LIMIT %s",
+            " ORDER BY t.id LIMIT %s",
             (BATCH,),
         ).fetchall()
         for (task_id,) in found:

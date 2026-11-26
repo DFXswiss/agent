@@ -14,10 +14,23 @@ export interface HubFilter {
   readonly urgency?: string | null;
   readonly assignee?: string | null;
   readonly topic?: string | null;
+  /** The overview of the open tasks (`working`, `waiting`, `no_agent`): the start page's three groups, read by the
+   * hub from the tasks' attention records (ADR-101). */
+  readonly overview?: string | null;
   readonly order?: string | null;
 }
 
-const NAMES = ['state', 'status', 'urgency', 'assignee', 'topic', 'order'] as const;
+const NAMES = ['state', 'status', 'urgency', 'assignee', 'topic', 'overview', 'order'] as const;
+
+/** The overview of the open tasks: in progress, waiting for a question, no agent. */
+export const OVERVIEWS = ['working', 'waiting', 'no_agent'] as const;
+export type Overview = (typeof OVERVIEWS)[number];
+
+/**
+ * Whether the list of `key` is filtered by the overview: a row does not carry its attention record, so a changed row
+ * is not moved into or out of such a list here - the list loads again instead (`TaskTable`).
+ */
+export const byOverview = (key: string | null): boolean => parseFilter(key).overview != null;
 
 /** The orders of a task list: latest activity (the default), newest creation, most urgent first. */
 export const ORDERS = ['activity', 'created', 'urgency'] as const;

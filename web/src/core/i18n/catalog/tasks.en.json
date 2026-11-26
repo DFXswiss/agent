@@ -39,6 +39,7 @@
   "order.created": "Newest",
   "order.urgency": "Most urgent",
   "dashboard.total": "Tasks: {count}",
+  "dashboard.by-overview": "Open tasks: in progress, waiting for a question, no agent",
   "dashboard.by-status": "Tasks by status",
   "dashboard.by-urgency": "Tasks by urgency",
   "dashboard.counts-failed": "The counts could not be loaded."

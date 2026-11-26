@@ -139,6 +139,32 @@ describe('lists', () => {
     expect(lists()).toEqual([['b', 'a'], [], ['a']]);
     expect(taskList(store.getState().tasks, 'other', null).ids).toEqual([]);
   });
+
+  it('keeps the rows of a list by overview and takes no new one (the row does not say its overview, ADR-101)', () => {
+    const store = createStore();
+    const key = 'overview=no_agent';
+    listPage(store, {
+      wg: 'w',
+      state: key,
+      rows: [row('a', '2026-11-21T12:00:00.000Z', { state: 'idle' })],
+      nextBefore: null,
+      first: true,
+    });
+    putTasks(store, [row('b', '2026-11-21T12:00:05.000Z', { state: 'idle' })]);
+    expect(taskList(store.getState().tasks, 'w', key).ids).toEqual(['a']);
+    putTasks(store, [row('a', '2026-11-21T12:00:09.000Z', { state: 'idle' })]);
+    expect(taskList(store.getState().tasks, 'w', key).ids).toEqual(['a']);
+    // the other filters still apply to the rows it holds
+    listPage(store, {
+      wg: 'w',
+      state: `status=todo&${key}`,
+      rows: [row('c', '2026-11-21T12:00:00.000Z', { status: 'todo' })],
+      nextBefore: null,
+      first: true,
+    });
+    putTasks(store, [row('c', '2026-11-21T12:00:10.000Z', { status: 'completed', state: 'closed' })]);
+    expect(taskList(store.getState().tasks, 'w', `status=todo&${key}`).ids).toEqual([]);
+  });
 });
 
 describe('stale rows', () => {

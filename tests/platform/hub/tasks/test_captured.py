@@ -1,6 +1,7 @@
 """U-HUB-tasks (captured tasks, E-41, ADR-100): `POST /v1/tasks` with only the `task.meta`, the ticket fields of
 `PUT /v1/tasks/{task}/fields`, the filters of `GET /v1/workgroups/{wg}/tasks`, the status on start, close and reopen,
-the `topic.profile` kind and the readers that skip a task without an agent."""
+the `topic.profile` kind, the main agents that skip a task without an agent, its attention record (`done/idle`: "No
+agent" of the overview of the open tasks) and the overview filter and counters of the task dashboard (ADR-101)."""
 
 from __future__ import annotations
 
@@ -66,9 +67,15 @@ def test_capturing_starts_no_agent(desk: Desk, published: MemoryPublisher) -> No
     assert hints(published) == []
     assert frames(published, "task")[-1]["status"] == "todo"
     assert audit_rows(desk, "task.create")[-1][3] == {"origin": "browser", "captured": True}
-    # the situation view and the main agents know no agent of it
-    assert desk.rows("SELECT count(*) FROM hub.task_attention WHERE task_id = %s", task["task_id"]) == [(0,)]
+    # its attention record says that no agent works on it ("No agent" of the start page, ADR-101); the main agents
+    # know no agent of it
+    record = "SELECT category, reason FROM hub.task_attention WHERE task_id = %s"
+    assert desk.rows(record, task["task_id"]) == [("done", "idle")]
     assert attention_jobs.backfill(desk.hub) == 0
+    # a captured task of before ADR-101 (no record) gets it from the backfill
+    desk.execute("DELETE FROM hub.task_attention WHERE task_id = %s", task["task_id"])
+    assert attention_jobs.backfill(desk.hub) == 1
+    assert desk.rows(record, task["task_id"]) == [("done", "idle")]
     people = desk.scene.writer.browser.get(f"/v1/orgs/{desk.org}/people/agents")
     assert people.status_code == 200, people.text
     assert all(row["owner_id"] != desk.scene.writer.id for row in people.json()["people"])
@@ -200,6 +207,8 @@ def test_completed_closes_and_todo_reopens(desk: Desk, published: MemoryPublishe
     reopened = desk.scene.writer.browser.put(path, json={"status": "todo"})
     row = reopened.json()["task"]
     assert (row["state"], row["status"], row["closed_at"]) == ("idle", "todo", None)
+    # reopened by its status: its record leaves done/closed (no agent works on it until the next prompt)
+    assert desk.rows("SELECT category, reason FROM hub.task_attention WHERE task_id = %s", task) == [("done", "idle")]
     # a follow-up prompt starts a new main session: inProgress again
     desk.transition(main, "stopped")
     assert desk.prompt(desk.scene.writer, task).status_code == 200
@@ -210,9 +219,12 @@ def test_a_captured_task_completes_without_an_agent(desk: Desk) -> None:
     task = _capture(desk).json()["task"]["task_id"]
     done = desk.scene.writer.browser.put(f"/v1/tasks/{task}/fields", json={"status": "completed"})
     assert (done.json()["task"]["state"], done.json()["task"]["status"]) == ("closed", "completed")
-    assert desk.rows("SELECT count(*) FROM hub.task_attention WHERE task_id = %s", task) == [(0,)]
+    record = "SELECT category, reason FROM hub.task_attention WHERE task_id = %s"
+    assert desk.rows(record, task) == [("done", "closed")]
     back = desk.scene.writer.browser.put(f"/v1/tasks/{task}/fields", json={"status": "inProgress"})
     assert (back.json()["task"]["state"], back.json()["task"]["status"]) == ("idle", "inProgress")
+    # reopened without an agent: open again, and no agent works on it
+    assert desk.rows(record, task) == [("done", "idle")]
 
 
 def test_close_and_reopen_keep_the_status(desk: Desk) -> None:
@@ -270,11 +282,17 @@ def test_the_list_filters_by_the_fields(desk: Desk) -> None:
     assert listed(f"topic={topic}") == [first]
     assert listed("topic=none&status=todo") == [second]
     assert listed("state=idle&urgency=normal") == [second]
+    # the overview of the open tasks (the start page's three groups, ADR-101): captured tasks have no agent
+    assert listed("overview=no_agent") == [second, first]
+    assert listed("overview=working") == [third]
+    assert listed("overview=waiting") == []
+    assert listed("overview=no_agent&urgency=high") == [first]
     for query, pointer in (
         ("status=done", "/status"),
         ("urgency=x", "/urgency"),
         ("assignee=x", "/assignee"),
         ("topic=x", "/topic"),
+        ("overview=no-agent", "/overview"),
     ):
         response = desk.scene.reader.browser.get(f"{base}&{query}", extensions={"contract": False})
         assert response.status_code == 400, query
@@ -303,8 +321,8 @@ def _dashboard(desk: Desk) -> dict[str, str]:
 
 def test_the_dashboard_counters(desk: Desk) -> None:
     """ADR-101 section 1: per status the tasks matching every filter but the status, per urgency every filter
-    but the urgency, total all of them."""
-    _dashboard(desk)
+    but the urgency, per overview of the open tasks every filter but the overview, total all of them."""
+    found = _dashboard(desk)
     base = f"/v1/orgs/{desk.org}/tasks/counts"
 
     def counted(query: str = "") -> dict[str, Any]:
@@ -316,8 +334,22 @@ def test_the_dashboard_counters(desk: Desk) -> None:
     assert everything == {
         "by_status": {"todo": 2, "inProgress": 1, "completed": 1},
         "by_urgency": {"low": 0, "normal": 3, "high": 0, "urgent": 1},
+        # the agent task works; both open captured tasks have no agent; the completed one is not open
+        "by_overview": {"working": 1, "waiting": 0, "no_agent": 2},
         "total": 4,
     }
+    no_agent = counted("overview=no_agent")
+    assert (no_agent["by_overview"], no_agent["by_status"], no_agent["total"]) == (
+        everything["by_overview"],
+        {"todo": 2, "inProgress": 0, "completed": 0},
+        2,
+    )
+    assert counted("urgency=urgent")["by_overview"] == {"working": 0, "waiting": 0, "no_agent": 1}
+    assert counted("overview=waiting")["total"] == 0
+    # a task without a record yet is in no overview (the backfill derives it)
+    desk.execute("DELETE FROM hub.task_attention WHERE task_id = %s", found["agent"])
+    assert counted()["by_overview"] == {"working": 0, "waiting": 0, "no_agent": 2}
+    assert attention_jobs.backfill(desk.hub) == 1
     todo = counted("status=todo")
     assert (todo["by_status"], todo["by_urgency"]["normal"], todo["by_urgency"]["urgent"], todo["total"]) == (
         everything["by_status"],
@@ -342,6 +374,7 @@ def test_the_dashboard_counters(desk: Desk) -> None:
         ("topic=x", "/topic"),
         ("wg=x", "/wg"),
         ("state=x", "/state"),
+        ("overview=idle", "/overview"),
     ):
         response = desk.scene.reader.browser.get(f"{base}?{query}", extensions={"contract": False})
         assert response.status_code == 400, query

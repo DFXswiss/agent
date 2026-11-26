@@ -1,14 +1,17 @@
-// The ticket filters of both task lists (E-41, ADR-100 sections 2 and 7): status, urgency, person and topic go to the
-// hub (the list key, `core/tasks/filters.ts`); GitHub organisation and repository are sealed and filtered in the
-// browser over the loaded rows with the bounded scan of the title search (`scan.ts`).
+// The ticket filters of both task lists (E-41, ADR-100 sections 2 and 7): the overview of the open tasks (the start
+// page's three groups, ADR-101), status, urgency, person and topic go to the hub (the list key,
+// `core/tasks/filters.ts`); GitHub organisation and repository are sealed and filtered in the browser over the loaded
+// rows with the bounded scan of the title search (`scan.ts`).
 import { useId, useMemo } from 'react';
-import { filterKey, NONE, type Order } from '../../../core/tasks/filters';
+import { filterKey, NONE, type Order, OVERVIEWS } from '../../../core/tasks/filters';
 import { STATUSES, URGENCIES } from '../../../core/tasks/tickets';
 import { useI18n } from '../../i18n';
 import { usePeopleOf, useTopicsOf } from './tickets';
 
 /** The chosen ticket filters ("" = any). */
 export interface TicketFilterValues {
+  /** `working`, `waiting`, `no_agent` or "". */
+  readonly overview: string;
   readonly status: string;
   readonly urgency: string;
   /** A user ID, `none` or "". */
@@ -20,6 +23,7 @@ export interface TicketFilterValues {
 }
 
 export const NO_FILTERS: TicketFilterValues = {
+  overview: '',
   status: '',
   urgency: '',
   assignee: '',
@@ -43,6 +47,7 @@ export const hubKey = (state: string | null, values: TicketFilterValues, order: 
     urgency: values.urgency || null,
     assignee: values.assignee || null,
     topic: values.topic || null,
+    overview: values.overview || null,
     order: order === 'activity' ? null : order,
   });
 
@@ -69,7 +74,7 @@ export function TicketFilters({
   const topics = useMemo(() => [...topicsBy.values()].flat(), [topicsBy]);
   const set = (patch: Partial<TicketFilterValues>) => onChange({ ...values, ...patch });
   const select = (
-    name: 'status' | 'urgency' | 'assignee' | 'topic',
+    name: 'overview' | 'status' | 'urgency' | 'assignee' | 'topic',
     label: string,
     options: readonly { readonly value: string; readonly label: string }[],
   ) => (
@@ -114,6 +119,11 @@ export function TicketFilters({
   );
   return (
     <div className="flex flex-wrap items-end gap-x-4 gap-y-2" data-testid="tickets.filters">
+      {select(
+        'overview',
+        t('tickets.field.overview'),
+        OVERVIEWS.map((value) => ({ value, label: t(`tickets.overview.${value}`) })),
+      )}
       {select(
         'status',
         t('tickets.field.status'),

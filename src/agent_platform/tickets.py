@@ -47,6 +47,9 @@ ME = "me"
 ORDERS = ("activity", "created", "urgency")
 """The orders of `task list` and `task overview` (ADR-101 section 2): latest activity (default), newest
 creation, most urgent first."""
+OVERVIEWS = ("working", "waiting", "no-agent")
+"""The overview of the open tasks (the start page's three groups: in progress, waiting for a question, no agent; the
+hub's `working`, `waiting`, `no_agent`, read from the tasks' attention records)."""
 
 
 def sort_key(order: str) -> Callable[[Mapping[str, Any]], tuple[Any, ...]]:
@@ -388,10 +391,13 @@ class Filters:
     topic: str | None = None
     github_org: str | None = None
     github_repo: str | None = None
+    overview: str | None = None
 
     def query(self, account: Account, org: str) -> dict[str, str]:
-        """The hub's filters (`status`, `urgency`, `assignee`, `topic`)."""
+        """The hub's filters (`status`, `urgency`, `assignee`, `topic`, `overview`)."""
         found: dict[str, str] = {}
+        if self.overview is not None:
+            found["overview"] = checked_code(self.overview, OVERVIEWS, "overview_invalid").replace("-", "_")
         if self.status is not None:
             found["status"] = checked_code(self.status, STATUSES, "status_invalid")
         if self.urgency is not None:

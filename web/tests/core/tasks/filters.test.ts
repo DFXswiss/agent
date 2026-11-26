@@ -3,12 +3,14 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskRow } from '../../../src/core/store/slices/tasks';
 import {
+  byOverview,
   comesAfter,
   filterKey,
   filterParams,
   matchesFilter,
   NONE,
   orderOf,
+  OVERVIEWS,
   parseFilter,
   rowStatus,
 } from '../../../src/core/tasks/filters';
@@ -90,6 +92,18 @@ describe('the order of a list (ADR-101 section 2)', () => {
     expect(comesAfter('activity', plain, twin)).toBe(true);
     expect(comesAfter('activity', twin, plain)).toBe(false);
     expect(comesAfter('urgency', plain, twin)).toBe(true);
+  });
+});
+
+describe('the overview of the open tasks (ADR-101)', () => {
+  it('keys the overview before the order and says which lists are filtered by it', () => {
+    const key = filterKey({ overview: 'no_agent', order: 'urgency', status: 'todo' });
+    expect(key).toBe('status=todo&overview=no_agent&order=urgency');
+    expect(parseFilter(key).overview).toBe('no_agent');
+    expect(byOverview(key)).toBe(true);
+    expect(byOverview('status=todo')).toBe(false);
+    expect(byOverview(null)).toBe(false);
+    expect(OVERVIEWS).toEqual(['working', 'waiting', 'no_agent']);
   });
 });
 

@@ -730,6 +730,7 @@ def _filter_arguments(sub: Parser) -> None:
     sub.add_argument("--topic", help="only tasks of this topic (from `topic list`, or none)")
     sub.add_argument("--github-org", help="only tasks of this GitHub organisation")
     sub.add_argument("--repo", help="only tasks of this repository (owner/name)")
+    sub.add_argument("--overview", choices=tickets.OVERVIEWS, help=sessions.OVERVIEW_HELP)
     sub.add_argument("--search", help="only tasks whose title contains this text (any case)")
     sub.add_argument("--order", choices=tickets.ORDERS, help="activity (default), created or urgency")
 

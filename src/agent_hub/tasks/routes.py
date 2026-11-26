@@ -23,6 +23,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent_hub.agents.identity import actor
+from agent_hub.attention.derive import OVERVIEW
 from agent_hub.attention.read import readable_workgroups
 from agent_hub.errors import HubError
 from agent_hub.events.routes import parse_count, parse_uuid
@@ -189,6 +190,7 @@ async def list_tasks(
     urgency: str | None = None,
     assignee: str | None = None,
     topic: str | None = None,
+    overview: str | None = None,
 ) -> dict[str, Any]:
     if state is not None and state not in TASK_STATES:
         raise HubError("request_invalid", detail={"pointers": ["/state"]})
@@ -201,24 +203,28 @@ async def list_tasks(
         "before": before,
         "limit": count,
         "order": order or "created",
-        "ticket": _ticket_filter(status, urgency, assignee, topic),
+        "ticket": _ticket_filter(status, urgency, assignee, topic, overview=overview),
     }
     return await asyncio.to_thread(_list, context, user, path_id(wg), **options)
 
 
 def _ticket_filter(
-    status: str | None, urgency: str | None, assignee: str | None, topic: str | None
+    status: str | None, urgency: str | None, assignee: str | None, topic: str | None, *, overview: str | None
 ) -> read.TicketFilter:
-    """The ticket filters of a query (`400 request_invalid` with the pointer for a value outside its form)."""
+    """The ticket filters of a query and the overview of the open tasks (`400 request_invalid` with the pointer for a
+    value outside its form)."""
     if status is not None:
         fields.check_code(status, fields.STATUSES, "/status")
     if urgency is not None:
         fields.check_code(urgency, fields.URGENCIES, "/urgency")
+    if overview is not None:
+        fields.check_code(overview, tuple(OVERVIEW), "/overview")
     return read.TicketFilter(
         status=status,
         urgency=urgency,
         assignee=_filter_id(assignee, "/assignee"),
         topic=_filter_id(topic, "/topic"),
+        overview=overview,
     )
 
 
@@ -245,11 +251,12 @@ async def task_counts(
     urgency: str | None = None,
     assignee: str | None = None,
     topic: str | None = None,
+    overview: str | None = None,
 ) -> dict[str, Any]:
     """The counters of the task dashboard (ADR-101 section 1) over the readable workgroups of the org."""
     if state is not None and state not in TASK_STATES:
         raise HubError("request_invalid", detail={"pointers": ["/state"]})
-    ticket = _ticket_filter(status, urgency, assignee, topic)
+    ticket = _ticket_filter(status, urgency, assignee, topic, overview=overview)
     chosen = None if wg is None else body_id(wg, "/wg")
     user = cast(UUID, principal.principal_id)
     work = functools.partial(_counts, wg=chosen, state=state, ticket=ticket)

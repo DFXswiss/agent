@@ -8,7 +8,9 @@
   the lists of several workgroups by activity and pages each with its own cursor). The ticket filters of ADR-100
   (`status`, `urgency`, `assignee`, `topic`; `none` for tasks without a person or topic) combine with the state.
   `order="urgency"` (ADR-101) puts the most urgent first, then the latest activity; its cursor adds the rank.
-- `count_tasks(wgs)`: the counters of the task dashboard per status and per urgency (ADR-101 section 1).
+  `overview` (`working`, `waiting`, `no_agent`) keeps the open tasks of one overview of the start page: their
+  attention record (`agent_hub.attention.derive.OVERVIEW`, the one rule of the three numbers) belongs to it.
+- `count_tasks(wgs)`: the counters of the task dashboard per status, per urgency and per overview (ADR-101 section 1).
 - `get_task(task)`: the task row, its sessions as a tree order (depth, creation), each with its usage and its newest
   100 transitions, and the newest 100 task transitions.
 - `get_session(session)`: the session row, its newest 1000 transitions, usage, VM and the IDs of its first 1000
@@ -27,6 +29,7 @@ from uuid import UUID
 
 import psycopg
 
+from agent_hub.attention.derive import CLOSED, DONE, OVERVIEW, overview_of
 from agent_hub.crypto.encoding import b64u_decode, b64u_encode, canonical
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.device.tasks import EPOCH, decode_cursor, encode_cursor
@@ -48,20 +51,33 @@ ORDERS = {"created": ("t.created_at", 6), "activity": ("t.last_activity_at", 8)}
 NONE = "none"
 
 
+OVERVIEW_SQL = (
+    "EXISTS (SELECT 1 FROM hub.task_attention a WHERE a.task_id = t.id AND a.category = ANY(%s)"
+    " AND NOT (a.category = %s AND a.reason = %s))"
+)
+"""A task of one overview of the open tasks (`agent_hub.attention.derive.OVERVIEW`, the start page's three numbers):
+its attention record has a category of the overview and is not `done/closed`."""
+
+
 @dataclass(frozen=True)
 class TicketFilter:
     """The ticket filters of a list (ADR-100 section 5): a status, an urgency, a person and a topic (an ID, or `none`
-    for tasks without one); None filters nothing."""
+    for tasks without one), and the overview of the open tasks (`working`, `waiting`, `no_agent`; ADR-101); None
+    filters nothing."""
 
     status: str | None = None
     urgency: str | None = None
     assignee: UUID | str | None = None
     topic: UUID | str | None = None
+    overview: str | None = None
 
     def clauses(self) -> tuple[list[str], list[Any]]:
         """The SQL conditions over `hub.task t` and their parameters."""
         clauses: list[str] = []
         params: list[Any] = []
+        if self.overview is not None:
+            clauses.append(OVERVIEW_SQL)
+            params.extend([list(OVERVIEW[self.overview]), DONE, CLOSED])
         given: tuple[tuple[str, UUID | str | None], ...] = (
             ("status", self.status),
             ("urgency", self.urgency),
@@ -165,7 +181,9 @@ URGENCY_KEYS = tuple(URGENCY_RANKS)
 def count_tasks(connection: Connection, wgs: list[UUID], *, state: str | None, ticket: TicketFilter) -> dict[str, Any]:
     """The counters of the task dashboard (ADR-101 section 1) over the workgroups `wgs` (the caller checked that
     it reads each): per status the tasks that match every filter but the status, per urgency those that match every
-    filter but the urgency, and `total` the tasks that match all of them - so a click on a counter gives that many."""
+    filter but the urgency, per overview of the open tasks (`overview_of` of the attention record) those that match
+    every filter but the overview, and `total` the tasks that match all of them - so a click on a counter gives that
+    many."""
     clauses = ["t.wg_id = ANY(%s)"]
     params: list[Any] = [wgs]
     if state is not None:
@@ -173,20 +191,27 @@ def count_tasks(connection: Connection, wgs: list[UUID], *, state: str | None, t
         params.append(state)
     more, values = TicketFilter(assignee=ticket.assignee, topic=ticket.topic).clauses()
     found = connection.execute(
-        f"SELECT t.status, t.urgency, count(*) FROM hub.task t WHERE {' AND '.join(clauses + more)}"
-        " GROUP BY t.status, t.urgency",
+        "SELECT t.status, t.urgency, a.category, a.reason, count(*) FROM hub.task t"
+        f" LEFT JOIN hub.task_attention a ON a.task_id = t.id WHERE {' AND '.join(clauses + more)}"
+        " GROUP BY t.status, t.urgency, a.category, a.reason",
         params + values,
     ).fetchall()
     by_status = dict.fromkeys(STATUS_KEYS, 0)
     by_urgency = dict.fromkeys(URGENCY_KEYS, 0)
+    by_overview = dict.fromkeys(OVERVIEW, 0)
     total = 0
-    for status, urgency, count in found:
+    for status, urgency, category, reason, count in found:
+        # a task without a record yet (the backfill derives it) is in no overview
+        overview = None if category is None else overview_of(category, reason)
         status_ok = ticket.status is None or status == ticket.status
         urgency_ok = ticket.urgency is None or urgency == ticket.urgency
-        by_status[status] += count if urgency_ok else 0
-        by_urgency[urgency] += count if status_ok else 0
-        total += count if status_ok and urgency_ok else 0
-    return {"by_status": by_status, "by_urgency": by_urgency, "total": total}
+        overview_ok = ticket.overview is None or overview == ticket.overview
+        by_status[status] += count if urgency_ok and overview_ok else 0
+        by_urgency[urgency] += count if status_ok and overview_ok else 0
+        if overview is not None and status_ok and urgency_ok:
+            by_overview[overview] += count
+        total += count if status_ok and urgency_ok and overview_ok else 0
+    return {"by_status": by_status, "by_urgency": by_urgency, "by_overview": by_overview, "total": total}
 
 
 def get_task(connection: Connection, task: UUID) -> dict[str, Any]:

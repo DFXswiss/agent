@@ -39,6 +39,7 @@
   "order.created": "Neueste zuerst",
   "order.urgency": "Dringendste zuerst",
   "dashboard.total": "Tasks: {count}",
+  "dashboard.by-overview": "Offene Tasks: in Arbeit, wartet auf eine Frage, kein Agent",
   "dashboard.by-status": "Tasks nach Status",
   "dashboard.by-urgency": "Tasks nach Dringlichkeit",
   "dashboard.counts-failed": "Die Zahlen konnten nicht geladen werden."

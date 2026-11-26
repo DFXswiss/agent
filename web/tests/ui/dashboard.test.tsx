@@ -33,11 +33,14 @@ function event(org: string, scope: string, seq: number, header: Record<string, u
   };
 }
 
+// in this world the captured tasks (todo) have no agent and the agent task (inProgress) works
 const counts = (todo: number, progress: number, urgent: number) => ({
   by_status: { todo, inProgress: progress, completed: 0 },
   by_urgency: { low: 0, normal: todo + progress - urgent, high: 0, urgent },
+  by_overview: { working: progress, waiting: 0, no_agent: todo },
   total: todo + progress,
 });
+const OVERVIEW_OF: Readonly<Record<string, string>> = { todo: 'no_agent', inProgress: 'working' };
 
 /**
  * Ada in two organizations: "Acme" (the route's, a captured urgent task and an agent task) and "Beta" (one task;
@@ -110,7 +113,11 @@ async function world({ named = true }: { named?: boolean } = {}) {
     t.client.on(`GET /v1/workgroups/${wg}/tasks`, (_body, target) => {
       const params = new URLSearchParams(target.split('?')[1]);
       const status = params.get('status');
-      const found = list.filter((row) => status === null || row.status === status);
+      const overview = params.get('overview');
+      const found = list.filter(
+        (row) =>
+          (status === null || row.status === status) && (overview === null || OVERVIEW_OF[row.status!] === overview),
+      );
       const ranked =
         params.get('order') === 'urgency'
           ? [...found].sort((a, b) => Number(b.urgency === 'urgent') - Number(a.urgency === 'urgent'))
@@ -160,6 +167,11 @@ describe('task dashboard', () => {
     expect(count('status.inProgress')).toBe('1');
     expect(count('status.completed')).toBe('0');
     expect(count('urgency.urgent')).toBe('1');
+    // the start page's three groups of the open tasks, first
+    expect(count('overview.working')).toBe('1');
+    expect(count('overview.waiting')).toBe('0');
+    expect(count('overview.no_agent')).toBe('2');
+    expect(screen.getByTestId('dashboard.count.overview.no_agent')).toHaveTextContent('No agent');
     expect(screen.getByTestId('dashboard.counts.total')).toHaveTextContent('Tasks: 3');
     const orgs = within(screen.getByTestId('tasks.filter.org')).getAllByRole('option');
     expect(orgs.map((node) => node.textContent)).toEqual(['All organizations', 'Acme', 'Beta']);
@@ -206,6 +218,28 @@ describe('task dashboard', () => {
     expect(screen.getByTestId('tickets.filter.urgency')).toHaveValue('urgent');
     fireEvent.click(screen.getByTestId('dashboard.count.urgency.urgent'));
     expect(screen.getByTestId('tickets.filter.urgency')).toHaveValue('');
+    // "No agent": the captured tasks that were never started (the hub's overview filter)
+    fireEvent.click(screen.getByTestId('dashboard.count.overview.no_agent'));
+    await waitFor(() => expect(titles()).toEqual(['Write docs', 'Fix payments']));
+    expect(screen.getByTestId('tickets.filter.overview')).toHaveValue('no_agent');
+    expect(countCalls(t).some((call) => call.target.endsWith('counts?overview=no_agent'))).toBe(true);
+    // a row that changes its state loads the list by overview again (the row does not carry its overview)
+    const loads = () => t.client.calls.filter((call) => call.target.includes('overview=no_agent&')).length;
+    const before = loads();
+    act(() =>
+      putTasks(t.store, [
+        taskRow(t, {
+          task_id: 'a1',
+          last_activity_at: at(9),
+          state: 'working',
+          status: 'inProgress',
+          urgency: 'urgent',
+        }) as TaskRow,
+      ]),
+    );
+    await waitFor(() => expect(loads()).toBeGreaterThan(before));
+    fireEvent.click(screen.getByTestId('dashboard.count.overview.no_agent'));
+    await waitFor(() => expect(titles()).toHaveLength(3));
     fireEvent.change(screen.getByTestId('tasks.order'), { target: { value: 'urgency' } });
     await waitFor(() => expect(titles()).toEqual(['Fix payments', 'Weekly report', 'Write docs']));
     expect(

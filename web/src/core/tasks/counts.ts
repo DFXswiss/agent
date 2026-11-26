@@ -1,24 +1,27 @@
-// The counters of the task dashboard (ADR-101 section 1): per status and per urgency the number of tasks of the
-// readable workgroups, from `GET /v1/orgs/{org}/tasks/counts` of every organization shown, summed. The hub filters of
-// the list apply (state, person, topic; one workgroup); a status counter ignores the status filter and an urgency
-// counter the urgency filter, so a click on a counter gives that many rows. The sealed filters (title search, "only
-// mine", GitHub organisation and repository) narrow only the list, never the counters.
+// The counters of the task dashboard (ADR-101 section 1): per status, per urgency and per overview of the open tasks
+// (the start page's three groups: in progress, waiting for a question, no agent) the number of tasks of the readable
+// workgroups, from `GET /v1/orgs/{org}/tasks/counts` of every organization shown, summed. The hub filters of the list
+// apply (state, person, topic; one workgroup); each group of counters ignores its own filter, so a click on a counter
+// gives that many rows. The sealed filters (title search, "only mine", GitHub organisation and repository) narrow only
+// the list, never the counters.
 import { isRecord } from '../registry';
 import { HubError } from '../net/signedFetch';
 import type { StoreState } from '../store/store';
-import { filterParams, rowStatus } from './filters';
+import { filterParams, type Overview, OVERVIEWS, rowStatus } from './filters';
 import type { TasksContext } from './pull';
 import { STATUSES, type TaskStatus, URGENCIES, type Urgency } from './tickets';
 
 export interface TaskCounts {
   readonly byStatus: Readonly<Record<TaskStatus, number>>;
   readonly byUrgency: Readonly<Record<Urgency, number>>;
+  readonly byOverview: Readonly<Record<Overview, number>>;
   readonly total: number;
 }
 
 export const NO_COUNTS: TaskCounts = {
   byStatus: { todo: 0, inProgress: 0, completed: 0 },
   byUrgency: { low: 0, normal: 0, high: 0, urgent: 0 },
+  byOverview: { working: 0, waiting: 0, no_agent: 0 },
   total: 0,
 };
 
@@ -50,21 +53,23 @@ export async function loadCounts(
   if (!isRecord(body) || !isCount(body.total)) throw new HubError('unavailable', 200);
   const byStatus = countsOf(body.by_status, STATUSES);
   const byUrgency = countsOf(body.by_urgency, URGENCIES);
-  if (byStatus === null || byUrgency === null) throw new HubError('unavailable', 200);
-  return { byStatus, byUrgency, total: body.total } as TaskCounts;
+  const byOverview = countsOf(body.by_overview, OVERVIEWS);
+  if (byStatus === null || byUrgency === null || byOverview === null) throw new HubError('unavailable', 200);
+  return { byStatus, byUrgency, byOverview, total: body.total } as TaskCounts;
 }
 
 /**
  * A selector of what the counters depend on among the loaded rows of the workgroups in `key` (IDs joined by commas):
- * each row's ID, status and urgency. A text, so it changes only when a row appears or its status or urgency changes
- * (a live row frame), and the counters are loaded again then – not on every page of the list.
+ * each row's ID, state, status and urgency. A text, so it changes only when a row appears or one of these changes (a
+ * live row frame; the task state moves a task between the overviews), and the counters are loaded again then – not on
+ * every page of the list.
  */
 export function selectCountsSignature(key: string): (state: StoreState) => string {
   const wgs = new Set(key === '' ? [] : key.split(','));
   return (state) =>
     Object.values(state.tasks.tasks)
       .filter((row) => wgs.has(row.wg_id))
-      .map((row) => `${row.task_id}:${rowStatus(row)}:${row.urgency ?? 'normal'}`)
+      .map((row) => `${row.task_id}:${row.state}:${rowStatus(row)}:${row.urgency ?? 'normal'}`)
       .sort()
       .join();
 }
@@ -79,6 +84,7 @@ export function sumCounts(all: readonly TaskCounts[]): TaskCounts {
   return {
     byStatus: sum(STATUSES, (item) => item.byStatus),
     byUrgency: sum(URGENCIES, (item) => item.byUrgency),
+    byOverview: sum(OVERVIEWS, (item) => item.byOverview),
     total: all.reduce((total, item) => total + item.total, 0),
   };
 }

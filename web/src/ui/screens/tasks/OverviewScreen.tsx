@@ -1,10 +1,12 @@
 // The task dashboard (ADR-101; built on the task overview of KOR-32, route `/o/:org/tasks`, right `org:member`):
 // every task the user can read, in every organization of `GET /v1/me` whose log is verified and every workgroup there
 // the user can read (from the verified membership logs; the others are never requested) – captured tasks without an
-// agent and agent tasks in one list. Filters: organization, workgroup (only those lists are loaded), state, status,
-// urgency (the priority), person and topic (hub side), "only mine", the title search and the GitHub organisation and
-// repository (in the browser: sealed; bounded per request, `scan.ts`). Order: latest activity, newest, or most urgent
-// first. On top the counters per status and per urgency (`TaskCounters.tsx`); a click on one filters. "Capture task"
+// agent and agent tasks in one list. Filters: organization, workgroup (only those lists are loaded), state, the
+// start page's three groups of the open tasks (in progress, waiting for a question, no agent - the hub's one rule over
+// the attention records; a captured task that was never started has no agent), status, urgency (the priority), person
+// and topic (hub side), "only mine", the title search and the GitHub organisation and repository (in the browser:
+// sealed; bounded per request, `scan.ts`). Order: latest activity, newest, or most urgent first. On top the counters
+// per group, status and urgency (`TaskCounters.tsx`); a click on one filters. "Capture task"
 // records a task without an agent in a writable workgroup of the route's organization (E-41).
 // Filters live in the screen's state, not in the URL: a search text in the address would reach the hub on a reload.
 import { useId, useMemo, useState } from 'react';
@@ -110,8 +112,10 @@ export function OverviewScreen() {
       </div>
       <TaskCounters
         loaded={loaded}
+        overview={tickets.overview}
         status={tickets.status}
         urgency={tickets.urgency}
+        onOverview={(overview) => setTickets({ ...tickets, overview })}
         onStatus={(status) => setTickets({ ...tickets, status })}
         onUrgency={(urgency) => setTickets({ ...tickets, urgency })}
       />

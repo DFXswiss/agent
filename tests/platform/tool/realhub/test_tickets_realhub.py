@@ -158,6 +158,11 @@ def test_the_dashboard_over_organizations(real: RealHub) -> None:
     assert set(everything["organizations"]) >= {org, other_org}
     assert everything["counts"]["by_status"]["completed"] >= 1
     assert everything["counts"]["by_urgency"]["urgent"] >= 1
+    # captured, never started: "no agent" of the start page's three groups; the completed one is not open
+    assert everything["counts"]["by_overview"] == {"working": 0, "waiting": 0, "no_agent": 2}
+    assert set(ids("--overview", "no-agent")) == {urgent["task_id"], mine["task_id"]}
+    assert ids("--overview", "working") == []
+    assert ids("--wg", wg, "--overview", "no-agent", "--urgency", "urgent") == [urgent["task_id"]]
     assert ids("--order", "urgency")[0] == urgent["task_id"]
     assert ids("--order", "created")[0] == later["task_id"]
     assert ids("--urgency", "urgent") == [urgent["task_id"]]
@@ -176,7 +181,10 @@ def test_the_dashboard_over_organizations(real: RealHub) -> None:
     assert run_ok(ada.tool, "task", "list", "--org", org, "--state", "open")["counts"]["total"] == 2
     listed = run_ok(ada.tool, "task", "list", "--wg", wg, "--order", "urgency", "--search", "e")
     assert [row["task_id"] for row in listed["tasks"]] == [urgent["task_id"], later["task_id"]]
+    no_agent = run_ok(ada.tool, "task", "list", "--wg", wg, "--overview", "no-agent")
+    assert [row["task_id"] for row in no_agent["tasks"]] == [urgent["task_id"]]
     assert ada.tool.run("task", "overview", "--org", org, "--wg", wg)[0] != 0
+    assert ada.tool.run("task", "overview", "--overview", "idle")[0] != 0
     for argv in (
         ("task", "list", "--org", org, "--mine"),
         ("task", "list", "--org", org, "--state", "needs-decision", "--status", "todo"),

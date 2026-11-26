@@ -1,5 +1,6 @@
 // The task dashboard (ADR-101) against the real hub, on the desktop and on the phones: one click from Home and
 // from the menu; the tasks of two organizations of the user in one list with "organization · workgroup"; the counters
+// of the start page's three groups (in progress, waiting for a question, no agent - captured tasks have no agent),
 // per status and per urgency on top (a click filters, a second click clears; the hub counts); the filters by
 // organization, person (Zuständig), urgency (Prio) and status; the order "most urgent first" and the title search.
 import { expect, type Page } from '@playwright/test';
@@ -75,6 +76,17 @@ test('the dashboard lists, counts, filters and sorts the tasks of every organiza
   await expect(count(page, 'urgency.high')).toHaveAttribute('data-count', '1');
   await expect(count(page, 'urgency.normal')).toHaveAttribute('data-count', '1');
   await expect(page.getByTestId('dashboard.counts.total')).toHaveText('Tasks: 3');
+  // the start page's three groups of the open tasks: captured and never started, so no agent works on any of them
+  await expect(count(page, 'overview.no_agent')).toHaveAttribute('data-count', '3');
+  await expect(count(page, 'overview.working')).toHaveAttribute('data-count', '0');
+  await expect(count(page, 'overview.waiting')).toHaveAttribute('data-count', '0');
+  await count(page, 'overview.no_agent').click();
+  await expect(rows).toHaveCount(3);
+  await expect(page.getByTestId('tickets.filter.overview')).toHaveValue('no_agent');
+  await count(page, 'overview.working').click();
+  await expect(page.getByTestId('tasks.empty')).toContainText('No task matches the filters.');
+  await count(page, 'overview.working').click();
+  await expect(rows).toHaveCount(3);
   // the counters, filters and rows fit the screen with touch targets of 44 px (06-web.md section 12)
   expect(await layoutProblems(page)).toEqual([]);
 
@@ -123,4 +135,6 @@ test('the dashboard lists, counts, filters and sorts the tasks of every organiza
   await openTasks(page);
   await expect(count(page, 'status.inProgress')).toHaveAttribute('data-count', '1');
   await expect(count(page, 'status.todo')).toHaveAttribute('data-count', '2');
+  // a status set by hand starts no agent: still no agent works on it
+  await expect(count(page, 'overview.no_agent')).toHaveAttribute('data-count', '3');
 });

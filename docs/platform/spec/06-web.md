@@ -477,10 +477,13 @@ task without a main session "Start agent" (its first prompt: title, blank line, 
 **Task dashboard (KOR-75, [ADR-101](../adr/101-task-dashboard.md)).** §5.1a is the dashboard of every task the
 user reads: every organization of `GET /v1/me` with a verified log and every readable workgroup there, captured tasks
 and agent tasks in one list; with several organizations each row names "organization · workgroup", and the filters
-offer the organization and the workgroups of all of them. On top the counters per status and per urgency
+offer the organization and the workgroups of all of them. On top the counters of the start page's three groups of
+the open tasks ("In progress", "Waiting for a question", "No agent"; the hub's `overview`, a captured task that was
+never started has no agent), then per status and per urgency
 (`GET /v1/orgs/{org}/tasks/counts` per organization shown, summed; under the hub filters of the list); a click on a
-counter sets that status or urgency filter, a second click clears it. They load again when a filter changes, when a
-row of the shown workgroups appears or changes its status or urgency, and after a reconnect; a failed request keeps
+counter sets that filter, a second click clears it (the three groups are also a filter of both task lists). They load
+again when a filter changes, when a row of the shown workgroups appears or changes its state, status or urgency, and
+after a reconnect; a list filtered by group loads again then too (a row frame does not carry the group); a failed request keeps
 the last numbers and says so. Sort: latest activity (default), newest, most urgent (`order=urgency`). Home links the
 dashboard ("Dashboard of all tasks"), so it is one click from Home and from the menu. "Capture task" captures in the
 route's organization.
