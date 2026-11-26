@@ -8,6 +8,7 @@ import base64
 import builtins
 import dataclasses
 import json
+import os
 from collections.abc import Callable
 from email.message import EmailMessage
 from pathlib import Path
@@ -494,7 +495,7 @@ def test_no_mail_in_time_ends_mail_timeout() -> None:
 
 
 def test_the_mail_is_read_link_first_then_the_code_and_imap_errors_are_retried(monkeypatch: pytest.MonkeyPatch) -> None:
-    links: list[str | None] = [None, None, "https://x.example/magic-link#t"]
+    links: list[str | None] = [None, None, "https://x.example/magic-link#t", None]
     codes: list[Any] = ["654321", OSError("down")]
 
     def link(*_a: Any, **_k: Any) -> str | None:
@@ -521,9 +522,14 @@ def test_the_mail_is_read_link_first_then_the_code_and_imap_errors_are_retried(m
             end=loop.time() + 1,
             clock=lambda: 5.0,
         )
-        return [await driver._mail(True), await driver._mail(True), await driver._mail(False)]
+        return [
+            await driver._mail(True),
+            await driver._mail(True),
+            await driver._mail(False),
+            await driver._mail(False),
+        ]
 
-    assert asyncio.run(main()) == [("code", "654321"), None, ("link", "https://x.example/magic-link#t")]
+    assert asyncio.run(main()) == [("code", "654321"), None, ("link", "https://x.example/magic-link#t"), None]
 
 
 def test_a_sandbox_failure_ends_the_automation_with_its_reason() -> None:
@@ -714,3 +720,29 @@ def test_a_message_without_text_part_has_no_code() -> None:
     message = EmailMessage()
     message.add_attachment(b"code 123456", maintype="application", subtype="octet-stream")
     assert mailcode.code_in(message) is None
+
+
+def test_a_code_without_a_button_and_a_registration_without_a_birth_date() -> None:
+    async def code_mail(_with_code: bool) -> tuple[str, str]:
+        return "code", "123456"
+
+    class Typed(Scripted):
+        async def type(self, target: str, text: str) -> None:
+            self._next(f"type {target} {text}")
+
+    typed = Typed([page("check_email", marks=["mail-code"]), page("code", code="C#S")])
+    assert drive(typed, PLAN, mail=code_mail)[0] == "C#S"
+    assert "click [data-agent-login='submit']" not in typed.actions
+    register = Scripted([page("register", marks=["name", "submit"]), page("code", code="C#S")])
+    assert drive(register, Plan(BOX, "a@x.example", {"name": "Ada"}))[0] == "C#S"
+    assert register.actions[1:] == ["type [data-agent-login='name'] Ada", "click [data-agent-login='submit']"]
+
+
+def test_the_platform_chromium_below_the_runner_home_is_used(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "unset")
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH")
+    sandbox.use_browsers(tmp_path)
+    assert "PLAYWRIGHT_BROWSERS_PATH" not in os.environ
+    (tmp_path / "ms-playwright").mkdir()
+    sandbox.use_browsers(tmp_path)
+    assert os.environ["PLAYWRIGHT_BROWSERS_PATH"] == str(tmp_path / "ms-playwright")

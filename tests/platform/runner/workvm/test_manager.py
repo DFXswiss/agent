@@ -1281,7 +1281,9 @@ def test_without_a_disk_quota_the_disk_is_not_checked(world: World) -> None:
 def test_login_vms_need_no_session_count_for_no_limit_are_not_billed_and_go_with_the_login(world: World) -> None:
     from agent_runner.workvm import billing_vms  # noqa: PLC0415
 
-    world.settings = manager_module.Settings(**{**world.settings.__dict__, "max_per_org": 1, "max_per_owner": 1})
+    world.settings = manager_module.Settings(
+        **{**world.settings.__dict__, "slots": 3, "max_per_org": 1, "max_per_owner": 1}
+    )
 
     async def body(vms: WorkVms) -> tuple[Any, Any, list[Any], Any]:
         first = await vms.obtain_login("0193000a-0000-7000-8000-0000000000a1")
