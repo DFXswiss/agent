@@ -55,7 +55,7 @@ def get(port: int, method: str, target: str, body: bytes | None = None, headers:
 
 def test_health_through_the_control_process(api_port: int, api_server: ApiHttpServer) -> None:
     status, headers, body = get(api_port, "GET", "/v1/health")
-    assert (status, json.loads(body)) == (200, {"state": "ok", "guest_version": "0.4.0"})
+    assert (status, json.loads(body)) == (200, {"state": "ok", "guest_version": "0.5.0"})
     assert headers["Content-Type"] == "application/json"
     assert api_server.server_address[0] == "127.0.0.1"
 

@@ -74,6 +74,9 @@ the name from the newest verified `task.agent_name` / `task.meta` events it hold
 events, so where a browser would show an unverifiable newest name the session sees the newest verified one or the
 automatic name) (child sessions run on their parent's
 device, which pulls the workgroup's events). RULES.md tells the agent that `get_context` names it and its helpers.
+Only a guest from 0.5.0 gets `agent` and `children` (`guest_features.NAMES`): a guest validates answers against the
+contracts bundled with it, and an older one refuses an answer with fields they do not allow, so its call would time out
+(HOT-23; `tests/platform/guest/test_contract_version.py` ties the guest's contracts to its version).
 
 ### 4. The actor of what a session does is the agent, on behalf of a person
 - New `actor_kind` values `main_agent` and `subagent`, chosen by the hub from the session's `depth` (never from what
@@ -146,7 +149,8 @@ agent's is its task's profile, a subagent's its own or else its parent's.
 - The hub learns no content: `task.number`, `agent_path`, `name_event_id` and `on_behalf_of` are counters, IDs and a
   person ID it already knows in other columns (04-crypto.md §7). Two agents with the same name are possible and told
   apart by the handle.
-- Old clients ignore the new fields; an old runner's `get_context` lacks `agent`; an older web client shows the new
+- Old clients ignore the new fields; an old runner's `get_context` lacks `agent`, and so does the answer to a guest
+  before 0.5.0 (its VM gets the names with the next golden); an older web client shows the new
   actor kinds by their kind name. A device filter (`actor=<device>`) no longer finds the operations of its sessions;
   the device stays in `device_id`.
 - `on_behalf_of` is as trustworthy as the device that reported it, as `triggered_by` is (ADR-083).

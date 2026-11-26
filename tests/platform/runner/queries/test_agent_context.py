@@ -127,6 +127,39 @@ def test_an_older_hub_without_handles_gives_no_agent(rig: Rig) -> None:
     run(rig, body)
 
 
+def test_a_guest_before_the_names_gets_neither_agent_nor_children(rig: Rig) -> None:
+    """A guest before 0.5.0 refuses an answer with fields its bundled contracts do not allow (HOT-23): the runner leaves
+    `agent` and `children` out for it, everything else stays; a VM on a current golden gets them again."""
+
+    async def body(k: RKit) -> None:
+        k.events.title(TASK, TITLE)
+        await k.pull()
+        main, *_ = await tree(k)
+        async with k.env.pool.connection() as conn:
+            await conn.execute(
+                "INSERT INTO runner.golden (version, lima_name, claude_version, guest_version, image_digest, state)"
+                " VALUES ('g-old', 'golden-old', '2.1.330', '0.4.0', 'sha256:x', 'ready')"
+            )
+            cursor = await conn.execute(
+                "SELECT s.vm_id, v.golden_version FROM runner.session s JOIN runner.vm v ON v.id = s.vm_id"
+                " WHERE s.id = %s",
+                (main,),
+            )
+            row = await cursor.fetchone()
+            assert row is not None
+            vm_id, golden = row
+            await conn.execute("UPDATE runner.vm SET golden_version = 'g-old' WHERE id = %s", (vm_id,))
+        found = await k.ok(main, "get_context")
+        assert "agent" not in found
+        assert "children" not in found
+        assert (found["task"]["id"], found["session"]["id"]) == (TASK, main)
+        async with k.env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.vm SET golden_version = %s WHERE id = %s", (golden, vm_id))
+        assert (await k.ok(main, "get_context"))["agent"]["handle"] == "#42"
+
+    run(rig, body)
+
+
 def test_handles_that_break_the_contract(rig: Rig) -> None:
     async def body(k: RKit) -> None:
         main = await k.session(1)

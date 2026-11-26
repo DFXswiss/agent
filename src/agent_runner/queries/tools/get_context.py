@@ -11,7 +11,9 @@ Workgroup level: an owner without access to the session's workgroup is `forbidde
 (`profiles.given_name`) or else automatic from the title (`agent_name.automatic_name`); a subagent carries its main
 agent's name, its parent's handle is its own path without the last ordinal. `children` are the session's own child
 sessions with a path, oldest first (their ordinals are given in creation order), at most 100. A hub of an older
-release sends no number, and a subagent whose row has no path cannot be named: both fields are then left out.
+release sends no number, and a subagent whose row has no path cannot be named: both fields are then left out. A guest
+before 0.5.0 (`guest_features.NAMES`) gets neither: its contracts allow no further fields, and it would refuse the
+whole answer (HOT-23).
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from agent_runner.sessions.agent_name import automatic_name
 from agent_runner.sessions.records import LocalSession
 from agent_runner.subagents import limits as subagent_limits
 from agent_runner.subagents.extensions import QueryCall, QueryOutcome
-from agent_runner.subagents.guest_features import current_guest
+from agent_runner.subagents.guest_features import NAMES, current_guest
 
 API_VERSION = 1
 MAX_CHILDREN = 100
@@ -86,6 +88,7 @@ async def get_context(call: QueryCall) -> QueryOutcome:
             wg_name = await profiles.name(conn, key, "wg.profile", scope.org_id, scope.wg_id)
             owner_name = await profiles.name(conn, key, "member.profile", scope.org_id, scope.owner_id)
             current = await current_guest(conn, session.vm_id)
+            named = await current_guest(conn, session.vm_id, NAMES)
             given = await profiles.given_name(conn, key, scope.org_id, session.task_id, wg_id=scope.wg_id)
         limits = subagent_limits.context_limits(subagent_limits.current(call.context), current)
         task_title = await title(call, scope.wg_id, session.task_id)
@@ -111,7 +114,7 @@ async def get_context(call: QueryCall) -> QueryOutcome:
             "rights": {"workgroup": access},
             "limits": limits,
             "api_version": API_VERSION,
-            **agent_fields(session, detail, task_title, given),
+            **(agent_fields(session, detail, task_title, given) if named else {}),
         }
         return common.ok(result, 1, read_wg_id=scope.wg_id)
 

@@ -94,6 +94,14 @@ def test_guest_versions(version: str | None, known: bool) -> None:
     assert guest_features.knows(version) is known
 
 
+@pytest.mark.parametrize(
+    ("version", "known"),
+    [("0.5.0", True), ("0.10.0", True), ("1.0.0", True), ("0.4.9", False), ("0.4.0", False), (None, False)],
+)
+def test_guest_versions_that_know_the_names(version: str | None, known: bool) -> None:
+    assert guest_features.knows(version, guest_features.NAMES) is known
+
+
 def test_the_guest_version_comes_from_the_golden_of_the_vm(store_dsn: str) -> None:
     async def main() -> None:
         pool = await open_pool(store_dsn, max_size=2)
@@ -124,6 +132,11 @@ def test_the_guest_version_comes_from_the_golden_of_the_vm(store_dsn: str) -> No
             async with pool.connection() as conn:
                 assert await guest_features.current_guest(conn, "vm-0000000b") is True
                 assert await guest_features.current_guest(conn, "vm-0000000a") is False
+            # "new" is 0.3.0: it knows ADR-088 but not the names of KOR-52 (NAMES = 0.5.0)
+            assert await guest_features.current_guest(pool, "vm-0000000b", guest_features.NAMES) is False
+            assert await guest_features.current_guest(pool, None, guest_features.NAMES) is True
+            async with pool.connection() as conn:
+                assert await guest_features.current_guest(conn, "vm-0000000b", guest_features.NAMES) is False
         finally:
             await pool.close()
 
