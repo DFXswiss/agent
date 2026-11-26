@@ -15,7 +15,9 @@ import {
   formBody,
   formOf,
   formReady,
+  isMailboxBody,
   isMailboxName,
+  isMailboxUse,
   loadMailboxes,
   nameTaken,
   openMailbox,
@@ -25,8 +27,8 @@ import {
   startMailboxCheck,
   updateMailbox,
 } from '../../../src/core/credentials/mailboxes';
-import { isMailboxBody, validBody } from '../../../src/core/credentials/records';
-import { isMailboxUse, validRequestBody } from '../../../src/core/requests/bodies';
+import { validBody } from '../../../src/core/credentials/records';
+import { validRequestBody } from '../../../src/core/requests/bodies';
 import { HubError } from '../../../src/core/net/signedFetch';
 import { actor } from '../log/world';
 import { A, B, body, C, D, form, item, PASSWORD, WG, WG2, world } from './mail-hub';
@@ -65,7 +67,7 @@ describe('bodies', () => {
   it('allows the check of a given mailbox', () => {
     expect(validRequestBody('mailbox.check', {}, false)).toBe(true);
     expect(validRequestBody('mailbox.check', { mailbox: body({ name: 'a' }) }, false)).toBe(true);
-    expect(validRequestBody('mailbox.check', { mailbox: { imap_host: 'x' } }, false)).toBe(false);
+    expect(validRequestBody('mailbox.check', { mailbox: 'x' }, false)).toBe(false);
     expect(validRequestBody('mailbox.check', { other: 1 }, false)).toBe(false);
     expect(validRequestBody('mailbox.check', { mailbox: MAILBOX }, true)).toBe(false);
   });

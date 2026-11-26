@@ -29,7 +29,8 @@ import { authorKey } from '../github/connection';
 import { workgroupOrder } from '../org/members';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
-import { isMailboxBody, isMailboxUse, MAILBOX_NAME_RE } from '../requests/bodies';
+import { isUuid7 } from '../encoding/ids';
+import { isMailboxBody as isPlainMailbox, type MailboxBody } from './records';
 import {
   type PreparedRequest,
   prepareRequest,
@@ -88,6 +89,29 @@ export const EMPTY_FORM: MailboxForm = {
 function refuse(code: string): never {
   throw new RequestError(code);
 }
+
+/** The name of a mailbox (`contracts/credentials/mailbox.json`, ADR-099 section 2). */
+export const MAILBOX_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+/** At most this many workgroups in a mailbox's release (`use.wgs`). */
+export const MAX_MAILBOX_WGS = 50;
+
+const codePoints = (value: unknown, min: number, max: number): boolean =>
+  typeof value === 'string' && [...value].length >= min && [...value].length <= max;
+
+/** The release of a mailbox: at most `MAX_MAILBOX_WGS` workgroup IDs (the clients write each once). */
+export const isMailboxUse = (value: unknown): value is { readonly wgs: readonly string[] } =>
+  isRecord(value) &&
+  Object.keys(value).join(',') === 'wgs' &&
+  Array.isArray(value.wgs) &&
+  value.wgs.length <= MAX_MAILBOX_WGS &&
+  value.wgs.every(isUuid7);
+
+/** The body exactly as `contracts/credentials/mailbox.json` allows it (`name`, `purpose`, `use` optional). */
+export const isMailboxBody = (value: unknown): value is MailboxBody =>
+  isPlainMailbox(value) &&
+  (value.name === undefined || (typeof value.name === 'string' && MAILBOX_NAME_RE.test(value.name))) &&
+  (value.purpose === undefined || codePoints(value.purpose, 1, 500)) &&
+  (value.use === undefined || isMailboxUse(value.use));
 
 export const isMailboxName = (value: string): boolean => MAILBOX_NAME_RE.test(value);
 
