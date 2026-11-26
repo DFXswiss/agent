@@ -710,6 +710,54 @@ def test_status_after_a_store_wipe_shows_the_adopted_hub_position(case: Case) ->
     assert _outbox(case.dsn, lambda conn, key: outbox.enqueue(conn, key, "metrics", metrics)) == 42
 
 
+def test_status_shows_the_work_vm_slots(case: Case) -> None:
+    """ADR-059 addendum 4: held (a VM that is not stopped, a pool entry), free, stopped and waiting, and the capacity
+    that admits a new work VM; not with WORKVM_SLOTS=0."""
+    case.env["AGENT_RUNNER_WORKVM_SLOTS"] = "0"
+    assert lines(case.cli("status")[1], "runner.status.workvm") == []
+    del case.env["AGENT_RUNNER_WORKVM_SLOTS"]
+    [unbounded] = lines(case.cli("status")[1], "runner.status.workvm")
+    assert (unbounded["cap"], unbounded["held"], unbounded["disk_quota_gib"]) == ("none", "0", "none")
+    assert int(unbounded["slots"]) >= 1  # what the RAM above the reserve could hold, at least one
+    case.env["AGENT_RUNNER_WORKVM_SLOTS"] = "4"
+    case.env["AGENT_RUNNER_WORKVM_DISK_QUOTA_GIB"] = "500"
+    now = datetime(2026, 11, 26, 9, tzinfo=UTC)
+    for number, (slot, state) in enumerate(((0, "running"), (1, "stopped"), (1, "deleted"), (3, "stopped")), start=1):
+        scope_task = pid(f"t{number}")
+        case.sql(
+            "INSERT INTO runner.workvm (id, lima_name, slot, scope, task_id, requested_by, org_id, wg_id, size, cpus,"
+            " memory_mib, disk_gib, image, state, created_at, last_used_at) VALUES (%s, %s, %s, 'task', %s, %s, %s,"
+            " %s, 'standard', 4, 8192, 50, 'img', %s, %s, %s)",
+            f"wvm-0000000{number}", f"wp-wvm-{number}", slot, scope_task, scope_task, pid("org"), pid("wg"), state,
+            now, now,
+        )  # fmt: skip
+    case.sql(
+        "INSERT INTO runner.workvm_pool (lima_name, slot, image, memory_mib, state, created_at)"
+        " VALUES ('wp-wvm-pool', 2, 'img', 8192, 'ready', %s)",
+        now,
+    )
+    case.sql(
+        "INSERT INTO runner.workvm_wait (ticket, slot, since) VALUES ('00000000000000aa', NULL, now() - interval '90 s'),"
+        " ('00000000000000bb', 1, now())"
+    )
+    [found] = lines(case.cli("status")[1], "runner.status.workvm")
+    oldest = int(found.pop("oldest_wait_s"))
+    host = {key: found.pop(key) for key in ("memory_free_mib", "cpu_load_pct")}  # of the machine running the test
+    assert found == {"slots": "4", "cap": "4", "held": "2", "free": "2", "stopped": "2", "waiting": "2",
+                     "cpu_load_max_pct": "85", "disk_used_gib": "200", "disk_quota_gib": "500"}  # fmt: skip
+    assert 90 <= oldest < 150
+    assert all(int(value) >= 0 for value in host.values())
+
+
+def test_status_without_a_store_shows_no_work_vm_slots(case: Case) -> None:
+    exists = cluster_tools(case.dsn, case.stops)
+    missing = type(exists)(ensure=exists.ensure, stop=exists.stop, create_database=exists.create_database,
+                           exists=lambda path: False)  # fmt: skip
+    captured = case.make_host({**case.env, "AGENT_RUNNER_WORKVM_SLOTS": "2"}, cluster=missing)
+    assert run_cli(["status"], captured.host) == 0
+    assert lines(captured.stdout.getvalue(), "runner.status.workvm") == []
+
+
 def test_status_hides_store_errors() -> None:
     with pytest.raises(RunnerError, match="store_unavailable"):
         doctor_cli._rows("host=127.0.0.1 port=1 dbname=none connect_timeout=1")

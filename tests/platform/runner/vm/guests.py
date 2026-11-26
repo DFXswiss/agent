@@ -32,6 +32,7 @@ from psycopg.rows import dict_row
 from agent_guest.config import load_config
 from agent_guest.control import ControlService
 from agent_runner.store.pool import open_pool
+from agent_runner.vm.capacity import NO_USAGE, Usage
 from agent_runner.vm.lifecycle import VmManager
 from agent_runner.vm.lima import Lima
 from agent_runner.vm.pool import SELFTEST_RESULT, VmEnv, VmSettings
@@ -212,6 +213,10 @@ class Harness:
     events: list[dict[str, Any]] = field(default_factory=list)
     logs: list[tuple[str, dict[str, str | int]]] = field(default_factory=list)
     unreachable: list[str] = field(default_factory=list)
+    other: Usage = NO_USAGE
+    """What the other areas hold (`VmEnv.other_usage`), e.g. work VMs that give way (ADR-059 addendum 4)."""
+    reclaimed: list[int] = field(default_factory=list)
+    """The MiB a workgroup VM asked the other areas for (`VmEnv.reclaim`); answered by letting them go."""
 
     def __post_init__(self) -> None:
         # The token store creates its missing parents with the process umask; created while a guest of this process
@@ -225,7 +230,17 @@ class Harness:
         def log(name: str, fields: dict[str, str | int]) -> None:
             self.logs.append((name, fields))
 
+        async def other_usage() -> Usage:
+            return self.other
+
+        async def reclaim(need_mib: int) -> int:
+            self.reclaimed.append(need_mib)
+            released, self.other = self.other.yielding_mib, NO_USAGE
+            return released
+
         return VmEnv(
+            other_usage=other_usage,
+            reclaim=reclaim,
             lima=Lima(self.fake, prefix=PREFIX),
             db=db,
             settings=self.settings,

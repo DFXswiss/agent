@@ -6,7 +6,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
-from agent_runner.vm import capacity
+from agent_runner.vm import capacity, pool
 from agent_runner.vm.capacity import Candidate, compute, lru_victim
 
 NOW = datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
@@ -109,8 +109,28 @@ def test_max_vms_caps_the_slots_and_other_areas_hold_slots_and_memory() -> None:
     assert capacity.Usage() == capacity.NO_USAGE
 
 
+def test_yielding_usage_takes_no_slot_of_a_workgroup_vm() -> None:
+    """ADR-059 addendum 4: work VMs that give way on demand leave `slots_free` alone; `slots_free_now` counts them."""
+    host = 32768 + 4 * 8192
+    work = capacity.Usage(vms=3, memory_mib=3 * 8192, yielding_vms=2, yielding_mib=2 * 8192)  # one run VM is firm
+    found = compute(physical_mib=host, reserve_mib=32768, vm_memory_mib=8192, vms=[("running", 8192)], other=work)
+    assert (found.slots_free, found.slots_yielding, found.slots_free_now) == (2, 2, 0)
+    assert (found.used_mib, found.other_vms) == (4 * 8192, 3)
+    full = compute(physical_mib=host, reserve_mib=32768, vm_memory_mib=8192, vms=[("running", 8192)] * 4, other=work)
+    assert (full.slots_free, full.slots_free_now) == (0, 0)
+    assert capacity.Usage(1, 2, 1, 2) + capacity.Usage(3, 4) == capacity.Usage(4, 6, 1, 2)
+
+
+def test_cpu_load_per_core() -> None:
+    assert capacity.cpu_load_per_core(lambda: (6.0, 1.0, 1.0), lambda: 8) == 0.75
+    assert capacity.cpu_load_per_core(lambda: (2.0, 1.0, 1.0), lambda: None) == 2.0
+    assert capacity.cpu_load_per_core() >= 0.0
+
+
 def test_own_usage_and_disk_free() -> None:
     assert asyncio.run(capacity.USAGE(None)) == capacity.NO_USAGE
+    assert asyncio.run(capacity.RECLAIM(None, 8192)) == 0
+    assert asyncio.run(pool._no_reclaim(8192)) == 0  # a `VmEnv` without other areas
 
     def usage(path: str) -> SimpleNamespace:
         if path == "/missing":

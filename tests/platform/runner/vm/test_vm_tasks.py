@@ -329,6 +329,24 @@ def test_the_usage_of_other_areas_is_summed_and_checked() -> None:
     assert (caught.value.code, caught.value.name) == ("registry_invalid", "capacity")
 
 
+def test_the_other_areas_give_room_back_in_turn_until_it_is_enough() -> None:
+    """ADR-059 addendum 4: a workgroup VM asks the areas' `RECLAIM` hooks for the RAM it needs."""
+    asked: list[tuple[str, int]] = []
+
+    def area(name: str, gives: int) -> Any:
+        async def give(context: Any, need_mib: int) -> int:
+            asked.append((name, need_mib))
+            return gives
+
+        return give
+
+    reclaim = tasks.reclaim_of("ctx", [area("vm", 0), area("workvm", 6144), area("other", 4096), area("last", 1)])
+    assert asyncio.run(reclaim(8192)) == 10240
+    assert asked == [("vm", 8192), ("workvm", 8192), ("other", 2048)]
+    assert asyncio.run(tasks.reclaim_of("ctx", [])(8192)) == 0
+    assert registry.capacity_reclaimers()  # the vm and workvm areas register one each
+
+
 def test_pool_task_reconciles_only_once(fake_clock: Any) -> None:
     async def body() -> list[str]:
         ctx = context(fake_clock)

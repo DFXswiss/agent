@@ -721,8 +721,11 @@ def test_operator_directory_checks(base: dict[str, str], operator_dir: Path, tmp
 
 def test_workvm_defaults_offer_no_work_vm(base: dict[str, str]) -> None:
     cfg = load(base)
-    assert (cfg.workvm_slots, cfg.workvm_slots_self, cfg.workvm_max_size) == (0, False, "large")
-    assert (cfg.workvm_idle_seconds, cfg.workvm_queue_seconds, cfg.workvm_pool_size) == (1800, 900, 1)
+    # ADR-059 addendum 4: no upper bound by default; the free resources decide
+    assert (cfg.workvm_slots, cfg.workvm_slots_self, cfg.workvm_max_size) == (None, False, "large")
+    assert cfg.workvm_cpu_load_max_percent == 85
+    assert (cfg.workvm_idle_seconds, cfg.workvm_queue_seconds, cfg.workvm_pool_size) == (600, 900, 1)
+    assert cfg.workvm_keep_stopped_seconds == 86400  # ADR-059 addendum 4
     assert cfg.workvm_disk_quota_gib == 0
     assert (cfg.workvm_max_per_task, cfg.workvm_max_per_org, cfg.workvm_max_per_owner) == (4, 16, 8)
     assert (cfg.workvm_ssh_port_base, cfg.workvm_template) == (47200, None)
@@ -738,7 +741,9 @@ def test_workvm_settings_round_trip(base: dict[str, str], tmp_path: Path) -> Non
             "AGENT_RUNNER_WORKVM_SLOTS": "3",
             "AGENT_RUNNER_WORKVM_SLOTS_SELF": "1",
             "AGENT_RUNNER_WORKVM_MAX_SIZE": "xlarge",
-            "AGENT_RUNNER_WORKVM_IDLE_SECONDS": "600",
+            "AGENT_RUNNER_WORKVM_IDLE_SECONDS": "900",
+            "AGENT_RUNNER_WORKVM_KEEP_STOPPED_SECONDS": "3600",
+            "AGENT_RUNNER_WORKVM_CPU_LOAD_MAX_PERCENT": "70",
             "AGENT_RUNNER_WORKVM_POOL_SIZE": "0",
             "AGENT_RUNNER_WORKVM_DISK_QUOTA_GIB": "500",
             "AGENT_RUNNER_WORKVM_TEMPLATE": str(template),
@@ -746,9 +751,11 @@ def test_workvm_settings_round_trip(base: dict[str, str], tmp_path: Path) -> Non
     )
     cfg = load(base)
     assert (cfg.workvm_slots, cfg.workvm_slots_self, cfg.workvm_max_size) == (3, True, "xlarge")
-    assert (cfg.workvm_idle_seconds, cfg.workvm_template, cfg.workvm_pool_size) == (600, template, 0)
-    assert cfg.workvm_disk_quota_gib == 500
+    assert (cfg.workvm_idle_seconds, cfg.workvm_template, cfg.workvm_pool_size) == (900, template, 0)
+    assert (cfg.workvm_disk_quota_gib, cfg.workvm_keep_stopped_seconds) == (500, 3600)
+    assert cfg.workvm_cpu_load_max_percent == 70
     env = environment(cfg)
+    assert env["AGENT_RUNNER_WORKVM_KEEP_STOPPED_SECONDS"] == "3600"
     assert env["AGENT_RUNNER_WORKVM_SLOTS_SELF"] == "1"
     assert env["AGENT_RUNNER_WORKVM_SLOTS"] == "3"
     assert load(env) == cfg
@@ -761,6 +768,15 @@ def test_workvm_settings_are_checked(base: dict[str, str]) -> None:
     refused({**base, "AGENT_RUNNER_WORKVM_MAX_SIZE": "huge"}, "WORKVM_MAX_SIZE")
     refused({**base, "AGENT_RUNNER_WORKVM_SLOTS": "101"}, "WORKVM_SLOTS")
     refused({**base, "AGENT_RUNNER_WORKVM_POOL_SIZE": "17"}, "WORKVM_POOL_SIZE")
+    refused({**base, "AGENT_RUNNER_WORKVM_KEEP_STOPPED_SECONDS": "599"}, "WORKVM_KEEP_STOPPED_SECONDS")
+    refused({**base, "AGENT_RUNNER_WORKVM_SLOTS": "x"}, "WORKVM_SLOTS")
+    refused({**base, "AGENT_RUNNER_WORKVM_CPU_LOAD_MAX_PERCENT": "9"}, "WORKVM_CPU_LOAD_MAX_PERCENT")
+
+
+def test_workvm_slots_zero_switches_work_vms_off_and_round_trips(base: dict[str, str]) -> None:
+    cfg = load({**base, "AGENT_RUNNER_WORKVM_SLOTS": "0"})
+    assert cfg.workvm_slots == 0
+    assert environment(cfg)["AGENT_RUNNER_WORKVM_SLOTS"] == "0"
 
 
 # -- platform browser (KOR-44, ADR-085) ----------------------------------------------------------------------------

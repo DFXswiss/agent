@@ -285,12 +285,15 @@ def config(home: Path, **changes: Any) -> SimpleNamespace:
     values: dict[str, Any] = {
         "home": home,
         "memory_reserve_mib": 4096,
+        "vm_memory_mib": 8192,
+        "workvm_cpu_load_max_percent": 85,
         "test_mode": False,
         "vm_prefix": "agent",
         "workvm_slots": 2,
         "workvm_slots_self": False,
         "workvm_max_size": "large",
         "workvm_idle_seconds": 14400,
+        "workvm_keep_stopped_seconds": 7200,
         "workvm_pool_size": 1,
         "workvm_disk_quota_gib": 0,
         "workvm_queue_seconds": 900,
@@ -330,6 +333,36 @@ def test_no_work_vms_without_slots(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     seen = fake_service(monkeypatch)
     assert service.workvms_for(context(tmp_path, workvm_slots=0)) is None
     assert seen == []
+
+
+def test_without_an_upper_bound_the_ram_decides_and_the_installation_switches_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """ADR-059 addendum 4: WORKVM_SLOTS empty = no bound; the number of slot accounts follows the RAM above the reserve,
+    and work VMs are on once `workvm install` created the first slot account (checked once per daemon)."""
+    seen = fake_service(monkeypatch)
+    probed: list[list[str]] = []
+    present = {"agentwvm00": False}
+
+    def run(argv: Sequence[str], timeout: float) -> subprocess.CompletedProcess[str]:
+        probed.append(list(argv))
+        return subprocess.CompletedProcess(list(argv), 0 if present[argv[-1]] else 1, "", "")
+
+    monkeypatch.setattr(service, "run_command", run)
+    monkeypatch.setattr(service, "physical_memory_mib", lambda: 4096 + 5 * 8192 + 100)
+    missing = context(tmp_path, workvm_slots=None)
+    assert service.workvms_for(missing) is None
+    assert service.workvms_for(missing) is None  # not probed again
+    assert (probed, seen) == ([["/usr/bin/id", "-u", "agentwvm00"]], [])
+    present["agentwvm00"] = True
+    built = service.workvms_for(context(tmp_path, workvm_slots=None))
+    assert built is not None
+    assert built.deps.settings.slots == 5
+
+
+def test_the_cpu_load_is_the_load_per_core(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(service, "cpu_load_per_core", lambda: 0.5)
+    assert asyncio.run(service.cpu_load()) == 0.5
 
 
 def test_no_work_vms_before_enrollment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -374,7 +407,11 @@ def test_wiring_with_slot_accounts(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
         ssh_port_base=47200,
         test_mode=False,
         pool_size=1,
+        keep_stopped_seconds=7200,
+        workgroup_headroom_mib=8192,
+        cpu_load_max=0.85,
     )
+    assert deps.cpu_load is service.cpu_load
     assert deps.now() == datetime.fromtimestamp(WALL, UTC)
     assert deps.sleep is host_sleep
     assert deps.scratch == tmp_path / "tmp"

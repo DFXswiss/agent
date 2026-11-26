@@ -36,6 +36,10 @@ class FakeWorkVms:
         self.calls.append("idle_pass")
         return []
 
+    async def slot_pass(self) -> list[str]:
+        self.calls.append("slot_pass")
+        return []
+
     async def sweep(self) -> int:
         self.calls.append("sweep")
         return 0
@@ -96,7 +100,7 @@ def test_reconcile_then_idle_passes_until_stopping(monkeypatch: pytest.MonkeyPat
         "left_over",
         "runs",
         "reconcile",
-        *["guard_pass", "browser_idle_pass", "idle_pass", "sweep", "pool_pass"] * 3,
+        *["guard_pass", "browser_idle_pass", "idle_pass", "slot_pass", "sweep", "pool_pass"] * 3,
     ]
 
 
@@ -121,6 +125,7 @@ def test_a_stop_during_the_wait_ends_the_task_without_another_pass(monkeypatch: 
         "guard_pass",
         "browser_idle_pass",
         "idle_pass",
+        "slot_pass",
         "sweep",
         "pool_pass",
     ]
@@ -156,5 +161,5 @@ def test_an_assigned_pool_entry_refills_at_once(monkeypatch: pytest.MonkeyPatch)
         "left_over",
         "runs",
         "reconcile",
-        *["guard_pass", "browser_idle_pass", "idle_pass", "sweep", "pool_pass"] * 2,
+        *["guard_pass", "browser_idle_pass", "idle_pass", "slot_pass", "sweep", "pool_pass"] * 2,
     ]

@@ -413,6 +413,9 @@ class VmManager:
         env = self.env
         capacity = await self.capacity()
         if capacity.slots_free > 0:
+            if capacity.slots_free_now == 0:  # work VMs hold the room: they give way (ADR-059 addendum 4)
+                released = await env.reclaim(env.settings.memory_mib)
+                env.log("vm.slot_from_work_vms", {"released_mib": released})
             return
         for candidate in await records.live(env.db, "pool"):
             if await env.delete(candidate, expect=("pool",)) is not None:

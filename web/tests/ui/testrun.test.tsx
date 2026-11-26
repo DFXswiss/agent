@@ -282,6 +282,12 @@ describe('workvm items with logs', () => {
     [vm({ state: 'starting', implicit: true }), 'Work VM starting', false],
     [vm({ state: 'stopped', reason: 'session_paused', runtime_ms: 60_000 }), 'Work VM stopped (session paused)', true],
     [vm({ state: 'stopped', runtime_ms: 60_000 }), 'Work VM stopped', true],
+    // ADR-059 addendum 4: an unused VM gave its slot back and starts again on the next use
+    [
+      vm({ state: 'stopped', reason: 'idle', runtime_ms: 60_000 }),
+      'Work VM stopped, unused – starts again when needed',
+      true,
+    ],
     [
       vm({ state: 'deleted', reason: 'credit_exhausted', runtime_ms: 60_000 }),
       'Work VM deleted (credit used up)',

@@ -200,6 +200,19 @@ def test_install_creates_everything(fake: FakeMachine, cli: Callable[..., tuple[
     assert (firewall.LAUNCHCTL, "bootstrap", "system", firewall.DAEMON_PATH) in fake.calls
 
 
+def test_install_without_an_upper_bound_creates_the_accounts_the_ram_can_use(
+    fake: FakeMachine, cli: Callable[..., tuple[int, str, str]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-059 addendum 4: no WORKVM_SLOTS - as many slot accounts as the RAM above the reserve holds standard VMs."""
+    monkeypatch.setattr(workvm_cli, "physical_memory_mib", lambda: 32768 + 3 * 8192)
+    code, out, _ = cli(*INSTALL, AGENT_RUNNER_WORKVM_SLOTS="")
+    assert code == 0
+    assert "runner.workvm.install step=accounts count=3 created=3" in out.splitlines()
+    assert out.splitlines()[-1] == "runner.workvm.install result=ok slots=3"
+    code, out, _ = cli("status", euid=501, AGENT_RUNNER_WORKVM_SLOTS="")
+    assert out.splitlines()[0] == "runner.workvm.status slots=3 self=no accounts=0 missing=3"
+
+
 def test_install_keeps_what_exists(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
     fake.mounted = True
     fake.gid = 650

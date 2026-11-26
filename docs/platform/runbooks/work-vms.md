@@ -16,7 +16,8 @@ disconnected - the internet with the site's address. The operator decided on 202
 filter all the same; a boundary by interface is left to a later package.
 
 ## 1. Preconditions
-- Runner at a version with work VMs, `AGENT_RUNNER_WORKVM_SLOTS=0` (the default: nothing changes).
+- Runner at a version with work VMs. Without the installation of §3 nothing changes (`AGENT_RUNNER_WORKVM_SLOTS` is
+  empty by default; the device offers work VMs once their first slot account exists; `0` switches them off).
 - The hub is updated before the runner. An older hub refuses a work VM metrics sample, and with it the whole
   `metrics` item.
 - A golden image with the work VM tools (`workvm_*`) and the harness section "Your work VM". Existing workgroup VMs
@@ -41,14 +42,16 @@ sudo AGENT_RUNNER=<path>/agent-runner images/workvm/host-rehearsal.sh \
 ## 3. Installation (root, runner device)
 1. Plan; this changes nothing:
    ```sh
-   sudo env AGENT_RUNNER_WORKVM_SLOTS=<n> <runner settings> \
+   sudo env <runner settings> \
      agent-runner workvm install --runner-account <runner> --quota-gib <q> --plan
    ```
    Expected: `main_ruleset=untouched pf_conf=untouched … hook=ok`, exit 0. With `hook=missing` (the running main
    ruleset has no `anchor "com.apple/*"` as its first anchor line) stop here: the installation is refused.
 2. The same command without `--plan`. It creates:
    - the APFS volume of the slot homes (quota `q`);
-   - the slot accounts `<prefix>wvm00 …` and their group;
+   - the slot accounts `<prefix>wvm00 …` and their group: as many as the RAM above `MEMORY_RESERVE_MIB` could hold
+     standard work VMs (ADR-059 addendum 4; `AGENT_RUNNER_WORKVM_SLOTS=<n>` only for an upper bound in a special
+     case);
    - the `limactl` wrapper and the sudoers rule;
    - the anchor `com.apple/000.agent.workvm`, its template and the watcher's LaunchDaemon
      `swiss.dfx.agent-runner.pf`.
@@ -58,9 +61,10 @@ sudo AGENT_RUNNER=<path>/agent-runner images/workvm/host-rehearsal.sh \
    - `sudo pfctl -a com.apple -sA` lists `com.apple/000.agent.workvm` first;
    - `cat /var/run/agent.workvm.state` shows `ok utunN`;
    - `agent-runner workvm firewall check` shows `ok=yes internet=yes`.
-4. Enable: set `AGENT_RUNNER_WORKVM_SLOTS=<n>` and `AGENT_RUNNER_WORKVM_DISK_QUOTA_GIB=<q>` (the quota of step 2)
-   in the runner's environment, then run `agent-runner service install`
-   and restart the runner.
+4. Enable: set `AGENT_RUNNER_WORKVM_DISK_QUOTA_GIB=<q>` (the quota of step 2) in the runner's environment - and
+   remove an `AGENT_RUNNER_WORKVM_SLOTS=<n>` of an earlier installation, which would now be an upper bound - then run
+   `agent-runner service install` and restart the runner. A device installed with a fixed number (e.g. 4): run
+   `workvm install` again without `WORKVM_SLOTS`; it adds the missing accounts.
 5. Build the work image as the runner account: `agent-runner workvm image build` (about 2 minutes). The warm pool
    fills within a minute (`runner.workvm pool_ready … start_ms=`).
 6. Run the egress check and keep its output (addresses only):
@@ -76,14 +80,19 @@ sudo AGENT_RUNNER=<path>/agent-runner images/workvm/host-rehearsal.sh \
    is a symbolic link; remove the link by hand and run it again.
 
 Sizing: a standard work VM holds 8 GiB RAM and up to 50 GiB disk, `large` 16 GiB/100 GiB. Work VMs share the RAM
-budget with the workgroup VMs. Quota = slots × 100 GiB + 50 GiB. Start with few slots (e.g. 4) and raise the count
-when the measured load allows.
+budget with the workgroup VMs, which always come first: a new work VM needs room for one more workgroup VM besides
+itself, and running work VMs give way when a workgroup VM needs their RAM. The CPU bound is
+`AGENT_RUNNER_WORKVM_CPU_LOAD_MAX_PERCENT` (default 85). The disk quota is the remaining fixed limit: choose it for
+the number of work VMs the device should keep (about 100 GiB each, stopped ones included).
 
 ## 4. Operation
 - `agent-runner workvm status` shows the slots, the accounts and the boundary (`ok`, `internet`, problem codes).
 - Work VMs are temporary. The runner tears a VM down:
   - when the session releases it;
-  - after 30 minutes idle (`WORKVM_IDLE_SECONDS`);
+  - after 10 minutes idle (`WORKVM_IDLE_SECONDS`) it is stopped: the slot is free, the disk stays, the next command
+    starts it again; a stopped VM is deleted after a day (`WORKVM_KEEP_STOPPED_SECONDS`). Slots in use:
+    `agent-runner status` (`runner.status.workvm`) and the metrics `agent_runner_workvm_slots{state}` and
+    `agent_runner_workvm_requests_waiting` (ADR-059 addendum 4);
   - when the session ends or the task closes;
   - when it restarts (no resume);
   - and always on a boundary failure.
@@ -95,7 +104,8 @@ when the measured load allows.
 ## 5. Faults
 | Symptom | Meaning | Action |
 |---|---|---|
-| Sessions answer "not switched on … on this execution device" | `WORKVM_SLOTS=0` | §3 step 4 |
+| Sessions answer "not switched on … on this execution device" | `WORKVM_SLOTS=0`, or not installed (no first slot account) | §3 |
+| Requests wait ("capacity queue") | RAM, CPU or disk short (`agent-runner status`: `runner.status.workvm memory_free_mib cpu_load_pct disk_used_gib`) | by design; workgroup VMs come first |
 | Sessions answer "not ready right now" | no ready image, or the boundary check fails | `workvm status`; `workvm image list` |
 | `not_hooked` / state `unhooked` | something replaced the running main ruleset without Apple's `anchor "com.apple/*"` first | The watcher keeps the slot accounts stopped. Find what reloaded pf (the client's update, an admin), restore Apple's main ruleset, never with a hand-made rule. The watcher then opens by itself. |
 | `not_first` / state `unordered` | another child of `com.apple` sorts before ours | rename or remove that child; report it |
@@ -104,7 +114,7 @@ when the measured load allows.
 
 ## 6. Removal
 ```sh
-sudo env AGENT_RUNNER_WORKVM_SLOTS=<n as installed> <runner settings> agent-runner workvm uninstall [--keep-volume]
+sudo env <runner settings as installed> agent-runner workvm uninstall [--keep-volume]
 ```
 - It stops every slot process, the watcher and its anchor, and removes every file of the installation, the accounts,
   the group, the wrapper, the sudoers rule and (unless `--keep-volume` is given) the volume.

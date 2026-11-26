@@ -62,6 +62,19 @@ def usage_of(context: Any, providers: list[Any]) -> Any:
     return other_usage
 
 
+def reclaim_of(context: Any, providers: list[Any]) -> Any:
+    """Ask the other areas' `RECLAIM` in turn to give back `need_mib` for a workgroup VM (ADR-059 addendum 4)."""
+
+    async def reclaim(need_mib: int) -> int:
+        released = 0
+        for give in providers:
+            if released < need_mib:
+                released += int(await give(context, need_mib - released))
+        return released
+
+    return reclaim
+
+
 def build_manager(context: Any) -> VmManager:
     config = context.config
     log = functools.partial(_line, context)
@@ -90,6 +103,7 @@ def build_manager(context: Any) -> VmManager:
         clock=context.host.clock,
         stopping=context.stopping.is_set,
         other_usage=usage_of(context, registry.capacity_usages()),
+        reclaim=reclaim_of(context, registry.capacity_reclaimers()),
         cpus=os.cpu_count,
         disk_free_mib=functools.partial(disk_free_mib, home),
     )

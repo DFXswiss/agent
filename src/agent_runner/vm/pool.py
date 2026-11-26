@@ -129,6 +129,10 @@ def _unknown() -> int | None:
     return None
 
 
+async def _no_reclaim(_need_mib: int) -> int:
+    return 0
+
+
 def _token() -> str:
     return secrets.token_urlsafe(32)
 
@@ -192,6 +196,8 @@ class VmEnv:
     guards: dict[str, threading.Lock] = field(default_factory=dict)
     # VMs and memory of the other runner areas (`<area>/capacity.py:USAGE`, ADR-075 section 2).
     other_usage: Callable[[], Awaitable[Usage]] = _no_usage
+    reclaim: Callable[[int], Awaitable[int]] = _no_reclaim
+    """Ask the other areas to give back the MiB a workgroup VM needs (their `RECLAIM`, ADR-059 addendum 4)."""
     # Host facts of the capacity report (None: unknown, the counter is left out).
     cpus: Callable[[], int | None] = _unknown
     disk_free_mib: Callable[[], int | None] = _unknown
@@ -480,7 +486,8 @@ class Pool:
         ready = len(await records.live(self.env.db, "pool"))
         wanted = self.env.settings.pool_size - ready - self.filling
         capacity = await self.env.capacity(self.filling + self._reserved())
-        return max(min(wanted, MAX_PARALLEL_FILLS - self.filling, capacity.slots_free), 0)
+        # only room nobody holds: a warm VM is no reason to make work VMs give way (ADR-059 addendum 4)
+        return max(min(wanted, MAX_PARALLEL_FILLS - self.filling, capacity.slots_free_now), 0)
 
     async def purge(self, golden: GoldenRef | None) -> int:
         """Delete pool VMs of another golden (all when there is none or the pool is disabled)."""

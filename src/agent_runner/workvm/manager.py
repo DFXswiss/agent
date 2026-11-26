@@ -10,14 +10,24 @@
   answers. A new VM keeps the person whose turn requested it (`triggered_by`, ADR-083 section 2): the operation's
   acting user, or for a VM obtained implicitly by a tool call the session's acting user at that moment
   (`credentials.acting.stamp`).
+- **slots** (ADR-059 addendum 4, 05-runner.md section 3.7): a slot is held only by a VM that is not stopped (and by a
+  pool entry). A stopped VM keeps its disk in its slot's Lima home and starts again in that slot when the slot is
+  free; a new VM prefers the free slot with the fewest stopped VMs. The queue (`queue`, mirrored in
+  `runner.workvm_wait`) is FIFO: a request goes when every request before it is a stopped VM whose own slot another VM
+  holds; a slot that becomes free wakes the waiting requests at once (`_wake`), not only at the next poll.
 - **release** (`workvm.release` executor) and `delete`: `limactl delete -f`, row `deleted`.
 - **calls** of the five tools (`journal.py`): the VM is always resolved from the session of the journal that carried
   the call (its own session VM, else the task VM), never from arguments; a stopped VM is started on the way.
-- **idle pass**: a VM without a running job and without a call for `WORKVM_IDLE_SECONDS` is deleted, a stopped VM
-  (paused session) once it stood that long; a VM whose deletion failed is deleted again, and own `wvm-` instances
-  without a row (left by a failed deletion) are swept.
+- **idle pass**: a VM without a running job, without a call in progress and without a call for
+  `WORKVM_IDLE_SECONDS` (default 600) is stopped (`workvm.state` `stopped`, reason `idle`): it gives its slot and RAM
+  back and starts again with its disk on the next call or request. A stopped VM is deleted once it stood
+  `WORKVM_KEEP_STOPPED_SECONDS` (default 86400, reason `idle`); a VM whose deletion failed is deleted again, and own
+  `wvm-` instances without a row (left by a failed deletion) are swept.
+- **slot pass** (`slot_pass`, every minute): the rows that hold a slot are compared with the instances Lima lists and
+  with the sessions of this device: a VM whose instance is gone, a start nobody finishes, a VM that is no longer
+  running and a VM whose sessions all ended give their slot back, so no slot stays held.
 - **paused sessions** (KOR-43, ADR-080 section 4): `pause` stops the session's VM (no RAM, no runtime); a request or
-  call of the resumed session starts it again (`_resume`), or deletes it and gets a new one when its RAM does not fit.
+  call of the resumed session starts it again (`_resume`) through the queue, in its own slot.
 - **run VMs** (scope `run`, `obtain_run_vm`): one fresh VM per `test.run` of `agent_runner.workvm.testrun`.
 - **browser VMs** (scope `browser`): the VM of a session's platform browser (`agent_runner.workvm.browser`).
 - **logs**: a job whose output is longer than its event keeps (`RUN_OUTPUT_LIMIT`) is captured as an encrypted log
@@ -43,6 +53,7 @@ import re
 import secrets
 import tempfile
 import time
+from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -149,6 +160,44 @@ class Settings:
     pool_size: int = 0
     disk_quota_gib: int = 0
     """Allocated disk of all work VMs and pool entries may not exceed it (0: not checked, spec 13 section 7)."""
+    keep_stopped_seconds: int = 86_400
+    """How long a stopped VM keeps its disk before it is deleted (`WORKVM_KEEP_STOPPED_SECONDS`, ADR-059 addendum 4)."""
+    workgroup_headroom_mib: int = 0
+    """RAM a new work VM leaves free above the reserve: room for one more workgroup VM (`VM_MEMORY_MIB`)."""
+    cpu_load_max: float = 1.0
+    """A new work VM starts only while the host's CPU load per core is at most this (`WORKVM_CPU_LOAD_MAX_PERCENT`)."""
+
+
+@dataclass(eq=False)
+class Waiter:
+    """A request in the slot queue: `slot` is the own slot of a stopped VM that starts again (None: a new VM),
+    `workvm_id` the VM it starts once known, `granted` once it got its slot (it leaves the queue when its VM runs)."""
+
+    ticket: str
+    slot: int | None = None
+    workvm_id: str | None = None
+    granted: bool = False
+
+
+@dataclass(frozen=True)
+class SlotState:
+    """The slots of the device now (metrics and `agent-runner status`, 08-monitoring.md section 3)."""
+
+    total: int
+    held: int
+    free: int
+    stopped: int
+    waiting: int
+    memory_free_mib: int = 0
+    """RAM a new work VM may still use (above the reserve, less room for one more workgroup VM)."""
+    cpu_load: float = 0.0
+    """The host's CPU load per core."""
+    disk_used_gib: int = 0
+    """Disk allocated to work VMs and pool entries (`WORKVM_DISK_QUOTA_GIB` bounds it when set)."""
+
+
+class _Gone(Exception):
+    """The stopped VM a request waited for is no longer stopped (deleted or started meanwhile)."""
 
 
 @dataclass
@@ -175,6 +224,8 @@ class Deps:
     """Stores the output of a final job (`vm, identity, job_id, output_bytes`) as a log; returns its `log_ref`."""
     hub_lease: Callable[[], bool] = field(default_factory=lambda: _always)
     """The runner's lease of the tools with internet egress (`sync.lease.held`, ADR-087 section 4)."""
+    cpu_load: Callable[[], Awaitable[float]] = field(default_factory=lambda: _idle_cpu)
+    """The host's CPU load per core (`service.cpu_load`); default: idle."""
 
 
 def _tail(text: str, limit: int) -> str:
@@ -235,12 +286,20 @@ def _always() -> bool:
     return True
 
 
+async def _idle_cpu() -> float:
+    return 0.0
+
+
 class WorkVms:
     def __init__(self, deps: Deps) -> None:
         self.deps = deps
         self.locks: dict[str, asyncio.Lock] = {}
-        self.queue: list[str] = []
+        self.queue: list[Waiter] = []
+        self.released = asyncio.Event()
+        """Set (and replaced) when a slot, RAM or a place in the queue became free: the waiting requests look at once."""
         self.last_call: dict[str, datetime] = {}
+        self.calls: Counter[str] = Counter()
+        """Tool calls in progress per work VM (a VM with a call in progress is not idle)."""
         self.runs: dict[str, Run] = {}
         self.slot_lock = asyncio.Lock()
         """Held from choosing a free slot to inserting its row (work VM or pool entry)."""
@@ -342,67 +401,136 @@ class WorkVms:
                 triggered_by=triggered_by,
             )
 
-        vm = await self._wait_for_capacity(SIZES[size][1], SIZES[size][2], build, from_pool)
+        memory_mib, disk_gib = SIZES[size][1], SIZES[size][2]
+        waiter = Waiter(secrets.token_hex(8))
+
+        async def attempt() -> WorkVm | None:
+            """A ready pool entry (`running`, standard size only), else a free slot with RAM and disk: the row
+            `build(slot)` (`starting`). A ready pool entry gives its slot, RAM and disk back to a request that does not
+            fit otherwise, the oldest stopped VM its disk."""
+            while True:
+                pooled = await from_pool()
+                if pooled is not None:
+                    return pooled
+                async with self.slot_lock:
+                    slot = await self._free_slot()
+                    fits, free = await self._fits(memory_mib)
+                    disk = await self._disk_fits(disk_gib)
+                    if slot is not None and fits and disk:
+                        row = build(slot)
+                        waiter.workvm_id = row.id
+                        return await self._insert(row)
+                if await self._drop_one_pooled(free_mib=free, need_mib=memory_mib, disk_short=not disk):
+                    continue
+                if not disk and await self._drop_one_stopped():
+                    continue
+                return None
+
+        vm = await self._queued(waiter, attempt)
         try:
             if vm.state == "starting":
                 vm = await self._boot(vm)
         finally:
-            self._leave_queue()
+            await self._leave(waiter)
         return vm
 
-    async def _wait_for_capacity(
-        self,
-        memory_mib: int,
-        disk_gib: int,
-        build: Callable[[int], WorkVm],
-        from_pool: Callable[[], Awaitable[WorkVm | None]],
-    ) -> WorkVm:
-        """Wait FIFO; at the head take a ready pool entry (`running`, standard size only), else wait for a free slot
-        and RAM and insert the row `build(slot)` (`starting`). A ready pool entry gives its slot and RAM back to a
-        waiting request that does not fit otherwise."""
-        ticket = secrets.token_hex(8)
-        self.queue.append(ticket)
+    async def _queued(self, waiter: Waiter, attempt: Callable[[], Awaitable[WorkVm | None]]) -> WorkVm:
+        """Wait in the queue until it is the waiter's turn (`_turn`) and `attempt` finds capacity, at most
+        `WORKVM_QUEUE_SECONDS` (then `timeout`, retryable). The waiter stays in the queue, `granted`, until the caller
+        leaves it (`_leave`) once its VM runs; a time-out, a cancelled operation or a failing step leave it at once."""
+        self.queue.append(waiter)
         deadline = self.deps.now() + timedelta(seconds=self.deps.settings.queue_seconds)
         try:
+            await records.wait_add(self.deps.db, waiter.ticket, waiter.slot, self.deps.now())
             while True:
-                if self.queue[0] == ticket:
-                    pooled = await from_pool()
-                    if pooled is not None:
-                        return pooled
-                    async with self.slot_lock:
-                        slot = await self._free_slot()
-                        free = await self.deps.free_memory_mib()
-                        disk = await self._disk_fits(disk_gib)
-                        if slot is not None and free >= memory_mib and disk:
-                            return await self._insert(build(slot))
-                    if await self._drop_one_pooled(free_mib=free, need_mib=memory_mib, disk_short=not disk):
-                        continue
-                    if (slot is None or not disk) and await self._drop_one_stopped():
-                        continue
+                if await self._turn(waiter):
+                    found = await attempt()
+                    if found is not None:
+                        waiter.granted = True
+                        return found
                 if self.deps.now() >= deadline:
                     raise OperationFailed(
                         "timeout", message="No capacity for a work VM became free in time; request again."
                     )
-                await self.deps.sleep(QUEUE_POLL)
+                await self._pause()
         except BaseException:
-            self.queue.remove(ticket)  # a time-out, a cancelled operation or a failing check never blocks the queue
+            await self._leave(waiter)
             raise
 
+    async def _turn(self, waiter: Waiter) -> bool:
+        """FIFO: the waiter goes when every request before it is a stopped VM whose own slot another VM holds (it
+        cannot start now anyway); a request that got its slot keeps the ones behind it waiting until its VM runs."""
+        before = self.queue[: self.queue.index(waiter)]
+        if any(other.granted or other.slot is None for other in before):
+            return False
+        held = await records.vm_slots(self.deps.db) if before else set()
+        return all(other.slot in held for other in before)
+
+    async def _pause(self) -> None:
+        """Wait `QUEUE_POLL` seconds or until a slot, RAM or a place in the queue became free (`_wake`)."""
+        released = asyncio.ensure_future(self.released.wait())
+        polled = asyncio.ensure_future(self.deps.sleep(QUEUE_POLL))
+        try:
+            done, _pending = await asyncio.wait({released, polled}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            released.cancel()
+            polled.cancel()
+        for finished in done:
+            finished.result()  # a failing sleep fails the wait (the request leaves the queue)
+
+    def _wake(self) -> None:
+        """Something became free: every waiting request looks again at once."""
+        self.released.set()
+        self.released = asyncio.Event()
+
+    async def _leave(self, waiter: Waiter) -> None:
+        self.queue.remove(waiter)  # once: `_queued` leaves on a failure, else its caller after the start
+        self._wake()
+        with contextlib.suppress(Exception):  # the mirror is for display; the queue itself is `queue`
+            await records.wait_remove(self.deps.db, waiter.ticket)
+
     async def _drop_one_stopped(self) -> bool:
-        """Give the slot and disk of the oldest stopped VM (a paused session's) back to a waiting request."""
+        """Give the disk of the oldest stopped VM back to a waiting request (the disk quota is short; a stopped VM
+        holds no slot). Visible as `workvm.state` `deleted` with reason `idle`."""
         stopped = await records.live(self.deps.db, "stopped")
         if not stopped:
             return False
-        await self.delete(stopped[0], reason="session_paused")
+        await self.delete(stopped[0], reason="idle")
         return True
 
-    def _leave_queue(self) -> None:
-        self.queue.pop(0)  # the request that leaves was the head of the queue (`_wait_for_capacity`)
+    async def _fits(self, memory_mib: int) -> tuple[bool, int]:
+        """Whether the free resources admit a VM of `memory_mib` now (ADR-059 addendum 4), and the RAM a work VM may
+        use: the RAM above `MEMORY_RESERVE_MIB` that the workgroup VMs and work VMs leave, less room for one more
+        workgroup VM (they always come first), and a CPU load per core of at most `WORKVM_CPU_LOAD_MAX_PERCENT`. The
+        disk quota is `_disk_fits`; the slot accounts only isolate, their number follows the RAM."""
+        room = await self.deps.free_memory_mib() - self.deps.settings.workgroup_headroom_mib
+        cpu = await self.deps.cpu_load()
+        return room >= memory_mib and cpu <= self.deps.settings.cpu_load_max, room
 
     async def _free_slot(self) -> int | None:
+        """The free slot with the fewest stopped VMs (their own slot stays free for their start when it can)."""
         used = await records.used_slots(self.deps.db)
+        parked = await records.parked(self.deps.db)
         free = [slot for slot in range(self.deps.settings.slots) if slot not in used]
-        return free[0] if free else None
+        return min(free, key=lambda slot: (parked.get(slot, 0), slot)) if free else None
+
+    async def slot_state(self) -> SlotState:
+        """The slots now: held (a VM that is not stopped, a pool entry), free, the stopped VMs and the waiting
+        requests - and the capacity that decides: RAM a new work VM may use, CPU load, disk in use."""
+        total = self.deps.settings.slots
+        held = len(await records.used_slots(self.deps.db))
+        stopped = len(await records.live(self.deps.db, "stopped"))
+        _fits, room = await self._fits(0)
+        return SlotState(
+            total,
+            held,
+            max(0, total - held),
+            stopped,
+            len(self.queue),
+            memory_free_mib=max(0, room),
+            cpu_load=await self.deps.cpu_load(),
+            disk_used_gib=await records.disk_in_use(self.deps.db, SIZES[POOL_SIZE][2]),
+        )
 
     def _row(
         self,
@@ -582,7 +710,7 @@ class WorkVms:
             if (
                 len(await records.pool(self.deps.db)) >= settings.pool_size
                 or slot is None
-                or await self.deps.free_memory_mib() < 2 * memory_mib
+                or not (await self._fits(2 * memory_mib))[0]
                 or not await self._disk_fits(2 * SIZES[POOL_SIZE][2])
             ):
                 return 0
@@ -609,6 +737,7 @@ class WorkVms:
         concurrent assignment turned it into a work VM)."""
         if await records.pool_remove(self.deps.db, entry.lima_name):
             await self._delete_instance(entry)
+            self._wake()
 
     async def _delete_instance(self, entry: Pooled) -> None:
         try:
@@ -703,6 +832,7 @@ class WorkVms:
             await records.update(self.deps.db, vm.id, state="deleting", delete_reason=reason)
             return False
         await records.update(self.deps.db, vm.id, state="deleted", deleted_at=self.deps.now(), delete_reason=reason)
+        self._wake()
         self.last_call.pop(vm.id, None)
         for job_id in [job_id for job_id, run in self.runs.items() if run.workvm_id == vm.id]:
             del self.runs[job_id]
@@ -828,9 +958,9 @@ class WorkVms:
 
     async def pause(self, session: LocalSession, *, reason: str, when_idle: bool = False) -> list[str]:
         """Stop the VMs a paused session works in (ADR-080 section 4): its own session VM, and the task VM when no
-        other session of the task is active - with `when_idle` only a VM in which no job runs. Their RAM and runtime
-        end; they are deleted after `WORKVM_IDLE_SECONDS` stopped unless a call or request of the session starts them
-        again. Returns the stopped IDs."""
+        other session of the task is active - with `when_idle` only a VM in which no job runs. Their slot, RAM and
+        runtime end; they are deleted after `WORKVM_KEEP_STOPPED_SECONDS` stopped unless a call or request of the
+        session starts them again. Returns the stopped IDs."""
         found: list[WorkVm] = []
         own = await records.for_scope(self.deps.db, task_id=session.task_id, session_id=session.id)
         if own is not None:
@@ -858,8 +988,34 @@ class WorkVms:
         except WorkVmError:
             return True
 
-    async def stop(self, vm: WorkVm, *, reason: str) -> bool:
-        """`limactl stop` a running VM (its jobs end and are recorded `lost`); False when it does not run."""
+    async def give_way(self, need_mib: int) -> int:
+        """Workgroup VMs always come first (ADR-059 addendum 4): give back at least `need_mib` of RAM to a workgroup VM
+        that needs it - ready pool entries, then the idle task and session VMs (no job, no call in progress: stopped,
+        reason `idle`), then the busy ones (stopped, their jobs `lost`; the event names no reason, the log
+        `reason=workgroup_priority`), least recently used first. A stopped VM keeps its disk and starts again when
+        there is room. Run and browser VMs belong to their owner. Returns the MiB given back."""
+        released = 0
+        for entry in await records.pool(self.deps.db):
+            if released < need_mib and entry.state == "ready":
+                await self._drop(entry)
+                released += entry.memory_mib
+        candidates: list[tuple[bool, datetime, WorkVm]] = []
+        for vm in await records.live(self.deps.db, "running"):
+            if vm.scope not in OWNED_SCOPES:
+                busy = bool(self.calls[vm.id]) or await self._busy(vm)
+                candidates.append((busy, max(vm.last_used_at, self.last_call.get(vm.id, vm.last_used_at)), vm))
+        for busy, _last, vm in sorted(candidates, key=lambda item: (item[0], item[1], item[2].id)):
+            if released >= need_mib:
+                break
+            if await self.stop(vm, reason="workgroup_priority" if busy else "idle", unnamed=busy):
+                released += vm.memory_mib
+        if released:
+            self.deps.log(f"runner.workvm gave_way need_mib={need_mib} released_mib={released}")
+        return released
+
+    async def stop(self, vm: WorkVm, *, reason: str, unnamed: bool = False) -> bool:
+        """`limactl stop` a running VM (its jobs end and are recorded `lost`); False when it does not run. The
+        `workvm.state` event names `reason` (a contract reason) unless `unnamed` (then the log alone names it)."""
         async with self._lock(vm.id):
             current = await records.get(self.deps.db, vm.id)
             if current is None or current.state != "running":
@@ -876,38 +1032,74 @@ class WorkVms:
                 return False
             stopped = await records.update(self.deps.db, vm.id, state="stopped", stopped_at=self.deps.now())
             assert stopped is not None
-            await self._emit_state(stopped, "stopped", reason=reason)
+            await self._emit_state(stopped, "stopped", reason=None if unnamed else reason)
+        self._wake()
         self.deps.log(f"runner.workvm stopped workvm_id={vm.id} reason={reason}")
         return True
 
     async def _resume(self, vm: WorkVm) -> WorkVm | None:
-        """Start a stopped VM again (its disk kept what the session installed); when its RAM does not fit now it is
-        deleted and None returned (the caller gets a new VM)."""
-        async with self._lock(vm.id):
+        """Start a stopped VM again with its disk (what the session installed is still there) through the queue: in
+        its own slot - the one whose Lima home holds its disk - once that slot is free and its RAM fits (a ready pool
+        entry in that slot gives it back). The VM that is not stopped any more when its turn comes is returned as it
+        is (None: deleted meanwhile); a VM that does not start is deleted (`failed`) and None returned (the caller gets
+        a new VM). Raises `timeout` when the slot did not become free within `WORKVM_QUEUE_SECONDS`; the VM stays
+        stopped with its disk."""
+        waiter = Waiter(secrets.token_hex(8), slot=vm.slot, workvm_id=vm.id)
+
+        async def attempt() -> WorkVm | None:
+            while True:
+                async with self.slot_lock:
+                    enough, free = await self._fits(vm.memory_mib)
+                    fits = enough and vm.slot not in await records.used_slots(self.deps.db)
+                    # one conditional update: `starting` when it fits, else unchanged; no row: it is not stopped now
+                    current = await records.update(
+                        self.deps.db, vm.id, expect=("stopped",), state="starting" if fits else "stopped"
+                    )
+                    if current is None:
+                        raise _Gone
+                    if fits:
+                        return current
+                if await self._drop_pooled_in(vm.slot) or await self._drop_one_pooled(
+                    free_mib=free, need_mib=vm.memory_mib, disk_short=False
+                ):
+                    continue
+                return None
+
+        try:
+            starting = await self._queued(waiter, attempt)
+        except _Gone:
             current = await records.get(self.deps.db, vm.id)
-            if current is None or current.state != "stopped":
-                return current if current is not None and current.state != "deleted" else None
-            if await self.deps.free_memory_mib() < current.memory_mib:
-                fits = False
+            return current if current is not None and current.state != "deleted" else None
+        try:
+            return await self._start_stopped(starting)
+        finally:
+            await self._leave(waiter)
+
+    async def _start_stopped(self, vm: WorkVm) -> WorkVm | None:
+        async with self._lock(vm.id):
+            try:
+                await asyncio.to_thread(self.deps.lima_for(vm.slot).start, vm.lima_name)
+                await self._wait_ready(vm)
+            except (LimaError, WorkVmError) as error:
+                self.deps.log(f"runner.workvm resume_failed workvm_id={vm.id} {failure(error)}")
             else:
-                await records.update(self.deps.db, vm.id, state="starting")
-                try:
-                    await asyncio.to_thread(self.deps.lima_for(vm.slot).start, vm.lima_name)
-                    await self._wait_ready(current)
-                    fits = True
-                except (LimaError, WorkVmError) as error:
-                    self.deps.log(f"runner.workvm resume_failed workvm_id={vm.id} {failure(error)}")
-                    fits = False
-            if fits:
                 running = await records.update(
                     self.deps.db, vm.id, state="running", stopped_at=None, last_used_at=self.deps.now()
                 )
                 assert running is not None
                 await self._emit_state(running, "created")
-                self.deps.log(f"runner.workvm resumed workvm_id={vm.id}")
+                self.deps.log(f"runner.workvm resumed workvm_id={vm.id} slot={vm.slot}")
                 return running
-        await self.delete(current, reason="session_paused")
+        await self.delete(vm, reason="failed")
         return None
+
+    async def _drop_pooled_in(self, slot: int) -> bool:
+        """Give the slot of a ready pool entry back to a stopped VM whose own slot it is."""
+        for entry in await records.pool(self.deps.db):
+            if entry.slot == slot and entry.state == "ready":
+                await self._drop(entry)
+                return True
+        return False
 
     async def close_task(self, task_id: str) -> list[str]:
         """Every VM of a closed task goes at once (`task_closed`, ADR-080 section 5); returns their IDs."""
@@ -952,16 +1144,19 @@ class WorkVms:
         return swept
 
     async def idle_pass(self) -> list[str]:
-        """Tear down VMs idle for `WORKVM_IDLE_SECONDS` (no call and no running job) and VMs stopped that long; run
-        and browser VMs belong to their run or browser session. Returns their IDs."""
-        removed: list[str] = []
-        limit = timedelta(seconds=self.deps.settings.idle_seconds)
+        """Stop the VMs idle for `WORKVM_IDLE_SECONDS` - no call and no running job in that time and no call in
+        progress, measured in the runner, not by CPU - (`stopped`, reason `idle`: slot and RAM are free, the disk stays,
+        the next call or request starts it again), and delete the VMs stopped for `WORKVM_KEEP_STOPPED_SECONDS`
+        (`idle`); run and browser VMs belong to their run or browser session. Returns the IDs of both."""
+        changed: list[str] = []
+        keep = timedelta(seconds=self.deps.settings.keep_stopped_seconds)
         for vm in await records.live(self.deps.db, "stopped"):
-            if self.deps.now() - (vm.stopped_at or vm.last_used_at) >= limit:
-                await self.delete(vm, reason="session_paused")
-                removed.append(vm.id)
+            if self.deps.now() - (vm.stopped_at or vm.last_used_at) >= keep:
+                await self.delete(vm, reason="idle")
+                changed.append(vm.id)
+        limit = timedelta(seconds=self.deps.settings.idle_seconds)
         for vm in await records.live(self.deps.db, "running"):
-            if vm.scope in OWNED_SCOPES:
+            if vm.scope in OWNED_SCOPES or self.calls[vm.id]:
                 continue
             await self._settle_runs(vm, at_teardown=False)
             last = max(vm.last_used_at, self.last_call.get(vm.id, vm.last_used_at))
@@ -971,11 +1166,78 @@ class WorkVms:
                 running = [job for job in await self._jobs(vm) if job["state"] == "running"]
             except WorkVmError:
                 running = []
-            if running:
+            if not running and await self.stop(vm, reason="idle"):
+                changed.append(vm.id)
+        return changed
+
+    async def slot_pass(self) -> list[str]:
+        """Reconcile the slots with the VMs that really exist (05-runner.md section 3.7): every row of a VM is compared
+        with the instances of its slot's Lima home (a slot whose listing fails is left alone this time) and with the
+        sessions of this device. A VM being started, stopped or deleted now is left alone. Returns the changed IDs:
+
+        - the instance is gone: the row is deleted (`failed`, its open runs `lost`);
+        - `starting` without a request that starts it (an interrupted start): deleted (`failed`);
+        - `running` or `stopping` while the instance does not run: `stopped` (`failed`; disk kept) - a run or browser
+          VM is deleted, its owner gets a new one; `stopping` while the instance runs: `running` again;
+        - a task or session VM whose sessions all ended (the end was missed): deleted (`session_ended`)."""
+        changed: list[str] = []
+        rows = [vm for vm in await records.live(self.deps.db) if vm.state != "deleting"]  # the sweep's
+        listed: dict[int, dict[str, str]] = {}
+        for slot in sorted({vm.slot for vm in rows}):
+            try:
+                instances = await asyncio.to_thread(self.deps.lima_for(slot).list)
+            except LimaError as error:
+                self.deps.log(f"runner.workvm slot_check_failed slot={slot} {failure(error)}")
                 continue
-            await self.delete(vm, reason="idle")
-            removed.append(vm.id)
-        return removed
+            listed[slot] = {instance.name: instance.status for instance in instances}
+        starting = {waiter.workvm_id for waiter in self.queue}
+        for vm in rows:
+            if vm.slot in listed and vm.id not in starting and not self._lock(vm.id).locked():
+                if await self._settle_slot(vm, listed[vm.slot].get(vm.lima_name)):
+                    changed.append(vm.id)
+        for vm in await records.live(self.deps.db, "running", "stopped"):
+            if vm.scope not in OWNED_SCOPES and vm.id not in changed and not await self._needed(vm):
+                self.deps.log(f"runner.workvm slot_released workvm_id={vm.id} cause=sessions_ended")
+                await self.delete(vm, reason="session_ended")
+                changed.append(vm.id)
+        return changed
+
+    async def _settle_slot(self, vm: WorkVm, status: str | None) -> bool:
+        """One row against its instance's Lima status (None: no such instance); True when the row changed."""
+        if status is None or vm.state == "starting":
+            cause = "instance_missing" if status is None else "start_interrupted"
+            self.deps.log(f"runner.workvm slot_released workvm_id={vm.id} state={vm.state} cause={cause}")
+            await self.delete(vm, reason="failed")
+            return True
+        if vm.state not in ("running", "stopping"):
+            return False
+        if status == "Running":
+            if vm.state == "running":
+                return False
+            await records.update(self.deps.db, vm.id, expect=("stopping",), state="running")
+            self.deps.log(f"runner.workvm slot_settled workvm_id={vm.id} state=running")
+            return True
+        self.deps.log(f"runner.workvm slot_released workvm_id={vm.id} state={vm.state} cause=not_running")
+        if vm.scope in OWNED_SCOPES:
+            await self.delete(vm, reason="failed")
+            return True
+        async with self._lock(vm.id):
+            await self._settle_runs(vm, at_teardown=True)
+            stopped = await records.update(
+                self.deps.db, vm.id, expect=(vm.state,), state="stopped", stopped_at=self.deps.now()
+            )
+        if stopped is None:
+            return False
+        await self._emit_state(stopped, "stopped", reason="failed")
+        self._wake()
+        return True
+
+    async def _needed(self, vm: WorkVm) -> bool:
+        """A session of this device may still use the VM: its own session (scope `session`), else any session of the
+        task that has not ended."""
+        if vm.session_id is not None:
+            return await records.session_live(self.deps.db, vm.session_id)
+        return await records.active_sessions(self.deps.db, vm.task_id) > 0
 
     async def guard_pass(self) -> list[str]:
         """Tear down every live VM and pool entry when the boundary check fails (spec 11 section 6.4); returns the
@@ -1013,7 +1275,10 @@ class WorkVms:
     async def reconcile(self, left: Sequence[WorkVm] | None = None) -> None:
         """After a restart nothing is resumed (KONZEPT idea 44): every VM `left` over from before the restart (default:
         every live VM) and every own `wvm-` instance without a live row is deleted. A VM a session obtained while the
-        test-run reconciliation kept the logs of the runs is not in `left` and stays."""
+        test-run reconciliation kept the logs of the runs is not in `left` and stays. Requests that waited for a slot
+        before the restart are gone with their operations' turns: their mirror rows are removed."""
+        if cleared := await records.wait_clear(self.deps.db, keep=[waiter.ticket for waiter in self.queue]):
+            self.deps.log(f"runner.workvm waits_cleared count={cleared}")
         for entry in await records.pool(self.deps.db):
             await self._drop(entry)
         for vm in await records.live(self.deps.db) if left is None else left:
@@ -1041,7 +1306,10 @@ class WorkVms:
         if vm is not None and vm.state == "stopped":
             if self.deps.exhausted(session.org_id):
                 raise CallFailed("unavailable", NO_CREDIT)
-            vm = await self._resume(vm)
+            try:
+                vm = await self._resume(vm)
+            except OperationFailed as failed:
+                raise CallFailed("unavailable", f"The stopped work VM could not start yet: {failed.message}") from None
         if vm is None and tool in IMPLICIT_TOOLS:
             vm = await self._implicit(session)
         if vm is None:
@@ -1051,6 +1319,16 @@ class WorkVms:
         except WorkVmError:
             raise CallFailed("unavailable", "The work VM is starting or being removed. Try again shortly.") from None
         self.last_call[vm.id] = self.deps.now()
+        self.calls[vm.id] += 1
+        try:
+            return await self._tool(env, vm, session, tool, arguments, begun)
+        finally:
+            self.calls -= Counter({vm.id: 1})  # drops the entry at zero
+            self.last_call[vm.id] = self.deps.now()
+
+    async def _tool(
+        self, env: Any, vm: WorkVm, session: LocalSession, tool: str, arguments: Mapping[str, Any], begun: float
+    ) -> dict[str, Any]:
         try:
             if tool == "workvm_exec":
                 return await self._exec(env, vm, session, arguments, begun)
@@ -1265,7 +1543,7 @@ class WorkVms:
         if vm.state == "running":
             with contextlib.suppress(WorkVmError):
                 found = [{**job, "started_at": _time(job["started_at"])} for job in await self._jobs(vm)]
-        state = vm.state if vm.state in ("starting", "running") else "stopping"
+        state = vm.state if vm.state in ("starting", "running", "stopped") else "stopping"
         last = max(vm.last_used_at, self.last_call.get(vm.id, vm.last_used_at))
         return {
             "workvm": {

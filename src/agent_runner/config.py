@@ -80,6 +80,8 @@ NAMES = (
     "WORKVM_SLOTS_SELF",
     "WORKVM_MAX_SIZE",
     "WORKVM_IDLE_SECONDS",
+    "WORKVM_KEEP_STOPPED_SECONDS",
+    "WORKVM_CPU_LOAD_MAX_PERCENT",
     "WORKVM_POOL_SIZE",
     "WORKVM_DISK_QUOTA_GIB",
     "WORKVM_QUEUE_SECONDS",
@@ -118,8 +120,11 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     "MAX_VMS": (0, 0, 1_000_000),
     "SESSION_IDLE_SECONDS": (1800, 60, 604_800),
     "VM_IDLE_SECONDS": (1800, 60, 604_800),
-    "WORKVM_SLOTS": (0, 0, 100),
-    "WORKVM_IDLE_SECONDS": (1800, 60, 604_800),
+    # ADR-059 addendum 4: an idle work VM is stopped (slot and RAM free, disk kept), a stopped one deleted later.
+    "WORKVM_IDLE_SECONDS": (600, 60, 604_800),
+    "WORKVM_KEEP_STOPPED_SECONDS": (86_400, 600, 2_592_000),
+    # ADR-059 addendum 4: a new work VM only while the host's CPU load (1 min, of all cores) stays below this
+    "WORKVM_CPU_LOAD_MAX_PERCENT": (85, 10, 100),
     "WORKVM_POOL_SIZE": (1, 0, 16),
     "WORKVM_DISK_QUOTA_GIB": (0, 0, 1_000_000),
     "WORKVM_QUEUE_SECONDS": (900, 0, 86_400),
@@ -247,10 +252,14 @@ class Config:
     def tmp_dir(self) -> Path:
         return self.home / "tmp"
 
-    workvm_slots: int = 0
+    workvm_slots: int | None = None
+    """Optional upper bound of the work VM slots (ADR-059 addendum 4): None = no bound, the free resources decide and
+    the number of slot accounts follows the RAM (`workvm.accounts.slot_count`); 0 = no work VMs."""
     workvm_slots_self: bool = False
     workvm_max_size: str = "large"
-    workvm_idle_seconds: int = 1800
+    workvm_idle_seconds: int = 600
+    workvm_keep_stopped_seconds: int = 86_400
+    workvm_cpu_load_max_percent: int = 85
     workvm_pool_size: int = 1
     workvm_disk_quota_gib: int = 0
     workvm_queue_seconds: int = 900
@@ -394,10 +403,12 @@ def load_config(
 
 
 class _WorkVmSettings(TypedDict):
-    workvm_slots: int
+    workvm_slots: int | None
     workvm_slots_self: bool
     workvm_max_size: str
     workvm_idle_seconds: int
+    workvm_keep_stopped_seconds: int
+    workvm_cpu_load_max_percent: int
     workvm_pool_size: int
     workvm_disk_quota_gib: int
     workvm_queue_seconds: int
@@ -423,10 +434,12 @@ def _workvm(
         raise RunnerError("config_invalid", "WORKVM_MAX_SIZE")
     template = _optional(raw("WORKVM_TEMPLATE"), "WORKVM_TEMPLATE", require, lambda v: _file(v, "WORKVM_TEMPLATE"))
     return {
-        "workvm_slots": integers["WORKVM_SLOTS"],
+        "workvm_slots": None if raw("WORKVM_SLOTS") == "" else _integer(raw("WORKVM_SLOTS"), "WORKVM_SLOTS", 0, 0, 100),
         "workvm_slots_self": slots_self,
         "workvm_max_size": max_size,
         "workvm_idle_seconds": integers["WORKVM_IDLE_SECONDS"],
+        "workvm_keep_stopped_seconds": integers["WORKVM_KEEP_STOPPED_SECONDS"],
+        "workvm_cpu_load_max_percent": integers["WORKVM_CPU_LOAD_MAX_PERCENT"],
         "workvm_pool_size": integers["WORKVM_POOL_SIZE"],
         "workvm_disk_quota_gib": integers["WORKVM_DISK_QUOTA_GIB"],
         "workvm_queue_seconds": integers["WORKVM_QUEUE_SECONDS"],
@@ -468,6 +481,7 @@ def environment(config: Config) -> dict[str, str]:
         "OPERATOR_GITHUB_TOKEN_FILE": config.operator_github_token_file,
         "OPERATOR_GITHUB_USERS": ",".join(sorted(config.operator_github_users)) or None,
         "OPERATOR_GITHUB_ORG": config.operator_github_org,
+        "WORKVM_SLOTS": None if config.workvm_slots is None else str(config.workvm_slots),
         "WORKVM_MAX_SIZE": None if config.workvm_max_size == "large" else config.workvm_max_size,
         "WORKVM_TEMPLATE": config.workvm_template,
         "BROWSER_SEARCH_URL": config.browser_search_url or None,

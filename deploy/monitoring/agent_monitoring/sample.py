@@ -2,8 +2,8 @@
 
     python -m agent_monitoring.sample --dir DIR [--capacity-low] [--interval S --count N]
 
-The snapshot has one device, a running VM with a working and an ended session, a pool VM whose probe failed and a
-stopped VM, so every metric of the table of 08-monitoring.md section 3 (with the ADR-042 name of the slot total and
+The snapshot has one device, a running VM with a working and an ended session, a pool VM whose probe failed, a
+stopped VM and four work VM slots, so every metric of the table of 08-monitoring.md section 3 (with the ADR-042 name of the slot total and
 a daily model spend) has at least one series. `--capacity-low` leaves no VM slot free (`agent_runner_device_capacity_low
 1`). The file is written like the runner writes it (`write_atomic`: temp file, mode 0644, `rename`), once, or
 `--count` times every `--interval` seconds with a fresh timestamp and growing counters.
@@ -23,6 +23,7 @@ from agent_runner.metrics.device import DeviceValues
 from agent_runner.metrics.session import SessionEntry
 from agent_runner.metrics.snapshot import DeviceEntry, Snapshot, VmEntry
 from agent_runner.vm.capacity import Capacity
+from agent_runner.workvm.manager import SlotState
 
 WG = "01930002-0000-7000-8000-00000000000a"
 WORKING = "01a1ee56-5e00-7003-8f1b-340691d99f03"
@@ -100,7 +101,19 @@ def snapshot(wall: float, step: int = 0, capacity_low: bool = False) -> Snapshot
         SessionEntry(ENDED, RUNNING_VM, "stopped", 60, None, values, False, True),
     )
     at = datetime.fromtimestamp(wall, UTC)
-    return Snapshot(wall=wall, at=at, device=device, vms=(running, pool, stopped), sessions=sessions)
+    slots = SlotState(
+        total=4,
+        held=4 if capacity_low else 2,
+        free=0 if capacity_low else 2,
+        stopped=1,
+        waiting=0,
+        memory_free_mib=0 if capacity_low else 16384,
+        cpu_load=0.25,
+        disk_used_gib=150,
+    )
+    return Snapshot(
+        wall=wall, at=at, device=device, vms=(running, pool, stopped), sessions=sessions, workvm_slots=slots
+    )
 
 
 def write(directory: Path, wall: float, step: int = 0, capacity_low: bool = False) -> Path:

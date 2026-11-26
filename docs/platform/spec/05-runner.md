@@ -68,6 +68,8 @@ Loaded once at start; a missing required or invalid value exits with `config_inv
 | `OPERATOR_GITHUB_TOKEN_FILE` / `OPERATOR_GITHUB_USERS` | empty / empty | the operator's own GitHub token (absolute path) and the operator's user ID (exactly one UUID; more is `config_invalid` `OPERATOR_GITHUB_USERS:one_user_only`, HOT-14); both or neither, platform devices only, refused on org devices (`config_invalid`); the file is checked at each read (§11.4, KOR-27, ADR-053) |
 | `BROWSER_IDLE_SECONDS` / `BROWSER_LIVE_MAX_KBPS` / `BROWSER_SEARCH_URL` | 600 / 3000 / empty | KOR-44: idle teardown of a platform browser session (60–3600, `browser.open` may set its own), the cap of the live picture's bandwidth (100–100000 kbit/s), the prepared search switch (an http(s) URL template with `{q}`; empty = off, question F9; 13-work-vm.md §13) |
 | `LOG_MAX_MIB` | 256 | KOR-43: the kept output of one test run or long work VM job, its last part (1–1000000; 13-work-vm.md §12.3) |
+| `WORKVM_IDLE_SECONDS` / `WORKVM_KEEP_STOPPED_SECONDS` | 600 / 86400 | work VMs (ADR-059 addendum 4, §3.7): an idle work VM is stopped and gives its slot back (60–604800); a stopped one keeps its disk that long (600–2592000); the other `WORKVM_*` settings: 13-work-vm.md |
+| `WORKVM_SLOTS` / `WORKVM_CPU_LOAD_MAX_PERCENT` | empty / 85 | work VMs (§3.7): empty = no upper bound, the free resources decide and the slot accounts follow the RAM; a number is an upper bound for special cases (0 = no work VMs); a new work VM only while the host's load per core is at most this percentage (10–100) |
 | `CONTEXT_INTERVAL_SECONDS` / `CONTEXT_CACHE_MIB` / `CONTEXT_WORKSPACE_MIB` / `CONTEXT_TRANSCRIPT_MIB` | 600 / 20480 / 4096 / 4096 | context checkpoints (§6.6, KOR-33): interval while working (30–86400), local encrypted cache cap (every object; the newest of each task is always kept), workspace above the limit is left out, transcript above the limit cannot be checkpointed |
 | `CONTEXT_WAIT_SECONDS` | 180 | how long a restore waits for the final checkpoint of the session it continues and retries transient hub failures (0–3600, §6.6) |
 | `OPERATOR_GITHUB_TOKEN_FILE` / `OPERATOR_GITHUB_USERS` / `OPERATOR_GITHUB_ORG` | empty / empty / empty | the operator's GitHub token (absolute path), the approved user IDs (comma-separated UUIDs) and the organization that owns the operator's account (an org UUID, KOR-47, ADR-078 §7); the file needs the users or the organization, each of them needs the file; platform devices only, refused on org devices (`config_invalid`); the file is checked at each read (§11.4, KOR-27, ADR-053) |
@@ -355,6 +357,83 @@ with `vm_upgrade_version` ≥ 2); those sessions move and continue without the s
 checkpoint of the session or its task, else fresh). The requests taken over are kept in
 `runner.golden_switch_request`, so a request still listed after a restart is no new one. Without a request such a VM
 stays as it is, and a start of the workgroup restarts it (§3.3 step 4).
+
+### 3.7 Work VM slots (ADR-059 addendum 4)
+
+Work VMs (13-work-vm.md) run in slots, one macOS account with its own Lima home and pinned SSH port each (13 §6.1).
+The slot assignment of `agent_runner/workvm/manager.py` is the only mechanism that hands out and frees slots; a slot
+counts only while its VM is needed, and **the free resources, not a fixed number, decide how many run**:
+
+- **Slot accounts** (`workvm.accounts.slot_count`): `WORKVM_SLOTS` when it is set (an optional upper bound for special
+  cases; 0 = no work VMs), else as many as the RAM above `MEMORY_RESERVE_MIB` could ever hold standard work VMs
+  (`(RAM - reserve) / 8192`, at least 1, at most 100) - isolation units that never limit before the resources do.
+  `agent-runner workvm install` creates them (again after more RAM: it adds the missing ones). Without `WORKVM_SLOTS`
+  the daemon offers work VMs once the first slot account exists (checked at the first use, once per daemon).
+- **Admission** (`WorkVms._fits`, for every new or restarted work VM and the work VM pool): after the start the RAM
+  above the reserve that the workgroup VMs and work VMs leave (the capacity calculation of §3.4) still holds one more
+  workgroup VM (`VM_MEMORY_MIB`), the host's 1-minute load per core is at most `WORKVM_CPU_LOAD_MAX_PERCENT` (default
+  85, 10–100), the disk quota `WORKVM_DISK_QUOTA_GIB` holds, and a slot account is free. Otherwise the request waits
+  in the queue (below).
+- **Workgroup VMs first**: the running task and session work VMs and the work VM pool are reported as yielding
+  (`Usage.yielding_vms`/`yielding_mib`, `workvm/capacity.py:USAGE`): they take no workgroup slot (`vm_slots_free` of
+  the capacity report is not reduced by them; `work_vms_running` still counts them). A workgroup VM start (§3.4
+  `_free_slot`) whose slot is free only because of them asks the areas' `RECLAIM` for `VM_MEMORY_MIB`
+  (`vm.slot_from_work_vms released_mib=`): `WorkVms.give_way` drops ready work VM pool entries, then stops idle work
+  VMs (`workvm.state` `stopped`, reason `idle`), then busy ones (no reason in the event, `runner.workvm stopped …
+  reason=workgroup_priority`; their running jobs `lost`), least recently used first (`runner.workvm gave_way
+  need_mib= released_mib=`). The workgroup pool refill uses only room nobody holds (`Capacity.slots_free_now`). Run and
+  browser VMs are not yielding. A work VM never runs on another device than its session (ADR-059 decision 11): a
+  request that does not fit waits; the hub places new sessions by the reported capacity.
+
+- **Held** by a work VM in `starting`, `running`, `stopping` or `deleting` and by a warm pool entry
+  (`workvm.records.SLOT_STATES`; unique index `workvm_slot_held`, migration `0038_workvm_slots`). A `stopped` VM keeps
+  its disk in its slot's Lima home and holds neither the slot nor RAM.
+- **Settings**: `WORKVM_IDLE_SECONDS` (default 600, 60–604800) and `WORKVM_KEEP_STOPPED_SECONDS` (default 86400,
+  600–2592000).
+- **Freed at once** when the task is closed (reconcile step `workvm`, `task_closed`) or the session ends (observer of
+  `session.state`, `session_ended`; the task VM when no session of the task is active any more).
+- **Freed when idle**: every minute the idle pass stops (`limactl stop`, `workvm.state` `stopped`, reason `idle`) a
+  task or session VM with no tool call for `WORKVM_IDLE_SECONDS`, no running job (`workvm-job list`) and no call in
+  progress. Idle is the runner's activity record (the start and the end of every call), never CPU. Run and browser VMs
+  belong to their owner (13 §12, §13) and are not stopped here.
+- **Stopped VMs**: the next tool call or `workvm.request` of the session starts it again with its disk (`created`
+  again, `created:false`). It starts only in its own slot (its disk is in that slot's Lima home; the host filter opens
+  only that slot's port for it): it waits in the queue until that slot is free and its RAM fits; a ready pool entry in
+  that slot gives the slot back. A VM that does not start is deleted (`failed`) and the call obtains a new one; a
+  call whose stopped VM still waits when the queue time ends answers `unavailable` ("The stopped work VM could not
+  start yet: …") and the VM stays stopped. A stopped VM is deleted after `WORKVM_KEEP_STOPPED_SECONDS` (`idle`), with
+  its session or task (above), when the disk quota needs its space for a waiting request (the oldest first, `idle`),
+  and at a restart. Every deletion is a `workvm.state` `deleted` event with its reason: nothing goes silently.
+- **New VMs** take the free slot with the fewest stopped VMs (then the lowest number), so the own slot of a stopped VM
+  is mostly free when it is needed.
+- **Queue** (`WORKVM_QUEUE_SECONDS`, 13 §2): requests wait in the order they came in. A request goes when every
+  request before it is a stopped VM whose own slot another VM holds (it could not start now anyway); a request that got
+  its slot keeps the ones behind it waiting until its VM runs. Every slot, RAM or place in the queue that becomes free
+  (a deletion, a stop, a pool entry dropped, a request leaving) wakes the waiting requests at once; the 2 s poll stays.
+  The waiting requests are mirrored in `runner.workvm_wait` (ticket, order, own slot of a stopped VM, since) for the
+  status; the mirror is display only.
+- **Reconciliation at start** (task `workvm`, before the first pass): every VM left over from before the restart is
+  deleted (`restart`, KONZEPT idea 44), every own `wvm-` instance without a row too, and the mirror rows of requests
+  of the old process are removed (`runner.workvm waits_cleared count=`).
+- **Slot pass** (task `workvm`, every minute after the idle pass): per slot `limactl list` (a slot whose listing fails
+  is skipped this time, `runner.workvm slot_check_failed slot= code=`), then for every row that is not `deleting` (the
+  sweep's) and not being started, stopped or deleted right now:
+  - instance missing → deleted (`failed`; its open runs `lost`);
+  - `starting` without a request that starts it → deleted (`failed`);
+  - `running`/`stopping` but the instance does not run → `stopped` (`workvm.state` `stopped`, reason `failed`; disk
+    kept); a run or browser VM is deleted instead (its owner obtains a new one);
+  - `stopping` and the instance runs (an interrupted stop) → `running` again (the idle pass decides);
+  - a `running` or `stopped` task VM whose task has no active session on the device, or session VM whose session is
+    final or unknown → deleted (`session_ended`; the end was missed).
+  Log `runner.workvm slot_released workvm_id= state= cause=instance_missing|start_interrupted|not_running|sessions_ended`
+  and `slot_settled`.
+- **Visible**: the chat shows `stopped` with reason `idle` as one quiet line ("Arbeits-VM angehalten, ungenutzt –
+  startet bei Bedarf neu"); the metrics `agent_runner_workvm_slots{state}` (`held`, `free`),
+  `agent_runner_workvm_requests_waiting` and `agent_runner_workvm_stopped` (08 §3); `workvm_status` reports a stopped
+  VM as `stopped`; the capacity metrics `agent_runner_workvm_memory_free_bytes`, `agent_runner_workvm_cpu_load_ratio`
+  and `agent_runner_workvm_disk_used_bytes` (08 §3); `agent-runner status` prints `runner.status.workvm slots=
+  cap=<n|none> held= free= stopped= waiting= oldest_wait_s= memory_free_mib= cpu_load_pct= cpu_load_max_pct=
+  disk_used_gib= disk_quota_gib=<n|none>` (not with `WORKVM_SLOTS=0`).
 
 ## 4. Sandbox (two independent layers, ADR-008)
 

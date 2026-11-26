@@ -10,6 +10,9 @@ With slot accounts the runner may not be able to read a slot's Lima home or its 
 only the runner's own processes); the probes then answer None and the entry still carries the configured memory and
 disk sizes, the state and the runtime since the VM was created (`uptime_seconds`, KONZEPT idea 46). A slot whose
 listing fails is left out of the host values (`runner.metrics workvm_list_failed slot=<n> code=<code>`).
+
+`slots` is the state of the work VM slots for the device metrics (`agent_runner_workvm_slots{state}`,
+`agent_runner_workvm_requests_waiting`, `agent_runner_workvm_stopped`; ADR-059 addendum 4).
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from agent_runner.metrics import vm
 from agent_runner.metrics.probes import Tools
 from agent_runner.vm.lima import Instance, LimaError
 from agent_runner.workvm import records
+from agent_runner.workvm.manager import SlotState
 from agent_runner.workvm.service import existing
 
 LIST_TIMEOUT_S = 10.0
@@ -44,6 +48,12 @@ class WorkvmEntry:
     uptime_seconds: int
     net_rx_bytes: int | None
     net_tx_bytes: int | None
+
+
+async def slots(context: Any) -> SlotState | None:
+    """The work VM slots held, free and waited for now (ADR-059 addendum 4); None without the daemon's work VMs."""
+    workvms = existing(context)
+    return None if workvms is None else await workvms.slot_state()
 
 
 async def entries(context: Any, tools: Tools, at: datetime, line: Any) -> tuple[WorkvmEntry, ...]:

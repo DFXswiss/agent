@@ -174,6 +174,17 @@ def capacity_usages(package: str = ROOT_PACKAGE) -> list[Callable[[Any], Awaitab
     return found
 
 
+def capacity_reclaimers(package: str = ROOT_PACKAGE) -> list[Callable[[Any, int], Awaitable[int]]]:
+    """The `RECLAIM` hooks of the areas (`async (context, need_mib) -> released_mib`: an area that reports yielding
+    usage gives room back to a workgroup VM, ADR-059 addendum 4), in area order."""
+    found: list[Callable[[Any, int], Awaitable[int]]] = []
+    for area, value in discover("capacity", "RECLAIM", package):
+        if not callable(value):
+            raise RunnerError("registry_invalid", f"{area}.capacity")
+        found.append(value)
+    return found
+
+
 def cli_registrars(package: str = ROOT_PACKAGE) -> list[tuple[str, Callable[[Any], None]]]:
     found: list[tuple[str, Callable[[Any], None]]] = []
     for area, value in discover("cli", "register", package):

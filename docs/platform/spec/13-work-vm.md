@@ -123,7 +123,10 @@ against a closed schema and treats any other answer as `unavailable`.
 
 ## 6. The outside boundary (threat model `docs/platform/security/work-vm-threat-model.md`)
 ### 6.1 Slot accounts
-- `AGENT_RUNNER_WORKVM_SLOTS` (default 0 = no work VMs; production e.g. 24) macOS accounts `<prefix>wvm00` …,
+- Slot accounts `<prefix>wvm00` … (ADR-059 addendum 4: `AGENT_RUNNER_WORKVM_SLOTS` empty by default = as many as the
+  RAM above `MEMORY_RESERVE_MIB` could hold standard work VMs, at most 100 - isolation units, not a limit: the free
+  RAM, CPU and disk decide how many VMs run, 05-runner.md §3.7; a number = an upper bound for special cases; 0 = no
+  work VMs) as macOS accounts,
   created by `agent-runner workvm install` (root): no login shell, hidden, own home `/var/agent-workvm/<account>`
   (0700) holding the Lima home `lima/` (short socket paths), on the APFS volume `AgentWorkVM` with a quota
   (`WORKVM_VOLUME_QUOTA_GIB`) so work VMs can never fill the device's main volume. `_config/` of each Lima home
@@ -134,7 +137,8 @@ against a closed schema and treats any other answer as `unavailable`.
   `/etc/sudoers.d/agent-runner-workvm` allows exactly that wrapper as the slot accounts and, as root, the five
   read-only `pfctl` commands of the boundary check.
 - Each slot has a pinned Lima SSH port `WORKVM_SSH_PORT_BASE + slot` (default base 47200, `ssh.localPort` in the
-  instance). A work VM of a slot always lives in that slot's Lima home; a slot holds at most one work VM.
+  instance). A work VM of a slot always lives in that slot's Lima home; a slot holds at most one work VM that is not
+  stopped (stopped VMs keep their disks there and start again only in that slot, 05-runner.md §3.7).
 
 ### 6.2 Host packet filter (pf anchor `com.apple/000.agent.workvm`)
 The main pf ruleset is **never loaded or changed** by the platform: the device's Cloudflare client hooks its own
@@ -233,19 +237,29 @@ filter all the same; a boundary by interface is left to a later package.
 `dns:` Cloudflare's two public resolvers (set per clone), no `param`; the clone gets fresh SSH host keys and
 machine-id at first boot (cloud-init new instance-id).
 ## 7. Capacity, lifetime, restart (temporary VMs, ADR-059 decisions 8 and 11)
-- RAM budget of 05 §3.4 shared: a work VM holds `memory_mib` while `starting|running|deleting`.
-- Queue: requests wait FIFO per device. An organization may hold at most `WORKVM_ORG_RAM_SHARE` (default 50 %) of
+- RAM budget of 05 §3.4 shared: a work VM holds `memory_mib` while `starting|running|deleting`. A new work VM is
+  admitted by the free resources (05 §3.7: RAM above the reserve with room for one more workgroup VM, CPU load below
+  `WORKVM_CPU_LOAD_MAX_PERCENT`, disk quota), never by a fixed number; workgroup VMs come first - running task and
+  session VMs give way when a workgroup VM needs their RAM.
+- Queue: requests wait FIFO per device; a freed slot wakes them at once, and a stopped VM waiting for its own slot
+  does not hold up the requests behind it (05-runner.md §3.7). An organization may hold at most `WORKVM_ORG_RAM_SHARE` (default 50 %) of
   the work VM RAM while others wait.
+- **Slots** (ADR-059 addendum 4, 05-runner.md §3.7): a slot is held only by a VM that is not stopped. An idle VM (no
+  call, no call in progress and no running job for `WORKVM_IDLE_SECONDS`, default 600) is **stopped**
+  (`workvm.state` `stopped`, reason `idle`; the chat line "Arbeits-VM angehalten, ungenutzt – startet bei Bedarf
+  neu"), keeps its disk and starts again in its own slot on the next call or request; the slot pass of the daemon
+  task frees slots whose VM is gone, no longer runs or whose sessions all ended.
 - **Teardown** (`limactl delete -f`, row `deleted`, `workvm.state` `deleted` with reason and runtime): `released`
-  (`workvm.release`), `idle` (no call and no running job for `WORKVM_IDLE_SECONDS`, default 1800), `session_ended`
+  (`workvm.release`), `idle` (a stopped VM after `WORKVM_KEEP_STOPPED_SECONDS`, default 86400, or the oldest stopped
+  VM when the disk quota needs its space for a waiting request), `session_ended`
   (scope `session`: its session reached a final state or `stopped`; scope `task`: no session of the task is in an
   active state any more), `task_closed` (the device state names the session's task closed, `task_closed: true`: the
   reconcile step `workvm` deletes every VM of the task at once, KOR-43; when the stop hint ends the task's session
   first, its VMs go with the session, `task_closed` when the runner already knew the task closed, else `session_ended`), `failed` (start failure, unhealthy helper),
   `restart` (the runner started and found it: no resume, KONZEPT idea 44), `run_ended` (the VM of one test run, §12),
   `credit_exhausted` (a run VM whose run the credit ended), `browser_closed`, `browser_idle` and `vm_lost` (browser VMs,
-  §13.2), `session_paused` (a stopped VM that stood
-  `WORKVM_IDLE_SECONDS` or gave its slot to a waiting request). Runs still `running` at teardown are recorded with
+  §13.2), `session_paused` (before ADR-059 addendum 4: a stopped VM that stood `WORKVM_IDLE_SECONDS` or gave its
+  slot to a waiting request; no longer written). Runs still `running` at teardown are recorded with
   state `lost`. The teardown is shielded from cancellation and waits (at most 300 s) for the log captures of the VM.
   When Lima fails to delete, the row stays `deleting` (its slot is not given back) and the daemon task's sweep deletes
   it again every minute; the sweep also deletes own `wvm-` instances without a live row or pool entry.
@@ -253,9 +267,10 @@ machine-id at first boot (cloud-init new instance-id).
   (`limactl stop`, state `stopped`, `workvm.state` `stopped` with reason `session_paused`) – its session VM, and the
   task VM when no other session of the task is active – unless a job still runs in it. On a platform device the
   reconcile step `workvm` stops every running work VM of an organization whose credit is used up (reason
-  `credit_exhausted`). A stopped VM holds no RAM and costs no runtime; the next call or `workvm.request` of the session
-  starts it again (state `created` again; without credit: `credit_exhausted` / `unavailable`), or deletes it and gets a
-  new one when its RAM does not fit. It is deleted after `WORKVM_IDLE_SECONDS` stopped.
+  `credit_exhausted`). A stopped VM holds no slot, no RAM and costs no runtime; the next call or `workvm.request` of
+  the session starts it again (state `created` again; without credit: `credit_exhausted` / `unavailable`) through the
+  queue, in its own slot once that slot is free and its RAM fits; a VM that does not start is deleted (`failed`) and a
+  new one obtained. It is deleted after `WORKVM_KEEP_STOPPED_SECONDS` stopped.
 - Implicit request: `workvm_exec` and `workvm_browse` of a session without a VM create a standard task VM first
   (same limits, queue and boundary checks as `workvm.request`; announced by the `workvm.state` `starting` event, so
   the panel counts down, and recorded by the `created` event with `implicit: true`).

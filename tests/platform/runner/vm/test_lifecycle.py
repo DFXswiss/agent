@@ -17,6 +17,7 @@ import pytest
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink import cursor
 from agent_runner.vm import lifecycle, records
+from agent_runner.vm.capacity import Usage
 from agent_runner.vm.lifecycle import VmManager
 from agent_runner.vm.pool import VmSettings
 from agent_runner.vm.records import GoldenRef
@@ -347,6 +348,24 @@ def test_lru_stop_frees_a_slot(harness: Harness) -> None:
     states = {row["id"]: row["state"] for row in harness.vms()}
     assert states == {a.id: "stopped", b.id: "running", c.id: "running"}
     assert ("vm.lru_stop", {"vm_id": a.id}) in harness.logs
+
+
+def test_work_vms_give_way_to_a_workgroup_vm(harness: Harness) -> None:
+    """ADR-059 addendum 4: the only slot's RAM is held by a work VM that yields; the workgroup VM gets it."""
+    harness.add_golden()
+    harness.physical_mib = 32768 + 8192
+    harness.settings = settings(pool_size=1)
+    harness.other = Usage(vms=1, memory_mib=8192, yielding_vms=1, yielding_mib=8192)
+
+    async def body(manager: VmManager) -> Any:
+        filled = await manager.refill()  # a warm VM is no reason to make work VMs give way
+        return filled, await manager.ensure_vm(ORG, WG_A)
+
+    filled, row = harness.run(body)
+    assert filled == 0
+    assert row.state == "running"
+    assert harness.reclaimed == [8192]
+    assert ("vm.slot_from_work_vms", {"released_mib": 8192}) in harness.logs
 
 
 def test_capacity_exhausted(harness: Harness) -> None:

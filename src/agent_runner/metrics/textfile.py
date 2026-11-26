@@ -23,6 +23,11 @@ The operator's subscriptions (KOR-23, ADR-052; only while `OPERATOR_SUBSCRIPTION
 deferred, ignored), `agent_runner_operator_subscription_sessions{file}` (the label is the file name without
 `.token`, chosen by the operator; never a token or an organization) and
 `agent_runner_operator_subscription_newest_change_age_seconds` (left out when no file was seen).
+
+The work VM slots (ADR-059 addendum 4; only on a device with work VMs, `Snapshot.workvm_slots`):
+`agent_runner_workvm_slots{state}` (`held`, `free`), `agent_runner_workvm_requests_waiting`,
+`agent_runner_workvm_stopped` and the capacity that admits new work VMs: `agent_runner_workvm_memory_free_bytes`,
+`agent_runner_workvm_cpu_load_ratio`, `agent_runner_workvm_disk_used_bytes`.
 """
 
 from __future__ import annotations
@@ -155,6 +160,30 @@ def _device(snapshot: Snapshot, spend: Mapping[str, float] | None) -> list[Metri
     return out
 
 
+def _workvm_slots(snapshot: Snapshot) -> list[Metric]:
+    """The work VM slots (ADR-059 addendum 4), only on a device with work VMs."""
+    slots = snapshot.workvm_slots
+    if slots is None:
+        return []
+    held = _gauge("agent_runner_workvm_slots", "Work VM slots by state (held by a VM that is not stopped, free).")
+    held.add((("state", "held"),), slots.held)
+    held.add((("state", "free"),), slots.free)
+    waiting = _gauge("agent_runner_workvm_requests_waiting", "Requests waiting for a work VM slot.")
+    waiting.add((), slots.waiting)
+    stopped = _gauge("agent_runner_workvm_stopped", "Stopped work VMs (disk kept, no slot held).")
+    stopped.add((), slots.stopped)
+    memory = _gauge(
+        "agent_runner_workvm_memory_free_bytes",
+        "RAM a new work VM may use (above the reserve, less room for one more workgroup VM).",
+    )
+    memory.add((), slots.memory_free_mib * MIB)
+    cpu = _gauge("agent_runner_workvm_cpu_load_ratio", "Host CPU load per core that admits new work VMs.")
+    cpu.add((), round(slots.cpu_load, 3))
+    disk = _gauge("agent_runner_workvm_disk_used_bytes", "Disk allocated to work VMs and their pool.")
+    disk.add((), slots.disk_used_gib * 1024 * MIB)
+    return [held, waiting, stopped, memory, cpu, disk]
+
+
 def _vms(snapshot: Snapshot) -> list[Metric]:
     gauges = {
         "probe_ok": _gauge("agent_runner_vm_probe_ok", "1 when the guest of a VM that should run answered."),
@@ -230,7 +259,7 @@ def _operator(summary: Summary) -> list[Metric]:
 def metrics_of(
     snapshot: Snapshot, spend: Mapping[str, float] | None = None, operator: Summary | None = None
 ) -> list[Metric]:
-    """Every metric of 08-monitoring.md section 3 for `snapshot` (device, VMs, sessions in that order), then the
-    operator's subscriptions when they are configured."""
-    found = [*_device(snapshot, spend), *_vms(snapshot), *_sessions(snapshot)]
+    """Every metric of 08-monitoring.md section 3 for `snapshot` (device, work VM slots, VMs, sessions in that order),
+    then the operator's subscriptions when they are configured."""
+    found = [*_device(snapshot, spend), *_workvm_slots(snapshot), *_vms(snapshot), *_sessions(snapshot)]
     return found if operator is None else [*found, *_operator(operator)]
