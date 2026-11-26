@@ -362,9 +362,9 @@ way of working to a task (for example `a38`). None is ever on by itself; choose 
 
 ```sh
 agent-platform modes list                                         # the catalogue: one line per mode, what it needs
-agent-platform task create --wg <wg_id> --text - --mode <name>  < prompt.txt   # choose modes with the task
-agent-platform task mode on --task <task_id> --mode <name>        # several --mode: in this order, needed ones first
-agent-platform task mode off --task <task_id> --mode <name>       # off at once for new steps
+agent-platform task create --wg <wg_id> --text - --mode <mode>  < prompt.txt   # choose modes with the task
+agent-platform task mode on --task <task_id> --mode <mode>        # several --mode: in this order, needed ones first
+agent-platform task mode off --task <task_id> --mode <mode>       # off at once for new steps
 ```
 
 `task show` lists the modes that are on (`modes`, and `modes_line` such as `Modes: test (tool, chosen by Ada)`). A mode

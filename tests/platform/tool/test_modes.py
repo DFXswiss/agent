@@ -13,7 +13,7 @@ from agent_platform import connector, errors, modes, relay
 from agent_platform.account import Account, Names
 from agent_platform.errors import PlatformError
 from agent_runner.crypto.ids import uuid7
-from agent_runner.sync import http as sync_http
+from agent_runner.sync import codes as sync_codes
 
 from .conftest import Tool
 from .hubfake import HubFake, User
@@ -60,11 +60,9 @@ def mode_routes(hub: HubFake, user: str = "0193002d-0000-7000-8000-000000000001"
 
 
 @pytest.fixture
-def mode_codes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The hub codes of ADR-098 in the signed client's closed list (as `contracts/enums/error-codes.json` has them)."""
-    monkeypatch.setattr(
-        sync_http, "HUB_ERROR_CODES", sync_http.HUB_ERROR_CODES | {"mode_needs", "mode_needs_instruction"}
-    )
+def mode_codes() -> None:
+    """The hub codes of ADR-098 are in the signed client's closed list (as `contracts/enums/error-codes.json`)."""
+    assert {"mode_needs", "mode_needs_instruction"} <= sync_codes.HUB_ERROR_CODES
 
 
 # --- the catalogue ---
@@ -141,7 +139,11 @@ def test_task_mode_bad_input(tool: Tool, hub: HubFake, account: User) -> None:
 def test_task_mode_refuses_a_malformed_answer(tool: Tool, hub: HubFake, account: User) -> None:
     task = uuid7()
     for answer in ({"mode": None}, {"mode": task_mode("other", account.id)}):
-        hub.hooks[("PUT", f"/v1/tasks/{task}/modes/test")] = lambda body, request, answer=answer: (200, answer)
+
+        def answered(body: Any, request: Any, found: dict[str, Any] = answer) -> tuple[int, dict[str, Any]]:
+            return 200, found
+
+        hub.hooks[("PUT", f"/v1/tasks/{task}/modes/test")] = answered
         assert tool.run("task", "mode", "on", "--task", task, "--mode", "test")[1]["reason"] == "response_invalid"
 
 

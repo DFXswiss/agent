@@ -144,9 +144,6 @@ export async function loadModes(context: RequestsContext, again = true): Promise
   setModes(store, catalogue === null ? { status: 'error', catalogue: [] } : { status: 'ready', catalogue });
 }
 
-const modePath = (task: string, mode: string) =>
-  `/v1/tasks/${encodeURIComponent(task)}/modes/${encodeURIComponent(mode)}`;
-
 /** Replaces the modes of the stored task row (when it is still the same user's store). */
 function follow(context: RequestsContext, generation: number, task: string, change: (modes: TaskMode[]) => TaskMode[]) {
   const row = context.store.getState().tasks.tasks[task];
@@ -157,7 +154,11 @@ function follow(context: RequestsContext, generation: number, task: string, chan
 /** `PUT /v1/tasks/{task}/modes/{mode}`: the mode is on (an answer off the contract leaves the row to the live frame). */
 export async function switchModeOn(context: RequestsContext, task: string, mode: string): Promise<void> {
   const generation = context.store.generation;
-  const answer = await context.client.request('PUT', modePath(task, mode), { body: {} });
+  const answer = await context.client.request(
+    'PUT',
+    `/v1/tasks/${encodeURIComponent(task)}/modes/${encodeURIComponent(mode)}`,
+    { body: {} },
+  );
   const on = isRecord(answer) ? taskModeOf(answer.mode) : null;
   if (on === null) return;
   follow(context, generation, task, (modes) => [...modes.filter((item) => item.mode !== on.mode), on]);
@@ -166,7 +167,7 @@ export async function switchModeOn(context: RequestsContext, task: string, mode:
 /** `DELETE /v1/tasks/{task}/modes/{mode}`: the mode is off (also when it was off already). */
 export async function switchModeOff(context: RequestsContext, task: string, mode: string): Promise<void> {
   const generation = context.store.generation;
-  await context.client.request('DELETE', modePath(task, mode));
+  await context.client.request('DELETE', `/v1/tasks/${encodeURIComponent(task)}/modes/${encodeURIComponent(mode)}`);
   follow(context, generation, task, (modes) => modes.filter((item) => item.mode !== mode));
 }
 

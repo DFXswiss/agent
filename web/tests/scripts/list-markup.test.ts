@@ -36,6 +36,15 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
   },
   'src/ui/screens/whiteboard/WhiteboardScreen.tsx': { count: 1, reason: 'the fixed whiteboard levels (org, group…)' },
   'src/ui/composer/Composer.tsx': { count: 1, reason: 'chips of the composer (fixed suggestions)' },
+  'src/ui/composer/ModeChoice.tsx': {
+    count: 2,
+    reason: 'the working modes of the catalogue and the modes one needs (at most 64, ADR-098)',
+  },
+  'src/ui/modes/ModeChips.tsx': { count: 1, reason: 'the working modes that are on for a task (at most 64, ADR-098)' },
+  'src/ui/screens/task/TaskModes.tsx': {
+    count: 2,
+    reason: 'the working modes of a task and those of the catalogue it can switch on (at most 64, ADR-098)',
+  },
   'src/ui/screens/security/SecurityScreen.tsx': { count: 1, reason: 'static points of the security page' },
   'src/ui/screens/errors/Unsupported.tsx': { count: 1, reason: 'the list of supported browsers (static)' },
   'src/ui/screens/wg-settings/WgSettingsScreen.tsx': {

@@ -47,6 +47,13 @@ def test_only_the_ways_of_the_adr_switch_a_mode_on(repo_root: Path) -> None:
     assert "if modes:" in service  # task creation chooses only the modes the request names
 
 
+def test_drivers_run_no_repository_code(repo_root: Path) -> None:
+    """ADR-098 section 4: a driver starts no process and runs no shell; repository code runs only in test VMs."""
+    forbidden = re.compile(r"\bsubprocess\b|create_subprocess|os\.system|os\.exec|os\.spawn|\bpty\b|\bshlex\b")
+    for path in _python(repo_root / "src/agent_runner/modes"):
+        assert forbidden.search(path.read_text(encoding="utf-8")) is None, path.name
+
+
 def test_the_runner_reaches_the_device_route_only_from_the_executor(repo_root: Path) -> None:
     users = {
         str(path.relative_to(repo_root))
