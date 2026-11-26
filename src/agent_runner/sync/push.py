@@ -30,8 +30,17 @@ Answer handling:
   `expected` (a hub restored from an export older than the retention of acknowledged items, KOR-10) and the hub's
   `GET /v1/device/state` confirms the position, the stored items from there on are renumbered to follow it and the
   pruned ones are reported lost (`outbox.realign`); pushing goes on. Unconfirmed, the push is retried.
-- `409 origin_seq_conflict` is fatal: `sync_fatal` is persisted, `runner.alert origin_seq_conflict` is logged, the
-  metric flag `fatal` is set and `SyncFatal` stops the `sync` task (sessions keep running; an operator clears it).
+- `409 origin_seq_conflict` after a power cut that cost the store its newest commits (HOT-25: the hub has items the
+  store lost, and the store numbered new items the same) is repaired once per process: when no push of this process
+  was answered yet, `GET /v1/device/state` confirms that the hub is at or past the first item of the batch, the first
+  item after `pushed_origin_seq` is `pushed_origin_seq + 1` and the hub is at most `LOSS_LIMIT` items ahead, the
+  runner takes the hub's position (`outbox.adopt_after_loss`: its unacknowledged items move behind it, audit
+  `runner.alert` `outbox_conflict_recovered` with the number of lost items, log `runner.alert
+  outbox_conflict_recovered pushed=P hub=L lost=N`) and pushes on. Every other conflict is real (two devices with one
+  identity: it comes again or after answered pushes; a store from an old backup: far behind) and fatal:
+  `sync_fatal` is persisted, `runner.sync conflict_fatal reason=<why>` and `runner.alert origin_seq_conflict` are
+  logged, the metric flag `fatal` is set and `SyncFatal` stops the `sync` task (sessions keep running; an operator
+  clears it).
 - Transport errors (unreachable hub, answers that do not verify) and other refusals are retried by `run` with
   backoff 1 s -> 30 s (±20 %); `429` waits for `Retry-After`.
 
@@ -87,6 +96,9 @@ CORRUPT = "outbox_corrupt"
 ALERT_STATUSES = frozenset({400, 413})
 """Batch-level refusals that repeat on every retry of the same batch: retried, but each raises `runner.alert`."""
 GAP = "origin_seq_gap"
+LOSS_LIMIT = MAX_ITEMS
+"""The most items a power cut may have taken from the store for a conflict to be repaired (HOT-25): the commits of the
+last moments, not the hours of an old backup."""
 STATUSES = frozenset({"ok", "replayed", "rejected", "reseal"})
 _ENVELOPE_BYTES = len(b'{"items":[]}')
 
@@ -160,6 +172,8 @@ class Pusher:
         # origin_seq -> refused epoch of items the hub answered with `reseal` (lost on restart: the hub asks again).
         self.reseal: dict[int, int] = {}
         self.fatal: str | None = None
+        # an `origin_seq_conflict` may be repaired only before the first answered push of this process, and once
+        self.conflict_repairable = True
         self.wake = asyncio.Event()
         self.lock = asyncio.Lock()
         self._last_start: float | None = None
@@ -348,6 +362,47 @@ class Pusher:
             self.log.flush()
         return PushOutcome(more=True)
 
+    async def _conflict(self, pushed: int, first: int) -> PushOutcome:
+        """`origin_seq_conflict` for the batch starting at `first`: repaired when it is a lost tail, else fatal."""
+        reason, hub_last = await self._conflict_reason(pushed, first)
+        if reason is None:
+            async with self.pool.connection() as conn:
+                try:
+                    lost = await outbox.adopt_after_loss(conn, self.storage_key, hub_last)
+                except CryptoError:
+                    await conn.rollback()
+                    lost, corrupt = None, True
+                else:
+                    corrupt = False
+            if corrupt:
+                raise await self._fail(CORRUPT)
+            reason = "not_contiguous" if lost is None else None
+        if reason is not None:
+            self.line(f"conflict_fatal reason={reason}")
+            raise await self._fail(CONFLICT)
+        self.conflict_repairable = False
+        self.reseal.clear()  # numbers moved: a pending reseal named an item that has another number now
+        self.log.write(f"runner.alert {outbox.CONFLICT_ALERT} pushed={pushed} hub={hub_last} lost={lost}\n")
+        self.log.flush()
+        return PushOutcome(more=True)
+
+    async def _conflict_reason(self, pushed: int, first: int) -> tuple[str | None, int]:
+        """Why the conflict cannot be a lost tail (None when it may be) and the hub's confirmed position."""
+        if not self.conflict_repairable:
+            return "after_answer", 0
+        if first != pushed + 1:
+            return "not_contiguous", 0
+        state = await self.client.request("GET", STATE_TARGET)
+        last = _int(state.get("last_origin_seq"))
+        if state.get("state") != "active" or last is None:
+            self.line("conflict_unconfirmed")
+            raise HubTransportError("position_unconfirmed")
+        if last < first:
+            return "hub_behind", last
+        if last - pushed > LOSS_LIMIT:
+            return "too_far", last
+        return None, last
+
     async def push_once(self) -> PushOutcome:
         """Send at most one batch; see the module docstring for the answer handling."""
         async with self.lock:
@@ -364,7 +419,7 @@ class Pusher:
                 answer = await self._post({"items": batch.wire})
             except HubRefusal as refusal:
                 if refusal.code == CONFLICT:
-                    raise await self._fail(CONFLICT) from None
+                    return await self._conflict(pushed, batch.wire[0]["origin_seq"])
                 if refusal.code == GAP:
                     return await self._gap(refusal, pushed)
                 raise
@@ -423,6 +478,7 @@ class Pusher:
         return requests[0].result()  # raises the first request's error
 
     async def _apply(self, answer: dict[str, object], pushed: int, batch: _Batch) -> PushOutcome:
+        self.conflict_repairable = False
         first, last = batch.wire[0]["origin_seq"], batch.wire[-1]["origin_seq"]
         acked = _int(answer.get("acked_through"))
         results = answer.get("results")
