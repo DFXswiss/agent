@@ -787,7 +787,10 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   Anmeldungen je Inhaber und Messung, Verwendung je Abo und Umzug von den Token-Dateien; die Ansicht in der
   Oberfläche: [ADR-091](adr/091-subscriptions-at-a-glance.md) (KOR-68); Anmeldung auf der Seite „Meine Abos“ („Abo
   hinzufügen“, „Jetzt anmelden“) und Verwaltung im Abschnitt „Claude-Abos“ der Einstellungen.
-### E-30 – Alle selbst gehosteten GitHub-Actions-Läufe über agent.dfx.swiss
+
+<a id="e-32"></a>
+
+### E-32 – Alle selbst gehosteten GitHub-Actions-Läufe über agent.dfx.swiss
 
 - **Datum:** 2026-11-25
 - **Regel:** Alle selbst gehosteten GitHub-Actions-Läufe der DFX-Organisationen laufen über agent.dfx.swiss; das
@@ -807,14 +810,15 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   Inhalte);
   [§9 Punkt 5](#k-9-b5), [§10 Punkt 3](#k-10-b3) und [§10 Punkt 6](#k-10-b6) (git und freie Shell sind
   Claude-Sessions verboten, ein CI-Gast braucht sie); [§6 Punkt 4](#k-6-b4) und [§11](#k-11) (Audit je
-  Aktion mit Akteur, Zeitpunkt, Task, Session und Workgroup; ein CI-Job hat keine davon); [§10 Punkt 8](#k-10-b8)
-  (Protokollierung blockierter Versuche); [E-10](#e-10) (Ausgang), [E-11](#e-11) (Freigaben), [E-25](#e-25) (Härtung nur auf Bestellung);
-  [A16](#a-16) (Workflows); [Idee 46](#k-idee-46) und [Idee 47](#k-idee-47) (Abrechnung).
+  Aktion mit Akteur, Zeitpunkt, Task, Session, Workgroup, Gerät, Ziel, Ergebnis und Änderungen; ein CI-Job hat
+  Akteur (der GitHub-Auslöser), Zeitpunkt, Gerät, Ziel und Ergebnis, aber keinen Task, keine Session und keine
+  Workgroup); [§10 Punkt 8](#k-10-b8) (Protokollierung blockierter Versuche); [E-10](#e-10) (Ausgang),
+  [E-11](#e-11) (Freigaben), [E-25](#e-25) (Härtung nur auf Bestellung); [A16](#a-16) (Workflows); [Idee 46](#k-idee-46) und [Idee 47](#k-idee-47) (Abrechnung).
 - **Umsetzung:** offen – Konzept [spec/16-ci-runners.md](spec/16-ci-runners.md); Entscheide offen.
 
-<a id="e-31"></a>
+<a id="e-33"></a>
 
-### E-31 – Eine gemeinsame Kapazität: alle Rechner gehören agent.dfx.swiss, Runner werden dort bezogen
+### E-33 – Eine gemeinsame Kapazität: alle Rechner gehören agent.dfx.swiss, Runner werden dort bezogen
 
 - **Datum:** 2026-11-25
 - **Regel:** Es gibt keine eigenen Rechner für selbst gehostete Runner neben der Plattform; die gesamte
@@ -822,9 +826,9 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „heute haben wir server für agent und server für self hostet runner, das ist inneffizient, ich will
   alle meine server kapazitäten an agent geben und wenn ich einen self hostet runner brauche dann diesen via agent
   beziehen“
-- **Bezug:** dass der Runner eine VM aus demselben Pool wie die Arbeits-VMs ist, legt [A20](#a-20) aus. Ergänzt
-  [E-30](#e-30) und [§3 Punkt 3](#k-3-b3) (DFX stellt eigene Ausführungsserver); ersetzt die
-  Aufteilung der Ausführungsserver in [§3 Punkt 8](#k-3-b8) (initiale Serverzuordnung: ein Server für die
+- **Bezug:** dass der Runner eine VM aus demselben Pool wie die Arbeits-VMs ist, legte [A20](#a-20) aus; entschieden
+  durch [E-34](#e-34). Ergänzt [E-32](#e-32) und [§3 Punkt 3](#k-3-b3) (DFX stellt eigene Ausführungsserver);
+  ersetzt die Aufteilung der Ausführungsserver in [§3 Punkt 8](#k-3-b8) (initiale Serverzuordnung: ein Server für die
   DFX-Cloud-Sessions), soweit sie Kapazität ausserhalb der Plattform voraussetzt; der Hub-Teil bleibt. Betrifft
   [Idee 38](#k-idee-38) (Gerätewahl nach freier Kapazität), [§7 Punkt 6](#k-7-b6) (kapazitätsbasierte Verteilung)
   und [E-02](#e-02) (klare Meldung bei erreichter Kapazität). In Spannung zu [E-25](#e-25) (Härtung nur auf
@@ -869,6 +873,23 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   [Idee 34](#k-idee-34).
 - **Umsetzung:** offen – Zielbild, Wahl und Abbaupfad [ADR-098](adr/098-working-modes.md) (KOR-72); gebaut wird in
   den dort in §9 genannten Paketen.
+- **Umsetzung:** offen – Bestand, Zielbild und Paketplan in KOR-72.
+<a id="e-34"></a>
+
+### E-34 – CI-Jobs teilen die Geräte mit den Arbeitsbereichen
+
+- **Datum:** 2026-11-26
+- **Regel:** CI-Jobs, auch solche mit fremdem PR-Code, laufen auf denselben Geräten wie die Arbeits-VMs der
+  Workgroups; es gibt kein eigenes CI-Gerät, auch nicht innerhalb der Plattform.
+- **Wortlaut:** Frage: „Ich hatte deinen Entscheid ‚alle Kapazität an agent‘ so ausgelegt, dass CI-Jobs (auch fremder
+  PR-Code) auf denselben Geräten laufen wie die Agent-Arbeitsbereiche. Ein eigenes CI-Gerät innerhalb von
+  agent.dfx.swiss wäre aber auch ‚Kapazität von agent‘ und trennt fremden Code von Kundendaten. Was gilt?“ –
+  Antwort: „Alles teilen – Du entscheidest jetzt: CI-Jobs laufen auf denselben Geräten wie die
+  Agent-Arbeitsbereiche. Wird als dein Entscheid (neue Regel) eingetragen.“
+- **Bezug:** ergänzt [E-33](#e-33); macht [A20](#a-20) zum Entscheid. In Spannung mit der Sicherheitsempfehlung der
+  Recherche (Trennung fremden Codes vom Klartext der Workgroups): das Gate U bleibt Empfehlung (D-7, D-20 in
+  [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)); [E-25](#e-25) (Härtung nur auf Bestellung).
+- **Umsetzung:** offen – [spec/16-ci-runners.md](spec/16-ci-runners.md).
 
 <a id="e-33"></a>
 
@@ -978,6 +999,7 @@ ausdrückliche Aussage gilt, [E-01](#e-01)).
   Wirkung tragen Operationen, Prüfurteile, Merge-Kriterien und die Treiber der Arbeitsweisen. Umgesetzt mit
   [ADR-098](adr/098-working-modes.md).
 - **A19 – Eine VM je CI-Job:** Jeder selbst gehostete GitHub-Actions-Job ([E-30](#e-30)) läuft in einer frischen VM,
+- **A19 – Eine VM je CI-Job:** Jeder selbst gehostete GitHub-Actions-Job ([E-32](#e-32)) läuft in einer frischen VM,
   die danach gelöscht wird – Empfehlung der Recherche vom 2026-11-25 und GitHubs Empfehlung für Einmal-Runner, nicht
   Wortlaut des Auftraggebers. Diese Auslegung betrifft nur „eine VM je Job“. Läufe, die das Gerät selbst ändern oder
   prüfen (gerätegebundene Läufe), erfasst sie nicht: Eine VM ohne Freigaben sieht das Gerät nicht, und ein Rückweg aus
@@ -985,10 +1007,10 @@ ausdrückliche Aussage gilt, [E-01](#e-01)).
   ([spec/16-ci-runners.md §1](spec/16-ci-runners.md#1-purpose-and-scope)). Ob sie ausserhalb der Plattform laufen
   dürfen, ist offen (Entscheid D-1, [offene Abweichungen](#d-offen)).
 <a id="a-20"></a>
-- **A20 – Runner als VM aus dem gemeinsamen Pool:** Ein über die Plattform bezogener Runner ([E-31](#e-31)) ist eine
-  VM, und sie läuft auf denselben Geräten, aus demselben Pool wie die Arbeits-VMs – nicht Wortlaut des Auftraggebers.
-  Begründung: folgt aus [A19](#a-19) (eine VM je Job) und dem Wortlaut „alle meine server kapazitäten an agent“, der
-  keine Kapazität für einen getrennten Runner-Pool lässt
+- **A20 – Runner als VM aus dem gemeinsamen Pool:** Ein über die Plattform bezogener Runner ([E-33](#e-33)) ist eine
+  VM, und sie läuft auf denselben Geräten, aus demselben Pool wie die Arbeits-VMs. Die VM folgt aus [A19](#a-19) (eine
+  VM je Job); dass sie auf denselben Geräten läuft, ist entschieden durch [E-34](#e-34) (2026-11-26) und gilt
+  seither als Regel, nicht mehr als Auslegung ([Teil D](#teil-d--pflege) Punkt 4); der Anker bleibt für Verweise
   ([spec/16-ci-runners.md §6.6](spec/16-ci-runners.md#66-shared-capacity)).
 
 ## Teil D – Pflege
@@ -1035,10 +1057,9 @@ Stand 2026-11-26. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber nennt, welche Schalter umgelegt werden (gebaut, [ADR-079](adr/079-no-approval-as-precondition.md); ein Startguthaben gibt es nicht, [E-14](#e-14), entschieden 2026-11-25); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
-| [E-30](#e-30), [A19](#a-19) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Entscheide des Auftraggebers ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)), danach Bau |
-| [E-31](#e-31), [A20](#a-20) Gemeinsame Kapazität | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | wie [E-30](#e-30) ([spec/16-ci-runners.md §6.6](spec/16-ci-runners.md#66-shared-capacity)) |
-| [E-30](#e-30), [E-31](#e-31) gerätegebundene Läufe | Gerätegebundene Läufe (Deploy) laufen heute auf einem Runner ausserhalb der Plattform; das widerspricht E-30 und E-31, und [A19](#a-19) erfasst sie nicht | Entscheid D-1 des Auftraggebers ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)) |
-| [A1](#a-1) mit [Idee 26](#k-idee-26) | Subagenten haben die Rechte des Task-Besitzers (entspricht A1); Rollen als freiwillige Einschränkung fehlen | KOR-51 |
+| [E-32](#e-32), [A19](#a-19) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Entscheide des Auftraggebers ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)), danach Bau |
+| [E-33](#e-33), [E-34](#e-34) Gemeinsame Kapazität ([A20](#a-20)) | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | wie [E-32](#e-32) ([spec/16-ci-runners.md §6.6](spec/16-ci-runners.md#66-shared-capacity)) |
+| [E-32](#e-32), [E-33](#e-33) gerätegebundene Läufe | Gerätegebundene Läufe (Deploy) laufen heute auf einem Runner ausserhalb der Plattform; das widerspricht E-32 und E-33, und [A19](#a-19) erfasst sie nicht | Entscheid D-1 des Auftraggebers ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)) |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |
 | [A10](#a-10) Subagenten | Ein Subagent endet nach einem Turn und bekommt keine Folge-Anweisung | KOR-45 |

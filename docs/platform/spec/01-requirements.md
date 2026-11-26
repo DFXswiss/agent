@@ -319,6 +319,9 @@ interpretations A1–A20 (part C) have no rows of their own; the rows above and 
 | E-31 | [E-31](../KONZEPT.md#e-31) | One shared capacity: no own machines for self-hosted runners next to the platform; the operator's whole computing capacity belongs to agent.dfx.swiss, and a runner is obtained on request as a VM from the same pool as the work VMs. | offen | concept [16-ci-runners.md](16-ci-runners.md) (§6.6 there) |
 | E-30 | [E-30](../KONZEPT.md#e-30) | All self-hosted GitHub Actions runs of the DFX organisations run through agent.dfx.swiss. | offen | concept [16-ci-runners.md](16-ci-runners.md), decisions open (§13 there); note: one VM per job is interpretation [A19](../KONZEPT.md#a-19); host-bound jobs are not covered by it and are an open deviation (decision D-1 there, [KONZEPT part D](../KONZEPT.md#d-offen)) |
 | E-31 | [E-31](../KONZEPT.md#e-31) | One shared capacity: no own machines for self-hosted runners next to the platform; the operator's whole computing capacity belongs to agent.dfx.swiss, and a runner is obtained through the platform. | offen | concept [16-ci-runners.md](16-ci-runners.md) (§6.6 there); note: a runner as a VM from the same pool as the work VMs is interpretation [A20](../KONZEPT.md#a-20); host-bound jobs: decision D-1 there, [KONZEPT part D](../KONZEPT.md#d-offen) |
+| E-32 | [E-32](../KONZEPT.md#e-32) | All self-hosted GitHub Actions runs of the DFX organisations run through agent.dfx.swiss. | offen | concept [16-ci-runners.md](16-ci-runners.md), decisions open (§13 there); note: one VM per job is interpretation [A19](../KONZEPT.md#a-19); host-bound jobs are not covered by it and are an open deviation (decision D-1 there, [KONZEPT part D](../KONZEPT.md#d-offen)) |
+| E-33 | [E-33](../KONZEPT.md#e-33) | One shared capacity: no own machines for self-hosted runners next to the platform; the operator's whole computing capacity belongs to agent.dfx.swiss, and a runner is obtained through the platform. | offen | concept [16-ci-runners.md](16-ci-runners.md) (§6.6 there); note: a runner as a VM from the same pool as the work VMs was interpretation [A20](../KONZEPT.md#a-20), decided by [E-34](../KONZEPT.md#e-34); host-bound jobs: decision D-1 there, [KONZEPT part D](../KONZEPT.md#d-offen) |
+| E-34 | [E-34](../KONZEPT.md#e-34) | CI jobs, also with foreign PR code, run on the same devices as the work VMs of the workgroups; there is no own CI device, not even inside the platform. | offen | concept [16-ci-runners.md](16-ci-runners.md) (§6.6, §9 there); gate U stays a recommendation (decisions D-7, D-20 there) |
 
 ## R-P Assignment guardrails (`PROJECT.md`)
 
@@ -360,7 +363,7 @@ interpretations A1–A20 (part C) have no rows of their own; the rows above and 
 | R-14 | 7 |
 | R-15 | 3 |
 | R-P | 13 |
-| **Total** | **153** (130 from Grundprinzip and §1–§12 and idea 26); R-16 (24 rows) and R-E (31 rows) are tracked separately |
+| **Total** | **153** (130 from Grundprinzip and §1–§12 and idea 26); R-16 (24 rows) and R-E (34 rows) are tracked separately |
 
 Every row of R-0 to R-13 names at least one `E2E-*` test; R-14, R-15 and R-P rows name the test or gate that
 proves the decision. Every milestone of `09-milestones.md` lists the R-IDs that must be green at its exit; the
