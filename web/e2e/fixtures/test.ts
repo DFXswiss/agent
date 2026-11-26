@@ -59,6 +59,11 @@ interface Fixtures {
 /** The choice "Stay signed in: off" of the sign-in page (`core/account/prefs.ts`), set before the app starts. */
 const STAY_OFF = `try { localStorage.setItem('agent-platform.stay-signed-in', 'off'); } catch {}`;
 
+/** "Stay signed in" off in a context a spec opens itself (`browser.newContext`), as the fixtures do for theirs. */
+export async function stayOff(context: BrowserContext): Promise<void> {
+  await context.addInitScript({ content: STAY_OFF });
+}
+
 /**
  * Waits until the lane's device double answers (`fetchHealth`, default: `GET /health`): the global setup starts a
  * volume lane in the background, because it may wait for the other volume lane's seed (decisions/HOT-21.md); a lane
@@ -115,7 +120,7 @@ export const test = base.extend<Fixtures, { lane: string }>({
   staySignedIn: [false, { option: true }],
   context: async ({ context, cspViolations, staySignedIn }, use) => {
     const finish = await instrument(context, cspViolations);
-    if (!staySignedIn) await context.addInitScript({ content: STAY_OFF });
+    if (!staySignedIn) await stayOff(context);
     await use(context);
     await finish();
   },
@@ -124,7 +129,7 @@ export const test = base.extend<Fixtures, { lane: string }>({
     await use(async (options) => {
       const context = await browser.newContext(options);
       opened.push([context, await instrument(context, cspViolations)]);
-      if (!staySignedIn) await context.addInitScript({ content: STAY_OFF });
+      if (!staySignedIn) await stayOff(context);
       return context;
     });
     for (const [context, finish] of opened) {
