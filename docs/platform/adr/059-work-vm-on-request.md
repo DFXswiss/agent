@@ -122,9 +122,9 @@ resources, not by a fixed number (points 7-9):
    verstehe ich nicht, warum einen deckel", then "diese anderen deckel alle restlos entfernen, der platz soll für das
    gebraucht werden was halt gebraucht wird"). `WORKVM_SLOTS` and `WORKVM_MAX_PER_TASK`/`_OWNER`/`_ORG` are removed
    (ADR-075 addendum 2: an older `runner.env` that sets them starts, the values are ignored and named once). A device
-   admits a new work, browser or test run VM as long as its free resources last - RAM above `MEMORY_RESERVE_MIB` that
-   the workgroup VMs and the work VMs leave, the host's 1-minute load per core at most `CPU_LOAD_MAX_PERCENT` (default
-   85), the disk quota `WORKVM_DISK_QUOTA_GIB` - and its turn has come (point 8). Short of any of them
+   admits a new work, browser or test run VM as long as its free resources last - RAM above the host reserve (a
+   quarter of the memory, 4-32 GiB, ADR-075 addendum 4) that the workgroup VMs and the work VMs leave, the host's
+   1-minute load leaving about 1-2 cores free (or `CPU_LOAD_MAX_PERCENT`), the disk quota `WORKVM_DISK_QUOTA_GIB` - and its turn has come (point 8). Short of any of them
    the request waits in the queue as before. The slot accounts stay - they are the isolation boundary of the host
    filter (one account, one pinned SSH port per VM) - but their number follows the RAM: as many as the RAM above the
    reserve could ever hold standard work VMs (at most 100, the accounts' port range), so they never limit before the

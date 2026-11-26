@@ -25,6 +25,7 @@ from agent_runner.enroll import cli, platform
 from agent_runner.errors import RunnerError
 from agent_runner.identity import key_path as identity_key_path
 from agent_runner.identity import load_identity, write_keys
+from agent_runner.vm.capacity import host_reserve_mib
 
 from ..reconcile.rig import ROOT, device_keys, pid
 from ..sync.fakehub import FakeHub, Received, utc_ms
@@ -135,7 +136,7 @@ def test_successful_enrollment_writes_the_identity_last(config: Config) -> None:
     assert body["kind"] == "platform"
     assert body["pub"] == {"kem": identity.keys.kem_public, "sig": identity.keys.sig_public}
     assert (body["os"], body["arch"], body["agent_version"]) == ("darwin", "arm64", "0.1.0")
-    assert body["capacity"]["vm_memory_budget_mib"] == 65536 - config.memory_reserve_mib
+    assert body["capacity"]["vm_memory_budget_mib"] == 65536 - host_reserve_mib(65536, config.memory_reserve_mib)
     assert [r.target for r in hub.requests] == ["/v1/config", "/v1/device/enroll"]
     assert hub.violations == []
     with pytest.raises(RunnerError, match="already_enrolled"):

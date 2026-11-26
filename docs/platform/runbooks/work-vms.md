@@ -83,8 +83,9 @@ sudo AGENT_RUNNER=<path>/agent-runner images/workvm/host-rehearsal.sh \
 Sizing: a standard work VM holds 8 GiB RAM and up to 50 GiB disk, `large` 16 GiB/100 GiB. Work VMs share the RAM
 budget with the workgroup VMs through the device's one admission (05-runner.md §3.8): the kind with the fewest active
 instances goes first (sessions or work VMs; `agent-runner status`: `runner.status.admission`), and idle work VMs are
-stopped when a workgroup VM needs their RAM; running work is never ended for it. The CPU bound for every new VM is `AGENT_RUNNER_CPU_LOAD_MAX_PERCENT`
-(default 85; it replaces `WORKVM_CPU_LOAD_MAX_PERCENT`). The disk quota is a physical bound of the volume: choose it
+stopped when a workgroup VM needs their RAM; running work is never ended for it. The CPU bound for every new VM leaves about 1–2 cores free
+(`AGENT_RUNNER_CPU_LOAD_MAX_PERCENT` replaces the rule when set; it replaces `WORKVM_CPU_LOAD_MAX_PERCENT`); the host
+reserve is a quarter of the memory, 4–32 GiB, unless `AGENT_RUNNER_MEMORY_RESERVE_MIB` is set. The disk quota is a physical bound of the volume: choose it
 for the disk the device can give work VMs (about 100 GiB each, stopped ones included).
 
 ## 4. Operation

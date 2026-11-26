@@ -2,9 +2,10 @@
 
 Every VM a device starts passes this admission: workgroup VMs with their sessions (`SESSION`), work, browser and test
 VMs (`WORK`), and later the CI VMs of 16-ci-runners.md (`CI`), which plug into it without a second mechanism. It
-admits only what is physically free - RAM above the host reserve (`MEMORY_RESERVE_MIB`), the host's CPU load
-(`CPU_LOAD_MAX_PERCENT`), disk, at most `MACOS_VMS_MAX` macOS VMs per Mac - in one transaction: `lock` is held from the
-check to the claim (the row in the store, or `pending` while a workgroup VM is being cloned), by every area.
+admits only what is physically free - RAM above the host reserve (a quarter of the memory, 4-32 GiB, or
+`MEMORY_RESERVE_MIB`), the host's CPU load (about 1-2 cores stay free, or `CPU_LOAD_MAX_PERCENT`), disk, at most
+`MACOS_VMS_MAX` macOS VMs per Mac - in one transaction: `lock` is held from the check to the claim (the row in the
+store, or `pending` while a workgroup VM is being cloned), by every area.
 
 There is no fixed number and no fixed share for any kind, CI included (decision of the client, 2026-11-26: "wenn es
 nur ci runnerbedarf gibt, dann darf es auch 100% sein ... immer der von dem es am wenigsten aktive gibt"): a kind
@@ -27,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import secrets
 import time
 from collections import Counter
@@ -35,7 +37,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from agent_runner.vm.capacity import cpu_load_per_core
+from agent_runner.vm.capacity import cpu_load_per_core, host_cpu_ratio
 
 SESSION = "session"
 WORK = "work"
@@ -239,11 +241,17 @@ class Admission:
         return {kind: (active[kind], waiting[kind]) for kind in KINDS}
 
 
+def cpu_load_max(percent: int | None, cores: Callable[[], int | None] = os.cpu_count) -> float:
+    """The load per core up to which new VMs start: `CPU_LOAD_MAX_PERCENT` when set, else about 1-2 cores stay free
+    for macOS, the runner and the VMs' input and output (`host_cpu_ratio`, no fixed reserve)."""
+    return percent / 100 if percent is not None else host_cpu_ratio(cores())
+
+
 def of(context: Any) -> Admission:
-    """The device's one admission (created once per daemon context, `CPU_LOAD_MAX_PERCENT` of its configuration)."""
+    """The device's one admission (created once per daemon context, `cpu_load_max` of its configuration)."""
     found = vars(context).get(ATTRIBUTE)
     if isinstance(found, Admission):
         return found
-    created = Admission(cpu_load_max=context.config.cpu_load_max_percent / 100)
+    created = Admission(cpu_load_max=cpu_load_max(context.config.cpu_load_max_percent))
     vars(context)[ATTRIBUTE] = created
     return created

@@ -170,4 +170,7 @@ def test_one_admission_per_device_with_its_cpu_bound() -> None:
     assert admission.of(context) is gate
     assert gate.cpu_load_max == 0.7
     assert gate.pending() == 0
+    # without the setting about 1-2 cores stay free for macOS, the runner and the VMs' input and output
+    assert admission.cpu_load_max(None, lambda: 16) == 14 / 16
+    assert admission.of(SimpleNamespace(config=SimpleNamespace(cpu_load_max_percent=None))).cpu_load_max < 1
     assert asyncio.run(admission.host_cpu_load()) >= 0.0

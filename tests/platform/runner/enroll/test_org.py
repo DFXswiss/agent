@@ -29,6 +29,7 @@ from agent_runner.identity import key_path, load_identity, write_keys
 from agent_runner.orgs.book import OrgBook
 from agent_runner.orgs.db import session
 from agent_runner.store.pool import open_pool
+from agent_runner.vm.capacity import host_reserve_mib
 
 from ..assignments.orgkit import (
     HOST,
@@ -130,7 +131,7 @@ def test_successful_enrollment_stores_log_keys_and_identity(case: Case) -> None:
     )
     assert body["entry"]["body"]["seq"] == 5
     assert body["entry"]["body"]["prev"] == entry_hash(world.spec.log.entries[4])
-    assert body["capacity"]["vm_memory_budget_mib"] == 65536 - case.config.memory_reserve_mib
+    assert body["capacity"]["vm_memory_budget_mib"] == 65536 - host_reserve_mib(65536, case.config.memory_reserve_mib)
     # the store: platform log, org log with the accept, its head and the entitled package keys only
     assert [r[0] for r in rows(case.dsn, "SELECT seq FROM runner.log_entry ORDER BY seq")] == [0, 1, 2, 3, 4, 5]
     assert rows(case.dsn, "SELECT seq, hash FROM runner.log_head") == [(5, entry_hash(world.spec.log.entries[5]))]

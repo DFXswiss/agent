@@ -61,9 +61,9 @@ CPU and disk.
 | `PLATFORM_ROOT_KEY` | required | b64u Ed25519 public key |
 | `VM_CPUS` / `VM_MEMORY_MIB` / `VM_DISK_GIB` | 4 / 8192 / 20 | per workgroup VM |
 | `POOL_SIZE` | 2 | 0 disables the pool (clone path only) |
-| `MEMORY_RESERVE_MIB` | 32768 | host reserve excluded from the VM budget |
+| `MEMORY_RESERVE_MIB` | empty = a quarter of the memory, 4–32 GiB | host reserve excluded from the VM budget; the same rule on every device, platform and own (`vm.capacity.host_reserve_mib`; a Mac mini of 32 GB keeps 8 GiB, a 512 GB platform device 32 GiB - measured there under load: wired 6.6 GB, every process without the VMs 7.2 GB, the runner 1.5 GB of it); a number replaces the rule |
 | `VM_LOAD_MAX_PERCENT` | 85 | a running workgroup VM takes one more session only while its own free resources last: its 1-minute load per vCPU is at most this (10–100) and its free RAM is enough (§3.3 step 2, `vm.room`) |
-| `CPU_LOAD_MAX_PERCENT` | 85 | the device admission (§3.8) starts a new VM of any kind only while the host's 1-minute load per core is at most this (10–100) |
+| `CPU_LOAD_MAX_PERCENT` | empty = about 1–2 cores stay free | the device admission (§3.8) starts a new VM of any kind only while the host's 1-minute load per core is at most this; no fixed CPU reserve: empty leaves an eighth of the cores, at least 1, at most 2, for macOS, the runner and the VMs' input and output (`vm.capacity.host_cpu_ratio`, at least half the cores admitted); a number (10–100) replaces the rule |
 | `SESSION_IDLE_SECONDS` / `VM_IDLE_SECONDS` | 1800 / 1800 | |
 | `TEXTFILE_DIR` | empty = textfile sink off | node_exporter textfile directory (08 §3) |
 | `MODEL_CATALOG` | packaged `model-catalog.json` | §10.5 |
@@ -290,7 +290,8 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
 
 ### 3.4 Capacity
 
-`budget_mib = physical RAM − MEMORY_RESERVE_MIB`; `vm_slots_total = floor(budget_mib / VM_MEMORY_MIB)` - the memory
+`budget_mib = physical RAM − host reserve` (a quarter of the memory, 4–32 GiB, or `MEMORY_RESERVE_MIB` when set,
+§1.3); `vm_slots_total = floor(budget_mib / VM_MEMORY_MIB)` - the memory
 budget alone, no fixed number of VMs (ADR-075 addendum 2);
 `vm_slots_free = vm_slots_total − (VMs in pool, assigning, running, stopping) − the slots other areas hold`. Stopped
 VMs do not consume slots (RAM is returned on stop; Spike A high-water-mark finding). Reported in every heartbeat
@@ -475,7 +476,8 @@ use it up to 100 %.
   workgroup VMs being started or filled into the pool counts while they start (`Admission.pending`); the warm pool of
   workgroup VMs fills only room no waiting request needs.
 - **Checks** (`Admission.judge`, reasons `cpu`, `memory`, `disk`, `macos`, `turn`): the host's 1-minute load per core
-  is at most `CPU_LOAD_MAX_PERCENT` (default 85); the VM's RAM fits into the RAM above `MEMORY_RESERVE_MIB` that the
+  leaves about 1–2 cores free (or `CPU_LOAD_MAX_PERCENT`, §1.3); the VM's RAM fits into the RAM above the host reserve
+  (a quarter of the memory, 4–32 GiB, or `MEMORY_RESERVE_MIB`) that the
   running VMs of every kind leave; the disk it needs is free; at most **2 macOS VMs per Mac** (`MACOS_VMS_MAX`, Apple's
   licence, 16 §8.4) - the only fixed number; then the turn (above).
 - **Running work is never ended** to make room. What gives way: warm pool entries, then idle work VMs (§3.7, stopped
@@ -1543,7 +1545,7 @@ An own Mac becomes an org device through one signed, versioned package (`agent_r
 |---|---|---|
 | Build | `install/build.py`, `scripts/macos-package/` | From one commit and the lock (`lock.json`, `requirements.lock`, every input pinned by SHA-256): relocatable CPython 3.12 with the runner's dependencies (`pip --require-hashes`) and `agent_runner`/`agent_cli`, Lima (without its agents for macOS guests), PostgreSQL, the golden's sources, the launchers; modes and times normalised, byte code with unchecked hashes, each file compiled by a fresh interpreter that reads no byte code (so it does not depend on what a compiling process compiled before); optional code signing (hardened runtime, entitlements) **before** the manifest, refused with `build_failed` `sign_missing` (each `sign_missing path=…` on standard error) when a Mach-O file lies inside an archive; `release.json` + signature; `pkgbuild`; `latest.json` + signature with an expiry (≤ 120 days). Two unsigned builds of one commit give the same `release.json` (a signed build is compared on its unsigned stage). |
 | Release | `install/release.py` | Canonical JSON, Ed25519 signatures of the release key; only keys of `install/release_keys.py` (public data) are accepted; version `YYYY.MM.DD.HHMM` of the commit time. |
-| Checks | `install/preflight.py` | macOS ≥ 14, Apple silicon, `kern.hv_support`, memory ≥ 16 GiB, free space ≥ 50 GiB; memory reserve of an own device: a quarter of the memory (4–32 GiB). |
+| Checks | `install/preflight.py` | macOS ≥ 14, Apple silicon, `kern.hv_support`, memory ≥ 16 GiB, free space ≥ 50 GiB; memory reserve: a quarter of the memory (4–32 GiB), the rule of every device (§1.3), written into the environment of an own device. |
 | Owner | `install/owner.py` | The runner runs as the Mac's owner (UID ≥ 501): the agent way names the owner of the request file, Installer.app the user at the screen, an update keeps the recorded one. No account is created (macOS 27 refuses to delete one again, ADR-074 §3). |
 | Root helper | `install/root.py` | `postinstall` (check the payload against its manifest, `current`, keep one previous version, Claude Code for the host, maintenance daemon, runner home created by the owner, enrollment from the spool with the code on `enroll --code-file -`'s standard input, runner daemon, `state.json`), `uninstall` (runner's `uninstall` as the owner, its home and the parents the installation created, plists, receipt, payload; prints `leftovers`), `leftovers`, `maintain`. |
 | Daemons | `install/daemons.py` | `swiss.dfx.agent-runner` (the owner, settings below) and `swiss.dfx.agent-runner.maintenance` (root, every 15 min), both through `libexec/dfx-agent-runner` (`python -I -B -m …`). |

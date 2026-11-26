@@ -57,7 +57,7 @@ def test_defaults(base: dict[str, str], runner_home: Path, root_key: str) -> Non
     assert cfg.platform_root_key == root_key
     assert (cfg.vm_cpus, cfg.vm_memory_mib, cfg.vm_disk_gib) == (4, 8192, 20)
     assert cfg.pool_size == 2
-    assert cfg.memory_reserve_mib == 32768
+    assert cfg.memory_reserve_mib is None  # the rule of every device: a quarter of the memory, 4-32 GiB
     # no fixed number of sessions or VMs: the free resources decide (`vm.room`, ADR-075 addendum 2)
     assert (cfg.vm_load_max_percent, cfg.retired) == (85, ())
     assert (cfg.session_idle_seconds, cfg.vm_idle_seconds) == (1800, 1800)
@@ -725,7 +725,7 @@ def test_workvm_defaults_offer_no_work_vm(base: dict[str, str]) -> None:
     cfg = load(base)
     # ADR-059 addendum 4: no fixed number of work VMs; the free resources decide
     assert (cfg.workvm_slots_self, cfg.workvm_max_size) == (False, "large")
-    assert cfg.cpu_load_max_percent == 85  # the device's one admission, every kind of VM
+    assert cfg.cpu_load_max_percent is None  # the device's one admission: about 1-2 cores stay free
     assert (cfg.workvm_idle_seconds, cfg.workvm_queue_seconds, cfg.workvm_pool_size) == (600, 900, 1)
     assert cfg.workvm_keep_stopped_seconds == 86400  # ADR-059 addendum 4
     assert cfg.workvm_disk_quota_gib == 0
@@ -757,7 +757,9 @@ def test_workvm_settings_round_trip(base: dict[str, str], tmp_path: Path) -> Non
     env = environment(cfg)
     assert env["AGENT_RUNNER_WORKVM_KEEP_STOPPED_SECONDS"] == "3600"
     assert env["AGENT_RUNNER_WORKVM_SLOTS_SELF"] == "1"
+    assert env["AGENT_RUNNER_CPU_LOAD_MAX_PERCENT"] == "70"
     assert load(env) == cfg
+    assert "AGENT_RUNNER_MEMORY_RESERVE_MIB" not in env  # empty: the rule of every device
 
 
 def test_workvm_settings_are_checked(base: dict[str, str]) -> None:

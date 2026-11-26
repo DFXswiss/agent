@@ -114,7 +114,6 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     "VM_MEMORY_MIB": (8192, 1024, 4_194_304),
     "VM_DISK_GIB": (20, 5, 65_536),
     "POOL_SIZE": (2, 0, 64),
-    "MEMORY_RESERVE_MIB": (32768, 0, 4_194_304),
     # a running workgroup VM takes one more session while its load per vCPU is at most this (`vm.room`)
     "VM_LOAD_MAX_PERCENT": (85, 10, 100),
     "SESSION_IDLE_SECONDS": (1800, 60, 604_800),
@@ -122,9 +121,6 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     # ADR-059 addendum 4: an idle work VM is stopped (slot and RAM free, disk kept), a stopped one deleted later.
     "WORKVM_IDLE_SECONDS": (600, 60, 604_800),
     "WORKVM_KEEP_STOPPED_SECONDS": (86_400, 600, 2_592_000),
-    # the device's one admission (`agent_runner.admission`): a new VM of any kind only while the host's CPU load
-    # (1 min, per core) is at most this
-    "CPU_LOAD_MAX_PERCENT": (85, 10, 100),
     "WORKVM_POOL_SIZE": (1, 0, 16),
     "WORKVM_DISK_QUOTA_GIB": (0, 0, 1_000_000),
     "WORKVM_QUEUE_SECONDS": (900, 0, 86_400),
@@ -142,6 +138,14 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     # KOR-44 platform browser (ADR-085 sections 2 and 6): idle teardown and the cap of the live picture (kbit/s).
     "BROWSER_IDLE_SECONDS": (600, 60, 3600),
     "BROWSER_LIVE_MAX_KBPS": (3000, 100, 100_000),
+}
+# name: (minimum, maximum) of a setting that is empty by default; empty = the rule of every device (05-runner.md 1.3)
+_OPTIONAL_INTEGERS: dict[str, tuple[int, int]] = {
+    # the host reserve: empty = a quarter of the memory, at least 4 GiB, at most 32 GiB (`vm.capacity.host_reserve_mib`)
+    "MEMORY_RESERVE_MIB": (0, 4_194_304),
+    # the device's one admission (`agent_runner.admission`): a new VM of any kind only while the host's CPU load (1 min,
+    # per core) is at most this; empty = about 1-2 cores stay free (`vm.capacity.host_cpu_ratio`)
+    "CPU_LOAD_MAX_PERCENT": (10, 100),
 }
 WORKVM_SIZES = ("standard", "large", "xlarge")
 _URL_DEFAULTS = {
@@ -178,7 +182,8 @@ class Config:
     vm_memory_mib: int
     vm_disk_gib: int
     pool_size: int
-    memory_reserve_mib: int
+    memory_reserve_mib: int | None
+    """The host reserve when set; None: a quarter of the memory, 4-32 GiB, on every device (`vm.capacity`)."""
     session_idle_seconds: int
     vm_idle_seconds: int
     textfile_dir: Path | None
@@ -217,8 +222,9 @@ class Config:
     """How long a restore waits for the final checkpoint of the session it continues and retries the hub."""
     vm_load_max_percent: int = 85
     """A running workgroup VM takes one more session while its load per vCPU is at most this (`vm.room`)."""
-    cpu_load_max_percent: int = 85
-    """The device's one admission: a new VM of any kind only while the host's load per core is at most this."""
+    cpu_load_max_percent: int | None = None
+    """The device's one admission: a new VM of any kind only while the host's load per core is at most this; None:
+    about 1-2 cores stay free (`vm.capacity.host_cpu_ratio`)."""
     retired: tuple[str, ...] = ()
     """Names of `RETIRED_NAMES` set in the environment: ignored, named once in the log at the start."""
     github_oauth_client_id: str | None = None
@@ -314,6 +320,10 @@ def load_config(
     hub_url = _optional(raw("HUB_URL"), "HUB_URL", require, lambda v: _url(v, "HUB_URL", test_mode))
     root_key = _optional(raw("PLATFORM_ROOT_KEY"), "PLATFORM_ROOT_KEY", require, _root_key)
     integers = {name: _integer(raw(name), name, *limits) for name, limits in _INTEGERS.items()}
+    chosen = {
+        name: None if raw(name) == "" else _integer(raw(name), name, low, low, high)
+        for name, (low, high) in _OPTIONAL_INTEGERS.items()
+    }
     urls = {name: _url(raw(name) or default, name, test_mode) for name, default in _URL_DEFAULTS.items()}
     openrouter = _optional(raw("OPENROUTER_KEY_FILE"), "OPENROUTER_KEY_FILE", require, _key_file)
     if openrouter is not None and device_kind == "org":
@@ -339,9 +349,9 @@ def load_config(
         vm_memory_mib=integers["VM_MEMORY_MIB"],
         vm_disk_gib=integers["VM_DISK_GIB"],
         pool_size=integers["POOL_SIZE"],
-        memory_reserve_mib=integers["MEMORY_RESERVE_MIB"],
+        memory_reserve_mib=chosen["MEMORY_RESERVE_MIB"],
         vm_load_max_percent=integers["VM_LOAD_MAX_PERCENT"],
-        cpu_load_max_percent=integers["CPU_LOAD_MAX_PERCENT"],
+        cpu_load_max_percent=chosen["CPU_LOAD_MAX_PERCENT"],
         retired=retired,
         session_idle_seconds=integers["SESSION_IDLE_SECONDS"],
         vm_idle_seconds=integers["VM_IDLE_SECONDS"],
@@ -472,9 +482,10 @@ def environment(config: Config) -> dict[str, str]:
     for name, value in optional_text.items():
         if value is not None:
             out[PREFIX + name] = str(value)
-    for name, (default, _, _) in _INTEGERS.items():
+    defaults: dict[str, int | None] = {name: default for name, (default, _, _) in _INTEGERS.items()}
+    for name, default in {**defaults, **dict.fromkeys(_OPTIONAL_INTEGERS)}.items():
         value_int = getattr(config, name.lower())
-        if value_int != default:
+        if value_int is not None and value_int != default:
             out[PREFIX + name] = str(value_int)
     for name, default_url in _URL_DEFAULTS.items():
         url = getattr(config, name.lower())

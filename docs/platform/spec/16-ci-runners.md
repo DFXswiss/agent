@@ -314,7 +314,7 @@ Every other value is **to be measured** and then set (D-10, D-22).
 
 **One admission per device.** Exactly one admission decides on a device for every kind of VM: workgroup VMs with
 their sessions, work, browser and test VMs, and later CI VMs ([05 §3.8](05-runner.md#38-device-admission),
-`agent_runner/admission.py`). It counts free RAM after `MEMORY_RESERVE_MIB`, the CPU load and the disk in one
+`agent_runner/admission.py`). It counts free RAM after the host reserve, the CPU load and the disk in one
 transaction. CI plugs into this admission as one more kind; there is no second mechanism. No kind has a fixed number
 or a fixed share, CI included: what is physically free decides ([ADR-075](../adr/075-resource-choice.md) addendum 2).
 The client (2026-11-26): "wenn es nur ci runnerbedarf gibt, dann darf es auch 100% sein, ich glaube wir haben das
@@ -322,8 +322,8 @@ beste ergebnis wenn wir denen den vorrang geben die noch nicht viele plätze hab
 
 | Resource | Budget of a device | Counted per VM |
 |---|---|---|
-| RAM | Physical RAM − `MEMORY_RESERVE_MIB` (as today) | Configured memory, from `starting` until the VM is stopped or deleted; warm pool entries count |
-| CPU | Host load per core below `CPU_LOAD_MAX_PERCENT` (as today, every kind) | Configured vCPUs |
+| RAM | Physical RAM − host reserve (a quarter of the memory, 4–32 GiB, or `MEMORY_RESERVE_MIB`; 05 §1.3) | Configured memory, from `starting` until the VM is stopped or deleted; warm pool entries count |
+| CPU | Host load leaves about 1–2 cores free for macOS, the runner and the VMs' I/O (or `CPU_LOAD_MAX_PERCENT`; every kind) | Configured vCPUs |
 | Disk | Volume quota per workload kind − reserve for image generations | Allocated disk or profile size, plus the pool entry reserve (`13-work-vm.md` §7) |
 | macOS VMs | 2 (§8.4) | 1 per macOS VM of any purpose; Linux VMs of any kind 0 [APPLE-FORUM] |
 | Slot accounts | Accounts installed per workload kind and class | 1 per VM that uses one |

@@ -22,6 +22,7 @@ import httpx
 import psycopg
 import pytest
 
+from agent_runner import admission
 from agent_runner.cli import run_cli
 from agent_runner.config import load_config
 from agent_runner.doctor import checks
@@ -714,11 +715,13 @@ def test_status_after_a_store_wipe_shows_the_adopted_hub_position(case: Case) ->
 def test_status_shows_the_work_vm_slots(case: Case, monkeypatch: pytest.MonkeyPatch) -> None:
     """ADR-059 addendum 4: held (a VM that is not stopped, a pool entry), free, stopped and waiting, and what the
     device's admission sees free; the slots follow the RAM above the reserve (no fixed number: a former
-    `AGENT_RUNNER_WORKVM_SLOTS` is ignored)."""
-    monkeypatch.setattr(capacity_module, "physical_memory_mib", lambda: 32768 + 4 * 8192)
+    `AGENT_RUNNER_WORKVM_SLOTS` is ignored); the host reserve is a quarter of the memory (ADR-075 addendum 4)."""
+    monkeypatch.setattr(capacity_module, "physical_memory_mib", lambda: 65536)  # reserve 16 GiB: 6 standard VMs
     case.env["AGENT_RUNNER_WORKVM_SLOTS"] = "0"
     [unbounded] = lines(case.cli("status")[1], "runner.status.workvm")
-    assert (unbounded["slots"], unbounded["held"], unbounded["disk_quota_gib"]) == ("4", "0", "none")
+    assert (unbounded["slots"], unbounded["held"], unbounded["disk_quota_gib"]) == ("6", "0", "none")
+    case.env["AGENT_RUNNER_MEMORY_RESERVE_MIB"] = "32768"  # a set reserve replaces the rule
+    assert lines(case.cli("status")[1], "runner.status.workvm")[0]["slots"] == "4"
     del case.env["AGENT_RUNNER_WORKVM_SLOTS"]
     case.env["AGENT_RUNNER_WORKVM_DISK_QUOTA_GIB"] = "500"
     now = datetime(2026, 11, 26, 9, tzinfo=UTC)
@@ -743,8 +746,9 @@ def test_status_shows_the_work_vm_slots(case: Case, monkeypatch: pytest.MonkeyPa
     [found] = lines(case.cli("status")[1], "runner.status.workvm")
     oldest = int(found.pop("oldest_wait_s"))
     load = int(found.pop("cpu_load_pct"))  # of the machine running the test
+    cpu_max = str(round(admission.cpu_load_max(None) * 100))  # about 1-2 cores of the test machine stay free
     assert found == {"slots": "4", "held": "2", "free": "2", "stopped": "2", "waiting": "2",
-                     "memory_free_mib": "16384", "cpu_load_max_pct": "85", "disk_used_gib": "200",
+                     "memory_free_mib": "16384", "cpu_load_max_pct": cpu_max, "disk_used_gib": "200",
                      "disk_quota_gib": "500"}  # fmt: skip
     assert 90 <= oldest < 150
     assert load >= 0

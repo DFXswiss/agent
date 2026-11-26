@@ -234,7 +234,7 @@ def _workvm_fact(out: Any, config: Config, counts: tuple[int, ...], physical: in
     """`runner.status.workvm`: the slots and what the device's admission sees free (ADR-059 addendum 4, 05 §3.8)."""
     held, stopped, waiting, oldest, work_mib, disk_gib = counts
     total = accounts.slot_count(physical, config.memory_reserve_mib)
-    room = physical - config.memory_reserve_mib - workgroup_mib - work_mib
+    room = physical - capacity_module.host_reserve_mib(physical, config.memory_reserve_mib) - workgroup_mib - work_mib
     out.fact(
         "status.workvm",
         {
@@ -246,7 +246,7 @@ def _workvm_fact(out: Any, config: Config, counts: tuple[int, ...], physical: in
             "oldest_wait_s": oldest,
             "memory_free_mib": max(0, room),
             "cpu_load_pct": round(capacity_module.cpu_load_per_core() * 100),
-            "cpu_load_max_pct": config.cpu_load_max_percent,
+            "cpu_load_max_pct": round(admission.cpu_load_max(config.cpu_load_max_percent) * 100),
             "disk_used_gib": disk_gib,
             "disk_quota_gib": config.workvm_disk_quota_gib or "none",
         },

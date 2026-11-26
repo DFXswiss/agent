@@ -127,6 +127,25 @@ def test_cpu_load_per_core() -> None:
     assert capacity.cpu_load_per_core() >= 0.0
 
 
+def test_the_host_reserve_is_a_quarter_of_the_memory_on_every_device() -> None:
+    """ADR-075 addendum 4: no fixed 32 GiB; a quarter of the memory, 4-32 GiB; a set value wins."""
+    assert capacity.host_reserve_mib(32 * 1024) == 8192  # a Mac mini of 32 GB keeps room for VMs
+    assert capacity.host_reserve_mib(512 * 1024) == 32768  # the platform device: covers 7.2 GB measured under load
+    assert capacity.host_reserve_mib(8 * 1024) == 4096  # the floor
+    assert capacity.host_reserve_mib(512 * 1024, 1024) == 1024
+    mini = capacity.compute(physical_mib=32 * 1024, reserve_mib=None, vm_memory_mib=8192, vms=[])
+    assert (mini.budget_mib, mini.slots_total) == (24 * 1024, 3)
+
+
+def test_about_one_or_two_cores_stay_free() -> None:
+    """No fixed CPU reserve: an eighth of the cores, at least 1, at most 2, at least half of them admitted."""
+    assert capacity.host_cpu_ratio(8) == 7 / 8
+    assert capacity.host_cpu_ratio(24) == 22 / 24
+    assert capacity.host_cpu_ratio(12) == 11 / 12
+    assert capacity.host_cpu_ratio(1) == 0.5
+    assert capacity.host_cpu_ratio(None) == 0.5
+
+
 def test_own_usage_and_disk_free() -> None:
     assert asyncio.run(capacity.USAGE(None)) == capacity.NO_USAGE
     assert asyncio.run(capacity.RECLAIM(None, 8192)) == 0

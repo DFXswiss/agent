@@ -237,7 +237,7 @@ filter all the same; a boundary by interface is left to a later package.
 machine-id at first boot (cloud-init new instance-id).
 ## 7. Capacity, lifetime, restart (temporary VMs, ADR-059 decisions 8 and 11)
 - RAM budget of 05 §3.4 shared: a work VM holds `memory_mib` while `starting|running|deleting`. A new work VM is
-  admitted by the device admission (05 §3.8: RAM above the reserve, CPU load below `CPU_LOAD_MAX_PERCENT`, disk
+  admitted by the device admission (05 §3.8: RAM above the host reserve, CPU load with about 1–2 cores left free, disk
   quota, no session waiting), never by a fixed number - also browser VMs (§13) and test run VMs (§12); sessions come
   first - idle task and session VMs give way when a workgroup VM needs their RAM, running work is never ended for it.
 - Queue: requests wait FIFO per device; a freed slot wakes them at once, and a stopped VM waiting for its own slot

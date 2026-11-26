@@ -158,8 +158,9 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeMachine:
 
 @pytest.fixture(autouse=True)
 def two_slot_device(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A device whose RAM above the default reserve (32 GiB) holds two standard work VMs: two slot accounts."""
-    monkeypatch.setattr(workvm_cli, "physical_memory_mib", lambda: 32768 + 2 * 8192 + 100)
+    """A device whose RAM above the host reserve (a quarter: 6000 of 24000 MiB) holds two standard work VMs: two
+    slot accounts."""
+    monkeypatch.setattr(workvm_cli, "physical_memory_mib", lambda: 24000)
 
 
 @pytest.fixture
@@ -211,7 +212,7 @@ def test_install_creates_the_accounts_the_ram_can_use(
 ) -> None:
     """ADR-059 addendum 4, ADR-075 addendum 2: as many slot accounts as the RAM above the reserve holds standard VMs;
     an old WORKVM_SLOTS changes nothing."""
-    monkeypatch.setattr(workvm_cli, "physical_memory_mib", lambda: 32768 + 3 * 8192)
+    monkeypatch.setattr(workvm_cli, "physical_memory_mib", lambda: 36000)  # reserve 9000: 27000 hold 3
     code, out, _ = cli(*INSTALL, AGENT_RUNNER_WORKVM_SLOTS="1")
     assert code == 0
     assert "runner.workvm.install step=accounts count=3 created=3" in out.splitlines()

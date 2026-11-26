@@ -162,7 +162,8 @@ class VmSettings:
     memory_mib: int
     disk_gib: int
     pool_size: int
-    memory_reserve_mib: int
+    memory_reserve_mib: int | None
+    """The host reserve when set; None: the rule of every device (`capacity.host_reserve_mib`)."""
     vm_idle_seconds: int
 
     @classmethod

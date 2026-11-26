@@ -1,6 +1,6 @@
 """VM capacity of the runner device (docs/platform/spec/05-runner.md section 3.4, 03-api.md section 4.6.2, ADR-009).
 
-    budget_mib     = physical RAM - MEMORY_RESERVE_MIB
+    budget_mib     = physical RAM - host reserve   (a quarter, 4-32 GiB, or MEMORY_RESERVE_MIB when set)
     vm_slots_total = floor(budget_mib / VM_MEMORY_MIB)   (no fixed number, ADR-075 addendum 2)
     vm_slots_free  = vm_slots_total - (VMs in pool, assigning, running, stopping) - slots of other areas
 
@@ -93,15 +93,16 @@ class Capacity:
 def compute(
     *,
     physical_mib: int,
-    reserve_mib: int,
+    reserve_mib: int | None,
     vm_memory_mib: int,
     vms: Sequence[tuple[str, int]],
     in_flight: int = 0,
     other: Usage = NO_USAGE,
 ) -> Capacity:
     """Capacity from the VM rows `(state, memory_mib)` plus `in_flight` VMs being created for the pool, less the slots
-    of `other` areas; the memory budget alone decides the slots (no fixed number, ADR-075 addendum 2)."""
-    budget = max(physical_mib - reserve_mib, 0)
+    of `other` areas; the memory budget alone decides the slots (no fixed number, ADR-075 addendum 2). `reserve_mib`
+    None: the host reserve of `host_reserve_mib`."""
+    budget = max(physical_mib - host_reserve_mib(physical_mib, reserve_mib), 0)
     total = budget // vm_memory_mib
     occupying = [memory for state, memory in vms if state in SLOT_STATES]
     pool_ready = sum(1 for state, _ in vms if state == "pool")
@@ -148,6 +149,35 @@ def disk_free_mib(path: str, usage: Callable[[str], Any] = shutil.disk_usage) ->
 def physical_memory_mib(sysconf: Callable[[str], int] = os.sysconf) -> int:
     """Installed RAM of this machine in MiB."""
     return sysconf("SC_PHYS_PAGES") * sysconf("SC_PAGE_SIZE") // MIB
+
+
+RESERVE_FLOOR_MIB = 4096
+RESERVE_CEILING_MIB = 32768
+RESERVE_DIVISOR = 4
+
+
+def host_reserve_mib(physical_mib: int, setting: int | None = None) -> int:
+    """The host reserve of every device (05-runner.md section 1.3): a quarter of its memory, at least 4 GiB, at most
+    32 GiB - unless `MEMORY_RESERVE_MIB` is set (`setting`). Measured on the platform device under load (512 GB):
+    wired 6.6 GB, every process without the VMs 7.2 GB, the runner 1.5 GB of it; a Mac mini of 32 GB keeps 8 GiB."""
+    if setting is not None:
+        return setting
+    return max(RESERVE_FLOOR_MIB, min(RESERVE_CEILING_MIB, physical_mib // RESERVE_DIVISOR))
+
+
+CPU_RESERVE_DIVISOR = 8
+CPU_RESERVE_FLOOR = 1
+CPU_RESERVE_CEILING = 2
+CPU_RATIO_FLOOR = 0.5
+
+
+def host_cpu_ratio(cores: int | None) -> float:
+    """The load per core up to which the admission starts new VMs when `CPU_LOAD_MAX_PERCENT` is not set: about 1-2
+    cores stay free for macOS, the runner and the VMs' input and output (an eighth of the cores, at least 1, at most 2;
+    no fixed reserve), at least half of the cores on a very small machine."""
+    count = max(cores or 1, 1)
+    free = max(CPU_RESERVE_FLOOR, min(CPU_RESERVE_CEILING, count // CPU_RESERVE_DIVISOR))
+    return max(CPU_RATIO_FLOOR, (count - free) / count)
 
 
 def cpu_load_per_core(

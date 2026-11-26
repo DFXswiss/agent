@@ -37,6 +37,7 @@ from collections.abc import Callable, Sequence
 from xml.parsers.expat import ExpatError
 
 from agent_runner.errors import RunnerError
+from agent_runner.vm.capacity import host_reserve_mib
 from agent_runner.workvm import firewall
 
 Run = Callable[[Sequence[str], float], "subprocess.CompletedProcess[str]"]
@@ -96,11 +97,13 @@ SMALLEST_VM_MIB = 8192
 """RAM of the smallest work VM (`standard`, `manager.SIZES`)."""
 
 
-def slot_count(physical_mib: int, reserve_mib: int) -> int:
-    """The number of slot accounts (ADR-059 addendum 4): as many as the RAM above the reserve could ever hold standard
-    work VMs (at least 1, at most `MAX_SLOTS`, the range of the pinned ports and the store), so the accounts - isolation
-    units - never limit before the free resources do. There is no setting for it."""
-    return max(1, min(MAX_SLOTS, (physical_mib - reserve_mib) // SMALLEST_VM_MIB))
+def slot_count(physical_mib: int, reserve_mib: int | None) -> int:
+    """The number of slot accounts (ADR-059 addendum 4): as many as the RAM above the host reserve (`reserve_mib`, None:
+    the rule of every device, `vm.capacity.host_reserve_mib`) could ever hold standard work VMs (at least 1, at most
+    `MAX_SLOTS`, the range of the pinned ports and the store), so the accounts - isolation units - never limit before
+    the free resources do. There is no setting for it."""
+    room = physical_mib - host_reserve_mib(physical_mib, reserve_mib)
+    return max(1, min(MAX_SLOTS, room // SMALLEST_VM_MIB))
 
 
 def slot_accounts(prefix: str, count: int, ssh_port_base: int) -> list[tuple[int, str, int]]:

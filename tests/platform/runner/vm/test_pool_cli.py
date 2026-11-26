@@ -23,6 +23,7 @@ PREFIX = "wp-cli-"
 def status(
     make_host: Callable[..., Any], store_dsn: str, runner_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> Any:
+    # 64 GiB: the host reserve is a quarter (16 GiB, ADR-075 addendum 4), 48 GiB hold 6 VMs of 8 GiB
     monkeypatch.setattr(capacity, "physical_memory_mib", lambda: 32768 + 4 * 8192)
     fake = FakeLimactl(lima_dir=tmp_path / "lima")
     state = tmp_path / "limactl.json"
@@ -65,7 +66,7 @@ def test_status_without_store(status: Any) -> None:
     assert (code, err) == (0, "")
     assert out.splitlines() == [
         "runner.pool size=2 ready=0 golden=none refill=no_golden",
-        "runner.capacity budget_mib=32768 used_mib=0 slots_total=4 slots_free=4 pool_ready=0 capacity_low=no",
+        "runner.capacity budget_mib=49152 used_mib=0 slots_total=6 slots_free=6 pool_ready=0 capacity_low=no",
     ]
 
 
@@ -89,7 +90,7 @@ def test_status_with_pool_vms(status: Any) -> None:
         "runner.pool.vm vm_id=vm-00000002 lima_name=wp-cli-arp-00000012 golden_version=g1"
         " created_at=2026-11-21T12:00:01Z instance=missing",
         "runner.pool size=2 ready=2 golden=g1 refill=full",
-        "runner.capacity budget_mib=32768 used_mib=16384 slots_total=4 slots_free=2 pool_ready=2 capacity_low=no",
+        "runner.capacity budget_mib=49152 used_mib=16384 slots_total=6 slots_free=4 pool_ready=2 capacity_low=no",
     ]
 
 

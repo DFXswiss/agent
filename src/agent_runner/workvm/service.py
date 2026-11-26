@@ -48,7 +48,7 @@ from agent_runner.sessions.records import LocalSession
 from agent_runner.sync import lease
 from agent_runner.sync.http import HubClient, HubTransportError
 from agent_runner.vm import records as vm_records
-from agent_runner.vm.capacity import physical_memory_mib
+from agent_runner.vm.capacity import host_reserve_mib, physical_memory_mib
 from agent_runner.vm.lima import Lima
 from agent_runner.workvm import accounts, firewall, records
 from agent_runner.workvm.browser import Browsers, BrowserSettings
@@ -329,7 +329,8 @@ def workvms_for(context: Any) -> WorkVms | None:
         workgroup = sum(memory for state, memory in await vm_records.slot_rows(db) if state in held)
         work = await records.memory_in_use(db)
         in_flight = device_admission.pending()
-        return int(physical_memory_mib()) - int(config.memory_reserve_mib) - workgroup - work - in_flight
+        physical = int(physical_memory_mib())
+        return physical - host_reserve_mib(physical, config.memory_reserve_mib) - workgroup - work - in_flight
 
     def shell_for(vm: WorkVm) -> VmShell:
         return VmShell(command, vm.slot, vm.lima_name)
