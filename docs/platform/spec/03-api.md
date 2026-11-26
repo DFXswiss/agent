@@ -165,6 +165,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `POST /v1/tasks/{task}/close` | task:write | `{}` → task (`closed`; all sessions `stopping`) |
 | `POST /v1/tasks/{task}/model-consent` | task:write | `{}` → `{task_id,model_consent:true}`: the task may use DFX access while its owner's own access is used up (card `quota_choice`); delivered as `model_consent` with the task's sessions in the device state; audit `task.model_consent` (KOR-50, ADR-081 §5) |
 | `PUT /v1/tasks/{task}/placement` | task:write | `{device_id:uuid|null,vm_id:string|null}` → task: changes the chosen device/VM (`null` = automatic) for the waiting and later main sessions; same checks as `POST /v1/tasks`; audit `task.placement` (ADR-075 §6) |
+| `PUT /v1/tasks/{task}/fields` **(new, KOR-75)** | task:write | `{status?,urgency?,assignee_id?:uuid\|null,topic_id?:uuid\|null}` (at least one) → `{task}`: the ticket fields of ADR-100 §5; `completed` closes the task as `POST /v1/tasks/{task}/close` (audit `task.close`), `todo`/`inProgress` on a closed task reopen it without an agent (state `idle`); a value outside its list, a user that is no active member of the organization or a topic without a `topic.profile` in its org scope is `400 request_invalid` with the pointer; audit `task.fields` with the changed values |
 | `POST /v1/sessions/{session}/control` | task:write | `{action:"interrupt"|"stop"}` → `{}` |
 | `POST /v1/sessions/{session}/orchestrator`, `GET` the same | owner (browser session of the task owner only) | the session as the user's main orchestrator on DFX hardware (KOR-57, ADR-082 §6): request → `{session_id,device_id,available,reason,requested_at,pairing}`, `409 orchestrator_unavailable`; `11-agent-access.md` §4 and §11 |
 | `GET /v1/sessions/{session}` | task:read | → session incl. transitions, usage, device, vm, parent, children |
@@ -176,6 +177,17 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `GET /v1/orgs/{org}/main-agents` | org:member (rows of readable workgroups only) | `?owner=&before=&limit=` (KOR-52, ADR-095 §5) → `{items:[{task:task_row,attention:attention_row\|null}],next_before}`: the open main agents (tasks not `closed`) of `owner` (required), `last_activity_at DESC, task_id DESC`; `limit` default 50, max 100 |
 
 Task rows carry `analysis` (`{scope,since,until}` of an analysis task, null otherwise; ADR-097 §1).
+
+**Captured tasks (KOR-75, ADR-100, E-41).** `POST /v1/tasks` with `events:[task.meta]` alone captures a task without
+an agent: no session and no scheduler decision, state `idle`, answer `session: null`, audit `task.create` with
+`captured: true`; `analysis` needs the prompt (`400`). Both forms take `urgency` (`low`, `normal` default, `high`,
+`urgent`), `assignee_id` (an active user member of the organization, a person or an agent account) and `topic_id` (the
+`ref` of a `topic.profile` event of the organization), checked like `PUT /v1/tasks/{task}/fields`; a repetition must
+name the same values. Task rows carry `status` (`todo`, `inProgress`, `completed`; closed ⇔ completed), `urgency`,
+`assignee_id` and `topic_id`. The first prompt of a captured task (`POST /v1/tasks/{task}/prompts`) creates its main
+session, and every prompt that starts a new main session moves `todo` to `inProgress`. `GET /v1/workgroups/{wg}/tasks`
+filters by `status`, `urgency`, `assignee` and `topic` (an ID or `none`). Title, description, GitHub organisation and
+repository are sealed in `task.meta` (§10), topic names in `topic.profile`.
 
 Session rows (`GET /v1/tasks/{task}`, `GET /v1/sessions/{session}`, the `session` frame, the device API) carry `agent_path` (a subagent's
 place below its main agent, the handle `#<task number>.<agent_path>`; null for a main session; KOR-52, ADR-095 §1)
@@ -863,7 +875,8 @@ operation's result (decrypted from its `operation.result` event) with `status:"d
 | `member.profile` | `{display_name}` |
 | `device.profile` | `{label}` |
 | `member.name` | `{display_name}`; header `ref` = the user or the invitation the name is for (ADR-073) |
-| `task.meta` | `{title,description?}`; header `session=""`, `ref=""` |
+| `topic.profile` | `{name}` (1–100 characters on one line); org scope, header `wg=""`, `task=""`, `ref` = the topic ID; written by every member (right `org_member`); the newest event of a `ref` wins; not delivered to devices (KOR-75, ADR-100 §3) |
+| `task.meta` | `{title,description?,github_org?,github_repo?}` (`github_*`: the task's GitHub organisation and repository `owner/name`, `""` clears; readers take each field from the newest `task.meta` that carries it; KOR-75, ADR-100 §4); header `session=""`, `ref=""` |
 | `task.agent_name` | `{name}` (1–80 characters on one line, or null = automatic name); header `session=""`, `ref=""` (KOR-52, ADR-095 §2) |
 | `prompt` | `{text,attachments:[]}` (attachments reserved, empty in v1); header `session=""`, `ref=""` (prompts address the task) |
 | `whiteboard.entry` | `{level,text}` (Markdown, ≤ 64 KiB) |

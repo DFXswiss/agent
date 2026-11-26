@@ -4089,6 +4089,19 @@
           "user"
         ],
         "header": {
+          "ref": "set",
+          "task": "empty",
+          "wg": "empty"
+        },
+        "kind": "topic.profile",
+        "right": "org_member",
+        "scope": "org"
+      },
+      {
+        "authors": [
+          "user"
+        ],
+        "header": {
           "ref": "entry",
           "task": "empty",
           "wg": "empty"
@@ -4448,6 +4461,7 @@
       "device_assigned_wg": "author device is assigned to the workgroup",
       "device_assigned_wg_session": "author device is assigned to the workgroup and the session runs on it",
       "org_admin": "author is an admin of the org",
+      "org_member": "author is a member of the org",
       "org_member_self": "author is an org member and ref == author",
       "wg_release": "author is an admin of the org or has write access to the workgroup, which is not archived",
       "wg_write": "author has write access to the workgroup"

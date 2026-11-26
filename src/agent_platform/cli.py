@@ -37,6 +37,7 @@ from agent_platform import (
     remote,
     session,
     tasks,
+    tickets,
     upkeep,
 )
 from agent_platform.account import Account
@@ -364,14 +365,23 @@ def cmd_device_assign(account: Account, args: argparse.Namespace, context: Conte
 
 
 def cmd_task_list(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    filters = tickets.Filters(
+        status=args.status,
+        urgency=args.urgency,
+        assignee=args.assignee,
+        topic=args.topic,
+        github_org=args.github_org,
+        github_repo=args.repo,
+    )
+    given = filters != tickets.Filters()
     if args.org is not None:
-        if args.state is None or args.by_person:
+        if args.state is None or args.by_person or given:
             raise PlatformError("invalid_argument")
         limit = attention.LIST_DEFAULT if args.limit is None else args.limit
         return attention.task_list(account, args.org, args.state, mine=args.mine, limit=limit)
     if args.state not in (None, *tasks.STATES) or args.mine:
         raise PlatformError("invalid_argument")
-    listed = tasks.task_list(account, args.wg, args.state)
+    listed = tasks.task_list(account, args.wg, args.state, filters if given else None)
     return mainagents.by_person(account, listed) if args.by_person else listed
 
 
@@ -379,6 +389,42 @@ def cmd_task_create(account: Account, args: argparse.Namespace, context: Context
     return tasks.task_create(
         account, args.wg, text_argument(args, context), args.device, args.vm, github_identity=args.github_identity
     )
+
+
+def _ticket(args: argparse.Namespace, context: Context) -> tickets.Ticket:
+    """The ticket fields of `task capture` / `task edit`; `--description -` reads stdin."""
+    description = None if args.description is None else text_argument(args, context, "description")
+    return tickets.Ticket(
+        title=args.title,
+        description=description,
+        github_org=args.github_org,
+        github_repo=args.repo,
+        urgency=args.urgency,
+        assignee=args.assignee,
+        topic=args.topic,
+        new_topic=args.new_topic,
+        status=getattr(args, "status", None),
+    )
+
+
+def cmd_task_capture(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return tickets.task_capture(account, args.wg, _ticket(args, context))
+
+
+def cmd_task_edit(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return tickets.task_edit(account, args.task, _ticket(args, context))
+
+
+def cmd_task_start(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return tickets.task_start(account, args.task, None if args.text is None else text_argument(args, context))
+
+
+def cmd_topic_list(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return tickets.topic_list(account, args.org)
+
+
+def cmd_topic_create(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    return tickets.topic_create(account, tickets.uuid_argument(args.org), args.name, args.topic)
 
 
 def cmd_task_prompt(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -579,6 +625,13 @@ def _task_commands(tree: Tree) -> None:
     sub.add_argument("--state", choices=[*tasks.STATES, *attention.CATEGORIES])
     sub.add_argument("--mine", action="store_true", help="with --org: only tasks the user owns")
     sub.add_argument("--by-person", action="store_true", help="with --wg: grouped by the responsible person")
+    sub.add_argument("--status", choices=tickets.STATUSES, help="with --wg: only tasks with this status")
+    sub.add_argument("--urgency", choices=tickets.URGENCIES, help="with --wg: only tasks with this urgency")
+    sub.add_argument("--assignee", help="with --wg: only tasks of this person (a user ID, me, or none)")
+    sub.add_argument("--topic", help="with --wg: only tasks of this topic (from `topic list`, or none)")
+    sub.add_argument("--github-org", help="with --wg: only tasks of this GitHub organisation")
+    sub.add_argument("--repo", help="with --wg: only tasks of this repository (owner/name)")
+    _ticket_commands(tree, group)
     sub = tree.add(
         group,
         "create",
@@ -654,6 +707,91 @@ def _task_commands(tree: Tree) -> None:
     sub.add_argument(
         "--timeout", type=int, default=tasks.WAIT_DEFAULT_S, help="seconds to wait at most (0-3600, default 600)"
     )
+
+
+def _ticket_arguments(sub: Parser, *, edit: bool) -> None:
+    """The ticket fields of `task capture` and `task edit` (ADR-100)."""
+    sub.add_argument("--title", required=not edit, help="one line, at most 120 characters")
+    sub.add_argument("--description", help="free text, or - to read it from stdin" + (" ('' clears)" if edit else ""))
+    sub.add_argument(
+        "--assignee", help="the responsible person: a user ID of the org or me" + (", none" if edit else "")
+    )
+    topic = sub.add_mutually_exclusive_group()
+    topic.add_argument("--topic", help="a topic ID (`topic list`)" + (", or none" if edit else ""))
+    topic.add_argument("--new-topic", metavar="NAME", help="create this topic and use it")
+    sub.add_argument("--github-org", help="the GitHub organisation or account" + (" ('' clears)" if edit else ""))
+    sub.add_argument("--repo", help="the repository owner/name" + (" ('' clears)" if edit else ""))
+    sub.add_argument("--urgency", choices=tickets.URGENCIES, help="default normal" if not edit else None)
+    if edit:
+        sub.add_argument(
+            "--status", choices=tickets.STATUSES, help="completed closes the task; todo/inProgress reopen it"
+        )
+
+
+def _ticket_commands(tree: Tree, group: Any) -> None:
+    """`task capture`, `task edit`, `task start`, `topic list` and `topic create` (E-41, ADR-100)."""
+    sub = tree.add(
+        group,
+        "capture",
+        writing(cmd_task_capture),
+        "capture a task like a ticket, without starting an agent",
+        example='agent-platform task capture --wg <wg_id> --title "Look at topic xy" --assignee me --urgency high',
+        words=(
+            "erfassen ticket jira notieren vormerken thema zuordnen person dringlichkeit ohne agent später capture"
+            " backlog todo note assign urgency later"
+        ),
+        then="agent-platform task start --task <task_id>",
+    )
+    sub.add_argument("--wg", required=True, help="the workgroup ID (`wg list --org <org_id>`, `status`)")
+    _ticket_arguments(sub, edit=False)
+    sub = tree.add(
+        group,
+        "edit",
+        writing(cmd_task_edit),
+        "change a task's status, urgency, person, topic, title, description, GitHub organisation or repository",
+        example="agent-platform task edit --task <task_id> --status completed",
+        words=(
+            "ändern bearbeiten status erledigt zuweisen umhängen dringlichkeit thema repository edit change assign"
+            " done complete reopen urgency"
+        ),
+        then="agent-platform task show --task <task_id>",
+    )
+    sub.add_argument("--task", required=True)
+    _ticket_arguments(sub, edit=True)
+    sub = tree.add(
+        group,
+        "start",
+        writing(cmd_task_start),
+        "start the agent of a captured task (its first prompt; default title and description)",
+        example="agent-platform task start --task <task_id>",
+        words="starten agent beginnen loslegen übergeben ausführen start agent run begin hand over",
+        then="agent-platform task follow --task <task_id>",
+    )
+    sub.add_argument("--task", required=True)
+    sub.add_argument("--text", help="the first prompt instead of title and description, or - to read it from stdin")
+    topics = tree.group("topic", "topics of captured tasks")
+    sub = tree.add(
+        topics,
+        "list",
+        with_account(cmd_topic_list),
+        "the topics of an organization",
+        example="agent-platform topic list --org <org_id>",
+        words="themen thema liste kategorien topics topic categories labels",
+        then="agent-platform task list --wg <wg_id> --topic <topic_id>",
+    )
+    sub.add_argument("--org", required=True)
+    sub = tree.add(
+        topics,
+        "create",
+        writing(cmd_topic_create),
+        "a new topic of an organization, or a new name of one (--topic)",
+        example='agent-platform topic create --org <org_id> --name "Payments"',
+        words="thema anlegen umbenennen kategorie topic create rename category label",
+        then="agent-platform task capture --wg <wg_id> --title … --topic <topic_id>",
+    )
+    sub.add_argument("--org", required=True)
+    sub.add_argument("--name", required=True, help="one line, at most 100 characters")
+    sub.add_argument("--topic", help="rename this topic instead of creating one")
 
 
 def _claude_commands(tree: Tree) -> None:

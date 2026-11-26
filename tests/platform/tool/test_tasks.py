@@ -50,6 +50,12 @@ def test_create_list_prompt_show(tool: Tool, hub: HubFake, account: User) -> Non
             "number": 1,
             "agent": "Fix the login bug #1",
             "name_source": "automatic",
+            # the ticket fields of ADR-100: an agent task is inProgress with the default urgency
+            "status": "inProgress",
+            "urgency": "normal",
+            "assignee_id": None,
+            "topic_id": None,
+            "topic": None,
             "created_at": listed["tasks"][0]["created_at"],
             "last_activity_at": listed["tasks"][0]["last_activity_at"],
         }

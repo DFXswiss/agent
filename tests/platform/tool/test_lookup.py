@@ -129,7 +129,7 @@ def test_a_mistyped_command_gets_the_usage_and_close_names(tool: Tool) -> None:
     assert result["error"] == "invalid_argument"
     assert result["did_you_mean"] == ["task", "test"]
     assert result["usage"].startswith("agent-platform [-h] [--version]")
-    assert tool.run("task", "craete")[1]["did_you_mean"] == ["create"]
+    assert tool.run("task", "craete")[1]["did_you_mean"] == ["create", "capture"]
     wrong = tool.run("task", "create", "--txt", "x")[1]
     assert "did_you_mean" not in wrong
     assert wrong["usage"].startswith("agent-platform task create")

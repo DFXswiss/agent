@@ -100,6 +100,17 @@ Process analysis (KOR-53, [ADR-097](../adr/097-process-analysis.md), migration `
 indexes `session (wg_id, created_at DESC, id DESC)`, `operation (wg_id, created_at DESC, id DESC)` and `audit (wg_id,
 seq DESC) WHERE wg_id IS NOT NULL` for the session reads of one workgroup's usage, operations and audit.
 
+Captured tasks (KOR-75, [ADR-100](../adr/100-captured-tasks.md), migration `0040_captured_tasks`): `task.status` text
+NOT NULL (`todo`, `inProgress`, `completed`; default `inProgress`), `task.urgency` text NOT NULL (`low`, `normal`,
+`high`, `urgent`; default `normal`), `task.assignee_id` uuid NULL (a user of the organization) and `task.topic_id` uuid
+NULL (the `ref` of a sealed `topic.profile` event of the organization) - IDs and codes only. Existing tasks are
+`completed` when closed and `inProgress` otherwise. The BEFORE INSERT OR UPDATE trigger `task_status` keeps closed ⇔
+completed (a row written `closed` gets `completed`, a row leaving `closed` with `completed` gets `inProgress`) and the
+check `task_status_closed` states it. A captured task is a row without any session: state `idle`, status `todo`, one
+transition `idle`. Indexes `task (wg_id, status, last_activity_at DESC, id DESC)` and the partial `(wg_id,
+assignee_id, …) WHERE assignee_id IS NOT NULL`, `(wg_id, topic_id, …) WHERE topic_id IS NOT NULL` bound the filtered
+lists.
+
 Device failure (KOR-58, ADR-087, migration `0031_device_failure`): `device.offline_since` (hub time the device went
 offline; cleared by a connect or heartbeat); `session.interrupted_at` (an active session of a failed device; it
 stays) and `interruption_ended_at` (its device was back before a move; interrupted while the first is newer),

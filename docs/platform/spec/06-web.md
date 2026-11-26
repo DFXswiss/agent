@@ -464,6 +464,16 @@ list says "Searched the N most recent tasks." ("Searched X of N tasks." once the
 further" button that starts the next request of at most 10 pages. While a search is active, "Search further" replaces
 "Load more".
 
+**Captured tasks (KOR-75, [ADR-100](../adr/100-captured-tasks.md), E-41).** Beside the composer of §5.1 and in §5.1a,
+"Capture task" opens a form: title (required), description, person (members of the organization, agent accounts
+included), topic (choose, or create a sealed `topic.profile`), GitHub organisation and repository (suggestions, free
+input allowed), urgency (preset normal); it sends `POST /v1/tasks` with the sealed `task.meta` alone, so no agent
+starts. Rows show status, urgency, person and topic. Both lists filter by person, topic, urgency and status at the hub
+(`assignee`, `topic`, `urgency`, `status`) and by GitHub organisation and repository in the browser with the bounded
+search above. The task page shows the fields with "Edit" (`PUT /v1/tasks/{task}/fields`; title, description,
+organisation and repository as a new sealed `task.meta`), the status as a choice (completed closes the task), and for a
+task without a main session "Start agent" (its first prompt: title, blank line, description; editable).
+
 ### 5.1b Resume notice (task page, KOR-33, ADR-072 §7)
 
 Below the task header, `ContextNotice` reads `context_restore`/`context_reason` of the task's current main session
