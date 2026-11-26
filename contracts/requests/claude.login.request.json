@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/requests/claude.login.request.json",
   "title": "device request body claude.login",
-  "description": "first request {mode} (manual = setup-token relay, automatic = mailbox automation, 05-runner.md section 11.3) with, for a subscription record of ADR-090, subscription_id (the record to fill; a new ID creates it), name and note (taken for a new record, for an existing one only when given) and, for automatic, email (the address to sign in with when it is not the mailbox's own); follow-up request (header follows set) {code} (05-runner.md section 11.2)",
+  "description": "first request {mode} (manual = setup-token relay, automatic = mailbox automation in a login sandbox, 05-runner.md section 11.3) with, for a subscription record of ADR-090, subscription_id (the record to fill; a new ID creates it), name and note (taken for a new record, for an existing one only when given) and, for automatic, email (the address to sign in with when it is not the mailbox's own) and account (KOR-73: the data of a new Claude account when the address has none yet - name, birth date and the consents the owner gave explicitly; never stored); follow-up requests (header follows set): {code} (05-runner.md section 11.2), {click} (the owner's click into the picture of a human check, x and y as fractions of its width and height, KOR-73) and {relay: true} (give the automation up and continue with link and code)",
   "oneOf": [
     {
       "type": "object",
@@ -35,6 +35,42 @@
           "type": "string",
           "pattern": "^[!-?A-~]{1,64}@[A-Za-z0-9-]{1,63}(\\.[A-Za-z0-9-]{1,63}){0,8}$",
           "maxLength": 254
+        },
+        "account": {
+          "type": "object",
+          "description": "data of a new Claude account (registration, KOR-73); used only when the provider asks for it, never stored",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "full name (no control character)",
+              "pattern": "^[^\u0000-\u001f]+$",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "birth_date": {
+              "type": "string",
+              "description": "date of birth YYYY-MM-DD",
+              "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+            },
+            "consents": {
+              "type": "array",
+              "description": "consents the owner gave explicitly: terms (terms of use and privacy policy), age (confirmation of the minimum age), marketing (product e-mails); only these boxes are ever ticked",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "terms",
+                  "age",
+                  "marketing"
+                ]
+              },
+              "uniqueItems": true,
+              "maxItems": 3
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -55,6 +91,50 @@
       },
       "required": [
         "code"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "click": {
+          "type": "object",
+          "description": "a click of the owner into the newest picture of the human check: fractions of its width and height",
+          "properties": {
+            "x": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "y": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "x",
+            "y"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "click"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "relay": {
+          "type": "boolean",
+          "const": true,
+          "description": "give the automation up: the device answers authorize with the link (relay)"
+        }
+      },
+      "required": [
+        "relay"
       ],
       "additionalProperties": false
     }

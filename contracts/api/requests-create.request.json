@@ -11,6 +11,10 @@
     "org_id": {
       "$ref": "../common.json#/$defs/uuid",
       "description": "github.connect for a company account of this organization (admins only, ADR-078 section 1); optional"
+    },
+    "slot": {
+      "$ref": "../common.json#/$defs/uuid",
+      "description": "the subject of the request (claude.login: the subscription record it fills, KOR-73): an active request is replaced only by a new one of the same user, device, kind and slot, so logins of different subscriptions run side by side; optional"
     }
   },
   "required": [
