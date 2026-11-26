@@ -107,21 +107,6 @@ async def live(db: Any, *states: str) -> list[WorkVm]:
     return [WorkVm(**row) for row in rows]
 
 
-async def counts(db: Any, *, task_id: str, org_id: str, owner_id: str | None) -> tuple[int, int, int]:
-    """Live VMs of the task (without its run and browser VMs), of the organization and of the owner (spec 11 section 2
-    limits, ADR-080 section 2, ADR-085 section 2)."""
-    rows = await _rows(
-        db,
-        "SELECT count(*) FILTER (WHERE task_id = %s AND scope NOT IN ('run', 'browser')) AS task,"
-        " count(*) FILTER (WHERE org_id = %s) AS org,"
-        " count(*) FILTER (WHERE owner_id IS NOT DISTINCT FROM %s) AS owner"
-        " FROM runner.workvm WHERE state <> 'deleted'",
-        (task_id, org_id, owner_id),
-    )
-    row = rows[0]
-    return int(row["task"]), int(row["org"]), int(row["owner"])
-
-
 def _values(vm: WorkVm) -> tuple[Any, ...]:
     return (
         vm.id,
@@ -364,9 +349,7 @@ async def wait_remove(db: Any, ticket: str) -> None:
 
 async def wait_clear(db: Any, *, keep: Sequence[str] = ()) -> int:
     """Remove the waiting requests except `keep` (the ones of this daemon); returns how many were left over."""
-    rows = await _rows(
-        db, "DELETE FROM runner.workvm_wait WHERE ticket <> ALL(%s) RETURNING ticket", (list(keep),)
-    )
+    rows = await _rows(db, "DELETE FROM runner.workvm_wait WHERE ticket <> ALL(%s) RETURNING ticket", (list(keep),))
     return len(rows)
 
 

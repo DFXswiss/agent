@@ -122,20 +122,19 @@ def test_requests_that_cannot_be_served(world: World, change: dict[str, Any], co
     assert caught.value.retryable is False
 
 
-@pytest.mark.parametrize("limit", ["max_per_task", "max_per_org", "max_per_owner"])
-def test_limits_per_task_org_and_owner(world: World, limit: str) -> None:
-    world.settings = manager_module.Settings(**{**world.settings.__dict__, limit: 1})
+def test_no_fixed_number_per_task_organization_or_owner(world: World) -> None:
+    """ADR-075 addendum 2: one owner and organization get as many VMs as the free resources admit."""
+    world.settings = manager_module.Settings(**{**world.settings.__dict__, "slots": 6})
 
-    async def body(vms: WorkVms) -> None:
-        await request(vms, {}, session(task_id=TASK))
-        same_task = limit == "max_per_task"
-        await request(
-            vms, {"scope": "session"} if same_task else {}, session(CHILD, task_id=TASK if same_task else TASK_B)
-        )
+    async def body(vms: WorkVms) -> list[bool]:
+        found = [(await request(vms, {}, session(task_id=TASK)))["created"]]
+        found.append((await request(vms, {"scope": "session"}, session(CHILD, task_id=TASK)))["created"])
+        for index in range(4):  # more than the former 4 per task, 8 per owner would allow together with these
+            task = f"0193000a-0000-7000-8000-0000000001{index:02d}"
+            found.append((await request(vms, {}, session(task[:-2] + "ff", task_id=task)))["created"])
+        return found
 
-    with pytest.raises(OperationFailed) as caught:
-        world.run(body)
-    assert caught.value.code == "limit_exceeded"
+    assert world.run(body) == [True] * 6
 
 
 def test_a_request_waits_in_the_queue_until_capacity_is_free(world: World) -> None:
@@ -903,7 +902,7 @@ def test_a_failing_wait_for_capacity_leaves_the_queue(world: World) -> None:
 
     world.on_sleep = boom
 
-    async def body(vms: WorkVms) -> list[str]:
+    async def body(vms: WorkVms) -> list[Waiter]:
         with pytest.raises(RuntimeError):
             await request(vms)
         return list(vms.queue)

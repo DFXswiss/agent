@@ -1,31 +1,30 @@
 """The deterministic scheduler (03-api.md section 4.6.2, ADR-002, ADR-009, ADR-013, ADR-049, ADR-075).
 
-`choose(candidates, vm_allowance=…, pinned=…)` picks the device for a new session from the devices assigned to the
-workgroup (directly or through the organization). For each candidate the hub knows the workgroup's live VMs on that
-device with their occupying sessions (`Vm`) and the sessions of the workgroup placed there without a VM yet
-(`pending`). The *room* of a VM is `capacity.sessions_per_vm` minus its sessions (unbounded when the device reports no
-limit, `sessions_per_vm = 0`). Pending sessions use the room of the running VMs first, then of VMs in another state,
-then of stopped ones; what is left needs new VMs (one per `sessions_per_vm` sessions, a single one without a limit),
-each taking a free slot and one VM of the workgroup's allowance.
+`choose(candidates, pinned=…)` picks the device for a new session from the devices assigned to the workgroup (directly
+or through the organization). For each candidate the hub knows the workgroup's live VMs on that device with their
+occupying sessions (`Vm`) and the sessions of the workgroup placed there without a VM yet (`pending`). The *room* of a
+VM is unbounded: the runner measures the VM's free resources itself (ADR-075 addendum 2). Only an older runner that
+still reports a fixed `capacity.sessions_per_vm` bounds it to that number minus its sessions. Pending sessions use the
+room of the running VMs first, then of VMs in another state, then of stopped ones; what is left needs new VMs (one per
+`sessions_per_vm` sessions, a single one without that number), each taking a free slot. No fixed number of VMs per
+workgroup exists (the former `AGENT_HUB_VMS_PER_WG` is ignored): the free resources of the devices decide.
 
 - Only **online** candidates count; without one the answer is `NoPlacement("device_offline")`.
 - Level 1: a running VM of the workgroup with room left. Level 2: a stopped VM with room (it needs a free slot only
   after the device **refused** a session of the workgroup, `Candidate.refused`, KOR-14, ADR-049). Level 3: a VM in
   another state with room (the same refusal rule), else a new VM: a ready pool VM or a free slot (after the pending
-  sessions' new VMs),
-  the workgroup's allowance of new VMs not used up (`vm_allowance`, from `AGENT_HUB_VMS_PER_WG`; None = no limit) and,
-  when the device reports `disk_free_mib`, at least `NEW_VM_DISK_MIB` free. Otherwise the device is skipped.
+  sessions' new VMs) and, when the device reports `disk_free_mib`, at least `NEW_VM_DISK_MIB` free. Otherwise the
+  device is skipped.
 - A device assigned only through the organization whose wrap of the workgroup's current key is missing
   (`Candidate.keys` False) is skipped as well (it could not open the task).
 - A platform device of an org whose credit is used up (`Candidate.unpaid`, KOR-31, ADR-062) is never chosen; own
   devices of the org still are.
 - The rest is ordered by (level, most free slots, most free VM memory budget, smallest device ID); the first one
   wins. Estimates: level 1 2500 ms, level 2 6500 ms, level 3 3000 ms with `pool_ready > 0` and 8000 ms without.
-- Nothing usable: `capacity_exhausted`, or `wg_vm_limit` when a device had a free slot but the workgroup's allowance
-  was used up, or `keys_pending` when only devices without the key had room; `credit_exhausted` when an online
-  device was skipped for the credit (the task waits and is placed once credit is added). With a chosen device
-  (`pinned`) the reasons are `placement_offline` and `placement_full`; with a chosen VM (`Candidate.pinned_vm`) only
-  that VM's room counts.
+- Nothing usable: `capacity_exhausted`, or `keys_pending` when only devices without the key had room;
+  `credit_exhausted` when an online device was skipped for the credit (the task waits and is placed once credit is
+  added). With a chosen device (`pinned`) the reasons are `placement_offline` and `placement_full`; with a chosen VM
+  (`Candidate.pinned_vm`) only that VM's room counts.
 
 The same inputs always give the same device (no clock, no randomness, no dictionary order). `Capacity.low` is the
 capacity warning of every device list: fewer than 10 % of the VM slots are free (a device without slots is low).
@@ -47,6 +46,7 @@ DEVICE_OFFLINE = "device_offline"
 CAPACITY_EXHAUSTED = "capacity_exhausted"
 CREDIT_EXHAUSTED = "credit_exhausted"
 WG_VM_LIMIT = "wg_vm_limit"
+"""No longer given (the workgroup VM limit is gone, ADR-075 addendum 2); kept as a known reason of stored tasks."""
 KEYS_PENDING = "keys_pending"
 PLACEMENT_OFFLINE = "placement_offline"
 PLACEMENT_FULL = "placement_full"
@@ -105,7 +105,7 @@ class Capacity:
     vm_slots_free: int = 0
     pool_ready: int = 0
     sessions_per_vm: int = 0
-    """Occupying sessions per VM; 0 = no limit (also for a runner that does not report it)."""
+    """Occupying sessions per VM an older runner reports; 0 = no limit (every current runner: it measures the room)."""
     disk_free_mib: int | None = None
     optional: Mapping[str, int] = field(default_factory=dict)
     """The reported optional counters and settings (for the device lists)."""
@@ -166,7 +166,6 @@ class Fit:
     new_vm: bool
     slots_free: int
     pending_new_vms: int
-    blocked_by_allowance: bool = False
 
 
 _ORDER = {RUNNING: 0, OTHER: 1, STOPPED: 2}
@@ -199,8 +198,8 @@ class Candidate:
         found = [vm for vm in self.vms if self.pinned_vm is None or vm.vm_id == self.pinned_vm]
         return sorted(found, key=lambda vm: (_ORDER[vm.state], vm.vm_id))
 
-    def fit(self, allowance: int | None) -> Fit:
-        """The fit of one more session (module docstring); `allowance` = new VMs the workgroup may still create."""
+    def fit(self) -> Fit:
+        """The fit of one more session (module docstring)."""
         capacity = self.capacity
         remaining = self.pending
         left: dict[str, int] = {RUNNING: 0, OTHER: 0, STOPPED: 0}
@@ -225,8 +224,6 @@ class Candidate:
         # a new VM takes a ready pool VM (no further slot) or a free slot
         if self.pinned_vm is not None or slots + capacity.pool_ready <= 0 or not capacity.disk_ok:
             return Fit(0, False, slots, pending_new)
-        if allowance is not None and allowance <= 0:
-            return Fit(0, False, slots, pending_new, blocked_by_allowance=True)
         return Fit(3, True, slots, pending_new)
 
     def estimate_ms(self, fit: Fit) -> int:
@@ -256,18 +253,9 @@ class NoPlacement:
 Decision = Placement | NoPlacement
 
 
-def allowance_left(candidates: Iterable[Candidate], vm_allowance: int | None) -> int | None:
-    """The new VMs the workgroup may still create after the VMs its pending sessions need."""
-    if vm_allowance is None:
-        return None
-    return vm_allowance - sum(item.fit(None).pending_new_vms for item in candidates if item.online)
-
-
-def ranked(candidates: Iterable[Candidate], vm_allowance: int | None = None) -> list[tuple[Candidate, Fit]]:
+def ranked(candidates: Iterable[Candidate]) -> list[tuple[Candidate, Fit]]:
     """The usable candidates with their fit, in scheduler order."""
-    items = list(candidates)
-    allowance = allowance_left(items, vm_allowance)
-    found = [(item, item.fit(allowance)) for item in items if item.online and item.keys and not item.unpaid]
+    found = [(item, item.fit()) for item in candidates if item.online and item.keys and not item.unpaid]
     usable = [(item, fit) for item, fit in found if fit.level > 0]
     return sorted(
         usable,
@@ -275,12 +263,12 @@ def ranked(candidates: Iterable[Candidate], vm_allowance: int | None = None) -> 
     )
 
 
-def order(candidates: Iterable[Candidate], vm_allowance: int | None = None) -> list[Candidate]:
+def order(candidates: Iterable[Candidate]) -> list[Candidate]:
     """The usable candidates in scheduler order."""
-    return [item for item, _fit in ranked(candidates, vm_allowance)]
+    return [item for item, _fit in ranked(candidates)]
 
 
-def _reason(items: list[Candidate], vm_allowance: int | None, *, pinned: bool) -> str:
+def _reason(items: list[Candidate], *, pinned: bool) -> str:
     online = [item for item in items if item.online]
     if not online:
         return PLACEMENT_OFFLINE if pinned else DEVICE_OFFLINE
@@ -288,19 +276,16 @@ def _reason(items: list[Candidate], vm_allowance: int | None, *, pinned: bool) -
         return CREDIT_EXHAUSTED
     if pinned:
         return KEYS_PENDING if not any(item.keys for item in online) else PLACEMENT_FULL
-    allowance = allowance_left(items, vm_allowance)
-    if any(item.keys and item.fit(allowance).blocked_by_allowance for item in online):
-        return WG_VM_LIMIT
-    if any(not item.keys and item.fit(allowance).level > 0 for item in online):
+    if any(not item.keys and item.fit().level > 0 for item in online):
         return KEYS_PENDING
     return CAPACITY_EXHAUSTED
 
 
-def choose(candidates: Iterable[Candidate], vm_allowance: int | None = None, *, pinned: bool = False) -> Decision:
+def choose(candidates: Iterable[Candidate], *, pinned: bool = False) -> Decision:
     """The placement of a new session (module docstring)."""
     items = list(candidates)
-    found = ranked(items, vm_allowance)
+    found = ranked(items)
     if not found:
-        return NoPlacement(_reason(items, vm_allowance, pinned=pinned))
+        return NoPlacement(_reason(items, pinned=pinned))
     item, fit = found[0]
     return Placement(device_id=item.device_id, estimate_ms=item.estimate_ms(fit))

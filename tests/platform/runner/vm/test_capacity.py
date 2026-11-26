@@ -93,11 +93,11 @@ def test_lru_victim_rules() -> None:
     assert lru_victim(tied, exclude_wg=None, now=NOW, idle_seconds=1800) == tied[1]
 
 
-def test_max_vms_caps_the_slots_and_other_areas_hold_slots_and_memory() -> None:
-    """ADR-075 section 2: `MAX_VMS` caps `vm_slots_total`; the VMs of other areas count against the budget."""
+def test_the_budget_alone_gives_the_slots_and_other_areas_hold_slots_and_memory() -> None:
+    """ADR-075 addendum 2: no fixed number of VMs, the memory budget alone; the VMs of other areas count against it."""
     host = 32768 + 10 * 8192
-    capped = compute(physical_mib=host, reserve_mib=32768, vm_memory_mib=8192, vms=[("running", 8192)], max_vms=4)
-    assert (capped.slots_total, capped.slots_free) == (4, 3)
+    found = compute(physical_mib=host, reserve_mib=32768, vm_memory_mib=8192, vms=[("running", 8192)])
+    assert (found.slots_total, found.slots_free) == (10, 9)
     # two work VMs of 4 GiB: two slots by count, one by memory -> two slots, 8 GiB used
     other = capacity.Usage(vms=2, memory_mib=8192)
     shared = compute(physical_mib=host, reserve_mib=32768, vm_memory_mib=8192, vms=[], other=other)
@@ -131,6 +131,7 @@ def test_own_usage_and_disk_free() -> None:
     assert asyncio.run(capacity.USAGE(None)) == capacity.NO_USAGE
     assert asyncio.run(capacity.RECLAIM(None, 8192)) == 0
     assert asyncio.run(pool._no_reclaim(8192)) == 0  # a `VmEnv` without other areas
+    assert asyncio.run(pool._no_usage()) == capacity.NO_USAGE
 
     def usage(path: str) -> SimpleNamespace:
         if path == "/missing":

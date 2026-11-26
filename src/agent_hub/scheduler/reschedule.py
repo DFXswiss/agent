@@ -5,7 +5,7 @@ A waiting session is a session in state `requested` without a device whose task 
 `not_before` (an attempt held back after repeated refusals, ADR-075 section 7) has passed. `reschedule(context,
 wg_ids)` loads the scheduler's inputs once per workgroup and runs the scheduler for each of its waiting sessions,
 oldest first, with the task's chosen device and VM (`hub.task.placement_*`), booking every placement on the chosen
-candidate (a pending session there; a new VM it needs takes a slot and one VM of the workgroup's allowance), so a
+candidate (a pending session there; a new VM it needs takes a slot), so a
 device that comes back with one free slot does not get every waiting session: with a device the session is placed
 (hint `session.start`, task `starting`); without one the task keeps waiting and gets the current reason; a session
 whose reason did not change is left untouched. Each session is handled in its own short transaction under the lock
@@ -62,7 +62,6 @@ def reschedule(context: Any, wg_ids: Iterable[UUID]) -> int:
                 (context.clock(), wg),
             ).fetchall()
             found = load.candidates(connection, wg, context.clock(), online_seconds)
-            allowance = load.allowance(connection, wg)
             pins = {str(task_id): load.task_pin(connection, task_id) for _session, task_id in waiting}
         for session_id, task_id in waiting:
             effects = Effects()
@@ -73,7 +72,7 @@ def reschedule(context: Any, wg_ids: Iterable[UUID]) -> int:
                 if task.state == "closed" or session.device_id is not None or session.state != "requested":
                     continue
                 pick, pinned = load.pinned(load.with_owner(connection, found, task.owner_id), pins[str(task_id)])
-                decision = choose(pick, allowance, pinned=pinned) if pick else load.without_device(connection, wg)
+                decision = choose(pick, pinned=pinned) if pick else load.without_device(connection, wg)
                 if isinstance(decision, NoPlacement) and decision.reason == task.state_reason:
                     continue
                 place(connection, task, session_id, decision, now, actor=HUB, effects=effects)

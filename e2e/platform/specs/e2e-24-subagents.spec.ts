@@ -1,13 +1,14 @@
 // E2E-24 (07-testing.md section 2.1; 03-api.md sections 8.1, 8.3, 9, 12; 05-runner.md section 13; ADR-088): controlled
-// subagents. The limits are settings of the hub (ADR-088 section 2); the spec restarts the hub with depth 2 and 3
-// running children per task (`POST /hub/subagent-limits`) and restores the defaults at the end. The session requests a
+// subagents. The limits are settings of the hub (ADR-088 section 2); the spec restarts the hub with depth 2 and 5
+// children per task (`POST /hub/subagent-limits`) and restores the defaults at the end. The session requests a
 // reviewer through the platform operation `subagent.request` and waits for it with `get_subagent_result`; the child
 // requests a grandchild the same way; the grandchild's own request exceeds the depth limit. Children keep running after
 // a turn (`idle`, ADR-088 section 1): the child stops the grandchild and the parent stops the child with
 // `subagent.stop`. Each subagent is a full session of the same task in its own sandbox (own session user) of the
 // workgroup's VM, linked to its parent and to the operation that started it, with its terminal in the web. Four
-// children requested at once: three run (and stay idle), the fourth exceeds the limit of running children per task
-// (`rejected` by the runner's pre-check or `denied` by the hub). Claude Code's own Agent/Task tools are never offered
+// children requested at once: three run (and stay idle), the fourth exceeds the limit of children per task - five
+// with the child and the grandchild; how many run at once is no fixed number, ADR-075 addendum 2 - (`rejected` by the
+// runner's pre-check or `denied` by the hub). Claude Code's own Agent/Task tools are never offered
 // nor used. Runs on T1 and T2.
 // Live view of a running child (KONZEPT idea 26 and section 6 point 7, KOR-60): the double holds the child's final
 // answer back for 40 s; meanwhile the child's terminal grows in the web, its chat tab shows its first answer and the
@@ -80,9 +81,9 @@ test('@E2E-24 @R-10.6 @R-13.1 @R-13.2 @R-13.3 @R-13.4 @R-13.5 @R-13.6 @R-13.7 @R
 }) => {
   test.setTimeout(720_000);
   // the former fixed limits, as settings of the restarted hub (the runners take them with the device state)
-  expect(await orchestrator.call('POST', '/hub/subagent-limits', { depth: 2, running: 3 })).toMatchObject({
+  expect(await orchestrator.call('POST', '/hub/subagent-limits', { depth: 2, total: 5 })).toMatchObject({
     subagent_max_depth: 2,
-    subagent_max_running: 3,
+    subagent_max_total: 5,
   });
   try {
     await orchestrator.loadScenario('model', scenario);

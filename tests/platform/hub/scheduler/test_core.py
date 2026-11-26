@@ -108,112 +108,85 @@ TABLE: list[tuple[str, list[Candidate], str, int | None]] = [
 
 V1, V2, V3 = "vm-0000000a", "vm-0000000b", "vm-0000000c"
 
-# ADR-075 section 3: room of the VMs, pending sessions, new VMs, the workgroup's allowance, keys and disk
-VM_TABLE: list[tuple[str, list[Candidate], int | None, str, int | None]] = [
-    ("full running VM: a new VM on the same device", [dev(A, per_vm=2, vms=(Vm(V1, "running", 2),))], None, A, 8000),
+# ADR-075 section 3: room of the VMs (an older runner's `sessions_per_vm`), pending sessions, new VMs, keys and disk;
+# no fixed number of VMs per workgroup (ADR-075 addendum 2)
+VM_TABLE: list[tuple[str, list[Candidate], str, int | None]] = [
+    ("full running VM: a new VM on the same device", [dev(A, per_vm=2, vms=(Vm(V1, "running", 2),))], A, 8000),
     (
         "full running VM: a device with room wins",
         [dev(A, per_vm=2, vms=(Vm(V1, "running", 2),)), dev(B, per_vm=2, vms=(Vm(V2, "running", 1),), free=1)],
-        None,
         B,
         2500,
     ),
     (
         "full running VM and no slot: skipped",
         [dev(A, per_vm=2, free=0, vms=(Vm(V1, "running", 2),)), dev(B, free=1)],
-        None,
         B,
         8000,
     ),
     (
         "pending sessions use the room first",
         [dev(A, per_vm=3, free=0, vms=(Vm(V1, "running", 1),), pending=2)],
-        None,
         "capacity_exhausted",
         None,
     ),
-    ("room left after pending", [dev(A, per_vm=3, free=0, vms=(Vm(V1, "running", 1),), pending=1)], None, A, 2500),
+    ("room left after pending", [dev(A, per_vm=3, free=0, vms=(Vm(V1, "running", 1),), pending=1)], A, 2500),
     (
         "pending beyond the room take a slot: the device with more slots left wins",
         [dev(A, per_vm=2, free=1, vms=(Vm(V1, "running", 2),), pending=1), dev(B, free=1)],
-        None,
         B,
         8000,
     ),
     (
         "pending beyond the room take the last slot",
         [dev(A, per_vm=2, free=1, vms=(Vm(V1, "running", 2),), pending=2), dev(B, free=1)],
-        None,
         B,
         8000,
     ),
+    ("a stopped VM with room", [dev(A, per_vm=2, free=0, vms=(Vm(V1, "running", 2), Vm(V2, "stopped", 0)))], A, 6500),
+    ("a stopped VM without room", [dev(A, per_vm=1, free=0, vms=(Vm(V1, "stopped", 1),))], "capacity_exhausted", None),
     (
-        "a stopped VM with room",
-        [dev(A, per_vm=2, free=0, vms=(Vm(V1, "running", 2), Vm(V2, "stopped", 0)))],
-        None,
+        "any number of VMs of the workgroup",
+        [dev(A, per_vm=1, vms=tuple(Vm(f"vm-{n:08x}", "running", 1) for n in range(50)))],
         A,
-        6500,
+        8000,
     ),
-    (
-        "a stopped VM without room",
-        [dev(A, per_vm=1, free=0, vms=(Vm(V1, "stopped", 1),))],
-        None,
-        "capacity_exhausted",
-        None,
-    ),
-    ("allowance used up", [dev(A, per_vm=1, vms=(Vm(V1, "running", 1),))], 0, "wg_vm_limit", None),
-    ("allowance used up, but room left", [dev(A, per_vm=2, vms=(Vm(V1, "running", 1),))], 0, A, 2500),
-    (
-        "allowance taken by the pending sessions",
-        [dev(A, per_vm=1, vms=(Vm(V1, "running", 1),), pending=1), dev(B, per_vm=1)],
-        1,
-        "wg_vm_limit",
-        None,
-    ),
-    ("allowance left for one more VM", [dev(A, per_vm=1, vms=(Vm(V1, "running", 1),))], 1, A, 8000),
-    ("keys missing: skipped", [dev(A, keys=False, vm="running"), dev(B, free=1)], None, B, 8000),
-    (
-        "keys missing on the only device with room",
-        [dev(A, keys=False, free=4), dev(B, free=0)],
-        None,
-        "keys_pending",
-        None,
-    ),
-    ("keys missing and no room anywhere", [dev(A, keys=False, free=0)], None, "capacity_exhausted", None),
-    ("disk too full for a new VM", [dev(A, disk=1000), dev(B, free=1, disk=20480)], None, B, 8000),
+    ("keys missing: skipped", [dev(A, keys=False, vm="running"), dev(B, free=1)], B, 8000),
+    ("keys missing on the only device with room", [dev(A, keys=False, free=4), dev(B, free=0)], "keys_pending", None),
+    ("keys missing and no room anywhere", [dev(A, keys=False, free=0)], "capacity_exhausted", None),
+    ("disk too full for a new VM", [dev(A, disk=1000), dev(B, free=1, disk=20480)], B, 8000),
     (
         "the booting VM of a pending session",
         [dev(A, per_vm=2, free=0, vms=(Vm(V1, "running", 2),), pending=0)],
-        None,
         "capacity_exhausted",
         None,
     ),
-    ("pending session on a fresh device", [dev(A, per_vm=2, free=1, pending=1), dev(B, free=1)], None, B, 8000),
-    ("disk too full but a running VM", [dev(A, disk=0, vm="running")], None, A, 2500),
+    ("pending session on a fresh device", [dev(A, per_vm=2, free=1, pending=1), dev(B, free=1)], B, 8000),
+    ("disk too full but a running VM", [dev(A, disk=0, vm="running")], A, 2500),
     (
         "no free slot but a ready pool VM: a new VM",
         [dev(A, per_vm=1, free=0, pool=1, vms=(Vm(V1, "running", 1),))],
-        None,
         A,
         3000,
     ),
     (
         "running VM most room is not needed for the device order",
         [dev(B, per_vm=4, vms=(Vm(V1, "running", 3),)), dev(A, per_vm=4, vms=(Vm(V2, "running", 0),))],
-        None,
+        A,
+        2500,
+    ),
+    (
+        "a current runner reports no number: a running VM has room",
+        [dev(A, free=0, vms=(Vm(V1, "running", 40),))],
         A,
         2500,
     ),
 ]
 
 
-@pytest.mark.parametrize(
-    ("name", "candidates", "allowance", "expected", "estimate"), VM_TABLE, ids=[row[0] for row in VM_TABLE]
-)
-def test_vm_table(
-    name: str, candidates: list[Candidate], allowance: int | None, expected: str, estimate: int | None
-) -> None:
-    decision = choose(candidates, allowance)
+@pytest.mark.parametrize(("name", "candidates", "expected", "estimate"), VM_TABLE, ids=[row[0] for row in VM_TABLE])
+def test_vm_table(name: str, candidates: list[Candidate], expected: str, estimate: int | None) -> None:
+    decision = choose(candidates)
     if estimate is None:
         assert decision == NoPlacement(expected), name
     else:
@@ -222,8 +195,8 @@ def test_vm_table(
 
 
 def test_the_fit_names_a_new_vm() -> None:
-    assert dev(A, per_vm=1, vms=(Vm(V1, "running", 1),)).fit(None).new_vm is True
-    assert dev(A, vm="running").fit(None).new_vm is False
+    assert dev(A, per_vm=1, vms=(Vm(V1, "running", 1),)).fit().new_vm is True
+    assert dev(A, vm="running").fit().new_vm is False
 
 
 def test_a_chosen_vm_counts_alone() -> None:

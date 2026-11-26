@@ -5,13 +5,13 @@
 
 1. `resuming` (transition);
 2. a VM of the workgroup is made ready again (`VmManager.ensure_vm` preferring the session's own VM, then the task's
-   chosen VM, ADR-075 section 6; a VM stopped by the VM idle rule is restarted; a new VM only while the hub allows one,
-   `vm_new_allowed`). On a VM other than the session's (deleted, replaced by a new golden, another VM of the workgroup)
-   the session's directories and transcript are not there: the session moves to that VM and is restored there from its
-   newest context checkpoint by the request amenders (`contexts.restore`, ADR-072 section 7), or - when that is not
-   possible - takes the reported emergency path; it no longer fails `vm_start_failed`. The session's `vm_id` changes
-   only once the guest accepted that `POST /v1/sessions` (KOR-33 review no. 4): a retry after a failed create therefore
-   sees the move again and restores again instead of sending `--resume` to a VM that never had the transcript;
+   chosen VM, ADR-075 section 6; a VM stopped by the VM idle rule is restarted; else a new VM). On a VM other than
+   the session's (deleted, replaced by a new golden, another VM of the workgroup) the session's directories and
+   transcript are not there: the session moves to that VM and is restored there from its newest context checkpoint by
+   the request amenders (`contexts.restore`, ADR-072 section 7), or - when that is not possible - takes the reported
+   emergency path; it no longer fails `vm_start_failed`. The session's `vm_id` changes only once the guest accepted that
+   `POST /v1/sessions` (KOR-33 review no. 4): a retry after a failed create therefore sees the move again and restores
+   again instead of sending `--resume` to a VM that never had the transcript;
 3. guest health assigned to the workgroup, model access and credential as for a start (the owner's preference from
    the desired state, else the session's recorded access);
 4. `POST /v1/sessions` with the same session ID and `resume_claude_session_id` (the guest keeps user, directories and
@@ -149,9 +149,7 @@ class Resumer:
         env = self.env
         prefer = [vm for vm in (session.vm_id, desired.vm_id_pref) if vm is not None]
         try:
-            row = await env.vms.ensure_vm(
-                session.org_id, session.wg_id, prefer=prefer, new_allowed=desired.vm_new_allowed
-            )
+            row = await env.vms.ensure_vm(session.org_id, session.wg_id, prefer=prefer)
         except RunnerError as exc:
             raise StartFailed(exc.code if exc.code in VM_REASONS else "vm_start_failed") from None
         moved = row.id != session.vm_id

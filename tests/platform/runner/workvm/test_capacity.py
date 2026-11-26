@@ -32,15 +32,18 @@ def test_live_work_vms_and_pool_entries_count_against_the_budget(dsn: str) -> No
             ),
         )
         await records.insert(
-            db, dataclasses.replace(ROW, id="wvm-0000000d", lima_name="wp-t-d", slot=3, scope="run", session_id=ROW.task_id)
+            db,
+            dataclasses.replace(
+                ROW, id="wvm-0000000d", lima_name="wp-t-d", slot=3, scope="run", session_id=ROW.task_id
+            ),
         )
         await records.pool_add(db, records.Pooled("wp-t-wvm-0000000b", 1, "img", 4096, "ready", START))
         return [empty, await capacity.usage(context)]
 
     assert run(dsn, body) == [
         Usage(0, 0),
-        # the run VM is firm (its test run owns it); the task VM and the pool entry yield
-        Usage(vms=3, memory_mib=2 * 8192 + 4096, yielding_vms=2, yielding_mib=8192 + 4096),
+        # running work keeps its RAM (the task and the run VM); the pool entry yields to a workgroup VM
+        Usage(vms=3, memory_mib=2 * 8192 + 4096, yielding_vms=1, yielding_mib=4096),
     ]
 
 

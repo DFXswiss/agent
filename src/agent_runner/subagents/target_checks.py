@@ -4,9 +4,8 @@ section 9, ADR-088 section 1).
 The hub cannot read the parameters, so the runner checks the target locally before the registration: `session_id`
 must name a child of the requesting session in the same task that has not ended (not `stopping`, `stopped` or
 `failed`); anything else is refused with `not_found`. An instruction for a `suspended` child resumes it, so it is
-running again: the running subagents of the task (`store.counts`) must stay below the setting
-`subagent_max_running` (`limits.running_refusal`) and the child's VM must have room for one more session
-(`limits.vm_room_refusal`); else `limit_exceeded` with the sentence that names the limit and the setting. The check
+running again: the child's VM must have the free resources for one more session (`limits.vm_room_refusal`, measured;
+no fixed number of running subagents, ADR-075 addendum 2); else `limit_exceeded` with the sentence why. The check
 before the registration is not atomic, so the executor repeats it (`resume_refusal`) right before it resumes the
 child, serialised per task, and a child suspended while its instruction waited is checked there too.
 """
@@ -22,7 +21,6 @@ from agent_runner.orgs.db import session as store_session
 from agent_runner.sessions import records
 from agent_runner.sessions.records import FINAL, LocalSession
 from agent_runner.subagents import limits as subagent_limits
-from agent_runner.subagents import store
 
 NOT_CHILD = "The session is no running subagent of this session."
 
@@ -42,13 +40,9 @@ async def _target(conn: AsyncConnection[Any], request: PrecheckRequest) -> Local
 
 
 async def resume_refusal(context: Any, conn: AsyncConnection[Any], child: LocalSession) -> str | None:
-    """The sentence why the suspended `child` may not run again now (running limit, VM room), None when it may. The
-    executor asks again right before it resumes the child, under one lock per task (module docstring)."""
-    running, _total = await store.counts(conn, child.task_id)
-    refused = subagent_limits.running_refusal(subagent_limits.current(context), running)
-    if refused is None:
-        refused = await subagent_limits.vm_room_refusal(context, conn, child.vm_id)
-    return refused
+    """The sentence why the suspended `child` may not run again now (its VM has no free resources for it), None when
+    it may. The executor asks again right before it resumes the child, under one lock per task (module docstring)."""
+    return await subagent_limits.vm_room_refusal(context, conn, child.vm_id)
 
 
 async def instruct_check(request: PrecheckRequest) -> PrecheckResult:

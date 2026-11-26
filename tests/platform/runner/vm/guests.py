@@ -234,8 +234,9 @@ class Harness:
             return self.other
 
         async def reclaim(need_mib: int) -> int:
+            """The other areas' VMs give way (as if idle) and are gone."""
             self.reclaimed.append(need_mib)
-            released, self.other = self.other.yielding_mib, NO_USAGE
+            released, self.other = self.other.memory_mib, NO_USAGE
             return released
 
         return VmEnv(

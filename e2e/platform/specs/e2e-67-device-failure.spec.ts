@@ -252,7 +252,7 @@ test('@E2E-67 @R-14.6 @needs-vm @needs-workvm a session of a failed device conti
     const B = (await spawnRunner(orchestrator, { pool_size: 1 })).name;
     spawned.push(B);
     // test runs in fresh VMs on both devices (cold clones: no work VM pool)
-    await orchestrator.call('POST', '/runners/workvm', { slots: 2, max_per_task: 2, pool_size: 0 });
+    await orchestrator.call('POST', '/runners/workvm', { enable: true, pool_size: 0 });
     const deviceA = await platformRunner(orchestrator, A);
     const deviceB = await platformRunner(orchestrator, B);
 
@@ -466,7 +466,7 @@ test('@E2E-67 @R-14.6 @needs-vm @needs-workvm a session of a failed device conti
     ]);
   } finally {
     for (const name of spawned) await removeRunner(orchestrator, name).catch(() => undefined);
-    await orchestrator.call('POST', '/runners/workvm', { slots: 0 }).catch(() => undefined);
+    await orchestrator.call('POST', '/runners/workvm', { enable: false }).catch(() => undefined);
     await orchestrator.setFailover(null, null).catch(() => undefined);
   }
   await closingChecks(orchestrator, true);

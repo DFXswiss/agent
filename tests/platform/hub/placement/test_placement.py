@@ -4,7 +4,6 @@ to the whole organization (03-api.md sections 4.5, 4.6, 4.6.2, 6.1; ADR-075 sect
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -153,45 +152,33 @@ def test_a_task_choice_is_checked(desk: Desk, world: World) -> None:
     assert reader.put(f"/v1/tasks/{task}/placement", json={"device_id": None, "vm_id": None}).status_code == 403
 
 
-def test_a_full_vm_of_the_workgroup_gets_a_second_vm_or_waits_at_the_limit(
-    desk: Desk, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_a_full_vm_of_the_workgroup_gets_a_second_vm_and_no_number_of_vms_bounds_it(desk: Desk) -> None:
     device, other = desk.scene.device, desk.scene.other_device
     desk.offline(other)
     desk.online(device, PER_VM_ONE)
     vm = desk.vm(device, "running")
     task, session = desk.started()
     desk.execute("UPDATE hub.session SET vm_id = %s WHERE id = %s", vm, session)
-    # the VM is full (one session per VM): a second VM on the same device
+    # the VM is full (an older runner's one session per VM): a second VM on the same device
     second_task, second = desk.started()
     assert desk.session(second)["device_id"] == device.id
     desk.execute("UPDATE hub.session SET vm_id = %s WHERE id = %s", desk.vm(device, "running"), second)
-    # two live VMs and a limit of two: waiting for room (the routes would bind the hub's own settings again)
-    settings.bind(replace(desk.hub.config, vms_per_wg=2))
-    monkeypatch.setattr(settings, "bind", lambda _config: None)
+    # no fixed number of VMs per workgroup (ADR-075 addendum 2): a third VM while the device has a free slot
     body = create(desk, None).json()
-    assert (body["task"]["state"], body["task"]["state_reason"]) == ("scheduling", "wg_vm_limit")
-    with desk.hub.pool.connection() as connection:
-        assert load.allowance(connection, desk.wg) == 0
-    monkeypatch.undo()
-    settings.bind(replace(desk.hub.config, vms_per_wg=0))
-    with desk.hub.pool.connection() as connection:
-        assert load.allowance(connection, desk.wg) is None
+    assert body["task"]["state"] == "starting"
+    assert desk.session(body["session"]["session_id"])["device_id"] == device.id
     assert {task, second_task}
 
 
-def test_the_device_state_names_the_chosen_vm_and_the_vm_limit(world: World, fleet: Fleet) -> None:
+def test_the_device_state_names_the_chosen_vm_and_never_forbids_a_new_vm(world: World, fleet: Fleet) -> None:
     desk = Desk(org_device_scene(world))
     device = desk.scene.device
     desk.online(device)
     vm = desk.vm(device, "running")
     body = create(desk, {"device_id": device.id, "vm_id": vm}).json()
-    settings.bind(replace(desk.hub.config, vms_per_wg=1))
     sessions = fleet.client(device).get("/v1/device/state").json()["sessions"]
     assert sessions[0]["session_id"] == body["session"]["session_id"]
-    assert (sessions[0]["vm_id_pref"], sessions[0]["vm_new_allowed"]) == (vm, False)
-    settings.bind(replace(desk.hub.config, vms_per_wg=5))
-    sessions = fleet.client(device).get("/v1/device/state").json()["sessions"]
+    assert sessions[0]["vm_id_pref"] == vm
     assert "vm_new_allowed" not in sessions[0]
 
 

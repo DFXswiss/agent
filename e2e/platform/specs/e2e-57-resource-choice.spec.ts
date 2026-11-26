@@ -1,14 +1,13 @@
 // E2E-57 (07-testing.md section 2.1; 03-api.md section 4.6.2; ADR-075): resource choice with two devices – the run's
-// platform device and a further runner instance on the runner device (a second certified platform device) whose
-// runner allows one session per VM and two VMs. A task in a workgroup without any device is created and waits for a
-// device ("waiting for a device"); the task view offers "Assign a device", which assigns one and the task starts. The
-// second device is given to the whole organization in one step (the dialog says what that means for the keys): it
-// becomes a candidate of every workgroup, also of a workgroup created afterwards, and a member cannot point a
-// workgroup at a device that is not assigned to it. In the default workgroup (only the organization's device) the
-// first task gets a VM, the second one – the first VM is full – a second VM on the same device (deterministic: the only
-// candidate, a new VM), the third waits for room ("waiting for room", never an error) and starts by itself once the
-// first task is closed. Finally the run's platform device joins the default workgroup and the user chooses it in the
-// composer: the task runs there and the task view names device and VM. Runs on T1.
+// platform device and a further runner instance on the runner device (a second certified platform device). A task in
+// a workgroup without any device is created and waits for a device ("waiting for a device"); the task view offers
+// "Assign a device", which assigns one and the task starts. The second device is given to the whole organization in
+// one step (the dialog says what that means for the keys): it becomes a candidate of every workgroup, also of a
+// workgroup created afterwards, and a member cannot point a workgroup at a device that is not assigned to it. In the
+// default workgroup (only the organization's device) the first task gets a VM and the second one runs in the same VM:
+// no fixed number of sessions per VM, the VM's measured free resources decide (ADR-075 addendum 2; waiting for room is
+// E2E-38's). Finally the run's platform device joins the default workgroup and the user chooses it in the composer:
+// the task runs there and the task view names device and VM. Runs on T1.
 import { readFileSync } from 'node:fs';
 import { expect, test } from '../fixtures/test.ts';
 import {
@@ -48,7 +47,7 @@ interface Placed {
   readonly state: string;
 }
 
-test('@E2E-57 @R-0.3 @R-3.3 @needs-vm devices and VMs are chosen by capacity or by the user, a full VM gets a second one, and missing room or devices are waiting states', async ({
+test('@E2E-57 @R-0.3 @R-3.3 @needs-vm devices and VMs are chosen by capacity or by the user, a VM takes sessions while its resources last, and a missing device is a waiting state', async ({
   page,
   e2e,
   orchestrator,
@@ -77,9 +76,7 @@ test('@E2E-57 @R-0.3 @R-3.3 @needs-vm devices and VMs are chosen by capacity or 
         `SELECT state, state_reason FROM hub.task WHERE id = '${uuid(task)}'`,
       )
     )[0]!;
-  const RUNNER = (
-    await spawnRunner(orchestrator, { pool_size: 1, memory_reserve_mib: 0, sessions_per_vm: 1, max_vms: 2 })
-  ).name;
+  const RUNNER = (await spawnRunner(orchestrator, { pool_size: 1, memory_reserve_mib: 0 })).name;
   try {
     const own = await enrollRunner(orchestrator, RUNNER, (await invite(orchestrator, 'device')).code, true);
     expect(await operator(orchestrator, ['certify-pending', '--device', own])).toContain(`certified ${own}`);
@@ -128,7 +125,7 @@ test('@E2E-57 @R-0.3 @R-3.3 @needs-vm devices and VMs are chosen by capacity or 
       ).rejects.toThrow(/403.*placement_forbidden/);
     }
 
-    // A full VM gets a second VM on the same device (one session per VM, two VMs).
+    // No fixed number of sessions per VM: the second task runs in the first task's VM while its resources last.
     await poolReady(orchestrator, 1);
     await home(page);
     const firstTask = await sendPrompt(page, 'E2E47-FIRST kz47-prompt-a5s6d7: hello');
@@ -138,28 +135,17 @@ test('@E2E-57 @R-0.3 @R-3.3 @needs-vm devices and VMs are chosen by capacity or 
     expect(one.device_id).toBe(own);
     await home(page);
     const second = await sendPrompt(page, 'E2E47-SECOND kz47-prompt-f8g9h1: hello');
-    await expectAnswerInChat(page, 'Second VM kz47-answer-g7h8j9.');
+    await expectAnswerInChat(page, 'Same VM kz47-answer-g7h8j9.');
     await expect.poll(async () => (await sessionOf(second)).vm_id, { timeout: 60_000 }).not.toBeNull();
     const two = await sessionOf(second);
     expect(two.device_id).toBe(own);
-    expect(two.vm_id).not.toBe(one.vm_id);
+    expect(two.vm_id).toBe(one.vm_id);
     const local = await runnerStore<{ n: number }>(
       orchestrator,
       `SELECT count(*)::int AS n FROM runner.vm WHERE state <> 'deleted' AND wg_id = '${uuid(wg)}'`,
       RUNNER,
     );
-    expect(local).toEqual([{ n: 2 }]);
-
-    // Both VMs full and no third VM: waiting for room, and it starts by itself once there is room.
-    await home(page);
-    const queued = await sendPrompt(page, 'E2E47-QUEUED kz47-prompt-j2k3l4: hello');
-    await expect(page.getByTestId('countdown.reason')).toHaveAttribute('data-reason', 'capacity_exhausted', {
-      timeout: 60_000,
-    });
-    expect(await taskOf(queued)).toEqual({ state: 'scheduling', state_reason: 'capacity_exhausted' });
-    await user.request('POST', `/v1/tasks/${firstTask}/close`, {});
-    await expectAnswerInChat(page, 'Room again kz47-answer-k1l2m3.');
-    expect((await sessionOf(queued)).device_id).toBe(own);
+    expect(local).toEqual([{ n: 1 }]);
 
     // Chosen by the user: the run's platform device joins the default workgroup and is chosen in the composer.
     await navigate(page, `/o/${org}/devices`);
@@ -186,12 +172,10 @@ test('@E2E-57 @R-0.3 @R-3.3 @needs-vm devices and VMs are chosen by capacity or 
       'kz47-prompt-q1w2e3',
       'kz47-prompt-a5s6d7',
       'kz47-prompt-f8g9h1',
-      'kz47-prompt-j2k3l4',
       'kz47-prompt-m5n6b7',
       'kz47-answer-a1b2c3',
       'kz47-answer-d4e5f6',
       'kz47-answer-g7h8j9',
-      'kz47-answer-k1l2m3',
       'kz47-answer-n4p5q6',
       'kz47-wg-w1e2r3',
       'kz47-wg-t4y5u6',

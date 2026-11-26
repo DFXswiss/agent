@@ -180,9 +180,8 @@ class FakeVms:
         *,
         session_id: str | None = None,
         prefer: Sequence[str] = (),
-        new_allowed: bool = True,
     ) -> VmRow:
-        self.calls.append({"session_id": session_id, "prefer": list(prefer), "new_allowed": new_allowed})
+        self.calls.append({"session_id": session_id, "prefer": list(prefer)})
         if self.on_ensure is not None:
             self.on_ensure()
         if self.error is not None:

@@ -20,7 +20,7 @@ from agent_runner.crypto.ids import uuid7
 from agent_runner.guestlink.errors import GuestRefused, GuestUnreachable
 from agent_runner.operations.extensions import OperationContext, OperationFailed, prechecks
 from agent_runner.prompts.resume import RETRY
-from agent_runner.subagents import instructions, session_state, store, target_checks, turns
+from agent_runner.subagents import instructions, limits, session_state, store, target_checks, turns
 from agent_runner.subagents.controller import GRACE_S, SETTLE_S, Subagents, ping_id
 from agent_runner.subagents.instructions import Instruction
 
@@ -153,6 +153,17 @@ def limited(found: SKit, running: int) -> None:
             "subagent_max_runtime_seconds": 0,
         }
     }
+
+
+def vm_room(found: SKit, room: bool) -> None:
+    """The measured room of the task's VM (`vm.room`, through the daemon's VM manager; ADR-075 addendum 2)."""
+
+    async def session_room(_row: Any) -> bool:
+        return room
+
+    vars(found.env.context)[limits.VM_MANAGER_KEY] = SimpleNamespace(
+        env=SimpleNamespace(db=found.env.pool, session_room=session_room)
+    )
 
 
 # -- turns -------------------------------------------------------------------------------------------------------------
@@ -344,21 +355,17 @@ def test_an_idle_child_is_suspended_and_resumed_by_its_next_instruction(rig: Rig
         assert (await found.stored(child)).state == "suspended"
         answer = await result(found, parent, child)
         assert (answer["state"], answer["final_text"], answer["instruction_id"]) == ("suspended", "Answer.", first)
-        # resuming makes it run again: the running limit and the room of the VM are pre-checked
+        # resuming makes it run again: the measured room of the VM is pre-checked (no number of running children:
+        # an older hub's `subagent_max_running` is read past, ADR-075 addendum 2)
         _other_parent, _busy, _ = await full_child(found, await found.parent(2))
         limited(found, running=1)
-        refused = await instruct(found, parent, child, rejected="limit_exceeded")
-        assert (refused.state, refused.error_code) == ("rejected", "limit_exceeded")
-        assert refused.answer is not None
-        assert "setting subagent_max_running" in refused.answer["error"]["message"]
-        assert found.ops.hub.requests[-1]["local_check"] == "rejected"
-        limited(found, running=0)
-        env.context.config.sessions_per_vm = 2
+        vm_room(found, False)
         full = await instruct(found, parent, child, rejected="limit_exceeded")
         assert (full.state, full.error_code) == ("rejected", "limit_exceeded")
         assert full.answer is not None
-        assert "AGENT_RUNNER_SESSIONS_PER_VM" in full.answer["error"]["message"]
-        env.context.config.sessions_per_vm = 0
+        assert "has no free resources for one more session" in full.answer["error"]["message"]
+        assert found.ops.hub.requests[-1]["local_check"] == "rejected"
+        vm_room(found, True)
         creates_before = len([1 for name, _ in found.guest.calls if name == "create_session"])
         op = await instruct(found, parent, child)
         assert op.state == "succeeded"
@@ -667,25 +674,14 @@ def test_a_child_suspended_while_its_instruction_waited_is_resumed_only_within_t
             found.controller.wake()
             return await waiting
 
-        await_rows = await rows(found, child)
+        # the VM's measured room (no number of running children, ADR-075 addendum 2)
         limited(found, running=1)
-        refused = await suspended_meanwhile()
-        assert (refused.state, refused.error_code) == ("failed", "limit_exceeded")
-        assert refused.answer is not None
-        assert "setting subagent_max_running" in refused.answer["error"]["message"]
-        # the VM's room
-        async with env.pool.connection() as conn:
-            await conn.execute("UPDATE runner.session SET state = 'working' WHERE id = %s", (child,))
-            await conn.execute(
-                "UPDATE runner.subagent_instruction SET ended_at = NULL WHERE operation_id = %s", (first,)
-            )
-        limited(found, running=0)
-        env.context.config.sessions_per_vm = 3
+        vm_room(found, False)
         await_rows = await rows(found, child)
         full = await suspended_meanwhile()
         assert (full.state, full.error_code) == ("failed", "limit_exceeded")
         assert full.answer is not None
-        assert "AGENT_RUNNER_SESSIONS_PER_VM" in full.answer["error"]["message"]
+        assert "has no free resources for one more session" in full.answer["error"]["message"]
         assert guest(found).registered() == []
         assert (await found.stored(child)).state == "suspended"
 

@@ -368,6 +368,44 @@ def test_work_vms_give_way_to_a_workgroup_vm(harness: Harness) -> None:
     assert ("vm.slot_from_work_vms", {"released_mib": 8192}) in harness.logs
 
 
+def test_idle_work_vms_give_way_before_another_workgroup_is_stopped(harness: Harness) -> None:
+    """Sessions rank before work VMs (05 section 3.8): the only slot is held by work VMs that give way; no LRU stop."""
+    harness.add_golden()
+    harness.physical_mib = 32768 + 8192
+    harness.settings = settings(pool_size=0)
+    harness.other = Usage(vms=1, memory_mib=8192)  # held, not yielding (a work VM that is not pooled)
+
+    row = harness.run(ensure(wg=WG_A))
+    assert row.state == "running"
+    assert harness.reclaimed == [8192]
+    assert not any(name == "vm.lru_stop" for name, _ in harness.logs)
+
+
+@pytest.mark.parametrize(("cpu", "disk", "reason"), [(0.99, None, "cpu"), (0.0, 1024, "disk")])
+def test_the_admission_refuses_a_workgroup_vm_without_cpu_or_disk_and_holds_back_lower_ranks(
+    harness: Harness, cpu: float, disk: int | None, reason: str
+) -> None:
+    """The device's one admission (05 section 3.8): CPU and disk count for every kind; a refused session keeps new
+    work VMs from starting while the hub places it again."""
+    from agent_runner.admission import WORK  # noqa: PLC0415
+
+    harness.add_golden()
+    harness.settings = settings(pool_size=0)
+
+    async def body(manager: VmManager) -> Any:
+        async def load() -> float:
+            return cpu
+
+        manager.env.admission.cpu_load = load
+        manager.env.admission.cpu_load_max = 0.85
+        manager.env.disk_free_mib = lambda: disk
+        with pytest.raises(RunnerError) as caught:
+            await manager.ensure_vm(ORG, WG_A)
+        return caught.value.name, manager.env.admission.ahead(WORK)
+
+    assert harness.run(body) == (reason, "session")
+
+
 def test_capacity_exhausted(harness: Harness) -> None:
     harness.add_golden()
     harness.physical_mib = 32768 + 8192

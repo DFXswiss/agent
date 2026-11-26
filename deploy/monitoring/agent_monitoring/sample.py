@@ -3,10 +3,10 @@
     python -m agent_monitoring.sample --dir DIR [--capacity-low] [--interval S --count N]
 
 The snapshot has one device, a running VM with a working and an ended session, a pool VM whose probe failed, a
-stopped VM and four work VM slots, so every metric of the table of 08-monitoring.md section 3 (with the ADR-042 name of the slot total and
-a daily model spend) has at least one series. `--capacity-low` leaves no VM slot free (`agent_runner_device_capacity_low
-1`). The file is written like the runner writes it (`write_atomic`: temp file, mode 0644, `rename`), once, or
-`--count` times every `--interval` seconds with a fresh timestamp and growing counters.
+stopped VM and four work VM slots, so every metric of the table of 08-monitoring.md section 3 (with the ADR-042 name
+of the slot total and a daily model spend) has at least one series. `--capacity-low` leaves no VM slot free
+(`agent_runner_device_capacity_low 1`). The file is written like the runner writes it (`write_atomic`: temp file, mode
+0644, `rename`), once, or `--count` times every `--interval` seconds with a fresh timestamp and growing counters.
 """
 
 from __future__ import annotations

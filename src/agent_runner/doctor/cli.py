@@ -13,8 +13,8 @@ afterwards, `vm.cli.existing_store`); it makes no hub request. Facts, one per li
     runner.status.session session_id=… state=… wg_id=… vm_id=<id|none> depth=<n>        (per session not ended)
     runner.status.pool size=<POOL_SIZE> ready=<n>
     runner.capacity budget_mib=… used_mib=… slots_total=… slots_free=… pool_ready=… capacity_low=yes|no
-    runner.status.workvm slots=… cap=<n|none> held=… free=… stopped=… waiting=… oldest_wait_s=… memory_free_mib=…
-        cpu_load_pct=… cpu_load_max_pct=… disk_used_gib=… disk_quota_gib=<n|none>   (not with WORKVM_SLOTS=0)
+    runner.status.workvm slots=… held=… free=… stopped=… waiting=… oldest_wait_s=… memory_free_mib=…
+        cpu_load_pct=… cpu_load_max_pct=… disk_used_gib=… disk_quota_gib=<n|none>   (with a store)
 
 `doctor` runs the checks of `doctor.checks` and prints `runner.doctor.check name=… result=ok|warn|fail detail=…
 [value=…]` per check and `runner.doctor result=ok|warn|fail` last; the exit code is 1 when a check failed. With
@@ -83,7 +83,7 @@ WORKVM_SLOTS = (
 seconds, the RAM (MiB) and the disk (GiB) work VMs and their pool hold (ADR-059 addendum 4, `workvm.records`)."""
 
 
-def _rows(dsn: str | None, *, workvm: bool = False) -> dict[str, Any]:
+def _rows(dsn: str | None) -> dict[str, Any]:
     empty: dict[str, Any] = {
         "state": {},
         "last": 0,
@@ -118,11 +118,12 @@ def _rows(dsn: str | None, *, workvm: bool = False) -> dict[str, Any]:
                 (sorted(FINAL),),
             ).fetchall()
             states = list(SLOT_STATES)
-            slots = conn.execute(WORKVM_SLOTS, (states, states)).fetchone() if workvm else None
+            slots = conn.execute(WORKVM_SLOTS, (states, states)).fetchone()
     except psycopg.Error:
         raise RunnerError("store_unavailable") from None
     assert row is not None
     assert counts is not None
+    assert slots is not None
     return {
         "state": state,
         "last": int(row[0]),
@@ -131,7 +132,7 @@ def _rows(dsn: str | None, *, workvm: bool = False) -> dict[str, Any]:
         "keys": int(counts[1]),
         "vms": vms,
         "sessions": sessions,
-        "workvm": None if slots is None else tuple(int(value) for value in slots),
+        "workvm": tuple(int(value) for value in slots),
     }
 
 
@@ -139,7 +140,7 @@ def cmd_status(_args: argparse.Namespace, ctx: Any) -> int:
     config: Config = ctx.config(require=frozenset())
     identity = ctx.identity(config)
     with store_cli.existing_store(config, ctx) as dsn:
-        found = _rows(dsn, workvm=config.workvm_slots != 0)
+        found = _rows(dsn)
     out = ctx.out
     if identity is None:
         out.fact("status.identity", {"enrolled": False})
@@ -215,15 +216,14 @@ def cmd_status(_args: argparse.Namespace, ctx: Any) -> int:
 
 
 def _workvm_fact(out: Any, config: Config, counts: tuple[int, ...], physical: int, workgroup_mib: int) -> None:
-    """`runner.status.workvm`: the slots and the capacity that admits a new work VM (ADR-059 addendum 4)."""
+    """`runner.status.workvm`: the slots and what the device's admission sees free (ADR-059 addendum 4, 05 §3.8)."""
     held, stopped, waiting, oldest, work_mib, disk_gib = counts
-    total = accounts.slot_count(config.workvm_slots, physical, config.memory_reserve_mib)
-    room = physical - config.memory_reserve_mib - workgroup_mib - work_mib - config.vm_memory_mib
+    total = accounts.slot_count(physical, config.memory_reserve_mib)
+    room = physical - config.memory_reserve_mib - workgroup_mib - work_mib
     out.fact(
         "status.workvm",
         {
             "slots": total,
-            "cap": "none" if config.workvm_slots is None else config.workvm_slots,
             "held": held,
             "free": max(0, total - held),
             "stopped": stopped,
@@ -231,7 +231,7 @@ def _workvm_fact(out: Any, config: Config, counts: tuple[int, ...], physical: in
             "oldest_wait_s": oldest,
             "memory_free_mib": max(0, room),
             "cpu_load_pct": round(capacity_module.cpu_load_per_core() * 100),
-            "cpu_load_max_pct": config.workvm_cpu_load_max_percent,
+            "cpu_load_max_pct": config.cpu_load_max_percent,
             "disk_used_gib": disk_gib,
             "disk_quota_gib": config.workvm_disk_quota_gib or "none",
         },

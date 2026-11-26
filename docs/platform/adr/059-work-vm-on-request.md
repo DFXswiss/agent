@@ -108,44 +108,48 @@ resources, not by a fixed number (points 7-9):
 4. **Queue.** Waiting requests take a slot that becomes free at once (the release wakes them, the 2 s poll stays as a
    fallback) and in the order they came in; a stopped VM whose own slot another VM holds cannot start anyway and does
    not hold up the requests behind it. The waiting requests are mirrored in `runner.workvm_wait` for the status.
-5. **Reconciliation.** At start (unchanged: every VM left over is deleted, KONZEPT idea 44; now also the mirror of the
+5. **Reconciliation.** At start (unchanged: every VM left over is deleted, [KONZEPT idea 44](../KONZEPT.md#k-idee-44); now also the mirror of the
    waiting requests is cleared) and every minute (`slot_pass`): each row is compared with the instances Lima lists for
    its slot - an instance that is gone, a start nobody finishes, a VM that no longer runs, a stop that was interrupted
    - and with the sessions of the device (a task or session VM whose sessions all ended goes, `session_ended`). A slot
    can therefore never stay held.
 6. **Visible.** The chat shows the `stopped`/`idle` event as one quiet line ("Arbeits-VM angehalten, ungenutzt –
    startet bei Bedarf neu"), the metrics `agent_runner_workvm_slots{state="held"|"free"}`,
-   `agent_runner_workvm_requests_waiting` and `agent_runner_workvm_stopped` (08-monitoring.md §3), and
-   `agent-runner status` the fact `runner.status.workvm slots held free stopped waiting oldest_wait_s`.
+   `agent_runner_workvm_requests_waiting`, `agent_runner_workvm_stopped` and what the admission sees free (RAM, CPU
+   load, disk; 08-monitoring.md §3), and `agent-runner status` the fact `runner.status.workvm` with the same values.
 
-7. **No fixed number of work VMs** (decision of the client the same day: "4 Plätze, alle belegt, künftig 16 – das
-   verstehe ich nicht, warum einen deckel"). A device admits a new work VM as long as its free resources last:
-   - RAM: after the start, the RAM above `MEMORY_RESERVE_MIB` that the workgroup VMs and the work VMs leave (the
-     runner's capacity calculation, ADR-013/ADR-075) must still hold one more workgroup VM (`VM_MEMORY_MIB`);
-   - CPU: the host's 1-minute load per core at most `WORKVM_CPU_LOAD_MAX_PERCENT` (default 85);
-   - disk: `WORKVM_DISK_QUOTA_GIB` (unchanged).
-   Short of any of them the request waits in the queue as before. `WORKVM_SLOTS` is only an optional upper bound for
-   special cases, empty by default (0 still switches work VMs off). The slot accounts stay - they are the isolation
-   boundary of the host filter (one account, one pinned SSH port per VM) - but their number follows the RAM: as many
-   as the RAM above the reserve could ever hold standard work VMs (at most 100), so they never limit before the
-   resources do. Without `WORKVM_SLOTS` a device offers work VMs once `agent-runner workvm install` created them.
-8. **Workgroup VMs and their sessions always come first.** A work VM never displaces them: the running task and
-   session VMs and the warm work VM pool count as *yielding* in the capacity report, so the hub's free workgroup slots
-   (`vm_slots_free`) are not reduced by them and sessions are placed as if they were not there; when a workgroup VM
-   then needs their RAM, the VM area asks for it (`<area>/capacity.py:RECLAIM`) and the work VMs give way at once - the
-   pool first, then idle VMs (stopped, `idle`), then busy ones (stopped, their running jobs `lost`; the event names no
-   reason, the runner log `reason=workgroup_priority`), least recently used first. Their disks stay; they start again
-   when there is room. The warm workgroup pool never makes them give way (a warm VM is speculative). Run VMs of
-   `test.run` and browser VMs belong to their run or browser session and do not yield; the admission rule above (room
-   for one more workgroup VM) applies to them too. Hub traffic: work VMs are admitted only below the CPU bound, and
-   each slot account's traffic stays capped by the host filter (`BANDWIDTH_MBIT`).
+7. **No fixed number of work VMs** (decisions of the client the same day: "4 Plätze, alle belegt, künftig 16 – das
+   verstehe ich nicht, warum einen deckel", then "diese anderen deckel alle restlos entfernen, der platz soll für das
+   gebraucht werden was halt gebraucht wird"). `WORKVM_SLOTS` and `WORKVM_MAX_PER_TASK`/`_OWNER`/`_ORG` are removed
+   (ADR-075 addendum 2: an older `runner.env` that sets them starts, the values are ignored and named once). A device
+   admits a new work, browser or test run VM as long as its free resources last - RAM above `MEMORY_RESERVE_MIB` that
+   the workgroup VMs and the work VMs leave, the host's 1-minute load per core at most `CPU_LOAD_MAX_PERCENT` (default
+   85), the disk quota `WORKVM_DISK_QUOTA_GIB` - and no session waits on the device (point 8). Short of any of them
+   the request waits in the queue as before. The slot accounts stay - they are the isolation boundary of the host
+   filter (one account, one pinned SSH port per VM) - but their number follows the RAM: as many as the RAM above the
+   reserve could ever hold standard work VMs (at most 100, the accounts' port range), so they never limit before the
+   resources do. A device offers work VMs once `agent-runner workvm install` created them.
+8. **One admission per device, sessions first.** The work VMs use the device's one admission (05-runner.md §3.8,
+   `agent_runner/admission.py`) that also admits the workgroup VMs and later CI VMs, in one transaction (one lock). Its
+   rank is: sessions before work, browser and test VMs before CI; a new request of a lower rank does not start while a
+   higher one waits. The running task and session VMs and the warm work VM pool count as *yielding* in the capacity
+   report, so the hub's free workgroup slots (`vm_slots_free`) are not reduced by them and sessions are placed as if
+   they were not there; when a workgroup VM then needs their RAM, the VM area asks for it
+   (`<area>/capacity.py:RECLAIM`) and the work VMs give way at once - the pool first, then idle VMs (no job and no call
+   in progress; stopped, `idle`, their disks stay and they start again when there is room), least recently used first.
+   **Running work is never ended silently**: a VM with a job or a call in progress keeps running, and the session
+   waits for room or is placed again by the hub (ADR-049). The warm workgroup pool never makes them give way (a warm
+   VM is speculative). Run VMs of `test.run` and browser VMs belong to their run or browser session and do not yield.
+   Hub traffic: new VMs are admitted only below the CPU bound, and each slot account's traffic stays capped by the
+   host filter (`BANDWIDTH_MBIT`).
 9. **Another device of the workgroup.** A work VM still runs on the device of its session (decision 11: the workspace
    mirror is local); a request that does not fit waits. Because work VMs no longer reduce the free workgroup slots and
    the device reports its work VMs (`work_vms_running`), the hub keeps placing new sessions on the devices with room.
    Placing a work VM on another device than its session stays outside this ADR.
 
-Specification: 05-runner.md §3.7, 13-work-vm.md §6.1 and §7. Not changed: the guest and the harness text (it still says
-"after 30 minutes without use"; the rule it gives - keep what must survive in the workspace - stays true).
+Specification: 05-runner.md §3.7 and §3.8, 13-work-vm.md §2, §6.1 and §7, 16-ci-runners.md §6.2 and §6.6. Not changed:
+the guest and the harness text (it still says "after 30 minutes without use"; the rule it gives - keep what must
+survive in the workspace - stays true).
 
 **Alternatives considered.** Deleting idle VMs earlier (no stop): loses what the session installed and makes the
 next command wait for a fresh clone. Moving a stopped VM's disk to another slot's account: a copy across macOS

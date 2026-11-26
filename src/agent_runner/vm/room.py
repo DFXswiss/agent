@@ -1,7 +1,7 @@
 """Room for one more session on a running workgroup VM, measured on the VM (05-runner.md section 3.3 step 2).
 
-No fixed number of sessions per VM (decision of the client, 2026-11-26): `SESSIONS_PER_VM` is only an optional upper
-bound, empty by default. A running VM takes one more session while its own free resources last, read from its guest
+No fixed number of sessions per VM (decision of the client, 2026-11-26; the former `SESSIONS_PER_VM` is gone,
+ADR-075 addendum 2). A running VM takes one more session while its own free resources last, read from its guest
 (`GET /v1/metrics`, the same answer the monitoring samples, 08-monitoring.md section 2; 2 s):
 
 - RAM: `MemAvailable` of the VM (`mem_total_bytes - mem_used_bytes`) less what one more session needs - the mean
@@ -9,17 +9,16 @@ bound, empty by default. A running VM takes one more session while its own free 
   `VM_FREE_FRACTION` of the VM's RAM;
 - CPU: the VM's 1-minute load per vCPU (`load1 / VM_CPUS`) at most `VM_LOAD_MAX_PERCENT`.
 
-A VM whose guest does not answer in time is judged as before (its room by the bound alone): a missing measurement is
-no reason to start another VM. When no running VM has room, the existing order of `lifecycle` goes on unchanged (a
-stopped VM of the workgroup, then a new one on a free slot of the device, else `capacity_exhausted` and the hub places
-the next attempt, ADR-013, ADR-049). The judgement is logged: `runner.vm.session_room vm_id= fits= available_mib=
-need_mib= load_pct=`.
+A VM whose guest does not answer in time keeps its room: a missing measurement is no reason to start another VM.
+When no running VM has room, the existing order of `lifecycle` goes on unchanged (a stopped VM of the workgroup, then
+a new one on a free slot of the device, else `capacity_exhausted` and the hub places the next attempt, ADR-013,
+ADR-049). The judgement is logged: `runner.vm.session_room vm_id= fits= available_mib= need_mib= load_pct=`.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
@@ -73,7 +72,7 @@ async def measure(client_for: Callable[[VmRow], Awaitable[Any]], row: VmRow) -> 
         await client.aclose()
 
 
-def checker(env: Any, *, load_max: float) -> Callable[[VmRow], Awaitable[bool]]:
+def checker(env: Any, *, load_max: float) -> Callable[[VmRow], Coroutine[Any, Any, bool]]:
     """`VmEnv.session_room` of the daemon: measure the VM, judge it, log the judgement."""
 
     async def session_room(row: VmRow) -> bool:

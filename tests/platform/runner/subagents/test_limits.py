@@ -11,8 +11,7 @@ from typing import Any
 
 import pytest
 
-from agent_runner.crypto.ids import uuid7
-from agent_runner.sessions import records, service
+from agent_runner.sessions import service
 from agent_runner.store.pool import open_pool
 from agent_runner.subagents import guest_features, limits
 from agent_runner.subagents.limits import SubagentLimits
@@ -28,8 +27,11 @@ SECTION = {
 
 
 def test_the_section_of_the_desired_state() -> None:
-    assert limits.of({"limits": SECTION}) == SubagentLimits(5, 50, 0, 0)
-    assert limits.of({"limits": {**SECTION, "api": 2, "unknown": 1}}) == SubagentLimits(5, 50, 0, 0)
+    assert limits.of({"limits": SECTION}) == SubagentLimits(5, 0, 0)
+    assert limits.of({"limits": {**SECTION, "api": 2, "unknown": 1}}) == SubagentLimits(5, 0, 0)
+    # no number of subagents running at once (ADR-075 addendum 2): an older hub's value is read past
+    running = {key: value for key, value in SECTION.items() if key != "subagent_max_running"}
+    assert limits.of({"limits": running}) == limits.of({"limits": {**SECTION, "subagent_max_running": True}})
     broken: dict[str, Any] | None
     for broken in (
         None,
@@ -39,7 +41,6 @@ def test_the_section_of_the_desired_state() -> None:
         {"limits": {**SECTION, "api": True}},
         {"limits": {**SECTION, "api": "1"}},
         {"limits": {**SECTION, "subagent_max_depth": -1}},
-        {"limits": {**SECTION, "subagent_max_running": True}},
         {"limits": {**SECTION, "subagent_max_total": None}},
         {"limits": {key: value for key, value in SECTION.items() if key != "subagent_max_runtime_seconds"}},
     ):
@@ -50,20 +51,17 @@ def test_current_reads_the_desired_state_the_session_area_keeps() -> None:
     assert limits.SERVICE_ATTRIBUTE == service.ATTRIBUTE
     assert limits.current(SimpleNamespace()) is None
     kept = SimpleNamespace(env=SimpleNamespace(desired={"limits": SECTION}))
-    assert limits.current(SimpleNamespace(**{service.ATTRIBUTE: kept})) == SubagentLimits(5, 50, 0, 0)
+    assert limits.current(SimpleNamespace(**{service.ATTRIBUTE: kept})) == SubagentLimits(5, 0, 0)
 
 
 def test_refusals_name_the_limit_its_value_and_the_setting() -> None:
-    found = SubagentLimits(2, 3, 1, 0)
+    found = SubagentLimits(2, 1, 0)
     assert limits.depth_refusal(None, 9) is None
-    assert limits.depth_refusal(SubagentLimits(0, 0, 0, 0), 9) is None
+    assert limits.depth_refusal(SubagentLimits(0, 0, 0), 9) is None
     assert limits.depth_refusal(found, 1) is None
     assert "at most 2 levels deep" in str(limits.depth_refusal(found, 2))
-    assert limits.running_refusal(None, 99) is None
-    assert limits.running_refusal(found, 2) is None
-    assert "(setting subagent_max_running)" in str(limits.running_refusal(found, 3))
     assert limits.total_refusal(None, 99) is None
-    assert limits.total_refusal(SubagentLimits(2, 3, 0, 0), 99) is None
+    assert limits.total_refusal(SubagentLimits(2, 0, 0), 99) is None
     assert limits.total_refusal(found, 0) is None
     assert str(limits.total_refusal(found, 1)).startswith("This task already started 1 subagent, the limit")
     assert limits.old_guest_depth_refusal(1) is None
@@ -78,12 +76,13 @@ def test_get_context_limits_for_current_and_older_guests() -> None:
         "subagent_max_parallel": 3,
         "subagent_max_total": 10,
     }
-    assert limits.context_limits(SubagentLimits(1, 2, 30, 60), False) == {
+    assert limits.context_limits(SubagentLimits(1, 30, 60), False) == {
         "subagent_max_depth": 1,
-        "subagent_max_parallel": 2,
+        "subagent_max_parallel": 3,  # an older guest's own contract; it shows no limit of the platform
         "subagent_max_total": 10,
     }
-    assert limits.values(SubagentLimits(1, 2, 3, 4)) == (1, 2, 3, 4)
+    assert limits.context_limits(SubagentLimits(1, 30, 60), True)["subagent_max_parallel"] == 0  # no limit
+    assert limits.values(SubagentLimits(1, 3, 4)) == (1, 0, 3, 4)
 
 
 @pytest.mark.parametrize(
@@ -143,49 +142,13 @@ def test_the_guest_version_comes_from_the_golden_of_the_vm(store_dsn: str) -> No
     asyncio.run(main())
 
 
-def test_the_room_of_a_vm(store_dsn: str) -> None:
-    async def main() -> None:
-        pool = await open_pool(store_dsn, max_size=2)
-        context: Any = SimpleNamespace(config=SimpleNamespace(sessions_per_vm=1))
-        try:
-            async with pool.connection() as conn:
-                assert await limits.vm_room_refusal(context, conn, None) is None
-                assert await limits.vm_room_refusal(context, conn, "vm-0000000c") is None
-                for state in ("working", "suspended", "idle"):
-                    sid = str(uuid7())
-                    await records.insert(
-                        conn,
-                        session_id=sid,
-                        task_id=str(uuid7()),
-                        org_id=str(uuid7()),
-                        wg_id=str(uuid7()),
-                        parent_id=None,
-                        depth=0,
-                        owner_id=str(uuid7()),
-                        created_at=datetime(2026, 11, 25, tzinfo=UTC),
-                    )
-                    await records.update(conn, sid, state=state, vm_id="vm-0000000c")
-                    if state == "working":
-                        assert str(await limits.vm_room_refusal(context, conn, "vm-0000000c")).startswith(
-                            "The computer of this task is full: 1 session runs in it,"
-                        )
-                context.config.sessions_per_vm = 2  # the suspended session does not occupy the VM
-                assert str(await limits.vm_room_refusal(context, conn, "vm-0000000c")).startswith(
-                    "The computer of this task is full: 2 sessions run in it,"
-                )
-                context.config.sessions_per_vm = 0
-                assert await limits.vm_room_refusal(context, conn, "vm-0000000c") is None  # no VM manager here
-        finally:
-            await pool.close()
-
-    asyncio.run(main())
-
-
-def test_without_the_bound_the_vms_measured_resources_decide(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No fixed number of sessions per VM: a child fits on its parent's VM while the VM's free resources last."""
+def test_the_vms_measured_resources_decide_whether_a_child_fits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No fixed number of sessions per VM (ADR-075 addendum 2): a child fits on its parent's VM while the VM's free
+    resources last; without a VM or a VM manager nothing is refused here."""
     from agent_runner.vm import tasks as vm_tasks  # noqa: PLC0415
 
     assert limits.VM_MANAGER_KEY == vm_tasks.MANAGER_KEY
+    assert asyncio.run(limits.vm_room_refusal(SimpleNamespace(), None, "vm-0000000a")) is None  # type: ignore[arg-type]
     rows = {
         "vm-0000000a": SimpleNamespace(id="vm-0000000a", state="running"),
         "vm-0000000b": SimpleNamespace(id="vm-0000000b", state="running"),
@@ -196,10 +159,10 @@ def test_without_the_bound_the_vms_measured_resources_decide(monkeypatch: pytest
         return rows.get(vm_id)
 
     async def session_room(row: Any) -> bool:
-        return row.id == "vm-0000000a"
+        return bool(row.id == "vm-0000000a")
 
     monkeypatch.setattr(vm_records, "get", get)
-    context: Any = SimpleNamespace(config=SimpleNamespace(sessions_per_vm=0))
+    context: Any = SimpleNamespace()
     vars(context)[limits.VM_MANAGER_KEY] = SimpleNamespace(env=SimpleNamespace(db=None, session_room=session_room))
 
     def refusal(vm_id: str) -> str | None:
@@ -209,3 +172,4 @@ def test_without_the_bound_the_vms_measured_resources_decide(monkeypatch: pytest
     assert str(refusal("vm-0000000b")).startswith("The computer of this task has no free resources")
     assert refusal("vm-0000000c") is None  # not running: its start decides
     assert refusal("vm-0000000d") is None  # unknown VM
+    assert asyncio.run(limits.vm_room_refusal(context, None, None)) is None  # type: ignore[arg-type]  # no VM yet

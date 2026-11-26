@@ -35,7 +35,6 @@ class Vms(Protocol):
         *,
         session_id: str | None = None,
         prefer: Sequence[str] = (),
-        new_allowed: bool = True,
     ) -> VmRow: ...
 
     async def client(self, row: VmRow) -> GuestClient: ...

@@ -1,10 +1,10 @@
 // E2E-48 (KOR-29; docs/platform/spec/13-work-vm.md, ADR-059): the work VM on request. The runner offers work
-// VMs in self mode (TEST_MODE, two slots, one per task, a warm pool of one) from the run's work image cache. The
+// VMs in self mode (TEST_MODE, no fixed number of VMs, a warm pool of one) from the run's work image cache. The
 // session checks out a repository through the platform, requests a work VM (answered from the warm pool), runs the
 // failing tests as root, fixes the code in its workspace, runs them green and opens a draft pull request through
 // the GitHub operations. A follow-up prompt of the same task uses the same VM: it starts a program as a service,
-// reads its page with the browser of the VM and shows the VM's status; a second VM for the task is refused with
-// `limit_exceeded`. The chat shows every run; closing the task tears the VM down at once (`task_closed`, or `session_ended` when the stop of
+// reads its page with the browser of the VM and shows the VM's status; a VM above the device's size limit is refused
+// with `limit_exceeded`. The chat shows every run; closing the task tears the VM down at once (`task_closed`, or `session_ended` when the stop of
 // the session came first; KOR-43). The measured
 // times (assignment, cold start of a pool entry) go to the iteration's artefacts (`e2e-48/work-vm.json`). T1 only.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -75,7 +75,7 @@ test('@E2E-48 @needs-vm @needs-workvm the session gets a work VM, runs and fixes
     ]),
   );
   await platformDevice(orchestrator);
-  await orchestrator.call('POST', '/runners/workvm', { slots: 2, max_per_task: 1, pool_size: 1 });
+  await orchestrator.call('POST', '/runners/workvm', { enable: true, pool_size: 1 });
   await poolReady(orchestrator);
   // the warm pool: one started work VM waits for the first request (its cold start is measured below)
   await expect
@@ -111,10 +111,10 @@ test('@E2E-48 @needs-vm @needs-workvm the session gets a work VM, runs and fixes
   const repo = await githubRepo(orchestrator, REPO);
   expect(repo.pulls.map((pull) => [pull.number, pull.draft, pull.head])).toEqual([[1, true, 'e2e48/fix']]);
 
-  // 2. The follow-up uses the same VM: a service, the browser, the status, and the per-task limit.
+  // 2. The follow-up uses the same VM: a service, the browser, the status, and the size limit of the device.
   await page.getByTestId('chat.composer.prompt').fill(FOLLOW_UP);
   await page.getByTestId('chat.composer.send').click();
-  await expectAnswerInChat(page, 'A second work VM is above the limit of this task kz48-answer-p8o2i6u3.');
+  await expectAnswerInChat(page, 'A work VM of size xlarge is above the limit of this device kz48-answer-p8o2i6u3.');
   await expect.poll(async () => (await orchestrator.doubleState('model')).ok, { timeout: 60_000 }).toBe(true);
   const [session] = await mainSessions(orchestrator, task);
 

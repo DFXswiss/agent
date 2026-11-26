@@ -531,7 +531,7 @@ def test_get_context_shows_the_settings_and_clamps_them_for_an_older_guest(rig: 
         k.skit.service.env.desired = {"limits": {"api": 1, **settings, "subagent_max_runtime_seconds": 0}}
         assert (await k.ok(sid, "get_context"))["limits"] == {
             "subagent_max_depth": 5,
-            "subagent_max_parallel": 50,
+            "subagent_max_parallel": 0,  # none running at once (ADR-075 addendum 2): an older hub's 50 is read past
             "subagent_max_total": 0,
             "subagent_max_runtime_seconds": 0,
         }

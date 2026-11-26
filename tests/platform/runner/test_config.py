@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from agent_runner.config import (
     NAMES,
     OPERATOR_GITHUB_ONE_USER,
     PREFIX,
+    RETIRED_NAMES,
     Config,
     check_platform,
     environment,
@@ -56,8 +58,8 @@ def test_defaults(base: dict[str, str], runner_home: Path, root_key: str) -> Non
     assert (cfg.vm_cpus, cfg.vm_memory_mib, cfg.vm_disk_gib) == (4, 8192, 20)
     assert cfg.pool_size == 2
     assert cfg.memory_reserve_mib == 32768
-    # no fixed number of sessions per VM: the VM's free resources decide (`vm.room`)
-    assert (cfg.sessions_per_vm, cfg.max_vms, cfg.vm_load_max_percent) == (0, 0, 85)
+    # no fixed number of sessions or VMs: the free resources decide (`vm.room`, ADR-075 addendum 2)
+    assert (cfg.vm_load_max_percent, cfg.retired) == (85, ())
     assert (cfg.session_idle_seconds, cfg.vm_idle_seconds) == (1800, 1800)
     assert cfg.textfile_dir is None
     assert cfg.model_catalog is None
@@ -85,7 +87,8 @@ def test_default_home_expands_user(base: dict[str, str]) -> None:
 
 
 def test_every_name_is_listed_once() -> None:
-    assert len(NAMES) == len(set(NAMES)) == 60
+    assert len(NAMES) == len(set(NAMES)) == 57
+    assert not RETIRED_NAMES & set(NAMES)
     assert "VM_PREFIX" in NAMES
     assert "TEST_MODE" in NAMES
     assert frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"}) == HUB_NAMES
@@ -220,9 +223,7 @@ INTEGER_CASES = {
     "VM_DISK_GIB": (5, 65_536),
     "POOL_SIZE": (0, 64),
     "MEMORY_RESERVE_MIB": (0, 4_194_304),
-    "SESSIONS_PER_VM": (0, 1_000_000),
     "VM_LOAD_MAX_PERCENT": (10, 100),
-    "MAX_VMS": (0, 1_000_000),
     "SESSION_IDLE_SECONDS": (60, 604_800),
     "VM_IDLE_SECONDS": (60, 604_800),
 }
@@ -540,8 +541,7 @@ def test_environment_round_trip_everything(base: dict[str, str], tmp_path: Path,
             "AGENT_RUNNER_VM_DISK_GIB": "40",
             "AGENT_RUNNER_POOL_SIZE": "0",
             "AGENT_RUNNER_MEMORY_RESERVE_MIB": "1024",
-            "AGENT_RUNNER_SESSIONS_PER_VM": "0",
-            "AGENT_RUNNER_MAX_VMS": "3",
+            "AGENT_RUNNER_VM_LOAD_MAX_PERCENT": "70",
             "AGENT_RUNNER_SESSION_IDLE_SECONDS": "600",
             "AGENT_RUNNER_VM_IDLE_SECONDS": "900",
             "AGENT_RUNNER_TEXTFILE_DIR": str(tmp_path / "tf"),
@@ -723,13 +723,12 @@ def test_operator_directory_checks(base: dict[str, str], operator_dir: Path, tmp
 
 def test_workvm_defaults_offer_no_work_vm(base: dict[str, str]) -> None:
     cfg = load(base)
-    # ADR-059 addendum 4: no upper bound by default; the free resources decide
-    assert (cfg.workvm_slots, cfg.workvm_slots_self, cfg.workvm_max_size) == (None, False, "large")
-    assert cfg.workvm_cpu_load_max_percent == 85
+    # ADR-059 addendum 4: no fixed number of work VMs; the free resources decide
+    assert (cfg.workvm_slots_self, cfg.workvm_max_size) == (False, "large")
+    assert cfg.cpu_load_max_percent == 85  # the device's one admission, every kind of VM
     assert (cfg.workvm_idle_seconds, cfg.workvm_queue_seconds, cfg.workvm_pool_size) == (600, 900, 1)
     assert cfg.workvm_keep_stopped_seconds == 86400  # ADR-059 addendum 4
     assert cfg.workvm_disk_quota_gib == 0
-    assert (cfg.workvm_max_per_task, cfg.workvm_max_per_org, cfg.workvm_max_per_owner) == (4, 16, 8)
     assert (cfg.workvm_ssh_port_base, cfg.workvm_template) == (47200, None)
     assert not any(name.startswith("AGENT_RUNNER_WORKVM_") for name in environment(cfg))
 
@@ -740,26 +739,24 @@ def test_workvm_settings_round_trip(base: dict[str, str], tmp_path: Path) -> Non
     base.update(
         {
             "AGENT_RUNNER_TEST_MODE": "1",
-            "AGENT_RUNNER_WORKVM_SLOTS": "3",
             "AGENT_RUNNER_WORKVM_SLOTS_SELF": "1",
             "AGENT_RUNNER_WORKVM_MAX_SIZE": "xlarge",
             "AGENT_RUNNER_WORKVM_IDLE_SECONDS": "900",
             "AGENT_RUNNER_WORKVM_KEEP_STOPPED_SECONDS": "3600",
-            "AGENT_RUNNER_WORKVM_CPU_LOAD_MAX_PERCENT": "70",
+            "AGENT_RUNNER_CPU_LOAD_MAX_PERCENT": "70",
             "AGENT_RUNNER_WORKVM_POOL_SIZE": "0",
             "AGENT_RUNNER_WORKVM_DISK_QUOTA_GIB": "500",
             "AGENT_RUNNER_WORKVM_TEMPLATE": str(template),
         }
     )
     cfg = load(base)
-    assert (cfg.workvm_slots, cfg.workvm_slots_self, cfg.workvm_max_size) == (3, True, "xlarge")
+    assert (cfg.workvm_slots_self, cfg.workvm_max_size) == (True, "xlarge")
     assert (cfg.workvm_idle_seconds, cfg.workvm_template, cfg.workvm_pool_size) == (900, template, 0)
     assert (cfg.workvm_disk_quota_gib, cfg.workvm_keep_stopped_seconds) == (500, 3600)
-    assert cfg.workvm_cpu_load_max_percent == 70
+    assert cfg.cpu_load_max_percent == 70
     env = environment(cfg)
     assert env["AGENT_RUNNER_WORKVM_KEEP_STOPPED_SECONDS"] == "3600"
     assert env["AGENT_RUNNER_WORKVM_SLOTS_SELF"] == "1"
-    assert env["AGENT_RUNNER_WORKVM_SLOTS"] == "3"
     assert load(env) == cfg
 
 
@@ -768,17 +765,19 @@ def test_workvm_settings_are_checked(base: dict[str, str]) -> None:
     production["AGENT_RUNNER_HUB_URL"] = "https://hub.example"
     refused({**production, "AGENT_RUNNER_WORKVM_SLOTS_SELF": "1"}, "WORKVM_SLOTS_SELF")
     refused({**base, "AGENT_RUNNER_WORKVM_MAX_SIZE": "huge"}, "WORKVM_MAX_SIZE")
-    refused({**base, "AGENT_RUNNER_WORKVM_SLOTS": "101"}, "WORKVM_SLOTS")
     refused({**base, "AGENT_RUNNER_WORKVM_POOL_SIZE": "17"}, "WORKVM_POOL_SIZE")
     refused({**base, "AGENT_RUNNER_WORKVM_KEEP_STOPPED_SECONDS": "599"}, "WORKVM_KEEP_STOPPED_SECONDS")
-    refused({**base, "AGENT_RUNNER_WORKVM_SLOTS": "x"}, "WORKVM_SLOTS")
-    refused({**base, "AGENT_RUNNER_WORKVM_CPU_LOAD_MAX_PERCENT": "9"}, "WORKVM_CPU_LOAD_MAX_PERCENT")
+    refused({**base, "AGENT_RUNNER_CPU_LOAD_MAX_PERCENT": "9"}, "CPU_LOAD_MAX_PERCENT")
 
 
-def test_workvm_slots_zero_switches_work_vms_off_and_round_trips(base: dict[str, str]) -> None:
-    cfg = load({**base, "AGENT_RUNNER_WORKVM_SLOTS": "0"})
-    assert cfg.workvm_slots == 0
-    assert environment(cfg)["AGENT_RUNNER_WORKVM_SLOTS"] == "0"
+@pytest.mark.parametrize("name", sorted(RETIRED_NAMES))
+def test_old_fixed_limits_are_ignored_not_refused(base: dict[str, str], name: str) -> None:
+    """ADR-075 addendum 2: a fixed capacity limit of an older runner.env - with any value - is ignored (no
+    `config_invalid`), named in `retired` for the one line in the log, and never written back."""
+    cfg = load({**base, PREFIX + name: "garbage"})
+    assert cfg.retired == (name,)
+    assert PREFIX + name not in environment(cfg)
+    assert cfg == replace(load(base), retired=(name,))
 
 
 # -- platform browser (KOR-44, ADR-085) ----------------------------------------------------------------------------

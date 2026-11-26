@@ -64,17 +64,12 @@ def call(ctx: Context, body: Any) -> tuple[int, Any]:
 def test_restarts_the_hub_with_the_limits_and_answers_what_it_publishes(ctx: Context, node: HubNode) -> None:
     assert call(ctx, {})[0] == 409
     ctx.hub = Hub(node, "/hub/python", {"A": "1"}, "127.0.0.1", 21006, sleep=lambda _s: None)
-    status, body = call(ctx, {"depth": 2, "running": 3})
+    status, body = call(ctx, {"depth": 2, "total": 3})
     assert status == 200
-    assert body == {
-        "subagent_max_depth": 2,
-        "subagent_max_running": 3,
-        "subagent_max_total": 7,
-        "subagent_max_runtime_seconds": 7,
-    }
+    assert body == {"subagent_max_depth": 2, "subagent_max_total": 3, "subagent_max_runtime_seconds": 7}
     assert node.stopped == ["hub"]
     assert node.env["AGENT_HUB_SUBAGENT_MAX_DEPTH"] == "2"
-    assert node.env["AGENT_HUB_SUBAGENT_MAX_RUNNING"] == "3"
+    assert "AGENT_HUB_SUBAGENT_MAX_RUNNING" not in node.env  # no number running at once (ADR-075 addendum 2)
     assert call(ctx, {"total": 0})[1]["subagent_max_total"] == 0
     assert "AGENT_HUB_SUBAGENT_MAX_DEPTH" not in ctx.hub.env  # left out: back to the default
     call(ctx, {})
@@ -82,7 +77,9 @@ def test_restarts_the_hub_with_the_limits_and_answers_what_it_publishes(ctx: Con
     assert ctx.hub.env["A"] == "1"
 
 
-@pytest.mark.parametrize("body", [None, [], {"other": 1}, {"depth": -1}, {"depth": True}, {"running": 1_000_001}])
+@pytest.mark.parametrize(
+    "body", [None, [], {"other": 1}, {"depth": -1}, {"depth": True}, {"total": 1_000_001}, {"running": 1}]
+)
 def test_refuses_other_bodies(ctx: Context, node: HubNode, body: Any) -> None:
     ctx.hub = Hub(node, "/hub/python", {}, "127.0.0.1", 21006, sleep=lambda _s: None)
     assert call(ctx, body)[0] == 400

@@ -422,15 +422,22 @@ def test_run_until_sigterm(
     os.chmod(runner_home, 0o700)
     (runner_home / "tmp" / "stale").write_text("old scratch", encoding="utf-8")
     pkg = area_package({"probe/tasks.py": STOP_TASK, "probe/shutdown.py": FLUSH_HOOK})
+    # a fixed capacity limit of an older runner.env is ignored and named once (ADR-075 addendum 2)
+    old = {"AGENT_RUNNER_SESSIONS_PER_VM": "16", "AGENT_RUNNER_WORKVM_SLOTS": "4"}
     captured = make_host(
-        run_env(env_for, runner_home, marker, runner_dsn), cluster=tools, package=pkg, install_signals=True
+        run_env(env_for, runner_home, marker, runner_dsn, **old), cluster=tools, package=pkg, install_signals=True
     )
     previous = signal.getsignal(signal.SIGTERM)
     try:
         assert run_cli(["run"], captured.host) == 0
     finally:
         signal.signal(signal.SIGTERM, previous)
-    assert captured.stdout.getvalue() == f'runner.migrate result="{APPLIED}"\nrunner.run tasks=1 enrolled=no\n'
+    assert captured.stdout.getvalue() == (
+        f'runner.migrate result="{APPLIED}"\n'
+        "runner.config.ignored name=SESSIONS_PER_VM reason=fixed_limit_removed\n"
+        "runner.config.ignored name=WORKVM_SLOTS reason=fixed_limit_removed\n"
+        "runner.run tasks=1 enrolled=no\n"
+    )
     versions = len(load_migrations())
     expected = f"task versions={versions} enrolled=False dsn=True\nflush stopping=True\n"
     assert marker.read_text(encoding="utf-8") == expected

@@ -4,8 +4,8 @@
 independent random value), the golden it was cloned from, the workgroup once assigned, the state, the SHA-256 of the
 control token and the size. A workgroup may have several live VMs on the device (ADR-075 section 4, migration 0018);
 a VM belongs to one workgroup for its life, and the VM of a session is the `vm_id` of its `runner.session` row
-(`assign_session`, written by `VmManager.ensure_vm` under the workgroup lock; `occupancy` counts the occupying
-sessions per VM).
+(`assign_session`, written by `VmManager.ensure_vm` under the workgroup lock; how many sessions a VM takes is measured
+on the VM, `vm.room`).
 
 `runner.golden_switch` records a VM replaced by one of a newer golden while sessions on it were paused (`record_switch`,
 `switched_to`; ADR-093), `sessions_on` lists the sessions on a VM that are not stopped or failed. The switch keeps its
@@ -105,17 +105,6 @@ async def of_workgroup(db: Any, wg_id: str) -> list[VmRow]:
         db, f"SELECT {COLUMNS} FROM runner.vm WHERE wg_id = %s AND state <> 'deleted' ORDER BY id", (wg_id,)
     )
     return [VmRow(**row) for row in rows]
-
-
-async def occupancy(db: Any, wg_id: str) -> dict[str, int]:
-    """Occupying sessions (`ACTIVE_SESSION_STATES`) per live VM of the workgroup that has any."""
-    rows = await _rows(
-        db,
-        "SELECT v.id, COUNT(*) AS sessions FROM runner.vm v JOIN runner.session s ON s.vm_id = v.id"
-        " WHERE v.wg_id = %s AND v.state <> 'deleted' AND s.state = ANY(%s) GROUP BY v.id",
-        (wg_id, list(ACTIVE_SESSION_STATES)),
-    )
-    return {row["id"]: int(row["sessions"]) for row in rows}
 
 
 async def assign_session(db: Any, session_id: str, vm_id: str) -> None:

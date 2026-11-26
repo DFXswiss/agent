@@ -23,7 +23,7 @@ import json
 import os
 from typing import Any, cast
 
-from agent_runner import registry
+from agent_runner import admission, registry
 from agent_runner.errors import RunnerError
 from agent_runner.metrics.device import lima_home
 from agent_runner.registry import TaskSpec
@@ -104,6 +104,7 @@ def build_manager(context: Any) -> VmManager:
         stopping=context.stopping.is_set,
         other_usage=usage_of(context, registry.capacity_usages()),
         reclaim=reclaim_of(context, registry.capacity_reclaimers()),
+        admission=admission.of(context),
         cpus=os.cpu_count,
         disk_free_mib=functools.partial(disk_free_mib, home),
     )

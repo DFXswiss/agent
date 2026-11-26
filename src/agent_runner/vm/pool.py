@@ -57,6 +57,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from agent_runner.admission import Admission
 from agent_runner.config import Config
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink import cursor
@@ -133,8 +134,17 @@ async def _no_reclaim(_need_mib: int) -> int:
     return 0
 
 
-async def _room_by_bound(_row: VmRow) -> bool:
+async def _room_unmeasured(_row: VmRow) -> bool:
+    """Without a measurement (`vm.room.checker`, set by `vm.tasks`) a running VM has room: no fixed number."""
     return True
+
+
+async def _idle_cpu() -> float:
+    return 0.0
+
+
+def _admission() -> Admission:
+    return Admission(cpu_load=_idle_cpu)
 
 
 def _token() -> str:
@@ -154,11 +164,6 @@ class VmSettings:
     pool_size: int
     memory_reserve_mib: int
     vm_idle_seconds: int
-    sessions_per_vm: int = 0
-    """Optional upper bound of occupying sessions per VM, 0 (the default) = none: the VM's free resources decide
-    (`vm.room`; ADR-075 section 1)."""
-    max_vms: int = 0
-    """Slots at most, 0 = the memory budget alone (ADR-075 section 1)."""
 
     @classmethod
     def from_config(cls, config: Config) -> VmSettings:
@@ -169,8 +174,6 @@ class VmSettings:
             pool_size=config.pool_size,
             memory_reserve_mib=config.memory_reserve_mib,
             vm_idle_seconds=config.vm_idle_seconds,
-            sessions_per_vm=config.sessions_per_vm,
-            max_vms=config.max_vms,
         )
 
 
@@ -203,9 +206,11 @@ class VmEnv:
     other_usage: Callable[[], Awaitable[Usage]] = _no_usage
     reclaim: Callable[[int], Awaitable[int]] = _no_reclaim
     """Ask the other areas to give back the MiB a workgroup VM needs (their `RECLAIM`, ADR-059 addendum 4)."""
-    session_room: Callable[[VmRow], Awaitable[bool]] = _room_by_bound
-    """Whether a running VM's own free resources take one more session (`vm.room.checker`; default: the optional
-    bound `SESSIONS_PER_VM` alone decides)."""
+    session_room: Callable[[VmRow], Awaitable[bool]] = _room_unmeasured
+    """Whether a running VM's own free resources take one more session (`vm.room.checker`; default: yes)."""
+    admission: Admission = field(default_factory=_admission)
+    """The device's one admission (`agent_runner.admission`, shared with the work VMs): its transaction (`lock`, the
+    pool's slot lock), the rank, CPU; default: idle CPU."""
     # Host facts of the capacity report (None: unknown, the counter is left out).
     cpus: Callable[[], int | None] = _unknown
     disk_free_mib: Callable[[], int | None] = _unknown
@@ -319,7 +324,6 @@ class VmEnv:
             vm_memory_mib=self.settings.memory_mib,
             vms=await records.slot_rows(self.db),
             in_flight=in_flight,
-            max_vms=self.settings.max_vms,
             other=await self.other_usage(),
         )
 
@@ -484,8 +488,9 @@ class Pool:
         self._on_change = on_change
         self._reserved = reserved
         # Held from a capacity check to its claim (`filling` here, `VmManager.reserved` for clones and restarts): the
-        # check awaits the store, so without it two claimants could both take the last free slot.
-        self.slot_lock = asyncio.Lock()
+        # check awaits the store, so without it two claimants could both take the last free slot. It is the device's
+        # one transaction (`Admission.lock`), so the work VMs never claim the same RAM meanwhile.
+        self.slot_lock = env.admission.lock
 
     async def missing(self, golden: GoldenRef | None) -> int:
         """Clones to start now: up to POOL_SIZE, at most 2 in flight, only into free slots."""

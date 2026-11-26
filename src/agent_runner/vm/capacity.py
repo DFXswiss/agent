@@ -1,7 +1,7 @@
 """VM capacity of the runner device (docs/platform/spec/05-runner.md section 3.4, 03-api.md section 4.6.2, ADR-009).
 
     budget_mib     = physical RAM - MEMORY_RESERVE_MIB
-    vm_slots_total = floor(budget_mib / VM_MEMORY_MIB), at most MAX_VMS when set (ADR-075)
+    vm_slots_total = floor(budget_mib / VM_MEMORY_MIB)   (no fixed number, ADR-075 addendum 2)
     vm_slots_free  = vm_slots_total - (VMs in pool, assigning, running, stopping) - slots of other areas
 
 Stopped VMs use no slot (the host gets their RAM back on stop). VMs being cloned for the pool count as well (they
@@ -97,15 +97,12 @@ def compute(
     vm_memory_mib: int,
     vms: Sequence[tuple[str, int]],
     in_flight: int = 0,
-    max_vms: int = 0,
     other: Usage = NO_USAGE,
 ) -> Capacity:
-    """Capacity from the VM rows `(state, memory_mib)` plus `in_flight` VMs being created for the pool, at most
-    `max_vms` slots (0: the budget alone), less the slots of `other` areas."""
+    """Capacity from the VM rows `(state, memory_mib)` plus `in_flight` VMs being created for the pool, less the slots
+    of `other` areas; the memory budget alone decides the slots (no fixed number, ADR-075 addendum 2)."""
     budget = max(physical_mib - reserve_mib, 0)
     total = budget // vm_memory_mib
-    if max_vms:
-        total = min(total, max_vms)
     occupying = [memory for state, memory in vms if state in SLOT_STATES]
     pool_ready = sum(1 for state, _ in vms if state == "pool")
     used = sum(occupying) + in_flight * vm_memory_mib + other.memory_mib

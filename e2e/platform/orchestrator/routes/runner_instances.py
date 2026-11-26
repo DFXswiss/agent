@@ -2,7 +2,7 @@
 runner instances with separate `AGENT_RUNNER_HOME`").
 
 - `POST /runners/{name}/spawn` (`{"device", "memory_reserve_mib", "pool_size", "session_idle_seconds",
-  "vm_idle_seconds", "sessions_per_vm", "max_vms"}`, each optional):
+  "vm_idle_seconds"}`, each optional):
   a further runner `runner-<n>` (n above the run's `E2E_RUNNERS`) with its own home `<runner scratch>/runner-<n>`
   and VM prefix `<run prefix>r<n>-` (the run's VM cleanup covers it), otherwise the environment of `runner-1`. It
   adopts the run's golden image when the run has one and starts waiting for enrollment (`POST
@@ -10,9 +10,9 @@ runner instances with separate `AGENT_RUNNER_HOME`").
   capacity-based scheduling); `pool_size` sets its warm pool (default: that of `runner-1`). An instance that will
   enroll as an org device (`"device": "org"`) gets no platform OpenRouter key file (the runner refuses it on org
   devices, 05-runner.md section 1.3). `session_idle_seconds` / `vm_idle_seconds` (60 s minimum) let an idle session
-  be suspended and then its VM stop quickly (E2E-38: the scheduler's stopped-VM path). `sessions_per_vm` and
-  `max_vms` set `AGENT_RUNNER_SESSIONS_PER_VM` / `AGENT_RUNNER_MAX_VMS` (E2E-57: a full VM, a second VM, a full
-  device; ADR-075). `operator_subscriptions: true` gives it a pool of the operator's subscriptions
+  be suspended and then its VM stop quickly (E2E-38: the scheduler's stopped-VM path). No fixed number of sessions
+  per VM or of VMs exists any more (ADR-075 addendum 2): the former options `sessions_per_vm` and `max_vms` are
+  refused. `operator_subscriptions: true` gives it a pool of the operator's subscriptions
   (`AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR`, a 0700 directory beside its home with one 0600 token file of the
   subscription token shape, random per spawn; E2E-61: which organizations use it comes from the platform log, ADR-079).
   Answers `{name, state, vm_prefix, home}`.
@@ -48,8 +48,9 @@ IDLE_VARIABLES = {
     "vm_idle_seconds": "AGENT_RUNNER_VM_IDLE_SECONDS",
 }
 IDLE_RANGE = (60, 604_800)
-LIMIT_VARIABLES = {"sessions_per_vm": "AGENT_RUNNER_SESSIONS_PER_VM", "max_vms": "AGENT_RUNNER_MAX_VMS"}
-MAX_LIMIT = 1000
+OPTIONS = frozenset(
+    {"device", "memory_reserve_mib", "pool_size", "operator_subscriptions", *IDLE_VARIABLES},
+)
 KEY_FILE = "AGENT_RUNNER_OPENROUTER_KEY_FILE"
 OPERATOR_DIR = "AGENT_RUNNER_OPERATOR_SUBSCRIPTION_DIR"
 OPERATOR_TOKEN_PREFIX = "-".join(("sk", "ant", "oat01", ""))
@@ -116,6 +117,9 @@ def post_spawn(ctx: Context, params: dict[str, str], body: Any) -> tuple[int, An
     options = body if isinstance(body, dict) else {}
     if body is not None and not isinstance(body, dict):
         raise RouteError(400, "invalid", "body must be an object of spawn options")
+    unknown = sorted(set(options) - OPTIONS)
+    if unknown:
+        raise RouteError(400, "invalid", f"unknown spawn option {unknown[0]}")
     kind = options.get("device", "platform")
     if kind not in DEVICE_KINDS:
         raise RouteError(400, "invalid", "device must be platform or org")
@@ -134,10 +138,6 @@ def post_spawn(ctx: Context, params: dict[str, str], body: Any) -> tuple[int, An
         seconds = _number(options, key, IDLE_RANGE[1], IDLE_RANGE[0])
         if seconds is not None:
             env[variable] = str(seconds)
-    for key, variable in LIMIT_VARIABLES.items():
-        limit = _number(options, key, MAX_LIMIT)
-        if limit is not None:
-            env[variable] = str(limit)
     env.update(_operator_env(ctx, options, kind, home))
     runner = Runner(ctx.runner_node, name, template.python, env)
     golden = _golden(ctx)

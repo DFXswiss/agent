@@ -31,6 +31,7 @@ from agent_runner.errors import RunnerError
 from agent_runner.identity import Device, ensure_private_dir, write_device, write_keys
 from agent_runner.login.relay import login_env
 from agent_runner.sync import outbox
+from agent_runner.vm import capacity as capacity_module
 from agent_runner.vm import golden as golden_module
 
 from ..assignments.orgkit import cluster_tools
@@ -710,16 +711,15 @@ def test_status_after_a_store_wipe_shows_the_adopted_hub_position(case: Case) ->
     assert _outbox(case.dsn, lambda conn, key: outbox.enqueue(conn, key, "metrics", metrics)) == 42
 
 
-def test_status_shows_the_work_vm_slots(case: Case) -> None:
-    """ADR-059 addendum 4: held (a VM that is not stopped, a pool entry), free, stopped and waiting, and the capacity
-    that admits a new work VM; not with WORKVM_SLOTS=0."""
+def test_status_shows_the_work_vm_slots(case: Case, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-059 addendum 4: held (a VM that is not stopped, a pool entry), free, stopped and waiting, and what the
+    device's admission sees free; the slots follow the RAM above the reserve (no fixed number: a former
+    `AGENT_RUNNER_WORKVM_SLOTS` is ignored)."""
+    monkeypatch.setattr(capacity_module, "physical_memory_mib", lambda: 32768 + 4 * 8192)
     case.env["AGENT_RUNNER_WORKVM_SLOTS"] = "0"
-    assert lines(case.cli("status")[1], "runner.status.workvm") == []
-    del case.env["AGENT_RUNNER_WORKVM_SLOTS"]
     [unbounded] = lines(case.cli("status")[1], "runner.status.workvm")
-    assert (unbounded["cap"], unbounded["held"], unbounded["disk_quota_gib"]) == ("none", "0", "none")
-    assert int(unbounded["slots"]) >= 1  # what the RAM above the reserve could hold, at least one
-    case.env["AGENT_RUNNER_WORKVM_SLOTS"] = "4"
+    assert (unbounded["slots"], unbounded["held"], unbounded["disk_quota_gib"]) == ("4", "0", "none")
+    del case.env["AGENT_RUNNER_WORKVM_SLOTS"]
     case.env["AGENT_RUNNER_WORKVM_DISK_QUOTA_GIB"] = "500"
     now = datetime(2026, 11, 26, 9, tzinfo=UTC)
     for number, (slot, state) in enumerate(((0, "running"), (1, "stopped"), (1, "deleted"), (3, "stopped")), start=1):
@@ -737,23 +737,24 @@ def test_status_shows_the_work_vm_slots(case: Case) -> None:
         now,
     )
     case.sql(
-        "INSERT INTO runner.workvm_wait (ticket, slot, since) VALUES ('00000000000000aa', NULL, now() - interval '90 s'),"
-        " ('00000000000000bb', 1, now())"
+        "INSERT INTO runner.workvm_wait (ticket, slot, since)"
+        " VALUES ('00000000000000aa', NULL, now() - interval '90 s'), ('00000000000000bb', 1, now())"
     )
     [found] = lines(case.cli("status")[1], "runner.status.workvm")
     oldest = int(found.pop("oldest_wait_s"))
-    host = {key: found.pop(key) for key in ("memory_free_mib", "cpu_load_pct")}  # of the machine running the test
-    assert found == {"slots": "4", "cap": "4", "held": "2", "free": "2", "stopped": "2", "waiting": "2",
-                     "cpu_load_max_pct": "85", "disk_used_gib": "200", "disk_quota_gib": "500"}  # fmt: skip
+    load = int(found.pop("cpu_load_pct"))  # of the machine running the test
+    assert found == {"slots": "4", "held": "2", "free": "2", "stopped": "2", "waiting": "2",
+                     "memory_free_mib": "16384", "cpu_load_max_pct": "85", "disk_used_gib": "200",
+                     "disk_quota_gib": "500"}  # fmt: skip
     assert 90 <= oldest < 150
-    assert all(int(value) >= 0 for value in host.values())
+    assert load >= 0
 
 
 def test_status_without_a_store_shows_no_work_vm_slots(case: Case) -> None:
     exists = cluster_tools(case.dsn, case.stops)
     missing = type(exists)(ensure=exists.ensure, stop=exists.stop, create_database=exists.create_database,
                            exists=lambda path: False)  # fmt: skip
-    captured = case.make_host({**case.env, "AGENT_RUNNER_WORKVM_SLOTS": "2"}, cluster=missing)
+    captured = case.make_host(case.env, cluster=missing)
     assert run_cli(["status"], captured.host) == 0
     assert lines(captured.stdout.getvalue(), "runner.status.workvm") == []
 

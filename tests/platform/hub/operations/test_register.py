@@ -521,8 +521,8 @@ def test_parallel_subagent_requests_take_the_last_place_once(ops: Ops) -> None:
         session,
     )
     requests = ops.request(session, "subagent.request"), ops.request(session, "subagent.request")
-    # the hub's settings (ADR-088 section 2): 3 running children
-    answers = _parallel(ops, *requests, limits=SubagentLimits(max_depth=2, max_running=3, max_total=10))
+    # the hub's settings (ADR-088 section 2): 3 children per task
+    answers = _parallel(ops, *requests, limits=SubagentLimits(max_depth=2, max_total=3))
     assert answers[0]["state"] == "accepted"
     assert answers[1] == {"state": "denied", "error_code": "limit_exceeded"}
     assert ops.desk.rows("SELECT count(*) FROM hub.session WHERE task_id = %s AND depth = 1", task) == [(3,)]

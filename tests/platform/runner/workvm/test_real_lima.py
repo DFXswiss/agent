@@ -109,9 +109,6 @@ def clone_sets(slot: int) -> list[str]:
         max_size=POOL_SIZE,
         idle_seconds=60,
         queue_seconds=60,
-        max_per_task=1,
-        max_per_org=1,
-        max_per_owner=1,
         ssh_port_base=free_port() - slot,
         test_mode=True,
     )

@@ -209,7 +209,7 @@ def test_resume_failure_reasons(rig: Rig) -> None:
         fallback = [item for item in await env.audits() if item["action"] == "session.context_fallback"]
         assert [item["detail"] for item in fallback] == [{"reason": "context_missing"}]
         # its VM row is gone (the session names none any more): the choice of the workgroup applies (ADR-075)
-        assert pk.kit.vms.calls[-1] == {"session_id": None, "prefer": [], "new_allowed": True}
+        assert pk.kit.vms.calls[-1] == {"session_id": None, "prefer": []}
 
     async def unreachable_vm(env: Any) -> None:
         pk = await setup(env)

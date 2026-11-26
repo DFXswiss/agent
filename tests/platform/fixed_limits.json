@@ -256,7 +256,6 @@
    "DEFAULT_CONTEXT_MAX_OBJECT_BYTES": "size",
    "DEFAULT_SUBAGENT_LIMITS": "time",
    "DEFAULT_SUBAGENT_MAX_DEPTH": "time",
-   "DEFAULT_SUBAGENT_MAX_RUNNING": "time",
    "DEFAULT_SUBAGENT_MAX_RUNTIME_SECONDS": "time",
    "DEFAULT_SUBAGENT_MAX_TOTAL": "time",
    "LIMITS": "page",
@@ -273,10 +272,8 @@
    "MAX_SUBAGENT_RUNTIME_SECONDS": "time",
    "MAX_SUBAGENT_SETTING": "time",
    "MAX_TOKENS": "size",
-   "MAX_VMS_PER_WG": "setting",
    "context_max_object_bytes": "size",
    "max_depth": "setting",
-   "max_running": "setting",
    "max_runtime_seconds": "setting",
    "max_total": "setting",
    "subagent_limits": "setting"
@@ -537,6 +534,9 @@
   "src/agent_hub/wraps/routes.py": {
    "MAX_EPOCH": "integer"
   },
+  "src/agent_runner/admission.py": {
+   "MACOS_VMS_MAX": "external"
+  },
   "src/agent_runner/billing/meter.py": {
    "MAX_ITEM_MS": "time"
   },
@@ -547,13 +547,11 @@
    "DEFAULT_DFX_KEY_MAX_HEADROOM_MICRO_USD": "integer",
    "_MAX_DFX_KEY_HEADROOM_MICRO_USD": "integer",
    "browser_live_max_kbps": "rate",
+   "cpu_load_max_percent": "setting",
    "dfx_key_max_headroom_micro_usd": "integer",
    "dfx_key_max_per_org": "setting",
    "log_max_mib": "size",
-   "max_vms": "setting",
-   "workvm_max_per_org": "setting",
-   "workvm_max_per_owner": "setting",
-   "workvm_max_per_task": "setting",
+   "vm_load_max_percent": "setting",
    "workvm_max_size": "setting"
   },
   "src/agent_runner/contexts/archive.py": {
@@ -973,7 +971,6 @@
    "OLD_GUEST_MAX_PARALLEL": "compat",
    "OLD_GUEST_MAX_TOTAL": "compat",
    "max_depth": "setting",
-   "max_running": "setting",
    "max_runtime_seconds": "setting",
    "max_total": "setting"
   },
@@ -1034,8 +1031,7 @@
    "_MAX_NAME": "size"
   },
   "src/agent_runner/vm/pool.py": {
-   "MAX_PARALLEL_FILLS": "rate",
-   "max_vms": "setting"
+   "MAX_PARALLEL_FILLS": "rate"
   },
   "src/agent_runner/workvm/accounts.py": {
    "MAX_SLOTS": "open",
@@ -1084,9 +1080,6 @@
    "RUN_COMMAND_LIMIT": "page",
    "RUN_OUTPUT_LIMIT": "size",
    "SYNC_LIMIT": "page",
-   "max_per_org": "setting",
-   "max_per_owner": "setting",
-   "max_per_task": "setting",
    "max_size": "setting"
   },
   "src/agent_runner/workvm/sync.py": {

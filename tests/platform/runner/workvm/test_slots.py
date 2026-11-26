@@ -234,6 +234,7 @@ def test_a_new_vm_prefers_a_free_slot_without_stopped_vms(world: World) -> None:
 
 def test_a_stopped_vm_starts_again_with_its_state_on_a_new_request(world: World) -> None:
     world.workspace = {"a.txt": b"one"}
+    world.scripts["true"] = (b"", "exited", 0)
 
     async def body(vms: WorkVms) -> dict[str, Any]:
         first = await vms.call(None, of(TASK), "workvm_exec", {"command": "true"})  # mirrors the workspace
@@ -349,7 +350,7 @@ def test_the_slot_pass_resolves_assignments_without_a_vm(world: World) -> None:
 
     async def body(vms: WorkVms) -> tuple[list[str], list[str], list[str]]:
         created = [(await vms.request(of(task_id), {}))["workvm_id"] for task_id in (TASK, TASK_B, TASK_C, TASK_D)]
-        missing, interrupted, outside, _fine = created
+        _missing, interrupted, _outside, _fine = created
         world.instances.pop((await vm_of(vms, TASK)).lima_name)  # deleted by hand
         await records.update(vms.deps.db, interrupted, state="starting")  # a start nobody finishes
         world.instances[(await vm_of(vms, TASK_C)).lima_name] = "Stopped"  # stopped outside the runner
@@ -467,25 +468,24 @@ def test_a_stop_that_finished_meanwhile_is_not_stopped_again(world: World, monke
 
 
 def test_new_vms_are_admitted_while_the_free_resources_last(world: World) -> None:
-    """No fixed number: with 8 slot accounts, a VM is admitted while the RAM above the reserve keeps room for one more
-    workgroup VM and the CPU load is below the bound; short of either, the request waits and goes when it is there."""
-    world.settings = dataclasses.replace(
-        world.settings, slots=8, workgroup_headroom_mib=8192, cpu_load_max=0.85, queue_seconds=10
-    )
+    """No fixed number (ADR-075 addendum 2): with 8 slot accounts, a VM is admitted while the RAM above the reserve
+    holds it and the CPU load is below the bound; short of either, the request waits and goes when it is there."""
+    world.settings = dataclasses.replace(world.settings, slots=8, queue_seconds=10)
     load = [0.2]
 
     async def body(vms: WorkVms) -> list[Any]:
         async def cpu() -> float:
             return load[0]
 
-        vms.deps.cpu_load = cpu
-        world.free_mib = 3 * 8192  # room for two work VMs besides one workgroup VM
+        vms.deps.admission.cpu_load = cpu
+        vms.deps.admission.cpu_load_max = 0.85
+        world.free_mib = 2 * 8192  # room for two work VMs
         found: list[Any] = []
         for task_id in (TASK, TASK_B):
             found.append((await vms.request(of(task_id), {}))["created"])
             world.free_mib -= 8192  # the started VM holds its RAM
         with pytest.raises(OperationFailed) as short:
-            await vms.request(of(TASK_C), {})  # 8 GiB left = the workgroup VM's room: waits, then times out
+            await vms.request(of(TASK_C), {})  # no RAM left: waits, then times out
         found.append(short.value.code)
         world.free_mib = 1_000_000
         load[0] = 0.9  # the CPU is busy: waits until the load is down again
@@ -501,20 +501,36 @@ def test_new_vms_are_admitted_while_the_free_resources_last(world: World) -> Non
     assert world.run(body) == [True, True, "timeout", True, 6]  # 5 polls of the time-out, 1 for the CPU
 
 
-def test_the_slot_accounts_follow_the_ram_unless_an_upper_bound_is_set() -> None:
+def test_the_slot_accounts_follow_the_ram() -> None:
+    """No setting of a number (ADR-075 addendum 2): the accounts are isolation units, as many as the RAM could hold."""
     from agent_runner.workvm import accounts  # noqa: PLC0415
 
     reserve = 32768
-    assert accounts.slot_count(None, reserve + 16 * 8192 + 100, reserve) == 16  # e.g. the platform device: 16
-    assert accounts.slot_count(None, reserve + 1000 * 8192, reserve) == accounts.MAX_SLOTS
-    assert accounts.slot_count(None, 16384, reserve) == 1  # a small machine still has one
-    assert accounts.slot_count(4, reserve + 16 * 8192, reserve) == 4  # an upper bound for special cases
-    assert accounts.slot_count(0, reserve + 16 * 8192, reserve) == 0  # off
+    assert accounts.slot_count(reserve + 16 * 8192 + 100, reserve) == 16  # e.g. the platform device: 16
+    assert accounts.slot_count(reserve + 1000 * 8192, reserve) == accounts.MAX_SLOTS
+    assert accounts.slot_count(16384, reserve) == 1  # a small machine still has one
 
 
-def test_work_vms_give_way_to_workgroup_vms_idle_ones_first(world: World) -> None:
-    """Workgroup VMs always come first: asked for room, the pool goes first, then idle VMs (stopped `idle`), then busy
-    ones (their jobs `lost`, no reason in the event), least recently used first; run VMs belong to their run."""
+def test_a_waiting_session_holds_back_new_work_vms(world: World) -> None:
+    """Rank (05 section 3.8): while a session refused for lack of capacity waits for its next attempt, no new work VM
+    starts - also with RAM to spare; once the session started, the work VM goes."""
+    from agent_runner.admission import SESSION  # noqa: PLC0415
+
+    world.settings = dataclasses.replace(world.settings, queue_seconds=4)
+
+    async def body(vms: WorkVms) -> list[Any]:
+        vms.deps.admission.refused(SESSION)
+        with pytest.raises(OperationFailed) as held:
+            await vms.request(of(TASK), {})
+        vms.deps.admission.started(SESSION)
+        return [held.value.code, (await vms.request(of(TASK), {}))["created"]]
+
+    assert world.run(body) == ["timeout", True]
+
+
+def test_work_vms_give_way_to_workgroup_vms_only_when_idle(world: World) -> None:
+    """Sessions rank first: asked for room, the pool goes first, then idle VMs (stopped `idle`), least recently used
+    first. Running work is never ended: a busy VM keeps running; run VMs belong to their run."""
     world.settings = dataclasses.replace(world.settings, slots=5, pool_size=1)
 
     async def body(vms: WorkVms) -> list[Any]:
@@ -529,17 +545,35 @@ def test_work_vms_give_way_to_workgroup_vms_idle_ones_first(world: World) -> Non
         vms.calls[(await vm_of(vms, TASK)).id] += 1  # TASK is busy: a call in progress
         first = await vms.give_way(8192)  # the pool entry is enough
         second = await vms.give_way(8192)  # the idle VM of TASK_B (TASK_C was used later, TASK is busy)
-        third = await vms.give_way(3 * 8192)  # TASK_C (idle), then TASK (busy)
-        left = await vms.give_way(8192)  # only the run VM is left: it stays
+        third = await vms.give_way(3 * 8192)  # TASK_C (idle); TASK is busy and keeps running
+        left = await vms.give_way(8192)  # only the busy VM and the run VM are left: both stay
         return [first, second, third, left, (await records.get(vms.deps.db, run.id)).state]  # type: ignore[union-attr]
 
-    assert world.run(body) == [8192, 8192, 2 * 8192, 0, "running"]
-    stopped = {row["task_id"]: row["state"] for row in rows(world) if row["task_id"] in (TASK, TASK_B, TASK_C)}
-    assert stopped == {TASK: "stopped", TASK_B: "stopped", TASK_C: "stopped"}
+    assert world.run(body) == [8192, 8192, 8192, 0, "running"]
+    found = {row["task_id"]: row["state"] for row in rows(world) if row["task_id"] in (TASK, TASK_B, TASK_C)}
+    assert found == {TASK: "running", TASK_B: "stopped", TASK_C: "stopped"}
     reasons = [reason for state, reason in states(world) if state == "stopped"]
-    assert reasons == ["idle", "idle", None]  # TASK_B, TASK_C, then the busy TASK
-    assert any("reason=workgroup_priority" in line for line in world.logs)
-    assert any("gave_way need_mib=24576 released_mib=16384" in line for line in world.logs)
+    assert reasons == ["idle", "idle"]  # TASK_B, then TASK_C
+    assert any("gave_way need_mib=24576 released_mib=8192" in line for line in world.logs)
+
+
+def test_giving_way_takes_only_what_is_needed_and_passes_over_a_vm_that_stopped_meanwhile(world: World) -> None:
+    world.settings = dataclasses.replace(world.settings, slots=4, pool_size=2)
+
+    async def body(vms: WorkVms) -> list[Any]:
+        filled = await vms.pool_pass() + await vms.pool_pass()  # one entry per pass
+        dropped = await vms.give_way(8192)  # one of the two pool entries is enough: the other stays
+        kept = len(await records.pool(vms.deps.db))
+        await vms.request(of(TASK), {})
+        world.helper.jobs.clear()
+
+        async def gone(vm: Any, *, reason: str) -> bool:  # it stopped meanwhile (another path got there first)
+            return False
+
+        vms.stop = gone  # type: ignore[method-assign]
+        return [filled, dropped, kept, await vms.give_way(8192)]
+
+    assert world.run(body) == [2, 8192, 1, 0]
 
 
 # -- visible: metrics and status (Soll 5) ----------------------------------------------------------------------------

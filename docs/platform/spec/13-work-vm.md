@@ -29,9 +29,9 @@ time, lifetime, capacity, monitoring; (c) browser and web search; (d) web views,
   only; a subagent always gets scope `session` (its request's `scope` is ignored), because a VM's `/workspace`
   mirrors one workspace. Commands of a main session use its own `session` VM when it has one, else the task VM;
   commands of a subagent use only its own VM.
-- Limits (formal checks, `limit_exceeded`): at most `WORKVM_MAX_PER_TASK` (default 4) VMs per task including session
-  VMs, `WORKVM_MAX_PER_ORG` (default 16) per organization, `WORKVM_MAX_PER_OWNER` (default 8) per task owner, on this
-  device.
+- No fixed number of VMs per task, task owner or organization (ADR-075 addendum 2; the former
+  `WORKVM_MAX_PER_TASK`, `WORKVM_MAX_PER_OWNER` and `WORKVM_MAX_PER_ORG` are ignored): the device's free resources
+  decide (§7). Unchanged: the size of one VM (`WORKVM_MAX_SIZE`) and the time limits of one request.
 - Device without the work boundary (§6) or without a ready work image: `workvm_unavailable` (new code,
   `retryable:false`).
 - Capacity (§7): when the VM does not fit now the executor waits in a FIFO queue up to
@@ -123,10 +123,9 @@ against a closed schema and treats any other answer as `unavailable`.
 
 ## 6. The outside boundary (threat model `docs/platform/security/work-vm-threat-model.md`)
 ### 6.1 Slot accounts
-- Slot accounts `<prefix>wvm00` … (ADR-059 addendum 4: `AGENT_RUNNER_WORKVM_SLOTS` empty by default = as many as the
-  RAM above `MEMORY_RESERVE_MIB` could hold standard work VMs, at most 100 - isolation units, not a limit: the free
-  RAM, CPU and disk decide how many VMs run, 05-runner.md §3.7; a number = an upper bound for special cases; 0 = no
-  work VMs) as macOS accounts,
+- Slot accounts `<prefix>wvm00` … (ADR-059 addendum 4: as many as the RAM above `MEMORY_RESERVE_MIB` could hold
+  standard work VMs, at most 100 - isolation units, not a limit: the free RAM, CPU and disk decide how many VMs run,
+  05-runner.md §3.7 and §3.8; the former `WORKVM_SLOTS` is ignored) as macOS accounts,
   created by `agent-runner workvm install` (root): no login shell, hidden, own home `/var/agent-workvm/<account>`
   (0700) holding the Lima home `lima/` (short socket paths), on the APFS volume `AgentWorkVM` with a quota
   (`WORKVM_VOLUME_QUOTA_GIB`) so work VMs can never fill the device's main volume. `_config/` of each Lima home
@@ -238,12 +237,12 @@ filter all the same; a boundary by interface is left to a later package.
 machine-id at first boot (cloud-init new instance-id).
 ## 7. Capacity, lifetime, restart (temporary VMs, ADR-059 decisions 8 and 11)
 - RAM budget of 05 §3.4 shared: a work VM holds `memory_mib` while `starting|running|deleting`. A new work VM is
-  admitted by the free resources (05 §3.7: RAM above the reserve with room for one more workgroup VM, CPU load below
-  `WORKVM_CPU_LOAD_MAX_PERCENT`, disk quota), never by a fixed number; workgroup VMs come first - running task and
-  session VMs give way when a workgroup VM needs their RAM.
+  admitted by the device admission (05 §3.8: RAM above the reserve, CPU load below `CPU_LOAD_MAX_PERCENT`, disk
+  quota, no session waiting), never by a fixed number - also browser VMs (§13) and test run VMs (§12); sessions come
+  first - idle task and session VMs give way when a workgroup VM needs their RAM, running work is never ended for it.
 - Queue: requests wait FIFO per device; a freed slot wakes them at once, and a stopped VM waiting for its own slot
-  does not hold up the requests behind it (05-runner.md §3.7). An organization may hold at most `WORKVM_ORG_RAM_SHARE` (default 50 %) of
-  the work VM RAM while others wait.
+  does not hold up the requests behind it (05-runner.md §3.7). No fixed share per organization (the former, never
+  built `WORKVM_ORG_RAM_SHARE` is dropped, ADR-075 addendum 2).
 - **Slots** (ADR-059 addendum 4, 05-runner.md §3.7): a slot is held only by a VM that is not stopped. An idle VM (no
   call, no call in progress and no running job for `WORKVM_IDLE_SECONDS`, default 600) is **stopped**
   (`workvm.state` `stopped`, reason `idle`; the chat line "Arbeits-VM angehalten, ungenutzt – startet bei Bedarf
@@ -380,8 +379,8 @@ and exit code are kept outside the VM. The work VM stays unrestricted (E-08).
   test, mocha, ESLint/ruff problems; else null), `log` (`log_ref` or null without output), `tail` (last ≤ 8192
   characters), `reason` (`credit_exhausted`, `restart`, `start_failed`, `transfer_failed`, `vm_lost`, `cancelled`, or
   null).
-- The operation fails only when nothing ran: `credit_exhausted`, `limit_exceeded` (size cap; the organization and
-  owner VM limits – a run VM does not count against the per-task limit), `workvm_unavailable`, `timeout` of the
+- The operation fails only when nothing ran: `credit_exhausted`, `limit_exceeded` (size cap only: no fixed number of
+  run VMs, ADR-075 addendum 2), `workvm_unavailable`, `timeout` of the
   capacity queue, `upstream_error` (workspace not readable, VM did not start; retryable). Once the command started the
   operation succeeds with the run's state.
 - Duplicates (§11 of the concept): a request of the same session with the same `kind`, `command`, `cwd`, `size`,
@@ -454,8 +453,8 @@ use. The work VM and its free browser (`workvm_browse`) stay as they are and unw
   work VM of §7); its answer carries the notice "A browser was opened for this call (browser.open)." A failure is the
   tool error `unavailable` with the reason.
 - `idle_seconds` default `BROWSER_IDLE_SECONDS` (600). `ready_ms`: request to a browser that answers.
-- The operation fails only when no browser came up: `credit_exhausted`, `limit_exceeded` (organization and owner VM
-  limits; a browser VM does not count against the per-task limit), `workvm_unavailable`, `timeout` (capacity queue),
+- The operation fails only when no browser came up: `credit_exhausted`, `workvm_unavailable`, `timeout` (capacity queue;
+  no fixed number of browser VMs, the device admission decides, ADR-075 addendum 2),
   `upstream_error` (VM or browser did not start; retryable). A `url` that does not load still opens the browser.
 - `reason` of `browser.close`: `browser_closed`, or the reason it had already ended with (then `closed:false`).
 

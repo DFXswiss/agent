@@ -95,6 +95,8 @@ def serve_command(_args: argparse.Namespace) -> int:
     except ConfigError as error:
         print(f"agent-hub: {error}", file=sys.stderr)
         return EXIT_CONFIG
+    for name in config.retired:
+        print(f"agent-hub: config.ignored name={name} reason=fixed_limit_removed", file=sys.stderr)
     return serve(config)
 
 

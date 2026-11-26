@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 
 import agent_runner.sessions.service as sessions_service
+from agent_runner import admission
 from agent_runner.store.migrate import migrate
 from agent_runner.store.pool import open_pool
 from agent_runner.vm import records as vm_records
@@ -286,10 +287,9 @@ def config(home: Path, **changes: Any) -> SimpleNamespace:
         "home": home,
         "memory_reserve_mib": 4096,
         "vm_memory_mib": 8192,
-        "workvm_cpu_load_max_percent": 85,
+        "cpu_load_max_percent": 85,
         "test_mode": False,
         "vm_prefix": "agent",
-        "workvm_slots": 2,
         "workvm_slots_self": False,
         "workvm_max_size": "large",
         "workvm_idle_seconds": 14400,
@@ -297,9 +297,6 @@ def config(home: Path, **changes: Any) -> SimpleNamespace:
         "workvm_pool_size": 1,
         "workvm_disk_quota_gib": 0,
         "workvm_queue_seconds": 900,
-        "workvm_max_per_task": 4,
-        "workvm_max_per_org": 16,
-        "workvm_max_per_owner": 8,
         "workvm_ssh_port_base": 47200,
         "workvm_template": None,
         "browser_idle_seconds": 900,
@@ -329,17 +326,22 @@ def fake_service(monkeypatch: pytest.MonkeyPatch, db: Any = None, found: bool = 
     return seen
 
 
-def test_no_work_vms_without_slots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    seen = fake_service(monkeypatch)
-    assert service.workvms_for(context(tmp_path, workvm_slots=0)) is None
-    assert seen == []
+INSTALLED = service.installed
 
 
-def test_without_an_upper_bound_the_ram_decides_and_the_installation_switches_on(
+@pytest.fixture(autouse=True)
+def installed_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An installed device whose RAM above the reserve (4096 MiB here) holds two standard work VMs: two accounts."""
+    monkeypatch.setattr(service, "physical_memory_mib", lambda: 4096 + 2 * 8192 + 100)
+    monkeypatch.setattr(service, "installed", lambda slots: True)
+
+
+def test_the_ram_decides_the_accounts_and_the_installation_switches_on(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """ADR-059 addendum 4: WORKVM_SLOTS empty = no bound; the number of slot accounts follows the RAM above the reserve,
-    and work VMs are on once `workvm install` created the first slot account (checked once per daemon)."""
+    """ADR-059 addendum 4, ADR-075 addendum 2: no setting of a number; the slot accounts follow the RAM above the
+    reserve, and work VMs are on once `workvm install` created the first slot account (checked once per daemon)."""
+    monkeypatch.setattr(service, "installed", INSTALLED)
     seen = fake_service(monkeypatch)
     probed: list[list[str]] = []
     present = {"agentwvm00": False}
@@ -350,19 +352,14 @@ def test_without_an_upper_bound_the_ram_decides_and_the_installation_switches_on
 
     monkeypatch.setattr(service, "run_command", run)
     monkeypatch.setattr(service, "physical_memory_mib", lambda: 4096 + 5 * 8192 + 100)
-    missing = context(tmp_path, workvm_slots=None)
+    missing = context(tmp_path)
     assert service.workvms_for(missing) is None
     assert service.workvms_for(missing) is None  # not probed again
     assert (probed, seen) == ([["/usr/bin/id", "-u", "agentwvm00"]], [])
     present["agentwvm00"] = True
-    built = service.workvms_for(context(tmp_path, workvm_slots=None))
+    built = service.workvms_for(context(tmp_path))
     assert built is not None
     assert built.deps.settings.slots == 5
-
-
-def test_the_cpu_load_is_the_load_per_core(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(service, "cpu_load_per_core", lambda: 0.5)
-    assert asyncio.run(service.cpu_load()) == 0.5
 
 
 def test_no_work_vms_before_enrollment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -401,17 +398,13 @@ def test_wiring_with_slot_accounts(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
         max_size="large",
         idle_seconds=14400,
         queue_seconds=900,
-        max_per_task=4,
-        max_per_org=16,
-        max_per_owner=8,
         ssh_port_base=47200,
         test_mode=False,
         pool_size=1,
         keep_stopped_seconds=7200,
-        workgroup_headroom_mib=8192,
-        cpu_load_max=0.85,
     )
-    assert deps.cpu_load is service.cpu_load
+    assert deps.admission is admission.of(ctx)  # the device's one admission, shared with the workgroup VMs
+    assert deps.admission.cpu_load_max == 0.85
     assert deps.now() == datetime.fromtimestamp(WALL, UTC)
     assert deps.sleep is host_sleep
     assert deps.scratch == tmp_path / "tmp"
@@ -441,7 +434,7 @@ def test_wiring_with_slot_accounts(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 def test_wiring_in_self_mode_with_a_template(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     fake_service(monkeypatch)
     template = tmp_path / "workvm.yaml"
-    ctx = context(tmp_path, workvm_slots_self=True, test_mode=True, workvm_slots=1, workvm_template=template)
+    ctx = context(tmp_path, workvm_slots_self=True, test_mode=True, workvm_template=template)
     workvms = service.workvms_for(ctx)
     assert workvms is not None
     bases = workvms.deps.base_for
@@ -576,8 +569,10 @@ def test_free_memory_counts_held_workgroup_vms_and_work_vms(
         db = await open_pool(store_dsn)
         try:
             fake_service(monkeypatch, db)
-            workvms = service.workvms_for(context(tmp_path))
+            ctx = context(tmp_path)
+            workvms = service.workvms_for(ctx)
             assert workvms is not None
+            admission.of(ctx).pending = lambda: 1000  # a workgroup VM admitted and still being cloned
             empty = await workvms.deps.free_memory_mib()
             vms = [("pool", 8192), ("assigning", 512), ("running", 4096), ("stopping", 1024), ("stopped", 2048)]
             vms.append(("deleted", 999))
@@ -601,8 +596,8 @@ def test_free_memory_counts_held_workgroup_vms_and_work_vms(
             await db.close()
 
     empty, used = asyncio.run(run())
-    assert empty == 65536 - 4096
-    assert used == 65536 - 4096 - (8192 + 512 + 4096 + 1024) - (8192 + 4096)
+    assert empty == 65536 - 4096 - 1000
+    assert used == 65536 - 4096 - 1000 - (8192 + 512 + 4096 + 1024) - (8192 + 4096)
 
 
 # -- test runs, log capture and credit (KOR-43) ----------------------------------------------------------------------
@@ -616,7 +611,8 @@ def test_test_runs_are_built_once_over_the_work_vms(monkeypatch: pytest.MonkeyPa
     assert runs.workvms is service.existing(ctx)
     assert service.testruns_for(ctx) is runs
     assert isinstance(runs.capture, service.Capturer)
-    assert service.testruns_for(context(tmp_path, workvm_slots=0)) is None
+    monkeypatch.setattr(service, "installed", lambda slots: False)
+    assert service.testruns_for(context(tmp_path)) is None  # not installed
 
 
 def test_credit_is_checked_only_on_a_platform_device(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -711,7 +707,9 @@ def test_the_browser_is_built_once_with_its_live_picture(monkeypatch: pytest.Mon
     assert service.existing_browsers(ctx) is browsers
     assert (browsers.settings.idle_seconds, browsers.settings.search_url) == (900, "https://search.test/?q={q}")
     assert browsers.live.max_kbps == 2000
-    assert service.browsers_for(context(tmp_path, workvm_slots=0)) is None
+    monkeypatch.setattr(service, "installed", lambda slots: False)
+    assert service.browsers_for(context(tmp_path)) is None  # not installed
+    monkeypatch.setattr(service, "installed", lambda slots: True)
 
     spawned: list[Any] = []
 

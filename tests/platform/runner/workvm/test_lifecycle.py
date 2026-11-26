@@ -220,8 +220,8 @@ def test_closing_a_task_deletes_every_vm_of_it(world: World) -> None:
     assert states(world).count(("deleted", "task_closed")) == 1  # the run VM writes no work VM event
 
 
-def test_run_vms_skip_the_per_task_limit_and_the_idle_pass(world: World) -> None:
-    world.settings = dataclasses.replace(world.settings, max_per_task=1, slots=3)
+def test_run_vms_skip_the_idle_pass(world: World) -> None:
+    world.settings = dataclasses.replace(world.settings, slots=3)
 
     async def body(vms: WorkVms) -> list[str]:
         await vms.request(session(), {})

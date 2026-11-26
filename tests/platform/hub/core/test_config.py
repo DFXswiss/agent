@@ -82,14 +82,21 @@ def test_optional_values(tmp_path: Path) -> None:
 
 
 def test_scheduler_settings(tmp_path: Path) -> None:
-    """ADR-075 section 1 and 7: the limits are settings with generous defaults; 0 means no limit or no hold."""
+    """ADR-075 section 7: the refusal rule is a setting with generous defaults; 0 means no hold."""
     config = load_config(hub_environ())
-    assert (config.vms_per_wg, config.capacity_refusals, config.refusal_hold_seconds) == (100, 3, 60)
-    config = load_config(
-        hub_environ(AGENT_HUB_VMS_PER_WG="0", AGENT_HUB_CAPACITY_REFUSALS="5", AGENT_HUB_REFUSAL_HOLD_SECONDS="0")
-    )
-    assert (config.vms_per_wg, config.capacity_refusals, config.refusal_hold_seconds) == (0, 5, 0)
+    assert (config.capacity_refusals, config.refusal_hold_seconds, config.retired) == (3, 60, ())
+    config = load_config(hub_environ(AGENT_HUB_CAPACITY_REFUSALS="5", AGENT_HUB_REFUSAL_HOLD_SECONDS="0"))
+    assert (config.capacity_refusals, config.refusal_hold_seconds) == (5, 0)
     assert tmp_path.exists()
+
+
+def test_the_fixed_numbers_of_what_runs_at_once_are_gone() -> None:
+    """ADR-075 addendum 2: the former `AGENT_HUB_VMS_PER_WG` and `AGENT_HUB_SUBAGENT_MAX_RUNNING` - also with values
+    they never took - are ignored, not refused, and named once at the start; the devices' free resources decide."""
+    config = load_config(hub_environ(AGENT_HUB_VMS_PER_WG="-1", AGENT_HUB_SUBAGENT_MAX_RUNNING="3"))
+    assert config.retired == ("AGENT_HUB_SUBAGENT_MAX_RUNNING", "AGENT_HUB_VMS_PER_WG")
+    assert config.subagent_limits == SubagentLimits(max_depth=5, max_total=0, max_runtime_seconds=0)
+    assert config.subagent_limits.published()["subagent_max_running"] == 0
 
 
 def test_the_failover_deadline() -> None:
@@ -101,20 +108,15 @@ def test_the_failover_deadline() -> None:
 
 def test_subagent_settings() -> None:
     """ADR-088 section 2: every subagent limit is a setting with a generous default; 0 means no limit."""
-    assert load_config(hub_environ()).subagent_limits == SubagentLimits(
-        max_depth=5, max_running=50, max_total=0, max_runtime_seconds=0
-    )
+    assert load_config(hub_environ()).subagent_limits == SubagentLimits(max_depth=5, max_total=0, max_runtime_seconds=0)
     config = load_config(
         hub_environ(
             AGENT_HUB_SUBAGENT_MAX_DEPTH="0",
-            AGENT_HUB_SUBAGENT_MAX_RUNNING="0",
             AGENT_HUB_SUBAGENT_MAX_TOTAL="1000000",
             AGENT_HUB_SUBAGENT_MAX_RUNTIME_SECONDS="31536000",
         )
     )
-    assert config.subagent_limits == SubagentLimits(
-        max_depth=0, max_running=0, max_total=1_000_000, max_runtime_seconds=31_536_000
-    )
+    assert config.subagent_limits == SubagentLimits(max_depth=0, max_total=1_000_000, max_runtime_seconds=31_536_000)
     assert config.subagent_limits.published() == {
         "subagent_max_depth": 0,
         "subagent_max_running": 0,
@@ -192,14 +194,11 @@ def test_owner_database_is_forbidden_in_the_hub_process(value: str) -> None:
         ("AGENT_HUB_LOG_KEEP", "0", "from 1 to 999999"),
         ("AGENT_HUB_LOG_KEEP", "1000000", "from 1 to 999999"),
         ("AGENT_HUB_LOG_ORG_BYTES", "0", "from 1 to 9007199254740991"),
-        ("AGENT_HUB_VMS_PER_WG", "1000001", "from 0 to 1000000"),
-        ("AGENT_HUB_VMS_PER_WG", "-1", "from 0 to 1000000"),
         ("AGENT_HUB_CAPACITY_REFUSALS", "0", "from 1 to 1000"),
         ("AGENT_HUB_REFUSAL_HOLD_SECONDS", "86401", "from 0 to 86400"),
         ("AGENT_HUB_DEVICE_FAILOVER_SECONDS", "86401", "from 1 to 86400"),
         ("AGENT_HUB_DEVICE_FAILOVER_SECONDS", "59", "at least twice AGENT_HUB_DEVICE_ONLINE_SECONDS (60)"),
         ("AGENT_HUB_SUBAGENT_MAX_DEPTH", "1000001", "from 0 to 1000000"),
-        ("AGENT_HUB_SUBAGENT_MAX_RUNNING", "-1", "from 0 to 1000000"),
         ("AGENT_HUB_SUBAGENT_MAX_TOTAL", "ten", "from 0 to 1000000"),
         ("AGENT_HUB_SUBAGENT_MAX_RUNTIME_SECONDS", "31536001", "from 0 to 31536000"),
         ("AGENT_HUB_PLATFORM_BUDGET_USD_PER_ORG_DAY", "-1", "non-negative amount"),

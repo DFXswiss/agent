@@ -46,6 +46,32 @@ counts as "no limit" (the behaviour before this ADR).
 > reports `sessions_per_vm` 0, which the hub's scheduler already reads as "no limit". Specification: 05-runner.md
 > §1.3 and §3.3 step 2.
 
+> **Addendum 2 (2026-11-26): every fixed number of what may run at once is removed.** Precision of the client, it
+> replaces the "optional upper bound" of the addendum above: "diese anderen deckel alle restlos entfernen, der platz
+> soll für das gebraucht werden was halt gebraucht wird". Only the physically free resources of a device decide -
+> RAM above `MEMORY_RESERVE_MIB`, disk and quota, CPU load (`CPU_LOAD_MAX_PERCENT`, `VM_LOAD_MAX_PERCENT`); when they do
+> not suffice, the request waits or the hub places it on another device, and sessions keep their rank before work VMs
+> (05-runner.md §3.8). Removed, setting, code and documentation:
+>
+> | Former limit | Where |
+> |---|---|
+> | `AGENT_RUNNER_SESSIONS_PER_VM` | runner config; `vm.lifecycle` choice; `subagents.limits` (sessions on the parent's VM) |
+> | `AGENT_RUNNER_MAX_VMS` | runner config; `vm.capacity.compute` (`vm_slots_total`), `vm.pool`, enrollment and capacity report (`vms_max`) |
+> | `AGENT_RUNNER_WORKVM_SLOTS` | runner config; `workvm.accounts`, `workvm.manager`/`service`/`cli` (ADR-059 addendum 4) |
+> | `AGENT_RUNNER_WORKVM_MAX_PER_TASK`, `_OWNER`, `_ORG` | runner config; `workvm.manager` (work, browser and test VMs, 13-work-vm.md §2) |
+> | `AGENT_HUB_VMS_PER_WG` | hub config; scheduler allowance (`wg_vm_limit`), device state `vm_new_allowed` |
+> | `AGENT_HUB_SUBAGENT_MAX_RUNNING` | hub config, check H4 (ADR-088 §2); runner pre-check and harness line |
+>
+> An older `runner.env` or hub environment that still sets one of them starts: the value is ignored and the start
+> names it once (`config.ignored name=<NAME> reason=fixed_limit_removed`), never `config_invalid`. For older peers the
+> contracts keep their fields: the hub publishes `subagent_max_running` 0 (no limit) and no longer sends
+> `vm_new_allowed`; the runner reads both past and no longer reports `sessions_per_vm`/`vms_max`; the hub still bounds
+> a VM's room by a `sessions_per_vm` an older runner reports. `wg_vm_limit` stays a known waiting reason of stored
+> tasks but is no longer given. Unchanged: the hub's rate limits, credit and budget, and the size and time limits of
+> single requests (subagent depth and total per task stay settings, ADR-088). The only fixed number of the device
+> admission is Apple's: at most 2 macOS VMs per Mac (16-ci-runners.md §8.4); CI VMs get bounds of their own
+> (16-ci-runners.md §6.6).
+
 ### 2. Capacity report (runner → hub, additive)
 The `capacity` object of the heartbeat gains optional counters: `cpus`, `memory_total_mib`, `disk_free_mib`,
 `vms_running`, `sessions_active`, `work_vms_running` (the work VMs of the runner's other areas, reported through the
