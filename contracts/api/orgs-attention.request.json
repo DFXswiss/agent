@@ -40,13 +40,13 @@
   },
   "oneOf": [
     {
-      "description": "one category",
+      "description": "one category (the parameters are checked by the properties above)",
       "properties": {
-        "category": true,
-        "mine": true,
-        "since": true,
-        "before": true,
-        "limit": true
+        "category": {},
+        "mine": {},
+        "since": {},
+        "before": {},
+        "limit": {}
       },
       "required": [
         "category"
@@ -54,13 +54,13 @@
       "additionalProperties": false
     },
     {
-      "description": "one overview of the open tasks (contracts/changes/HOME-COUNTS.md)",
+      "description": "one overview of the open tasks (contracts/changes/HOME-COUNTS.md; the parameters are checked by the properties above)",
       "properties": {
-        "overview": true,
-        "mine": true,
-        "since": true,
-        "before": true,
-        "limit": true
+        "overview": {},
+        "mine": {},
+        "since": {},
+        "before": {},
+        "limit": {}
       },
       "required": [
         "overview"
