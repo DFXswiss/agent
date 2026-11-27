@@ -12,6 +12,10 @@
 // - Live frames are applied in batches: at most one store update per `FRAME_MS` (HOT-05); each batch counts
 //   `changes`, which the counters follow (refetched at most once per second, `core/attention/load.ts`).
 //
+// - The start page's overview of the open tasks (`OVERVIEWS`, contracts/changes/HOME-COUNTS.md): the counters carry
+//   its three numbers, and the list `no_agent` (`GET …/attention?overview=no_agent`) is a group like a category's,
+//   ordered newest first; a record belongs to it by `overviewOf` (frames move it in and out like between categories).
+//
 // The slice also exports `frames` (the live-channel frames it applies, `core/net/frames.ts`).
 import { parseTime } from '../../encoding/time';
 import { isRecord } from '../../registry';
@@ -20,6 +24,42 @@ import type { Slice, Store } from '../store';
 /** The categories in the order of the view (`contracts/enums/attention.json`). */
 export const CATEGORIES = ['needs_decision', 'blocked', 'working', 'done'] as const;
 export type Category = (typeof CATEGORIES)[number];
+
+/**
+ * The overview of the open tasks on the start page (contracts/changes/HOME-COUNTS.md; the hub counts them,
+ * `agent_hub.attention.derive.OVERVIEW`): "In progress" are the records of `working`, "Waiting for a person" those of
+ * `needs_decision`, "No agent" those of `blocked` and `done` except `done/closed` (a closed task is not open).
+ */
+export const OVERVIEWS = ['working', 'waiting', 'no_agent'] as const;
+export type Overview = (typeof OVERVIEWS)[number];
+export const OVERVIEW_CATEGORIES: Readonly<Record<Overview, readonly Category[]>> = {
+  working: ['working'],
+  waiting: ['needs_decision'],
+  no_agent: ['blocked', 'done'],
+};
+
+/** The overview a record counts in; null for a closed task (and a category this release does not know). */
+export function overviewOf(row: Pick<AttentionRow, 'category' | 'reason'>): Overview | null {
+  if (row.category === 'done' && row.reason === 'closed') return null;
+  return OVERVIEWS.find((name) => OVERVIEW_CATEGORIES[name].includes(row.category as Category)) ?? null;
+}
+
+/**
+ * A list of the view: one category, or `no_agent` (the open tasks of the overview "No agent"; "In progress" and
+ * "Waiting for a person" are the lists of `working` and `needs_decision`, which hold exactly their tasks).
+ */
+export type ListKind = Category | 'no_agent';
+
+/** The list that shows the tasks of an overview number. */
+export const OVERVIEW_LIST: Readonly<Record<Overview, ListKind>> = {
+  working: 'working',
+  waiting: 'needs_decision',
+  no_agent: 'no_agent',
+};
+
+/** Whether a record belongs to the list `kind`. */
+export const inList = (kind: ListKind, row: Pick<AttentionRow, 'category' | 'reason'>): boolean =>
+  kind === 'no_agent' ? overviewOf(row) === 'no_agent' : row.category === kind;
 
 /** `attention_row` of the contracts (03-api.md section 4.6.0). */
 export interface AttentionRow {
@@ -44,6 +84,10 @@ export interface AttentionSummary {
   readonly blocked: number;
   readonly working: number;
   readonly done_since: number;
+  /** The overview of the open tasks: every task that is not closed counts in exactly one of the three. */
+  readonly open_working: number;
+  readonly open_waiting: number;
+  readonly open_no_agent: number;
 }
 
 export type GroupStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -51,7 +95,7 @@ export type GroupStatus = 'idle' | 'loading' | 'ready' | 'error';
 /** One group of an org: task IDs in the group's order and the cursor of the next page. */
 export interface AttentionGroup {
   readonly org: string;
-  readonly category: Category;
+  readonly category: ListKind;
   readonly ids: readonly string[];
   readonly nextBefore: string | null;
   readonly status: GroupStatus;
@@ -115,7 +159,16 @@ export function isAttentionRow(value: unknown): value is AttentionRow {
   );
 }
 
-const SUMMARY_FIELDS = ['needs_decision', 'needs_decision_mine', 'blocked', 'working', 'done_since'] as const;
+const SUMMARY_FIELDS = [
+  'needs_decision',
+  'needs_decision_mine',
+  'blocked',
+  'working',
+  'done_since',
+  'open_working',
+  'open_waiting',
+  'open_no_agent',
+] as const;
 
 export function isSummary(value: unknown): value is AttentionSummary {
   return isRecord(value) && SUMMARY_FIELDS.every((field) => isCount(value[field]));
@@ -123,16 +176,16 @@ export function isSummary(value: unknown): value is AttentionSummary {
 
 // --- order ---
 
-export const groupKey = (org: string, category: Category): string => `${org} ${category}`;
+export const groupKey = (org: string, category: ListKind): string => `${org} ${category}`;
 
 /** Whether record `a` comes before record `b` in the group of `category` (module comment). */
-export function before(category: Category, a: AttentionRow, b: AttentionRow): boolean {
+export function before(category: ListKind, a: AttentionRow, b: AttentionRow): boolean {
   const delta = parseTime(a.since) - parseTime(b.since);
   const ascending = delta < 0 || (delta === 0 && a.task_id < b.task_id);
   return category === 'needs_decision' ? ascending : !ascending;
 }
 
-function sorted(category: Category, rows: AttentionState['rows'], ids: Iterable<string>): string[] {
+function sorted(category: ListKind, rows: AttentionState['rows'], ids: Iterable<string>): string[] {
   return [...new Set(ids)].sort((a, b) => (before(category, rows[a]!, rows[b]!) ? -1 : 1));
 }
 
@@ -143,7 +196,7 @@ export function staleRow(known: AttentionRow | undefined, row: AttentionRow): bo
   return delta < 0 || (delta === 0 && row.seq < known.seq);
 }
 
-const emptyGroup = (org: string, category: Category): AttentionGroup => ({
+const emptyGroup = (org: string, category: ListKind): AttentionGroup => ({
   org,
   category,
   ids: [],
@@ -155,7 +208,7 @@ const emptyGroup = (org: string, category: Category): AttentionGroup => ({
 const idleGroups = new Map<string, AttentionGroup>();
 
 /** The group of `org`/`category` (an idle empty one when not loaded yet, the same object every time). */
-export function attentionGroup(state: AttentionState, org: string, category: Category): AttentionGroup {
+export function attentionGroup(state: AttentionState, org: string, category: ListKind): AttentionGroup {
   const key = groupKey(org, category);
   const found = state.groups[key];
   if (found !== undefined) return found;
@@ -172,7 +225,7 @@ function place(state: AttentionState, changed: readonly AttentionRow[]): Attenti
     for (const [key, group] of Object.entries(groups)) {
       if (group.org !== org) continue;
       const present = group.ids.includes(row.task_id);
-      const own = group.category === row.category;
+      const own = inList(group.category, row);
       if (!own) {
         if (present) groups = { ...groups, [key]: { ...group, ids: group.ids.filter((id) => id !== row.task_id) } };
         continue;
@@ -216,7 +269,7 @@ function applyRows(
 }
 
 /** A group starts loading. */
-export function groupLoading(store: Store, org: string, category: Category): void {
+export function groupLoading(store: Store, org: string, category: ListKind): void {
   store.update('attention', (state) => {
     const key = groupKey(org, category);
     const group = state.groups[key] ?? emptyGroup(org, category);
@@ -233,7 +286,7 @@ export function groupPage(
   store: Store,
   page: {
     org: string;
-    category: Category;
+    category: ListKind;
     rows: readonly AttentionRow[];
     nextBefore: string | null;
     first: boolean;
@@ -242,13 +295,13 @@ export function groupPage(
 ): void {
   store.update('attention', (state) => {
     const key = groupKey(page.org, page.category);
-    const own = page.rows.filter((row) => row.category === page.category);
+    const own = page.rows.filter((row) => inList(page.category, row));
     // the page's records are stored and leave the other groups of the org they were in
     const applied = applyRows(state, own, page.org, null);
     const rows = applied.rows;
     const group = state.groups[key] ?? emptyGroup(page.org, page.category);
     // a record a newer frame moved to another category meanwhile stays out
-    const ids = own.map((row) => row.task_id).filter((id) => rows[id]!.category === page.category);
+    const ids = own.map((row) => row.task_id).filter((id) => inList(page.category, rows[id]!));
     const last = own.at(-1);
     let older: string[] = [];
     if (page.refresh && page.nextBefore !== null && last !== undefined) {
@@ -263,7 +316,7 @@ export function groupPage(
   });
 }
 
-export function groupFailed(store: Store, org: string, category: Category, code: string): void {
+export function groupFailed(store: Store, org: string, category: ListKind, code: string): void {
   store.update('attention', (state) => {
     const key = groupKey(org, category);
     const group = state.groups[key] ?? emptyGroup(org, category);

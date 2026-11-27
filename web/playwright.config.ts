@@ -35,6 +35,7 @@ const MOBILE_DEVICE_SPECS = [
   '**/devices/task-overview.spec.ts',
   '**/devices/waiting.spec.ts',
   '**/devices/attention.spec.ts',
+  '**/devices/home-counts.spec.ts',
   '**/devices/pulls.spec.ts',
   '**/devices/browser.spec.ts',
   '**/devices/subscriptions.spec.ts',

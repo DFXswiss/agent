@@ -3,5 +3,8 @@
   "needs_decision_mine": 1,
   "blocked": 2,
   "working": 5,
-  "done_since": 12
+  "done_since": 12,
+  "open_working": 5,
+  "open_waiting": 3,
+  "open_no_agent": 4
 }

@@ -286,6 +286,15 @@ uses the platform's hybrid/QR UI of `create()`; a passkey without PRF output is 
 
 The home of an organization shows where people are needed, across all workgroups the user reads:
 
+- **Overview of the open tasks** first, at the very top (contracts/changes/HOME-COUNTS.md): three numbers over every
+  organization of the user and every workgroup they read – "In progress" (`open_working`: category `working`),
+  "Waiting for a question" (`open_waiting`: `needs_decision`) and "No agent" (`open_no_agent`: `blocked` and `done`
+  without `done/closed`); every task that is not closed counts in exactly one. The hub counts them from the attention
+  records (`…/attention/summary` of each org, summed). A number is a button: it shows exactly its tasks of the shown
+  organization right below (`?show=working|waiting|no_agent`, the lists `working`, `needs_decision` and
+  `…/attention?overview=no_agent`) instead of the groups, and names every other organization with tasks in it as a link
+  to the same list there; "Show everything" brings the groups back. The shown organization's numbers follow its live
+  channel, the others are loaded again after a reconnect and every 30 s.
 - **Counters** at the top: "Waiting for me" (`needs_decision` tasks the user owns), "Stuck", "Running", "Finished
   today" (`GET /v1/orgs/{org}/attention/summary`, `since` = local midnight). The navigation entry Home (sidebar,
   navigation row, phone bottom bar) carries the "waiting for me" count as a badge. Below them the organization's

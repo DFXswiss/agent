@@ -15,7 +15,7 @@ import { actionOf } from '../../../core/attention/view';
 import { parseTime } from '../../../core/encoding/time';
 import { formatEventTime, localTimeZone } from '../../../core/i18n';
 import { type OrgState, WG } from '../../../core/log/state';
-import type { Category } from '../../../core/store/slices/attention';
+import type { Category, ListKind } from '../../../core/store/slices/attention';
 import type { Directory } from '../../../core/tasks/directory';
 import { taskPlacement } from '../../../core/tasks/placement';
 import { useStore } from '../../hooks/useStore';
@@ -29,17 +29,19 @@ import { SessionTree } from './SessionTree';
 export interface AttentionItemProps {
   readonly org: string;
   readonly id: string;
-  readonly category: Category;
+  /** The list the entry is shown in; an entry of the list `no_agent` reads as its record's own category. */
+  readonly category: ListKind;
   readonly state: OrgState;
   readonly userId: string;
   readonly directory: Directory;
   readonly now: number;
 }
 
-function Item({ org, id, category, state, userId, directory, now }: AttentionItemProps) {
+function Item({ org, id, category: list, state, userId, directory, now }: AttentionItemProps) {
   const { app } = useAppEnv();
   const { t, locale } = useI18n();
   const row = useStore((store) => store.attention.rows[id]!, app.store);
+  const category: Category = list === 'no_agent' ? (row.category as Category) : list;
   const task = useStore((store) => store.tasks.tasks[id], app.store);
   const main = task?.main_session_id ?? null;
   const agent = useStore(

@@ -189,6 +189,10 @@ def cmd_pair(args: argparse.Namespace, context: Context) -> dict[str, Any]:
 
 
 def cmd_status(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
+    if args.overview:
+        if args.attention:
+            raise PlatformError("invalid_argument")
+        return attention.overview(account, args.org)
     if args.attention:
         return attention.status(account, args.org)
     if args.org is not None:
@@ -476,11 +480,19 @@ def _account_commands(tree: Tree) -> None:
         writing(cmd_status),
         "the account as the agent sees it",
         example="agent-platform status",
-        words="zustand konto überblick lage entscheidung account overview whoami state situation attention decision",
+        words=(
+            "zustand konto überblick lage entscheidung offene tasks anzahl in arbeit wartet frage kein agent account"
+            " overview whoami state situation attention decision open count in progress waiting no agent"
+        ),
         then="agent-platform org list",
     )
     sub.add_argument("--attention", action="store_true", help="the situation: counters, decisions and stuck tasks")
-    sub.add_argument("--org", help="with --attention: only this organization")
+    sub.add_argument(
+        "--overview",
+        action="store_true",
+        help="the open tasks in three numbers: in progress, waiting for a person, no agent (every organization)",
+    )
+    sub.add_argument("--org", help="with --attention or --overview: only this organization")
     sub = tree.add(
         tree.commands,
         "api",
@@ -575,8 +587,10 @@ def _task_commands(tree: Tree) -> None:
     )
     where = sub.add_mutually_exclusive_group(required=True)
     where.add_argument("--wg", help="the tasks of a workgroup (--state open|closed)")
-    where.add_argument("--org", help="one category of the org's situation view (--state needs-decision|...)")
-    sub.add_argument("--state", choices=[*tasks.STATES, *attention.CATEGORIES])
+    where.add_argument(
+        "--org", help="one category of the org's situation view (--state needs-decision|...|waiting|no-agent)"
+    )
+    sub.add_argument("--state", choices=[*tasks.STATES, *attention.CATEGORIES, *attention.OVERVIEWS])
     sub.add_argument("--mine", action="store_true", help="with --org: only tasks the user owns")
     sub.add_argument("--by-person", action="store_true", help="with --wg: grouped by the responsible person")
     sub = tree.add(

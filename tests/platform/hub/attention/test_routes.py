@@ -95,8 +95,14 @@ def test_a_member_never_sees_a_workgroup_it_cannot_read(situation: Situation) ->
         "blocked": 1,
         "working": 0,
         "done_since": 0,
+        "open_working": 0,
+        "open_waiting": 0,
+        "open_no_agent": 1,
     }
     assert _get(scene.writer, situation.desk.org, "/summary").json()["needs_decision"] == 1
+    assert _get(scene.writer, situation.desk.org, "/summary").json()["open_waiting"] == 1
+    assert _all(situation, scene.reader, overview="no_agent") == visible
+    assert _all(situation, scene.reader, overview="waiting") == []
     lonely = situation.scene.world.user()
     situation.scene.world.join(scene.draft, lonely)
     assert _all(situation, lonely, category="blocked") == []
@@ -129,11 +135,41 @@ def test_the_summary_counts_recently_finished_tasks(situation: Situation) -> Non
     assert timedelta(hours=24) == read.DONE_WINDOW
 
 
+def test_the_overview_counts_every_open_task_once_and_lists_it(situation: Situation) -> None:
+    """The start page's three numbers: every record of an open task in exactly one, `done/closed` in none; the list of
+    an overview holds exactly the counted tasks, in the order of its categories and paged by the cursor."""
+    scene, wg = situation.scene, situation.desk.wg
+    now = situation.hub.clock()
+    minutes = [now - timedelta(minutes=value) for value in (4, 1, 6)]
+    running = _records(situation, wg, scene.writer.id, ("working", "working"), minutes[:1])
+    running += _records(situation, wg, scene.writer.id, ("working", "queued"), minutes[1:2])
+    running += _records(situation, wg, scene.writer.id, ("working", "quota_wait"), minutes[2:])
+    waiting = _records(situation, wg, scene.writer.id, ("needs_decision", "question"), minutes[:1])
+    waiting += _records(situation, wg, scene.writer.id, ("needs_decision", "approval"), minutes[2:])
+    waiting += _records(situation, wg, scene.writer.id, ("needs_decision", "device_missing"), minutes[1:2])
+    idle = _records(situation, wg, scene.writer.id, ("done", "idle"), [now - timedelta(days=30)])
+    failed = _records(situation, wg, scene.writer.id, ("blocked", "session_failed"), minutes[1:2])
+    _records(situation, wg, scene.writer.id, ("done", "closed"), minutes)
+    summary = _get(scene.reader, situation.desk.org, "/summary").json()
+    assert (summary["open_working"], summary["open_waiting"], summary["open_no_agent"]) == (3, 3, 2)
+    assert summary["open_working"] == summary["working"]
+    assert summary["open_waiting"] == summary["needs_decision"]
+    assert summary["open_no_agent"] == summary["blocked"] + 1
+    assert _all(situation, scene.reader, overview="working", limit="1") == [running[1], running[0], running[2]]
+    assert _all(situation, scene.reader, overview="waiting", limit="2") == [waiting[1], waiting[0], waiting[2]]
+    assert _all(situation, scene.reader, overview="no_agent", limit="1") == failed + idle
+    assert _all(situation, scene.reader, overview="no_agent", mine="1") == []
+    listed = [_all(situation, scene.reader, overview=name) for name in ("working", "waiting", "no_agent")]
+    assert sorted(task for tasks in listed for task in tasks) == sorted(running + waiting + idle + failed)
+
+
 @pytest.mark.parametrize(
     ("params", "pointer"),
     [
         ({}, "/category"),
         ({"category": "stuck"}, "/category"),
+        ({"overview": "closed"}, "/overview"),
+        ({"overview": "no_agent", "category": "blocked"}, "/category"),
         ({"category": "done", "mine": "yes"}, "/mine"),
         ({"category": "done", "limit": "101"}, "/limit"),
         ({"category": "done", "limit": "0"}, "/limit"),

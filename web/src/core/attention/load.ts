@@ -3,7 +3,8 @@
 // - `loadGroup` / `loadGroupMore`: the pages of one group (`GET /v1/orgs/{org}/attention?category=…&limit=50`, then
 //   `before` = the previous page's `next_before`); "Recently finished" asks for the last 7 days (`since`). The task
 //   rows of a page enter the `tasks` slice like the rows of a task list. Failures are recorded in the group, never
-//   thrown. `refresh` (after a reconnect, KOR-11) loads the first page again and keeps the further pages.
+//   thrown. `refresh` (after a reconnect, KOR-11) loads the first page again and keeps the further pages. The list
+//   `no_agent` of the start page's overview asks with `overview=no_agent` instead of a category.
 // - `refreshSummary`: the counters (`…/attention/summary?since=<local midnight>`), at most once per `SUMMARY_MS` per
 //   org: a call inside that time is answered by one load at its end (a burst of frames costs one request a second).
 // - `ensureTask`: the row of a task a live frame named before its row was known (`GET /v1/tasks/{task}`), once per
@@ -18,12 +19,12 @@ import { isRecord } from '../registry';
 import {
   attentionGroup,
   type AttentionRow,
-  type Category,
   groupFailed,
   groupLoading,
   groupPage,
   isAttentionRow,
   isSummary,
+  type ListKind,
   putSummary,
 } from '../store/slices/attention';
 import { isTaskRow, putTasks, type TaskRow } from '../store/slices/tasks';
@@ -47,8 +48,8 @@ export function localMidnight(now: number): number {
 }
 
 /** The request target of a page. */
-export function groupTarget(org: string, category: Category, before: string | null, now: number): string {
-  const params = new URLSearchParams({ category });
+export function groupTarget(org: string, category: ListKind, before: string | null, now: number): string {
+  const params = new URLSearchParams(category === 'no_agent' ? { overview: category } : { category });
   if (category === 'done') params.set('since', formatTime(now - DONE_DAYS * DAY_MS));
   if (before !== null) params.set('before', before);
   params.set('limit', String(PAGE_SIZE));
@@ -73,7 +74,7 @@ const isItem = (value: unknown): value is Item =>
 export async function loadGroup(
   context: TasksContext,
   org: string,
-  category: Category,
+  category: ListKind,
   more = false,
   refresh = false,
 ): Promise<number> {
@@ -108,7 +109,7 @@ export async function loadGroup(
 }
 
 /** The next page of a group (no-op while it loads or has no further page). */
-export const loadGroupMore = (context: TasksContext, org: string, category: Category): Promise<number> =>
+export const loadGroupMore = (context: TasksContext, org: string, category: ListKind): Promise<number> =>
   loadGroup(context, org, category, true);
 
 /** Loads the counters now; failures leave the old ones. */

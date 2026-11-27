@@ -40,6 +40,8 @@ describe('targets and times', () => {
     expect(groupTarget('o', 'done', 'c', T0)).toBe(
       `/v1/orgs/o/attention?category=done&since=${since}&before=c&limit=50`,
     );
+    // the list "No agent" of the overview: the open tasks of its categories, without a time window
+    expect(groupTarget('o', 'no_agent', 'c', T0)).toBe('/v1/orgs/o/attention?overview=no_agent&before=c&limit=50');
   });
 
   it('starts "today" at local midnight', () => {
@@ -145,7 +147,16 @@ describe('counters', () => {
     vi.useRealTimers();
   });
 
-  const summary = { needs_decision: 2, needs_decision_mine: 1, blocked: 0, working: 3, done_since: 4 };
+  const summary = {
+    needs_decision: 2,
+    needs_decision_mine: 1,
+    blocked: 0,
+    working: 3,
+    done_since: 4,
+    open_working: 3,
+    open_waiting: 2,
+    open_no_agent: 1,
+  };
 
   it('load since local midnight; failures and malformed answers keep the old ones', async () => {
     const t = await taskWorld();

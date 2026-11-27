@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/orgs-attention-summary.response.json",
   "title": "GET /v1/orgs/{org}/attention/summary response",
-  "description": "Body of a successful response to GET /v1/orgs/{org}/attention/summary (03-api.md section 4.6, KOR-39): counts over the readable workgroups; done_since counts done records with since at or after the parameter.",
+  "description": "Body of a successful response to GET /v1/orgs/{org}/attention/summary (03-api.md section 4.6, KOR-39): counts over the readable workgroups; done_since counts done records with since at or after the parameter; open_working, open_waiting and open_no_agent are the overview of the open tasks (every task that is not closed in exactly one of them).",
   "type": "object",
   "properties": {
     "needs_decision": {
@@ -19,6 +19,18 @@
     },
     "done_since": {
       "$ref": "../common.json#/$defs/count"
+    },
+    "open_working": {
+      "$ref": "../common.json#/$defs/count",
+      "description": "open tasks an agent works on (category working)"
+    },
+    "open_waiting": {
+      "$ref": "../common.json#/$defs/count",
+      "description": "open tasks waiting for a person's answer, approval or decision (category needs_decision)"
+    },
+    "open_no_agent": {
+      "$ref": "../common.json#/$defs/count",
+      "description": "open tasks no agent works on and nobody is asked about (category blocked, and done except done/closed)"
     }
   },
   "required": [
@@ -26,7 +38,10 @@
     "needs_decision_mine",
     "blocked",
     "working",
-    "done_since"
+    "done_since",
+    "open_working",
+    "open_waiting",
+    "open_no_agent"
   ],
   "additionalProperties": false
 }
