@@ -8,8 +8,9 @@
   with `next_before`; `GET /v1/operations/{id}` with its transitions;
 - `GET /v1/sessions/{id}` (`task:read`): row, transitions, usage, VM, children;
 - `POST /v1/sessions/{id}/control {action: interrupt|stop}` (`task:write`): recorded as the device hint; `stop`
-  without a device ends the session at once;
-- the scope events route filters by `session` and `ref` as well.
+  without a device ends the session at once.
+
+The scope events route of the hub fake filters by `session` and `ref` itself (`HubFake.r_events`).
 
 Helpers seed sessions, operations and device-written events (sealed with the workgroup key, signed by the device).
 """
@@ -120,9 +121,8 @@ def _right(hub: HubFake, request: Request, wg: str, write: bool) -> tuple[int, A
     return None
 
 
-def install(hub: HubFake) -> None:  # noqa: PLR0915
+def install(hub: HubFake) -> None:
     found = state_of(hub)
-    original_events = hub.r_events
 
     def close(request: Request, body: Any, task: str) -> tuple[int, Any]:
         stored = hub.tasks.get(task)
@@ -186,18 +186,6 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
             row["state"] = "stopped"
         return 200, {}
 
-    def events(request: Request, body: Any, scope: str) -> tuple[int, Any]:
-        status, answer = original_events(request, body, scope)
-        filters = {name: request.query[name] for name in ("session", "ref") if name in request.query}
-        if status == 200 and filters:
-            answer["events"] = [
-                item
-                for item in answer["events"]
-                if all(item["event"]["header"][name] == value for name, value in filters.items())
-            ]
-        return status, answer
-
-    hub.override("r_events", events)
     hub.add_route("POST", r"/v1/tasks/(?P<task>[0-9a-f-]+)/close", close)
     hub.add_route("GET", r"/v1/tasks/(?P<task>[0-9a-f-]+)/operations", operations)
     hub.add_route("GET", r"/v1/operations/(?P<operation>[0-9a-f-]+)", operation)

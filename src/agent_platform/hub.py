@@ -110,10 +110,13 @@ class AgentClient:
         self._on_revoked = on_revoked
 
     def close(self) -> None:
-        """Close the client and its event loop (once; a second call does nothing)."""
+        """Close the client and its event loop (once; a second call does nothing); asynchronous generators still open
+        are closed first, so none is left to a task that never runs (`asyncio`'s "Task was destroyed but it is
+        pending!" on stderr)."""
         if self._loop.is_closed():
             return
         self._loop.run_until_complete(self._client.aclose())
+        self._loop.run_until_complete(self._loop.shutdown_asyncgens())
         self._loop.close()
 
     def call(self, method: str, path: str, body: object | None = None) -> dict[str, Any]:

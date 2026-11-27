@@ -32,7 +32,7 @@ from agent_platform.commands import Context, Parser, Tree
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import uuid_argument
 from agent_platform.orgs import find_org
-from agent_platform.tasks import task_answer, task_create, task_show
+from agent_platform.tasks import task_answer, task_create, task_outputs
 from agent_platform.whiteboards import board_add, locate, require_writer
 
 LANGUAGES = ("en", "de")
@@ -139,12 +139,13 @@ def optimize(
     return {**created, "notice": NOTICE_WG.format(name=name)} if scope == "org" else created
 
 
-def _newest_output(events: list[dict[str, Any]]) -> dict[str, Any]:
-    """The newest opened `session.output` with text (`no_output` without one)."""
-    found = [event for event in events if event.get("kind") == "session.output" and _has_text(event.get("body"))]
-    if not found:
+def _newest_output(account: Account, place: tuple[str, str, str]) -> dict[str, Any]:
+    """The newest opened `session.output` with text of the task `place`, read from the end of its chat
+    (`tasks.task_outputs`; `no_output` without one)."""
+    found = next((event for event in task_outputs(account, place) if _has_text(event.get("body"))), None)
+    if found is None:
         raise PlatformError("invalid_argument", reason="no_output")
-    return found[-1]
+    return found
 
 
 def _has_text(body: object) -> bool:
@@ -160,9 +161,10 @@ def adopt(account: Account, task: str, level: str = "workgroup", notify: bool = 
     if not isinstance(row.get("analysis"), dict):
         raise PlatformError("invalid_argument", reason="not_analysis")
     wg = str(row["wg_id"])
-    location = locate(account, find_org(account, wg), wg if level == "workgroup" else None, None)
+    org = find_org(account, wg)
+    location = locate(account, org, wg if level == "workgroup" else None, None)
     require_writer(account, location)
-    output = _newest_output(task_show(account, task)["events"])
+    output = _newest_output(account, (org, wg, task))
     added = board_add(account, location, output["body"]["text"], notify)
     result = {**added, "analysis_task_id": task, "output_event_id": output["id"]}
     return {**result, "notice": NOTICE_ORG} if level == "org" else result

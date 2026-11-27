@@ -139,6 +139,8 @@ class HubFake:
         self.platform_devices: dict[str, Identity] = {}
         self.sign_answers = True
         self.old_hub = False  # refuses `remote` like a hub of before KOR-42
+        self.events_before = True  # pages newest first (`before`, KOR-44)
+        self.event_page_bytes: int | None = None  # bounds event pages in bytes as well (HOT-29; None: by count only)
         self.routes: list[tuple[str, str, Callable[..., tuple[int, Any]]]] = []
         self.lock = threading.RLock()
         body = {"seq": 0, "prev": "", "type": "root", "by": "platform-root", "ts": now_ms_text(), "v": 1}
@@ -832,20 +834,40 @@ class HubFake:
         return 404, {"error": "identity_unproven"}
 
     def r_events(self, request: Request, body: Any, scope: str) -> tuple[int, Any]:
+        """As the hub (`agent_hub.events.read`): ascending after `after`, or newest first below `before` (refused
+        with `request_invalid` while `events_before` is off, a hub before KOR-44), at most `limit` events and, when
+        `event_page_bytes` is set, at most that many bytes of them (always the first; None: a hub before HOT-29,
+        whose pages are bounded by their count only)."""
         if self._member(request, self.org_of_wg(scope) or scope) is None:
             return 404, {"error": "not_found"}
-        kinds = set(request.query.get("kinds", "").split(","))
-        after = int(request.query.get("after", "0"))
-        task, ref = request.query.get("task"), request.query.get("ref")
+        query = request.query
+        backwards = "before" in query
+        if backwards and ("after" in query or not self.events_before):
+            return 400, {"error": "request_invalid"}
+        kinds = set(query.get("kinds", "").split(","))
+        cursor = int(query.get("before" if backwards else "after", "0"))
+        limit = int(query.get("limit", "200"))
+        filters = {name: query[name] for name in ("task", "session", "ref") if name in query}
+        stored = self.events.get(scope, [])
         found = [
             item
-            for item in self.events.get(scope, [])
-            if item["scope_seq"] > after
+            for item in (reversed(stored) if backwards else stored)
+            if (item["scope_seq"] < cursor if backwards else item["scope_seq"] > cursor)
             and item["event"]["header"]["kind"] in kinds
-            and (task is None or item["event"]["header"]["task"] == task)
-            and (ref is None or item["event"]["header"]["ref"] == ref)
+            and all(item["event"]["header"][name] == value for name, value in filters.items())
         ]
-        return 200, {"events": found, "next_after": None, "head": len(self.events.get(scope, []))}
+        page: list[Json] = []
+        used = 0
+        for item in found[:limit]:
+            size = len(json.dumps(item, separators=(",", ":")))
+            if page and self.event_page_bytes is not None and used + size > self.event_page_bytes:
+                break
+            page.append(item)
+            used += size
+        last = page[-1]["scope_seq"] if len(found) > len(page) else None
+        if backwards:
+            return 200, {"events": page, "next_after": None, "head": len(stored), "next_before": last}
+        return 200, {"events": page, "next_after": last, "head": len(stored)}
 
     def r_candidates(self, request: Request, body: Any, wg: str) -> tuple[int, Any]:
         return 200, {"candidates": self.candidates.get(wg, [])}

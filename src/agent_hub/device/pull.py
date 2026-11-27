@@ -12,9 +12,11 @@ What a scope returns:
 - org scope: `org.profile`, `wg.profile`, `member.profile`, `device.profile` and the org-level whiteboard kinds.
 
 `kinds` narrows this further (an unknown kind is `400 request_invalid`; a watched kind is never returned). The
-answer holds at most `limit` events (default 200, max 1000): the scopes in the order of the cursors (sorted by scope
-ID without cursors), each ascending by `scope_seq`, as `{scope_id, scope_seq, received_at, event}`; `more` is true
-while further matching events exist after the returned ones.
+answer holds at most `limit` events (default 200, max 1000) and, like a page of the events endpoint, at most
+`agent_hub.events.read.PAGE_BYTES` of stored event bytes over all scopes (always at least one event; HOT-29); a
+scope that left events behind ends the page. The scopes come in the order of the cursors (sorted by scope ID without
+cursors), each ascending by `scope_seq`, as `{scope_id, scope_seq, received_at, event}`; `more` is true while further
+matching events exist after the returned ones.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ import psycopg
 from agent_hub.device.access import DeviceView
 from agent_hub.errors import HubError
 from agent_hub.events import watched
-from agent_hub.events.read import read_events
+from agent_hub.events.read import PAGE_BYTES, read_events
 from agent_hub.log.events import KIND_RULES
 from agent_hub.log.state import ORG
 
@@ -98,17 +100,27 @@ def pull(
     check_kinds(kinds)
     events: list[dict[str, Any]] = []
     more = False
+    size = 0
     for cursor, scope in scope_cursors(view, cursors):
         selected = allowed_kinds(scope, kinds)
         if not selected:
             continue
-        remaining = limit - len(events)
-        page = read_events(connection, cursor.scope_id, after=cursor.after, limit=max(remaining, 1), kinds=selected)
+        # a scope that left events behind (the count or the byte bound) ends the page: later scopes are only probed
+        remaining = 0 if more else limit - len(events)
+        page = read_events(
+            connection,
+            cursor.scope_id,
+            after=cursor.after,
+            limit=max(remaining, 1),
+            kinds=selected,
+            max_bytes=max(PAGE_BYTES - size, 0),
+        )
         if remaining == 0:
             if page.events:
                 more = True
                 break
             continue
         events.extend({"scope_id": str(cursor.scope_id), **item} for item in page.events)
+        size += page.size
         more = more or page.next_after is not None
     return {"events": events, "more": more}

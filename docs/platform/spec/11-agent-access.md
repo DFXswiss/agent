@@ -382,6 +382,12 @@ result's lists keep at most N items (the last ones for `task show` and `session 
 last N lines), their objects only the named keys; a cut list is named under `limited`, and `next_after` of
 `task follow` moves behind the last event returned. Without the options the output is unchanged.
 
+No command holds the whole chat of a long task (HOT-29): `task show` reads only the newest chat events from the end
+of the chat (`--limit`, default 200) and names `next_before`, which `--before` takes for the older ones; `task wait`
+reads the chat page by page for the pull requests and its answer, the newest output, from the end. The hub bounds a
+page of events in bytes as well as in count (03-api.md section 4.4); against an older hub, which bounds it by count
+only, the tool asks for a page that is too large for its signed client again with half the count.
+
 The browser's background jobs (06-web.md §11 jobs 3-5) run around the commands (`agent_platform/upkeep.py`): before
 every command that writes into an org or stores a credential, the owed pending rotations of every org of the user that
 the user may send and the `CK` check; after it, catch-up wrapping of every org; `status` and every round of

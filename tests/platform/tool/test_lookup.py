@@ -243,6 +243,10 @@ def test_limit_and_fields_on_the_command_line(tool: Tool, hub: HubFake, account:
     shown = tool.run("task", "show", "--task", task, "--limit", "1", "--fields", "body")[1]
     assert [set(event) for event in shown["events"]] == [{"body"}]
     assert shown["events"][0]["body"]["text"] == "More"
-    assert shown["limited"] == {"events": 2}
+    # `task show` reads only the newest `--limit` events (HOT-29): the older ones are behind `next_before`
+    assert "limited" not in shown
+    older = tool.run("task", "show", "--task", task, "--limit", "1", "--before", str(shown["next_before"]))[1]
+    first = [listed["tasks"][0]["title"]]
+    assert ([event["body"]["text"] for event in older["events"]], older["next_before"]) == (first, None)
     assert tool.run("task", "list", "--wg", wg, "--limit", "0")[1]["error"] == "invalid_argument"
     assert "--limit" not in tool.run("task", "create", "--help")[1]["help"]

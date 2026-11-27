@@ -6,10 +6,11 @@ from typing import Any
 
 import pytest
 
-from agent_hub.device import routes
+from agent_hub.device import pull, routes
 from agent_hub.errors import HubError
 from tests.platform.hub.device.support import Fleet, org_device_scene
 from tests.platform.hub.events.support import Scene
+from tests.platform.hub.events.test_page_bytes import sized
 from tests.platform.hub.orgs.support import World, new_id
 
 NOT_CONTRACT = {"contract": False}
@@ -75,6 +76,29 @@ def test_cursors_kinds_and_pages(world: World, fleet: Fleet) -> None:
     one = client.get("/v1/device/pull", params={"cursor": [f"{scene.org}:2", f"{scene.wg}:4"], "limit": "1"})
     assert kinds(one.json()) == [(scene.org, 3, "member.profile")]
     assert one.json()["more"] is False
+
+
+def test_a_pull_is_bounded_in_bytes_over_its_scopes(
+    world: World, fleet: Fleet, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HOT-29: at most `PAGE_BYTES` of stored events over every scope, always at least one event."""
+    scene = org_device_scene(world)
+    for _ in range(2):
+        assert scene.post(scene.writer, sized(scene)).status_code == 200
+    client = fleet.client(scene.device)
+    cursors = [f"{scene.wg}:0", f"{scene.org}:0"]
+
+    def pulled(params: dict[str, Any]) -> tuple[list[tuple[str, int]], bool]:
+        answer = client.get("/v1/device/pull", params=params).json()
+        return [(item["scope_id"], item["scope_seq"]) for item in answer["events"]], answer["more"]
+
+    whole, more = pulled({"cursor": cursors})
+    assert (whole[:3], more) == ([(scene.wg, 1), (scene.wg, 2), (scene.org, 1)], False)
+    monkeypatch.setattr(pull, "PAGE_BYTES", 1)
+    # the first scope leaves an event behind: the page ends there, the org scope is only probed
+    assert pulled({"cursor": cursors}) == ([(scene.wg, 1)], True)
+    # a scope read to its end leaves the rest of the bound to the next one, which serves at least one event
+    assert pulled({"cursor": [f"{scene.wg}:1", f"{scene.org}:0"]}) == ([(scene.wg, 2), (scene.org, 1)], True)
 
 
 def test_pull_a_kind_with_an_underscore(world: World, fleet: Fleet) -> None:

@@ -32,14 +32,16 @@ ADR-087 section 4). Wall-clock time, because a monotonic clock stands still whil
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
 import secrets
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncGenerator, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -338,11 +340,17 @@ class HubClient:
             raise HubTransportError("response_encoded", status=response.status_code)
         chunks: list[bytes] = []
         size = 0
-        async for chunk in response.aiter_raw():
-            size += len(chunk)
-            if size > self._max:
-                raise HubTransportError("response_too_large", status=response.status_code)
-            chunks.append(chunk)
+        # closed here, also when the answer is too large: a generator left open is closed later by a task of the event
+        # loop, which a synchronous caller (`agent_platform.hub.AgentClient`) never runs (HOT-29: "Task was destroyed
+        # but it is pending!" before the tool's JSON)
+        # typed as an iterator, an asynchronous generator at run time
+        stream = cast(AsyncGenerator[bytes, None], response.aiter_raw())
+        async with contextlib.aclosing(stream) as raw:
+            async for chunk in raw:
+                size += len(chunk)
+                if size > self._max:
+                    raise HubTransportError("response_too_large", status=response.status_code)
+                chunks.append(chunk)
         return b"".join(chunks)
 
     async def _send(
