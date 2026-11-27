@@ -954,8 +954,9 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   neuer Claude-Konten vor einem Bilderrätsel anhielten)
 - **Bezug:** ergänzt [E-33](#e-33) (jeder Vorgang in seiner eigenen Sandbox) und [E-05](#e-05) (Fehlendes wird angestoßen).
   Die Plattform umgeht nie eine Prüfung.
-- **Umsetzung:** offen – für die Abo-Anmeldung in KOR-73 (Live-Bild mit Klickweitergabe); für alle Browser-Sandboxen der
-  Sitzungen folgt sie.
+- **Umsetzung:** teils – Live-Bild mit Klickweitergabe für die Abo-Anmeldung (KOR-73); echte VNC-Verbindung zur
+  Anmelde- und Browser-Sandbox für die eigene Identität des Inhabers über das Agentenwerkzeug
+  ([ADR-103](adr/103-vnc-when-a-human-is-needed.md)); die Fernsteuerung direkt auf agent.dfx.swiss folgt.
 
 <a id="e-40"></a>
 

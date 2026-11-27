@@ -533,6 +533,9 @@
   "src/agent_hub/vmswitch/service.py": {
    "REQUESTED_MAX": "answer"
   },
+  "src/agent_hub/vnc/relay.py": {
+   "RECORD_MAX": "size"
+  },
   "src/agent_hub/whiteboards/read.py": {
    "HISTORY_MAX": "page",
    "LIST_MAX": "page",
@@ -1065,6 +1068,12 @@
   "src/agent_runner/vm/pool.py": {
    "MAX_PARALLEL_FILLS": "rate",
    "max_vms": "setting"
+  },
+  "src/agent_runner/vnc/screen.py": {
+   "ANSWER_LIMIT": "size"
+  },
+  "src/agent_runner/vnc/tunnel.py": {
+   "RECORD_MAX": "size"
   },
   "src/agent_runner/workvm/accounts.py": {
    "MAX_SLOTS": "open",
@@ -1924,6 +1933,9 @@
    "/$defs/pull_address/properties/number/maximum": "integer",
    "/$defs/pull_state/oneOf/0/properties/number/maximum": "integer",
    "/$defs/pull_state/oneOf/1/properties/number/maximum": "integer"
+  },
+  "contracts/requests/vnc.open.response.json": {
+   "/oneOf/0/properties/idle_seconds/maximum": "time"
   },
   "contracts/ws/device/objects.json": {
    "/$defs/heartbeat/properties/sessions/maxItems": "answer",

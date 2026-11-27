@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/requests/vnc.open.request.json",
+  "title": "device request body vnc.open",
+  "description": "the owner asks for a VNC connection to the screen of a sandbox that waits for a human (ADR-103): kind login (id = the claude.login request whose check for humans waits) or session (id = the session whose platform browser is open). Only the owner's own identity may send it (the device answers an agent's request failed forbidden, the hub refuses the agent's tunnel); no follow-up requests",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "login",
+        "session"
+      ]
+    },
+    "id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "kind",
+    "id"
+  ],
+  "additionalProperties": false
+}

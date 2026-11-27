@@ -34,6 +34,8 @@ class Subscriptions:
     outdated: set[str] = field(default_factory=set)
     parallel: set[str] = field(default_factory=set)
     """Devices that announce `subscriptions.parallel` (ADR-100 section 7)."""
+    screens: set[str] = field(default_factory=set)
+    """Devices that announce `vnc` (ADR-103 section 6)."""
     puts: list[Json] = field(default_factory=list)
     conflicts: int = 0
     """The next PUTs answered `409 version_conflict` regardless."""
@@ -153,6 +155,8 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
                     row["features"] = [] if device in found.outdated else ["subscriptions"]
                     if device in found.parallel:
                         row["features"].append("subscriptions.parallel")
+                    if device in found.screens:
+                        row["features"].append("vnc")
         return status, answer
 
     hub.override("r_devices", devices)

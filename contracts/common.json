@@ -548,7 +548,8 @@
         "claude.login",
         "credential.check",
         "mailbox.check",
-        "github.pull_status"
+        "github.pull_status",
+        "vnc.open"
       ]
     },
     "request_state": {

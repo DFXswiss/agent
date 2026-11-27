@@ -637,6 +637,9 @@ agent-platform subscriptions add-many --file subscriptions.json --wait 120   # s
 agent-platform subscriptions check --request <request_id> --out frame.jpg   # a check for humans: the picture for a person
 agent-platform subscriptions check --request <request_id> --click 0.31,0.52   # the person's click (signed as the user; never a model)
 agent-platform subscriptions check --request <request_id> --relay   # give the automation up: link and code instead
+agent-platform subscriptions add --name "Ada" --automatic --vnc   # a check for humans opens the screen by VNC for the user by itself
+agent-platform vnc --login <request_id>   # the user takes the screen of a check for humans over (Screen Sharing on macOS; never a model)
+agent-platform vnc --task <task_id>   # or --session <session_id>: the screen of an open platform browser, for its task owner
 printf '%s' "$PASSWORD" | agent-platform subscriptions mailbox --id <subscription_id> --mailbox-host imap.example.com --mailbox-user me --mailbox-email me@example.com --mailbox-password-stdin
 agent-platform subscriptions mailbox --id <subscription_id> --check   # or --clear: the single mailbox is used again
 agent-platform subscriptions login --id <subscription_id>        # log it in again ("not_logged_in", refused token)

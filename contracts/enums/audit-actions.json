@@ -1040,6 +1040,14 @@
     {
       "action": "mail.read",
       "group": "runner"
+    },
+    {
+      "action": "vnc.connect",
+      "group": "device_request"
+    },
+    {
+      "action": "vnc.close",
+      "group": "device_request"
     }
   ]
 }

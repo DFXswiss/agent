@@ -3394,6 +3394,44 @@
       "read_resource": null,
       "streaming": false,
       "owner": "KOR-56"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/vnc/{request}",
+      "name": "vnc-client",
+      "section": "4.10",
+      "auth": "browser",
+      "rights": [
+        "owner"
+      ],
+      "path_params": {
+        "request": "uuid"
+      },
+      "request_kind": "stream",
+      "request": "ws/vnc/query.json",
+      "response": "ws/vnc/record.json",
+      "read_resource": null,
+      "streaming": true,
+      "owner": "ADR-103"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/vnc/{request}",
+      "name": "device-vnc",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device_addressed"
+      ],
+      "path_params": {
+        "request": "uuid"
+      },
+      "request_kind": "stream",
+      "request": "ws/vnc/query.json",
+      "response": "ws/vnc/record.json",
+      "read_resource": null,
+      "streaming": true,
+      "owner": "ADR-103"
     }
   ]
 }

@@ -35,7 +35,9 @@ from urllib.parse import urlsplit
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
+from agent_runner.vnc.screen import VmScreen
 from agent_runner.workvm.browser_helper import ANSWER_LIMIT, Answer, call_argv, parse_answer
+from agent_runner.workvm.browser_live import spawn_process
 from agent_runner.workvm.jobs import ShellResult, WorkVmError
 
 IMAGE_BYTES = 100 * 1024
@@ -89,9 +91,11 @@ Run = Callable[[bytes], Awaitable[ShellResult]]
 class HelperSandbox:
     """A sandbox behind the platform browser helper; `run` sends one `call` request, `release` ends the sandbox."""
 
-    def __init__(self, run: Run, release: Callable[[], Awaitable[None]]) -> None:
+    def __init__(self, run: Run, release: Callable[[], Awaitable[None]], screen: Any = None) -> None:
         self.run = run
         self.release = release
+        self.screen = screen
+        """The VM's screen (`agent_runner.vnc.screen.VmScreen`), offered to the owner by a check for humans."""
         self.last: Answer | None = None
 
     async def _call(self, tool: str, arguments: dict[str, Any]) -> Answer:
@@ -148,7 +152,10 @@ async def vm_sandbox(workvms: Any, request_id: str, log: Callable[[str], None]) 
     async def release() -> None:
         await workvms.delete(vm, reason="login_ended")
 
-    return HelperSandbox(run, release)
+    async def spawn(argv: Any) -> Any:
+        return await spawn_process(shell, argv)
+
+    return HelperSandbox(run, release, VmScreen(shell, spawn))
 
 
 # --- a browser process of the device ------------------------------------------------------------------------------

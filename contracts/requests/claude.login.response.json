@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/requests/claude.login.response.json",
   "title": "device response body claude.login",
-  "description": "Plaintext body of a device response to claude.login (seq 1..n, final on the last; 05-runner.md section 11). Never contains a secret. verify (KOR-73): the automation met a check for humans; image is the sandbox's viewport (JPEG, base64) sealed to the requester like every response, frame counts the pictures of the login.",
+  "description": "Plaintext body of a device response to claude.login (seq 1..n, final on the last; 05-runner.md section 11). Never contains a secret. verify (KOR-73): the automation met a check for humans; image is the sandbox's viewport (JPEG, base64) sealed to the requester like every response, frame counts the pictures of the login. needs_human (ADR-103, only to a root with vnc): a check for humans waits for the owner; vnc_available says whether its sandbox has a screen the owner can take over with vnc.open {kind: login, id: this request}.",
   "oneOf": [
     {
       "type": "object",
@@ -114,6 +114,23 @@
         "step",
         "frame",
         "image"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "step": {
+          "type": "string",
+          "const": "needs_human"
+        },
+        "vnc_available": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "step",
+        "vnc_available"
       ],
       "additionalProperties": false
     },

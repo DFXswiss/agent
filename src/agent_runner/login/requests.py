@@ -81,10 +81,11 @@ from agent_runner.login.sandbox import (
 from agent_runner.model.selection import load_catalog
 from agent_runner.requests.service import RESPOND_DELAYS, Flow, FollowUp
 from agent_runner.sync.http import HubRefusal, HubTransportError
+from agent_runner.vnc.screens import Offer, screens_for
 from agent_runner.workvm.service import workvms_for
 
 MODES = ("manual", "automatic")
-LOGIN_FIELDS = frozenset({"mode", "subscription_id", "name", "note", "email", "account", "extended"})
+LOGIN_FIELDS = frozenset({"mode", "subscription_id", "name", "note", "email", "account", "extended", "vnc"})
 ACCOUNT_FIELDS = frozenset({"name", "birth_date", "consents"})
 CONSENTS = frozenset({"terms", "age", "marketing"})
 BIRTH_RE = re.compile(r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")
@@ -185,7 +186,7 @@ def _target(body: Mapping[str, object]) -> dict[str, object]:
         raise Failed("upstream_error")
     if "account" in found and not (automatic and _account(found["account"])):
         raise Failed("upstream_error")
-    if "extended" in found and found["extended"] is not True:
+    if any(name in found and found[name] is not True for name in ("extended", "vnc")):
         raise Failed("upstream_error")
     return found
 
@@ -210,13 +211,21 @@ class HumanCheck:
     """The check for humans of one login, done by its owner (ADR-100 section 4): the sandbox's picture goes out as
     `verify` responses (when it changed, every `verify_tick`, at most `VERIFY_FRAMES`), a `{click}` follow-up of the
     owner's own identity is clicked at that point of the viewport, `{relay: true}` or no click within `verify_wait`
-    gives up (`human_check`). Without `extended` the check is given up at once."""
+    gives up (`human_check`). Without `extended` the check is given up at once.
 
-    def __init__(self, flow: Flow, opts: LoginOptions, *, extended: bool, progress: automation.Progress) -> None:
+    With `vnc` (the root asked for it, ADR-103) the check first answers `{step: "needs_human", vnc_available}` and,
+    when the sandbox has a screen, offers it to the owner (`agent_runner.vnc.screens`, kind `login`, this request) until
+    the check is gone or given up. While a VNC connection is open the owner works on the screen itself: no pictures are
+    sent and the check keeps waiting (`verify_wait` starts again on every look)."""
+
+    def __init__(
+        self, flow: Flow, opts: LoginOptions, *, extended: bool, progress: automation.Progress, vnc: bool = False
+    ) -> None:
         self.flow = flow
         self.opts = opts
         self.extended = extended
         self.progress = progress
+        self.vnc = vnc
         self.frames = 0
         self.shown: str | None = None
 
@@ -247,10 +256,29 @@ class HumanCheck:
         await asyncio.sleep(self.opts.verify_settle)
         return "clicked"
 
+    async def offer(self, sandbox: Sandbox) -> Offer | None:
+        """Tell a client that asked for VNC that a human is needed, and offer the sandbox's screen when it has one."""
+        if not self.vnc:
+            return None
+        screen = getattr(sandbox, "screen", None)
+        await self.flow.respond({"step": "needs_human", "vnc_available": screen is not None})
+        if screen is None:
+            return None
+        _line(self.flow, "vnc_offered")
+        return screens_for(self.flow.context).offer("login", self.flow.id, self.flow.user, screen)
+
     async def __call__(self, sandbox: Sandbox, page: Page) -> None:
         if not self.extended:
             raise AutomationFailed("human_check")
         _line(self.flow, "verify_started")
+        offer = await self.offer(sandbox)
+        try:
+            await self.wait(sandbox, page, offer)
+        finally:
+            if offer is not None:
+                screens_for(self.flow.context).withdraw(offer)
+
+    async def wait(self, sandbox: Sandbox, page: Page, offer: Offer | None) -> None:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.opts.verify_wait
         await self.show(sandbox)
@@ -259,7 +287,8 @@ class HumanCheck:
             outcome = "none" if follow is None else await self.click(sandbox, page, follow)
             if outcome == "relay":
                 raise AutomationFailed("human_check")
-            if outcome == "clicked":  # only a click of the owner gives the check its time again
+            watched = offer is not None and offer.viewers > 0
+            if outcome == "clicked" or watched:  # only the owner gives the check its time again
                 deadline = loop.time() + self.opts.verify_wait
             if (await automation.classify(sandbox)).kind != "challenge":
                 _line(self.flow, "verify_passed")
@@ -267,7 +296,8 @@ class HumanCheck:
                 return
             if loop.time() >= deadline:
                 raise AutomationFailed("human_check")
-            await self.show(sandbox)
+            if not watched:
+                await self.show(sandbox)
 
 
 def _fraction(value: object) -> bool:
@@ -290,7 +320,9 @@ async def _sandbox(flow: Flow, url: str, workdir: Path, opts: LoginOptions) -> S
     return await vm_sandbox(workvms, flow.id, lambda text: _line(flow, text))
 
 
-async def _automate(flow: Flow, url: str, plan: Plan, opts: LoginOptions, workdir: Path, *, extended: bool) -> str:
+async def _automate(
+    flow: Flow, url: str, plan: Plan, opts: LoginOptions, workdir: Path, *, extended: bool, vnc: bool = False
+) -> str:
     """The code from the automation (`AutomationFailed` with the reason of a fall-back)."""
 
     async def progress(stage: str) -> None:
@@ -308,7 +340,7 @@ async def _automate(flow: Flow, url: str, plan: Plan, opts: LoginOptions, workdi
             sandbox=sandbox,
             opts=opts,
             progress=progress,
-            human=HumanCheck(flow, opts, extended=extended, progress=progress),
+            human=HumanCheck(flow, opts, extended=extended, progress=progress, vnc=vnc),
             budget=flow.remaining() - opts.code_margin,
             clock=time.time,
         )
@@ -394,7 +426,8 @@ async def _login(flow: Flow, session: LoginSession, opts: LoginOptions) -> None:
     code: str | None = None
     if plan is not None:
         try:
-            code = await _automate(flow, url, plan, opts, session.workdir, extended=extended)
+            vnc = wanted.get("vnc") is True
+            code = await _automate(flow, url, plan, opts, session.workdir, extended=extended, vnc=vnc)
         except AutomationFailed as failed:
             _line(flow, f"automation_failed reason={failed.reason}")
             reason = failed.answer

@@ -51,6 +51,7 @@ log "job helper"
 install -m 0755 "$FILES/usr/local/sbin/workvm-job" /usr/local/sbin/workvm-job
 install -m 0755 "$FILES/usr/local/bin/workvm-browse" /usr/local/bin/workvm-browse
 install -m 0755 "$FILES/usr/local/bin/workvm-browser" /usr/local/bin/workvm-browser
+install -m 0755 "$FILES/usr/local/bin/workvm-vnc" /usr/local/bin/workvm-vnc
 install -d -m 0700 /var/lib/workvm/jobs
 install -d -m 0755 /workspace
 
@@ -64,7 +65,8 @@ apt-get install -y -q --no-install-recommends \
   python3 python3-venv python3-pip python3-dev pipx \
   docker.io docker-compose-v2 \
   sqlite3 ripgrep fd-find tmux htop procps iproute2 iputils-ping dnsutils netcat-openbsd rsync openssh-client \
-  pkg-config libssl-dev
+  pkg-config libssl-dev \
+  xvfb x11vnc
 systemctl enable docker.service containerd.service
 
 log "Node"
@@ -99,6 +101,8 @@ rm -rf "$CACHE"
 /usr/local/sbin/workvm-job selftest
 # The platform browser (13-work-vm.md section 13.3): start the daemon once, then leave no profile in the image.
 /usr/local/bin/workvm-browser selftest
+# The screen of a check for humans (ADR-103): the VNC server and the virtual display are installed.
+/usr/local/bin/workvm-vnc selftest
 systemctl stop workvm-browser.service 2>/dev/null || true
 rm -rf /var/lib/workvm-browser /run/workvm-browser.sock
 touch "$GUARD"

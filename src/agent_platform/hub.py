@@ -116,6 +116,14 @@ class AgentClient:
         self._loop.run_until_complete(self._client.aclose())
         self._loop.close()
 
+    def upgrade(self, path: str) -> tuple[str, dict[str, str]]:
+        """The WebSocket URL of `path` and the signed headers of its upgrade request (a VNC tunnel, ADR-103);
+        `not_in_session` in session mode, whose relay carries no WebSocket."""
+        if relay.relay_path() is not None:
+            raise PlatformError("not_in_session")
+        signed = self._client.signer.sign("GET", path, b"")
+        return self._client.origin.ws_base_url + path, dict(signed.headers)
+
     def call(self, method: str, path: str, body: object | None = None) -> dict[str, Any]:
         """The verified JSON object of a 2xx answer; `PlatformError` otherwise (`key_revoked` runs `on_revoked`)."""
         try:

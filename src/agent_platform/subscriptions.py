@@ -59,6 +59,10 @@ subscription as the plaintext `slot`, so logins of different subscriptions do no
   link). The check for humans is done by a person; the platform only carries the click.
 - Every `claude.login` root to such a device says `extended: true`: the tool understands `verify`, `authorize.reason`
   and the new progress stages (`devicereq`).
+- `subscriptions add|login --vnc` (ADR-103, only the user's own identity, only with a device that announced `vnc`):
+  the root says `vnc: true`; when the device answers `needs_human` with `vnc_available`, the tool opens the screen of
+  the check by VNC on its own (`agent_platform.vnc.take_over`, no link to click) and follows the login again after the
+  connection ended; the result carries the connection's outcome under `vnc`.
 """
 
 from __future__ import annotations
@@ -71,7 +75,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
-from agent_platform import devicereq
+from agent_platform import devicereq, vnc
 from agent_platform.account import Account, unverified
 from agent_platform.commands import Context, Tree
 from agent_platform.credentials import valid_mailbox
@@ -323,16 +327,17 @@ def overview(account: Account) -> dict[str, Any]:
 # --- login on a device ---
 
 
-def _device(account: Account, device: str | None, *, parallel: bool = False) -> Target:
+def _device(account: Account, device: str | None, *, parallel: bool = False, screen: bool = False) -> Target:
     """The named device, else an online one that announced `subscriptions` (with `parallel`: also
-    `subscriptions.parallel`), preferring one that runs logins side by side (module docstring)."""
+    `subscriptions.parallel`; with `screen`: also `vnc`), preferring one that runs logins side by side (module
+    docstring)."""
     rows = rows_of(account.call("GET", "/v1/me/devices"), "devices")
     able: dict[str, tuple[bool, bool]] = {}
     for row in rows:
         features = row.get("features")
         if not isinstance(row.get("device_id"), str) or not isinstance(features, list) or FEATURE not in features:
             continue
-        if parallel and PARALLEL not in features:
+        if (parallel and PARALLEL not in features) or (screen and vnc.FEATURE not in features):
             continue
         online, side = able.get(row["device_id"], (False, False))
         able[row["device_id"]] = (online or row.get("online") is True, side or PARALLEL in features)
@@ -367,6 +372,8 @@ def _next(request_id: str, found: dict[str, Any]) -> str | None:
             f"{request_id} --out frame.jpg` and clicks with `--click X,Y` (fractions of its width and height), or "
             "gives up with `--relay`; never let a model answer it"
         )
+    if found["step"] == "needs_human":
+        return f"a person takes the screen over with `agent-platform vnc --login {request_id}`"
     if found["step"] in ("progress", "waiting"):
         return f"agent-platform subscriptions check --request {request_id}"
     return None
@@ -494,6 +501,8 @@ def _start(account: Account, target: Target, record_id: str, entry: dict[str, An
     body: dict[str, Any] = {"mode": entry["mode"], "subscription_id": record_id}
     if side:
         body["extended"] = True
+    if entry.get("vnc") is True:
+        body["vnc"] = True
     if entry["extended"]:
         _create(account, record_id, entry)
         if "account" in entry:
@@ -510,15 +519,34 @@ def _wait_option(args: Any) -> None:
         raise PlatformError("invalid_argument")
 
 
+def needs_screen(account: Account, prepared: dict[str, Any]) -> bool:
+    """The device said that a check for humans waits and that its sandbox has a screen (ADR-103)."""
+    return any(
+        item["status"] == "verified" and item["body"]["step"] == "needs_human" and item["body"]["vnc_available"]
+        for item in read(account, prepared)["responses"]
+    )
+
+
 def _run_login(
     account: Account, args: Any, context: Context, record_id: str, entry: dict[str, Any], *, parallel: bool = False
 ) -> dict[str, Any]:
-    target = _device(account, args.device, parallel=parallel or entry["extended"])
-    prepared = _start(account, target, record_id, entry)
-    found = wait(account, prepared, args.wait, STEPS)
+    screen = getattr(args, "vnc", False) is True
+    if screen:
+        vnc.human_only(account)
+    target = _device(account, args.device, parallel=parallel or entry["extended"] or screen, screen=screen)
+    prepared = _start(account, target, record_id, {**entry, "vnc": screen})
+    found = wait(account, prepared, args.wait, STEPS | {"needs_human"})
+    taken = None
+    if screen and found["step"] in ("needs_human", "verify") and needs_screen(account, prepared):
+        # the person takes the check over by VNC; then the login goes on by itself (ADR-103)
+        taken = vnc.take_over(account, "login", prepared["id"], prepared["device"], prepared["keys"])
+        found = wait(account, prepared, args.wait, STEPS - {"verify"})
     if found["step"] == "authorize":
         show_in_browser(context.environ, found["url"], "authorize the Claude login at")
-    return _result(record_id, prepared, found)
+    result = _result(record_id, prepared, found)
+    if taken is not None:
+        result["vnc"] = taken
+    return result
 
 
 def _mailbox_option(args: Any, context: Context) -> dict[str, Any] | None:
@@ -810,6 +838,11 @@ def _login_options(sub: Any) -> None:
     sub.add_argument("--email", help="with --automatic: the address to sign in with (default: the mailbox's)")
     sub.add_argument("--device", help="the platform device (default: an online one that can do it)")
     sub.add_argument("--wait", type=int, default=DEFAULT_WAIT_S, help="seconds to wait for the device (0-600)")
+    sub.add_argument(
+        "--vnc",
+        action="store_true",
+        help="when a check for humans waits, open its screen by VNC for the user (only the user's own identity)",
+    )
 
 
 def _mailbox_options(sub: Any) -> None:

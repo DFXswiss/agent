@@ -339,6 +339,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "credential.check",
                         "mailbox.check",
                         "github.pull_status",
+                        "vnc.open",
                     ],
                 }
             ],
@@ -357,6 +358,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "credential.check",
                         "mailbox.check",
                         "github.pull_status",
+                        "vnc.open",
                     ],
                 }
             ],
@@ -375,6 +377,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "credential.check",
                         "mailbox.check",
                         "github.pull_status",
+                        "vnc.open",
                     ],
                 }
             ],
@@ -393,6 +396,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "credential.check",
                         "mailbox.check",
                         "github.pull_status",
+                        "vnc.open",
                     ],
                 }
             ],
@@ -411,6 +415,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
                         "credential.check",
                         "mailbox.check",
                         "github.pull_status",
+                        "vnc.open",
                     ],
                 }
             ],
@@ -2072,6 +2077,20 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["vm_id", "device_id", "requested"],
     },
+    "vnc.close": {
+        "properties": {
+            "reason": [
+                {
+                    "type": "string",
+                    "enum": ["client_left", "device_left", "record_invalid", "record_too_large", "expired"],
+                }
+            ],
+            "seconds": [{"type": "integer", "minimum": 0}],
+            "bytes": [{"type": "integer", "minimum": 0}],
+        },
+        "required": ["reason", "seconds", "bytes"],
+    },
+    "vnc.connect": {"properties": {}, "required": []},
     "wg.placement": {
         "properties": {
             "device_id": [

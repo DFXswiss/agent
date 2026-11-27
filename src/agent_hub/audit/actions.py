@@ -212,6 +212,8 @@ AUDIT_ACTIONS = frozenset(
         "read.session.list_workgroups",
         "read.stream",
         "read.stream.browser",
+        "vnc.connect",
+        "vnc.close",
         "read.stream.terminal",
         "read.task",
         "read.task.charges",

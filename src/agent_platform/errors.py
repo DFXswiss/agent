@@ -167,8 +167,16 @@ NEXT_FOR_REASON: dict[tuple[str, str], str] = {
         "command again."
     ),
     ("invalid_argument", "human_only"): (
-        'A check for humans is done by a person: the user clicks into the picture in the web ("Meine Abos") or with '
-        "this tool signed in as the user; an agent may only give the automation up (`subscriptions check --relay`)."
+        'A check for humans is done by a person: the user clicks into the picture in the web ("Meine Abos") or takes '
+        "the screen over with `agent-platform vnc`, both with this tool signed in as the user; an agent may only give "
+        "the automation up (`subscriptions check --relay`)."
+    ),
+    ("invalid_argument", "vnc_target"): (
+        "Name exactly one screen: `--login <request_id>` (a Claude login waiting for a check for humans), "
+        "`--session <session_id>` or `--task <task_id>` (an open platform browser)."
+    ),
+    ("no_device", "session_not_running"): (
+        "The session runs on no device now; start it again (`agent-platform task prompt`) and run the command again."
     ),
     ("device_request_failed", "github_not_connected"): (
         "No GitHub connection may read this pull request: connect one with `agent-platform github connect --from-gh` "
