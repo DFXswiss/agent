@@ -21,6 +21,12 @@ from .timestamps import parse_utc_timestamp
 Runner = Callable[[list[str]], Completed]
 
 ACTIVITY_MARKER = "<!-- agent-activity:{id} -->"
+# The compiled form of `ACTIVITY_MARKER`, derived from it so a reader that has
+# to remove a copied marker cannot drift from the producer. The id uses the
+# safe activity alphabet: UUIDs and job ids both fit it.
+ACTIVITY_MARKER_RE = re.compile(
+    re.escape(ACTIVITY_MARKER).replace(re.escape("{id}"), r"[A-Za-z0-9_-]+")
+)
 A38_REPORT_BINDING_KEY = "_coordinator_a38_report"
 COMMENT_KIND_KEY = "_agent_comment_kind"
 A38_MODEL_SECOND_REVIEW_COMMENT = "a38-model-second-review"
