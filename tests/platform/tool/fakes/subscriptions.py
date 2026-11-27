@@ -8,6 +8,7 @@ section 4.8):
 - `PUT /v1/subscriptions/{id}`: an own further record (the primary one is `403 forbidden`) signed by the caller under
   the current `CK` epoch (`409 epoch_stale`), at the stored version (`409 version_conflict`);
 - `DELETE /v1/subscriptions/{id}`: an own record (also the primary one), else `404`;
+- `GET /v1/me/subscriptions/usage`: the answer in `usage` as it is (ADR-103), the queries in `usage_queries`;
 - `GET /v1/me/devices` lists `features` once `announce` is on: `subscriptions` for every device but those in
   `outdated`, and `subscriptions.parallel` (KOR-73) for the devices in `parallel`.
 """
@@ -42,6 +43,9 @@ class Subscriptions:
     refuse_delete: bool = False
     refuse_put: bool = False
     """Every PUT is answered `403 forbidden`."""
+    usage: Json | None = None
+    """The answer of `GET /v1/me/subscriptions/usage` (ADR-103), sent as it is; None answers no subscription."""
+    usage_queries: list[dict[str, str]] = field(default_factory=list)
 
 
 def state_of(hub: HubFake) -> Subscriptions:
@@ -155,9 +159,14 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
                         row["features"].append("subscriptions.parallel")
         return status, answer
 
+    def usage(request: Request, body: Any) -> tuple[int, Any]:
+        found.usage_queries.append(dict(request.query))
+        return 200, found.usage if found.usage is not None else {"period": "five_hour", "subscriptions": []}
+
     hub.override("r_devices", devices)
     path = r"/v1/subscriptions/(?P<record_id>[0-9a-f-]+)"
     hub.add_route("GET", r"/v1/me/subscriptions", listing)
+    hub.add_route("GET", r"/v1/me/subscriptions/usage", usage)
     hub.add_route("GET", path, get)
     hub.add_route("PUT", path, put)
     hub.add_route("DELETE", path, delete)

@@ -628,6 +628,7 @@ agent-platform notifications read --all                          # or --id <id> 
 agent-platform quotas                                            # unreadable_since: the login may not read them
 agent-platform quotas [--org <org_id>]                           # with --org: own and operator subscriptions, DFX access, release
 agent-platform subscriptions list                                # every Claude subscription: status, use, remaining quota
+agent-platform subscriptions usage --period week                # per subscription: who used how much of it in the window
 agent-platform subscriptions add --name "Team" [--note "..."]    # logged in on a platform device; answers the link
 agent-platform subscriptions add --name "Mail" --automatic [--email <address>]  # through the mailbox, no browser
 agent-platform subscriptions add --name "Ada" --automatic --org <org_id>   # side by side: its own slot, used by that org

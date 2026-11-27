@@ -672,6 +672,11 @@ device withdrew.
 items carry `triggered_by`: the operation's stamp (`actor_id`), the session's acting user when the usage record is
 processed (a child: its inherited stamp), for a work VM the acting user when it was requested.
 
+**Served by (ADR-103 §1).** To a hub whose device state has `subscriptions.api >= 2`, `usage` items carry
+`subscription_id` (`model.served`): the record of a shared pool entry `sub-<id>`, the cached primary record of the
+session's owner for the own subscription, null for a token file of the operator, for a session once provisioned from
+the pool whose binding ended, and for any other access. Deltas of different subscriptions are not merged.
+
 ### 6.3 Control, idle, resume, stop
 
 - Interrupt: `tmux send-keys Escape`. Stop: `systemctl stop agent-session-<id>` (SIGTERM, 10 s, SIGKILL), close

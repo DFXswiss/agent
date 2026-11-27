@@ -544,6 +544,20 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     "quota_unreadable": [("owner_id", U), ("since", TS), ("device_id", U)],
     # the use of a further subscription as its owner's client tells it (KOR-69, migration 0034, ADR-090 section 3)
     "subscription_use": [("credential_id", U), ("owner_id", U), ("pool", BOOL), ("orgs", J), ("set_at", TS)],
+    # the tokens per person on each subscription (KOR-75, migration 0042, ADR-103)
+    "subscription_usage": [
+        ("credential_id", U),
+        ("owner_id", U),
+        ("user_id", U),
+        ("org_id", U),
+        ("session_id", U),
+        ("slot", TS),
+        ("requests", BI),
+        ("input_tokens", BI),
+        ("output_tokens", BI),
+        ("cache_read_tokens", BI),
+        ("cache_write_tokens", BI),
+    ],
     # the release of a mailbox as its owner's client tells it (KOR-74, migration 0040, ADR-099 section 3)
     "mailbox_use": [("credential_id", U), ("owner_id", U), ("wgs", J), ("set_at", TS)],
     # the newest reading of every non-primary subscription (KOR-69, migration 0033, ADR-090)
@@ -834,6 +848,7 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "charge_daily": ("org_id", "day", "wg_id", "device_id", "kind"),
     "dfx_key_cost": ("device_id", "session_id"),
     "charge_person_daily": ("org_id", "day", "user_id", "kind"),
+    "subscription_usage": ("credential_id", "slot", "user_id", "session_id"),
     "context_chunk": ("object_id", "chunk_index"),
     "pr_link": ("wg_id", "epoch", "tag"),
     "ui_health_daily": ("day", "version", "view"),
@@ -985,6 +1000,8 @@ def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns:
         ("credential", "(owner_id, kind) WHERE is_primary"),
         ("credential", "(owner_id, updated_at DESC, id DESC) WHERE (kind = 'claude_subscription'::text)"),
         ("subscription_quota", "(owner_id)"),
+        ("subscription_usage", "(user_id, slot)"),  # KOR-75, migration 0042 (ADR-103)
+        ("subscription_usage", "(owner_id)"),
         ("credential", "(owner_id, updated_at DESC, id DESC) WHERE (kind = 'mailbox'::text)"),  # KOR-74, migration 0040
         ("mailbox_use", "USING gin (wgs)"),
         ("pr_link", '(wg_id, created_at DESC, epoch DESC, tag COLLATE "C" DESC)'),

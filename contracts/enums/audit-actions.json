@@ -970,6 +970,10 @@
       "group": "read"
     },
     {
+      "action": "read.me.subscriptions.usage",
+      "group": "read"
+    },
+    {
       "action": "read.subscription",
       "group": "read"
     },

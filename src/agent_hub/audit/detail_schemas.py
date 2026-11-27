@@ -1425,6 +1425,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.me.mailboxes": {"properties": {}, "required": []},
     "read.me.quotas": {"properties": {}, "required": []},
     "read.me.subscriptions": {"properties": {}, "required": []},
+    "read.me.subscriptions.usage": {"properties": {}, "required": []},
     "read.monitoring.overview": {"properties": {}, "required": []},
     "read.monitoring.series": {"properties": {}, "required": []},
     "read.notifications": {"properties": {}, "required": []},

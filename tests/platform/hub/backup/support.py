@@ -398,6 +398,13 @@ class Estate:
                 " VALUES (%s, %s, false, %s, %s)",
                 (self.subscription, writer.id, Jsonb([org]), now),
             ),
+            # the tokens of a person on it (KOR-75, ADR-103)
+            (
+                "INSERT INTO hub.subscription_usage (credential_id, owner_id, user_id, org_id, session_id, slot,"
+                " requests, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)"
+                " VALUES (%s, %s, %s, %s, %s, %s, 2, 100, 20, 1000, 30)",
+                (self.subscription, writer.id, writer.id, org, self.session, now),
+            ),
             # a further mailbox of the writer and its release (KOR-74, ADR-099)
             (
                 "INSERT INTO hub.credential (id, owner_id, kind, version, epoch, header_text, ct, sig, updated_at,"

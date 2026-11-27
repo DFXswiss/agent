@@ -1,0 +1,18 @@
+{
+  "session_id": "01930028-0000-7000-8000-000000000028",
+  "delta": {
+    "requests": 10,
+    "input_tokens": 10,
+    "output_tokens": 10,
+    "cache_read_tokens": 10,
+    "cache_write_tokens": 10,
+    "thinking_tokens": 10,
+    "cost_micro_usd": 10
+  },
+  "cost_basis": "provider",
+  "context_used_tokens": 12000,
+  "context_window_tokens": 128000,
+  "last_provider": "DeepSeek",
+  "triggered_by": "0193000b-0000-7000-8000-00000000000b",
+  "subscription_id": "01930050-0000-7000-8000-000000000050"
+}
