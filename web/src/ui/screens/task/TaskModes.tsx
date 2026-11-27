@@ -151,7 +151,13 @@ export function TaskModes({
             ))}
           </select>
           {choice !== '' && missing.length === 0 && (
-            <button type="button" className={BUTTON} disabled={busy} onClick={() => on([choice])} data-testid="task.modes.on">
+            <button
+              type="button"
+              className={BUTTON}
+              disabled={busy}
+              onClick={() => on([choice])}
+              data-testid="task.modes.on"
+            >
               {t('modes.on')}
             </button>
           )}
@@ -169,7 +175,12 @@ export function TaskModes({
         </div>
       )}
       {failed !== null && (
-        <div role="alert" className="flex flex-wrap items-center gap-2 text-red-800" data-testid="task.modes.error" data-code={failed.code}>
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 text-red-800"
+          data-testid="task.modes.error"
+          data-code={failed.code}
+        >
           <span>
             {failed.needs.length > 0
               ? t('modes.error.needs', { modes: titles(failed.needs) })

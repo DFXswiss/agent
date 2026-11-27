@@ -4,10 +4,9 @@ Package: the foundation of working modes – catalogue, choice, record, visibili
 with no mode but a test mode. Rules [E-32](../KONZEPT.md#e-32) (selectable, never forced, never on by default),
 [E-33](../KONZEPT.md#e-33) (independent work runs in parallel, each in its own sandbox), [E-04](../KONZEPT.md#e-04)
 (web and tool can do the same), [E-05](../KONZEPT.md#e-05), [E-19](../KONZEPT.md#e-19), [E-25](../KONZEPT.md#e-25)
-(no protection beyond what is needed) and E-37 ("what the platform can do itself is a platform tool and needs no VM;
-a session never sees the secret of an access" – „wenn ein agent einen unbuntu braucht um ein e-mail postfach abzurufen
-dann haben wir was falsch gemacht“; recorded on the documentation branch `ad5f2026-doc-11`, not yet on develop, so
-not linked here; E-34 to E-36 of develop are the CI runner rules and not part of this package). Design:
+(no protection beyond what is needed) and [E-37](../KONZEPT.md#e-37) (what can be a platform operation needs no
+VM; a session never sees the secret of an access; E-34 to E-36 are the CI runner rules and not part of this
+package). Design:
 [ADR-098](../adr/098-working-modes.md) §§1–4 and 8, step 1 of §9; §7 as of the branch `ad5f2026-doc-10` (D1–D6 and
 D8 decided, D7 and D9 open – neither is touched by this package, no access is built here). Specification:
 [17-working-modes.md](../spec/17-working-modes.md).
@@ -20,9 +19,9 @@ D8 decided, D7 and D9 open – neither is touched by this package, no access is 
 | Choice by a person | `GET /v1/modes`; `PUT`/`DELETE /v1/tasks/{task}/modes/{mode}` (browser and agent principals, `wg:write`); `modes` on `POST /v1/tasks` | hub (`agent_hub.modes`) |
 | Choice by a sentence | operation `task.mode {mode, on, quote?}` (class `write`); quote check in the runner's pre-check; the executor records it through `PUT /v1/device/tasks/{task}/modes/{mode}` | runner, hub |
 | Tool path closed for session agents | an agent whose pairing belongs to a session (`hub.agent.session_id`) gets `403 mode_needs_instruction`, except `inherited` | hub (`modes.choice`) |
-| Record | `hub.task_mode` (migration 0040) + audit `task.mode_on`/`task.mode_off`/`task.mode_driver`/`read.modes` + column classification (04-crypto.md §7, `e2e/platform/checks/hub_columns.py`) + export rule | hub |
+| Record | `hub.task_mode` (migration 0042) + audit `task.mode_on`/`task.mode_off`/`task.mode_driver`/`read.modes` + column classification (04-crypto.md §7, `e2e/platform/checks/hub_columns.py`) + export rule | hub |
 | Rights loss | subscriber of `log.appended`: a chooser without `wg:write` switches the mode off (`chooser_left`) | hub (`modes.signals`) |
-| Device state | section `task_modes {api, tasks}` for the tasks of the device's live sessions, with the last reported driver state | hub, runner (`modes.state`, migration 0038) |
+| Device state | section `task_modes {api, tasks}` for the tasks of the device's live sessions, with the last reported driver state | hub, runner (`modes.state`, migration 0040) |
 | Harness | section "Working modes" and "Working mode: test" in `images/harness/RULES.md`; the runner adds "Working modes of this task: …" to the context block (request amender) | guest rules, runner |
 | Web | task form field "Arbeitsweisen" (empty), chips with "Ausschalten" on the task page, modes in the task list and the situation view, a notice line in the task header | web |
 | Agent tool | `agent-platform modes list`, `task create --mode`, `task mode on|off --task --mode`, `task show` lists modes; MCP `set_task_mode`; rows in `agent-parity.md` | agent tool |

@@ -49,7 +49,7 @@ Design: [ADR-098](../adr/098-working-modes.md); rule [E-32](../KONZEPT.md#e-32);
 
 ## 4. Record, audit, visibility
 
-- `hub.task_mode` (migration 0040, 02-data-model.md): one row per task and mode ever chosen – `state`, `version`,
+- `hub.task_mode` (migration 0042, 02-data-model.md): one row per task and mode ever chosen – `state`, `version`,
   `chosen_by`, `way`, `op_id`, `origin_task`, `changed_at`, `changed_by`, `reason`, `driver_state`, `settings_sealed`
   (always NULL in v1). Plaintext classification: 04-crypto.md §7 ("Working modes").
 - Audit: `task.mode_on {mode, version, way, chosen_by, operation_id, origin_task}`, `task.mode_off {mode, reason,
@@ -67,7 +67,7 @@ Design: [ADR-098](../adr/098-working-modes.md); rule [E-32](../KONZEPT.md#e-32);
 ## 6. Drivers
 
 - Device state section `task_modes {api: 1, tasks: {task_id: [{mode, version, chosen_by, way, changed_at, driver}]}}`
-  for the tasks with live sessions on the device; the runner keeps it (`runner.task_mode`, migration 0038).
+  for the tasks with live sessions on the device; the runner keeps it (`runner.task_mode`, migration 0040).
 - `agent_runner.modes.drivers`: a driver per mode (`DRIVERS`); `run_once` (reconcile step `mode_drivers`) works each
   due mode once: state in `runner.mode_driver` (take-over from the hub's last reported state on a new device), rate
   budget per GitHub identity (`runner.mode_rate`, 600 per hour for all drivers of the device), the step, its

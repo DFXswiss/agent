@@ -1,4 +1,4 @@
-"""The frame of the drivers of working modes (ADR-098 section 4; runner migration `0038_task_modes`).
+"""The frame of the drivers of working modes (ADR-098 section 4; runner migration `0040_task_modes`).
 
 A **driver** is the deterministic part of a mode: platform code in the runner of the device that serves the task. It
 watches, advances a step machine and requests the same operations a session would; it never runs a model in place of

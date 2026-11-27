@@ -1,13 +1,14 @@
--- 0040_task_modes: the working modes of a task (KOR-75, ADR-098 section 3; 02-data-model.md section 2.4).
+-- 0042_task_modes: the working modes of a task (KOR-75, ADR-098 section 3; 02-data-model.md section 2.4).
 --
 -- One row per task and mode that was ever switched on: `state` 'on' or 'off', the catalogue `version` it was chosen
 -- in, `chosen_by` (the person whose choice it is: a browser user, the user of an agent, or the verified author of the
 -- instruction a session quoted), `way` ('web', 'tool', 'sentence', 'inherited'), `op_id` (the `task.mode` operation of
--- the last change by a session; always set for a sentence), `origin_task` (the task whose mode an `inherited` choice passed on), `changed_at`/`changed_by` (the last
--- change and the principal that made it, NULL for the hub itself), `reason` (why it is off: 'person', 'session', 'chooser_left'), `driver_state` (the state of
--- the mode's driver as its device reports it: step name, counters, times - metadata only) and `settings_sealed` (the
--- settings sealed under the workgroup key; no mode of catalogue v1 has settings, so it stays NULL). Names, states,
--- principals and times are plaintext metadata (04-crypto.md section 7).
+-- the last change by a session; always set for a sentence), `origin_task` (the task whose mode an `inherited` choice
+-- passed on), `changed_at`/`changed_by` (the last change and the principal that made it, NULL for the hub itself),
+-- `reason` (why it is off: 'person', 'session', 'chooser_left'), `driver_state` (the state of the mode's driver as its
+-- device reports it: step name, counters, times - metadata only) and `settings_sealed` (the settings sealed under the
+-- workgroup key; no mode of catalogue v1 has settings, so it stays NULL). Names, states, principals and times are
+-- plaintext metadata (04-crypto.md section 7).
 --
 -- Nothing writes a row by default: no migration, installation or creation path (ADR-098 section 2). Every change is
 -- additive; the previous hub code starts on this schema and ignores the table.

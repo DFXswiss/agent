@@ -1,5 +1,5 @@
 """The working modes the hub sent, kept in the store (ADR-098 sections 3 and 4; section `task_modes` of
-`GET /v1/device/state`; runner migration `0038_task_modes`).
+`GET /v1/device/state`; runner migration `0040_task_modes`).
 
 - `store(conn, desired)` (reconcile step `task_modes`): replaces the stored modes by the section of the last desired
   state. A malformed section fails the step (`wire.ResponseInvalid`); a desired state without it (an older hub, which

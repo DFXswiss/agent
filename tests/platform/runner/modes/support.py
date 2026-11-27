@@ -22,7 +22,8 @@ CHILD = "0193000c-0000-7000-8000-000000000011"
 CHANGED = "2026-11-26T10:00:00.000Z"
 
 
-def entry(mode: str = "test", driver: dict[str, Any] | None = None, **extra: Any) -> dict[str, Any]:
+def entry(mode: Any = "test", driver: Any = None, **extra: Any) -> dict[str, Any]:
+    """One entry of the section `task_modes`; `mode` and `driver` take malformed values too (the refusal tests)."""
     return {
         "mode": mode,
         "version": 1,

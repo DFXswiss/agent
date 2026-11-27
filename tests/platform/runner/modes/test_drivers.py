@@ -19,6 +19,7 @@ from psycopg_pool import AsyncConnectionPool
 from agent_runner.errors import RunnerError
 from agent_runner.modes import drivers, state
 from agent_runner.modes.drivers import Budget, Current, Step, TestDriver
+from agent_runner.pings.send import stable_ping_id
 from agent_runner.prompts.resume import RESUMED
 from agent_runner.sessions import records
 from agent_runner.sync.http import HubRefusal, HubTransportError
@@ -292,7 +293,7 @@ def test_the_wake_up(store_dsn: str, monkeypatch: pytest.MonkeyPatch, tmp_path: 
         assert await drivers.wake(None, MAIN, ref)
         [(session_id, prompt_id, text)] = env.prompts
         assert (session_id, text) == (MAIN, drivers.WAKE.format(ref=ref))
-        assert prompt_id == drivers.stable_ping_id("mode.wake", ref)
+        assert prompt_id == stable_ping_id("mode.wake", ref)
         async with pool.connection() as conn:
             await records.update(conn, MAIN, state="suspended")
         assert await drivers.wake(None, MAIN, ref)

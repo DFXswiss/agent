@@ -190,10 +190,7 @@ describe('switching a mode', () => {
     t.client.on(`DELETE ${path}/a38`, () => ({}));
     await switchModeOn(t.context, task.task_id, 'test');
     expect(t.client.of(`PUT ${path}/test`)[0]!.body).toEqual({});
-    expect(taskModes(t.store.getState().tasks.tasks[task.task_id]!).map((item) => item.mode)).toEqual([
-      'a38',
-      'test',
-    ]);
+    expect(taskModes(t.store.getState().tasks.tasks[task.task_id]!).map((item) => item.mode)).toEqual(['a38', 'test']);
     await switchModeOff(t.context, task.task_id, 'a38');
     expect(taskModes(t.store.getState().tasks.tasks[task.task_id]!).map((item) => item.mode)).toEqual(['test']);
     // a repetition answers the record unchanged; an answer off the contract leaves the row to the live frame
