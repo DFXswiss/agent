@@ -51,12 +51,12 @@ transcript (input and result) and in the read-only terminal (Claude Code's own r
 
 | Tool | Input | Output |
 |---|---|---|
-| `workvm_exec` | `{command, cwd?, env?, stdin?, timeout_seconds?, wait_seconds?, sync?}` | job |
+| `workvm_exec` | `{command, cwd?, env?, stdin?, timeout_seconds?, wait_seconds?, sync?}` | job, or `starting` |
 | `workvm_output` | `{job_id, offset?, limit?, wait_seconds?}` | job |
 | `workvm_kill` | `{job_id, signal?}` | job |
 | `workvm_status` | `{}` | `{workvm, jobs}` |
 | `workvm_sync` | `{direction, path?}` | `{direction, path, files, bytes, deleted, skipped}` |
-| `workvm_browse` | `{url, action?, selector?, text?, wait_ms?, path?}` | `{url, final_url, status, title, text, screenshot?, job_id}` |
+| `workvm_browse` | `{url, action?, selector?, text?, wait_ms?, path?}` | `{url, final_url, status, title, text, screenshot?, job_id}`, or `starting` |
 
 - `workvm_browse` drives the preinstalled Chromium (Playwright) through the helper `/usr/local/bin/workvm-browse` in
   the VM: `action` `read` (default: open `url`, wait for load and `wait_ms`, return the visible text ≤ 32768
@@ -81,7 +81,18 @@ transcript (input and result) and in the read-only terminal (Claude Code's own r
   survive the end of the job (`KillMode=process`); `systemctl` services are real services of the VM.
 - `workvm_kill`: `signal` `TERM` (default), `INT`, `HUP` or `KILL` to every process of the job.
 - `workvm_status`: `workvm` null or `{workvm_id, state, scope, size, cpus, memory_mib, disk_gib, created_at,
-  last_used_at}` and the last 50 jobs `{job_id, command, state, exit_code, started_at, duration_ms}`.
+  last_used_at, started_at?, queue_position?}` and the last 50 jobs `{job_id, command, state, exit_code, started_at,
+  duration_ms}`. While an implicit start of the session's scope is in flight (§7) the VM is reported `starting` - also
+  before its row exists, then with the shape of the VM about to start (`created_at` = the moment the start began) -
+  with `started_at` (the moment the start began) and `queue_position` (its place in the device's capacity queue, 1 at
+  the head where it is cloned and booted; null while it does not wait there: formal checks, warm pool).
+- `starting` (`workvm_exec`, `workvm_browse`; `mcp/objects.json#/$defs/output_workvm_starting`): `{workvm_id, state:
+  "starting", started_at, queue_position, message}` - the implicit start goes on and nothing ran; the sentence tells
+  the session to call again in a minute or to follow the start with `workvm_status`. It comes when the start did not
+  end within the wait of the call: at most 15 s, and never longer than the guest waits for the call minus the runner's
+  reserve for its answer (`workvm_exec`: `wait_seconds` + 5 s, at most 33 s, minus 3 s; `workvm_browse`: 33 s minus
+  8 s). A guest before 0.8.0 does not know this answer (nor `started_at` and `queue_position`, which it does not get):
+  it gets the tool error `unavailable` "The work VM is starting or being removed. Try again shortly.".
 - `workvm_sync`: `to_vm` mirrors the workspace (or `path` below it) into `/workspace`: changed files only (SHA-256
   manifest of the last mirror of this session), deletions applied, files the VM created and the workspace never had
   are kept (build outputs, `node_modules`). `from_vm` needs `path` (a directory of the workspace): the files of
@@ -92,8 +103,12 @@ transcript (input and result) and in the read-only terminal (Claude Code's own r
   on the host and imports it (`replace=true`). The answer counts added/changed (`files`), `deleted` and `skipped`.
   Limits of the guest import (512 MiB, 100 000 entries) apply.
 - Errors (`tool_error`): no VM → `not_found` ("No work VM: request one with workvm.request."); VM starting or
-  stopped → the call starts it and waits (counts against `wait_seconds`; still starting → `unavailable`); unknown job
-  → `not_found`; invalid input → `params_invalid`; runner without work VM support → `unavailable`.
+  stopped → the call starts it and waits (counts against `wait_seconds`; still starting → `unavailable`, but
+  `workvm_exec` and `workvm_browse` during an implicit start answer `starting`, above); a VM being removed, and
+  `workvm_output`, `workvm_kill` and `workvm_sync` during an implicit start → `unavailable` ("The work VM is starting or
+  being removed. Try again shortly."); a failed implicit start → `unavailable` ("No work VM could be obtained: ...")
+  for every call that waited for it, else once for the next `workvm_exec` or `workvm_browse` of the scope (§7);
+  unknown job → `not_found`; invalid input → `params_invalid`; runner without work VM support → `unavailable`.
 - A stopped VM (idle) starts automatically on the next `workvm_exec`, `workvm_output` or `workvm_sync`.
 
 ## 4. Work image (`images/workvm.yaml`, `images/workvm/`)
@@ -271,6 +286,28 @@ machine-id at first boot (cloud-init new instance-id).
 - Implicit request: `workvm_exec` and `workvm_browse` of a session without a VM create a standard task VM first
   (same limits, queue and boundary checks as `workvm.request`; announced by the `workvm.state` `starting` event, so
   the panel counts down, and recorded by the `created` event with `implicit: true`).
+- Implicit start in flight: a cold start can take minutes, longer than one tool call may wait. The runner keeps the
+  start in progress per scope - the task (main sessions), or the session of a subagent, as the session's VM is
+  resolved - and runs it as its own asyncio task. A further `workvm_exec` or `workvm_browse` of the scope joins that
+  start instead of starting another VM (the lookup and the insertion of the marker happen without a suspension point,
+  so concurrent calls never start twice); the call waits for it within its budget and answers `starting` (§3) while it
+  goes on, and the start goes on when a call gives up. The marker goes when the start ends - created, failed or
+  cancelled. A start that fails or is cancelled is logged (`runner.workvm implicit_start_failed workvm_id= scope=
+  error=<code or exception type | cancelled>`), and the countdown ends with exactly one `deleted` event (reason
+  `failed`): a row it already inserted is torn down with its instance like any VM (shielded `delete`, which writes the
+  event), so no `starting` row keeps its slot. Every call waiting for a failed start gets the failure (`unavailable`,
+  "No work VM could be obtained: ..."); when none waited - a cold start takes far longer than a call waits - the
+  failure is kept and answered once to the next `workvm_exec` or `workvm_browse` of the scope before any new start.
+  A kept failure is forgotten when the scope itself gets a VM through `workvm.request` (a main session's own session
+  VM leaves the task scope's failure), when its session ends (the task scope's with the last active session of the
+  task) and when its task closes. A session end or task close first cancels a start of those scopes still in flight
+  and waits for it: it is torn down like any cancelled start (one `deleted` event, no live row) and keeps no failure,
+  so no start runs on for an ended session or a closed task. The teardown of a failed or cancelled start itself
+  cannot be cancelled: it runs shielded to its end, a cancel that arrives meanwhile takes effect afterwards, and a
+  start that is already being cancelled is only waited for, not cancelled again.
+  Calls waiting for a cancelled start get `unavailable` ("The start of the work VM was cancelled ..."); the next call
+  starts anew. Markers and kept failures live in the runner's memory only: a restart forgets them, and the
+  reconciliation deletes what a start left (reason `restart`).
 - Credit (KOR-43): on a platform device an organization whose credit is used up gets no new work VM or run VM
   (`credit_exhausted`). The tool waits within its `wait_seconds`; a queued request answers `unavailable` with "capacity
   queue" text and keeps the place.
@@ -291,6 +328,13 @@ machine-id at first boot (cloud-init new instance-id).
   entry; a request that finds no slot or RAM deletes the oldest ready entry first, but only when the RAM of all ready
   entries would make it fit. Boundary failure and restart delete the pool. Larger sizes are always cloned on demand.
   Log lines `runner.workvm pool_ready slot= start_ms=` (cold start time of the device) and `created … pooled=0|1`.
+- Start phases (measurement only): every start of a work VM (any scope) logs `runner.workvm start_phases workvm_id=
+  scope= pooled=0|1 queue_ms= clone_ms= boot_ms= ready_ms= total_ms=` - waiting in the capacity queue (from entering
+  it to the row insert or the pool assignment), clone (the slot's base and `limactl clone`), boot (`limactl start`)
+  and the ready check (until the job helper answers); a VM from the warm pool has no clone, boot or ready phase - and
+  adds them to the device counters `agent_runner_workvm_starts_total`, `agent_runner_workvm_cold_starts_total` and
+  `agent_runner_workvm_start_<phase>_seconds_total` (08-monitoring.md section 3). A failed start logs `start_failed`
+  as before and is not counted.
 - Scale: one device holds `floor((RAM − reserve − workgroup VMs) / 8 GiB)` standard work VMs (512 GiB, 32 GiB reserve:
   60); more parallel agents need more execution devices (ADR-059 decision 11).
 
@@ -308,6 +352,9 @@ machine-id at first boot (cloud-init new instance-id).
 - Event `workvm.state` (same scope, author and right): `{workvm_id, state: "starting"|"created"|"stopped"|"deleted",
   scope, size, cpus, memory_mib, disk_gib, implicit, reason (deleted and stopped), started_at, ended_at, runtime_ms}`;
   `starting` announces an implicit start, `stopped` a paused session's VM (KOR-43). Run VMs write none (§12).
+  `started_at` and `ended_at` (as the times of `workvm_status`) are UTC with `Z`: a time read back from the store
+  comes in PostgreSQL's session time zone (the device's local zone) and is converted to UTC before it is written,
+  never formatted as it is (a device in CET wrote `started_at` one hour late until KOR-29-implicit-start).
 - `workvm.run` of a job whose output is longer than its tail (64 KiB) carries `log` `{object_id, bytes, stored_bytes,
   truncated}`: the runner keeps the complete output (at most `LOG_MAX_MIB`, its last part) as an encrypted log object
   (§12.3) and writes the final event once it is stored.

@@ -1492,6 +1492,9 @@
           "$ref": "#/$defs/output_workvm_browse"
         },
         {
+          "$ref": "#/$defs/output_workvm_starting"
+        },
+        {
           "$ref": "#/$defs/output_browser"
         }
       ],
@@ -1963,6 +1966,54 @@
       ],
       "additionalProperties": false
     },
+    "workvm_queue_position": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "place of a starting work VM in the device's capacity queue (1: at its head, where it is cloned and booted); null when it does not wait in the queue"
+    },
+    "output_workvm_starting": {
+      "type": "object",
+      "description": "answer of workvm_exec and workvm_browse while the implicit start of the work VM goes on: nothing ran; call again or follow the start with workvm_status (13-work-vm.md section 3)",
+      "properties": {
+        "workvm_id": {
+          "$ref": "../ops/objects.json#/$defs/workvm_id"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "starting"
+          ]
+        },
+        "started_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "queue_position": {
+          "$ref": "#/$defs/workvm_queue_position"
+        },
+        "message": {
+          "type": "string",
+          "pattern": "^[ -~]+$",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "workvm_id",
+        "state",
+        "started_at",
+        "queue_position",
+        "message"
+      ],
+      "additionalProperties": false
+    },
     "output_workvm_status": {
       "type": "object",
       "properties": {
@@ -2009,6 +2060,12 @@
                 },
                 "last_used_at": {
                   "$ref": "../common.json#/$defs/time"
+                },
+                "started_at": {
+                  "$ref": "../common.json#/$defs/time"
+                },
+                "queue_position": {
+                  "$ref": "#/$defs/workvm_queue_position"
                 }
               },
               "required": [

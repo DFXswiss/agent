@@ -1,0 +1,6 @@
+{
+  "workvm_id": "wvm-0123abcd",
+  "state": "starting",
+  "started_at": "2026-11-23T10:00:00.000Z",
+  "queue_position": null
+}

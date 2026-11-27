@@ -1,0 +1,16 @@
+{
+  "workvm": {
+    "workvm_id": "wvm-0123abcd",
+    "state": "starting",
+    "scope": "task",
+    "size": "standard",
+    "cpus": 4,
+    "memory_mib": 8192,
+    "disk_gib": 50,
+    "created_at": "2026-11-23T10:00:00.000Z",
+    "last_used_at": "2026-11-23T10:00:00.000Z",
+    "started_at": "2026-11-23T10:00:00.000Z",
+    "queue_position": 1
+  },
+  "jobs": []
+}
