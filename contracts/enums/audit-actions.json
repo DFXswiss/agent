@@ -946,6 +946,10 @@
       "group": "session"
     },
     {
+      "action": "session.continued",
+      "group": "session"
+    },
+    {
       "action": "session.interrupted",
       "group": "session"
     },

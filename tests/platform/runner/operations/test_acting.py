@@ -6,10 +6,12 @@ the turn without an acting user; a child session inherits the acting user of its
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
+import pytest
 from psycopg.types.json import Jsonb
 
 from agent_runner.credentials import acting
@@ -195,6 +197,78 @@ def test_a_child_session_acts_for_the_person_who_instructed_its_parent(rig: Rig)
         assert await turns.request(sid=child) is None
 
     run(rig, body)
+
+
+def test_a_continuation_of_the_platform_acts_for_the_person_of_the_turn_it_continues(rig: Rig) -> None:
+    """HOT-28: a continuation prompt the platform stored for a session acts for the person it was stored with - once,
+    only in that session, and like any prompt it cannot make a running turn of another person that person's."""
+
+    async def body(env: Any) -> None:
+        kit = await setup(env)
+        turns = Turns(kit, await kit.session(actor=None))
+        other = await kit.session(2, actor=None)
+
+        async def continuation(actor: str | None, session: str | None = None) -> str:
+            prompt_id = uuid7()
+            async with env.pool.connection() as conn:
+                await acting.continuation(
+                    conn, session_id=session or turns.sid, prompt_id=prompt_id, actor_id=actor, cause="credit"
+                )
+            return prompt_id
+
+        async with env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.session SET turn_open = false")
+        await turns.accepted(await turns.prompt(BOB))
+        await turns.idle()  # the platform interrupted bob's turn
+        continued = await continuation(BOB)
+        async with env.pool.connection() as conn:  # a repeated hand-over keeps the first row
+            await acting.continuation(conn, session_id=turns.sid, prompt_id=continued, actor_id=ALICE, cause="model")
+        await turns.accepted(continued)
+        assert await turns.turn() == (BOB, True)
+        assert await turns.request() == BOB
+        rows = await env.rows("SELECT cause, accepted_at IS NOT NULL FROM runner.platform_prompt")
+        assert rows == [("credit", True)]
+        # a replayed acceptance of it never brings bob back
+        await turns.idle()
+        await turns.accepted(await turns.prompt(ALICE))
+        await turns.idle()
+        await turns.accepted(continued)
+        assert await turns.turn() == (None, True)
+        await turns.idle()
+        # a continuation of another session is nobody's here
+        await turns.accepted(await continuation(BOB, other))
+        assert await turns.turn() == (None, True)
+        await turns.idle()
+        # a continuation without a person stays without one
+        await turns.accepted(await continuation(None))
+        assert await turns.request() is None
+        # alice's running turn: bob's continuation joins it, nobody acts until the next turn
+        await turns.idle()
+        await turns.accepted(await turns.prompt(ALICE))
+        await turns.accepted(await continuation(BOB))
+        assert await turns.turn() == (None, True)
+
+    run(rig, body)
+
+
+def test_a_continuation_names_a_known_cause_and_its_audit_the_person() -> None:
+    async def scenario() -> None:
+        with pytest.raises(ValueError, match="cause"):
+            await acting.continuation(
+                cast(Any, None), session_id=session_id(1), prompt_id=uuid7(), actor_id=None, cause="restart"
+            )
+
+    asyncio.run(scenario())
+    row = acting.continued(task_id=TASK, session_id=session_id(1), prompt_id="p", actor_id=BOB, cause="model")
+    assert row == {
+        "action": "session.continued",
+        "result": "ok",
+        "task_id": TASK,
+        "session_id": session_id(1),
+        "target_kind": "session",
+        "target_id": session_id(1),
+        "detail": {"cause": "model", "prompt_id": "p", "triggered_by": BOB},
+    }
 
 
 def test_the_stamp_of_an_unknown_session_is_nobody(rig: Rig) -> None:

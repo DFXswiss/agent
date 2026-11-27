@@ -23,6 +23,12 @@ session, so no prompt is handed over in between:
    for the guest) with the platform's sender line `CONTINUATION_LINE` (ADR-083; an older guest gets it without); a
    session that was idle stays suspended until its next prompt. `resumed_at` marks the pause done.
 
+**The person of the interrupted turn** (HOT-28): the pause records the acting user of the session's turn
+(`runner.credit_pause.actor_id`, `acting.TURN_ACTOR`); the continuation is stored with that person before it is handed
+over (`acting.continuation`), so the continued turn acts for the same person - also after a restart of the daemon -
+while its sender line stays the platform's. A turn without acting user stays without one. The audit
+`session.continued` (`acting.continued`) names the person taken over.
+
 `deferred(env, session)`: while its org is exhausted no prompt is handed to a session this device acts on - neither
 to a suspended one (no resume) nor to one that is still idle before the pause; the prompt stays pending and is
 delivered once credit is back (`deliver.Deliverer`). The same holds while the session waits for model quota
@@ -46,6 +52,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent_runner.billing import state
+from agent_runner.credentials import acting
 from agent_runner.crypto.ids import uuid7
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestError, GuestRefused
@@ -64,6 +71,8 @@ CONTINUATION = (
 )
 CONTINUATION_LINE = speaker.check(speaker.PLATFORM_CONTINUATION)
 """Its sender line (ADR-083 section 1): the platform, not a person."""
+CAUSE = "credit"
+"""The cause of its `runner.platform_prompt` row and of its audit `session.continued` (HOT-28)."""
 STOPPED_STATES = frozenset({"working", "idle"})
 SUSPEND_TRIES = 10
 SUSPEND_WAIT_S = 0.5
@@ -130,15 +139,19 @@ async def guest_control(
 
 
 async def _record(env: SessionEnv, session: LocalSession, interrupted: bool) -> None:
-    """Open (or carry on) the credit pause of the session (`runner.credit_pause`)."""
+    """Open (or carry on) the credit pause of the session (`runner.credit_pause`) with the acting user of its turn
+    (`acting.TURN_ACTOR`, HOT-28); an open pause of an interrupted turn keeps the person it recorded."""
     async with env.transaction() as conn:
         await conn.execute(
-            "INSERT INTO runner.credit_pause (session_id, org_id, interrupted, paused_at) VALUES (%s, %s, %s, %s)"
-            " ON CONFLICT (session_id) DO UPDATE SET interrupted = CASE WHEN runner.credit_pause.resumed_at IS NULL"
+            "INSERT INTO runner.credit_pause (session_id, org_id, interrupted, paused_at, actor_id) VALUES (%s, %s,"
+            f" %s, %s, {acting.TURN_ACTOR}) ON CONFLICT (session_id) DO UPDATE SET"
+            " actor_id = CASE WHEN runner.credit_pause.resumed_at IS NULL AND runner.credit_pause.interrupted"
+            " THEN runner.credit_pause.actor_id ELSE EXCLUDED.actor_id END,"
+            " interrupted = CASE WHEN runner.credit_pause.resumed_at IS NULL"
             " THEN runner.credit_pause.interrupted OR EXCLUDED.interrupted ELSE EXCLUDED.interrupted END,"
             " paused_at = CASE WHEN runner.credit_pause.resumed_at IS NULL"
             " THEN runner.credit_pause.paused_at ELSE EXCLUDED.paused_at END, resumed_at = NULL",
-            (session.id, session.org_id, interrupted, datetime.fromtimestamp(env.wall(), UTC)),
+            (session.id, session.org_id, interrupted, datetime.fromtimestamp(env.wall(), UTC), session.id),
         )
 
 
@@ -190,21 +203,25 @@ async def continue_after_credit(
     """Step 2 of the module docstring."""
     async with env.transaction() as conn:
         cursor = await conn.execute(
-            "SELECT session_id::text, org_id::text, interrupted, paused_at FROM runner.credit_pause"
+            "SELECT session_id::text, org_id::text, interrupted, paused_at, actor_id::text FROM runner.credit_pause"
             " WHERE resumed_at IS NULL ORDER BY paused_at, session_id"
         )
         pauses = await cursor.fetchall()
-    for session_id, org_id, interrupted, paused_at in pauses:
+    for session_id, org_id, interrupted, paused_at, actor_id in pauses:
         if state.exhausted(desired, org_id) or model_pauses.held(env.context, session_id):
             continue
         async with lock(session_id):
-            await _continue(env, resumer, session_id, interrupted, paused_at)
+            await _continue(env, resumer, session_id, interrupted, paused_at, actor_id=actor_id)
 
 
-async def _continue(env: SessionEnv, resumer: Any, session_id: str, interrupted: bool, paused_at: datetime) -> None:
-    """One recorded pause whose org has credit again (step 2)."""
+async def _continue(
+    env: SessionEnv, resumer: Any, session_id: str, interrupted: bool, paused_at: datetime, *, actor_id: str | None
+) -> None:
+    """One recorded pause whose org has credit again (step 2); the continuation acts for the person of the
+    interrupted turn (`actor_id`, `acting.continuation`, HOT-28)."""
     async with env.transaction() as conn:
         session = await records.get(conn, session_id)
+    audit = None
     if interrupted and session is not None and session.state not in records.FINAL:
         if session.state in {"suspended", "resuming"} and await resumer.resume(session) != RESUMED:
             return
@@ -213,6 +230,10 @@ async def _continue(env: SessionEnv, resumer: Any, session_id: str, interrupted:
         row = None if current is None else await vm_running(env, current)
         if row is None:
             return
+        assert current is not None  # its VM runs
+        continued = prompt_id(session_id, paused_at)
+        async with env.transaction() as conn:
+            await acting.continuation(conn, session_id=session_id, prompt_id=continued, actor_id=actor_id, cause=CAUSE)
         try:
             async with await env.client(row) as guest:
                 await speaker.register(
@@ -220,20 +241,25 @@ async def _continue(env: SessionEnv, resumer: Any, session_id: str, interrupted:
                     guest,
                     vm_id=row.id,
                     session_id=session_id,
-                    prompt_id=prompt_id(session_id, paused_at),
+                    prompt_id=continued,
                     text=CONTINUATION,
                     line=CONTINUATION_LINE,
                 )
         except (GuestError, RunnerError) as exc:
             env.line(f"credit_continue_failed session_id={session_id} code={exc.code}")
             return
-        env.line(f"credit_continued session_id={session_id}")
+        env.line(f"credit_continued session_id={session_id} acting={actor_id or '-'}")
+        audit = acting.continued(
+            task_id=current.task_id, session_id=session_id, prompt_id=continued, actor_id=actor_id, cause=CAUSE
+        )
     async with env.transaction() as conn:
         await conn.execute(
             "UPDATE runner.credit_pause SET resumed_at = %s WHERE session_id = %s",
             (datetime.fromtimestamp(env.wall(), UTC), session_id),
         )
         await model_pauses.end(conn, env, session_id)  # one continuation for both pauses
+        if audit is not None:
+            await env.outbox.enqueue(conn, "audit", audit)
 
 
 async def enforce(deliverer: Any, desired: Mapping[str, Any] | None) -> None:

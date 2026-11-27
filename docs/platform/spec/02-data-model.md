@@ -255,7 +255,10 @@ restarts, `model_pause` – sessions paused for model quota, `dfx_key` – the s
 per organization, `dfx_key_issued` – the requests an issuing platform device answered; KOR-35: `usage_pending` – the
 usage deltas of a session merged over 10 s before they become one outbox item `usage`, counts only, ADR-086; KOR-45:
 `subagent_instruction` – the instructions of a child session in their order of creation with their acting user and
-when each was handed over, accepted and its turn ended, no text, ADR-088 §1; KOR-70: `golden_switch` – a workgroup VM
+when each was handed over, accepted and its turn ended, no text, ADR-088 §1; HOT-28 (migration 0040): `platform_prompt`
+– the continuation prompts the runner wrote itself for an interrupted turn with the acting user of that turn, the
+cause (`credit`, `model`) and when the guest accepted it, no text, and `actor_id` on `credit_pause` and `model_pause`
+– the acting user of the turn a pause interrupted; KOR-70: `golden_switch` – a workgroup VM
 replaced by one of a newer golden while sessions on it were paused, `golden_switch_hold` – since when a cause holds
 an outdated VM, and the column `context_session.checkpoint_state` – what the newest checkpoint request ended with,
 ADR-093; HOT-24: `golden_switch_attempt` – the switch's starts for fresh checkpoints and failed attempts,

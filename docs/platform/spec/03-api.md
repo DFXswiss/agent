@@ -545,6 +545,11 @@ outbox audit action `session.model_switched` `{from_access,to_access,from_model,
 `subscription`, `operator`, `api_key`, `platform`); the hub then notifies the task's owner with the notification kind
 `model.switched` (`ref` = `<from>:<to>:<until or empty>`, the same access values).
 
+HOT-28 adds the outbox audit action `session.continued` `{cause: credit|model, prompt_id, triggered_by}` (target the
+session): the runner handed a session the continuation it writes itself for a turn it interrupted (a credit pause or a
+model pause); `triggered_by` is the acting user of the interrupted turn the continuation keeps (null: that turn had
+none). An older hub refuses the unknown action for that one item.
+
 Processing is strictly in `origin_seq` order. Rule set (pattern of the legacy `/sync/push`): `origin_seq` must
 be `last+1` (`409 origin_seq_gap` with `detail.expected`; a runner that no longer holds `detail.expected` – it
 prunes acknowledged items after 1 h, the hub was restored from an older export – confirms the hub's position with

@@ -241,6 +241,7 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'session.context_refused',
   'session.context_restored',
   'session.context_saved',
+  'session.continued',
   'session.control',
   'session.failed',
   'session.idle',

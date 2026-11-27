@@ -8,9 +8,10 @@ reconcile step `model_fallback` (`model.fallback`):
   from its start (`hold`, before its first prompt);
 - `switch`: the session's access is used up and another kind of access is allowed: paused and resumed at once.
 
-`interrupted` = a turn was running (the session gets the continuation sentence), `suspended` = the guest suspended
-it, `resumed_at` = the pause ended (an ended pause is never continued again; a new pause of the same session replaces
-it). `held(context, session_id)`: the session's prompts wait (`billing.pause.deferred`). The set `holding(context)` is
+`interrupted` = a turn was running (the session gets the continuation sentence), `actor_id` = the acting user of that
+turn (HOT-28: the continuation acts for that person, `credentials.acting`), `suspended` = the guest suspended it,
+`resumed_at` = the pause ended (an ended pause is never continued again; a new pause of the same session replaces it).
+`held(context, session_id)`: the session's prompts wait (`billing.pause.deferred`). The set `holding(context)` is
 computed by each (serialized) run of the step and replaced as a whole; a wait recorded by a start or resume meanwhile
 (`pend`, `model.access.hold`) stays held until a run has seen its row, so a concurrent run cannot undo it.
 
@@ -27,6 +28,7 @@ from typing import Any
 
 from psycopg import AsyncConnection
 
+from agent_runner.credentials import acting
 from agent_runner.model import policy
 from agent_runner.sessions.records import time_text
 
@@ -97,6 +99,14 @@ class Pause:
     from_access: str
     from_model: str | None
     suspended: bool
+    actor_id: str | None = None
+    """The acting user of the interrupted turn (HOT-28, `acting.TURN_ACTOR`; None: that turn had none)."""
+
+
+COLUMNS = (
+    "session_id::text, kind, interrupted, paused_at, until, dfx_choice, from_access, from_model, suspended,"
+    " actor_id::text"
+)
 
 
 def stamp(value: float | None) -> datetime | None:
@@ -115,10 +125,14 @@ async def record(
     from_access: str,
     from_model: str | None,
 ) -> None:
-    """Open (or carry on) the pause of a session; an open pause keeps its start, its `interrupted` and `suspended`."""
+    """Open (or carry on) the pause of a session with the acting user of its turn (`acting.TURN_ACTOR`); an open pause
+    keeps its start, its `interrupted` and `suspended`, and an open pause of an interrupted turn its person."""
     await conn.execute(
         "INSERT INTO runner.model_pause (session_id, kind, interrupted, paused_at, until, dfx_choice, from_access,"
-        " from_model) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (session_id) DO UPDATE SET"
+        f" from_model, actor_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, {acting.TURN_ACTOR})"
+        " ON CONFLICT (session_id) DO UPDATE SET"
+        " actor_id = CASE WHEN runner.model_pause.resumed_at IS NULL AND runner.model_pause.interrupted"
+        " THEN runner.model_pause.actor_id ELSE EXCLUDED.actor_id END,"
         " kind = EXCLUDED.kind, until = EXCLUDED.until, dfx_choice = EXCLUDED.dfx_choice,"
         " interrupted = CASE WHEN runner.model_pause.resumed_at IS NULL"
         " THEN runner.model_pause.interrupted OR EXCLUDED.interrupted ELSE EXCLUDED.interrupted END,"
@@ -129,23 +143,20 @@ async def record(
         " THEN runner.model_pause.from_access ELSE EXCLUDED.from_access END,"
         " from_model = CASE WHEN runner.model_pause.resumed_at IS NULL"
         " THEN runner.model_pause.from_model ELSE EXCLUDED.from_model END, resumed_at = NULL",
-        (session_id, kind, interrupted, stamp(at), stamp(until), choice, from_access, from_model),
+        (session_id, kind, interrupted, stamp(at), stamp(until), choice, from_access, from_model, session_id),
     )
 
 
 async def open_pauses(conn: AsyncConnection[Any]) -> list[Pause]:
     cursor = await conn.execute(
-        "SELECT session_id::text, kind, interrupted, paused_at, until, dfx_choice, from_access, from_model, suspended"
-        " FROM runner.model_pause WHERE resumed_at IS NULL ORDER BY paused_at, session_id"
+        f"SELECT {COLUMNS} FROM runner.model_pause WHERE resumed_at IS NULL ORDER BY paused_at, session_id"
     )
     return [Pause(*row) for row in await cursor.fetchall()]
 
 
 async def get(conn: AsyncConnection[Any], session_id: str) -> Pause | None:
     cursor = await conn.execute(
-        "SELECT session_id::text, kind, interrupted, paused_at, until, dfx_choice, from_access, from_model, suspended"
-        " FROM runner.model_pause WHERE session_id = %s AND resumed_at IS NULL",
-        (session_id,),
+        f"SELECT {COLUMNS} FROM runner.model_pause WHERE session_id = %s AND resumed_at IS NULL", (session_id,)
     )
     row = await cursor.fetchone()
     return None if row is None else Pause(*row)

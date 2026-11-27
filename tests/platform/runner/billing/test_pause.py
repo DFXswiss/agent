@@ -15,6 +15,8 @@ from agent_runner.prompts.resume import RESUMED
 from agent_runner.reconcile.engine import Run
 from agent_runner.sessions import records
 
+from ..credentials.continued import continued_audits, continued_request, set_turn
+from ..credentials.kit import ALICE, BOB
 from ..prompts.kit import PromptGuest, add_prompt, pull, run, setup
 from ..reconcile.rig import Rig
 from ..sessions.kit import ORG
@@ -285,6 +287,80 @@ def test_waiting_resumes_a_vm_that_stopped_and_a_session_that_changed(rig: Rig, 
             await conn.execute("UPDATE runner.vm SET state = 'stopped' WHERE id = %s", (row.id,))
         await pause.enforce(pk.deliverer, desired(True))
         assert ("control", (third, "suspend")) not in pk.guest.calls
+
+    run(rig, body)
+
+
+def test_the_continuation_after_a_credit_acts_for_the_person_of_the_interrupted_turn(rig: Rig) -> None:
+    """HOT-28: bob gave the instruction of the running turn in alice's task; the credit pause interrupts it and the
+    platform continues it - the continuation keeps bob as acting user, so a `github.*` step after it acts for bob.
+    The sender line stays the platform's; the audit names bob."""
+
+    async def body(env: Any) -> None:
+        pk = await setup(env)
+        sid = await pk.add_session(1, state="working")
+        await set_turn(env.pool, sid, BOB)
+        await pause.enforce(pk.deliverer, desired(True))
+        rows = await env.rows("SELECT actor_id::text FROM runner.credit_pause WHERE session_id = %s", sid)
+        assert rows == [(BOB,)]
+        # the turn's state changes while the session is paused: the recorded person counts
+        await set_turn(env.pool, sid, None)
+        await pause.enforce(pk.deliverer, desired(False))
+        assert pk.guest.speakers() == [pause.CONTINUATION_LINE]  # the platform speaks, not bob
+        (prompt_id,) = pk.guest.sent()
+        op = await continued_request(pk.kit.session_env, await pk.vm(), sid, prompt_id)
+        assert op.actor_id == BOB
+        assert continued_audits(await env.audits()) == [
+            {"cause": "credit", "prompt_id": prompt_id, "triggered_by": BOB}
+        ]
+        assert any(f"credit_continued session_id={sid} acting={BOB}" in line for line in pk.lines)
+        await env.sync.pusher.drain()  # the contract-checking hub takes the audit
+
+    run(rig, body)
+
+
+def test_a_continued_turn_without_a_person_stays_without_one(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        pk = await setup(env)
+        sid = await pk.add_session(1, state="working")
+        await set_turn(env.pool, sid, None)  # prompts of two people in the turn, or no known author
+        await pause.enforce(pk.deliverer, desired(True))
+        await pause.enforce(pk.deliverer, desired(False))
+        (prompt_id,) = pk.guest.sent()
+        op = await continued_request(pk.kit.session_env, await pk.vm(), sid, prompt_id)
+        assert op.actor_id is None
+        assert continued_audits(await env.audits()) == [
+            {"cause": "credit", "prompt_id": prompt_id, "triggered_by": None}
+        ]
+        assert any(f"credit_continued session_id={sid} acting=-" in line for line in pk.lines)
+        await env.sync.pusher.drain()
+
+    run(rig, body)
+
+
+def test_an_open_pause_keeps_the_person_of_the_interrupted_turn(rig: Rig) -> None:
+    """A pause carried on (a second run while exhausted) keeps the person it recorded for an interrupted turn; a pause
+    of an idle session takes the current one, and a new pause after an ended one records anew."""
+
+    async def body(env: Any) -> None:
+        pk = await setup(env)
+        working = await pk.add_session(1, state="working")
+        idle = await pk.add_session(2, state="idle")
+        await set_turn(env.pool, working, BOB)
+        await set_turn(env.pool, idle, BOB)
+        session_env = pk.kit.session_env
+        await pause.enforce(pk.deliverer, desired(True))
+        await set_turn(env.pool, working, ALICE)
+        await set_turn(env.pool, idle, ALICE)
+        for sid in (working, idle):
+            await pause._record(session_env, await pk.session(sid), False)
+        rows = await env.rows("SELECT session_id::text, actor_id::text FROM runner.credit_pause ORDER BY 1")
+        assert dict(rows) == {working: BOB, idle: ALICE}
+        await pause.enforce(pk.deliverer, desired(False))
+        await pk.set_state(working, "working")
+        await pause.enforce(pk.deliverer, desired(True))
+        rows = await env.rows("SELECT actor_id::text FROM runner.credit_pause WHERE session_id = %s", working)
+        assert rows == [(ALICE,)]
 
     run(rig, body)
 

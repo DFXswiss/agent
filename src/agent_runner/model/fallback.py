@@ -34,7 +34,11 @@ suspended until its next prompt, which is then delivered. **Credit first**: whil
 the next resume or start resolves anew.
 
 The sentences have a stable prompt ID per pause (`prompt_id`), so a repeated hand-over is the same prompt for the
-guest; they carry no user text.
+guest; they carry no user text. Their sender line is the platform's (`LINE`, ADR-083; an older guest gets them
+without). **The person of the interrupted turn** (HOT-28): the pause records the acting user of the session's turn
+(`runner.model_pause.actor_id`); the sentence is stored with that person before it is handed over
+(`acting.continuation`), so the continued turn - on the new access, also after a restart of the daemon - acts for the
+same person; a turn without acting user stays without one. The audit `session.continued` names the person taken over.
 """
 
 from __future__ import annotations
@@ -45,11 +49,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent_runner.billing import pause as credit
+from agent_runner.credentials import acting
 from agent_runner.crypto.ids import uuid7
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestError
 from agent_runner.model import access, exhaustion, limits, operator, pauses, policy
 from agent_runner.model.access import Resolved, Wait
+from agent_runner.prompts import speaker
 from agent_runner.prompts.resume import RESUMED, RETRY, desired_of, vm_running
 from agent_runner.sessions import records
 from agent_runner.sessions.env import SessionEnv
@@ -75,6 +81,10 @@ SWITCHED = (
     " {time}. Continue the interrupted work."
 )
 AVAILABLE = "The model quota is available again. Continue the interrupted work."
+LINE = speaker.check(speaker.PLATFORM_MODEL_CONTINUATION)
+"""The sender line of the sentences (ADR-083 section 1): the platform, not a person."""
+CAUSE = "model"
+"""The cause of their `runner.platform_prompt` rows and of the audit `session.continued` (HOT-28)."""
 LOCK = "_model_fallback_lock"
 
 
@@ -199,9 +209,12 @@ async def check(deliverer: Any, session: LocalSession) -> bool:
     return await _continue(deliverer, session.id, pause)
 
 
-async def _end(env: SessionEnv, session_id: str) -> None:
+async def _end(env: SessionEnv, session_id: str, audit: dict[str, Any] | None = None) -> None:
+    """End the pause; `audit`: the row `session.continued` of its continuation, in the same transaction."""
     async with env.transaction() as conn:
         await pauses.end(conn, env, session_id)
+        if audit is not None:
+            await env.outbox.enqueue(conn, "audit", audit)
     _line(env, f"model_pause_ended session_id={session_id}")
 
 
@@ -228,13 +241,33 @@ async def _continue(deliverer: Any, session_id: str, pause: pauses.Pause) -> boo
                 return True
             target, _key = await label_of(env, current)
             text = sentence(pause.from_access, target, pause.until)
+            continued = prompt_id(session_id, pause.paused_at)
+            async with env.transaction() as conn:
+                await acting.continuation(
+                    conn, session_id=session_id, prompt_id=continued, actor_id=pause.actor_id, cause=CAUSE
+                )
             try:
                 async with await env.client(row) as guest:
-                    await guest.register_prompt(session_id, prompt_id(session_id, pause.paused_at), text)
+                    await speaker.register(
+                        env, guest, vm_id=row.id, session_id=session_id, prompt_id=continued, text=text, line=LINE
+                    )
             except (GuestError, RunnerError) as exc:
                 _line(env, f"model_continue_failed session_id={session_id} code={exc.code}")
                 return True
-            _line(env, f"model_continued session_id={session_id} from={pause.from_access} to={target}")
+            _line(
+                env,
+                f"model_continued session_id={session_id} from={pause.from_access} to={target}"
+                f" acting={pause.actor_id or '-'}",
+            )
+            audit = acting.continued(
+                task_id=current.task_id,
+                session_id=session_id,
+                prompt_id=continued,
+                actor_id=pause.actor_id,
+                cause=CAUSE,
+            )
+            await _end(env, session_id, audit)
+            return False
         await _end(env, session_id)
     return False
 
