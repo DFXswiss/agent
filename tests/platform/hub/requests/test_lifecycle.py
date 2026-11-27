@@ -232,7 +232,7 @@ def test_a_new_request_replaces_the_active_one_of_its_kind(desk: Desk) -> None:
 
 
 def test_roots_of_different_slots_run_side_by_side(desk: Desk, published: MemoryPublisher) -> None:
-    """KOR-73, ADR-099 section 2: logins of different subscriptions (`slot`) never replace each other; a new root of
+    """KOR-73, ADR-100 section 2: logins of different subscriptions (`slot`) never replace each other; a new root of
     the same slot replaces the active one; a slot sent with a follow-up is not kept."""
     writer, device = desk.scene.writer, desk.scene.device
     slots = [new_id() for _ in range(5)]

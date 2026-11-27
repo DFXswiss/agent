@@ -71,8 +71,8 @@ ADR-094 section 2), so clients send those fields only to such a device;
 session read tools `get_usage`, `list_audit`, `list_workgroup_operations` and `get_metrics` (ADR-097 section 3), so the
 hub creates an analysis task only while every device of the organization announced it; `subscriptions.parallel` -
 logins of different subscriptions side by side (slot), the record's own mailbox, `account`, `extended`, `click`,
-`relay` and `mailbox.check {subscription_id}` (ADR-099 section 7), so clients send those only to such a device;
-`vnc` - `vnc.open` and the root field `vnc` of `claude.login` with its response `needs_human` (ADR-101), so clients
+`relay` and `mailbox.check {subscription_id}` (ADR-100 section 7), so clients send those only to such a device;
+`vnc` - `vnc.open` and the root field `vnc` of `claude.login` with its response `needs_human` (ADR-103), so clients
 send them only to such a device."""
 DEVICE_FLOW = "github.device_flow"
 OAUTH_APP = "github.oauth_app"

@@ -50,7 +50,7 @@ SPEC_CHANNELS = {
     "/v1/device/ws": ("ws/device/query.json", "ws/device/hint.json"),
 }
 SPEC_LOG_FILES = {"log/invitation-package.json", "log/session-statement.json"}
-# ADR-101: the query and messages of the VNC tunnel's two WebSockets (rows of api/INDEX.json, not live channels).
+# ADR-103: the query and messages of the VNC tunnel's two WebSockets (rows of api/INDEX.json, not live channels).
 VNC_SCHEMAS = {"ws/vnc/query.json", "ws/vnc/record.json"}
 
 
@@ -94,9 +94,9 @@ def test_device_rows_are_complete(index: dict[str, Any], contracts: Contracts) -
     assert "CTR-03" not in index["pending_owners"]
     rows = [e for e in index["endpoints"] if e["owner"] == "CTR-03"]
     # later packages add device rows of their own (KOR-33: context checkpoints; KOR-44: the browser; KOR-57: the
-    # orchestrator session; KOR-69: subscriptions; KOR-53: the analysis reads of a workgroup; ADR-101: the device's
-    # end of a VNC tunnel)
-    owners = ("KOR-33", "KOR-44", "KOR-57", "KOR-69", "KOR-53", "ADR-101")
+    # orchestrator session; KOR-69: subscriptions; KOR-53: the analysis reads of a workgroup; KOR-74: mailboxes;
+    # ADR-103: the device's end of a VNC tunnel)
+    owners = ("KOR-33", "KOR-44", "KOR-57", "KOR-69", "KOR-53", "KOR-74", "ADR-103")
     later = {e["path"] for e in index["endpoints"] if e["owner"] in owners}
     assert {e["path"] for e in rows} | later >= {
         e["path"] for e in index["endpoints"] if e["path"].startswith("/v1/device/")

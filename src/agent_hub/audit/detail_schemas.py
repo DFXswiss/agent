@@ -227,6 +227,10 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"key_id": [{"type": "string", "pattern": "^session\\.[0-9a-f]{32}$"}]},
         "required": ["key_id"],
     },
+    "auth.session_renew": {
+        "properties": {"key_id": [{"type": "string", "pattern": "^session\\.[0-9a-f]{32}$"}]},
+        "required": ["key_id"],
+    },
     "billing.export": {
         "properties": {
             "from": [{"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}],
@@ -621,6 +625,22 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "log.wg_create": {
         "properties": {"seq": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}]},
         "required": ["seq"],
+    },
+    "mail.read": {
+        "properties": {
+            "operation_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ],
+            "owner_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ],
+            "folder": [{"type": "string", "enum": ["inbox", "spam", "all"]}],
+            "count": [{"type": "integer", "minimum": 0, "maximum": 20}],
+            "waited_seconds": [{"type": "integer", "minimum": 0, "maximum": 330}],
+            "timed_out": [{"type": "boolean"}],
+            "result": [{"type": "string", "enum": ["ok", "not_found", "upstream_error", "timeout"]}],
+        },
+        "required": ["operation_id", "owner_id", "folder", "count", "waited_seconds", "timed_out", "result"],
     },
     "model.provider_outside_allowlist": {
         "properties": {
@@ -1380,6 +1400,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.device.github_identities": {"properties": {}, "required": []},
     "read.device.github_identity": {"properties": {}, "required": []},
     "read.device.logs": {"properties": {}, "required": []},
+    "read.device.mailboxes": {"properties": {}, "required": []},
     "read.device.orchestrator": {"properties": {}, "required": []},
     "read.device.platform_log": {"properties": {}, "required": []},
     "read.device.pull": {"properties": {}, "required": []},
@@ -1396,6 +1417,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.device.wraps": {"properties": {}, "required": []},
     "read.device_request": {"properties": {}, "required": []},
     "read.github_identity": {"properties": {}, "required": []},
+    "read.mailbox": {"properties": {}, "required": []},
     "read.me.agents": {"properties": {}, "required": []},
     "read.me.audit": {"properties": {}, "required": []},
     "read.me.bundles.recovery": {"properties": {}, "required": []},
@@ -1405,6 +1427,7 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.me.github_identities": {"properties": {}, "required": []},
     "read.me.invitees": {"properties": {}, "required": []},
     "read.me": {"properties": {}, "required": []},
+    "read.me.mailboxes": {"properties": {}, "required": []},
     "read.me.quotas": {"properties": {}, "required": []},
     "read.me.subscriptions": {"properties": {}, "required": []},
     "read.monitoring.overview": {"properties": {}, "required": []},

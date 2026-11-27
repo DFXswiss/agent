@@ -1,4 +1,4 @@
-// U-WEB-credentials (KOR-73, ADR-099): subscriptions logged in side by side – the own mailbox of a subscription in its
+// U-WEB-credentials (KOR-73, ADR-100): subscriptions logged in side by side – the own mailbox of a subscription in its
 // sealed record (only the address leaves), the record written before its login, the login with `extended`, its slot
 // and the data of a new account, several logins at once, the human check (`verify`, click, relay), the reason of a
 // fallback, the check of the own mailbox, and the bodies and the `slot` of the request client.
@@ -16,6 +16,7 @@ import {
   newRecordBody,
   setSubscriptionMailbox,
   startSubscriptionLogin,
+  parallelAvailable,
   subscriptionDevices,
 } from '../../../src/core/credentials/subscriptions';
 import { checkResponseBody, isAccount, validRequestBody } from '../../../src/core/requests/bodies';
@@ -129,6 +130,9 @@ describe('the own mailbox', () => {
     expect((await sent(t))[0]!.body).toEqual({ subscription_id: A });
     expect(validRequestBody('mailbox.check', { subscription_id: 'x' }, false)).toBe(false);
     expect(validRequestBody('mailbox.check', { other: A }, false)).toBe(false);
+    // KOR-74's mailbox body and the subscription are one or the other, never both
+    expect(validRequestBody('mailbox.check', { mailbox: {}, subscription_id: A }, false)).toBe(false);
+    expect(validRequestBody('mailbox.check', { mailbox: {} }, false)).toBe(true);
   });
 });
 
@@ -178,6 +182,27 @@ describe('the parallel login', () => {
     expect(await subscriptionDevices(t.context)).toMatchObject({ preselected: t.device.id, parallel: true });
     devices(t, ['subscriptions.parallel']);
     expect(await subscriptionDevices(t.context)).toMatchObject({ preselected: null, parallel: false });
+    expect(await parallelAvailable(t.context)).toBe(false);
+    t.client.on('GET /v1/me/devices', () => ({ devices: [] }));
+    expect(await parallelAvailable(t.context)).toBeNull();
+    devices(t, ['subscriptions', 'subscriptions.parallel']);
+    expect(await parallelAvailable(t.context)).toBe(true);
+    // an offline device and a device that announces nothing do not count
+    t.client.on('GET /v1/me/devices', () => ({
+      devices: [
+        {
+          device_id: t.device.id,
+          kind: 'platform',
+          org_id: t.org,
+          wg_ids: [t.wg],
+          online: false,
+          last_seen_at: null,
+          features: ['subscriptions', 'subscriptions.parallel'],
+        },
+        { device_id: t.device.id, kind: 'platform', org_id: t.org, wg_ids: [t.wg], online: true, last_seen_at: null },
+      ],
+    }));
+    expect(await parallelAvailable(t.context)).toBe(false);
   });
 
   it('writes the record, then sends the automatic login with extended, slot and the new account', async () => {

@@ -1,4 +1,4 @@
-"""Mailbox automation of the Claude subscription login (05-runner.md section 11.3, ADR-011, ADR-099).
+"""Mailbox automation of the Claude subscription login (05-runner.md section 11.3, ADR-011, ADR-100).
 
 Instead of relaying the authorize URL to the user, the runner drives the provider's pages itself in the login's own
 browser sandbox (`agent_runner.login.sandbox`: a login VM, or a browser process) and reads the sign-in mail from the
@@ -61,7 +61,7 @@ REASONS = frozenset(
 MAX_STEPS = 16
 _MAIL_LOCKS: dict[tuple[int, str, int, str], asyncio.Lock] = {}
 """One lock per mailbox: logins that share a mailbox (aliases) take turns from the address entered to the mail read,
-so none takes the sign-in mail of another (ADR-099 section 2)."""
+so none takes the sign-in mail of another (ADR-100 section 2)."""
 
 
 def mail_lock(mailbox: Mailbox) -> asyncio.Lock:

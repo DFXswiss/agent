@@ -1,6 +1,6 @@
 # KOR-73 – contract changes
 
-ADR-027 section 3 (additive). Decision: ADR-099 (parallel subscription logins, each in its own sandbox, own mailbox
+ADR-027 section 3 (additive). Decision: ADR-100 (parallel subscription logins, each in its own sandbox, own mailbox
 per subscription, registration).
 
 ## Credential body (`credentials/claude_subscription.json`)

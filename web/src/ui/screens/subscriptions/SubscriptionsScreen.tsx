@@ -237,7 +237,7 @@ export function SubscriptionsScreen() {
               >
                 {t('subscriptions.add')}
               </button>
-              {parallel === true && (
+              {(parallel === true || parallel === null) && (
                 <button
                   type="button"
                   className="min-h-11 self-start rounded border border-gray-400 px-4"

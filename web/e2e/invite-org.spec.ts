@@ -11,7 +11,7 @@ import { buildEntries, type Entry, logText } from '../src/core/log/entries';
 import { epochKey, ORG, WG } from '../src/core/log/state';
 import { ed25519VerifyB64u } from '../src/core/crypto/keys';
 import { extendLog } from '../src/core/log/verify';
-import { expect, test } from './fixtures/test.ts';
+import { expect, stayOff, test } from './fixtures/test.ts';
 import { addAuthenticator } from './helpers/authenticator.ts';
 import { cancelNext } from './helpers/cancel.ts';
 import { createRecoveryCode, onboard, type Onboarded, ORG_PATH } from './helpers/onboard.ts';
@@ -25,6 +25,8 @@ interface Admin {
 
 async function newPage(browser: Browser, baseURL: string): Promise<Page> {
   const context = await browser.newContext({ baseURL });
+  // the reloads below need the passkey again: "Stay signed in" (rule E-40) off, as in the fixtures' contexts
+  await stayOff(context);
   const page = await context.newPage();
   await addAuthenticator(page);
   return page;

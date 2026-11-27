@@ -1,6 +1,6 @@
 // "Add a subscription" (KOR-69, ADR-090): a label (and an optional note), one button – the login on a platform device
 // starts at once (`SubscriptionLogin`) and the new subscription is only measured until its use is switched on.
-// KOR-73 (ADR-099): with a device that runs logins side by side (`useParallel`) the form also takes the subscription's
+// KOR-73 (ADR-100): with a device that runs logins side by side (`useParallel`) the form also takes the subscription's
 // own mailbox (then the login is automatic and the record is written first), the data of a new account with the
 // account holder's consents, and the organizations that may use it; otherwise it stays the single login of KOR-69.
 import { type FormEvent, useState } from 'react';
@@ -72,7 +72,8 @@ export function addInput(
 export function AddSubscription({ onAdded, onClose }: { readonly onAdded: () => void; readonly onClose: () => void }) {
   const { t } = useI18n();
   // until the device is known the form is the single login of KOR-69; the new fields appear with a parallel device
-  const parallel = useParallel() === true;
+  const offered = useParallel();
+  const parallel = offered === true || offered === null;
   const [name, setName] = useState('');
   const [note, setNote] = useState('');
   const [started, setStarted] = useState<LoginInput | null>(null);

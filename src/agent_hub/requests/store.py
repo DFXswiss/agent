@@ -17,7 +17,7 @@ authorization code typed during `claude.login`). Rules:
 - the device must be eligible for the user (`agent_hub.credentials.eligibility`, the set of `GET /v1/me/devices`),
   else `403 device_not_assigned`;
 - at most one active root per user, device, kind and `slot` (the plaintext subject of the root, e.g. the subscription a
-  `claude.login` fills; KOR-73, ADR-099 section 2 - NULL is a slot of its own): a new root replaces an active one of
+  `claude.login` fills; KOR-73, ADR-100 section 2 - NULL is a slot of its own): a new root replaces an active one of
   the same slot, whose chain becomes `failed`; roots of different slots run side by side;
 - a `github.connect` for a company identity names the organization (`org_id`, ADR-078 section 1): only an active
   admin of it may send one, and only of kind `github.connect` (`403 forbidden` otherwise); it is stored as

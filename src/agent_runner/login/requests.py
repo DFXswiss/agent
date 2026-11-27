@@ -41,6 +41,8 @@ use `count_tokens`.
 
 `mailbox.check` (`{}`): IMAPS login with the owner's `mailbox` credential and `LIST` -> `{step:"done", valid}` (a
 refused login is not valid); a connection or TLS failure `upstream_unreachable`, a failed `LIST` `upstream_error`.
+With `{mailbox}` (ADR-099 section 9) the same check of that mailbox body, which the owner's client sealed into the
+request (any mailbox of the store, also before it is saved); a malformed body is `upstream_error`.
 """
 
 from __future__ import annotations
@@ -88,7 +90,7 @@ ACCOUNT_FIELDS = frozenset({"name", "birth_date", "consents"})
 CONSENTS = frozenset({"terms", "age", "marketing"})
 BIRTH_RE = re.compile(r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")
 BASIC_STAGES = frozenset({"browser_started", "email_entered", "magic_link_received", "authorized"})
-"""The progress stages a client without `extended` knows (ADR-099 section 4)."""
+"""The progress stages a client without `extended` knows (ADR-100 section 4)."""
 VERIFY_FRAMES = 80
 """Pictures of a check for humans per login (the hub keeps at most 100 responses per request)."""
 LABEL_LIMITS = {"name": 64, "note": 500}
@@ -125,7 +127,7 @@ async def _fail(flow: Flow, code: str, to: FollowUp | None = None, *, shape: str
 
 @dataclass(frozen=True)
 class Stored:
-    """What a further subscription's record already holds: its address and its own mailbox (ADR-099 section 1)."""
+    """What a further subscription's record already holds: its address and its own mailbox (ADR-100 section 1)."""
 
     email: str | None
     mailbox: tuple[Mailbox, str] | None
@@ -206,12 +208,12 @@ async def _stored(flow: Flow, record_id: object) -> Stored | None:
 
 
 class HumanCheck:
-    """The check for humans of one login, done by its owner (ADR-099 section 4): the sandbox's picture goes out as
+    """The check for humans of one login, done by its owner (ADR-100 section 4): the sandbox's picture goes out as
     `verify` responses (when it changed, every `verify_tick`, at most `VERIFY_FRAMES`), a `{click}` follow-up of the
     owner's own identity is clicked at that point of the viewport, `{relay: true}` or no click within `verify_wait`
     gives up (`human_check`). Without `extended` the check is given up at once.
 
-    With `vnc` (the root asked for it, ADR-101) the check first answers `{step: "needs_human", vnc_available}` and,
+    With `vnc` (the root asked for it, ADR-103) the check first answers `{step: "needs_human", vnc_available}` and,
     when the sandbox has a screen, offers it to the owner (`agent_runner.vnc.screens`, kind `login`, this request) until
     the check is gone or given up. While a VNC connection is open the owner works on the screen itself: no pictures are
     sent and the check keeps waiting (`verify_wait` starts again on every look)."""
@@ -248,7 +250,7 @@ class HumanCheck:
             _line(self.flow, "verify_follow_up_invalid")
             return "ignored"
         if request.user != request.owner:
-            _line(self.flow, "click_refused")  # a check for humans is never answered by an agent (ADR-099 section 4)
+            _line(self.flow, "click_refused")  # a check for humans is never answered by an agent (ADR-100 section 4)
             return "ignored"
         await sandbox.click_at(float(point["x"]) * page.width, float(point["y"]) * page.height)
         await asyncio.sleep(self.opts.verify_settle)
@@ -303,7 +305,7 @@ def _fraction(value: object) -> bool:
 
 
 async def _sandbox(flow: Flow, url: str, workdir: Path, opts: LoginOptions) -> Sandbox:
-    """The login's own sandbox (`LOGIN_SANDBOX`, ADR-099 section 3)."""
+    """The login's own sandbox (`LOGIN_SANDBOX`, ADR-100 section 3)."""
     if opts.sandbox is not None:
         made: Sandbox = await opts.sandbox(flow, url, workdir)
         return made
@@ -391,7 +393,7 @@ async def _plan(flow: Flow, wanted: Mapping[str, object], stored: Stored | None)
     email = wanted.get("email") or (stored.email if stored is not None else None) or own
     account = wanted.get("account")
     if isinstance(account, dict) and account.get("consents") and flow.request.user != flow.user:
-        # consents are the account holder's, declared by the user, never by the user's agent (ADR-099 section 5)
+        # consents are the account holder's, declared by the user, never by the user's agent (ADR-100 section 5)
         _line(flow, "consents_ignored")
         account = {name: value for name, value in account.items() if name != "consents"}
     return Plan(mailbox, str(email), account if isinstance(account, dict) else None)
@@ -566,17 +568,24 @@ async def mailbox_check(flow: Flow) -> None:
     opts = options(flow.context)
     try:
         record_id = flow.body.get("subscription_id")
-        if set(flow.body) - {"subscription_id"} or (
-            record_id is not None and not (isinstance(record_id, str) and UUID_RE.fullmatch(record_id))
+        if (
+            set(flow.body) - {"mailbox", "subscription_id"}
+            or len(flow.body) > 1
+            or (record_id is not None and not (isinstance(record_id, str) and UUID_RE.fullmatch(record_id)))
         ):
             raise Failed("upstream_error")
-        if record_id is None:
-            mailbox, _email = await _mailbox(flow)
-        else:
+        if "mailbox" in flow.body:  # a mailbox of the store, sealed to this device with the request (ADR-099 §9)
+            given = mailbox_fields(flow.body["mailbox"]) if isinstance(flow.body["mailbox"], dict) else None
+            if given is None:
+                raise Failed("upstream_error")
+            mailbox, _email = given
+        elif record_id is not None:  # the own mailbox of a further subscription (KOR-73, ADR-100 section 1)
             stored = await _stored(flow, record_id)
             if stored is None or stored.mailbox is None:
                 raise Failed("credential_missing")
             mailbox = stored.mailbox[0]
+        else:
+            mailbox, _email = await _mailbox(flow)
         try:
             valid = await asyncio.to_thread(imap_login, mailbox, opts.imap_factory)
         except (OSError, imaplib.IMAP4.error):

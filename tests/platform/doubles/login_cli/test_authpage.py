@@ -445,7 +445,7 @@ def test_invalid_verifier_is_a_failure(login: Login) -> None:
     )
 
 
-# --- KOR-73: the code of the mail, registration, the check for humans (ADR-099 section 8) ---------------------------
+# --- KOR-73: the code of the mail, registration, the check for humans (ADR-100 section 8) ---------------------------
 
 
 def _to_check_email(login: Login) -> tuple[Any, str]:

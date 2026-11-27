@@ -1,4 +1,4 @@
-// The own mailbox of a further subscription (KOR-73, ADR-099 section 1): set or replace it (the password is entered
+// The own mailbox of a further subscription (KOR-73, ADR-100 section 1): set or replace it (the password is entered
 // anew, it is never shown), remove it, and check it on a device that runs logins side by side
 // (`mailbox.check {subscription_id}`: IMAP login and LIST with the subscription's own mailbox).
 import { useState } from 'react';

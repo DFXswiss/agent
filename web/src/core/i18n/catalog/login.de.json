@@ -3,5 +3,7 @@
   "explain": "Melden Sie sich mit Ihrem Passkey an.",
   "submit": "Mit Passkey anmelden",
   "working": "Warte auf Ihren Passkey…",
-  "cancelled": "Die Anmeldung wurde abgebrochen – bitte erneut versuchen."
+  "cancelled": "Die Anmeldung wurde abgebrochen – bitte erneut versuchen.",
+  "stay": "Angemeldet bleiben",
+  "stay.hint": "Dieser Browser bleibt angemeldet und öffnet Ihre Daten nach einem Neuladen oder Neustart ohne Passkey, bis Sie sich abmelden. Nicht auf gemeinsam genutzten Geräten verwenden."
 }

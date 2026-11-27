@@ -33,9 +33,9 @@ class Subscriptions:
     """`GET /v1/me/devices` lists `features` (on in the tests of this area; other suites see the rows as before)."""
     outdated: set[str] = field(default_factory=set)
     parallel: set[str] = field(default_factory=set)
-    """Devices that announce `subscriptions.parallel` (ADR-099 section 7)."""
+    """Devices that announce `subscriptions.parallel` (ADR-100 section 7)."""
     screens: set[str] = field(default_factory=set)
-    """Devices that announce `vnc` (ADR-101 section 6)."""
+    """Devices that announce `vnc` (ADR-103 section 6)."""
     puts: list[Json] = field(default_factory=list)
     conflicts: int = 0
     """The next PUTs answered `409 version_conflict` regardless."""

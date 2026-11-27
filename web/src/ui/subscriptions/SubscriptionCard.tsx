@@ -1,6 +1,6 @@
 // One Claude subscription with its actions (KOR-69, ADR-090): status and address; "Log in now" for one that is not
 // logged in (or "Log in again"), label and note, use, log out and remove. The primary subscription (own sessions) is
-// shown only; it is changed in the credentials section. No token is ever shown. KOR-73 (ADR-099 section 1): its own
+// shown only; it is changed in the credentials section. No token is ever shown. KOR-73 (ADR-100 section 1): its own
 // mailbox (address shown, set, removed, checked); a subscription with one logs in automatically from it.
 import { type FormEvent, useState } from 'react';
 import {

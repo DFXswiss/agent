@@ -505,7 +505,7 @@ def test_login_automation_invalid(value: str, base: dict[str, str]) -> None:
 
 
 def test_login_sandbox(base: dict[str, str]) -> None:
-    """KOR-73, ADR-099 section 3: a login VM per login unless `process` is set; the environment keeps only `process`."""
+    """KOR-73, ADR-100 section 3: a login VM per login unless `process` is set; the environment keeps only `process`."""
     assert load(base).login_sandbox == "vm"
     assert "AGENT_RUNNER_LOGIN_SANDBOX" not in environment(load(base))
     base["AGENT_RUNNER_LOGIN_SANDBOX"] = "process"

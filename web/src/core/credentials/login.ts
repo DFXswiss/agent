@@ -8,7 +8,7 @@
 //   program reports it) – the token never reaches the browser. In the automatic mode (mailbox automation) the device
 //   reports `progress` stages; when the automation fails it answers `authorize` with `automation: "failed"`, which the
 //   UI shows as `login_automation_failed` and continues as the relay.
-// - KOR-73 (ADR-099 section 4): when the automation meets a check for humans the device answers `verify` with the
+// - KOR-73 (ADR-100 section 4): when the automation meets a check for humans the device answers `verify` with the
 //   sandbox's picture (newest wins); the owner's click into it goes out as the follow-up `{click: {x, y}}` (fractions of
 //   the picture, `sendClick`), and `{relay: true}` (`sendRelay`) gives the automation up for the link and the code.
 //   `authorize` may name why the automation gave up (`reason`).

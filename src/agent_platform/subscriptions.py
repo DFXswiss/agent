@@ -37,7 +37,7 @@ measure only). The token is created on the device and never printed here.
   of `rename`, `note`, `logout` and `use` sends the mirror of the use it sealed.
 - `subscriptions remove --id`: `DELETE /v1/subscriptions/{id}` (`404` counts as done).
 
-Side by side, with an own mailbox and registration (KOR-73, ADR-099; rule E-33), only with a device that announced
+Side by side, with an own mailbox and registration (KOR-73, ADR-100; rule E-33), only with a device that announced
 `subscriptions.parallel` (else `no_device`, `reason: device_outdated`); every `claude.login` to such a device names its
 subscription as the plaintext `slot`, so logins of different subscriptions do not replace each other:
 - `subscriptions add` with `--mailbox-host`, `--mailbox-user`, `--mailbox-email` and the password on stdin
@@ -59,7 +59,7 @@ subscription as the plaintext `slot`, so logins of different subscriptions do no
   link). The check for humans is done by a person; the platform only carries the click.
 - Every `claude.login` root to such a device says `extended: true`: the tool understands `verify`, `authorize.reason`
   and the new progress stages (`devicereq`).
-- `subscriptions add|login --vnc` (ADR-101, only the user's own identity, only with a device that announced `vnc`):
+- `subscriptions add|login --vnc` (ADR-103, only the user's own identity, only with a device that announced `vnc`):
   the root says `vnc: true`; when the device answers `needs_human` with `vnc_available`, the tool opens the screen of
   the check by VNC on its own (`agent_platform.vnc.take_over`, no link to click) and follows the login again after the
   connection ended; the result carries the connection's outcome under `vnc`.
@@ -392,7 +392,7 @@ def _optional_label(value: object, most: int) -> bool:
 
 
 def _account(value: object) -> dict[str, Any]:
-    """The data of a new account (`account` of `claude.login`, ADR-099 section 5)."""
+    """The data of a new account (`account` of `claude.login`, ADR-100 section 5)."""
     if not isinstance(value, dict) or not set(value) <= ACCOUNT_FIELDS:
         raise PlatformError("invalid_argument", reason="account")
     found: dict[str, Any] = {"name": value.get("name")}
@@ -480,7 +480,7 @@ def _seal_put(
 
 
 def _create(account: Account, record_id: str, entry: dict[str, Any]) -> None:
-    """The new record without a token (ADR-099 section 1): it holds the mailbox and the use before the login."""
+    """The new record without a token (ADR-100 section 1): it holds the mailbox and the use before the login."""
     body: dict[str, Any] = {"email": entry.get("email"), "kind": "oauth_login", "name": entry["name"]}
     for name in ("note", "mailbox"):
         if name in entry:
@@ -520,7 +520,7 @@ def _wait_option(args: Any) -> None:
 
 
 def needs_screen(account: Account, prepared: dict[str, Any]) -> bool:
-    """The device said that a check for humans waits and that its sandbox has a screen (ADR-101)."""
+    """The device said that a check for humans waits and that its sandbox has a screen (ADR-103)."""
     return any(
         item["status"] == "verified" and item["body"]["step"] == "needs_human" and item["body"]["vnc_available"]
         for item in read(account, prepared)["responses"]
@@ -538,7 +538,7 @@ def _run_login(
     found = wait(account, prepared, args.wait, STEPS | {"needs_human"})
     taken = None
     if screen and found["step"] in ("needs_human", "verify") and needs_screen(account, prepared):
-        # the person takes the check over by VNC; then the login goes on by itself (ADR-101)
+        # the person takes the check over by VNC; then the login goes on by itself (ADR-103)
         taken = vnc.take_over(account, "login", prepared["id"], prepared["device"], prepared["keys"])
         found = wait(account, prepared, args.wait, STEPS - {"verify"})
     if found["step"] == "authorize":
@@ -596,7 +596,7 @@ def login(account: Account, args: Any, context: Context) -> dict[str, Any]:
 
 
 def _own_mailbox(account: Account, record_id: str) -> bool:
-    """Whether the record holds its own mailbox (its login then needs a device that reads it, ADR-099 section 7)."""
+    """Whether the record holds its own mailbox (its login then needs a device that reads it, ADR-100 section 7)."""
     answer = fetch(account, record_id)
     if answer is None:
         raise PlatformError("not_found")
@@ -629,7 +629,7 @@ def _entries(args: Any, context: Context) -> list[dict[str, Any]]:
 
 
 def add_many(account: Account, args: Any, context: Context) -> dict[str, Any]:
-    """Several subscriptions at once (ADR-099 section 2): every login starts before any is followed."""
+    """Several subscriptions at once (ADR-100 section 2): every login starts before any is followed."""
     _wait_option(args)
     entries = _entries(args, context)
     target = _device(account, args.device, parallel=True)
@@ -723,7 +723,7 @@ def check(account: Account, args: Any, _context: Context) -> dict[str, Any]:
 
 
 def mailbox(account: Account, args: Any, context: Context) -> dict[str, Any]:
-    """Set, remove or check the own mailbox of a further subscription (ADR-099 sections 1 and 7)."""
+    """Set, remove or check the own mailbox of a further subscription (ADR-100 sections 1 and 7)."""
     _wait_option(args)
     found = _mailbox_option(args, context)
     if args.check:

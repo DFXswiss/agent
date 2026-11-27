@@ -78,7 +78,7 @@ class LoginOptions:
     playwright: Callable[[], Callable[[], Any]] | None = None
     """Returns `playwright.async_api.async_playwright` (None: import it from the `login` extra)."""
     page_poll: float = 0.5
-    """Seconds between two looks at a page that is still loading (ADR-099 section 4)."""
+    """Seconds between two looks at a page that is still loading (ADR-100 section 4)."""
     verify_wait: float = 180.0
     """Seconds a check for humans waits for the owner's click before the relay takes over (`VERIFY_WAIT`)."""
     verify_tick: float = 2.0

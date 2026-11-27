@@ -42,11 +42,14 @@ from agent_hub.audit.details import detail_violation
 from agent_hub.audit.recorder import note
 from agent_hub.crypto.encoding import MAX_SAFE_INTEGER, canonical, format_time, is_printable_ascii
 from agent_hub.crypto.errors import CryptoError
+from agent_hub.db.blocks import blocks, size_sql
 
 AUDIT_LOCK = 742180101
 HASH_LABEL = "agent-audit-v1"
 NO_PREVIOUS = "-"
 READ_BATCH = 1000
+READ_BYTES = 8 * 1024 * 1024
+"""About the most stored bytes `read_audit` holds per batch."""
 
 ACTOR_KINDS = frozenset({"user", "device", "session", "hub", "operator", "anonymous", "main_agent", "subagent"})
 RESULTS = frozenset({"ok", "denied", "rejected", "duplicate", "failed"})
@@ -86,6 +89,19 @@ _COLUMNS = (
     "seq, at, actor_id, actor_kind, action, result, org_id, wg_id, task_id, session_id, device_id, target_kind,"
     " target_id, detail, event_id, prev_hash, hash, agent_id, on_behalf_of"
 )
+_SIZE = size_sql(
+    [
+        ("actor_kind", "text"),
+        ("action", "text"),
+        ("result", "text"),
+        ("target_kind", "text"),
+        ("target_id", "text"),
+        ("detail", "jsonb"),
+        ("prev_hash", "text"),
+        ("hash", "text"),
+    ]
+)
+"""The size of a stored audit row (`agent_hub.db.blocks.size_sql`; the other columns have a fixed size)."""
 
 
 class AuditIsolationError(RuntimeError):
@@ -312,19 +328,27 @@ def _stored(record: Sequence[Any]) -> StoredAudit:
 def read_audit(
     connection: psycopg.Connection[Any], from_seq: int = 1, to_seq: int | None = None
 ) -> Iterator[StoredAudit]:
-    """The stored rows with `from_seq <= seq <= to_seq` (to the head when None), ascending, read in batches."""
+    """The stored rows with `from_seq <= seq <= to_seq` (to the head when None), ascending, read in batches of at most
+    `READ_BATCH` rows and about `READ_BYTES` stored bytes (`agent_hub.db.blocks`; a larger row alone): the sizes of the
+    next rows are read first, then the rows of the first block. So reading the whole chain needs memory for one batch,
+    whatever the length of the chain or the size of a row (HOT-27)."""
     last = from_seq - 1
     while True:
-        records = connection.execute(
-            f"SELECT {_COLUMNS} FROM hub.audit WHERE seq > %s AND (%s::bigint IS NULL OR seq <= %s)"
+        sizes = connection.execute(
+            f"SELECT seq, {_SIZE} FROM hub.audit WHERE seq > %s AND (%s::bigint IS NULL OR seq <= %s)"
             " ORDER BY seq LIMIT %s",
             (last, to_seq, to_seq, READ_BATCH),
         ).fetchall()
+        if not sizes:
+            return
+        count = next(blocks((int(size) for _seq, size in sizes), max_rows=READ_BATCH, max_bytes=READ_BYTES))
+        through = int(sizes[count - 1][0])
+        records = connection.execute(
+            f"SELECT {_COLUMNS} FROM hub.audit WHERE seq > %s AND seq <= %s ORDER BY seq", (last, through)
+        ).fetchall()
         for record in records:
             yield _stored(record)
-        if len(records) < READ_BATCH:
-            return
-        last = int(records[-1][0])
+        last = through
 
 
 def verify_rows(

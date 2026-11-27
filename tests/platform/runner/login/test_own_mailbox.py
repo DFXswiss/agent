@@ -1,4 +1,4 @@
-"""U-RUN-login (KOR-73, ADR-099 sections 1 and 3): the login VM path of `LOGIN_SANDBOX=vm` (a device with work VMs;
+"""U-RUN-login (KOR-73, ADR-100 sections 1 and 3): the login VM path of `LOGIN_SANDBOX=vm` (a device with work VMs;
 the sandbox is closed on every path, a failing close is only logged) and `mailbox.check {subscription_id}` against the
 subscription's own mailbox."""
 
@@ -107,6 +107,7 @@ def test_a_device_with_work_vms_drives_the_login_in_a_login_vm(
         ({"subscription_id": RECORD}, False, {"step": "failed", "code": "credential_missing"}),
         ({"subscription_id": "nope"}, True, {"step": "failed", "code": "upstream_error"}),
         ({"folder": "INBOX"}, True, {"step": "failed", "code": "upstream_error"}),
+        ({"subscription_id": RECORD, "mailbox": {}}, True, {"step": "failed", "code": "upstream_error"}),
     ],
 )
 def test_the_own_mailbox_of_a_subscription_is_checked(

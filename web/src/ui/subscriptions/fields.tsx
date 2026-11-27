@@ -1,10 +1,10 @@
-// Form parts of adding Claude subscriptions on a device that runs logins side by side (KOR-73, ADR-099): the
+// Form parts of adding Claude subscriptions on a device that runs logins side by side (KOR-73, ADR-100): the
 // subscription's own mailbox, the data of a new account with the consents of the account holder (each unticked, each
 // saying that the person whose address it is gave it), the organizations that may use it, and whether the device can
 // do it (`useParallel`).
 import { useEffect, useState } from 'react';
 import { meOrgs } from '../../core/account/session';
-import { type Account, isMailbox, type Mailbox, subscriptionDevices } from '../../core/credentials/subscriptions';
+import { type Account, isMailbox, type Mailbox, parallelAvailable } from '../../core/credentials/subscriptions';
 import { CONSENTS, type Consent, isAccount } from '../../core/requests/bodies';
 import { useStore } from '../hooks/useStore';
 import { useI18n } from '../i18n';
@@ -194,14 +194,17 @@ export function OrgChoice({
   );
 }
 
-/** Whether the device that would log a subscription in runs logins side by side; null while it is asked. */
-export function useParallel(): boolean | null {
+/** Whether the device that would log a subscription in runs logins side by side: `true` – yes; `null` – no device
+ * serves the user yet (the forms offer it, the start places a device and refuses what it cannot do); `false` – no;
+ * `undefined` while it is asked. */
+export function useParallel(): boolean | null | undefined {
   const { app } = useAppEnv();
-  const [parallel, setParallel] = useState<boolean | null>(null);
+  const [parallel, setParallel] = useState<boolean | null | undefined>(undefined);
   useEffect(() => {
     let closed = false;
-    subscriptionDevices(app.tasks).then(
-      (found) => !closed && setParallel(found.parallel),
+    // read only: opening a form never places a device
+    parallelAvailable(app.tasks).then(
+      (found) => !closed && setParallel(found),
       () => !closed && setParallel(false),
     );
     return () => {

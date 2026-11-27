@@ -2,13 +2,83 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/requests/mailbox.check.request.json",
   "title": "device request body mailbox.check",
-  "description": "no parameters: the user's single mailbox credential; with subscription_id (KOR-73) the own mailbox of that further subscription",
+  "description": "without parameters: the user's primary mailbox (the mailbox of the automatic login); with mailbox: that mailbox body, sealed to the device like every request (a mailbox of the store before or after it is saved, ADR-099 section 9); with subscription_id (KOR-73): the own mailbox of that further subscription (at most one of the two)",
   "type": "object",
   "properties": {
+    "mailbox": {
+      "$ref": "#/$defs/mailbox"
+    },
     "subscription_id": {
       "$ref": "../common.json#/$defs/uuid"
     }
   },
   "required": [],
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "mailbox": {
+      "description": "a mailbox body as contracts/credentials/mailbox.json allows (kept equal by a test)",
+      "type": "object",
+      "properties": {
+        "imap_host": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9.-]{1,253}$"
+        },
+        "imap_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "imap_user": {
+          "type": "string",
+          "pattern": "^[ -~]+$",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "imap_password": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "email": {
+          "type": "string",
+          "pattern": "^[!-?A-~]{1,64}@[A-Za-z0-9-]{1,63}(\\.[A-Za-z0-9-]{1,63}){0,8}$",
+          "maxLength": 254
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "use": {
+          "type": "object",
+          "description": "the workgroups whose sessions may read this mailbox with mail.find (ADR-099 section 3)",
+          "properties": {
+            "wgs": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "$ref": "../common.json#/$defs/uuid"
+              }
+            }
+          },
+          "required": [
+            "wgs"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "imap_host",
+        "imap_port",
+        "imap_user",
+        "imap_password",
+        "email"
+      ],
+      "additionalProperties": false
+    }
+  }
 }

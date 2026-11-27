@@ -1,4 +1,4 @@
-// A check for humans in the login sandbox (KOR-73, ADR-099 section 4): the device's newest picture of the sandbox; the
+// A check for humans in the login sandbox (KOR-73, ADR-100 section 4): the device's newest picture of the sandbox; the
 // owner clicks into it where they would click on the page, and the click goes to the device as fractions of the
 // picture (`sendClick`). The owner does the check; the platform only carries the click. "Sign in myself" gives the
 // automation up (`sendRelay`): the device answers with the link and the code continues as the relay.

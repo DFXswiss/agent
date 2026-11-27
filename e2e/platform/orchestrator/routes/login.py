@@ -131,7 +131,7 @@ def post_doubles(ctx: Context, _params: dict[str, str], body: Any) -> tuple[int,
     settings = {
         "AGENT_RUNNER_LOGIN_ARGV": json.dumps(login_argv(ctx)),
         "AGENT_RUNNER_LOGIN_AUTOMATION": "on",
-        # the doubles run on the test host, which a login VM's boundary does not reach (ADR-099 section 3)
+        # the doubles run on the test host, which a login VM's boundary does not reach (ADR-100 section 3)
         "AGENT_RUNNER_LOGIN_SANDBOX": "process",
         "SSL_CERT_FILE": ca_file(ctx),
     }

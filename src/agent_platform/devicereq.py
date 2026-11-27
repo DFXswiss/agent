@@ -103,7 +103,7 @@ VNC_KEY_RE = re.compile(r"[A-Za-z0-9_-]{43}")
 VNC_PASSWORD_RE = re.compile(r"[A-Za-z0-9]{8}")
 VNC_IDLE_MAX = 900
 VNC_REASONS = frozenset({"ended", "idle", "closed", "unpaired", "timeout", "broken", "unreachable"})
-"""Why a VNC connection ended (`vnc.open` `done.reason`, ADR-101)."""
+"""Why a VNC connection ended (`vnc.open` `done.reason`, ADR-103)."""
 
 Keys = tuple[bytes, bytes]
 
@@ -182,7 +182,7 @@ def _check(body: dict[str, Any]) -> bool:
 
 
 def _vnc(body: dict[str, Any]) -> bool:
-    """A response to `vnc.open` (ADR-101): the connection's key and one-time password, or why it ended."""
+    """A response to `vnc.open` (ADR-103): the connection's key and one-time password, or why it ended."""
     if body.get("step") == "vnc":
         seconds = body.get("idle_seconds")
         return (
@@ -289,7 +289,7 @@ def submit(
 ) -> dict[str, Any]:
     """Seal and post a request to the device `(id, keys)` (with `org`: the plaintext `org_id` of a company account;
     with `slot`: the plaintext subject of a root, the subscription of a `claude.login`, so logins of different
-    subscriptions run side by side, ADR-099 section 2); the prepared request `{id, kind, device, keys}`."""
+    subscriptions run side by side, ADR-100 section 2); the prepared request `{id, kind, device, keys}`."""
     device, keys = target
     header = {
         "v": 1,

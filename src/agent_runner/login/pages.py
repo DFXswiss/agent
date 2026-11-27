@@ -1,4 +1,4 @@
-"""Recognition of the provider's sign-in pages (KOR-73, ADR-099 section 4; 05-runner.md section 11.3).
+"""Recognition of the provider's sign-in pages (KOR-73, ADR-100 section 4; 05-runner.md section 11.3).
 
 `CLASSIFY` is evaluated in the login's sandbox. It reads the page's structure and address - never the markers of the
 auth-page double - and returns `{kind, url, view, code, boxes}`:

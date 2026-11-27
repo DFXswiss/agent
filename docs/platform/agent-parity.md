@@ -35,6 +35,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | login-unlock | screens/login | (the agent's own key signs every request and its state holds the unlocked identity, also for an account of an agent alone: there is no sign-in step) | n/a |
 | recover | screens/recover (an account without a passkey takes its account to this computer with the recovery code, KOR-62; a person's recovery registers a new passkey) | `recover --hub` | done |
 | sign-out | shell | (ends a browser session; an agent is disconnected with `agents revoke`) | n/a |
+| stay-signed-in | shell, screens/login, settings/passkeys (rule E-40: a browser that stays signed in renews its session by itself) | (renews a browser session; an agent's own key does not expire and needs no renewal) | n/a |
 | me-view | shell | `status` | done |
 | settings-language | settings/language | `settings set --locale` | done |
 | settings-model | settings/model (also the two fallback settings of ADR-081: own subscription used up → DFX access, default off; operator subscriptions used up → DFX access over OpenRouter, default on) | `settings set --model-access --model --fallback --fallback-platform` | done |
@@ -51,15 +52,21 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | quotas | settings/quotas | `quotas` | done |
 | subscriptions-list | screens/subscriptions and the card "My subscriptions" of screens/home (every own subscription with status - also `relogin` when the device could not renew it -, use, expiry, plan and the remaining quota per window, for the operator also the token-file subscriptions; ADR-091, ADR-092, rules E-30, E-31) | `subscriptions list` (token files: `quotas --org`) | done |
 | settings-subscriptions | settings/subscriptions (the link to the page "My subscriptions", ADR-091) | `subscriptions list` | done |
-| subscriptions-add | screens/subscriptions ("Add subscription") and settings/subscription-logins (a new subscription logged in on a platform device, ADR-090; with its own mailbox, use and registration, ADR-099) | `subscriptions add --name --note --automatic --email --mailbox-host --mailbox-user --mailbox-email --mailbox-password-stdin --org --register-name --birth-date --consent` | done |
-| subscriptions-add-many | screens/subscriptions ("Mehrere Abos hinzufügen": several subscriptions at once, each with its own mailbox, use and registration, progress per subscription; ADR-099, rule E-33) | `subscriptions add-many --file --wait` | done |
-| subscriptions-mailbox | screens/subscriptions and settings/subscription-logins (the own mailbox of a subscription: set, remove, check; ADR-099 §1) | `subscriptions mailbox --id --mailbox-host --mailbox-user --mailbox-email --mailbox-password-stdin --clear --check` | done |
-| subscriptions-check | screens/subscriptions (the check for humans of a running login: the live picture, a person's click, "sign in in my own browser"; ADR-099 §4) | `subscriptions check --request --out --click --relay` | done |
+| subscriptions-add | screens/subscriptions ("Add subscription") and settings/subscription-logins (a new subscription logged in on a platform device, ADR-090; with its own mailbox, use and registration, ADR-100) | `subscriptions add --name --note --automatic --email --mailbox-host --mailbox-user --mailbox-email --mailbox-password-stdin --org --register-name --birth-date --consent` | done |
+| subscriptions-add-many | screens/subscriptions ("Mehrere Abos hinzufügen": several subscriptions at once, each with its own mailbox, use and registration, progress per subscription; ADR-100, rule E-33) | `subscriptions add-many --file --wait` | done |
+| subscriptions-mailbox | screens/subscriptions and settings/subscription-logins (the own mailbox of a subscription: set, remove, check; ADR-100 §1) | `subscriptions mailbox --id --mailbox-host --mailbox-user --mailbox-email --mailbox-password-stdin --clear --check` | done |
+| subscriptions-check | screens/subscriptions (the check for humans of a running login: the live picture, a person's click, "sign in in my own browser"; ADR-100 §4) | `subscriptions check --request --out --click --relay` | done |
 | subscriptions-login | screens/subscriptions ("Log in now") and settings/subscription-logins (log a subscription in again) | `subscriptions login --id` | done |
 | subscriptions-edit | settings/subscription-logins (label and note) | `subscriptions rename --id --name`, `subscriptions note --id --note\|--clear` | done |
 | subscriptions-logout | settings/subscription-logins (drop the access and refresh token, keep name, note and use) | `subscriptions logout --id` | done |
 | subscriptions-use | settings/subscription-logins (use per subscription: only measured, organizations, the operator's pool; ADR-090 §3) | `subscriptions use --id --measure --pool --org` | done |
 | subscriptions-remove | settings/subscription-logins (remove a subscription and its readings) | `subscriptions remove --id` | done |
+| mailboxes-list | settings/mailboxes (every own mailbox: name, address, purpose, released workgroups, "login" for the primary one; ADR-099) | `mailbox list` | done |
+| mailboxes-add | settings/mailboxes (add a mailbox; the password is write-only) | `mailbox add --name --email --imap-host --imap-port --imap-user --purpose --wg` | done |
+| mailboxes-edit | settings/mailboxes (change a mailbox; what is not given stays, the password is write-only) | `mailbox change --id --name --email --imap-host --imap-port --imap-user --purpose --password-stdin` | done |
+| mailboxes-release | settings/mailboxes (release a mailbox to workgroups whose sessions read it with `mail.find`, ADR-099 §3) | `mailbox release --id --wg --none` | done |
+| mailboxes-check | settings/mailboxes (check a mailbox on a device, `mailbox.check` with the mailbox) | `mailbox check --id --device --wait` | done |
+| mailboxes-delete | settings/mailboxes (delete a mailbox) | `mailbox delete --id` | done |
 | model-quotas | settings/model-quotas (model access and quotas of the active organization: own subscription, operator subscriptions with state and release or "not readable" with the last observed limit, DFX access, summary; ADR-081) | `quotas --org` | done |
 | github-status | settings/github | `github status` | done |
 | github-connect | settings/github | `github connect --device --request --wait` | done |
@@ -235,6 +242,10 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/subscriptions/{id}` | subscriptions-list, subscriptions-edit, subscriptions-use, subscriptions-logout |
 | `PUT /v1/subscriptions/{id}` | subscriptions-edit, subscriptions-use, subscriptions-logout, subscriptions-add, subscriptions-add-many, subscriptions-mailbox |
 | `DELETE /v1/subscriptions/{id}` | subscriptions-remove |
+| `GET /v1/me/mailboxes` | mailboxes-list |
+| `GET /v1/mailboxes/{id}` | mailboxes-list, mailboxes-edit, mailboxes-release, mailboxes-check |
+| `PUT /v1/mailboxes/{id}` | mailboxes-add, mailboxes-edit, mailboxes-release |
+| `DELETE /v1/mailboxes/{id}` | mailboxes-delete |
 | `POST /v1/me/recovery/begin` | recovery-new |
 | `DELETE /v1/me/registration` | register |
 | `PUT /v1/me/settings` | settings-language, settings-model, attention-model-always |
@@ -289,6 +300,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/recovery/finish` | recover |
 | `GET /v1/scopes/{scope}/events` | task-view, session-follow, session-terminal, operations, wg-settings, tasks-overview, session-workvm, task-workvm-items, task-waiting, task-guest-errors, platform-browser |
 | `POST /v1/session/end` | sign-out |
+| `POST /v1/session/renew` | stay-signed-in |
 | `GET /v1/sessions/{session}` | session-view, monitoring, session-workvm, task-runtime, triggered-by |
 | `POST /v1/sessions/{session}/control` | session-control |
 | `GET /v1/sessions/{session}/orchestrator` | session-orchestrator |
@@ -355,7 +367,7 @@ persons. `tests/platform/test_without_person.py` keeps the table complete and ev
 | action:task-waiting | `github connect --from-gh`, `github connect --token` (the waiting card's next step `github connect` needs a person at GitHub's device page; an access step at GitHub - install, approval, SSO - needs the account at GitHub) | outside |
 | action:github-token | `github connect --from-gh` (the GitHub CLI login of this computer), `github connect --token` (any existing token) | built |
 | action:github-connect | `github connect --from-gh` (the GitHub CLI login of this computer), `github connect --token` (any existing token; the device page needs a person at GitHub) | outside |
-| next:human_only | `subscriptions check --relay` (gives the automation up: link and code); the check for humans of the provider's sign-in page is answered by a person by design and never by a model (ADR-099 §4) | outside |
+| next:human_only | `subscriptions check --relay` (gives the automation up: link and code); the check for humans of the provider's sign-in page is answered by a person by design and never by a model (ADR-100 §4) | outside |
 | action:github-accounts | `github connect --from-gh`, `github connect --token` (a further own account through an existing token; the device page needs a person at GitHub) | outside |
 | action:github-company-accounts | `github connect --org --token` (a company account through an existing token, e.g. the operator's or a dedicated account's; the device page needs a person at GitHub) | outside |
 | next:not_paired | `register --own-account`, `recover --hub` | built |

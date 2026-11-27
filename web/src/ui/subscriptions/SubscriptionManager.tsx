@@ -1,6 +1,6 @@
 // The Claude subscriptions of the user with "Add a subscription" (KOR-69, ADR-090; rules E-30, E-31): the list of
 // `loadSubscriptions` as cards. A standalone component: the page "Subscriptions" (KOR-68) shows it beside its
-// overview of the remaining quotas. KOR-73 (ADR-099): "Add several subscriptions" (`AddSeveral`) when the device runs
+// overview of the remaining quotas. KOR-73 (ADR-100): "Add several subscriptions" (`AddSeveral`) when the device runs
 // logins side by side; each finished login reads the list again while the batch stays open.
 import { useCallback, useEffect, useState } from 'react';
 import { loadSubscriptions, type Subscription } from '../../core/credentials/subscriptions';
@@ -52,7 +52,7 @@ export function SubscriptionManager() {
           <button type="button" className={PRIMARY} onClick={() => setAdding('one')} data-testid="submanage.add">
             {t('subscription-login.add')}
           </button>
-          {parallel === true && (
+          {(parallel === true || parallel === null) && (
             <button
               type="button"
               className={BUTTON}
