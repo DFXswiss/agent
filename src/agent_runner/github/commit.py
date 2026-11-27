@@ -44,7 +44,10 @@ Executor: `POST /repos/{r}/git/blobs` (base64) for every added or modified file 
 checked against its SHA, each answer's SHA compared with the local one; `POST /repos/{r}/git/trees` with `base_tree` =
 the parent tree, deletions (`sha: null`) first, then the files; GitHub's tree SHA must equal the local one
 (`tree_mismatch`, not retryable); `POST /repos/{r}/git/commits {message, tree, parents: [parent], author, committer,
-signature?}`. Author and committer are always sent (explicit attribution, also for the acting identity) with one
+signature?}`. An identity that may only read the repository commits in its fork (HOT-33, `fork.route` in the
+pre-check: the parent is the head of the branch in the fork, the fork is created at execution when there is none yet,
+`fork.ensure`); the workspace directory stays the repository's and the result names the fork (`fork`). Author and
+committer are always sent (explicit attribution, also for the acting identity) with one
 runner time (UTC, whole seconds; `signing.Person`). The co-authors follow the message as `Co-authored-by: <login>
 <email>` trailer lines after one blank line (a message that ends with a line feed gets one more, one that does not
 gets two) and the trailers end with a line feed (`full_message`). With `signing:"key"` the committer identity's seed
@@ -70,6 +73,7 @@ from agent_runner.crypto.errors import CryptoError
 from agent_runner.github import (
     access,
     checkout,
+    fork,
     gitobj,
     identity,
     merge3,
@@ -207,16 +211,18 @@ def scan(scratch: Any, entries: Sequence[Mapping[str, Any]]) -> None:
             raise CheckFailed("secret_detected", message=f"A secret ({found}) was found in a changed file.")
 
 
-async def _parent(github: GitHubClient, request: PrecheckRequest, repo: str, branch: str) -> str:
+async def _parent(github: GitHubClient, request: PrecheckRequest, source: str, branch: str) -> str:
+    """The head of `branch` in `source` (the repository or the identity's fork), else the commit of the session's
+    latest checkout of the repository."""
     try:
-        answer = await github.request("GET", f"/repos/{repo}/git/ref/heads/{quote(branch, safe='/')}")
+        answer = await github.request("GET", f"/repos/{source}/git/ref/heads/{quote(branch, safe='/')}")
     except GitHubError as error:
         if error.kind != "not_found":
             raise
     else:
         return ops.text(ops.obj(ops.obj(answer.data).get("object")).get("sha"), ops.SHA_RE)
     async with store_session(request.context.pool) as conn:
-        found = await checkout.base_sha(conn, request.session.id, repo)
+        found = await checkout.base_sha(conn, request.session.id, str(request.params["repo"]))
     if found is None:
         raise CheckFailed("not_found", message="The branch does not exist and the repository was not checked out.")
     return found
@@ -362,12 +368,15 @@ async def check(request: PrecheckRequest) -> PrecheckResult:
     attribution = await commit_identity(request)
     prep = await _prepared(request, repo, branch)
     async with access.client(request) as github:
-        await access.repository(github, repo, write=True)
-        parent = await _parent(github, request, repo, branch)
+        _, routed = await access.writable(github, repo)
+        # the branch lives where the commit goes: the fork of an identity that may only read (HOT-33), the
+        # repository itself while that fork is still to be created
+        source = repo if routed is None or routed["repo"] is None else str(routed["repo"])
+        parent = await _parent(github, request, source, branch)
         if prep is not None and parent != prep.head_sha:
             raise CheckFailed("merge_outdated", message=MERGE_OUTDATED)
-        parent_tree, base = await _parent_files(github, repo, parent)
-        theirs = {} if prep is None else (await _parent_files(github, repo, prep.base_sha))[1]
+        parent_tree, base = await _parent_files(github, source, parent)
+        theirs = {} if prep is None else (await _parent_files(github, source, prep.base_sha))[1]
         snapshot.sweep(context)
         scratch = snapshot.fresh(context, op_id)
         try:
@@ -402,6 +411,8 @@ async def check(request: PrecheckRequest) -> PrecheckResult:
         "commit": attribution,
         "workspace_digest": merge_prep.digest((path, found.blob) for path, found in snap.files.items()),
     }
+    if routed is not None:
+        data["fork"] = routed
     if prep is not None:
         data |= {"merge_parent": prep.base_sha, "prep_id": prep.id, "upload": upload}
     # a merge commit never shares the slot of a single-parent commit with the same parent and tree (ADR-084 §4)
@@ -411,6 +422,9 @@ async def check(request: PrecheckRequest) -> PrecheckResult:
 
 async def _create(ctx: OperationContext, github: GitHubClient, scratch: Any) -> dict[str, Any]:
     repo, data = str(ctx.params["repo"]), ctx.data
+    routed = data.get("fork")
+    forked = (await fork.ensure(github, repo, routed))[0] if isinstance(routed, dict) else None
+    repo = forked or repo
     parent, tree_sha = ops.text(data.get("parent_sha"), ops.SHA_RE), ops.text(data.get("tree_sha"), ops.SHA_RE)
     entries: list[dict[str, Any]] = list(data.get("entries", []))
     upload = data.get("upload")
@@ -445,9 +459,12 @@ async def _create(ctx: OperationContext, github: GitHubClient, scratch: Any) -> 
         digest = data.get("workspace_digest")
         if isinstance(digest, str):  # the committed snapshot is a known state of the workspace (`merge_base`)
             known = merge_prep.Known(digest, commit, str(ctx.params["branch"]))
-            await merge_prep.remember(conn, ctx.session.id, checkout.directory(repo), known)
+            directory = checkout.directory(str(ctx.params["repo"]))
+            await merge_prep.remember(conn, ctx.session.id, directory, known)
     if merge is not None:
         result["merge_parent"] = merge
+    if forked is not None:
+        result["fork"] = forked
     return result
 
 

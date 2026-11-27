@@ -57,7 +57,8 @@ TOKEN_NAME = "agent"
 TOKEN_DAYS = "90"
 """Pre-filled lifetime: within the token-lifetime policy organisations commonly set (`none` may be refused)."""
 PUSH_TYPES = frozenset({"github.create_branch", "github.commit", "github.push"})
-"""Types that write to the repository itself: the pre-check also needs the right to push (`check_write`)."""
+"""Types that write to the repository itself: without the right to push they write through the identity's fork
+(`fork.route`, HOT-33); with it the pre-check also checks the connection's reach (`check_write`)."""
 FINE_GRAINED_PERMISSIONS = (
     ("contents", "write"),
     ("pull_requests", "write"),
@@ -91,10 +92,6 @@ MESSAGES = {
     "check_access": (
         "The GitHub account of the person who gave this instruction has no access to {repo} (or it does not exist)."
         " Next step for that person: open {url} and ask its owner for access, or connect another GitHub account."
-    ),
-    "check_write": (
-        "The GitHub account of the person who gave this instruction may read but not write {repo}. Next step for that"
-        " person: open {url} and ask its owner for write access, or work in a fork."
     ),
 }
 
@@ -163,9 +160,8 @@ def next_step(client: GitHubClient, repo: str, error: GitHubError) -> dict[str, 
 
 def message(step: Mapping[str, Any], repo: str) -> str:
     """The fixed sentence of a step (at most 1024 printable ASCII characters: the URL is cut at the contract's limit
-    of a message, never in the step itself); `write` marks the step of a missing right to push."""
-    key = "check_write" if step.get("write") else step["action"]
-    text = MESSAGES[key].format(repo=repo, owner=step["owner"], url=step.get("url", ""))
+    of a message, never in the step itself)."""
+    text = MESSAGES[step["action"]].format(repo=repo, owner=step["owner"], url=step.get("url", ""))
     return text[:1024]
 
 
@@ -188,16 +184,12 @@ async def _installed(client: GitHubClient, repo: str) -> bool | None:
     return False
 
 
-async def check_write(client: GitHubClient, repo: str, answer: Mapping[str, Any]) -> None:
-    """The right to push for the types of `PUSH_TYPES` (KOR-65): a public repository is readable with nearly any
-    token, so `GET /repos` passing is not enough. `permissions.push` false -> `repo_not_accessible` with the step
-    `check_access` (ask for write access or work in a fork); a GitHub App user token whose installations do not cover
-    the repository -> the step of a repository the token does not see. Both are held like every access refusal."""
+async def check_write(client: GitHubClient, repo: str) -> None:
+    """The connection's reach for a write of `PUSH_TYPES` the account may push (`fork.route` calls it when
+    `permissions.push` is not false; an account that may only read writes through its fork, HOT-33): a GitHub App user
+    token whose installations do not cover the repository -> `repo_not_accessible` with the step of a repository the
+    token does not see, held like every access refusal."""
     owner = repo.split("/", 1)[0]
-    permissions = answer.get("permissions")
-    if isinstance(permissions, dict) and permissions.get("push") is False:
-        step = {"action": "check_access", "owner": owner, "url": f"{client.web_url}/{repo}"}
-        raise CheckFailed("repo_not_accessible", message=message({**step, "write": True}, repo), next_step=step)
     if client.token_kind == "github_app" and await _installed(client, repo) is False:
         step = _missing(client, repo, owner)
         raise CheckFailed("repo_not_accessible", message=message(step, repo), next_step=step)

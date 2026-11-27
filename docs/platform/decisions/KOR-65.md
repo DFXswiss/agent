@@ -41,7 +41,8 @@
 
 ## Independent review (fresh context) and what was done
 - **High – a readable repository is not a writable one:** the pre-check of `github.create_branch`, `github.commit`
-  and `github.push` now also needs the right to push (`reach.check_write`: `permissions.push` false -> held with
+  and `github.push` now also needs the right to push (superseded by HOT-33: an identity that may only read writes
+  through its fork, `repo_read_only` at once without one; `reach.check_write`: `permissions.push` false -> held with
   `check_access` "may read but not write"; a GitHub App user token whose installations do not cover the repository ->
   held with the step of a repository the token does not see). A `403` access refusal at execution time (after the
   pre-checks passed; e.g. a comment in a public repository of an organisation that restricts OAuth Apps) ends

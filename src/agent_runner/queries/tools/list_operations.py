@@ -51,6 +51,7 @@ ERROR_CODES = frozenset(
         "merge_unsupported",
         "workspace_dirty",
         "device_failed",
+        "repo_read_only",
     }
 )
 """`contracts/enums/operation-error-codes.json` (a test compares them)."""

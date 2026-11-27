@@ -851,6 +851,21 @@ when a new credential of the acting user arrives, so the operation goes on by it
 after 15 minutes it is rejected with `repo_not_accessible`, the timeout text and the step. Any other GitHub failure of
 a pre-check stays `upstream_error`.
 
+Through the fork (HOT-33): an identity that reads the repository but may not push to it (`permissions.push` false of
+`GET /repos/{repo}`, the roles read and triage) is no access refusal and never held. `github.create_branch`,
+`github.commit` and `github.push` go to the identity's fork by themselves: the runner finds it (`GET
+/repos/{login}/{name}` when that is a fork of the repository, else the repository's fork list, so another name is
+found too) or, when there is none and the repository allows forks (`allow_forking`), creates it at execution (`POST
+/repos/{repo}/forks`, after the registration). Before a branch is created from a branch, the fork's branch of that
+name is brought to the repository's state (`POST /repos/{fork}/merge-upstream`; a missing or diverged branch is left
+as it is); the new branch starts at the repository's commit. `github.create_pull_request` opens the pull request from
+the fork (`head` = `<fork owner>:<head>`) when the identity may not push and its fork holds the head. The session
+always names the repository; the results of these four types carry `fork` when a fork was used. When no fork can be
+used - the repository does not allow forks and the identity has none, GitHub refuses to create one, or the
+connection may not write the fork either - the operation fails at once with `repo_read_only` and a message that names
+the account, its rights on the repository and the next step for a person (write access or allowing forks).
+`repo_not_accessible` stays for a repository the connection does not reach at all.
+
 Compatibility while the parts are rolled out one by one (KOR-25): a type the hub does not know is `rejected` with
 `unknown_type` (H3) and a type a guest does not know is forwarded with `local_check:"rejected"` and `unknown_type`;
 neither is ever executed in part. A new type is therefore rolled out hub first, then runners, then goldens: a new
@@ -902,7 +917,7 @@ All enumerations of this section are closed lists in `contracts/enums/` (`error-
 Operation codes (in operation results): `unknown_type`, `params_invalid`, `repo_not_allowed`,
 `repo_not_accessible`, `branch_protected`, `branch_exists`, `non_fast_forward`, `path_invalid`, `secret_detected`,
 `size_exceeded`, `github_not_connected`, `not_found`, `limit_exceeded`, `budget_exceeded`, `rights_denied`,
-`hub_unreachable`, `upstream_error`, `timeout`, `model_not_allowed`, `credit_exhausted` (`12-billing.md` §7). Session failure reasons (in `session.state_reason`):
+`hub_unreachable`, `upstream_error`, `timeout`, `model_not_allowed`, `credit_exhausted` (`12-billing.md` §7), `repo_read_only` (the identity may only read the repository and no fork can be used, HOT-33). Session failure reasons (in `session.state_reason`):
 `model_access_unavailable`, `vm_start_failed`, `guest_unreachable`, `sandbox_failed`, `agent_start_failed`,
 `agent_exited`, `prompt_refused`, `delivery_failed`, `device_offline`, `device_shutdown`, `capacity_exhausted`,
 `runtime_exceeded`, `budget_exceeded`, `credit_exhausted` (also a task's `scheduling` reason, `12-billing.md` §7), `oom`, `unassigned`. Additional operation codes: `tree_mismatch`, `no_changes`; `identity_forbidden` and `identity_unavailable` (KOR-47,

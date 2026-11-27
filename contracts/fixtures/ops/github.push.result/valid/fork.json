@@ -1,0 +1,6 @@
+{
+  "branch": "feature/x",
+  "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "url": "https://github.example/example-user/example-repo/tree/feature/x",
+  "fork": "example-user/example-repo"
+}
