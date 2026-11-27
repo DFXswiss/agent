@@ -298,8 +298,11 @@ machine-id at first boot (cloud-init new instance-id).
   event), so no `starting` row keeps its slot. Every call waiting for a failed start gets the failure (`unavailable`,
   "No work VM could be obtained: ..."); when none waited - a cold start takes far longer than a call waits - the
   failure is kept and answered once to the next `workvm_exec` or `workvm_browse` of the scope before any new start.
-  A kept failure is forgotten when the scope gets a VM through `workvm.request`, when its session ends (the task
-  scope's with the last active session of the task) and when its task closes.
+  A kept failure is forgotten when the scope itself gets a VM through `workvm.request` (a main session's own session
+  VM leaves the task scope's failure), when its session ends (the task scope's with the last active session of the
+  task) and when its task closes. A session end or task close first cancels a start of those scopes still in flight
+  and waits for it: it is torn down like any cancelled start (one `deleted` event, no live row) and keeps no failure,
+  so no start runs on for an ended session or a closed task.
   Calls waiting for a cancelled start get `unavailable` ("The start of the work VM was cancelled ..."); the next call
   starts anew. Markers and kept failures live in the runner's memory only: a restart forgets them, and the
   reconciliation deletes what a start left (reason `restart`).

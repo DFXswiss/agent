@@ -400,20 +400,61 @@ def test_a_vm_obtained_by_request_clears_a_kept_failure(world: World, monkeypatc
     assert [state for state, _ in states(world)].count("created") == 2  # the requested VM and the new implicit one
 
 
-def test_a_request_for_an_existing_vm_clears_a_kept_failure(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A main session with its own VM requests it again after an unseen failure of the task scope: the request
-    returns the existing VM and the kept failure of the session's scope (`_start_key`: the task) goes."""
+def test_a_request_clears_only_the_failure_of_the_scope_that_gets_the_vm(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After an unseen failure of the task scope, a main session's own session VM leaves that failure (the task scope
+    still has no VM); a task VM clears it, whether the request creates it or returns the existing one."""
     monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 0.0)
+    key = ("task", TASK)
 
-    async def body(vms: WorkVms) -> tuple[bool, bool, bool]:
+    async def body(vms: WorkVms) -> tuple[bool, bool, bool, bool]:
         await current_guest_vm(vms)
-        await vms.request(session(THIRD), {"scope": "session"})
         await fail_unobserved(world, vms, session())
-        before = ("task", TASK) in vms.start_failed
-        result = await vms.request(session(THIRD), {"scope": "session"})
-        return before, result["created"], ("task", TASK) in vms.start_failed
+        failed = vms.start_failed[key]
+        await vms.request(session(), {"scope": "session"})
+        kept = key in vms.start_failed
+        await vms.request(session(THIRD), {})
+        cleared = key not in vms.start_failed
+        vms.start_failed[key] = failed  # kept again while the task VM exists
+        result = await vms.request(session(THIRD), {})
+        return kept, cleared, result["created"], key in vms.start_failed
 
-    assert world.run(body) == (True, False, False)
+    assert world.run(body) == (True, True, False, False)
+
+
+@pytest.mark.parametrize("ending", ["session_ended", "subagent_ended", "close_task"])
+def test_a_start_in_flight_is_cancelled_when_its_session_ends_or_its_task_closes(
+    world: World, monkeypatch: pytest.MonkeyPatch, ending: str
+) -> None:
+    """The start is held at the clone (its row exists) when its session ends or its task closes: it is cancelled and
+    torn down before the cleanup, so once the clone would have failed there is no kept failure, no marker, no live
+    row, no instance and exactly one `deleted`."""
+    monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 0.0)
+    gate = Gate()
+    local = session(CHILD, parent_id=SESSION) if ending == "subagent_ended" else session()
+
+    async def body(vms: WorkVms) -> tuple[dict[str, Any], dict[Any, Starting], dict[Any, Starting], list[Any]]:
+        await current_guest_vm(vms)
+        vms.deps.base_for = gate.base_for
+        first = await vms.call(None, local, "workvm_exec", EXEC)
+        while gate.waiting == 0:  # the row is inserted, the start waits at the clone
+            await asyncio.sleep(0.01)
+        if ending == "close_task":
+            await vms.close_task(TASK)
+        else:
+            await vms.session_ended(local)
+        world.fail.add("clone")
+        gate.event.set()
+        await asyncio.sleep(0.05)
+        return first, dict(vms.starting), dict(vms.start_failed), await records.live(vms.deps.db)
+
+    first, starting, failed, live = world.run(body)
+    assert first["state"] == "starting"
+    assert (starting, failed, live) == ({}, {}, [])
+    assert world.instances == {}
+    assert states(world) == [("starting", None), ("deleted", "failed")]
+    assert failures(world) == ["cancelled"]
 
 
 def test_session_end_and_task_close_forget_kept_failures(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
