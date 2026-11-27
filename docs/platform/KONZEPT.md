@@ -971,8 +971,10 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Bezug:** ändert die bisherige Festlegung, dass Identitäts- und Bereichsschlüssel nur im Speicher liegen und ein
   Neuladen den Passkey verlangt ([spec/06-web.md](spec/06-web.md) §2.3); setzt [Idee 30](#k-idee-30) (Verschlüsselung
   ohne Nachteile für die Bedienung) für die Anmeldung um.
-- **Umsetzung:** in Arbeit – Aufgabe auf agent; baut auf dem Gerätschlüssel des Browsers auf
-  ([ADR-006](adr/006-passkey-prf-key-management.md)).
+- **Umsetzung:** gebaut – [ADR-102](adr/102-stay-signed-in.md) (KOR-76): der Gerätschlüssel des Browsers
+  ([ADR-006](adr/006-passkey-prf-key-management.md)) öffnet die Identität beim Start, die Sitzung erneuert sich mit dem
+  noch gültigen Sitzungsschlüssel (`POST /v1/session/renew`), „Angemeldet bleiben“ auf der Anmeldeseite und in den
+  Einstellungen.
 
 <a id="e-41"></a>
 
