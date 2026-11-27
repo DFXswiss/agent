@@ -52,6 +52,9 @@ class Desired:
     resume_from: str | None = None
     vm_id_pref: str | None = None
     vm_new_allowed: bool = True
+    model_required: bool = False
+    """`model_id_pref` was asked for explicitly (the `model_id` of a `subagent.request`, never a field of the hub): only
+    an access whose catalog allows that model is taken (`model.access.walk`, HOT-31)."""
 
 
 def _text(value: object, what: str, allowed: frozenset[str] | None = None, *, maximum: int = 128) -> str:

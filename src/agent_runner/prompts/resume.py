@@ -14,7 +14,8 @@
    sees the move again and restores again instead of sending `--resume` to a VM that never had the transcript;
 3. guest health assigned to the workgroup, model access and credential as for a start (the owner's preference from
    the desired state - for a session not listed yet that of an entry of the same task and owner, HOT-31 -, else the
-   session's recorded access; the fallback settings and the consent likewise, `model.policy.settings`);
+   session's recorded access; the fallback settings and the consent likewise, `model.policy.settings`; a child that
+   asked for a model at its start keeps it as a required model, `Desired.model_required`);
 4. `POST /v1/sessions` with the same session ID and `resume_claude_session_id` (the guest keeps user, directories and
    transcript and starts `claude --resume <id>`) - on another VM with what the amenders set instead (`restore`) -,
    then `PUT .../credential`, which starts the agent.
@@ -59,6 +60,7 @@ from agent_runner.sessions.events import fail
 from agent_runner.sessions.records import LocalSession
 from agent_runner.sessions.start import Starter, StartFailed
 from agent_runner.sessions.stop import stop_guest
+from agent_runner.subagents import instructions
 from agent_runner.vm import records as vm_records
 
 Amend = Callable[[LocalSession, dict[str, Any]], Awaitable[None]]
@@ -132,7 +134,7 @@ class Resumer:
             # stopped (or failed) meanwhile: no guest session is started again
             env.line(f"resume_ended session_id={sid}")
             return ENDED
-        desired = desired_of(env, session)
+        desired = await self._child_model(desired_of(env, session))
         try:
             await self._resume(session, desired, amend)
         except StartFailed as exc:
@@ -149,6 +151,15 @@ class Resumer:
         self.attempts.pop(sid, None)
         env.line(f"resumed session_id={sid}")
         return RESUMED
+
+    async def _child_model(self, desired: Desired) -> Desired:
+        """A child that asked for a model at its start keeps it as a required model (the hub's entry names only the
+        owner's model; HOT-31)."""
+        if desired.depth == 0:
+            return desired
+        async with self.env.transaction() as conn:
+            model = await instructions.requested_model(conn, desired.session_id)
+        return desired if not model else replace(desired, model_id_pref=model, model_required=True)
 
     async def _resume(self, session: LocalSession, desired: Desired, amend: Amend | None = None) -> None:
         env = self.env

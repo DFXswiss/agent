@@ -80,8 +80,13 @@ def desired(n: int = 1, **overrides: Any) -> Desired:
 
 
 def wire(item: Desired) -> dict[str, Any]:
-    """The desired session as `GET /v1/device/state` lists it (`resume_from` only when set)."""
-    return {key: value for key, value in item.__dict__.items() if key != "resume_from" or value is not None}
+    """The desired session as `GET /v1/device/state` lists it (`resume_from` only when set; `model_required` is the
+    runner's own mark of a subagent's requested model, never a field of the hub)."""
+    return {
+        key: value
+        for key, value in item.__dict__.items()
+        if key != "model_required" and (key != "resume_from" or value is not None)
+    }
 
 
 @dataclass
