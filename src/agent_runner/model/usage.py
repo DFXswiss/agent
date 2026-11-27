@@ -27,7 +27,7 @@ page's transaction (`model.merge`: one item per session and 10 s, totals unchang
 - `triggered_by` (ADR-083 section 2), only towards a hub whose device state has the section `prompt_queue`: the person
   whose instruction the request follows from, `credentials.acting.stamp` when the record is handled (a main session:
   the acting user of its turn; a child: the acting user of its `subagent.request`); null when unknown.
-- `subscription_id` (ADR-100), only towards a hub whose device state has `subscriptions.api >= 2`: the Claude
+- `subscription_id` (ADR-102), only towards a hub whose device state has `subscriptions.api >= 2`: the Claude
   subscription record that served the request (`model.served`); null for any other access.
 
 For a session bound to a token file of the operator's subscriptions the record's `status` is handed to the pool

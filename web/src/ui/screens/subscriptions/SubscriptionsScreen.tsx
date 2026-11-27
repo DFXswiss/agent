@@ -4,7 +4,7 @@
 // reset, device, checked, changed. Only the user reads it (the data are the user's own, `loadSubscriptions`).
 // "Add subscription" and "Log in now" open the login dialogs of KOR-69 (ADR-090 section 2: the login runs on a
 // platform device, the user opens the link and pastes the code); name, note, use, log out and remove are in the
-// settings section "Claude subscriptions". Below, "Who used how much" (ADR-100, `UsageOverview`): the people who used
+// settings section "Claude subscriptions". Below, "Who used how much" (ADR-102, `UsageOverview`): the people who used
 // the user's subscriptions, and the user's own use of other people's.
 import { useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
@@ -13,12 +13,15 @@ import { useNow } from '../../countdown/useNow';
 import { useStore } from '../../hooks/useStore';
 import { useAppEnv } from '../../shell/context';
 import { loginTarget } from '../../shell/guard';
+import { AddSeveral } from '../../subscriptions/AddSeveral';
 import { AddSubscription } from '../../subscriptions/AddSubscription';
+import { useParallel } from '../../subscriptions/fields';
 import { SubscriptionLogin } from '../../subscriptions/SubscriptionLogin';
 import { useReason } from '../../settings/sections/github/reason';
 import { ProviderList, percent, TICK_MS, useTexts } from '../../subscriptions/ProviderList';
 import { UsageOverview } from '../../subscriptions/UsageOverview';
 import { useSubscriptions } from '../../subscriptions/useSubscriptions';
+import '../../../core/i18n/lazy/subscription-login';
 
 const COLUMNS = [
   'provider',
@@ -172,7 +175,9 @@ export function SubscriptionsScreen() {
   const now = useNow(true, TICK_MS);
   const [detailed, setDetailed] = useState(false);
   const [sorted, setSorted] = useState(false);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<'none' | 'one' | 'several'>('none');
+  // KOR-73: several at once only with a device that logs them in side by side
+  const parallel = useParallel();
   if (!unlocked) return <Navigate to={loginTarget(location.pathname, location.search)} replace />;
   return (
     <main className="mx-auto flex w-full min-w-0 max-w-5xl flex-col gap-4 p-4" data-testid="subscriptions.page">
@@ -225,25 +230,38 @@ export function SubscriptionsScreen() {
       {rows !== null && <UsageOverview rows={rows} now={now} />}
       {rows !== null && (
         <div className="flex flex-col gap-1">
-          {!adding && (
-            <button
-              type="button"
-              className="min-h-11 self-start rounded border border-gray-400 px-4"
-              onClick={() => setAdding(true)}
-              data-testid="subscriptions.add"
-            >
-              {t('subscriptions.add')}
-            </button>
+          {adding === 'none' && (
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="min-h-11 self-start rounded border border-gray-400 px-4"
+                onClick={() => setAdding('one')}
+                data-testid="subscriptions.add"
+              >
+                {t('subscriptions.add')}
+              </button>
+              {(parallel === true || parallel === null) && (
+                <button
+                  type="button"
+                  className="min-h-11 self-start rounded border border-gray-400 px-4"
+                  onClick={() => setAdding('several')}
+                  data-testid="subscriptions.add-several"
+                >
+                  {t('subscription-login.batch')}
+                </button>
+              )}
+            </div>
           )}
-          {adding && (
+          {adding === 'one' && (
             <AddSubscription
               onAdded={() => {
-                setAdding(false);
+                setAdding('none');
                 reload();
               }}
-              onClose={() => setAdding(false)}
+              onClose={() => setAdding('none')}
             />
           )}
+          {adding === 'several' && <AddSeveral onAdded={reload} onClose={() => setAdding('none')} />}
         </div>
       )}
     </main>

@@ -23,7 +23,8 @@ test hub (`scripts/hub_test_server.py` starts it on `--port` with the hub's writ
   answers `{"session_id"}`.
 - `POST /sessions/<id>/operations {"type", "params", "outcome"?, "dedupe"?}`: an operation registered and finished
   through the hub's device API (`scripts/hub_test_operations.py`, WEB-09).
-- `POST /requests/answer {"device", "steps"}`: answers the device's newest open device request
+- `POST /requests/answer {"device", "steps", "request_id"?, "skip"?}`: answers the device's newest open device
+  request (or the named one, or the newest not skipped)
   (`scripts/hub_test_requests.py`, WEB-09).
 - `POST /devices/<id>/{vms,metrics,usage,rollups}`: VMs, metric samples, usage and rollups of the monitoring screen
   (`scripts/hub_test_metrics.py`, WEB-12).
@@ -132,7 +133,16 @@ def signed_headers(key_id: str, sign: Callable[[bytes], bytes], method: str, url
     return headers
 
 
-FEATURES = ("log.admit", "log.org_assign", "log.policy", "log.support", "vm.choice", "github.identities")
+FEATURES = (
+    "log.admit",
+    "log.org_assign",
+    "log.policy",
+    "log.support",
+    "vm.choice",
+    "github.identities",
+    "subscriptions",
+    "subscriptions.parallel",
+)
 
 
 class BusPublisher:
@@ -460,6 +470,8 @@ def handler(director: Director) -> type[BaseHTTPRequestHandler]:
                     director.identities.__getitem__,
                     str(body["device"]),
                     list(body.get("steps", [])),
+                    request_id=body.get("request_id"),
+                    skip=[str(item) for item in body.get("skip", [])],
                 )
                 self._send(200, answered)
                 return True

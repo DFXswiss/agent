@@ -41,17 +41,21 @@ use `count_tokens`.
 
 `mailbox.check` (`{}`): IMAPS login with the owner's `mailbox` credential and `LIST` -> `{step:"done", valid}` (a
 refused login is not valid); a connection or TLS failure `upstream_unreachable`, a failed `LIST` `upstream_error`.
+With `{mailbox}` (ADR-099 section 9) the same check of that mailbox body, which the owner's client sealed into the
+request (any mailbox of the store, also before it is saved); a malformed body is `upstream_error`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import imaplib
 import re
 import ssl
 import time
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -62,15 +66,32 @@ from agent_runner.credentials import subscriptions
 from agent_runner.credentials.cache import CredentialUnavailable, RecordRefused, opened, put
 from agent_runner.errors import RunnerError
 from agent_runner.login import automation
-from agent_runner.login.automation import CODE_RE, EMAIL_RE, MAX_EMAIL, AutomationFailed, mailbox_fields
+from agent_runner.login.automation import CODE_RE, EMAIL_RE, MAX_EMAIL, AutomationFailed, Plan, mailbox_fields
 from agent_runner.login.full_login import FullLogin
+from agent_runner.login.pages import Page
 from agent_runner.login.relay import LoginFailed, LoginOptions, LoginSession, options
+from agent_runner.login.sandbox import (
+    ProcessSandbox,
+    Sandbox,
+    SandboxError,
+    load_playwright,
+    use_browsers,
+    vm_sandbox,
+)
 from agent_runner.model.selection import load_catalog
 from agent_runner.requests.service import RESPOND_DELAYS, Flow, FollowUp
 from agent_runner.sync.http import HubRefusal, HubTransportError
+from agent_runner.workvm.service import workvms_for
 
 MODES = ("manual", "automatic")
-LOGIN_FIELDS = frozenset({"mode", "subscription_id", "name", "note", "email"})
+LOGIN_FIELDS = frozenset({"mode", "subscription_id", "name", "note", "email", "account", "extended"})
+ACCOUNT_FIELDS = frozenset({"name", "birth_date", "consents"})
+CONSENTS = frozenset({"terms", "age", "marketing"})
+BIRTH_RE = re.compile(r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")
+BASIC_STAGES = frozenset({"browser_started", "email_entered", "magic_link_received", "authorized"})
+"""The progress stages a client without `extended` knows (ADR-100 section 4)."""
+VERIFY_FRAMES = 80
+"""Pictures of a check for humans per login (the hub keeps at most 100 responses per request)."""
 LABEL_LIMITS = {"name": 64, "note": 500}
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 CHECK_KINDS = {"anthropic_api_key": ("api_key", "key"), "claude_subscription": ("subscription", "token")}
@@ -103,89 +124,200 @@ async def _fail(flow: Flow, code: str, to: FollowUp | None = None, *, shape: str
 # --- claude.login --------------------------------------------------------------------------------------------------
 
 
-async def _mailbox(flow: Flow) -> tuple[Mailbox, str]:
+@dataclass(frozen=True)
+class Stored:
+    """What a further subscription's record already holds: its address and its own mailbox (ADR-100 section 1)."""
+
+    email: str | None
+    mailbox: tuple[Mailbox, str] | None
+
+
+async def _legacy_mailbox(flow: Flow) -> tuple[Mailbox, str] | None:
     try:
         async with opened(flow.context, flow.user, "mailbox") as body:
-            found = mailbox_fields(body)
+            return mailbox_fields(body)
     except CredentialUnavailable:
-        found = None
+        return None
+
+
+async def _mailbox(flow: Flow, stored: Stored | None = None) -> tuple[Mailbox, str]:
+    """The subscription's own mailbox, else the user's single one (`Failed("credential_missing")` without either)."""
+    found = stored.mailbox if stored is not None and stored.mailbox is not None else await _legacy_mailbox(flow)
     if found is None:
         raise Failed("credential_missing")
     return found
-
-
-async def _automate(flow: Flow, url: str, plan: tuple[Mailbox, str], opts: LoginOptions, workdir: Path) -> str | None:
-    """The code from the automation, None after a fall-back (logged)."""
-    mailbox, email = plan
-
-    async def progress(stage: str) -> None:
-        await flow.respond({"step": "progress", "stage": stage})
-
-    try:
-        return await automation.authorize(
-            url,
-            mailbox,
-            email,
-            opts=opts,
-            progress=progress,
-            budget=flow.remaining() - opts.code_margin,
-            clock=time.time,
-            profile_dir=workdir / "browser",
-        )
-    except AutomationFailed as failed:
-        _line(flow, f"automation_failed reason={failed.reason}")
-        return None
 
 
 def _label(value: object, most: int) -> bool:
     return isinstance(value, str) and 0 < len(value) <= most and all(ord(char) >= 0x20 for char in value)
 
 
+def _account(value: object) -> bool:
+    """`account` of the root body (`contracts/requests/claude.login.request.json`)."""
+    if not isinstance(value, dict) or not set(value) <= ACCOUNT_FIELDS or not _label(value.get("name"), 100):
+        return False
+    birth, consents = value.get("birth_date", "2000-01-01"), value.get("consents", [])
+    return (
+        isinstance(birth, str)
+        and BIRTH_RE.fullmatch(birth) is not None
+        and isinstance(consents, list)
+        and len(set(consents)) == len(consents)
+        and all(item in CONSENTS for item in consents)
+    )
+
+
 def _target(body: Mapping[str, object]) -> dict[str, object]:
     """The subscription fields of a root body (`Failed("upstream_error")` when one is malformed): `subscription_id`,
-    `name`, `note` and `email` as given."""
+    `name`, `note`, `email`, `account` and `extended` as given."""
     if not set(body) <= LOGIN_FIELDS or body.get("mode") not in MODES:
         raise Failed("upstream_error")
-    found = {name: body[name] for name in ("subscription_id", "name", "note", "email") if name in body}
+    found = {name: body[name] for name in sorted(LOGIN_FIELDS - {"mode"}) if name in body}
     record_id = found.get("subscription_id")
     if record_id is not None and not (isinstance(record_id, str) and UUID_RE.fullmatch(record_id)):
         raise Failed("upstream_error")
     if any(name in found and not _label(found[name], most) for name, most in LABEL_LIMITS.items()):
         raise Failed("upstream_error")
     email = found.get("email")
+    automatic = body["mode"] == "automatic"
     if email is not None and not (
-        body["mode"] == "automatic" and isinstance(email, str) and len(email) <= MAX_EMAIL and EMAIL_RE.fullmatch(email)
+        automatic and isinstance(email, str) and len(email) <= MAX_EMAIL and EMAIL_RE.fullmatch(email)
     ):
+        raise Failed("upstream_error")
+    if "account" in found and not (automatic and _account(found["account"])):
+        raise Failed("upstream_error")
+    if "extended" in found and found["extended"] is not True:
         raise Failed("upstream_error")
     return found
 
 
-async def _plan(flow: Flow, opts: LoginOptions) -> tuple[Mailbox, str] | None:
-    """Mailbox and address for an `automatic` login, None when the automation is off or the extra is missing (the
-    relay is used then); `Failed("credential_missing")` without a usable `mailbox` credential."""
-    try:
-        if not flow.context.config.login_automation:
-            raise AutomationFailed("disabled")
-        automation.load_playwright(opts)
-        automation.use_browsers(flow.context.config.home)
-    except AutomationFailed as failed:
-        _line(flow, f"automation_failed reason={failed.reason}")
+async def _stored(flow: Flow, record_id: object) -> Stored | None:
+    """The address and own mailbox of the further subscription (None when there is none or it cannot be read)."""
+    if not isinstance(record_id, str):
         return None
-    return await _mailbox(flow)
-
-
-async def _known_email(flow: Flow, record_id: str) -> str | None:
-    """The address the further subscription already holds (the `--email` of a new login), None when there is none
-    or the record cannot be read."""
     try:
         found = await subscriptions.fetch(flow.context, record_id)
         if found is None or found.primary or found.owner != flow.user:
             return None
         async with subscriptions.opened(flow.context, found) as body:
-            email = body.get("email")
+            email, box = body.get("email"), body.get("mailbox")
+            mailbox = mailbox_fields(box) if isinstance(box, dict) else None
     except (CredentialUnavailable, RecordRefused, HubRefusal, HubTransportError):
         return None
-    return email if isinstance(email, str) and EMAIL_RE.fullmatch(email) else None
+    return Stored(email if isinstance(email, str) and EMAIL_RE.fullmatch(email) else None, mailbox)
+
+
+class HumanCheck:
+    """The check for humans of one login, done by its owner (ADR-100 section 4): the sandbox's picture goes out as
+    `verify` responses (when it changed, every `verify_tick`, at most `VERIFY_FRAMES`), a `{click}` follow-up of the
+    owner's own identity is clicked at that point of the viewport, `{relay: true}` or no click within `verify_wait`
+    gives up (`human_check`). Without `extended` the check is given up at once."""
+
+    def __init__(self, flow: Flow, opts: LoginOptions, *, extended: bool, progress: automation.Progress) -> None:
+        self.flow = flow
+        self.opts = opts
+        self.extended = extended
+        self.progress = progress
+        self.frames = 0
+        self.shown: str | None = None
+
+    async def show(self, sandbox: Sandbox) -> None:
+        picture = await sandbox.picture()
+        if picture is None or picture.digest == self.shown:
+            return
+        if self.frames >= VERIFY_FRAMES:
+            raise AutomationFailed("human_check")
+        self.frames += 1
+        self.shown = picture.digest
+        image = {"width": picture.width, "height": picture.height, "data": base64.b64encode(picture.jpeg).decode()}
+        await self.flow.respond({"step": "verify", "frame": self.frames, "image": image})
+
+    async def click(self, sandbox: Sandbox, page: Page, follow: FollowUp) -> str:
+        """Handle one follow-up: `relay`, `clicked` or `ignored` (malformed, or an agent's click)."""
+        body, request = follow.request.body, follow.request
+        if body == {"relay": True}:
+            return "relay"
+        point = body.get("click") if set(body) == {"click"} else None
+        if not (isinstance(point, dict) and set(point) == {"x", "y"} and all(_fraction(point[k]) for k in point)):
+            _line(self.flow, "verify_follow_up_invalid")
+            return "ignored"
+        if request.user != request.owner:
+            _line(self.flow, "click_refused")  # a check for humans is never answered by an agent (ADR-100 section 4)
+            return "ignored"
+        await sandbox.click_at(float(point["x"]) * page.width, float(point["y"]) * page.height)
+        await asyncio.sleep(self.opts.verify_settle)
+        return "clicked"
+
+    async def __call__(self, sandbox: Sandbox, page: Page) -> None:
+        if not self.extended:
+            raise AutomationFailed("human_check")
+        _line(self.flow, "verify_started")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.opts.verify_wait
+        await self.show(sandbox)
+        while True:
+            follow = await self.flow.wait_follow_up(min(self.opts.verify_tick, max(deadline - loop.time(), 0.0)))
+            outcome = "none" if follow is None else await self.click(sandbox, page, follow)
+            if outcome == "relay":
+                raise AutomationFailed("human_check")
+            if outcome == "clicked":  # only a click of the owner gives the check its time again
+                deadline = loop.time() + self.opts.verify_wait
+            if (await automation.classify(sandbox)).kind != "challenge":
+                _line(self.flow, "verify_passed")
+                await self.progress("verified")
+                return
+            if loop.time() >= deadline:
+                raise AutomationFailed("human_check")
+            await self.show(sandbox)
+
+
+def _fraction(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
+
+
+async def _sandbox(flow: Flow, url: str, workdir: Path, opts: LoginOptions) -> Sandbox:
+    """The login's own sandbox (`LOGIN_SANDBOX`, ADR-100 section 3)."""
+    if opts.sandbox is not None:
+        made: Sandbox = await opts.sandbox(flow, url, workdir)
+        return made
+    config = flow.context.config
+    if config.login_sandbox == "process":
+        starter = load_playwright(opts.playwright)
+        use_browsers(config.home)
+        return await ProcessSandbox.start(starter, workdir / "browser", url, opts.page_timeout)
+    workvms = workvms_for(flow.context)
+    if workvms is None:
+        raise SandboxError("no_sandbox")
+    return await vm_sandbox(workvms, flow.id, lambda text: _line(flow, text))
+
+
+async def _automate(flow: Flow, url: str, plan: Plan, opts: LoginOptions, workdir: Path, *, extended: bool) -> str:
+    """The code from the automation (`AutomationFailed` with the reason of a fall-back)."""
+
+    async def progress(stage: str) -> None:
+        if extended or stage in BASIC_STAGES:
+            await flow.respond({"step": "progress", "stage": stage})
+
+    try:
+        sandbox = await _sandbox(flow, url, workdir, opts)
+    except SandboxError as error:
+        raise AutomationFailed(error.reason) from None
+    try:
+        return await automation.authorize(
+            url,
+            plan,
+            sandbox=sandbox,
+            opts=opts,
+            progress=progress,
+            human=HumanCheck(flow, opts, extended=extended, progress=progress),
+            budget=flow.remaining() - opts.code_margin,
+            clock=time.time,
+        )
+    finally:
+        try:
+            await sandbox.close()
+        except Exception as error:  # a failed teardown is logged and swept (VMs), never the end of the login
+            reason = error.reason if isinstance(error, SandboxError) else type(error).__name__
+            _line(flow, f"sandbox_close_failed reason={reason}")
 
 
 async def _store(flow: Flow, login: str | FullLogin, email: str | None, target: Mapping[str, object]) -> None:
@@ -220,30 +352,62 @@ async def _store(flow: Flow, login: str | FullLogin, email: str | None, target: 
         body.clear()
 
 
+async def _plan(flow: Flow, wanted: Mapping[str, object], stored: Stored | None) -> Plan | None:
+    """The plan of an `automatic` login, None when the automation is switched off (`disabled`);
+    `Failed("credential_missing")` without a mailbox."""
+    if not flow.context.config.login_automation:
+        return None
+    mailbox, own = await _mailbox(flow, stored)
+    email = wanted.get("email") or (stored.email if stored is not None else None) or own
+    account = wanted.get("account")
+    if isinstance(account, dict) and account.get("consents") and flow.request.user != flow.user:
+        # consents are the account holder's, declared by the user, never by the user's agent (ADR-100 section 5)
+        _line(flow, "consents_ignored")
+        account = {name: value for name, value in account.items() if name != "consents"}
+    return Plan(mailbox, str(email), account if isinstance(account, dict) else None)
+
+
+async def _code(flow: Flow, opts: LoginOptions) -> FollowUp:
+    """The follow-up with the code; late `{click}`/`{relay}` follow-ups of a check for humans are passed over."""
+    while True:
+        follow = await flow.wait_follow_up(flow.remaining() - opts.code_margin)
+        if follow is None:
+            raise Failed("timeout")
+        if set(follow.request.body) not in ({"click"}, {"relay"}):
+            return follow
+
+
 async def _login(flow: Flow, session: LoginSession, opts: LoginOptions) -> None:
     wanted = _target(flow.body)
-    mode = flow.body["mode"]
-    plan = await _plan(flow, opts) if mode == "automatic" else None
-    if plan is not None and "email" in wanted:
-        plan = (plan[0], str(wanted["email"]))
+    mode, extended = flow.body["mode"], wanted.get("extended") is True
+    stored = await _stored(flow, wanted.get("subscription_id"))
+    plan = await _plan(flow, wanted, stored) if mode == "automatic" else None
+    reason = "disabled" if mode == "automatic" and plan is None else None
+    if reason is not None:
+        _line(flow, f"automation_failed reason={reason}")
     if session.full:
-        record_id = str(wanted["subscription_id"])
-        hint = plan[1] if plan is not None else await _known_email(flow, record_id)
+        hint = plan.email if plan is not None else (stored.email if stored is not None else None)
         if hint is not None:
             session.argv = (*session.argv, "--email", hint)
     url = await session.start(opts)
     _line(flow, f"started mode={mode}")
-    code = None if plan is None else await _automate(flow, url, plan, opts, session.workdir)
+    code: str | None = None
+    if plan is not None:
+        try:
+            code = await _automate(flow, url, plan, opts, session.workdir, extended=extended)
+        except AutomationFailed as failed:
+            _line(flow, f"automation_failed reason={failed.reason}")
+            reason = failed.answer
     target: FollowUp | None = None
     email: str | None = None
     if code is None:
         answer: dict[str, object] = {"step": "authorize", "url": url}
         if mode == "automatic":
             answer["automation"] = "failed"
+            if extended and reason is not None:
+                answer["reason"] = reason
         await flow.respond(answer)
-        target = await flow.wait_follow_up(flow.remaining() - opts.code_margin)
-        if target is None:
-            raise Failed("timeout")
+        target = await _code(flow, opts)
         given = target.request.body.get("code")
         if set(target.request.body) != {"code"} or not isinstance(given, str) or not CODE_RE.fullmatch(given):
             await _fail(flow, "code_invalid", target)
@@ -251,7 +415,7 @@ async def _login(flow: Flow, session: LoginSession, opts: LoginOptions) -> None:
         code = given
     else:
         assert plan is not None
-        email = plan[1]
+        email = plan.email
     try:
         login: str | FullLogin = await (session.finish_full(code, opts) if session.full else session.finish(code, opts))
         await _store(flow, login, email, wanted)
@@ -370,9 +534,25 @@ def imap_login(mailbox: Mailbox, factory: Callable[..., Any]) -> bool:
 async def mailbox_check(flow: Flow) -> None:
     opts = options(flow.context)
     try:
-        if flow.body:
+        record_id = flow.body.get("subscription_id")
+        if (
+            set(flow.body) - {"mailbox", "subscription_id"}
+            or len(flow.body) > 1
+            or (record_id is not None and not (isinstance(record_id, str) and UUID_RE.fullmatch(record_id)))
+        ):
             raise Failed("upstream_error")
-        mailbox, _email = await _mailbox(flow)
+        if "mailbox" in flow.body:  # a mailbox of the store, sealed to this device with the request (ADR-099 §9)
+            given = mailbox_fields(flow.body["mailbox"]) if isinstance(flow.body["mailbox"], dict) else None
+            if given is None:
+                raise Failed("upstream_error")
+            mailbox, _email = given
+        elif record_id is not None:  # the own mailbox of a further subscription (KOR-73, ADR-100 section 1)
+            stored = await _stored(flow, record_id)
+            if stored is None or stored.mailbox is None:
+                raise Failed("credential_missing")
+            mailbox = stored.mailbox[0]
+        else:
+            mailbox, _email = await _mailbox(flow)
         try:
             valid = await asyncio.to_thread(imap_login, mailbox, opts.imap_factory)
         except (OSError, imaplib.IMAP4.error):

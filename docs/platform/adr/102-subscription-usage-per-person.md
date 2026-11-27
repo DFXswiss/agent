@@ -1,4 +1,4 @@
-# ADR-100: Who used how much of my subscriptions – tokens per person and subscription, an estimated share of the quota
+# ADR-102: Who used how much of my subscriptions – tokens per person and subscription, an estimated share of the quota
 
 Status: Accepted (2026-11-26)
 
@@ -30,7 +30,7 @@ The provider measures the quota per subscription only; nobody measures it per pe
   own); otherwise the owner's own subscription gives the ID of the cached primary record. Deltas of different
   subscriptions are never merged into one item.
 - The hub (handler after the usage base handler) adds the item's requests and four token counts to
-  `hub.subscription_usage` (migration 0040): one row per record, five-minute slot of the request time, person and
+  `hub.subscription_usage` (migration 0042): one row per record, five-minute slot of the request time, person and
   session. The person is `triggered_by` when that person wrote a prompt of the session's task (the rule of the
   charges), else the session's owner. A row is kept only when the record may serve the session: the primary record of
   the session's owner, or a further record whose use mirror names the session's organization or the pool. A wrong or

@@ -65,6 +65,8 @@ class Estate:
     """The ID of the estate's charge (KOR-31)."""
     subscription: str = "01930028-0000-7000-8000-0000000000c2"
     """The ID of the writer's further subscription (KOR-69)."""
+    mailbox: str = "01930028-0000-7000-8000-0000000000c3"
+    """The ID of the writer's further mailbox, released to a workgroup (KOR-74)."""
 
     @property
     def org(self) -> str:
@@ -396,12 +398,22 @@ class Estate:
                 " VALUES (%s, %s, false, %s, %s)",
                 (self.subscription, writer.id, Jsonb([org]), now),
             ),
-            # the tokens of a person on it (KOR-75, ADR-100)
+            # the tokens of a person on it (KOR-75, ADR-102)
             (
                 "INSERT INTO hub.subscription_usage (credential_id, owner_id, user_id, org_id, session_id, slot,"
                 " requests, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)"
                 " VALUES (%s, %s, %s, %s, %s, %s, 2, 100, 20, 1000, 30)",
                 (self.subscription, writer.id, writer.id, org, self.session, now),
+            ),
+            # a further mailbox of the writer and its release (KOR-74, ADR-099)
+            (
+                "INSERT INTO hub.credential (id, owner_id, kind, version, epoch, header_text, ct, sig, updated_at,"
+                " created_at, is_primary) VALUES (%s, %s, 'mailbox', 1, 1, '{}', %s, %s, %s, %s, false)",
+                (self.mailbox, writer.id, secrets.token_bytes(40), secrets.token_bytes(64), now, now),
+            ),
+            (
+                "INSERT INTO hub.mailbox_use (credential_id, owner_id, wgs, set_at) VALUES (%s, %s, %s, %s)",
+                (self.mailbox, writer.id, Jsonb([org]), now),
             ),
             # model access with fallback (KOR-50): a limit, a snapshot, an issuer, a key and its waiting cost
             (

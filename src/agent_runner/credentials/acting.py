@@ -8,8 +8,10 @@ keeps it so).
 
 - `PERSONAL_KINDS`: the credential kinds that are one person's own connection and that operations of a session use:
   `github` (every `github.*` type, `needs`). The other kinds are no connection a session uses on behalf of someone:
-  `mailbox` and the login kinds are opened only for the verified user of that user's own device request
-  (`login.requests`), the model access is the session's model access chosen at its start, whose consumption the
+  `mailbox` and the login kinds are opened for the verified user of that user's own device request
+  (`login.requests`); a `mailbox` record its owner released to a workgroup is opened by `mail.find` for the sessions
+  of that workgroup, because its owner switched that on (`agent_runner.mail`, ADR-099 section 3); the model access
+  is the session's model access chosen at its start, whose consumption the
   organisation carries (A15; the model gateways and quota reads of `model`/`quota`).
 - **Turn** (`prompt_accepted`, `turn_ended`; the observer `credentials/session_state.py`, which runs in the journal
   transaction in the guest's order): the verified author of an accepted prompt (`runner.prompt_event.author_id`, set

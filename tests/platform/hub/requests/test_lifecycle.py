@@ -231,6 +231,46 @@ def test_a_new_request_replaces_the_active_one_of_its_kind(desk: Desk) -> None:
     assert response.json() == {"error": "forbidden"}
 
 
+def test_roots_of_different_slots_run_side_by_side(desk: Desk, published: MemoryPublisher) -> None:
+    """KOR-73, ADR-100 section 2: logins of different subscriptions (`slot`) never replace each other; a new root of
+    the same slot replaces the active one; a slot sent with a follow-up is not kept."""
+    writer, device = desk.scene.writer, desk.scene.device
+    slots = [new_id() for _ in range(5)]
+
+    def send(slot: str | None, **options: Any) -> str:
+        envelope = desk.request(writer, device, "claude.login", **options)
+        body: Json = {"envelope": envelope} if slot is None else {"envelope": envelope, "slot": slot}
+        response = writer.browser.post("/v1/device-requests", json=body)
+        assert response.status_code == 200, response.text
+        return str(envelope["header"]["id"])
+
+    roots = [send(slot) for slot in slots]
+    unslotted = send(None)
+    assert [desk.state(root) for root in roots] == ["pending"] * 5
+    follow_up = send(slots[0], follows=roots[0], body={"code": "authorization"})
+    assert desk.world.rows("SELECT slot FROM hub.device_request WHERE id = %s", follow_up) == [(None,)]
+    stored = desk.world.rows("SELECT slot::text FROM hub.device_request WHERE id = %s", roots[1])
+    assert stored == [(slots[1],)]
+    published.clear()
+    again = send(slots[2])
+    assert desk.state(roots[2]) == "failed"
+    assert [desk.state(root) for root in (roots[0], roots[1], roots[3], roots[4], unslotted, follow_up)] == [
+        "pending"
+    ] * 6
+    assert [(item.frame, dict(item.data)) for item in published.items()] == [
+        ("reconcile", {}),
+        ("request", {"request_id": again}),
+    ]
+    second = send(None)
+    assert (desk.state(unslotted), desk.state(second), desk.state(roots[0])) == ("failed", "pending", "pending")
+    refused = writer.browser.post(
+        "/v1/device-requests",
+        json={"envelope": desk.request(writer, device, "claude.login"), "slot": "not-a-slot"},
+        extensions=NO_CONTRACT,
+    )
+    assert refused.status_code == 400
+
+
 def test_a_final_response_to_a_follow_up_answers_the_chain(desk: Desk) -> None:
     writer, device = desk.scene.writer, desk.scene.device
     root = _send(desk, writer, device, "claude.login")

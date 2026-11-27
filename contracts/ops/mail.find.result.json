@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ops/mail.find.result.json",
+  "title": "operation mail.find result",
+  "description": "Result of the operation type mail.find (03-api.md section 9, ADR-099 section 4).",
+  "$ref": "objects.json#/$defs/result_mail_find"
+}

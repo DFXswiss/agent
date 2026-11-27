@@ -9,7 +9,8 @@ Every `running` work VM of this device is billed to the second as `vm_kind` `wor
 - a **session VM**, a **run VM** (one test run) and a **browser VM** (a platform browser session, KOR-44) belong to
   their session.
 
-A stopped VM (paused session) is not running and costs nothing. The meter runs only on platform devices.
+A stopped VM (paused session) is not running and costs nothing. A login VM (KOR-73, ADR-100 section 3) is the device's
+own work for a Claude login and is not billed. The meter runs only on platform devices.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ async def work_vms(_context: Any, conn: AsyncConnection[Any]) -> list[MeteredVm]
         "SELECT w.id, w.size, w.scope, COALESCE(w.session_id, w.requested_by)::text,"
         " array_remove(array_agg(s.id::text ORDER BY s.id), NULL) FROM runner.workvm w"
         " LEFT JOIN runner.session s ON w.scope = 'task' AND s.task_id = w.task_id AND s.state = ANY(%s)"
-        " WHERE w.state = 'running' GROUP BY w.id ORDER BY w.id",
+        " WHERE w.state = 'running' AND w.scope <> 'login' GROUP BY w.id ORDER BY w.id",
         (sorted(HOLDING),),
     )
     found: list[MeteredVm] = []

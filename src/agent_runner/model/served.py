@@ -1,4 +1,4 @@
-"""Which Claude subscription record served a session's requests (ADR-100 section 1; 05-runner.md section 10.4).
+"""Which Claude subscription record served a session's requests (ADR-102 section 1; 05-runner.md section 10.4).
 
 The `usage` handler (`model.usage`) adds `subscription_id` to its item towards a hub whose device state has
 `subscriptions.api >= 2` (`api`), so the hub can show who used how much of which subscription. Metadata only: the

@@ -79,6 +79,7 @@ describe('loginProgress', () => {
       step: 'authorize',
       url: 'https://claude.ai/oauth/authorize?x=1',
       automationFailed: false,
+      reason: null,
     });
     expect(loginProgress(view('delivered', [authorize]), view('pending', [], 'r2'))).toMatchObject({
       step: 'authorize',
@@ -105,6 +106,7 @@ describe('loginProgress', () => {
       step: 'authorize',
       url: 'https://claude.ai/x',
       automationFailed: true,
+      reason: null,
     });
     expect(AUTOMATION_FAILED).toBe('login_automation_failed');
   });

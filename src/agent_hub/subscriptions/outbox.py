@@ -1,4 +1,4 @@
-"""Outbox handler extension of the subscriptions area (ADR-027 section 4 `<area>/outbox.py:HANDLERS`, ADR-030; ADR-100
+"""Outbox handler extension of the subscriptions area (ADR-027 section 4 `<area>/outbox.py:HANDLERS`, ADR-030; ADR-102
 section 1): the tokens of a `usage` item on the Claude subscription that served it.
 
 `usage` (after the usage area's base handler, which already checked that the session runs on the pushing device): an

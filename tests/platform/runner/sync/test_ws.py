@@ -121,7 +121,7 @@ def test_session_order_heartbeat_and_hint_dispatch(
             assert "runner.sync ws_connected count=1\n" in log
             assert env.hub.ws_features == [
                 "log.admit,log.org_assign,log.policy,log.support,vm.choice,github.ways,github.identities,"
-                "prompt.withdraw,subscriptions,agent.profiles,platform.analysis"
+                "prompt.withdraw,subscriptions,agent.profiles,platform.analysis,subscriptions.parallel"
             ]
             assert "runner.sync hint_invalid\n" in log
             assert "runner.sync hint_unknown type=bogus\n" in log

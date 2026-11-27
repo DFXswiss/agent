@@ -56,7 +56,7 @@ from agent_runner.sync.http import HubRefusal, HubTransportError
 
 KIND = "claude_subscription"
 LIST_TARGET = "/v1/device/subscriptions"
-KEPT = ("name", "note", "use")
+KEPT = ("name", "note", "use", "mailbox")
 """Body fields a new login keeps from the record it replaces."""
 
 

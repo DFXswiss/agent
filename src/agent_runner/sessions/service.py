@@ -21,6 +21,15 @@ of `sessions.extensions`.
   `deleted` or missing) fails with `guest_unreachable`, so the hub places a successor instead of showing the task
   working for ever. `idle` and `suspended` sessions run nothing and are left alone (their next prompt resumes them on
   another VM with the context restore, ADR-072).
+- `vms_stopped()` (task `guestlink` after `vms_lost`, and at the end of every `reconcile`; HOT-25): a main session
+  still `working` or `idle` in a VM whose row is `stopped` (the device restarted - a power cut - while it ran; the VM
+  reconciliation found the instance stopped, so no agent process of it runs) becomes `suspended` with the reason
+  `device_restart` - a `working` one through `idle`, the only way the hub's state machine leads to `suspended`. Like
+  any paused session its next prompt, or one that already waits, resumes it from its transcript on that VM
+  (restarted) or from its newest context checkpoint on another (`prompts.resume`); left `working` it would never get
+  a prompt again. A start cut off after `agent_starting` (the hub does not lead a start state back) fails
+  `device_shutdown` like an earlier interrupted start, so the next follow-up starts a new main session. Sessions with
+  a start or stop task are left to it.
 - `run_journals(stopping)` (task `guestlink`): one journal loop (`consume.VmJournal`) per running VM, started when a
   VM becomes running (at the latest after `POLL_S`, at once for a session start) and cancelled when it no longer
   runs; a loop that fails is restarted with backoff (1 s doubling to 30 s).
@@ -60,6 +69,11 @@ OWNER_REFUSED = "owner_not_member"
 INTERRUPTED = frozenset({"requested", "vm_assigning", "vm_ready", "sandbox_ready"})
 RESTING = frozenset({"idle", "suspended"})
 """Session states that run nothing in their VM (`vms_lost` leaves them alone)."""
+STRANDED = frozenset({"agent_starting", "prompt_delivering", "working", "idle"})
+"""States of a main session that need its agent process: in a `stopped` VM they end (`vms_stopped`)."""
+STRANDED_START = frozenset({"agent_starting", "prompt_delivering"})
+"""Of those, the start states: the hub's state machine leads them only forward (`agent_hub.sessions.derive.step`)."""
+DEVICE_RESTART = "device_restart"
 NO_LOCAL = frozenset({"requested", "stopped", "failed"})
 """Desired states for which a missing local session is expected: not started yet (`requested`, started by
 `schedule_start`) or ended."""
@@ -143,6 +157,7 @@ class SessionService:
                 self.schedule_stop(session.id, "unassigned")
             elif session.state in INTERRUPTED:
                 await self._interrupted(session)
+        await self.vms_stopped()
 
     async def _desired(self, item: Desired, book: Any, known: set[str], local_ids: set[str]) -> None:
         """One assigned main session of the desired state against the store."""
@@ -239,6 +254,32 @@ class SessionService:
         for session_id in lost:
             env.line(f"vm_lost session_id={session_id}")
         return len(lost)
+
+    async def vms_stopped(self) -> int:
+        """Suspend (or, in a start state, fail) the main sessions left running in a stopped VM (module docstring); their
+        number."""
+        env = self.env
+        ended: list[tuple[str, str]] = []
+        async with env.transaction() as conn:
+            for session in await records.listed(conn):
+                if session.depth != 0 or session.vm_id is None or session.state not in STRANDED:
+                    continue
+                if session.id in self.tasks:
+                    continue
+                row = await vm_records.get(env.db, session.vm_id)
+                if row is None or row.state != "stopped":
+                    continue
+                if session.state in STRANDED_START:
+                    if await fail(conn, env.outbox, session.id, "device_shutdown", at=env.at()):
+                        ended.append((session.id, "failed reason=device_shutdown"))
+                    continue
+                if session.state == "working":
+                    await records.advance(conn, env.outbox, session.id, "idle", at=env.at(), reason=DEVICE_RESTART)
+                if await records.advance(conn, env.outbox, session.id, "suspended", at=env.at(), reason=DEVICE_RESTART):
+                    ended.append((session.id, f"suspended reason={DEVICE_RESTART}"))
+        for session_id, outcome in ended:
+            env.line(f"vm_stopped session_id={session_id} state={outcome}")
+        return len(ended)
 
     # -- journal loops -------------------------------------------------------------------------------------------
 

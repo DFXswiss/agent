@@ -1,4 +1,4 @@
-// U-WEB-subscriptions (KOR-75, ADR-100): "Who used how much" – the answer of `GET /v1/me/subscriptions/usage` checked
+// U-WEB-subscriptions (KOR-75, ADR-102): "Who used how much" – the answer of `GET /v1/me/subscriptions/usage` checked
 // subscription by subscription and person by person (a malformed one left out, nothing twice), the request target of
 // each period, the span of chosen days and the short token numbers.
 import { describe, expect, it } from 'vitest';

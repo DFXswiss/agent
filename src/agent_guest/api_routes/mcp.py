@@ -9,7 +9,8 @@
 * ``GET /mcp``, ``DELETE /mcp`` - ``405`` with ``Allow: POST``: the server offers no SSE stream and no MCP session
   (Streamable HTTP transport, 2025-06-18)
 
-The handler may run ``TIMEOUT`` seconds, above the longest tool wait of 03-api.md §12 (``get_operation`` ≤ 30 s).
+The handler may run ``TIMEOUT`` seconds, above the longest tool wait of 03-api.md §12 (``request_operation`` of
+``mail.find`` ≤ 320 s, ADR-099 section 5; every other tool ≤ 33 s).
 The tool registry is loaded once per API process (``mcp_tools/*:TOOL``).
 """
 
@@ -28,7 +29,7 @@ MAX_BODY = 1024 * 1024
 ROUTE_MAX_BODY = 10**16 - 1
 """The router lets every length through to the handler, which checks ``MAX_BODY`` once the session is known; the
 body of a refused request is never read (the router closes the connection)."""
-TIMEOUT = 35.0
+TIMEOUT = 330.0
 
 _SERVERS: weakref.WeakKeyDictionary[ApiClient, McpServer] = weakref.WeakKeyDictionary()
 _SERVERS_LOCK = threading.Lock()

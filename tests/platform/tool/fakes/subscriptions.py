@@ -8,9 +8,9 @@ section 4.8):
 - `PUT /v1/subscriptions/{id}`: an own further record (the primary one is `403 forbidden`) signed by the caller under
   the current `CK` epoch (`409 epoch_stale`), at the stored version (`409 version_conflict`);
 - `DELETE /v1/subscriptions/{id}`: an own record (also the primary one), else `404`;
-- `GET /v1/me/subscriptions/usage`: the answer in `usage` as it is (ADR-100), the queries in `usage_queries`;
+- `GET /v1/me/subscriptions/usage`: the answer in `usage` as it is (ADR-102), the queries in `usage_queries`;
 - `GET /v1/me/devices` lists `features` once `announce` is on: `subscriptions` for every device but those in
-  `outdated`.
+  `outdated`, and `subscriptions.parallel` (KOR-73) for the devices in `parallel`.
 """
 
 from __future__ import annotations
@@ -33,6 +33,8 @@ class Subscriptions:
     announce: bool = False
     """`GET /v1/me/devices` lists `features` (on in the tests of this area; other suites see the rows as before)."""
     outdated: set[str] = field(default_factory=set)
+    parallel: set[str] = field(default_factory=set)
+    """Devices that announce `subscriptions.parallel` (ADR-100 section 7)."""
     puts: list[Json] = field(default_factory=list)
     conflicts: int = 0
     """The next PUTs answered `409 version_conflict` regardless."""
@@ -42,7 +44,7 @@ class Subscriptions:
     refuse_put: bool = False
     """Every PUT is answered `403 forbidden`."""
     usage: Json | None = None
-    """The answer of `GET /v1/me/subscriptions/usage` (ADR-100), sent as it is; None answers no subscription."""
+    """The answer of `GET /v1/me/subscriptions/usage` (ADR-102), sent as it is; None answers no subscription."""
     usage_queries: list[dict[str, str]] = field(default_factory=list)
 
 
@@ -151,7 +153,10 @@ def install(hub: HubFake) -> None:  # noqa: PLR0915
         if status == 200 and found.announce:
             for row in answer["devices"]:
                 if isinstance(row, dict) and "features" not in row:
-                    row["features"] = [] if row.get("device_id") in found.outdated else ["subscriptions"]
+                    device = row.get("device_id")
+                    row["features"] = [] if device in found.outdated else ["subscriptions"]
+                    if device in found.parallel:
+                        row["features"].append("subscriptions.parallel")
         return status, answer
 
     def usage(request: Request, body: Any) -> tuple[int, Any]:

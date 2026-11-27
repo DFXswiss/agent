@@ -1,4 +1,4 @@
--- 0040_subscription_usage: the tokens each person used on each Claude subscription (ADR-100; 02-data-model.md section
+-- 0042_subscription_usage: the tokens each person used on each Claude subscription (ADR-102; 02-data-model.md section
 -- 2.8).
 --
 -- One row per subscription record, five-minute slot, person and session: the person is the one whose instruction

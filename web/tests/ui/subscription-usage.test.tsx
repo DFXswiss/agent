@@ -1,4 +1,4 @@
-// U-WEB-ui-subscriptions (KOR-75, ADR-100): the overview "Who used how much" of the page `/subscriptions` – the people
+// U-WEB-ui-subscriptions (KOR-75, ADR-102): the overview "Who used how much" of the page `/subscriptions` – the people
 // of each own subscription with tokens, sessions, share of the tokens and the estimated share of the quota (always
 // marked as estimated), the total, another person's subscription with the own row only, the 5-hour window, the week
 // and a chosen span (an invalid span is refused before any request), loading, failure and reload, the empty state, and

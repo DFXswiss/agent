@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-mailboxes-list.request.json",
+  "title": "GET /v1/device/mailboxes request",
+  "description": "Query wg_id: the workgroup whose released mailboxes the device reads (03-api.md section 6.1, ADR-099 section 2).",
+  "type": "object",
+  "properties": {
+    "wg_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    }
+  },
+  "required": [
+    "wg_id"
+  ],
+  "additionalProperties": false
+}

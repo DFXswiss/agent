@@ -71,6 +71,7 @@ OUTBOX_AUDIT_ACTIONS = (
     "session.context_fallback",
     "runner.operator_github_users",
     "session.model_switched",
+    "mail.read",
 )
 """A copy of `contracts/enums/outbox-audit-actions.json` (a test compares them)."""
 OPERATION_ERROR_CODES = (
@@ -367,7 +368,7 @@ class UsageBody(Strict):
     """The person whose turn made the request (ADR-083 section 2); null for several authors or none, absent from an
     older runner."""
     subscription_id: Uuid7 | None = None
-    """The Claude subscription record that served the request (ADR-100 section 1); null when the access was no
+    """The Claude subscription record that served the request (ADR-102 section 1); null when the access was no
     subscription record, absent from an older runner."""
 
 
@@ -637,6 +638,18 @@ class ModelSwitched(Strict):
     until: Time | None
 
 
+class MailRead(Strict):
+    """`mail.read` (ADR-099 section 7): a session read a mailbox - counts and times only, never content."""
+
+    operation_id: Uuid7
+    owner_id: Uuid7
+    folder: Literal["inbox", "spam", "all"]
+    count: Annotated[int, Field(ge=0, le=20)]
+    waited_seconds: Annotated[int, Field(ge=0, le=330)]
+    timed_out: bool
+    result: Literal["ok", "not_found", "upstream_error", "timeout"]
+
+
 AUDIT_DETAILS: dict[str, type[Strict]] = {
     "hook.denied": HookDenied,
     **{action: ReadCount for action in OUTBOX_AUDIT_ACTIONS if action.startswith("read.session.")},
@@ -652,6 +665,7 @@ AUDIT_DETAILS: dict[str, type[Strict]] = {
     "runner.operator_github_users": OperatorGithubUsers,
     "session.model_switched": ModelSwitched,
     "session.prompt_withdrawn": NoDetail,
+    "mail.read": MailRead,
 }
 
 
@@ -686,6 +700,7 @@ class AuditBody(Strict):
         "session.context_restored",
         "session.context_fallback",
         "session.model_switched",
+        "mail.read",
     ]
     result: Literal["ok", "denied", "rejected", "duplicate", "failed"]
     task_id: Uuid7 | None = None

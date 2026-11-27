@@ -508,6 +508,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("created_at", TS),
         ("expires_at", TS),
         ("org_id", U),  # KOR-47, migration 0022
+        ("slot", U),  # KOR-73, migration 0041 (ADR-100)
     ],
     # credential-change notices for devices (HUB-13, ADR-035, migration 0003)
     "credential_notice": [("device_id", U), ("owner_id", U), ("kind", T), ("changed_at", TS)],
@@ -543,7 +544,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     "quota_unreadable": [("owner_id", U), ("since", TS), ("device_id", U)],
     # the use of a further subscription as its owner's client tells it (KOR-69, migration 0034, ADR-090 section 3)
     "subscription_use": [("credential_id", U), ("owner_id", U), ("pool", BOOL), ("orgs", J), ("set_at", TS)],
-    # the tokens per person on each subscription (KOR-75, migration 0040, ADR-100)
+    # the tokens per person on each subscription (KOR-75, migration 0042, ADR-102)
     "subscription_usage": [
         ("credential_id", U),
         ("owner_id", U),
@@ -557,6 +558,8 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("cache_read_tokens", BI),
         ("cache_write_tokens", BI),
     ],
+    # the release of a mailbox as its owner's client tells it (KOR-74, migration 0040, ADR-099 section 3)
+    "mailbox_use": [("credential_id", U), ("owner_id", U), ("wgs", J), ("set_at", TS)],
     # the newest reading of every non-primary subscription (KOR-69, migration 0033, ADR-090)
     "subscription_quota": [
         ("credential_id", U),
@@ -997,8 +1000,10 @@ def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns:
         ("credential", "(owner_id, kind) WHERE is_primary"),
         ("credential", "(owner_id, updated_at DESC, id DESC) WHERE (kind = 'claude_subscription'::text)"),
         ("subscription_quota", "(owner_id)"),
-        ("subscription_usage", "(user_id, slot)"),  # KOR-75, migration 0040 (ADR-100)
+        ("subscription_usage", "(user_id, slot)"),  # KOR-75, migration 0042 (ADR-102)
         ("subscription_usage", "(owner_id)"),
+        ("credential", "(owner_id, updated_at DESC, id DESC) WHERE (kind = 'mailbox'::text)"),  # KOR-74, migration 0040
+        ("mailbox_use", "USING gin (wgs)"),
         ("pr_link", '(wg_id, created_at DESC, epoch DESC, tag COLLATE "C" DESC)'),
         ("task", "(org_id, owner_id, last_activity_at DESC, id DESC) WHERE (state <> 'closed'::text)"),  # KOR-52
         ("audit", "(on_behalf_of, seq DESC) WHERE (on_behalf_of IS NOT NULL)"),

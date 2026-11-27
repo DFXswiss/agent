@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/subscriptions-usage.response.json",
   "title": "GET /v1/me/subscriptions/usage response",
-  "description": "Who used how much of which Claude subscription (03-api.md section 4.8, ADR-100): every subscription of the caller with every person and the total, and the subscriptions of other owners the caller used in the span with the caller's own row only (`total` null). Numbers only. `estimated_percent` is the person's share of the tokens times the measured use of the window: an estimate, because the provider measures the quota per subscription only.",
+  "description": "Who used how much of which Claude subscription (03-api.md section 4.8, ADR-102): every subscription of the caller with every person and the total, and the subscriptions of other owners the caller used in the span with the caller's own row only (`total` null). Numbers only. `estimated_percent` is the person's share of the tokens times the measured use of the window: an estimate, because the provider measures the quota per subscription only.",
   "type": "object",
   "properties": {
     "period": {

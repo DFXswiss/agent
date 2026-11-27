@@ -1,6 +1,6 @@
 # KOR-75 – contract changes
 
-ADR-027 section 3 (additive). Decision: ADR-100 (who used how much of my subscriptions).
+ADR-027 section 3 (additive). Decision: ADR-102 (who used how much of my subscriptions).
 
 ## API (`api/INDEX.json`)
 | Endpoint | Purpose |

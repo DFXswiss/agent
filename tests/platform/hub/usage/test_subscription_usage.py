@@ -1,4 +1,4 @@
-"""U-HUB-usage (who used how much, KOR-75, ADR-100): `usage` items with `subscription_id` add their tokens to
+"""U-HUB-usage (who used how much, KOR-75, ADR-102): `usage` items with `subscription_id` add their tokens to
 `hub.subscription_usage` per subscription, five-minute slot, person and session - only for a subscription that may
 serve the session -, and `GET /v1/me/subscriptions/usage` answers per subscription the span, the measured window and
 per person the tokens, sessions, share of the tokens and the estimated share of the quota (the owner sees everybody,
