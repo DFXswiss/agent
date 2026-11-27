@@ -92,7 +92,7 @@ transcript (input and result) and in the read-only terminal (Claude Code's own r
   end within the wait of the call: at most 15 s, and never longer than the guest waits for the call minus the runner's
   reserve for its answer (`workvm_exec`: `wait_seconds` + 5 s, at most 33 s, minus 3 s; `workvm_browse`: 33 s minus
   8 s). A guest before 0.8.0 does not know this answer (nor `started_at` and `queue_position`, which it does not get):
-  it gets the same sentence as the tool error `unavailable`.
+  it gets the tool error `unavailable` "The work VM is starting or being removed. Try again shortly.".
 - `workvm_sync`: `to_vm` mirrors the workspace (or `path` below it) into `/workspace`: changed files only (SHA-256
   manifest of the last mirror of this session), deletions applied, files the VM created and the workspace never had
   are kept (build outputs, `node_modules`). `from_vm` needs `path` (a directory of the workspace): the files of
@@ -104,10 +104,11 @@ transcript (input and result) and in the read-only terminal (Claude Code's own r
   Limits of the guest import (512 MiB, 100 000 entries) apply.
 - Errors (`tool_error`): no VM → `not_found` ("No work VM: request one with workvm.request."); VM starting or
   stopped → the call starts it and waits (counts against `wait_seconds`; still starting → `unavailable`, but
-  `workvm_exec` and `workvm_browse` during an implicit start answer `starting`, above); `workvm_output`, `workvm_kill`
-  and `workvm_sync` during an implicit start → `unavailable` ("The work VM is still starting ..."); a failed implicit
-  start → `unavailable` ("No work VM could be obtained: ...") for every call that waited for it; unknown job →
-  `not_found`; invalid input → `params_invalid`; runner without work VM support → `unavailable`.
+  `workvm_exec` and `workvm_browse` during an implicit start answer `starting`, above); a VM being removed, and
+  `workvm_output`, `workvm_kill` and `workvm_sync` during an implicit start → `unavailable` ("The work VM is starting or
+  being removed. Try again shortly."); a failed implicit start → `unavailable` ("No work VM could be obtained: ...")
+  for every call that waited for it, else once for the next `workvm_exec` or `workvm_browse` of the scope (§7);
+  unknown job → `not_found`; invalid input → `params_invalid`; runner without work VM support → `unavailable`.
 - A stopped VM (idle) starts automatically on the next `workvm_exec`, `workvm_output` or `workvm_sync`.
 
 ## 4. Work image (`images/workvm.yaml`, `images/workvm/`)
@@ -290,10 +291,16 @@ machine-id at first boot (cloud-init new instance-id).
   resolved - and runs it as its own asyncio task. A further `workvm_exec` or `workvm_browse` of the scope joins that
   start instead of starting another VM (the lookup and the insertion of the marker happen without a suspension point,
   so concurrent calls never start twice); the call waits for it within its budget and answers `starting` (§3) while it
-  goes on, and the start goes on when a call gives up. The marker goes when the start ends - created, failed (every
-  waiting call gets the failure) or cancelled (`unavailable`, "The start of the work VM was cancelled"); the next call
-  then starts anew. It lives in the runner's memory only: a restart forgets it, and the reconciliation deletes what
-  the start left (reason `restart`).
+  goes on, and the start goes on when a call gives up. The marker goes when the start ends - created, failed or
+  cancelled. A start that fails or is cancelled is logged (`runner.workvm implicit_start_failed workvm_id= scope=
+  error=<code or exception type | cancelled>`), and the countdown ends with exactly one `deleted` event (reason
+  `failed`): a row it already inserted is torn down with its instance like any VM (shielded `delete`, which writes the
+  event), so no `starting` row keeps its slot. Every call waiting for a failed start gets the failure (`unavailable`,
+  "No work VM could be obtained: ..."); when none waited - a cold start takes far longer than a call waits - the
+  failure is kept and answered once to the next `workvm_exec` or `workvm_browse` of the scope before any new start.
+  Calls waiting for a cancelled start get `unavailable` ("The start of the work VM was cancelled ..."); the next call
+  starts anew. Markers and kept failures live in the runner's memory only: a restart forgets them, and the
+  reconciliation deletes what a start left (reason `restart`).
 - Credit (KOR-43): on a platform device an organization whose credit is used up gets no new work VM or run VM
   (`credit_exhausted`). The tool waits within its `wait_seconds`; a queued request answers `unavailable` with "capacity
   queue" text and keeps the place.
@@ -338,9 +345,9 @@ machine-id at first boot (cloud-init new instance-id).
 - Event `workvm.state` (same scope, author and right): `{workvm_id, state: "starting"|"created"|"stopped"|"deleted",
   scope, size, cpus, memory_mib, disk_gib, implicit, reason (deleted and stopped), started_at, ended_at, runtime_ms}`;
   `starting` announces an implicit start, `stopped` a paused session's VM (KOR-43). Run VMs write none (§12).
-  `started_at` and `ended_at` (as every time of the tools) are UTC with `Z`: a time read back from the store comes in
-  PostgreSQL's session time zone (the device's local zone) and is converted to UTC before it is written, never
-  formatted as it is (a device in CET wrote `started_at` one hour late until KOR-29-implicit-start).
+  `started_at` and `ended_at` (as the times of `workvm_status`) are UTC with `Z`: a time read back from the store
+  comes in PostgreSQL's session time zone (the device's local zone) and is converted to UTC before it is written,
+  never formatted as it is (a device in CET wrote `started_at` one hour late until KOR-29-implicit-start).
 - `workvm.run` of a job whose output is longer than its tail (64 KiB) carries `log` `{object_id, bytes, stored_bytes,
   truncated}`: the runner keeps the complete output (at most `LOG_MAX_MIB`, its last part) as an encrypted log object
   (§12.3) and writes the final event once it is stored.

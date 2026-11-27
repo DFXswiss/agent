@@ -23,8 +23,9 @@ the start in flight and answers within the guest's budget.
 `oneOf` the previous result and `output_workvm_starting`.
 
 Version 0.8.0: the contracts the guest bundles change. The runner gives the `starting` answer and the two status fields
-only to guests from 0.8.0 (`agent_runner.subagents.guest_features.START_ANSWER`); an older guest gets the same
-sentence as the tool error `unavailable` and the status without `started_at` and `queue_position`.
+only to guests from 0.8.0 (`agent_runner.subagents.guest_features.START_ANSWER`); an older guest gets the existing
+tool error `unavailable` "The work VM is starting or being removed. Try again shortly." and the status without
+`started_at` and `queue_position`.
 
 Fixtures: `valid/starting.json` and invalid starting shapes under `fixtures/mcp/tools/workvm_exec.output/`,
 `workvm_browse.output/` and `workvm_status.output/`.

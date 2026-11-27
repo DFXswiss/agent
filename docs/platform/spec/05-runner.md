@@ -774,7 +774,8 @@ processed (a child: its inherited stamp), for a work VM the acting user when it 
 - Implicit work VM start (13-work-vm.md §§3, 7): the runner keeps one start in flight per scope (the task, or a
   subagent's session) in memory and joins every further `workvm_exec` or `workvm_browse` of the scope to it; a call
   answers within the guest's budget (`starting` while the start goes on, for a guest from 0.8.0) and `workvm_status`
-  reports the start. The marker ends with the start (created, failed or cancelled); a restart forgets it. Each start
+  reports the start. The marker ends with the start (created, failed or cancelled); a failed or cancelled start is
+  logged and torn down, and a failure no call saw is answered once to the next call; a restart forgets it. Each start
   of a work VM logs its phases (`runner.workvm start_phases`) and adds them to the counters of 08-monitoring.md §3.
 - Pull requests: every succeeded `github.create_pull_request` of the device is registered once as an opaque tag
   (`POST /v1/device/pr-links`, ADR-072 §8).
