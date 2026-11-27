@@ -18,11 +18,12 @@ from agent_runner.github import snapshot
 from agent_runner.store.migrate import migrate
 from agent_runner.workvm import manager as manager_module
 from agent_runner.workvm import records
+from agent_runner.workvm.jobs import ShellResult
 from agent_runner.workvm.manager import (
+    NOT_RUNNING,
     START_CANCELLED,
     START_PHASES,
     STARTING,
-    STILL_STARTING,
     CallFailed,
     Starting,
     WorkVms,
@@ -32,8 +33,11 @@ from .kit import CHILD, SESSION, START, TASK, VM_ID, World, session
 
 THIRD = "0193000a-0000-7000-8000-0000000000a7"
 """A second main session of the task (no parent)."""
+FOURTH = "0193000a-0000-7000-8000-0000000000a8"
+"""A third main session of the task."""
 EXEC = {"command": "true", "sync": "none"}
 STARTED_AT = "2026-11-23T10:00:00.000Z"
+DID_NOT_START = "No work VM could be obtained: The work VM did not start."
 
 
 @pytest.fixture
@@ -93,6 +97,11 @@ async def settle(vms: WorkVms) -> None:
 
 def states(world: World) -> list[tuple[str, str | None]]:
     return [(body["state"], body["reason"]) for _, kind, body in world.events if kind == "workvm.state"]
+
+
+def failures(world: World) -> list[str]:
+    """The `error=` of every `implicit_start_failed` log line."""
+    return [line.rsplit("error=", 1)[1] for line in world.logs if "implicit_start_failed" in line]
 
 
 # -- in-flight dedupe ----------------------------------------------------------------------------------------------
@@ -163,7 +172,7 @@ def test_calls_during_the_start_answer_starting_promptly_and_join_it(
     }
     assert (first["state"], first["started_at"], first["message"]) == ("starting", STARTED_AT, STARTING)
     assert elapsed < 5
-    assert refused == [f"unavailable: {STILL_STARTING}"] * 2
+    assert refused == [f"unavailable: {NOT_RUNNING}"] * 2
     assert gate.waiting == 1
     assert ran["state"] == "running"
     [row] = world.run(lambda vms: records.live(vms.deps.db))
@@ -219,8 +228,9 @@ def test_status_reports_a_start_that_waits_in_the_queue(world: World, monkeypatc
 def test_a_guest_before_the_starting_answer_gets_a_prompt_tool_error(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A guest of an older golden refuses fields and answers its contracts do not know (HOT-23): it gets the same
-    sentence as the tool error `unavailable`, and the status without `started_at` and `queue_position`."""
+    """A guest of an older golden refuses fields and answers its contracts do not know (HOT-23): it gets the existing
+    tool error `unavailable` of a VM that does not run yet, and the status without `started_at` and
+    `queue_position`."""
     monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 0.05)
     gate = Gate()
 
@@ -235,7 +245,7 @@ def test_a_guest_before_the_starting_answer_gets_a_prompt_tool_error(
         return caught.value, status
 
     failed, status = world.run(body)
-    assert (failed.error, failed.message) == ("unavailable", STARTING)
+    assert (failed.error, failed.message) == ("unavailable", NOT_RUNNING)
     assert status["workvm"]["state"] == "starting"
     assert "started_at" not in status["workvm"]
     assert "queue_position" not in status["workvm"]
@@ -281,76 +291,138 @@ def test_a_failed_start_releases_the_marker_and_the_next_call_starts_again(world
 
     failed, left, ran = world.run(body)
     assert failed.error == "unavailable"
-    assert failed.message == "No work VM could be obtained: The work VM did not start."
+    assert failed.message == DID_NOT_START
     assert left == {}
     assert ran["state"] == "running"
     assert states(world) == [("starting", None), ("deleted", "failed"), ("starting", None), ("created", None)]
+    assert failures(world) == ["upstream_error"]
 
 
 def test_a_joined_start_that_fails_fails_every_waiting_call(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every call that waits for the start gets its failure; as they saw it, the next call starts anew."""
     monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 0.05)
     gate = Gate()
 
-    async def body(vms: WorkVms) -> tuple[dict[str, Any], CallFailed, dict[Any, Starting]]:
+    async def body(vms: WorkVms) -> tuple[dict[str, Any], list[CallFailed], dict[str, Any]]:
         await current_guest_vm(vms)
         vms.deps.base_for = gate.base_for
         first = await vms.call(None, session(), "workvm_exec", EXEC)
         monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 10.0)
-        joined = asyncio.ensure_future(vms.call(None, session(THIRD), "workvm_exec", EXEC))
-        await asyncio.sleep(0.05)
+        world.fail.add("clone")
+        joined = [
+            asyncio.ensure_future(vms.call(None, session(sid), "workvm_exec", EXEC)) for sid in (THIRD, FOURTH)
+        ]
+        await asyncio.sleep(0.2)  # both calls wait for the start held at the clone (it cannot end before the gate)
+        gate.event.set()
+        failed = []
+        for call in joined:
+            with pytest.raises(CallFailed) as caught:
+                await call
+            failed.append(caught.value)
+        world.fail.clear()
+        return first, failed, await vms.call(None, session(), "workvm_exec", EXEC)
+
+    first, failed, ran = world.run(body)
+    assert first["state"] == "starting"
+    assert [(call.error, call.message) for call in failed] == [("unavailable", DID_NOT_START)] * 2
+    assert ran["state"] == "running"
+    assert gate.waiting == 2  # the failed start and the new one
+
+
+def test_a_start_that_fails_unobserved_is_answered_once_to_the_next_call(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first call already answered `starting` when the start fails: the failure is logged, the countdown ends, no
+    row is left, and the next call of the scope gets the failure once instead of silently starting again; the call
+    after that starts a new VM."""
+    monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 0.05)
+    gate = Gate()
+
+    async def body(vms: WorkVms) -> tuple[dict[str, Any], list[Any], CallFailed, dict[str, Any]]:
+        await current_guest_vm(vms)
+        vms.deps.base_for = gate.base_for
+        first = await vms.call(None, session(), "workvm_exec", EXEC)
         world.fail.add("clone")
         gate.event.set()
+        await settle(vms)
+        live = await records.live(vms.deps.db)
         with pytest.raises(CallFailed) as caught:
-            await joined
-        return first, caught.value, dict(vms.starting)
+            await vms.call(None, session(THIRD), "workvm_exec", EXEC)
+        world.fail.clear()
+        monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 10.0)
+        return first, live, caught.value, await vms.call(None, session(), "workvm_exec", EXEC)
 
-    first, failed, left = world.run(body)
+    first, live, failed, ran = world.run(body)
     assert first["state"] == "starting"
-    assert (failed.error, failed.message) == ("unavailable", "No work VM could be obtained: The work VM did not start.")
-    assert left == {}
-    assert gate.waiting == 1
+    assert live == []
+    assert (failed.error, failed.message) == ("unavailable", DID_NOT_START)
+    assert ran["state"] == "running"
+    assert failures(world) == ["upstream_error"]
+    assert states(world) == [("starting", None), ("deleted", "failed"), ("starting", None), ("created", None)]
+    assert gate.waiting == 2
 
 
-def test_a_failure_that_is_no_operation_failure_reaches_the_caller(world: World) -> None:
-    """An unexpected error of the start is not turned into a tool error: it reaches the journal handler as before."""
+def test_an_unexpected_error_of_the_start_is_logged_and_leaves_no_row(world: World) -> None:
+    """An error that is no operation failure (here after the row was inserted) is logged with its type, ends the
+    countdown once, tears the row down, and reaches the call as the failure of the start."""
     gate = Gate()
     gate.fail = RuntimeError("broken base")
     gate.event.set()
 
-    async def body(vms: WorkVms) -> dict[Any, Starting]:
+    async def body(vms: WorkVms) -> tuple[CallFailed, dict[Any, Starting], list[Any]]:
         vms.deps.base_for = gate.base_for
-        with pytest.raises(RuntimeError, match="broken base"):
+        with pytest.raises(CallFailed) as caught:
             await vms.call(None, session(), "workvm_exec", EXEC)
-        return dict(vms.starting)
+        return caught.value, dict(vms.starting), await records.live(vms.deps.db)
 
-    assert world.run(body) == {}
+    failed, left, live = world.run(body)
+    assert (failed.error, failed.message) == ("unavailable", DID_NOT_START)
+    assert (left, live) == ({}, [])
+    assert failures(world) == ["RuntimeError"]
+    assert states(world) == [("starting", None), ("deleted", "failed")]
+    assert not any("broken base" in line for line in world.logs)
 
 
 def test_a_cancelled_start_releases_the_marker_and_ends_the_waiting_calls(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The start is cancelled (the runner shuts down): a waiting call ends with a tool error, the countdown ends with
-    `deleted`, the marker is gone, so nothing blocks the scope."""
+    """The start is cancelled during its ready check (the runner shuts down): a waiting call ends with a tool error,
+    the row and the instance are torn down with exactly one `deleted` event, the marker is gone, and the next call
+    starts a new VM that runs."""
     monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 10.0)
-    gate = Gate()
+    hold = asyncio.Event()
 
-    async def body(vms: WorkVms) -> tuple[CallFailed, dict[Any, Starting], bool]:
-        vms.deps.base_for = gate.base_for
+    async def held(_seconds: float) -> None:
+        await hold.wait()
+
+    async def body(vms: WorkVms) -> tuple[CallFailed, dict[Any, Starting], bool, list[Any], dict[str, Any]]:
+        world.helper_fail["list"] = ShellResult(1, b"", False)  # the helper does not answer yet
+        vms.deps.sleep = held
         waiting = asyncio.ensure_future(vms.call(None, session(), "workvm_exec", EXEC))
-        while gate.waiting == 0:
+        while "Running" not in world.instances.values():  # cloned and booted, in the ready check
             await asyncio.sleep(0.01)
         start = vms.starting[("task", TASK)]
         start.task.cancel()
         with pytest.raises(CallFailed) as caught:
             await waiting
         await asyncio.sleep(0)
-        return caught.value, dict(vms.starting), start.task.cancelled()
+        live = await records.live(vms.deps.db)
+        world.helper_fail.clear()
+        vms.deps.sleep = poll
+        ran = await vms.call(None, session(), "workvm_exec", EXEC)
+        return caught.value, dict(vms.starting), start.task.cancelled(), live, ran
 
-    failed, left, cancelled = world.run(body)
+    failed, left, cancelled, live, ran = world.run(body)
     assert (failed.error, failed.message) == ("unavailable", START_CANCELLED)
     assert left == {}
     assert cancelled is True
-    assert states(world) == [("starting", None), ("deleted", "failed")]
+    assert live == []
+    assert ran["state"] == "running"
+    assert len(world.instances) == 1
+    [row] = world.run(lambda vms: records.live(vms.deps.db))
+    assert row.state == "running"
+    assert failures(world) == ["cancelled"]
+    assert states(world) == [("starting", None), ("deleted", "failed"), ("starting", None), ("created", None)]
 
 
 def test_a_call_that_is_cancelled_leaves_the_start_running(world: World, monkeypatch: pytest.MonkeyPatch) -> None:

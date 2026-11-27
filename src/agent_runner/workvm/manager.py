@@ -19,6 +19,8 @@
   `START_JOIN_SECONDS` (within the guest's budget) and otherwise answers `starting` (`workvm_id`, `started_at`,
   `queue_position`, a sentence) instead of running into the guest's time limit; `workvm_status` reports the start. The
   marker goes when the start ends (success, failure or cancellation); a restart forgets it and deletes what it left.
+  A failed or cancelled start is logged (`implicit_start_failed`), its row and instance are torn down (one `deleted`
+  event), and a failure no waiting call saw is answered once to the next call of the scope before a new start.
 - **start phases**: every start of a VM is measured (queue wait, clone, boot, ready check): log line
   `runner.workvm start_phases` and the counters of `start_times` (`agent_runner.metrics.workvm`).
 - **idle pass**: a VM without a running job and without a call for `WORKVM_IDLE_SECONDS` is deleted, a stopped VM
@@ -118,7 +120,11 @@ STARTING = (
     "The work VM is still starting (a cold start can take several minutes); nothing was run yet. Call the tool again"
     " in a minute, or follow the start with workvm_status."
 )
-STILL_STARTING = "The work VM is still starting. Call again in a minute, or follow the start with workvm_status."
+"""The `message` of the non-error `starting` answer of `workvm_exec` and `workvm_browse`."""
+NOT_RUNNING = "The work VM is starting or being removed. Try again shortly."
+"""The tool error `unavailable` of a call whose VM does not run (yet): a VM being removed, the other tools during an
+implicit start, and a guest that does not know the `starting` answer."""
+NOT_STARTED = "The work VM did not start."
 START_CANCELLED = "The start of the work VM was cancelled. Call the tool again to start a new one."
 START_PHASES = ("queue", "clone", "boot", "ready")
 """Measured phases of a VM start: waiting in the capacity queue, clone (with the slot's base), boot, ready check."""
@@ -254,11 +260,13 @@ class Run:
 @dataclass
 class Starting:
     """An implicit start in progress (`WorkVms.starting`): the shape of the VM about to start (its `starting` event),
-    the task that starts it and its ticket in the capacity queue once it waits there."""
+    the task that starts it, its ticket in the capacity queue once it waits there, and the failure sentence once it
+    failed."""
 
     vm: WorkVm
     task: asyncio.Task[WorkVm] = field(init=False)
     ticket: str | None = None
+    failure: str | None = None
 
 
 _START: ContextVar[Starting | None] = ContextVar("workvm_start", default=None)
@@ -308,6 +316,8 @@ class WorkVms:
         """Running log captures per work VM (its teardown waits for them)."""
         self.starting: dict[tuple[str, str], Starting] = {}
         """Implicit starts in flight per scope (`_start_key`)."""
+        self.start_failed: dict[tuple[str, str], Starting] = {}
+        """The last failed implicit start per scope that no waiting call saw: its failure goes once to the next call."""
         self.start_times = StartTimes()
 
     # -- availability ------------------------------------------------------------------------------------------
@@ -604,7 +614,7 @@ class WorkVms:
         except (LimaError, WorkVmError) as error:
             self.deps.log(f"runner.workvm start_failed workvm_id={vm.id} {failure(error)}")
             await self._remove(vm, reason="failed")
-            raise OperationFailed("upstream_error", retryable=True, message="The work VM did not start.") from None
+            raise OperationFailed("upstream_error", retryable=True, message=NOT_STARTED) from None
         running = await records.update(self.deps.db, vm.id, state="running", last_used_at=self.deps.now())
         assert running is not None
         self.deps.log(
@@ -1190,7 +1200,7 @@ class WorkVms:
         try:
             vm = await self.ensure_running(found)
         except WorkVmError:
-            raise CallFailed("unavailable", "The work VM is starting or being removed. Try again shortly.") from None
+            raise CallFailed("unavailable", NOT_RUNNING) from None
         self.last_call[vm.id] = self.deps.now()
         try:
             if tool == "workvm_exec":
@@ -1225,7 +1235,7 @@ class WorkVms:
         if tool in IMPLICIT_TOOLS and (vm is None or start is not None):
             found = await self._implicit(session, _join_seconds(tool, arguments, begun))
         elif start is not None:
-            raise CallFailed("unavailable", STILL_STARTING)
+            raise CallFailed("unavailable", NOT_RUNNING)
         if found is None:
             raise CallFailed("not_found", NO_VM)
         return found
@@ -1250,24 +1260,28 @@ class WorkVms:
 
     async def _implicit(self, session: LocalSession, wait: float) -> WorkVm | dict[str, Any] | None:
         """A standard VM for a tool call without one: the start of the scope that is in flight is joined, else a new
-        one begins (`_begin`). The call waits for it at most `wait` seconds, then answers `starting` (a guest before
-        `START_ANSWER` does not know that answer: it gets the same sentence as the tool error `unavailable`); the
+        one begins (`_begin`) - unless the last start of the scope failed while no call waited for it: that failure is
+        answered first, once. The call waits for the start at most `wait` seconds, then answers `starting` (a guest
+        before `START_ANSWER` does not know that answer: it gets `NOT_RUNNING` as the tool error `unavailable`); the
         start goes on without the call."""
-        start = self.starting.get(_start_key(session))
+        key = _start_key(session)
+        start = self.starting.get(key)
         if start is None:
+            failed = self.start_failed.pop(key, None)
+            if failed is not None:
+                raise CallFailed("unavailable", str(failed.failure))
             start = self._begin(session)
         done, _ = await asyncio.wait({start.task}, timeout=wait)
         if not done:
             if not await current_guest(self.deps.db, session.vm_id, START_ANSWER):
-                raise CallFailed("unavailable", STARTING)
+                raise CallFailed("unavailable", NOT_RUNNING)
             return self._starting_answer(start)
         if start.task.cancelled():
             raise CallFailed("unavailable", START_CANCELLED)
-        error = start.task.exception()
-        if isinstance(error, OperationFailed):
-            raise CallFailed("unavailable", f"No work VM could be obtained: {error.message}") from None
-        if error is not None:
-            raise error
+        if start.failure is not None:
+            if self.start_failed.get(key) is start:
+                del self.start_failed[key]  # a waiting call saw it: the next call starts anew
+            raise CallFailed("unavailable", start.failure)
         return await self._vm_of(session)
 
     def _begin(self, session: LocalSession) -> Starting:
@@ -1277,13 +1291,26 @@ class WorkVms:
         start = Starting(self._starting(session, key[0], new_workvm_id()))
         start.task = asyncio.ensure_future(self._start(session, start))
         self.starting[key] = start
-        start.task.add_done_callback(partial(self._start_done, key))
+        start.task.add_done_callback(partial(self._start_done, key, start))
         return start
 
-    def _start_done(self, key: tuple[str, str], task: asyncio.Task[WorkVm]) -> None:
+    def _start_done(self, key: tuple[str, str], start: Starting, task: asyncio.Task[WorkVm]) -> None:
+        """Remove the marker; log a start that failed or was cancelled, and keep a failure for the next call of the
+        scope (`start_failed`). It runs before any waiting call resumes (its callback was added first)."""
         del self.starting[key]
-        if not task.cancelled():
-            task.exception()  # read once here, so a failure nobody joined is never reported as unretrieved
+        if task.cancelled():
+            error = "cancelled"
+        else:
+            failure = task.exception()
+            if failure is None:
+                return
+            error = failure.code if isinstance(failure, OperationFailed) else type(failure).__name__
+            sentence = failure.message if isinstance(failure, OperationFailed) else NOT_STARTED
+            start.failure = f"No work VM could be obtained: {sentence}"
+            self.start_failed[key] = start
+        self.deps.log(
+            f"runner.workvm implicit_start_failed workvm_id={start.vm.id} scope={start.vm.scope} error={error}"
+        )
 
     async def _start(self, session: LocalSession, start: Starting) -> WorkVm:
         """Obtain the implicit VM; the `workvm.state` `starting` event comes first, so the panel shows the countdown as
@@ -1299,9 +1326,19 @@ class WorkVms:
             return await self.obtain(
                 session, scope=scope, size="standard", implicit=True, workvm_id=start.vm.id, triggered_by=stamp
             )
-        except (OperationFailed, asyncio.CancelledError):
-            await self._emit_state(start.vm, "deleted", reason="failed")  # the countdown ends
+        except BaseException:  # a failure, an unexpected error or the cancellation: the countdown ends, then re-raised
+            await self._end_start(start.vm)
             raise
+
+    async def _end_start(self, shape: WorkVm) -> None:
+        """End a start that did not succeed with one `deleted` event: a row it left (cancelled or broken during clone,
+        boot or ready check) is torn down like any VM (`delete`, shielded, which writes the event); else only the
+        event is written."""
+        row = await records.get(self.deps.db, shape.id)
+        if row is not None and row.state != "deleted":
+            await self.delete(row, reason="failed")
+        else:
+            await self._emit_state(shape, "deleted", reason="failed")
 
     def _starting_answer(self, start: Starting) -> dict[str, Any]:
         """The answer of `workvm_exec` and `workvm_browse` while the start goes on (`mcp/objects.json#/$defs/
@@ -1579,21 +1616,25 @@ def new_workvm_id() -> str:
     return "wvm-" + secrets.token_hex(4)
 
 
+def _budget(requested: float, begun: float, reserve: float) -> float:
+    """The seconds left until the guest stops waiting for the call (it waits `GUEST_MARGIN + requested`, at most
+    `GUEST_MAX`), minus the runner's `reserve` for its answer; negative when the budget is spent."""
+    return min(GUEST_MARGIN + requested, GUEST_MAX) - reserve - (time.monotonic() - begun)
+
+
 def _remaining(requested: float, begun: float, reserve: float) -> float:
     """How long the job may still be waited for so the answer reaches the guest within its budget."""
-    budget = min(GUEST_MARGIN + requested, GUEST_MAX) - reserve - (time.monotonic() - begun)
-    return max(0.0, min(requested, budget))
+    return max(0.0, min(requested, _budget(requested, begun, reserve)))
 
 
 def _join_seconds(tool: str, arguments: Mapping[str, Any], begun: float) -> float:
-    """How long an implicit-start call may wait for the start: at most `START_JOIN_SECONDS`, and never longer than the
-    guest waits for the call (`workvm_exec` its `wait_seconds` + margin, `workvm_browse` `GUEST_MAX`) minus the
-    runner's reserve for its answer."""
+    """How long an implicit-start call may wait for the start: at most `START_JOIN_SECONDS` within the budget of the
+    call (`workvm_exec`: its `wait_seconds` and `ANSWER_RESERVE`; `workvm_browse`: 30 s and `BROWSE_RESERVE`, as for
+    its page)."""
     exec_call = tool == "workvm_exec"
     requested = float(arguments.get("wait_seconds", 30)) if exec_call else 30.0
     reserve = ANSWER_RESERVE if exec_call else BROWSE_RESERVE
-    budget = min(GUEST_MARGIN + requested, GUEST_MAX) - reserve - (time.monotonic() - begun)
-    return max(0.0, min(START_JOIN_SECONDS, budget))
+    return max(0.0, min(START_JOIN_SECONDS, _budget(requested, begun, reserve)))
 
 
 def _start_key(session: LocalSession) -> tuple[str, str]:
