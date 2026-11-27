@@ -8,7 +8,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { loadGroup, loadGroupMore } from '../../../core/attention/load';
 import { earlierFrom, groupWindow, laterFrom, selectTaskRows, STEP, windowAt } from '../../../core/attention/view';
 import type { OrgState } from '../../../core/log/state';
-import { attentionGroup, type Category } from '../../../core/store/slices/attention';
+import { attentionGroup, type Category, type GroupFilter, NO_FILTER } from '../../../core/store/slices/attention';
 import type { Directory } from '../../../core/tasks/directory';
 import { titles } from '../../../core/tasks/list';
 import { useLiveReload } from '../../hooks/useLiveReload';
@@ -33,12 +33,33 @@ export interface AttentionGroupProps {
   readonly count?: number | null;
   /** Further content of the heading (a link). */
   readonly extra?: ReactNode;
+  /** Narrows the group (the list behind a counter, `core/attention/situation.ts`); none: the whole category. */
+  readonly filter?: GroupFilter;
+  /** The heading instead of the category's name. */
+  readonly title?: string;
+  /** What the empty group says instead of the category's text. */
+  readonly empty?: string;
 }
 
-export function AttentionGroup({ org, category, state, userId, directory, now, count, extra }: AttentionGroupProps) {
+export function AttentionGroup({
+  org,
+  category,
+  state,
+  userId,
+  directory,
+  now,
+  count,
+  extra,
+  filter: given = NO_FILTER,
+  title,
+  empty,
+}: AttentionGroupProps) {
   const { app } = useAppEnv();
   const { t, error } = useI18n();
-  const group = useStore((store) => attentionGroup(store.attention, org, category), app.store);
+  // the same object while its values are the same (the effects below load again only when they change)
+  const { owner, after } = given;
+  const filter = useMemo(() => ({ owner, after }), [owner, after]);
+  const group = useStore((store) => attentionGroup(store.attention, org, category, filter), app.store);
   const [view, setView] = useState<{ start: string | null; from: number }>({ start: null, from: 0 });
   const span = groupWindow(group.ids, view.start, view.from);
   // the window follows its first entry and keeps its place when that entry leaves (state derived during render)
@@ -54,12 +75,12 @@ export function AttentionGroup({ org, category, state, userId, directory, now, c
     return () => clearTimeout(timer);
   }, [app, rows]);
   useEffect(() => {
-    void loadGroup(app.tasks, org, category);
-  }, [app, org, category]);
-  useLiveReload(app.store, () => void loadGroup(app.tasks, org, category, false, true));
+    void loadGroup(app.tasks, org, category, false, false, filter);
+  }, [app, org, category, filter]);
+  useLiveReload(app.store, () => void loadGroup(app.tasks, org, category, false, true, filter));
   const more = async () => {
-    const loaded = () => attentionGroup(app.store.getState().attention, org, category);
-    if (loaded().ids.length - span.to < STEP) await loadGroupMore(app.tasks, org, category);
+    const loaded = () => attentionGroup(app.store.getState().attention, org, category, filter);
+    if (loaded().ids.length - span.to < STEP) await loadGroupMore(app.tasks, org, category, filter);
     const ids = loaded().ids;
     setView(windowAt(ids, laterFrom(ids, span.from)));
   };
@@ -90,7 +111,7 @@ export function AttentionGroup({ org, category, state, userId, directory, now, c
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id={headingId} className="font-semibold">
-          {t(`attention.group.${category}`)}
+          {title ?? t(`attention.group.${category}`)}
           {count !== undefined && count !== null && (
             <span className="ml-2 text-sm font-normal text-gray-600" data-testid="attention.group.count">
               ({count})
@@ -105,7 +126,7 @@ export function AttentionGroup({ org, category, state, userId, directory, now, c
           <button
             type="button"
             className="min-h-11 underline"
-            onClick={() => void loadGroup(app.tasks, org, category, group.ids.length > 0)}
+            onClick={() => void loadGroup(app.tasks, org, category, group.ids.length > 0, false, filter)}
             data-testid="attention.reload"
           >
             {t('attention.reload')}
@@ -119,7 +140,7 @@ export function AttentionGroup({ org, category, state, userId, directory, now, c
       )}
       {group.status === 'ready' && group.ids.length === 0 && (
         <p className="text-sm text-gray-600" data-testid="attention.empty">
-          {t(`attention.empty.${category}`)}
+          {empty ?? t(`attention.empty.${category}`)}
         </p>
       )}
       {span.from > 0 && (

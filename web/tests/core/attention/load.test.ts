@@ -42,6 +42,16 @@ describe('targets and times', () => {
     );
   });
 
+  it('asks a narrowed group for the own tasks and the records since its bound', () => {
+    expect(groupTarget('o', 'needs_decision', null, T0, { owner: 'me', after: null })).toBe(
+      `/v1/orgs/o/attention?category=needs_decision&mine=1&limit=${PAGE_SIZE}`,
+    );
+    const after = formatTime(localMidnight(T0));
+    expect(groupTarget('o', 'done', null, T0, { owner: null, after })).toBe(
+      `/v1/orgs/o/attention?category=done&since=${encodeURIComponent(after)}&limit=${PAGE_SIZE}`,
+    );
+  });
+
   it('starts "today" at local midnight', () => {
     const midnight = localMidnight(T0);
     const date = new Date(midnight);
@@ -75,6 +85,30 @@ describe('groups', () => {
     // no further page: nothing is requested
     expect(await loadGroupMore(t.context, t.org, 'needs_decision')).toBe(0);
     expect(t.client.calls).toHaveLength(2);
+  });
+
+  it('load a narrowed group apart from the whole category, with the owners of its tasks', async () => {
+    const t = await taskWorld();
+    const mine = { owner: t.me.id, after: null };
+    let fail = false;
+    t.client.on(`GET /v1/orgs/${t.org}/attention`, (_body, target) => {
+      if (fail) throw new HubError('forbidden', 403);
+      return target.includes('before=')
+        ? { items: [item(t, 'c', { since: at(3) })], next_before: null }
+        : { items: [item(t, 'a', { since: at(1) })], next_before: 'cursor' };
+    });
+    expect(await loadGroup(t.context, t.org, 'needs_decision', false, false, mine)).toBe(1);
+    expect(t.client.calls.at(-1)!.target).toContain('mine=1');
+    const narrowed = () => attentionGroup(t.store.getState().attention, t.org, 'needs_decision', mine);
+    expect(narrowed()).toMatchObject({ ids: ['a'], nextBefore: 'cursor', status: 'ready' });
+    expect(group(t).status).toBe('idle');
+    expect(t.store.getState().attention.owners.a).toBe(t.me.id);
+    expect(await loadGroupMore(t.context, t.org, 'needs_decision', mine)).toBe(1);
+    expect(narrowed().ids).toEqual(['a', 'c']);
+    fail = true;
+    await loadGroup(t.context, t.org, 'needs_decision', false, false, mine);
+    expect(narrowed()).toMatchObject({ status: 'error', code: 'forbidden' });
+    expect(group(t).status).toBe('idle');
   });
 
   it('leave a loading group alone, record failures and refuse malformed answers', async () => {

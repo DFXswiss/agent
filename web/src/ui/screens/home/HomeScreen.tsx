@@ -6,7 +6,8 @@
 //   access anywhere sees a short note instead (controls the rights do not allow are not rendered, section 1). Next to
 //   it "Optimize processes" (ADR-097 section 6): an analysis of the organization, in the default workgroup unless
 //   chosen otherwise.
-// - The counters: "Waiting for me", "Stuck", "Running", "Finished today" (since local midnight), and below them the
+// - The counters: "Waiting for me", "Stuck", "Running", "Finished today" (since local midnight), each a link to the task
+//   overview filtered to the tasks it counts (`/o/:org/tasks?situation=…`, `core/attention/situation.ts`), and below them the
 //   organization's subscriptions ("Subscriptions: n available · m used up – next release 14:05", ADR-081 section 6),
 //   then the card "My subscriptions" with every subscription of the user (KOR-68, `ui/subscriptions/`).
 // - The four groups in this order: "Needs your decision", "Stuck", "Running", "Recently finished" (the last links the
@@ -17,6 +18,7 @@
 // Live `attention` frames update the entries and the counters (batched in the store, counters at most once a second).
 import { useId, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
+import type { Situation } from '../../../core/attention/situation';
 import { selectNoTask } from '../../../core/attention/view';
 import { CATEGORIES, type AttentionSummary } from '../../../core/store/slices/attention';
 import { formatNumber } from '../../../core/i18n';
@@ -35,8 +37,8 @@ import { useSummary } from './hooks';
 import { QuotaCounter } from './QuotaCounter';
 import { SubscriptionsCard } from '../../subscriptions/SubscriptionsCard';
 
-/** The counters in their order: test ID suffix and field of the summary. */
-const COUNTERS: readonly [string, keyof AttentionSummary][] = [
+/** The counters in their order: the situation of the task overview they open (and test ID suffix), field of the summary. */
+const COUNTERS: readonly [Situation, keyof AttentionSummary][] = [
   ['mine', 'needs_decision_mine'],
   ['blocked', 'blocked'],
   ['working', 'working'],
@@ -55,14 +57,20 @@ function Counters({ org }: { readonly org: string }) {
       {COUNTERS.map(([name, field]) => (
         <li
           key={name}
-          className="flex min-h-11 flex-col rounded border border-gray-200 px-3 py-2"
+          className="flex"
           data-testid={`attention.counter.${name}`}
           data-count={summary === null ? '' : summary[field]}
         >
-          <span className="text-2xl font-semibold">
-            {summary === null ? '–' : formatNumber(summary[field], locale)}
-          </span>
-          <span className="text-sm text-gray-700">{t(`attention.counter.${name}`)}</span>
+          <Link
+            className="flex min-h-11 flex-1 flex-col rounded border border-gray-200 px-3 py-2 hover:border-blue-700 hover:bg-blue-50"
+            to={`/o/${encodeURIComponent(org)}/tasks?situation=${name}`}
+            data-testid={`attention.counter.${name}.link`}
+          >
+            <span className="text-2xl font-semibold">
+              {summary === null ? '–' : formatNumber(summary[field], locale)}
+            </span>
+            <span className="text-sm text-gray-700">{t(`attention.counter.${name}`)}</span>
+          </Link>
         </li>
       ))}
     </ul>

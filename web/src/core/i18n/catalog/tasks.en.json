@@ -31,5 +31,11 @@
   "filter.reset": "Clear filters",
   "search.scanned": "Searched the {scanned} most recent tasks.",
   "search.scanned-of": "Searched {scanned} of {total} tasks.",
-  "search.further": "Search further"
+  "search.further": "Search further",
+  "filter.situation": "Situation",
+  "filter.situation.all": "All tasks",
+  "situation.empty.mine": "No task of yours waits for your decision.",
+  "situation.empty.blocked": "Nothing is stuck.",
+  "situation.empty.working": "No agent is running.",
+  "situation.empty.done": "Nothing finished today."
 }

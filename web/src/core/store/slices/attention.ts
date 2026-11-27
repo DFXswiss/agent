@@ -11,6 +11,10 @@
 // - A record older than the stored one (by `updated_at`, then `seq`) is ignored: an answer overtaken by a frame.
 // - Live frames are applied in batches: at most one store update per `FRAME_MS` (HOT-05); each batch counts
 //   `changes`, which the counters follow (refetched at most once per second, `core/attention/load.ts`).
+// - A group may be narrowed by a `GroupFilter` (the lists behind the counters: "Waiting for me" is the decisions of the
+//   user's own tasks, "Finished today" the records finished since local midnight). A narrowed group is a group of its
+//   own; a changed record enters it only when it matches the filter (its owner known from a page and the same, its
+//   `since` not before the bound) and leaves it otherwise.
 //
 // The slice also exports `frames` (the live-channel frames it applies, `core/net/frames.ts`).
 import { parseTime } from '../../encoding/time';
@@ -48,10 +52,23 @@ export interface AttentionSummary {
 
 export type GroupStatus = 'idle' | 'loading' | 'ready' | 'error';
 
+/**
+ * A narrower list of a category (module comment): only the tasks of `owner`, only the records that entered the
+ * category at or after `after` (null: no such bound).
+ */
+export interface GroupFilter {
+  readonly owner: string | null;
+  readonly after: string | null;
+}
+
+/** Every record of the category. */
+export const NO_FILTER: GroupFilter = { owner: null, after: null };
+
 /** One group of an org: task IDs in the group's order and the cursor of the next page. */
 export interface AttentionGroup {
   readonly org: string;
   readonly category: Category;
+  readonly filter: GroupFilter;
   readonly ids: readonly string[];
   readonly nextBefore: string | null;
   readonly status: GroupStatus;
@@ -63,7 +80,9 @@ export interface AttentionState {
   readonly rows: Readonly<Record<string, AttentionRow>>;
   /** Task ID → the org it belongs to (from the page that brought it, else the active org of its frame). */
   readonly orgs: Readonly<Record<string, string>>;
-  /** `groupKey(org, category)` → the group. */
+  /** Task ID → its owner (from the pages that brought it; a narrowed group needs it). */
+  readonly owners: Readonly<Record<string, string>>;
+  /** `groupKey(org, category, filter)` → the group. */
   readonly groups: Readonly<Record<string, AttentionGroup>>;
   /** Org → its counters (null until the first answer). */
   readonly summaries: Readonly<Record<string, AttentionSummary>>;
@@ -79,7 +98,7 @@ declare module '../store' {
 
 export const slice: Slice<'attention'> = {
   name: 'attention',
-  initial: () => ({ rows: {}, orgs: {}, groups: {}, summaries: {}, changes: 0 }),
+  initial: () => ({ rows: {}, orgs: {}, owners: {}, groups: {}, summaries: {}, changes: 0 }),
 };
 
 // --- validation (malformed rows are ignored, never half-applied) ---
@@ -123,7 +142,16 @@ export function isSummary(value: unknown): value is AttentionSummary {
 
 // --- order ---
 
-export const groupKey = (org: string, category: Category): string => `${org} ${category}`;
+export const groupKey = (org: string, category: Category, filter: GroupFilter = NO_FILTER): string =>
+  [org, category, filter.owner ?? '', filter.after ?? ''].join(' ');
+
+/** Whether `row` belongs into `group` (its category, and its filter with the known `owners`). */
+export function matches(group: AttentionGroup, row: AttentionRow, owners: AttentionState['owners']): boolean {
+  if (row.category !== group.category) return false;
+  const { owner, after } = group.filter;
+  if (owner !== null && owners[row.task_id] !== owner) return false;
+  return after === null || parseTime(row.since) >= parseTime(after);
+}
 
 /** Whether record `a` comes before record `b` in the group of `category` (module comment). */
 export function before(category: Category, a: AttentionRow, b: AttentionRow): boolean {
@@ -143,9 +171,10 @@ export function staleRow(known: AttentionRow | undefined, row: AttentionRow): bo
   return delta < 0 || (delta === 0 && row.seq < known.seq);
 }
 
-const emptyGroup = (org: string, category: Category): AttentionGroup => ({
+const emptyGroup = (org: string, category: Category, filter: GroupFilter): AttentionGroup => ({
   org,
   category,
+  filter,
   ids: [],
   nextBefore: null,
   status: 'idle',
@@ -154,12 +183,17 @@ const emptyGroup = (org: string, category: Category): AttentionGroup => ({
 
 const idleGroups = new Map<string, AttentionGroup>();
 
-/** The group of `org`/`category` (an idle empty one when not loaded yet, the same object every time). */
-export function attentionGroup(state: AttentionState, org: string, category: Category): AttentionGroup {
-  const key = groupKey(org, category);
+/** The group of `org`/`category`/`filter` (an idle empty one when not loaded yet, the same object every time). */
+export function attentionGroup(
+  state: AttentionState,
+  org: string,
+  category: Category,
+  filter: GroupFilter = NO_FILTER,
+): AttentionGroup {
+  const key = groupKey(org, category, filter);
   const found = state.groups[key];
   if (found !== undefined) return found;
-  const idle = idleGroups.get(key) ?? emptyGroup(org, category);
+  const idle = idleGroups.get(key) ?? emptyGroup(org, category, filter);
   idleGroups.set(key, idle);
   return idle;
 }
@@ -172,7 +206,7 @@ function place(state: AttentionState, changed: readonly AttentionRow[]): Attenti
     for (const [key, group] of Object.entries(groups)) {
       if (group.org !== org) continue;
       const present = group.ids.includes(row.task_id);
-      const own = group.category === row.category;
+      const own = matches(group, row, state.owners);
       if (!own) {
         if (present) groups = { ...groups, [key]: { ...group, ids: group.ids.filter((id) => id !== row.task_id) } };
         continue;
@@ -216,10 +250,10 @@ function applyRows(
 }
 
 /** A group starts loading. */
-export function groupLoading(store: Store, org: string, category: Category): void {
+export function groupLoading(store: Store, org: string, category: Category, filter: GroupFilter = NO_FILTER): void {
   store.update('attention', (state) => {
-    const key = groupKey(org, category);
-    const group = state.groups[key] ?? emptyGroup(org, category);
+    const key = groupKey(org, category, filter);
+    const group = state.groups[key] ?? emptyGroup(org, category, filter);
     return { ...state, groups: { ...state.groups, [key]: { ...group, status: 'loading', code: null } } };
   });
 }
@@ -227,28 +261,33 @@ export function groupLoading(store: Store, org: string, category: Category): voi
 /**
  * A loaded page of a group: its records are stored and the group continues with them (`first`: the group starts over
  * with this page; `refresh`: the first page again after a reconnect – records of further pages already loaded that
- * sort after the page stay with their paging position, KOR-11).
+ * sort after the page stay with their paging position, KOR-11). `owners` names the owners of the page's tasks.
  */
 export function groupPage(
   store: Store,
   page: {
     org: string;
     category: Category;
+    filter?: GroupFilter;
     rows: readonly AttentionRow[];
+    owners?: Readonly<Record<string, string>>;
     nextBefore: string | null;
     first: boolean;
     refresh?: boolean;
   },
 ): void {
   store.update('attention', (state) => {
-    const key = groupKey(page.org, page.category);
+    const filter = page.filter ?? NO_FILTER;
+    const key = groupKey(page.org, page.category, filter);
     const own = page.rows.filter((row) => row.category === page.category);
+    // the owners first: the page's records then also find the narrowed groups they belong to
+    const known = { ...state, owners: { ...state.owners, ...page.owners } };
     // the page's records are stored and leave the other groups of the org they were in
-    const applied = applyRows(state, own, page.org, null);
+    const applied = applyRows(known, own, page.org, null);
     const rows = applied.rows;
-    const group = state.groups[key] ?? emptyGroup(page.org, page.category);
-    // a record a newer frame moved to another category meanwhile stays out
-    const ids = own.map((row) => row.task_id).filter((id) => rows[id]!.category === page.category);
+    const group = state.groups[key] ?? emptyGroup(page.org, page.category, filter);
+    // a record a newer frame moved to another category (or out of the filter) meanwhile stays out
+    const ids = own.map((row) => row.task_id).filter((id) => matches(group, rows[id]!, applied.owners));
     const last = own.at(-1);
     let older: string[] = [];
     if (page.refresh && page.nextBefore !== null && last !== undefined) {
@@ -263,10 +302,16 @@ export function groupPage(
   });
 }
 
-export function groupFailed(store: Store, org: string, category: Category, code: string): void {
+export function groupFailed(
+  store: Store,
+  org: string,
+  category: Category,
+  code: string,
+  filter: GroupFilter = NO_FILTER,
+): void {
   store.update('attention', (state) => {
-    const key = groupKey(org, category);
-    const group = state.groups[key] ?? emptyGroup(org, category);
+    const key = groupKey(org, category, filter);
+    const group = state.groups[key] ?? emptyGroup(org, category, filter);
     return { ...state, groups: { ...state.groups, [key]: { ...group, status: 'error', code } } };
   });
 }

@@ -269,8 +269,10 @@ uses the platform's hybrid/QR UI of `create()`; a passkey without PRF output is 
 The home of an organization shows where people are needed, across all workgroups the user reads:
 
 - **Counters** at the top: "Waiting for me" (`needs_decision` tasks the user owns), "Stuck", "Running", "Finished
-  today" (`GET /v1/orgs/{org}/attention/summary`, `since` = local midnight). The navigation entry Home (sidebar,
-  navigation row, phone bottom bar) carries the "waiting for me" count as a badge. Below them the organization's
+  today" (`GET /v1/orgs/{org}/attention/summary`, `since` = local midnight). Each counter links the task overview
+  filtered to the tasks it counts (§5.1a, `/o/:org/tasks?situation=mine|blocked|working|done`). The navigation entry
+  Home (sidebar, navigation row, phone bottom bar) carries the "waiting for me" count as a badge. Below them the
+  organization's
   subscriptions ("Subscriptions: n available · m used up – next release 14:05", `GET /v1/orgs/{org}/quotas`, refreshed
   every minute, a link to the section of §8.2; hidden without any subscription to list or when the hub cannot answer;
   KOR-50, [ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md) §6).
@@ -456,6 +458,13 @@ workgroup merged with per-workgroup cursors (a row is shown only when no unloade
 §5.1 plus the workgroup; the same window and "Load more" as §5.1 (list `tasks.overview`). Filters: state, workgroup,
 "only mine" (signed owner), title search (in the browser). Empty state explains how to create a task. Details:
 `decisions/KOR-32.md`.
+
+**Situation filter.** The first filter, "Situation", offers the four counters of §4.0 ("Waiting for me", "Stuck",
+"Running", "Finished today"); it is kept in the address (`?situation=mine|blocked|working|done`, the counters link it;
+an unknown value is ignored). Chosen, the list shows exactly the tasks its counter counts: the hub's attention list of
+that category (`GET /v1/orgs/{org}/attention`, "Waiting for me" with `mine=1`, "Finished today" with `since` = local
+midnight) with the entries, actions and paging of §4.0, and the other filters give way to it. "All tasks" returns to
+the full list.
 
 **Bounded search.** Titles are encrypted, so "only mine" and the title search filter the loaded rows. One search request
 (a new search text or filter) loads at most 10 further pages, one page of the binding list at a time, and stops earlier
