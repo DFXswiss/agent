@@ -1,6 +1,7 @@
 // U-WEB-ui-subscriptions (KOR-68, rule E-30): the card "My subscriptions" of the home page (hidden while loading, the
 // way to add one, the provider rows), the page `/subscriptions` (loading, failure and reload, empty with "Add
-// subscription", "detailed" and "sort by used", the provider details with every account, the table with every column
+// subscription", "detailed" and "least free first", the provider details with every account and all its windows as
+// what is left (the binding one marked, "not usable now until …"), the table with every column
 // and "Log in now", the redirect when locked), its refresh, the settings link and the guard. The data come from the
 // fake hub routes of KOR-69 and are opened like in the browser (`loadSubscriptions`).
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
@@ -8,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ed25519KeyPair } from '../../src/core/crypto/keys';
 import { buildPlatformEntries } from '../../src/core/log/entries';
 import { appendPlatform } from '../../src/core/log/platform';
+import { formatClock, localTimeZone } from '../../src/core/i18n/format';
 import { HubError } from '../../src/core/net/signedFetch';
 import { setPhase } from '../../src/core/store/slices/session';
 import { setPlatform } from '../../src/core/store/slices/orgs';
@@ -108,12 +110,23 @@ const operatorSub = (label: string, used: number | null, fetched: string | null,
   fetched_at: fetched,
 });
 
-/** Every kind of row: own, further, not logged in, not readable, not measured, unverifiable, operator. */
+/** The hub's `state` of a subscription (ADR-081 section 6, `agent_hub.models.quotas`). */
+const state = (usable: boolean, binding: string | null, release: number | null = null) => ({
+  usable,
+  binding,
+  release: release === null ? null : iso(release),
+});
+
+/** Every kind of row: own, further, not logged in, not readable, not measured, unverifiable, operator. The states are
+ *  those the hub derives from the readings. */
 async function fullWorld(): Promise<CredWorld> {
   const t = await world();
   t.client.on(LIST, () => ({
     subscriptions: [
-      item(1, { reading: measured([win('seven_day', 95, NOW + 30_000)], { fetched_at: OLD }) }),
+      item(1, {
+        reading: measured([win('seven_day', 95, NOW + 30_000)], { fetched_at: OLD }),
+        state: state(true, 'seven_day'),
+      }),
       item(2, {
         primary: true,
         reading: measured([
@@ -121,10 +134,16 @@ async function fullWorld(): Promise<CredWorld> {
           win('seven_day', 50, NOW + 27 * 3600_000),
           win('weekly:opus', 75, null),
         ]),
+        state: state(true, 'seven_day'),
       }),
       item(3),
-      item(4, { reading: measured([], { unreadable: true, device_id: null }) }),
-      item(5, { reading: measured([win('five_hour', 72, NOW - 1000), win('seven_day', 10, NOW + 5 * 60_000)]) }),
+      // not readable: the hub counts it as usable, as the summary of ADR-081 section 6 does
+      item(4, { reading: measured([], { unreadable: true, device_id: null }), state: state(true, null) }),
+      // the 5 hours have reset since the reading: free again, the week binds
+      item(5, {
+        reading: measured([win('five_hour', 72, NOW - 1000), win('seven_day', 10, NOW + 5 * 60_000)]),
+        state: state(true, 'seven_day'),
+      }),
       item(6),
       item(7, { updated_at: 'never' }),
     ],
@@ -196,7 +215,7 @@ describe('the card of the home page', () => {
     expect(screen.queryByTestId('subscriptions.card')).toBeNull();
   });
 
-  it('shows the provider row with the week as the total of all accounts and opens it', async () => {
+  it('shows the provider row with what is left of the week as the total of all accounts and opens it', async () => {
     const t = await fullWorld();
     mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/');
     const provider = await screen.findByTestId('subscriptions.provider');
@@ -204,19 +223,31 @@ describe('the card of the home page', () => {
     expect(within(provider).getByTestId('subscriptions.provider.summary')).toHaveTextContent('Claude');
     // seven records and two token files: the line stands for all of them
     expect(within(provider).getByTestId('subscriptions.provider.total')).toHaveTextContent('all 9');
-    // the week of the three accounts that measured it: (95 + 50 + 10) / 3, the next reset of them
-    expect(within(provider).getByTestId('subscriptions.provider.used')).toHaveTextContent('51.7%');
+    // the hub's states: Team, own sessions, Beta (not readable), Gamma and team-a are usable; the others have no state
+    expect(within(provider).getByTestId('subscriptions.provider.usable')).toHaveTextContent('usable now: 5 of 9');
+    // no account waits for a release
+    expect(within(provider).queryByTestId('subscriptions.provider.release')).toBeNull();
+    // what each measured subscription has left in its binding window: Team 5, own 50, Gamma 90, team-a 60; Beta is
+    // not readable and counted apart
+    expect(within(provider).getByTestId('subscriptions.provider.free')).toHaveTextContent('51.3% free');
+    expect(within(provider).getByTestId('subscriptions.provider.unreadable')).toHaveTextContent('1 not readable');
     expect(within(provider).getByTestId('subscriptions.provider.reset')).toHaveTextContent('<1 min');
     expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('data-level', 'ok');
+    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-valuenow', '51');
+    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-valuetext', '51.3% free');
     expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-label', 'Claude – all 9');
     expect(screen.queryByTestId('subscriptions.provider.details')).toBeNull();
     toggle(provider, true);
     const details = await screen.findByTestId('subscriptions.provider.details');
-    expect(within(details).getByTestId('subscriptions.window.five_hour')).toHaveTextContent('5hdue46%');
+    // (80 + 100) / 2 left: Gamma's 5 hours have reset since its reading
+    expect(within(details).getByTestId('subscriptions.window.five_hour')).toHaveTextContent('5hdue90% free');
     expect(within(details).getByTestId('subscriptions.window.five_hour.bar')).toHaveAttribute('data-level', 'ok');
-    expect(within(details).getByTestId('subscriptions.window.seven_day')).toHaveTextContent('Week<1 min51.7%');
-    expect(within(details).getByTestId('subscriptions.window.weekly:opus')).toHaveTextContent('Week opus75%');
-    expect(within(details).getByTestId('subscriptions.window.fullest')).toHaveTextContent('fullest window3 h 0 min40%');
+    expect(within(details).getByTestId('subscriptions.window.seven_day')).toHaveTextContent('Week<1 min48.3% free');
+    expect(within(details).getByTestId('subscriptions.window.weekly:opus')).toHaveTextContent('Week opus25% free');
+    expect(within(details).getByTestId('subscriptions.window.weekly:opus.bar')).toHaveAttribute('data-level', 'warn');
+    expect(within(details).getByTestId('subscriptions.window.fullest')).toHaveTextContent(
+      'fullest window3 h 0 min60% free',
+    );
     expect(within(details).getByTestId('subscriptions.provider.recorded')).toHaveTextContent('measured 5 min ago');
     toggle(provider, false);
     await waitFor(() => expect(screen.queryByTestId('subscriptions.provider.details')).toBeNull());
@@ -242,8 +273,14 @@ describe('the review of KOR-68', () => {
     const t = await world();
     t.client.on(LIST, () => ({
       subscriptions: [
-        item(1, { reading: measured([win('seven_day', 130, NOW + 3600_000)], { fetched_at: OLD }) }),
-        item(2, { reading: measured([win('seven_day', 90, null)], { device_id: null }) }),
+        item(1, {
+          reading: measured([win('seven_day', 130, NOW + 3600_000)], { fetched_at: OLD }),
+          state: state(false, 'seven_day', NOW + 3600_000),
+        }),
+        item(2, {
+          reading: measured([win('seven_day', 90, null)], { device_id: null }),
+          state: state(true, 'seven_day'),
+        }),
       ],
     }));
     await serveRecord(t, 1, { ...SUBSCRIPTION, name: 'One' });
@@ -251,11 +288,14 @@ describe('the review of KOR-68', () => {
     await operator(t, [operatorSub('file', 10, FRESH)]);
     mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/');
     const provider = await screen.findByTestId('subscriptions.provider');
-    // the total counts an old reading: the line is marked old; (130 + 90) / 2 = 110 % is capped
+    // the total counts an old reading: the line is marked old; 130 % used counts as 0 % left: (0 + 10 + 90) / 3
     expect(within(provider).getByTestId('subscriptions.provider.old')).toHaveTextContent('old (2 h ago)');
-    expect(within(provider).getByTestId('subscriptions.provider.used')).toHaveTextContent('110%');
-    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-valuenow', '100');
+    expect(within(provider).getByTestId('subscriptions.provider.free')).toHaveTextContent('33.3% free');
+    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-valuenow', '33');
+    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('data-level', 'ok');
     toggle(provider, true);
+    expect(within(account(id(1))).getByTestId('subscriptions.account.free')).toHaveTextContent('0% free');
+    expect(within(account(id(1))).getByTestId('subscriptions.account.bar')).toHaveAttribute('aria-valuenow', '0');
     const ages = (await screen.findAllByTestId('subscriptions.account.age')).map((found) => found.textContent);
     expect(ages).toEqual([
       'measured 2 h ago · platform device',
@@ -266,8 +306,136 @@ describe('the review of KOR-68', () => {
     // fresh readings: no mark
     t.client.on(LIST, () => ({ subscriptions: [item(2, { reading: measured([win('seven_day', 20, null)]) })] }));
     mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/');
-    await screen.findByTestId('subscriptions.provider.used');
+    await screen.findByTestId('subscriptions.provider.free');
     expect(screen.queryByTestId('subscriptions.provider.old')).toBeNull();
+  });
+});
+
+describe('what is left of each subscription and the window that binds it', () => {
+  const FIVE_DONE = NOW + 90 * 60_000;
+  const WEEK_DONE = NOW + 2 * 86400_000;
+  const clock = (at: number, locale: 'en' | 'de') => formatClock(at, { locale, timeZone: localTimeZone(), now: NOW });
+
+  async function threeWorld(): Promise<CredWorld> {
+    const t = await world();
+    t.client.on(LIST, () => ({
+      subscriptions: [
+        // 5 hours used up, the week nearly free
+        item(1, {
+          reading: measured([
+            win('five_hour', 100, FIVE_DONE),
+            win('seven_day', 13, NOW + 4 * 86400_000),
+            win('weekly:opus', 40, null),
+          ]),
+          state: state(false, 'five_hour', FIVE_DONE),
+        }),
+        // the week used up
+        item(2, {
+          reading: measured([win('five_hour', 30, NOW + 60 * 60_000), win('seven_day', 100, WEEK_DONE)]),
+          state: state(false, 'seven_day', WEEK_DONE),
+        }),
+        // free; its earlier reset is no release
+        item(3, {
+          reading: measured([win('five_hour', 10, NOW + 30 * 60_000), win('seven_day', 20, NOW + 3 * 86400_000)]),
+          state: state(true, 'seven_day'),
+        }),
+      ],
+    }));
+    await serveRecord(t, 1, { ...SUBSCRIPTION, name: 'Nora' });
+    await serveRecord(t, 2, { ...SUBSCRIPTION, name: 'Otto' });
+    await serveRecord(t, 3, { ...SUBSCRIPTION, name: 'Pia' });
+    return t;
+  }
+
+  it('shows every window as free, marks the binding one and an account that is not usable now', async () => {
+    const t = await threeWorld();
+    mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/');
+    const provider = await screen.findByTestId('subscriptions.provider');
+    // only Pia can be used now; the next release is Nora's 5 hours (Otto's week comes later)
+    expect(within(provider).getByTestId('subscriptions.provider.usable')).toHaveTextContent('usable now: 1 of 3');
+    expect(within(provider).getByTestId('subscriptions.provider.usable')).toHaveAttribute('data-usable', '1');
+    expect(within(provider).getByTestId('subscriptions.provider.release')).toHaveTextContent(
+      `next release ${clock(FIVE_DONE, 'en')} (in 1 h 30 min)`,
+    );
+    // the provider line stays with the mean of the week, as what is left: (87 + 0 + 80) / 3
+    // what each has left in its binding window: Nora 0 (5 hours used up), Otto 0 (week), Pia 80
+    expect(within(provider).getByTestId('subscriptions.provider.free')).toHaveTextContent('26.7% free');
+    expect(within(provider).queryByTestId('subscriptions.provider.unreadable')).toBeNull();
+    toggle(provider, true);
+    await screen.findByTestId('subscriptions.provider.details');
+    const windows = (key: string) =>
+      within(account(key))
+        .getAllByTestId('subscriptions.account.window')
+        .map((line) => [
+          line.dataset.window,
+          line.dataset.binding,
+          within(line).getByTestId('subscriptions.account.free').textContent,
+          within(line).getByTestId('subscriptions.account.reset').textContent,
+          within(line).getByTestId('subscriptions.account.bar').dataset.level,
+        ]);
+    const nora = account(id(1));
+    expect(nora).toHaveAttribute('data-exhausted', 'yes');
+    expect(within(nora).getByTestId('subscriptions.account.blocked')).toHaveTextContent(
+      `not usable now until ${clock(FIVE_DONE, 'en')} (in 1 h 30 min)`,
+    );
+    expect(windows(id(1))).toEqual([
+      ['five_hour', 'yes', '0% free', '1 h 30 min', 'low'],
+      ['seven_day', 'no', '87% free', '4 d 0 h', 'ok'],
+      ['weekly:opus', 'no', '60% free', '', 'ok'],
+    ]);
+    expect(within(nora).getAllByTestId('subscriptions.account.bar')[0]).toHaveAttribute('aria-valuenow', '0');
+    expect(within(nora).getAllByTestId('subscriptions.account.bar')[0]).toHaveAttribute('aria-valuetext', '0% free');
+    expect(within(nora).getAllByTestId('subscriptions.account.bar')[0]).toHaveAttribute('aria-label', 'Nora – 5h');
+    // source and time of the measurement stay
+    expect(within(nora).getByTestId('subscriptions.account.age')).toHaveTextContent(
+      'measured 5 min ago · platform device',
+    );
+    const otto = account(id(2));
+    expect(within(otto).getByTestId('subscriptions.account.blocked')).toHaveTextContent(
+      `not usable now until ${clock(WEEK_DONE, 'en')} (in 2 d 0 h)`,
+    );
+    expect(windows(id(2))).toEqual([
+      ['five_hour', 'no', '70% free', '1 h 0 min', 'ok'],
+      ['seven_day', 'yes', '0% free', '2 d 0 h', 'low'],
+    ]);
+    expect(account(id(3))).toHaveAttribute('data-exhausted', 'no');
+    expect(within(account(id(3))).queryByTestId('subscriptions.account.blocked')).toBeNull();
+    expect(windows(id(3))).toEqual([
+      ['five_hour', 'no', '90% free', '30 min', 'ok'],
+      ['seven_day', 'yes', '80% free', '3 d 0 h', 'ok'],
+    ]);
+    // exhausted without a known release (an observed limit without one): not usable now, without a time
+    cleanup();
+    t.client.on(LIST, () => ({
+      subscriptions: [item(1, { reading: measured([win('seven_day', 60, null)]), state: state(false, 'seven_day') })],
+    }));
+    mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/');
+    toggle(await screen.findByTestId('subscriptions.provider'), true);
+    expect(await screen.findByTestId('subscriptions.account.blocked')).toHaveTextContent(/^not usable now$/);
+    expect(screen.queryByTestId('subscriptions.provider.release')).toBeNull();
+    expect(screen.getByTestId('subscriptions.provider.usable')).toHaveTextContent('usable now: 0 of 1');
+  });
+
+  it('says it in German', async () => {
+    const t = await threeWorld();
+    mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/', 'de');
+    const provider = await screen.findByTestId('subscriptions.provider');
+    expect(within(provider).getByTestId('subscriptions.provider.usable')).toHaveTextContent('jetzt nutzbar: 1 von 3');
+    expect(within(provider).getByTestId('subscriptions.provider.release')).toHaveTextContent(
+      `nächste Freigabe ${clock(FIVE_DONE, 'de')} (in 1 h 30 min)`,
+    );
+    expect(within(provider).getByTestId('subscriptions.provider.free')).toHaveTextContent('26.7% frei');
+    toggle(provider, true);
+    await screen.findByTestId('subscriptions.provider.details');
+    const nora = account(id(1));
+    expect(within(nora).getByTestId('subscriptions.account.blocked')).toHaveTextContent(
+      `gerade nicht nutzbar bis ${clock(FIVE_DONE, 'de')} (in 1 h 30 min)`,
+    );
+    expect(within(nora).getByTestId('subscriptions.account.binding')).toHaveTextContent('bindet');
+    expect(within(nora).getAllByTestId('subscriptions.account.window')[0]).toHaveTextContent(
+      '5 hbindet1 h 30 min0% frei',
+    );
+    expect(within(nora).getAllByTestId('subscriptions.account.window')[1]).toHaveTextContent('Woche4 T 0 h87% frei');
   });
 });
 
@@ -362,7 +530,7 @@ describe('the page', () => {
     expect(screen.queryByTestId('subscriptions.page')).toBeNull();
   });
 
-  it('shows every provider and account, "detailed" and "sort by used"', async () => {
+  it('shows every provider and account, "detailed" and "least free first"', async () => {
     const t = await fullWorld();
     mount(t, [{ path: '/subscriptions', element: <SubscriptionsScreen /> }], '/subscriptions');
     const provider = await screen.findByTestId('subscriptions.provider');
@@ -387,8 +555,39 @@ describe('the page', () => {
     const own = account(id(2));
     expect(own).toHaveAttribute('data-status', 'logged_in');
     expect(own).toHaveTextContent('own sessions claude@example.com');
-    expect(within(own).getByTestId('subscriptions.account.used')).toHaveTextContent('50%');
-    expect(within(own).getByTestId('subscriptions.account.bar')).toHaveAttribute('data-level', 'ok');
+    // every window of the account with what is left, its bar and its reset; the week binds (50 % left against 80 %)
+    const lines = (key: string) =>
+      within(account(key))
+        .getAllByTestId('subscriptions.account.window')
+        .map((line) => [line.dataset.window, line.dataset.binding, line.textContent]);
+    expect(lines(id(2))).toEqual([
+      ['five_hour', 'no', '5h2 h 5 min80% free'],
+      ['seven_day', 'yes', 'Weekbinding1 d 3 h50% free'],
+      ['weekly:opus', 'no', 'Week opus25% free'],
+    ]);
+    expect(within(own).getAllByTestId('subscriptions.account.binding')).toHaveLength(1);
+    expect(within(own).queryByTestId('subscriptions.account.blocked')).toBeNull();
+    expect(own).toHaveAttribute('data-exhausted', 'no');
+    expect(
+      within(own)
+        .getAllByTestId('subscriptions.account.bar')
+        .map((bar) => [bar.getAttribute('aria-label'), bar.dataset.level]),
+    ).toEqual([
+      ['own sessions – 5h', 'ok'],
+      ['own sessions – Week', 'ok'],
+      ['own sessions – Week opus', 'warn'],
+    ]);
+    // the 5 hours bind (28 % left against 90 % of the week): amber
+    // Gamma: its 5 hours (72 % used) have reset since the reading – free again –, the week binds
+    expect(lines(id(5))).toEqual([
+      ['five_hour', 'no', '5hdue100% free'],
+      ['seven_day', 'yes', 'Weekbinding5 min90% free'],
+    ]);
+    expect(within(account(id(5))).getAllByTestId('subscriptions.account.bar')[0]).toHaveAttribute('data-level', 'ok');
+    // Team: 5 % left of the week, red but usable
+    expect(lines(id(1))).toEqual([['seven_day', 'yes', 'Weekbinding<1 min5% free']]);
+    expect(within(account(id(1))).getByTestId('subscriptions.account.bar')).toHaveAttribute('data-level', 'low');
+    expect(lines('operator:team-a')).toEqual([['fullest', 'yes', 'fullest windowbinding3 h 0 min60% free']]);
     expect(within(own).getByTestId('subscriptions.account.age')).toHaveAttribute('data-old', 'no');
     expect(within(own).getByTestId('subscriptions.account.age')).toHaveTextContent('measured 5 min ago');
     expect(within(account(id(1))).getByTestId('subscriptions.account.age')).toHaveAttribute('data-old', 'yes');
@@ -401,7 +600,7 @@ describe('the page', () => {
       'cannot be opened (forbidden)',
     );
     expect(account(id(7))).toHaveTextContent('subscription');
-    expect(within(account('operator:team-a')).getByTestId('subscriptions.account.used')).toHaveTextContent('40%');
+    expect(within(account('operator:team-a')).getByTestId('subscriptions.account.free')).toHaveTextContent('60% free');
     expect(within(account('operator:team-b')).getByTestId('subscriptions.account.none')).toHaveTextContent(
       'not measured yet',
     );
@@ -432,7 +631,7 @@ describe('the page', () => {
       'Use',
       'Listed',
       'Plan',
-      'Used',
+      'Free',
       'Reset',
       'Device',
       'Checked',
@@ -448,7 +647,8 @@ describe('the page', () => {
       'own sessions',
       'listed',
       '—',
-      '5h: 20%Week: 50%Week opus: 75%',
+      // what is left per window
+      '5h: 80%Week: 50%Week opus: 25%',
       '5h: 2 h 5 minWeek: 1 d 3 hWeek opus: —',
       'platform device',
       '5 min ago',
@@ -463,7 +663,7 @@ describe('the page', () => {
       'pool, 1 org(s)',
       'listed',
       '—',
-      'Week: 95%',
+      'Week: 5%',
       'Week: <1 min',
       'platform device',
       '2 h ago',
@@ -506,7 +706,7 @@ describe('the page', () => {
       'pool',
       'token file',
       'usable',
-      'fullest window: 40%',
+      'fullest window: 60%',
       'fullest window: 3 h 0 min',
       'token file',
       '5 min ago',

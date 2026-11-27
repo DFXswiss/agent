@@ -1,12 +1,13 @@
 // The page "My subscriptions" (`/subscriptions`, rule E-30, KOR-68, after the page "Subscriptions" of the local
-// dashboard): the provider rows – "detailed" opens all of them, "sort by used" orders them by the used share of their
-// week – and below the table of every subscription: provider, account, name, status, note, use, listed, plan, used,
-// reset, device, checked, changed. Only the user reads it (the data are the user's own, `loadSubscriptions`).
+// dashboard): the provider rows – "detailed" opens all of them, "sort by used" puts the provider with the least left
+// of its week first – and below the table of every subscription: provider, account, name, status, note, use, listed,
+// plan, free (the share left per window), reset, device, checked, changed. Only the user reads it (the data are the user's own, `loadSubscriptions`).
 // "Add subscription" and "Log in now" open the login dialogs of KOR-69 (ADR-090 section 2: the login runs on a
 // platform device, the user opens the link and pastes the code); name, note, use, log out and remove are in the
 // settings section "Claude subscriptions".
 import { useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
+import { freePercent } from '../../../core/credentials/quotas';
 import { providerGroups, providerName, type SubscriptionRow } from '../../../core/subscriptions/subscriptions';
 import { useNow } from '../../countdown/useNow';
 import { useStore } from '../../hooks/useStore';
@@ -30,7 +31,7 @@ const COLUMNS = [
   'use',
   'listed',
   'plan',
-  'used',
+  'free',
   'reset',
   'device',
   'checked',
@@ -93,12 +94,12 @@ function Row({
       <td className={cell}>{useText(row)}</td>
       <td className={cell}>{t(`subscriptions.source.${row.source}`)}</td>
       <td className={cell}>{row.state ?? '—'}</td>
-      <td className={cell} data-testid="subscriptions.row.used">
+      <td className={cell} data-testid="subscriptions.row.free">
         {windows.length === 0
           ? '—'
           : windows.map((window) => (
               <span key={window.window} className="block whitespace-nowrap">
-                {windowName(window.window)}: {percent(window.usedPercent)}
+                {windowName(window.window)}: {percent(freePercent(window.usedPercent, window.resetsAt, now))}
               </span>
             ))}
       </td>
@@ -221,7 +222,7 @@ export function SubscriptionsScreen() {
               {t('subscriptions.sort')}
             </label>
           </div>
-          <ProviderList groups={providerGroups(rows, sorted)} now={now} detailed={detailed} />
+          <ProviderList groups={providerGroups(rows, now, sorted)} now={now} detailed={detailed} />
           <Table rows={rows} now={now} onChanged={reload} />
         </>
       )}

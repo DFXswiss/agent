@@ -2,7 +2,7 @@
 // access and quotas" of the active organization (own subscription with windows or "not readable" and the last observed
 // limit, the operator's subscriptions, DFX access, the summary) and the model switch line of the task view.
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { formatClock, localTimeZone } from '../../src/core/i18n';
 import { applyFrame, frameHandlers } from '../../src/core/net/frames';
 import { HubError } from '../../src/core/net/signedFetch';
@@ -18,6 +18,8 @@ import { mount } from './chat-world';
 
 const AT = '2026-11-24T13:05:00.000Z';
 const LATER = '2026-11-24T14:05:00.000Z';
+
+afterEach(() => vi.useRealTimers());
 const clock = (value: string) =>
   formatClock(Date.parse(value), { locale: 'en', timeZone: localTimeZone(), now: Date.now() });
 
@@ -126,6 +128,8 @@ describe('model access and quotas', () => {
   });
 
   it('shows the own and the operator subscriptions with state, share and release, DFX access and the summary', async () => {
+    // before the releases (a window whose reset has passed is free again)
+    vi.useFakeTimers({ now: Date.parse(AT), toFake: ['Date'] });
     const t = await taskWorld();
     let answer: () => unknown = () => QUOTAS;
     t.client.on(`GET /v1/orgs/${t.org}/quotas`, () => answer());
@@ -138,8 +142,9 @@ describe('model access and quotas', () => {
       `Subscriptions: 1 available · 2 used up – next release ${clock(LATER)}`,
     );
     const bars = screen.getByTestId('model-quotas.own.bars');
-    expect(bars).toHaveTextContent(`5 hours: 100% used · release ${clock(LATER)}`);
-    expect(bars).toHaveTextContent('Week, opus: 30% used');
+    // what is left, as on the page "My subscriptions"
+    expect(bars).toHaveTextContent(`5 hours: 0% free · release ${clock(LATER)}`);
+    expect(bars).toHaveTextContent('Week, opus: 70% free');
     expect(screen.getByTestId('model-quotas.own.limited')).toHaveTextContent(
       `Last observed limit: ${clock(AT)} – free from ${clock(LATER)}`,
     );
@@ -150,7 +155,7 @@ describe('model access and quotas', () => {
     expect(within(a).getByTestId('model-quotas.subscription.release')).toHaveTextContent(
       `Used up until ${clock(LATER)}`,
     );
-    expect(within(a).getByTestId('model-quotas.subscription.meter')).toHaveAttribute('value', '1');
+    expect(within(a).getByTestId('model-quotas.subscription.meter')).toHaveAttribute('value', '0');
     expect(within(b).getByTestId('model-quotas.subscription.release')).toHaveTextContent(`release ${clock(LATER)}`);
     expect(within(b).queryByTestId('model-quotas.subscription.limited')).toBeNull();
     // not readable: said honestly, with the last observed limit time

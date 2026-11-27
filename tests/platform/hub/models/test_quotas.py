@@ -7,11 +7,54 @@ from datetime import timedelta
 from typing import Any
 
 from agent_hub.crypto.encoding import b64u_encode, format_time, parse_time
+from agent_hub.models import quotas
 from tests.platform.hub.events.support import Json
 from tests.platform.hub.models.support import Keys
 from tests.platform.hub.orgs.support import PlatformLog, insert_platform_entries, new_id
 from tests.platform.hub.tasks.support import audit_rows
 from tests.platform.hub.usage.support import window
+
+
+def test_the_binding_window_and_the_state_of_one_subscription() -> None:
+    now = parse_time("2026-11-26T12:00:00.000Z")
+    soon, later = format_time(now + timedelta(hours=1)), format_time(now + timedelta(days=2))
+    passed = format_time(now - timedelta(minutes=1))
+
+    def bound(*windows: Json) -> Json | None:
+        return quotas.binding_window(list(windows), now)
+
+    def name(*windows: Json) -> object:
+        found = bound(*windows)
+        return None if found is None else found["window"]
+
+    def state(*windows: Json, **limit: Any) -> Any:
+        return quotas.subscription_state(list(windows), now, **limit)
+
+    # the highest use binds, a week per model never
+    assert name(window("five_hour", 100, soon), window("seven_day", 13, later)) == "five_hour"
+    assert name(window("five_hour", 4, soon), window("seven_day", 80), window("weekly:opus", 99)) == "seven_day"
+    # the week on a tie
+    assert name(window("five_hour", 50, soon), window("seven_day", 50, later)) == "seven_day"
+    assert name(window("seven_day", 50, later), window("five_hour", 50, soon)) == "seven_day"
+    # a window whose reset has passed counts 0
+    assert bound(window("five_hour", 100, passed), window("seven_day", 40, later)) == window("seven_day", 40, later)
+    assert bound(window("five_hour", 100, passed)) == {**window("five_hour", 100, passed), "used_percent": 0}
+    assert name(window("weekly:opus", 100, soon)) is None
+    assert name() is None
+    # usable, or exhausted until the last full window resets; a passed or unknown reset does not exhaust
+    assert state(window("five_hour", 100, soon), window("seven_day", 13, later)) == parse_time(soon)
+    assert state(window("five_hour", 100, soon), window("seven_day", 100, later)) == parse_time(later)
+    assert state(window("five_hour", 100, passed), window("seven_day", 100, None)) is None
+    assert state(window("weekly:opus", 100, soon)) is None
+    assert state(limited=True) == now
+    assert state(limited=True, until=parse_time(soon)) == parse_time(soon)
+    assert state(limited=True, until=now - timedelta(seconds=1)) is None
+    assert quotas.subscription_usage([window("five_hour", 100, soon), window("seven_day", 13, later)], now) == {
+        "usable": False,
+        "binding": "five_hour",
+        "release": soon,
+    }
+    assert quotas.subscription_usage([], now) == {"usable": True, "binding": None, "release": None}
 
 
 def _quotas(keys: Keys, actor: Any = None) -> Json:

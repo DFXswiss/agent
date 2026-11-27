@@ -1,6 +1,7 @@
 // Settings section "My own subscription" (06-web.md section 8.2, ADR-010; titled apart from the organization's "Model
 // access" since KOR-68): the user's own subscription windows the execution device last read
-// (`GET /v1/me/quotas`): 5 hours, week and per model, each as a bar with the used share and the reset time. Without
+// (`GET /v1/me/quotas`): 5 hours, week and per model, each as a bar of what is left (`freePercent`) and the reset
+// time. Without
 // rows the quota is "not readable" when the subscription refused the read (KOR-40), else "not available" (no
 // subscription, or the usage endpoint did not answer). Spend of API keys and the
 // platform is in monitoring.
@@ -24,18 +25,23 @@ function Bar({ bar }: { readonly bar: QuotaBar }) {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const label =
     bar.model === null ? t(`model.quotas.window.${bar.window}`) : t('model.quotas.window.model', { model: bar.model });
-  const share = barShare(bar);
+  const share = barShare(bar, now);
   return (
     <li className="flex flex-col gap-1" data-testid={`quotas.bar.${bar.window}`}>
       <div className="flex flex-wrap justify-between gap-2">
         <span>{label}</span>
-        <span data-testid={`quotas.bar.${bar.window}.used`}>{formatPercent(bar.usedPercent / 100, locale)}</span>
+        <span data-testid={`quotas.bar.${bar.window}.free`}>
+          {t('model.org.free', { percent: formatPercent(share, locale) })}
+        </span>
       </div>
+      {/* what is left: red at 10 % or less, amber at 30 % or less (ADR-091 section 3) */}
       <meter
         className="h-3 w-full"
         min={0}
         max={1}
-        high={0.8}
+        low={0.1}
+        high={0.3}
+        optimum={1}
         value={share}
         aria-label={label}
         data-testid={`quotas.bar.${bar.window}.meter`}

@@ -136,6 +136,13 @@ Reconcile step `model_fallback` (after `billing`, on every desired state and eve
   a summary (`usable`, `exhausted`, `next_release`). "Not readable" is shown honestly with the last observed limit
   time. The web shows it in the organization settings ("Modellzugang und Kontingente") and as a counter in the
   situation view; the CLI has `agent-platform quotas --org ORG` (E-04, `agent-parity.md`).
+- One rule per subscription (`agent_hub.models.quotas`, corrected 2026-11-26 with ADR-091 §3): its **binding window** is
+  the window of the whole subscription with the highest use – a window whose reset has passed counts 0, the week on a
+  tie (an operator subscription's `used_percent`/`resets_at` are those of it); it is **exhausted** by the rule of §2
+  (until the latest reset of its full windows, or by its latest limit). `GET /v1/me/subscriptions` names the same state
+  for every subscription record of the caller (`state {usable, binding, release}`), so the page "My subscriptions" and
+  its card count "usable now" and the next release as this summary does. Shares are shown as what is left (100 % less
+  the used share; a window whose reset has passed is free again) in the settings sections and on that page alike.
 - The runner sends the new fields and items only to a hub whose device state carries `model_fallback: {api: 1}`.
 
 ### 7. DFX model access on own hardware (idea 46 case 3)
