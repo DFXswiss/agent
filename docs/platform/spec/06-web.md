@@ -314,9 +314,9 @@ The home of an organization shows where people are needed, across all workgroups
   browser (name, note, address, logged in or not, use; ADR-090), for the platform role `operator` also the
   token-file subscriptions of `GET /v1/orgs/{org}/quotas` of the granted organizations (an organization whose answer
   fails is left out; a token file named like an own record, ignoring case, is not listed again – the record's row
-  stays, with the file's reading when it has none); refreshed every minute. Every account names the source of its reading (device or token file); a closed
-  provider line one of whose counted headline readings is older than 60 minutes is marked old. Without any subscription
-  the card leads to "Add subscription". The card links the page `/subscriptions`: the same provider lines with
+  stays, with the file's reading when it has none); refreshed every minute. Every account names the source of its
+  reading (device or token file); a closed provider line one of whose counted headline readings is older than 60
+  minutes is marked old. Without any subscription the card leads to "Add subscription". The card links the page `/subscriptions`: the same provider lines with
   "detailed" (opens all; the user's own choices come back when it is switched off) and "least free first" (providers
   by what is left of their headline), and a table with provider, account, name, status (logged in, not logged in with
   "Log in now", not readable, cannot be opened), note, use, listed (record or token file), plan, free (share left) and
