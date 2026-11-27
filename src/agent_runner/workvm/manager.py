@@ -57,6 +57,7 @@ from agent_runner.credentials import acting
 from agent_runner.errors import RunnerError
 from agent_runner.operations.extensions import OperationFailed
 from agent_runner.sessions.records import LocalSession
+from agent_runner.subagents import guest_features
 from agent_runner.vm.lima import Instance, Lima, LimaError
 from agent_runner.workvm import firewall, jobs, records, sync
 from agent_runner.workvm.jobs import JobView, Shell, WorkVmError
@@ -260,6 +261,8 @@ class WorkVms:
         """Set when a pool entry was assigned: the daemon task refills the pool at once (`tasks.py`)."""
         self.captures: dict[str, set[asyncio.Task[None]]] = {}
         """Running log captures per work VM (its teardown waits for them)."""
+        self.mirror_locks: dict[tuple[str, str], asyncio.Lock] = {}
+        """One lock per (work VM, session): its mirrors run one after the other (`push`)."""
 
     # -- availability ------------------------------------------------------------------------------------------
 
@@ -1291,7 +1294,7 @@ class WorkVms:
             await _export(env, session, root, workspace, missing_ok=True)
             if not workspace.exists():
                 _empty_export(workspace)
-            sync.merge_from_vm(workspace, packed, None, merged)
+            await asyncio.to_thread(sync.merge_from_vm, workspace, packed, None, merged)
             await _import(env, session, root, merged)
 
     async def _wait(self, vm: WorkVm, arguments: Mapping[str, Any], command: str | None = None) -> JobView:
@@ -1357,22 +1360,67 @@ class WorkVms:
     # -- workspace mirror --------------------------------------------------------------------------------------
 
     async def push(self, env: Any, vm: WorkVm, session: LocalSession, root: str) -> dict[str, int]:
-        """Mirror the changed files of the workspace (`root` below it) into `/workspace` (spec 11 section 3)."""
-        with tempfile.TemporaryDirectory(dir=self.deps.scratch) as scratch:
-            exported = Path(scratch) / "export.tar"
-            await _export(env, session, root, exported)
-            return await self.push_export(vm, session, root, exported)
+        """Mirror the changed files of the workspace (`root` below it) into `/workspace` (spec 11 section 3).
+
+        Only changed files cross the guest link (FIX-02): the export names the keys of the last mirror (`known`), so
+        the guest leaves out every file the VM already holds unchanged. A guest before `guest_features.KNOWN_EXPORT`
+        gets no `known` and answers with every file, as before; one that refuses `known` all the same is asked again
+        without it (`OLD_GUEST_REFUSALS`). The mirrors of one VM and session run one after the other, so a call the
+        guest stopped waiting for and its repetition never export the workspace twice at once. An export that left out a file the
+        plan needs (a mirror that does not match) is repeated without `known`. The durations go to the log
+        (`runner.workvm push`)."""
+        async with self.mirror_locks.setdefault((vm.id, session.id), asyncio.Lock()):
+            begun = time.monotonic()
+            previous = await records.mirror(self.deps.db, vm.id, session.id, root)
+            new_guest = previous is not None and await guest_features.current_guest(
+                self.deps.db, session.vm_id, guest_features.KNOWN_EXPORT
+            )
+            with tempfile.TemporaryDirectory(dir=self.deps.scratch) as scratch:
+                exported = Path(scratch) / "export.tar"
+                await _export(env, session, root, exported, known=sync.known_keys(previous) if new_guest else None)
+                exported_at = time.monotonic()
+                transferred = exported.stat().st_size
+                pushed = await self._mirror(vm, session, root, exported, previous)
+                if pushed is None:
+                    exported.unlink()
+                    await _export(env, session, root, exported)
+                    exported_at = time.monotonic()
+                    transferred += exported.stat().st_size
+                    pushed = await self._mirror(vm, session, root, exported, previous)
+                    assert pushed is not None  # an export without `known` omits nothing
+            done = time.monotonic()
+        self.deps.log(
+            f"runner.workvm push session_id={session.id} workvm_id={vm.id} files={pushed['files']}"
+            f" bytes={pushed['bytes']} deleted={pushed['deleted']} transferred={transferred}"
+            f" export_ms={_ms(exported_at - begun)} apply_ms={_ms(done - exported_at)} total_ms={_ms(done - begun)}"
+        )
+        return pushed
 
     async def push_export(self, vm: WorkVm, session: LocalSession, root: str, exported: Path) -> dict[str, int]:
-        """Mirror an exported workspace (`root` below it) into `/workspace`: the files changed since the last mirror
-        of this VM and session (all of them into a fresh VM)."""
-        export = sync.read_export(exported)
+        """Mirror a complete export (without `known`) of the workspace (`root` below it) into `/workspace`: the files
+        changed since the last mirror of this VM and session (all of them into a fresh VM)."""
         previous = await records.mirror(self.deps.db, vm.id, session.id, root)
+        pushed = await self._mirror(vm, session, root, exported, previous)
+        if pushed is None:
+            raise WorkVmError("workvm_sync_failed")
+        return pushed
+
+    async def _mirror(
+        self, vm: WorkVm, session: LocalSession, root: str, exported: Path, previous: Mapping[str, str] | None
+    ) -> dict[str, int] | None:
+        """Push the files of `exported` that changed against `previous`; None (nothing pushed) when the export left
+        out the content of one of them. The archive checks hash every member: they run in a thread, so a large
+        mirror never stalls the runner's other calls."""
+        export = await asyncio.to_thread(sync.read_export, exported)
         plan = sync.plan_push(previous, export)
+        if plan.incomplete:
+            return None
         files, size = len(plan.changed), 0
         if plan.changed or plan.deleted:
             packed = exported.with_name(exported.name + ".push")
-            files, size = sync.write_push_tar(exported, plan, packed, "" if root == "." else root)
+            files, size = await asyncio.to_thread(
+                sync.write_push_tar, exported, plan, packed, "" if root == "." else root
+            )
             shell = self.deps.shell_for(vm)
             applied = await shell(
                 ["sudo", "-n", jobs.HELPER, "apply", root], stdin=packed, timeout=SYNC_TIMEOUT, limit=4096
@@ -1409,7 +1457,7 @@ class WorkVms:
                 _empty_export(workspace)
             mirrored = await records.mirror(self.deps.db, vm.id, session.id, ".")
             prefixed = None if mirrored is None else _below(mirrored, root)
-            outcome = sync.merge_from_vm(workspace, packed, prefixed, merged)
+            outcome = await asyncio.to_thread(sync.merge_from_vm, workspace, packed, prefixed, merged)
             await _import(env, session, root, merged)
         return {
             "direction": direction,
@@ -1433,6 +1481,10 @@ def _remaining(requested: float, begun: float, reserve: float) -> float:
     """How long the job may still be waited for so the answer reaches the guest within its budget."""
     budget = min(GUEST_MARGIN + requested, GUEST_MAX) - reserve - (time.monotonic() - begun)
     return max(0.0, min(requested, budget))
+
+
+def _ms(seconds: float) -> int:
+    return max(0, round(seconds * 1000))
 
 
 def _empty_export(path: Path) -> None:
@@ -1473,7 +1525,20 @@ async def export_directory(env: Any, session: LocalSession, root: str, target: P
     await _export(env, session, root, target)
 
 
-async def _export(env: Any, session: LocalSession, root: str, target: Path, *, missing_ok: bool = False) -> None:
+OLD_GUEST_REFUSALS = frozenset({"request_invalid", "size_exceeded"})
+"""How a guest without `known` (FIX-02) refuses an export that names it: the schema refuses the field, the body limit of
+1 MiB a long list."""
+
+
+async def _export(
+    env: Any,
+    session: LocalSession,
+    root: str,
+    target: Path,
+    *,
+    missing_ok: bool = False,
+    known: Sequence[str] | None = None,
+) -> None:
     from agent_runner.github import snapshot  # noqa: PLC0415 - the github area imports the operation pipeline
     from agent_runner.guestlink.errors import GuestError, GuestRefused  # noqa: PLC0415
 
@@ -1481,9 +1546,12 @@ async def _export(env: Any, session: LocalSession, root: str, target: Path, *, m
         guest = await snapshot.guest_for(env, session)
         async with guest:
             with open(target, "wb") as sink:
-                await guest.export_files(session.id, root, sink.write)
+                await guest.export_files(session.id, root, sink.write, known=known)
     except GuestRefused as error:
         target.unlink(missing_ok=True)
+        if known is not None and error.error in OLD_GUEST_REFUSALS:
+            await _export(env, session, root, target, missing_ok=missing_ok)
+            return
         if missing_ok and error.error == "not_found":
             return
         code = "params_invalid" if error.error == "path_invalid" else "unavailable"

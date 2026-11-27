@@ -135,7 +135,10 @@ Operation types and parameter examples:
   `{"type": "github.push", "params": {"repo": "example-org/example-repo", "branch": "fix-typo", "commit_sha": "0123456789abcdef0123456789abcdef01234567"}}`
 - `github.create_pull_request` – open a pull request (`body` and `draft` optional):
   `{"type": "github.create_pull_request", "params": {"repo": "example-org/example-repo", "head": "fix-typo", "base": "main", "title": "Fix a typo in the README", "body": "One word.", "draft": true}}`
-- `github.comment` – comment on an issue or a pull request:
+- `github.comment` – comment on an issue or a pull request. For an A38 review comment add `"a38_review": true`: the
+  platform checks the text with the A38 guard's own parser and posts it only if the guard would count it, otherwise
+  the operation fails with the guard's reasons and nothing is posted - one call, no format check of your own. Put the
+  finished text into `body` directly, not into a file of the work VM:
   `{"type": "github.comment", "params": {"repo": "example-org/example-repo", "number": 42, "body": "Looks good to me."}}`
 - `github.list_issues` – list one page of the issues of a repository, newest first (`state` `open` by default, or
   `closed`, `all`; `labels`, `sort` `created`/`updated`/`comments`, `direction` `desc`/`asc`, `per_page` up to 100 and

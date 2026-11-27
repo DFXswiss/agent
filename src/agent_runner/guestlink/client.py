@@ -13,7 +13,7 @@ Transport: the Unix socket `<lima instance dir>/sock/agent-guest.sock` that Lima
 | `register_prompt(session_id, prompt_id, text, speaker?)` | `POST /v1/sessions/{id}/prompts` (sender line, ADR-083) |
 | `control(session_id, action)` | `POST /v1/sessions/{id}/control` |
 | `import_files(session_id, dir, data, replace=)` | `POST /v1/sessions/{id}/files/import` (tar body) |
-| `export_files(session_id, dir, write, paths=)` | `POST /v1/sessions/{id}/files/export` (tar chunks to `write`) |
+| `export_files(session_id, dir, write, paths=, known=)` | `POST /v1/sessions/{id}/files/export` (tar chunks) |
 | `export_context(session_id, write, ...)` | `POST /v1/sessions/{id}/context/export` (tar chunks to `write`, KOR-33) |
 | `stage_context(session_id, data, size)` | `POST /v1/contexts/{id}/stage` (tar body, KOR-33) |
 | `ping(session_id, ping)` | `POST /v1/sessions/{id}/pings` |
@@ -287,12 +287,16 @@ class GuestClient:
         write: Callable[[bytes], object],
         *,
         paths: Sequence[str] | None = None,
+        known: Sequence[str] | None = None,
     ) -> str:
-        """Stream the tar answer chunk by chunk to `write`; returns the `X-Manifest-Sha256` header."""
+        """Stream the tar answer chunk by chunk to `write`; returns the `X-Manifest-Sha256` header. `known` are the
+        keys of files the caller already has (their content is left out, FIX-02)."""
         path = f"/v1/sessions/{_segment(session_id, 'files_export')}/files/export"
         body: dict[str, Any] = {"dir": directory}
         if paths is not None:
             body["paths"] = list(paths)
+        if known is not None:
+            body["known"] = list(known)
         try:
             async with self._client.stream("POST", path, json=body, timeout=FILES_TIMEOUT_S) as response:
                 await self._check("files_export", response)

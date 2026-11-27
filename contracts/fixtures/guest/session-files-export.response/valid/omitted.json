@@ -1,0 +1,18 @@
+{
+  "files": [
+    {
+      "path": "README.md",
+      "size": 12,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "path": "src/main.py",
+      "size": 3,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "skipped": [],
+  "omitted": [
+    "src/main.py"
+  ]
+}

@@ -84,7 +84,12 @@ transcript (input and result) and in the read-only terminal (Claude Code's own r
   last_used_at}` and the last 50 jobs `{job_id, command, state, exit_code, started_at, duration_ms}`.
 - `workvm_sync`: `to_vm` mirrors the workspace (or `path` below it) into `/workspace`: changed files only (SHA-256
   manifest of the last mirror of this session), deletions applied, files the VM created and the workspace never had
-  are kept (build outputs, `node_modules`). `from_vm` needs `path` (a directory of the workspace): the files of
+  are kept (build outputs, `node_modules`). Only changed files cross the link from the session's VM to the runner
+  (FIX-02): the export names the keys of the last mirror's files (`known`), and the guest sends their content only
+  when it changed (a guest before 0.8.0 sends every file). The mirrors of one VM and session run one after the other,
+  so a call the session stopped waiting for and its repetition never export the workspace twice at once; the archive
+  checks run outside the runner's event loop. Each mirror logs `runner.workvm push` with the files, bytes, the bytes
+  that crossed the link (`transferred`) and `export_ms`, `apply_ms`, `total_ms`. `from_vm` needs `path` (a directory of the workspace): the files of
   `/workspace/<path>` in the VM – without `.git` directories, git-ignored files (`.gitignore` rules, also without a
   repository), links, special files and the protected names of 05 §5.3 – are merged into the workspace's `path`:
   the runner exports the workspace's `path`, overlays the VM's files, applies deletions only for files the mirror had

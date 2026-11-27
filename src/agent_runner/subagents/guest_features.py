@@ -1,4 +1,5 @@
-"""Whether the guest of a VM knows ADR-088 (full subagents and limits as settings) or the names of KOR-52.
+"""Whether the guest of a VM knows ADR-088 (full subagents and limits as settings), the names of KOR-52 or the
+`known` export of FIX-02 (`KNOWN_EXPORT`).
 
 A guest validates its answers against the contracts bundled with it and refuses an answer its contracts do not allow
 (`request_invalid`: the tool call then times out). A guest before ADR-088 (golden with guest version below `CURRENT`)
@@ -23,6 +24,8 @@ CURRENT = (0, 3, 0)
 """The first guest version that knows ADR-088."""
 NAMES = (0, 5, 0)
 """The first guest version that knows `agent` and `children` in `get_context` (KOR-52, ADR-095 section 3)."""
+KNOWN_EXPORT = (0, 8, 0)
+"""The first guest version whose `files/export` takes `known` and answers `omitted` (FIX-02)."""
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
 _QUERY = "SELECT g.guest_version FROM runner.vm v JOIN runner.golden g ON g.version = v.golden_version WHERE v.id = %s"
 

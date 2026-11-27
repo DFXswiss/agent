@@ -209,12 +209,14 @@ def test_files_import_and_export() -> None:
             imported = await client.import_files(SESSION, "work", b"abc", replace=True)
             got = await client.export_files(SESSION, "work", chunks.append, paths=["a.txt"])
             await client.export_files(SESSION, "out", chunks.append)
+            await client.export_files(SESSION, ".", chunks.append, known=["0" * 32])
         return imported, got, b"".join(chunks)
 
     imported, got, data = run(body())
     assert imported == {"files": 1, "bytes": 3}
     assert got == manifest
-    assert data == b"tar-bytestar-bytes"
+    assert data == b"tar-bytestar-bytestar-bytes"
+    assert json.loads(seen[3].content) == {"dir": ".", "known": ["0" * 32]}
     assert seen[0].url.params["dir"] == "work"
     assert seen[0].url.params["replace"] == "true"
     assert seen[0].headers["Content-Type"] == "application/x-tar"

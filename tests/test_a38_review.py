@@ -2642,3 +2642,204 @@ def test_unreadable_second_run_ancestry_outranks_stale() -> None:
     ok, reasons = _gate(api, [_first_run_comment(), broken, stale])
     assert ok is False
     assert reasons == ["review ancestry unavailable"]
+
+
+# -- check_comment: the guard's verdict before posting (FIX-02) -------------------------------------------------------
+
+
+class _CheckApi(_GateApi):
+    """The gate double plus the pull request and its changed files."""
+
+    def __init__(
+        self,
+        commits: dict[str, str] | None = None,
+        compares: dict[str, object] | None = None,
+        *,
+        pull: object = None,
+        files: object = (),
+        review_md: int = 404,
+    ) -> None:
+        super().__init__(
+            commits if commits is not None else {BASE: "2026-07-01T00:00:00Z", HEAD: "2026-09-01T00:00:00Z"},
+            compares,
+        )
+        self.pull = pull if pull is not None else (
+            200,
+            {"head": {"sha": HEAD}, "base": {"sha": BASE}, "user": {"id": 10}},
+            {},
+        )
+        self.files = files
+        self.review_md = review_md
+        self.paths: list[str] = []
+
+    def request(self, method: str, path: str, **kwargs: object) -> tuple[int, dict, dict]:
+        self.paths.append(path)
+        if path == "/repos/o/r/pulls/1":
+            if isinstance(self.pull, Exception):
+                raise self.pull
+            return self.pull  # type: ignore[return-value]
+        if "/contents/REVIEW.md" in path and self.review_md != 404:
+            return self.review_md, {}, {}
+        return super().request(method, path, **kwargs)
+
+    def paginate(self, path: str, *, hard_limit: int) -> list[object]:
+        assert path == "/repos/o/r/pulls/1/files"
+        if isinstance(self.files, Exception):
+            raise self.files
+        return list(self.files)  # type: ignore[call-overload]
+
+
+def _check(api: _CheckApi, body: str, *, poster: int = 10, at: str = "2026-09-02T00:00:00Z"):
+    from agent_cli.a38_review import check_comment
+
+    return check_comment(api, repo="o/r", number=1, body=body, poster_id=poster, posted_at=at)
+
+
+def test_check_counts_a_valid_first_run_as_the_guard_does() -> None:
+    body = _body(_pass_payload(lanes=_run("a")))
+    api = _CheckApi(files=_markdown_files("docs/a.md"))
+    check = _check(api, body)
+    assert (check.reasons, check.run, check.head, check.signal) == ([], "first", HEAD, None)
+    assert check.facts == {"rules_bound": False, "markdown_only": True}
+    assert api.paths[0] == "/repos/o/r/pulls/1"
+    # the guard selects the same comment once it is posted
+    comment = _comment(body, cid=1, user=10, created="2026-09-02T00:00:00Z")
+    chosen, reasons = select_review_comment(
+        [comment],
+        author_id=10,
+        guard_user_id=99,
+        committed_at="2026-09-01T00:00:00Z",
+        head=HEAD,
+        markdown_only=True,
+        rules_bound=False,
+    )
+    assert (chosen, reasons) == (comment, [])
+
+
+def test_check_returns_the_guards_reasons_for_a_broken_first_run() -> None:
+    body = _body(_pass_payload(lanes=_run("a"), defects=1))
+    check = _check(_CheckApi(), body)
+    assert check.run == "first"
+    assert "review defects must be 0" in check.reasons
+    wrong = _check(_CheckApi(), _body(_pass_payload(head=OTHER, lanes=_run("a"))))
+    assert wrong.reasons == [wrong_head_reason(OTHER, HEAD)]
+
+
+def test_check_requires_the_rules_reminder_when_the_base_has_review_md() -> None:
+    body = _body(_pass_payload(lanes=_run("a")))
+    bound = _check(_CheckApi(review_md=200), body)
+    assert (bound.reasons, bound.facts["rules_bound"]) == ([], True)
+    without = body.replace(COMPLIANCE_PROMPT, "Review this change carefully and report every defect.")
+    assert without != body
+    assert _check(_CheckApi(review_md=404), without).reasons == []
+    assert "review prompt must check CONTRIBUTING.md and REVIEW.md read-only" in _check(
+        _CheckApi(review_md=200), without
+    ).reasons
+
+
+def test_check_second_runs_need_a_merge_signal() -> None:
+    clear = _check(_CheckApi(), _body(_v2_second(blocks_merge=False, defects=0), passes=1))
+    assert (clear.reasons, clear.run, clear.signal) == ([], "second", "clear")
+    blocking = _check(_CheckApi(), _body(_v2_second(blocks_merge=True, defects=2), passes=1))
+    assert (blocking.reasons, blocking.signal) == ([], "blocking")
+    broken = _v2_second(blocks_merge=True, defects=0)
+    no_count = _check(_CheckApi(), _body(broken, passes=1))
+    assert no_count.signal is None
+    assert "review blocking defects must be counted" in no_count.reasons
+    wrong_payload = _v2_second(blocks_merge=False, defects=0)
+    wrong_payload["head"] = OTHER
+    wrong = _check(_CheckApi(), _body(wrong_payload, passes=1))
+    assert wrong.reasons == [wrong_head_reason(OTHER, HEAD)]
+
+
+def test_check_second_run_without_any_other_reason_names_the_missing_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_cli import a38_review
+
+    monkeypatch.setattr(a38_review, "second_run_status", lambda comments, **_kw: "absent")
+    check = _check(_CheckApi(), _body(_v2_second(blocks_merge=False, defects=0), passes=1))
+    assert check.reasons == [a38_review.NO_SECOND_SIGNAL]
+
+
+def test_check_second_run_of_an_unreadable_or_stale_ancestor() -> None:
+    payload = _v2_second(blocks_merge=False, defects=0)
+    payload["head"] = OTHER
+    body = _body(payload, passes=1)
+    unread = _check(_CheckApi(compares={f"/repos/o/r/compare/{OTHER}...{HEAD}": (500, {}, {})}), body)
+    assert unread.reasons == ["review ancestry unavailable"]
+    commits = {BASE: "2026-07-01T00:00:00Z", OTHER: "2026-08-01T00:00:00Z", HEAD: "2026-09-01T00:00:00Z"}
+    stale_api = _CheckApi(
+        commits,
+        {
+            f"/repos/o/r/compare/{OTHER}...{HEAD}": _ahead([{"status": "modified", "filename": "src/app.py"}]),
+            f"/repos/o/r/compare/{BASE}...{OTHER}": _ahead(),
+        },
+    )
+    stale = _check(stale_api, body)
+    assert stale.reasons == [f"review head {OTHER[:12]} is not the current head {HEAD[:12]}"]
+    covered_api = _CheckApi(
+        commits,
+        {
+            f"/repos/o/r/compare/{OTHER}...{HEAD}": _ahead(_markdown_files("docs/a.md")),
+            f"/repos/o/r/compare/{BASE}...{OTHER}": _ahead(),
+        },
+    )
+    assert _check(covered_api, body).signal == "clear"
+
+
+def test_check_refuses_another_author_and_a_mixed_or_unmarked_comment() -> None:
+    body = _body(_pass_payload(lanes=_run("a")))
+    other = _check(_CheckApi(), body, poster=11)
+    assert other.reasons == ["review comment author is not the pull request author"]
+    mixed = _check(_CheckApi(), f"{LOCAL_CI_BEGIN}\nx\n{LOCAL_CI_END}\n" + body)
+    assert mixed.reasons == ["local CI report and review record must be separate comments"]
+    plain = _check(_CheckApi(), "Looks good.", poster=11)
+    assert plain.reasons == [
+        "review comment author is not the pull request author",
+        "review markers missing or duplicated",
+    ]
+    assert plain.run == "first"
+
+
+@pytest.mark.parametrize(
+    "pull",
+    [
+        (404, {}, {}),
+        (200, [], {}),
+        (200, {"head": {"sha": "x"}, "base": {"sha": BASE}, "user": {"id": 10}}, {}),
+        (200, {"head": {"sha": HEAD}, "base": None, "user": {"id": 10}}, {}),
+        (200, {"head": {"sha": HEAD}, "base": {"sha": BASE}, "user": {"id": True}}, {}),
+        (200, {"head": {"sha": HEAD}, "base": {"sha": BASE}, "user": {"id": 0}}, {}),
+        (200, {"head": None, "base": {"sha": BASE}, "user": None}, {}),
+        RuntimeError("down"),
+    ],
+)
+def test_check_fails_closed_on_an_unreadable_pull_request(pull: object) -> None:
+    check = _check(_CheckApi(pull=pull), _body(_pass_payload(lanes=_run("a"))))
+    assert (check.reasons, check.head) == (["pull request unavailable"], "")
+
+
+def test_check_passes_a_rate_limit_on() -> None:
+    from agent_cli.a38_errors import RateLimitError
+
+    limit = RateLimitError("limit", retry_at=None)
+    with pytest.raises(RateLimitError):
+        _check(_CheckApi(pull=limit), _body(_pass_payload(lanes=_run("a"))))
+
+
+def test_check_fails_closed_on_unreadable_rules_and_commit_time() -> None:
+    body = _body(_pass_payload(lanes=_run("a")))
+    assert _check(_CheckApi(review_md=500), body).reasons == ["review rules unavailable"]
+    no_time = _CheckApi({BASE: "2026-07-01T00:00:00Z"})
+    assert _check(no_time, body).reasons == ["review commit time unavailable"]
+
+
+@pytest.mark.parametrize("at", ["2026-09-01T00:00:00Z", "2026-08-01T00:00:00Z", "not a time"])
+def test_check_refuses_a_comment_not_newer_than_the_head(at: str) -> None:
+    check = _check(_CheckApi(), _body(_pass_payload(lanes=_run("a"))), at=at)
+    assert check.reasons == ["review comment would not be newer than the head commit"]
+
+
+def test_check_reads_unreadable_files_as_not_markdown_only() -> None:
+    check = _check(_CheckApi(files=RuntimeError("down")), _body(_pass_payload(lanes=_run("a"))))
+    assert check.facts["markdown_only"] is False
+    assert check.reasons == []

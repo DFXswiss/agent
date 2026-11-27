@@ -273,6 +273,82 @@ def test_read_export_refuses_a_truncated_archive(tmp_path: Path) -> None:
     assert refused(lambda: sync.read_export(second)) == (INVALID, "archive_invalid")
 
 
+# -- known files (FIX-02) ---------------------------------------------------------------------------------------------
+
+
+def test_known_keys_match_the_guest_and_cover_the_last_mirror() -> None:
+    from agent_guest import files as guest_files  # noqa: PLC0415 - the guest computes the same key
+
+    digest = sha(b"x")
+    assert sync.known_key("a/b.txt", digest) == guest_files.known_key("a/b.txt", digest)
+    assert sync.known_key("a/b.txt", digest) == hashlib.sha256(b"a/b.txt\0" + digest.encode()).hexdigest()[:32]
+    assert sync.known_key("a/b.txt", digest) != sync.known_key("a/c.txt", digest)
+    assert sync.known_keys(None) is None
+    assert sync.known_keys({}) == []
+    mirror = {"b": sha(b"2"), "a": sha(b"1")}
+    assert sync.known_keys(mirror) == sorted([sync.known_key("a", sha(b"1")), sync.known_key("b", sha(b"2"))])
+
+
+def test_read_export_accepts_omitted_files_without_members(tmp_path: Path) -> None:
+    files = {"a": b"1", "b": b"2"}
+    manifest = {**manifest_of(files), "omitted": ["a"]}
+    export = sync.read_export(write_export(tmp_path / "e.tar", files, manifest=manifest, members={"b": b"2"}))
+    assert export.omitted == frozenset({"a"})
+    assert set(export.manifest) == {"a", "b"}
+    empty = sync.read_export(write_export(tmp_path / "n.tar", files, manifest={**manifest_of(files), "omitted": []}))
+    assert empty.omitted == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("omitted", "members", "reason"),
+    [
+        ({}, {"a": b"1"}, "manifest_invalid"),  # not a list
+        (["zz"], {"a": b"1"}, "manifest_invalid"),  # not a manifest file
+        ([1], {"a": b"1"}, "manifest_invalid"),
+        (["a", "a"], {}, "manifest_invalid"),
+        (["a"], {"a": b"1"}, "content_mismatch"),  # omitted, yet sent
+    ],
+)
+def test_read_export_refuses_a_bad_omitted_list(
+    tmp_path: Path, omitted: object, members: dict[str, bytes], reason: str
+) -> None:
+    manifest = {**manifest_of({"a": b"1"}), "omitted": omitted}
+    tar = write_export(tmp_path / "e.tar", {"a": b"1"}, manifest=manifest, members=members)
+    assert refused(lambda: sync.read_export(tar)) == (INVALID, reason)
+
+
+def test_read_export_bounds_the_omitted_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    files = {"a": b"1"}
+    tar = write_export(tmp_path / "e.tar", files, manifest={**manifest_of(files), "omitted": ["a", "a"]}, members={})
+    monkeypatch.setattr(sync, "MAX_ENTRIES", 1)
+    assert refused(lambda: sync.read_export(tar)) == (INVALID, "manifest_invalid")
+
+
+def test_plan_push_marks_changed_files_the_export_left_out(tmp_path: Path) -> None:
+    files = {"a": b"1", "b": b"2"}
+    manifest = {**manifest_of(files), "omitted": ["a", "b"]}
+    tar = write_export(tmp_path / "e.tar", files, manifest=manifest, members={})
+    export = sync.read_export(tar)
+    # the mirror holds both: nothing to push, the export is enough
+    same = sync.plan_push({"a": sha(b"1"), "b": sha(b"2")}, export)
+    assert (same.changed, same.incomplete) == ([], [])
+    assert sync.write_push_tar(tar, same, tmp_path / "p.tar", "") == (0, 0)
+    # the mirror does not hold "b" as exported: the export cannot be pushed
+    other = sync.plan_push({"a": sha(b"1"), "b": sha(b"old")}, export)
+    assert (other.changed, other.incomplete) == (["b"], ["b"])
+    assert refused(lambda: sync.write_push_tar(tar, other, tmp_path / "o.tar", "")) == (INVALID, "content_mismatch")
+
+
+def test_merge_refuses_a_workspace_export_with_omitted_files(tmp_path: Path) -> None:
+    files = {"a": b"1"}
+    workspace = write_export(tmp_path / "ws.tar", files, manifest={**manifest_of(files), "omitted": ["a"]}, members={})
+    pack = write_pack(tmp_path / "vm.tar", {"b": b"2"})
+    assert refused(lambda: sync.merge_from_vm(workspace, pack, None, tmp_path / "m.tar")) == (
+        INVALID,
+        "content_mismatch",
+    )
+
+
 # -- plan_push and write_push_tar ------------------------------------------------------------------------------------
 
 
