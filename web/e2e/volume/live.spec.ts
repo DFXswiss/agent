@@ -10,7 +10,8 @@ export const COVERS = ['live:task.chat', 'live:tasks.list', 'live:whiteboard', '
 test('live:task.chat', async ({ volume }, info) => {
   await openView(volume, info, {
     id: 'live:task.chat',
-    path: orgPath(volume.data, `/t/${volume.data.small_task}`),
+    // the chat is the second tab of the task page (KONZEPT E-43)
+    path: `${orgPath(volume.data, `/t/${volume.data.small_task}`)}?tab=chat`,
     ready: (page: Page) => page.getByTestId('chat.item').first(),
     primary: (page: Page) => page.getByTestId('chat.composer.prompt'),
     live: true,

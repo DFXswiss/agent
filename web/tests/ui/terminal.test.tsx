@@ -15,8 +15,11 @@ import { TerminalWatch } from '../../src/core/terminal/watch';
 import { SessionScreen } from '../../src/ui/screens/session/SessionScreen';
 import { TaskScreen } from '../../src/ui/screens/task/TaskScreen';
 import { resized } from './resize-observer';
+import { TerminalTab } from '../../src/ui/task-tabs/terminal/TerminalTab';
+import { THEME } from '../../src/core/terminal/screen';
 import TerminalView, { offsetLabel } from '../../src/ui/terminal/TerminalView';
 import {
+  cellColorAt,
   clearScreen,
   fitFont,
   hasWebgl2,
@@ -24,6 +27,7 @@ import {
   MIN_FONT,
   openScreen,
   SCROLLBACK,
+  visibleRows,
 } from '../../src/ui/terminal/xterm';
 import { sessionRow, taskRow, type TaskWorld, taskWorld } from '../core/tasks/world';
 import { MAIN, mount, TASK, verified } from './chat-world';
@@ -250,6 +254,20 @@ describe('xterm screen', () => {
     delete (screen.terminal.options as Record<string, unknown>).fontSize;
     xterm.fit.proposed = { cols: 160, rows: 48 };
     expect(fitFont(screen)).toBe(13);
+  });
+
+  it('reads the visible rows and the colours of cells, the foreground for a row without output', () => {
+    const screen = openScreen(document.createElement('div'), 20, 3);
+    screen.terminal.write('ab\r\ncd');
+    xterm.cells['0:0'] = { mode: 'rgb', value: 0x112233 };
+    xterm.cells['0:1'] = { mode: 'palette', value: 1 };
+    expect(visibleRows(screen)).toEqual(['ab', 'cd', '']);
+    expect(cellColorAt(screen, 0, 0)).toBe('#112233');
+    expect(cellColorAt(screen, 0, 1)).toBe(THEME.red);
+    expect(cellColorAt(screen, 1, 0)).toBe(THEME.foreground);
+    expect(cellColorAt(screen, 2, 0)).toBe(THEME.foreground);
+    delete xterm.cells['0:0'];
+    delete xterm.cells['0:1'];
   });
 
   it('labels offsets as minutes and seconds', () => {
@@ -639,13 +657,21 @@ describe('task tab "Claude Code" (KONZEPT E-43, ADR-104)', () => {
     const t = await taskWorld();
     await taskPage(t, [], { session: { state: 'failed', state_reason: 'oom' } });
     expect(await screen.findByTestId('terminal.start')).toHaveAttribute('data-phase', 'failed');
-    expect(screen.getByTestId('terminal.start.retry')).toBeInTheDocument();
+    // Retry sends the task's prompt again; here the prompt cannot be read, which the line reports
+    fireEvent.click(screen.getByTestId('terminal.start.retry'));
+    expect(await screen.findByTestId('terminal.start.retry-error')).toBeInTheDocument();
     // no box on the screen: the input is docked below it
     expect(screen.getByTestId('terminal.input')).toHaveAttribute('data-placement', 'docked');
     act(() => t.store.update('me', (me) => ({ ...me, userId: 'reader' })));
     expect(screen.queryByTestId('terminal.start.retry')).toBeNull();
     expect(screen.queryByTestId('terminal.input')).toBeNull();
     expect(screen.getByTestId('chat.read-only')).toHaveTextContent('You have read access');
+  });
+
+  it('shows nothing for a task that is not loaded', async () => {
+    const t = await taskWorld();
+    mount(t, [{ path: '/', element: <TerminalTab orgId={t.org} taskId="not-loaded" /> }], '/');
+    expect(screen.queryByTestId('task.terminal')).toBeNull();
   });
 
   it('waits for the main session with the start lines and the docked input', async () => {
