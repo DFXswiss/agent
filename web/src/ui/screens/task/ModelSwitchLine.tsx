@@ -48,11 +48,11 @@ export function ModelSwitchLine({ row }: { readonly row: TaskRow }) {
   const timed = found.cause === 'exhausted' && found.until !== null;
   const switched = () =>
     `${t('model.switch.line', {
-          from: access(found.fromAccess, found.fromModel),
-          to: access(found.toAccess, found.toModel),
-        })} · ${t(timed ? 'model.switch.cause.exhausted.until' : `model.switch.cause.${found.cause}`, {
-          time: clock(found.until ?? 0),
-        })}`;
+      from: access(found.fromAccess, found.fromModel),
+      to: access(found.toAccess, found.toModel),
+    })} · ${t(timed ? 'model.switch.cause.exhausted.until' : `model.switch.cause.${found.cause}`, {
+      time: clock(found.until ?? 0),
+    })}`;
   const text =
     found.cause === 'renewed'
       ? t('model.switch.renewed', { access: access(found.toAccess, found.toModel) })
