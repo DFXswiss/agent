@@ -30,6 +30,7 @@ from urllib.parse import parse_qs, urlsplit
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from agent_cli.keys import request_text, response_text
+from agent_hub.attention.derive import OVERVIEW, overview_of
 from agent_platform.batch import build_batch, make_wrap
 from agent_runner.crypto import agent as agent_crypto
 from agent_runner.crypto import enroll
@@ -927,10 +928,17 @@ class HubFake:
     def r_attention(self, request: Request, body: Any, org: str) -> tuple[int, Any]:
         if self._member(request, org) is None:
             return 404, {"error": "not_found"}
-        category = request.query.get("category")
-        if category not in ("needs_decision", "blocked", "working", "done"):
+        category, overview = request.query.get("category"), request.query.get("overview")
+        if overview is not None:
+            if overview not in OVERVIEW or category is not None:
+                return 400, {"error": "invalid"}
+            found = self._attention_rows(request, org)
+            rows = [(t, a) for t, a in found if overview_of(a["category"], a["reason"]) == overview]
+            category = OVERVIEW[overview][0]
+        elif category not in ("needs_decision", "blocked", "working", "done"):
             return 400, {"error": "invalid"}
-        rows = [(t, a) for t, a in self._attention_rows(request, org) if a["category"] == category]
+        else:
+            rows = [(t, a) for t, a in self._attention_rows(request, org) if a["category"] == category]
         if request.query.get("mine") == "1":
             rows = [(t, a) for t, a in rows if t["owner_id"] == request.user]
         ascending = category == "needs_decision"
@@ -966,6 +974,10 @@ class HubFake:
             "blocked": count("blocked"),
             "working": count("working"),
             "done_since": count("done"),
+            **{
+                f"open_{name}": sum(1 for _t, a in rows if overview_of(a["category"], a["reason"]) == name)
+                for name in OVERVIEW
+            },
         }
 
 

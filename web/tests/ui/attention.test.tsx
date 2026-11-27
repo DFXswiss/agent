@@ -3,7 +3,8 @@
 // helpers), the actions without opening the task (answer, approve / decline with the exact prompt, try again,
 // continue, connect, model settings, assign a computer or who can), read-only users without controls, entries of
 // unknown or unreadable tasks, the agent tree, the window of a long group, live frames, reconnects, errors, the
-// suggestions, the Home badge and the notification text. The Playwright specs run the same view against the hub.
+// suggestions, the Home badge and the notification text; the overview of the open tasks at the top (three numbers over
+// every org, the list of a number, the other orgs). The Playwright specs run the same view against the hub.
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { createMemoryRouter, MemoryRouter, RouterProvider } from 'react-router-dom';
@@ -24,8 +25,9 @@ import { putSession, type SessionRow } from '../../src/core/store/slices/tasks';
 import { I18nProvider } from '../../src/ui/i18n';
 import { BottomNav } from '../../src/ui/responsive/BottomNav';
 import { AttentionBadge } from '../../src/ui/screens/home/Badge';
-import { HomeScreen } from '../../src/ui/screens/home/HomeScreen';
+import { HomeScreen, overviewCount, shownOverview } from '../../src/ui/screens/home/HomeScreen';
 import { nav } from '../../src/ui/screens/home/nav';
+import { OTHER_ORGS_MS, overviewTotals } from '../../src/ui/screens/home/Overview';
 import { REFRESH_MS as QUOTA_REFRESH_MS } from '../../src/ui/screens/home/QuotaCounter';
 import { NotificationText } from '../../src/ui/screens/notifications/text';
 import { durationLabel } from '../../src/ui/screens/tasks/TaskItem';
@@ -43,7 +45,16 @@ const [Q, A, E, F] = ['201', '202', '203', '204'].map((n) => `0190f000-0000-7000
   string,
   string,
 ];
-const SUMMARY = { needs_decision: 2, needs_decision_mine: 1, blocked: 3, working: 1, done_since: 4 };
+const SUMMARY = {
+  needs_decision: 2,
+  needs_decision_mine: 1,
+  blocked: 3,
+  working: 1,
+  done_since: 4,
+  open_working: 1,
+  open_waiting: 2,
+  open_no_agent: 5,
+};
 
 afterEach(() => {
   vi.useRealTimers();
@@ -59,13 +70,13 @@ function wrap(t: TaskWorld, children: ReactNode) {
   );
 }
 
-function mount(t: TaskWorld) {
+function mount(t: TaskWorld, path = `/o/${t.org}`) {
   const router = createMemoryRouter(
     [
       { path: '/o/:org', element: <HomeScreen /> },
       { path: '*', element: <p data-testid="elsewhere">elsewhere</p> },
     ],
-    { initialEntries: [`/o/${t.org}`] },
+    { initialEntries: [path] },
   );
   render(wrap(t, <RouterProvider router={router} />));
   return router;
@@ -78,7 +89,8 @@ async function world(groups: (t: TaskWorld) => Groups = () => ({}), options: Wor
   const t = await taskWorld(options);
   const items = groups(t);
   t.client.on(`GET /v1/orgs/${t.org}/attention`, (_body, target) => {
-    const category = new URLSearchParams(target.split('?')[1]).get('category')!;
+    const query = new URLSearchParams(target.split('?')[1]);
+    const category = query.get('category') ?? `overview:${query.get('overview')}`;
     return { items: items[category] ?? [], next_before: null };
   });
   t.client.on(`GET /v1/orgs/${t.org}/attention/summary`, () => SUMMARY);
@@ -713,6 +725,140 @@ describe('window', () => {
     });
     expect(group()).toHaveAttribute('data-from', '24');
     expect(shown()[0]).toBe('t026');
+  });
+});
+
+describe('overview of the open tasks', () => {
+  const count = (name: string) => screen.getByTestId(`overview.count.${name}`);
+
+  it('comes first and shows exactly the tasks of a number when it is clicked', async () => {
+    const t = await world((w) => ({
+      needs_decision: [item(w, 'q', { reason: 'question' })],
+      blocked: [item(w, 'r', { category: 'blocked', reason: 'session_failed' })],
+      working: [item(w, 'w', { category: 'working', reason: 'working' })],
+      'overview:no_agent': [
+        item(w, 'r', { category: 'blocked', reason: 'session_failed', since: at(3) }),
+        item(w, 'i', { category: 'done', reason: 'idle', since: at(2) }),
+      ],
+    }));
+    const router = mount(t);
+    await waitFor(() => expect(count('no_agent')).toHaveAttribute('data-count', '5'));
+    // the very first thing of the page
+    expect(screen.getByTestId('home.screen').firstElementChild).toBe(screen.getByTestId('overview'));
+    expect(count('working')).toHaveTextContent('1In progressAn agent works on them');
+    expect(count('waiting')).toHaveTextContent('2Waiting for a question');
+    expect(count('no_agent')).toHaveTextContent('5No agent');
+    expect(screen.getByTestId('overview')).toHaveTextContent('Across all your organizations and workgroups');
+    expect(count('no_agent')).toHaveAttribute('aria-pressed', 'false');
+    // "No agent": the stuck and the idle task, instead of the four groups
+    fireEvent.click(count('no_agent'));
+    expect(router.state.location.search).toBe('?show=no_agent');
+    expect(count('no_agent')).toHaveAttribute('aria-pressed', 'true');
+    const list = await screen.findByTestId('attention.group.no_agent');
+    await waitFor(() => expect(within(list).getAllByTestId('attention.item')).toHaveLength(2));
+    expect(within(list).getByTestId('attention.group.count')).toHaveTextContent('(5)');
+    expect(
+      within(list)
+        .getAllByTestId('attention.item')
+        .map((node) => node.dataset.task),
+    ).toEqual(['r', 'i']);
+    expect(within(entry('i')).getByTestId('attention.item.reason')).toHaveTextContent('Finished – waiting for you');
+    expect(within(entry('r')).getByTestId('attention.item.since')).toHaveTextContent(/^Stuck for /);
+    expect(screen.queryByTestId('attention.group.blocked')).toBeNull();
+    expect(t.client.calls.map((call) => call.target)).toContain(
+      `/v1/orgs/${t.org}/attention?overview=no_agent&limit=50`,
+    );
+    // "Waiting for a question": the decisions; a second click on it shows everything again
+    fireEvent.click(count('waiting'));
+    expect(router.state.location.search).toBe('?show=waiting');
+    await waitFor(() =>
+      expect(screen.getAllByTestId('attention.item').map((node) => node.dataset.task)).toEqual(['q']),
+    );
+    expect(screen.queryByTestId('attention.group.no_agent')).toBeNull();
+    fireEvent.click(count('waiting'));
+    expect(router.state.location.search).toBe('');
+    expect(await screen.findByTestId('attention.group.blocked')).toBeInTheDocument();
+    // "In progress", then "Show everything"
+    fireEvent.click(count('working'));
+    await waitFor(() =>
+      expect(screen.getAllByTestId('attention.item').map((node) => node.dataset.task)).toEqual(['w']),
+    );
+    fireEvent.click(screen.getByTestId('overview.all'));
+    expect(router.state.location.search).toBe('');
+    expect(screen.queryByTestId('overview.all')).toBeNull();
+  });
+
+  it('sums every organization of the user and names the others in the list of a number', async () => {
+    const other = '0190f000-0000-7000-8000-0000000000e9';
+    const t = await world(() => ({}));
+    t.client.on(`GET /v1/orgs/${other}/attention/summary`, () => ({
+      ...SUMMARY,
+      open_working: 4,
+      open_waiting: 0,
+      open_no_agent: 2,
+    }));
+    t.client.on(`GET /v1/scopes/${other}/events`, () => ({ events: [], next_after: null, head: 0 }));
+    const orgs = [t.org, other].map((org) => ({ org_id: org, role: 'member', private: false, default_wg: t.wg }));
+    act(() => t.store.update('me', (me) => ({ ...me, profile: { orgs } })));
+    mount(t, `/o/${t.org}?show=no_agent`);
+    await waitFor(() => expect(count('working')).toHaveAttribute('data-count', '5'));
+    expect(count('waiting')).toHaveAttribute('data-count', '2');
+    expect(count('no_agent')).toHaveAttribute('data-count', '7');
+    const elsewhere = screen.getByTestId('overview.elsewhere.org');
+    expect(elsewhere).toHaveAttribute('href', `/o/${other}?show=no_agent`);
+    expect(elsewhere).toHaveAttribute('data-count', '2');
+    expect(elsewhere).toHaveTextContent('2 in another organization: Organization');
+    // the list of the shown org counts only its own tasks
+    expect(
+      within(screen.getByTestId('attention.group.no_agent')).getByTestId('attention.group.count'),
+    ).toHaveTextContent('(5)');
+    // waiting: no other org has one
+    fireEvent.click(count('waiting'));
+    expect(screen.queryByTestId('overview.elsewhere')).toBeNull();
+  });
+
+  it('loads the other organizations again every half minute and after a reconnect', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const other = '0190f000-0000-7000-8000-0000000000e8';
+    const t = await world(() => ({}));
+    let working = 1;
+    t.client.on(`GET /v1/orgs/${other}/attention/summary`, () => ({ ...SUMMARY, open_working: working }));
+    t.client.on(`GET /v1/scopes/${other}/events`, () => ({ events: [], next_after: null, head: 0 }));
+    const orgs = [other].map((org) => ({ org_id: org, role: 'member', private: false, default_wg: t.wg }));
+    act(() => t.store.update('me', (me) => ({ ...me, profile: { orgs } })));
+    mount(t);
+    // the counters of one org are asked at most once a second (`SUMMARY_MS`, real time here)
+    const slow = { timeout: 4000 };
+    await waitFor(() => expect(count('working')).toHaveAttribute('data-count', '2'), slow);
+    working = 6;
+    act(() => vi.advanceTimersByTime(OTHER_ORGS_MS));
+    await waitFor(() => expect(count('working')).toHaveAttribute('data-count', '7'), slow);
+    working = 2;
+    act(() => t.store.update('connection', (connection) => ({ ...connection, round: connection.round + 1 })));
+    await waitFor(() => expect(count('working')).toHaveAttribute('data-count', '3'), slow);
+  });
+
+  it('shows a dash until a count is known and ignores an unknown number in the address', async () => {
+    const t = await taskWorld();
+    t.client.on(`GET /v1/orgs/${t.org}/attention/summary`, () => {
+      throw new HubError('unavailable', 503);
+    });
+    t.client.on(`GET /v1/orgs/${t.org}/attention`, () => ({ items: [], next_before: null }));
+    for (const scope of [t.org, t.wg])
+      t.client.on(`GET /v1/scopes/${scope}/events`, () => ({ events: [], next_after: null, head: 0 }));
+    mount(t, `/o/${t.org}?show=closed`);
+    expect(await screen.findByTestId('overview')).toBeInTheDocument();
+    expect(count('working')).toHaveTextContent('–');
+    expect(count('working')).toHaveAttribute('data-count', '');
+    expect(screen.getByTestId('attention.group.blocked')).toBeInTheDocument();
+    expect(shownOverview('no_agent')).toBe('no_agent');
+    expect(shownOverview(null)).toBeNull();
+    expect(overviewCount(null, 'working')).toBeNull();
+    expect(overviewTotals(['x'], {})).toBeNull();
+    fireEvent.click(count('no_agent'));
+    // without counters the list has no number in its heading
+    const list = await screen.findByTestId('attention.group.no_agent');
+    expect(within(list).queryByTestId('attention.group.count')).toBeNull();
   });
 });
 

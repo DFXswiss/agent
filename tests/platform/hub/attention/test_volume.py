@@ -97,8 +97,10 @@ def _estate(situation: Situation) -> tuple[list[str], set[str]]:
 
 
 def _pages(situation: Situation, actor: Actor, category: str, **params: str) -> list[dict[str, Any]]:
+    """Every page of one category (or, with `category` empty and `overview`, of one overview of the open tasks)."""
     items: list[dict[str, Any]] = []
-    query = {"category": category, "limit": str(read.LIST_MAX), **params}
+    which = {"category": category} if category else {}
+    query = {**which, "limit": str(read.LIST_MAX), **params}
     while True:
         started = time.monotonic()
         response = actor.browser.get(f"/v1/orgs/{situation.desk.org}/attention", params=query)
@@ -126,6 +128,7 @@ def test_thousands_of_tasks_with_deep_subagent_trees(situation: Situation) -> No
     for name, actor in (("writer", scene.writer), ("reader", scene.reader)):
         seen: set[str] = set()
         counts: dict[str, int] = {}
+        closed = 0
         for category in ("needs_decision", "blocked", "working", "done"):
             items = _pages(situation, actor, category)
             ids = [item["task"]["task_id"] for item in items]
@@ -140,10 +143,18 @@ def test_thousands_of_tasks_with_deep_subagent_trees(situation: Situation) -> No
                 assert item["attention"]["subagents_active"] == (total if item["task"]["state"] == "working" else 0)
             seen |= set(ids)
             counts[category] = len(ids)
+            if category == "done":
+                closed = sum(1 for item in items if item["attention"]["reason"] == "closed")
         assert seen <= tasks
         assert len(seen) == (TASKS if name == "writer" else TASKS // 2)
         mine = _pages(situation, actor, "needs_decision", mine="1")
         assert {item["task"]["owner_id"] for item in mine} <= {actor.id}
+        # the overview of the open tasks: the list "No agent" holds the stuck and the idle tasks, never a closed one
+        no_agent = _pages(situation, actor, "", overview="no_agent")
+        reasons = [(item["attention"]["category"], item["attention"]["reason"]) for item in no_agent]
+        assert set(reasons) == {("blocked", "session_failed"), ("done", "idle")}
+        keys = [(item["attention"]["since"], item["attention"]["task_id"]) for item in no_agent]
+        assert keys == sorted(keys, reverse=True)
         summary = actor.browser.get(f"/v1/orgs/{situation.desk.org}/attention/summary").json()
         assert summary == {
             "needs_decision": counts["needs_decision"],
@@ -151,4 +162,9 @@ def test_thousands_of_tasks_with_deep_subagent_trees(situation: Situation) -> No
             "blocked": counts["blocked"],
             "working": counts["working"],
             "done_since": counts["done"],
+            "open_working": counts["working"],
+            "open_waiting": counts["needs_decision"],
+            "open_no_agent": len(no_agent),
         }
+        # every task in exactly one number, or closed
+        assert summary["open_working"] + summary["open_waiting"] + summary["open_no_agent"] + closed == len(seen)

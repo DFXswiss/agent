@@ -1,5 +1,9 @@
 // Home of an organization (06-web.md sections 4.0 and 4.1, route `/o/:org`, right `org:member`): the situation view.
 //
+// - First, at the very top, the overview of the open tasks (`Overview.tsx`, contracts/changes/HOME-COUNTS.md): "In
+//   progress", "Waiting for a question", "No agent" over every org and workgroup the user reads. A number shows exactly
+//   its tasks of this org right below it (`?show=working|waiting|no_agent`, the lists `working`, `needs_decision` and
+//   `no_agent`) instead of the groups further down; "Show everything" brings the groups back.
 // - At the top a compact composer (section 4.1): the context line with the organization and the workgroup selector
 //   (preselected with the default workgroup; only workgroups with `wg:write`) and the prompt field. The suggestion
 //   chips are shown while the organization has no task yet, otherwise behind "Suggestions". A user without write
@@ -18,7 +22,13 @@
 import { useId, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { selectNoTask } from '../../../core/attention/view';
-import { CATEGORIES, type AttentionSummary } from '../../../core/store/slices/attention';
+import {
+  CATEGORIES,
+  type AttentionSummary,
+  type Overview as OverviewName,
+  OVERVIEW_LIST,
+  OVERVIEWS,
+} from '../../../core/store/slices/attention';
 import { formatNumber } from '../../../core/i18n';
 import { writableWorkgroups } from '../../../core/tasks/send';
 import { useNow } from '../../countdown/useNow';
@@ -30,6 +40,7 @@ import { useAppEnv } from '../../shell/context';
 import { useDirectory, useOrgView } from '../tasks/hooks';
 import '../../../core/i18n/lazy/mainagent';
 import { AttentionGroup } from './AttentionGroup';
+import { Overview } from './Overview';
 import { PeopleView } from './people/PeopleView';
 import { useSummary } from './hooks';
 import { QuotaCounter } from './QuotaCounter';
@@ -67,6 +78,16 @@ function Counters({ org }: { readonly org: string }) {
       ))}
     </ul>
   );
+}
+
+/** The number of the overview whose tasks are shown (`?show=working|waiting|no_agent`; anything else: none). */
+export const shownOverview = (value: string | null): OverviewName | null =>
+  OVERVIEWS.find((name) => name === value) ?? null;
+
+/** The shown org's count of one number of the overview (null until its counters are known). */
+export function overviewCount(summary: AttentionSummary | null, name: OverviewName): number | null {
+  if (summary === null) return null;
+  return name === 'working' ? summary.open_working : name === 'waiting' ? summary.open_waiting : summary.open_no_agent;
 }
 
 /** The grouping of the situation view (`?by=person`; anything else is "by situation"). */
@@ -115,10 +136,17 @@ export function HomeScreen() {
   const [chips, setChips] = useState(false);
   const [search, setSearch] = useSearchParams();
   const by: GroupBy = search.get('by') === 'person' ? 'person' : 'situation';
+  const show = shownOverview(search.get('show'));
   const group = (next: GroupBy) => {
     const params = new URLSearchParams(search);
     if (next === 'person') params.set('by', 'person');
     else params.delete('by');
+    setSearch(params);
+  };
+  const choose = (next: OverviewName | null) => {
+    const params = new URLSearchParams(search);
+    if (next === null) params.delete('show');
+    else params.set('show', next);
     setSearch(params);
   };
   const loading = (
@@ -147,8 +175,32 @@ export function HomeScreen() {
       {t('attention.all-tasks', { wg: wgName(state.defaultWg) })}
     </Link>
   );
+  const showAll = (
+    <button
+      type="button"
+      className="flex min-h-11 items-center text-sm underline"
+      onClick={() => choose(null)}
+      data-testid="overview.all"
+    >
+      {t('attention.overview.all')}
+    </button>
+  );
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" data-testid="home.screen">
+      <Overview org={org} show={show} onShow={choose} />
+      {show !== null && (
+        <AttentionGroup
+          key={show}
+          org={org}
+          category={OVERVIEW_LIST[show]}
+          state={state}
+          userId={userId}
+          directory={directory}
+          now={now}
+          count={overviewCount(summary, show)}
+          extra={showAll}
+        />
+      )}
       <section className="flex flex-col gap-2" data-testid="attention.compose">
         <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="home.context">
           <span data-testid="home.org">{directory.orgName ?? t('home.org.unnamed')}</span>
@@ -202,8 +254,11 @@ export function HomeScreen() {
       <Counters org={org} />
       <QuotaCounter org={org} />
       <SubscriptionsCard />
-      {by === 'person' && <PeopleView org={org} state={state} userId={userId} directory={directory} now={now} />}
-      {by === 'situation' &&
+      {show === null && by === 'person' && (
+        <PeopleView org={org} state={state} userId={userId} directory={directory} now={now} />
+      )}
+      {show === null &&
+        by === 'situation' &&
         CATEGORIES.map((category) => (
           <AttentionGroup
             key={category}

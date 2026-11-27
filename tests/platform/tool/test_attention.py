@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from agent_platform import attention, tasks
+from agent_platform import attention, connector, tasks
 from agent_platform.errors import PlatformError
 from agent_runner.crypto.encoding import body_json
 from agent_runner.crypto.event import new_header, seal_event
@@ -119,6 +119,7 @@ def test_status_shows_counters_decisions_with_questions_and_stuck_tasks(world: W
         "working": 1,
         "done_since": 0,
     }
+    assert org["overview"] == {"working": 1, "waiting": 2, "no_agent": 1}
     first, second = org["needs_decision"]
     assert (first["task_id"], first["title"], first["question"]) == (asked, "Set up the service", QUESTION)
     assert (first["workgroup"], first["owner_id"], first["owner"]) == ("Default", world.account.id, "Ada")
@@ -239,6 +240,101 @@ def test_malformed_attention_answers(world: World, hub: HubFake, tool: Tool) -> 
     assert tool.run("status", "--attention")[1]["reason"] == "response_invalid"
 
 
+def _overview_world(world: World, hub: HubFake) -> dict[str, list[str]]:
+    """Tasks in every state the start page counts: each overview with its tasks, and a closed task."""
+    made = {
+        "working": [world.task("Run"), world.task("Queued")],
+        "waiting": [world.task("Ask"), world.task("Approve")],
+        "no_agent": [world.task("Failed"), world.task("Idle"), world.task("Captured")],
+    }
+    hub.attention[made["working"][0]] = record(made["working"][0], "working", "working", "2026-11-24T10:00:00.000Z")
+    hub.attention[made["working"][1]] = record(made["working"][1], "working", "queued", "2026-11-24T11:00:00.000Z")
+    asked = world.ask(made["waiting"][0])
+    hub.attention[made["waiting"][0]] = record(
+        made["waiting"][0], "needs_decision", "question", "2026-11-24T09:00:00.000Z", ref_id=asked
+    )
+    hub.attention[made["waiting"][1]] = record(
+        made["waiting"][1], "needs_decision", "approval", "2026-11-24T12:00:00.000Z", ref_id=None
+    )
+    no_agent = made["no_agent"]
+    hub.attention[no_agent[0]] = record(no_agent[0], "blocked", "session_failed", "2026-11-24T13:00:00.000Z")
+    hub.attention[no_agent[1]] = record(no_agent[1], "done", "idle", "2026-11-24T12:00:00.000Z")
+    hub.attention[no_agent[2]] = record(no_agent[2], "done", "idle", "2026-11-24T08:00:00.000Z")
+    closed = world.task("Closed")
+    hub.attention[closed] = record(closed, "done", "closed", "2026-11-24T14:00:00.000Z")
+    return made
+
+
+def test_status_overview_counts_every_open_task_once_and_lists_exactly_them(
+    world: World, hub: HubFake, tool: Tool
+) -> None:
+    made = _overview_world(world, hub)
+    code, document = tool.run("status", "--overview")
+    assert code == 0, document
+    assert document["overview"] == {"working": 2, "waiting": 2, "no_agent": 3}
+    (org,) = document["orgs"]
+    assert (org["org_id"], org["working"], org["waiting"], org["no_agent"]) == (world.org, 2, 2, 3)
+    assert tool.run("status", "--overview", "--org", world.org)[1] == document
+    # the same numbers and name as the situation view of the same org
+    (situation,) = tool.run("status", "--attention")[1]["attention"]
+    assert (situation["overview"], situation["name"]) == (document["overview"], org["name"])
+    # a click on a number: exactly its tasks, in the hub's order (waiting: longest first, else newest first)
+    listed = {
+        state: tool.run("task", "list", "--org", world.org, "--state", state)[1]
+        for state in ("working", "waiting", "no-agent")
+    }
+    assert [row["task_id"] for row in listed["working"]["tasks"]] == list(reversed(made["working"]))
+    assert [row["task_id"] for row in listed["waiting"]["tasks"]] == made["waiting"]
+    assert [row["task_id"] for row in listed["no-agent"]["tasks"]] == made["no_agent"]
+    assert (listed["waiting"]["overview"], listed["no-agent"]["overview"]) == ("waiting", "no_agent")
+    assert listed["waiting"]["tasks"][0]["question"] == QUESTION
+    assert listed["no-agent"]["tasks"][1]["title"] == "Idle"
+    for name, state in (("working", "working"), ("waiting", "waiting"), ("no_agent", "no-agent")):
+        assert len(listed[state]["tasks"]) == document["overview"][name]
+
+
+def test_status_overview_is_the_same_through_mcp(world: World, hub: HubFake, tool: Tool) -> None:
+    _overview_world(world, hub)
+    direct = tool.run("status", "--overview")[1]
+    through = connector.tool_run({"args": ["status", "--overview"]}, tool.env)
+    assert through == {"ok": True, **direct}
+    listed = connector.tool_run({"args": ["task", "list", "--org", world.org, "--state", "no-agent"]}, tool.env)
+    assert listed == {"ok": True, **tool.run("task", "list", "--org", world.org, "--state", "no-agent")[1]}
+    found = connector.tool_search({"query": "offene tasks kein agent"}, tool.env)
+    assert "status" in [hit["command"] for hit in found["results"]]
+
+
+def test_status_overview_of_an_older_hub_and_bad_arguments(world: World, hub: HubFake, tool: Tool) -> None:
+    _overview_world(world, hub)
+    summary = ("GET", f"/v1/orgs/{world.org}/attention/summary")
+    older = {"needs_decision": 2, "needs_decision_mine": 2, "blocked": 1, "working": 2, "done_since": 3}
+    hub.hooks[summary] = lambda body, request: (200, older)
+    assert tool.run("status", "--overview")[1]["reason"] == "response_invalid"
+    (org,) = tool.run("status", "--attention")[1]["attention"]
+    assert org["overview"] is None
+    hub.hooks[summary] = lambda body, request: (200, {**older, "open_working": 1, "open_waiting": "2"})
+    assert tool.run("status", "--overview", "--org", world.org)[1]["reason"] == "response_invalid"
+    del hub.hooks[summary]
+    assert tool.run("status", "--overview", "--org", uuid7())[1]["error"] == "no_org"
+    assert tool.run("status", "--overview", "--org", "x")[1]["error"] == "invalid_argument"
+    assert tool.run("status", "--overview", "--attention")[1]["error"] == "invalid_argument"
+
+
+def test_an_overview_list_leaves_out_records_of_another_overview(world: World, hub: HubFake, tool: Tool) -> None:
+    task = world.task("Task")
+    good = {"task": hub.tasks[task]["task"], "attention": record(task, "done", "idle", "2026-11-24T10:00:00.000Z")}
+    closed = {**good, "attention": {**good["attention"], "reason": "closed"}}
+    working = {**good, "attention": {**good["attention"], "category": "working", "reason": "working"}}
+    route = ("GET", f"/v1/orgs/{world.org}/attention")
+    hub.hooks[route] = lambda body, request: (
+        (200, {"items": [good, closed, working], "next_before": None})
+        if request.query.get("overview") == "no_agent" and "category" not in request.query
+        else (400, {"error": "request_invalid"})
+    )
+    listed = tool.run("task", "list", "--org", world.org, "--state", "no-agent")[1]
+    assert ([row["task_id"] for row in listed["tasks"]], listed["unverified"]) == ([task], 2)
+
+
 def test_bad_attention_arguments(world: World, tool: Tool) -> None:
     for argv in (
         ("task", "list", "--org", world.org),
@@ -247,6 +343,8 @@ def test_bad_attention_arguments(world: World, tool: Tool) -> None:
         ("task", "list", "--org", world.org, "--state", "done", "--limit", "1001"),
         ("task", "list", "--org", "not-a-uuid", "--state", "done"),
         ("task", "list", "--wg", world.wg, "--state", "blocked"),
+        ("task", "list", "--wg", world.wg, "--state", "no-agent"),
+        ("task", "list", "--org", world.org, "--state", "waiting", "--limit", "0"),
         ("task", "list", "--wg", world.wg, "--mine"),
         ("task", "list", "--wg", world.wg, "--org", world.org),
         ("task", "list"),

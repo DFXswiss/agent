@@ -3,7 +3,9 @@
 
 Both need `org:member` (`404 not_found` for an unknown org, a malformed ID and a non-member alike) and answer only
 records of the workgroups the caller reads (`agent_hub.attention.read`). Query values outside their form are
-`400 request_invalid` with the pointer of the parameter.
+`400 request_invalid` with the pointer of the parameter. The list takes either `category` or `overview` (the open
+tasks of one overview of the start page, `working`, `waiting` or `no_agent`); both together are `request_invalid`
+with the pointer `/category`.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from agent_hub.attention import read
-from agent_hub.attention.derive import CATEGORIES
+from agent_hub.attention.derive import CATEGORIES, OVERVIEW
 from agent_hub.crypto.encoding import parse_time
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.errors import HubError
@@ -59,8 +61,14 @@ async def list_attention(
     since: str | None = None,
     before: str | None = None,
     limit: str | None = None,
+    overview: str | None = None,
 ) -> dict[str, Any]:
-    if category not in CATEGORIES:
+    if overview is not None:
+        if overview not in OVERVIEW:
+            raise _invalid("overview")
+        if category is not None:
+            raise _invalid("category")
+    elif category not in CATEGORIES:
         raise _invalid("category")
     if mine not in MINE:
         raise _invalid("mine")
@@ -68,7 +76,14 @@ async def list_attention(
         count = parse_count(limit, read.LIST_DEFAULT, 1, read.LIST_MAX)
     except HubError:
         raise _invalid("limit") from None
-    options = {"category": category, "mine": MINE[mine], "since": parse_since(since), "before": before, "limit": count}
+    options = {
+        "category": category,
+        "overview": overview,
+        "mine": MINE[mine],
+        "since": parse_since(since),
+        "before": before,
+        "limit": count,
+    }
     user = cast(UUID, principal.principal_id)
     return await asyncio.to_thread(_list, context, user, path_id(org), **options)
 

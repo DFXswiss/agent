@@ -35,7 +35,16 @@ const NOBODY = '0190f000-0000-7000-8000-0000000000c3';
 const T1 = '0190f000-0000-7000-8000-000000000101';
 const T2 = '0190f000-0000-7000-8000-000000000102';
 const IDENTITY = '0190f000-0000-7000-8000-0000000000e1';
-const SUMMARY = { needs_decision: 0, needs_decision_mine: 0, blocked: 0, working: 2, done_since: 0 };
+const SUMMARY = {
+  needs_decision: 0,
+  needs_decision_mine: 0,
+  blocked: 0,
+  working: 2,
+  done_since: 0,
+  open_working: 2,
+  open_waiting: 0,
+  open_no_agent: 0,
+};
 
 afterEach(() => {
   vi.useRealTimers();

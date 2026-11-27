@@ -1,6 +1,7 @@
 """The situation view of the agent tool (KOR-39, ADR-076 section 7; twin of the web client's home, 06-web.md section
-4.0): `status --attention [--org ORG]` and `task list --org ORG --state needs-decision|blocked|working|done [--mine]
-[--limit N]`.
+4.0): `status --attention [--org ORG]`, `task list --org ORG --state needs-decision|blocked|working|done|waiting|
+no-agent [--mine] [--limit N]` and `status --overview [--org ORG]` (the start page's three numbers of the open tasks:
+working, waiting for a person, no agent; contracts/changes/HOME-COUNTS.md).
 
 The hub derives one attention record per task (`GET /v1/orgs/{org}/attention`, paged with `next_before`, and
 `/attention/summary`); the tool adds what only the client can read: the task titles (`task.meta`), the workgroup and
@@ -28,6 +29,13 @@ from agent_runner.crypto.ids import is_uuid7
 
 CATEGORIES = {"needs-decision": "needs_decision", "blocked": "blocked", "working": "working", "done": "done"}
 """Command-line state -> API category."""
+OVERVIEWS = {"waiting": "waiting", "no-agent": "no_agent"}
+"""Command-line state -> API overview of the open tasks (`working` is the category with the same tasks)."""
+OVERVIEW_CATEGORIES = {"working": ("working",), "waiting": ("needs_decision",), "no_agent": ("blocked", "done")}
+"""API overview -> the categories its list items may have (contracts/changes/HOME-COUNTS.md; the hub counts)."""
+OVERVIEW_KEYS = ("open_working", "open_waiting", "open_no_agent")
+"""The summary counts of the overview and their names in the answer of `task overview`."""
+OVERVIEW_NAMES = {"open_working": "working", "open_waiting": "waiting", "open_no_agent": "no_agent"}
 ASKING = {"question": "human.question", "approval": "human.approval"}
 """Reason -> the operation type whose `operation.params` holds the question."""
 SUMMARY_KEYS = ("needs_decision", "needs_decision_mine", "blocked", "working", "done_since")
@@ -57,7 +65,17 @@ def _org(account: Account, org: str) -> str:
     return org
 
 
-def _item(org: str, category: str, item: object) -> tuple[dict[str, Any], dict[str, Any]] | None:
+def _fits(attention: dict[str, Any], category: str, overview: str | None) -> bool:
+    """Whether a record belongs to the list: its category, or one of the overview's categories of an open task."""
+    if overview is None:
+        return attention.get("category") == category
+    closed = attention.get("category") == "done" and attention.get("reason") == "closed"
+    return attention.get("category") in OVERVIEW_CATEGORIES[overview] and not closed
+
+
+def _item(
+    org: str, category: str, item: object, overview: str | None = None
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
     """`(task_row, attention_row)` of one list item, None when it does not fit the API shape."""
     if not isinstance(item, dict):
         return None
@@ -69,7 +87,7 @@ def _item(org: str, category: str, item: object) -> tuple[dict[str, Any], dict[s
         not isinstance(task_id, str)
         or not is_uuid7(task_id)
         or attention.get("task_id") != task_id
-        or attention.get("category") != category
+        or not _fits(cast(dict[str, Any], attention), category, overview)
         or not is_uuid7(str(task.get("wg_id")))
         or task.get("org_id", org) != org
     ):
@@ -87,12 +105,16 @@ class Reader:
         self.named: dict[str, Named] = {}
         self.unverified = 0
 
-    def rows(self, category: str, *, mine: bool, limit: int) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-        """The records of one category in the hub's order, every page up to `limit`."""
+    def rows(
+        self, category: str, *, mine: bool, limit: int, overview: str | None = None
+    ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+        """The records of one category (or of one overview of the open tasks) in the hub's order, every page up to
+        `limit`."""
         found: list[tuple[dict[str, Any], dict[str, Any]]] = []
         before: str | None = None
         while len(found) < limit:
-            query: dict[str, object] = {"category": category, "limit": min(PAGE_MAX, limit - len(found))}
+            which = {"category": category} if overview is None else {"overview": overview}
+            query: dict[str, object] = {**which, "limit": min(PAGE_MAX, limit - len(found))}
             if mine:
                 query["mine"] = 1
             if before is not None:
@@ -102,7 +124,7 @@ class Reader:
             if not isinstance(items, list):
                 raise PlatformError("hub_refused", reason="response_invalid")
             for item in items:
-                row = _item(self.org, category, item)
+                row = _item(self.org, category, item, overview)
                 if row is None:
                     self.unverified += 1
                 else:
@@ -152,27 +174,39 @@ class Reader:
             found["question"] = self.question(wg, task_id, attention)
         return found
 
-    def summary(self) -> dict[str, Any]:
+    def counters(self) -> dict[str, Any]:
+        """The hub's summary: the counters of the situation view and, from a hub that has them, the overview."""
         answer = self.account.call("GET", f"/v1/orgs/{segment(self.org)}/attention/summary")
         if not all(type(answer.get(key)) is int for key in SUMMARY_KEYS):
             raise PlatformError("hub_refused", reason="response_invalid")
-        return {key: answer[key] for key in SUMMARY_KEYS}
+        return answer
+
+
+def _overview(answer: dict[str, Any]) -> dict[str, int] | None:
+    """The three numbers of the open tasks of a summary, None from a hub of an older release."""
+    if not all(type(answer.get(key)) is int for key in OVERVIEW_KEYS):
+        return None
+    return {OVERVIEW_NAMES[key]: answer[key] for key in OVERVIEW_KEYS}
 
 
 def task_list(account: Account, org: str, state: str, *, mine: bool, limit: int) -> dict[str, Any]:
-    """One category of the org's situation view with titles (and the questions of `needs-decision`)."""
-    category = CATEGORIES.get(state)
-    if category is None or not 1 <= limit <= LIST_MAX:
+    """One category of the org's situation view, or one overview of its open tasks (`waiting`, `no-agent`), with titles
+    (and the questions of `needs-decision` and `waiting`)."""
+    category, overview = CATEGORIES.get(state), OVERVIEWS.get(state)
+    if (category is None and overview is None) or not 1 <= limit <= LIST_MAX:
         raise PlatformError("invalid_argument")
     reader = Reader(account, _org(account, org))
-    rows = reader.rows(category, mine=mine, limit=limit)
-    tasks = [reader.entry(task, attention, question=category == "needs_decision") for task, attention in rows]
-    return {"org_id": org, "category": category, "tasks": tasks, "unverified": reader.unverified}
+    rows = reader.rows(category or "", mine=mine, limit=limit, overview=overview)
+    asking = category == "needs_decision" or overview == "waiting"
+    tasks = [reader.entry(task, attention, question=asking) for task, attention in rows]
+    which = {"category": category} if overview is None else {"overview": overview}
+    return {"org_id": org, **which, "tasks": tasks, "unverified": reader.unverified}
 
 
 def _status_of(account: Account, org: str) -> dict[str, Any]:
     reader = Reader(account, org)
-    summary = reader.summary()
+    answer = reader.counters()
+    summary = {key: answer[key] for key in SUMMARY_KEYS}
     groups = {
         category: [
             reader.entry(task, attention, question=True)
@@ -180,7 +214,34 @@ def _status_of(account: Account, org: str) -> dict[str, Any]:
         ]
         for category in ("needs_decision", "blocked")
     }
-    return {"org_id": org, "name": reader.names.org, "summary": summary, **groups, "unverified": reader.unverified}
+    return {
+        "org_id": org,
+        "name": reader.names.org,
+        "summary": summary,
+        "overview": _overview(answer),
+        **groups,
+        "unverified": reader.unverified,
+    }
+
+
+def overview(account: Account, org: str | None) -> dict[str, Any]:
+    """The start page's three numbers of the open tasks (`working`, `waiting`, `no_agent`): summed over every org of the
+    user (or one org), with the numbers of each org. The hub assigns every open task to exactly one of them."""
+    if org is not None:
+        orgs = [_org(account, org)]
+    else:
+        orgs = [str(item.get("org_id")) for item in account.me().get("orgs", [])]
+    total = dict.fromkeys(OVERVIEW_CATEGORIES, 0)
+    each = []
+    for found in orgs:
+        reader = Reader(account, found)
+        numbers = _overview(reader.counters())
+        if numbers is None:
+            raise PlatformError("hub_refused", reason="response_invalid")
+        for name, count in numbers.items():
+            total[name] += count
+        each.append({"org_id": found, "name": reader.names.org, **numbers})
+    return {"overview": total, "orgs": each}
 
 
 def status(account: Account, org: str | None) -> dict[str, Any]:

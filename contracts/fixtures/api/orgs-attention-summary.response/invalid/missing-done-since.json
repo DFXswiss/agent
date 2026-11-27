@@ -2,5 +2,8 @@
   "needs_decision": 3,
   "needs_decision_mine": 1,
   "blocked": 2,
-  "working": 5
+  "working": 5,
+  "open_working": 5,
+  "open_waiting": 3,
+  "open_no_agent": 2
 }

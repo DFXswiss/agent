@@ -8,7 +8,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { loadGroup, loadGroupMore } from '../../../core/attention/load';
 import { earlierFrom, groupWindow, laterFrom, selectTaskRows, STEP, windowAt } from '../../../core/attention/view';
 import type { OrgState } from '../../../core/log/state';
-import { attentionGroup, type Category } from '../../../core/store/slices/attention';
+import { attentionGroup, type ListKind } from '../../../core/store/slices/attention';
 import type { Directory } from '../../../core/tasks/directory';
 import { titles } from '../../../core/tasks/list';
 import { useLiveReload } from '../../hooks/useLiveReload';
@@ -24,7 +24,7 @@ export const TITLES_MS = 500;
 
 export interface AttentionGroupProps {
   readonly org: string;
-  readonly category: Category;
+  readonly category: ListKind;
   readonly state: OrgState;
   readonly userId: string;
   readonly directory: Directory;
