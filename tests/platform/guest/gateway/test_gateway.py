@@ -458,7 +458,13 @@ def test_only_an_error_answer_naming_the_plan_is_a_model_refusal() -> None:
     assert refusal_of({"type": "error", "error": {"message": "Your plan: this is NOT INCLUDED IN YOUR PLAN"}}) == (
         "model_not_in_plan"
     )
-    for answer in ({"type": "error", "error": {"message": "Overloaded"}}, {"type": "error", "error": "x"}, [], None):
+    answers: list[object] = [
+        {"type": "error", "error": {"message": "Overloaded"}},
+        {"type": "error", "error": "x"},
+        [],
+        None,
+    ]
+    for answer in answers:
         assert refusal_of(answer) is None
     assert refusal_of({"type": "message", "error": {"message": "usage credits are required"}}) is None
 
