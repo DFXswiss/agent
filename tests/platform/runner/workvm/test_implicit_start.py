@@ -457,6 +457,89 @@ def test_a_start_in_flight_is_cancelled_when_its_session_ends_or_its_task_closes
     assert failures(world) == ["cancelled"]
 
 
+class HeldDeleted:
+    """`Deps.emit` that holds the `deleted` event of a start (the teardown in `_end_start`) until `release`."""
+
+    def __init__(self, vms: WorkVms) -> None:
+        self.inner = vms.deps.emit
+        self.held = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, identity: Any, kind: str, body: Any) -> None:
+        if kind == "workvm.state" and body["state"] == "deleted":
+            self.held.set()
+            await self.release.wait()
+        await self.inner(identity, kind, body)
+
+
+def test_a_second_cancel_waits_for_the_teardown_of_a_start_without_a_row(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The start waits in the queue (no row) and is cancelled by a session end; a task close cancels it again while
+    its teardown writes the `deleted` event: the second one does not cancel again but waits, and the countdown ends
+    with exactly one `deleted`."""
+    monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 0.0)
+
+    async def body(vms: WorkVms) -> tuple[bool, dict[Any, Starting], dict[Any, Starting], list[Any]]:
+        await current_guest_vm(vms)
+        held = HeldDeleted(vms)
+        vms.deps.emit = held
+        vms.deps.sleep = poll
+        vms.queue.append("earlier")
+        await vms.call(None, session(), "workvm_exec", EXEC)
+        start = vms.starting[("task", TASK)]
+        while start.ticket is None:  # the start waits in the queue
+            await asyncio.sleep(0.01)
+        first = asyncio.ensure_future(vms._cancel_starts([("task", TASK)]))
+        await held.held.wait()  # the teardown writes the `deleted` event
+        second = asyncio.ensure_future(vms.close_task(TASK))
+        await asyncio.sleep(0.05)
+        waiting = not second.done()
+        held.release.set()
+        await asyncio.gather(first, second)
+        vms.queue.remove("earlier")
+        return waiting, dict(vms.starting), dict(vms.start_failed), await records.live(vms.deps.db)
+
+    waiting, starting, failed, live = world.run(body)
+    assert waiting is True
+    assert (starting, failed, live) == ({}, {}, [])
+    assert states(world) == [("starting", None), ("deleted", "failed")]
+    assert failures(world) == ["cancelled"]
+
+
+def test_a_cancel_during_the_teardown_of_a_failed_start_waits_for_it(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The clone failed (`_boot` removed the row) and the teardown writes the `deleted` event when the start is
+    cancelled twice: the teardown runs to its end, the countdown ends with exactly one `deleted`, no row is left and
+    the cancelled start keeps no failure."""
+    monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 0.0)
+
+    async def body(vms: WorkVms) -> tuple[bool, dict[Any, Starting], dict[Any, Starting], list[Any]]:
+        await current_guest_vm(vms)
+        held = HeldDeleted(vms)
+        vms.deps.emit = held
+        world.fail.add("clone")
+        await vms.call(None, session(), "workvm_exec", EXEC)
+        start = vms.starting[("task", TASK)]
+        await held.held.wait()
+        start.task.cancel()
+        await asyncio.sleep(0.01)
+        start.task.cancel()
+        await asyncio.sleep(0.01)
+        running = not start.task.done()
+        held.release.set()
+        await asyncio.wait({start.task})
+        await asyncio.sleep(0)
+        return running, dict(vms.starting), dict(vms.start_failed), await records.live(vms.deps.db)
+
+    running, starting, failed, live = world.run(body)
+    assert running is True  # the teardown was not cut short by the cancels
+    assert (starting, failed, live) == ({}, {}, [])
+    assert states(world) == [("starting", None), ("deleted", "failed")]
+    assert failures(world) == ["cancelled"]
+
+
 def test_session_end_and_task_close_forget_kept_failures(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
     """A kept failure of a subagent's scope goes with its session, that of the task scope with the last session of
     the task, and every one of a task when the task closes."""

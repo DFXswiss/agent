@@ -1167,7 +1167,8 @@ class WorkVms:
         down what it left (`_end_start`, one `deleted` event) and keeps no failure (`_start_done`)."""
         tasks = [start.task for key in keys if (start := self.starting.get(key)) is not None]
         for task in tasks:
-            task.cancel()
+            if not task.cancelling():  # a start already being cancelled is only waited for
+                task.cancel()
         if tasks:
             await asyncio.wait(tasks)
 
@@ -1350,7 +1351,7 @@ class WorkVms:
                 session, scope=scope, size="standard", implicit=True, workvm_id=start.vm.id, triggered_by=stamp
             )
         except BaseException:  # a failure, an unexpected error or the cancellation: the countdown ends, then re-raised
-            await self._end_start(start.vm)
+            await _to_the_end(self._end_start(start.vm))
             raise
 
     async def _end_start(self, shape: WorkVm) -> None:
@@ -1663,6 +1664,21 @@ def _join_seconds(tool: str, arguments: Mapping[str, Any], begun: float) -> floa
 def _start_key(session: LocalSession) -> tuple[str, str]:
     """The scope of a session's implicit VM, as `_vm_of` resolves it: a subagent's own session VM, else the task VM."""
     return ("session", session.id) if session.parent_id is not None else ("task", session.task_id)
+
+
+async def _to_the_end(coroutine: Awaitable[None]) -> None:
+    """Run `coroutine` to its end even when the calling task is cancelled meanwhile (shielded, as `delete`); a cancel
+    that arrived is raised once it has ended."""
+    future = asyncio.ensure_future(coroutine)
+    cancelled = False
+    while not future.done():
+        try:
+            await asyncio.shield(future)
+        except asyncio.CancelledError:
+            cancelled = True
+    if cancelled:
+        raise asyncio.CancelledError
+    future.result()
 
 
 def _mark_queued(ticket: str) -> None:

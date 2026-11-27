@@ -302,7 +302,9 @@ machine-id at first boot (cloud-init new instance-id).
   VM leaves the task scope's failure), when its session ends (the task scope's with the last active session of the
   task) and when its task closes. A session end or task close first cancels a start of those scopes still in flight
   and waits for it: it is torn down like any cancelled start (one `deleted` event, no live row) and keeps no failure,
-  so no start runs on for an ended session or a closed task.
+  so no start runs on for an ended session or a closed task. The teardown of a failed or cancelled start itself
+  cannot be cancelled: it runs shielded to its end, a cancel that arrives meanwhile takes effect afterwards, and a
+  start that is already being cancelled is only waited for, not cancelled again.
   Calls waiting for a cancelled start get `unavailable` ("The start of the work VM was cancelled ..."); the next call
   starts anew. Markers and kept failures live in the runner's memory only: a restart forgets them, and the
   reconciliation deletes what a start left (reason `restart`).
