@@ -212,6 +212,25 @@ def _write_worker_files(home: Path, **policy_overrides: Any) -> None:
     (prompts / "pr-review.md").write_text("Review the change.\n", encoding="utf-8")
 
 
+def _allow_log_error(home: Path) -> None:
+    """Make the policy allow only `log-error`, mapped by the catalogue."""
+    runner_dir = home / "runner"
+    policy = json.loads(
+        (runner_dir / "policy.json").read_text(encoding="utf-8")
+    )
+    policy["job_types_allow"] = ["log-error"]
+    policy["default_skill_on_mention"] = "log-error"
+    (runner_dir / "policy.json").write_text(
+        json.dumps(policy), encoding="utf-8"
+    )
+    (runner_dir / "skills-catalog.json").write_text(
+        json.dumps(
+            {"skills": [{"id": "log-error", "queue_type": "log-error"}]}
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_ingest_creates_a_job_for_an_admitted_mention(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1151,6 +1170,72 @@ def test_dispatch_stops_before_state_without_a_prompt_template_with_other_queue_
         cmd_runner(["dispatch"])
 
     _assert_dispatch_stopped_before_state(home, calls)
+
+
+def test_dispatch_stops_before_state_without_the_log_error_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An allowed `log-error` queue type resolves to the log-error worker, which
+    # renders its own template. Starting it without that file would create a
+    # worktree and a session only to fail.
+    home = tmp_path / "home"
+    _write_runner_config(home, {"max_concurrent": 1})
+    _write_worker_files(home)
+    _allow_log_error(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda argv: (calls.append(list(argv)), _completed())[1],
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["dispatch"])
+
+    assert "prompt template" in str(raised.value)
+    assert "log-error.md" in str(raised.value)
+    _assert_dispatch_stopped_before_state(home, calls)
+
+
+def test_dispatch_preflight_accepts_log_error_with_its_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    _write_runner_config(home, {"max_concurrent": 1})
+    _write_worker_files(home)
+    _allow_log_error(home)
+    (home / "runner" / "prompts" / "log-error.md").write_text(
+        "Explain the failure.\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    runner_cmd._worker_preflight(runner_paths(home / "runner"))
+
+
+def test_dispatch_preflight_does_not_require_an_unallowed_log_error_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The catalogue may name log-error without the policy allowing it. No
+    # dispatched row of that skill can be created, so its template is not
+    # required.
+    home = tmp_path / "home"
+    _write_worker_files(home)
+    paths = runner_paths(home / "runner")
+    paths.skills_catalog.write_text(
+        json.dumps(
+            {
+                "skills": [
+                    {"id": "pr-review", "queue_type": "pr-ready"},
+                    {"id": "log-error", "queue_type": "log-error"},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+
+    assert not (paths.prompts / "log-error.md").exists()
+    runner_cmd._worker_preflight(paths)
 
 
 def test_dispatch_stops_before_state_for_a_skill_without_a_worker(
@@ -3507,6 +3592,60 @@ def test_doctor_reports_a_skill_without_a_worker(
     assert "job type merge-conflict has no worker" in out
     assert "job type pr-review has no worker" not in out
     assert "doctor 1 problems" in out
+
+
+def test_doctor_reports_a_missing_log_error_template(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # `log-error` has a worker now, so an allowed one needs its template; it is
+    # no longer reported as a skill without a worker.
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    _allow_log_error(home)
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: Completed(0, "example-bot\n", ""),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        cmd_runner(["doctor"])
+
+    assert raised.value.code == 1
+    out = capsys.readouterr().out
+    assert f"prompt template {paths.prompts / 'log-error.md'} is missing" in out
+    assert "job type log-error has no worker" not in out
+    assert "doctor 1 problems" in out
+
+
+def test_doctor_accepts_an_allowed_log_error_with_its_template(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    home = tmp_path / "home"
+    paths = _healthy_runner_files(home)
+    _allow_log_error(home)
+    (paths.prompts / "log-error.md").write_text(
+        "Explain the failure.\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("AGENT_HOME", str(home))
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr(
+        "agent_cli.runner_cmd.run_argv",
+        lambda _argv: Completed(0, "example-bot\n", ""),
+    )
+
+    cmd_runner(["doctor"])
+
+    assert capsys.readouterr().out.strip() == "doctor ok"
 
 
 def test_doctor_reports_a_queue_type_not_in_the_catalogue(
