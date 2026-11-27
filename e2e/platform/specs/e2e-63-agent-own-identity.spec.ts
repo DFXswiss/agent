@@ -49,6 +49,7 @@ import {
   home,
   invite,
   mainSessions,
+  openChat,
   platformDevice,
   poolReady,
   sendPrompt,
@@ -231,6 +232,7 @@ test('@E2E-63 the main orchestrator acts with its own identity, its revocation i
   const row = page.locator(`[data-testid="tasks.row"][data-task="${uuid(taskId)}"]`);
   await expect(row.getByTestId('tasks.row.owner')).toHaveText(BY_AGENT, { timeout: 30_000 });
   await navigate(page, `/o/${org}/t/${taskId}`);
+  await openChat(page); // the chat is the second tab (KONZEPT E-43)
   await expect(page.getByTestId('chat.prompt').filter({ hasText: 'kz57-prompt-b3n5m7' })).toBeVisible({
     timeout: 30_000,
   });
@@ -698,6 +700,7 @@ test('@E2E-63 @needs-vm stage b: a running main session becomes the main orchest
   // requests with the hub's checks and audit); it can neither ask to become the orchestrator nor pair.
   await withSecondMcp(orchestrator, session);
   await visit(page, `/o/${org}/t/${task}`);
+  await openChat(page); // the chat is the second tab (KONZEPT E-43)
   await page.getByTestId('chat.composer.prompt').fill(ACT_PROMPT);
   await page.getByTestId('chat.composer.send').click();
   await expectAnswerInChat(page, 'Orchestrated kz63-done-q7w1e5.');

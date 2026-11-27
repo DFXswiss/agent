@@ -21,6 +21,7 @@ import { navigate } from '../fixtures/identity.ts';
 import {
   mainSessions,
   onboard,
+  openChat,
   platformDevice,
   poolReady,
   sendPrompt,
@@ -146,6 +147,7 @@ test('@E2E-24 @R-10.6 @R-13.1 @R-13.2 @R-13.3 @R-13.4 @R-13.5 @R-13.6 @R-13.7 @R
     // The parent answers only after the held-back child (40 s) and the parallel children (8 s): more than the 60 s of
     // `expectAnswerInChat` after the live checks.
     await navigate(page, `/o/${onboarded.org}/t/${task}`);
+    await openChat(page); // the chat is the second tab (KONZEPT E-43)
     await expect(
       page.getByTestId('chat.output').filter({ hasText: 'Subagents finished kz24-answer-o4i8p1.' }),
     ).toBeVisible({ timeout: 180_000 });

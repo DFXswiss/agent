@@ -35,7 +35,7 @@ import {
 } from '../fixtures/identity.ts';
 import { storeApiKey, testApiKey } from '../fixtures/model.ts';
 import type { Orchestrator } from '../fixtures/orchestrator.ts';
-import { expectAnswerInChat, invite, onboard, operator, uuid } from '../fixtures/platform.ts';
+import { expectAnswerInChat, invite, onboard, openChat, operator, uuid } from '../fixtures/platform.ts';
 import { PageUser } from '../../../web/e2e/helpers/user.ts';
 import type { Page } from '@playwright/test';
 
@@ -274,6 +274,7 @@ test('@E2E-67 @R-14.6 @needs-vm @needs-workvm a session of a failed device conti
     await expectDevice(orchestrator, deviceB, { online: false });
     const [task] = await user.createTasks(org, wg, [WORK]);
     await navigate(page, `/o/${org}/t/${task!}`);
+    await openChat(page); // the chat is the second tab (KONZEPT E-43)
     await expectAnswerInChat(page, WORK_ANSWER);
     const [lost] = await sessionsOf(orchestrator, task!);
     expect(lost!.device_id).toBe(deviceA);
@@ -502,6 +503,7 @@ test('@E2E-67 @R-14.6 @needs-vm an organization whose only own device failed wai
 
     const [task] = await user.createTasks(org, wg, [SOLO_WORK]);
     await navigate(page, `/o/${org}/t/${task!}`);
+    await openChat(page); // the chat is the second tab (KONZEPT E-43)
     await expectAnswerInChat(page, SOLO_ANSWER);
     const [lost] = await sessionsOf(orchestrator, task!);
     expect(lost!.device_id).toBe(device);

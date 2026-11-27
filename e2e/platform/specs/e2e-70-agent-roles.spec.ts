@@ -30,6 +30,7 @@ import {
   expectAnswerInChat,
   home,
   onboard,
+  openChat,
   platformDevice,
   poolReady,
   sendPrompt,
@@ -155,6 +156,7 @@ test('@E2E-70 @needs-vm agent roles keep work, review and release apart, restric
     'review',
   ]);
   await navigate(page, `/o/${onboarded.org}/t/${task}`);
+  await openChat(page); // the chat is the second tab (KONZEPT E-43)
   await expect(page.getByTestId('task.profile.name')).toHaveAttribute('data-profile', '');
 
   await expectNoPlaintext(orchestrator, CANARIES);

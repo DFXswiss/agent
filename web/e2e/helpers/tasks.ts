@@ -24,12 +24,25 @@ export async function freshUser(
   return { ...onboarded, device: id };
 }
 
-/** Sends `prompt` from the composer on the current page and returns the task ID of the task page it lands on. */
-export async function sendPrompt(page: Page, prompt: string): Promise<string> {
+/**
+ * Sends `prompt` from the composer on the current page and returns the task ID of the task page it lands on. The page
+ * opens on the tab "Claude Code" (KONZEPT E-43); with `tab` `chat` (the default) the step then opens the Chat tab, where
+ * the specs read prompts, outputs and cards.
+ */
+export async function sendPrompt(page: Page, prompt: string, tab: 'chat' | 'terminal' = 'chat'): Promise<string> {
   await page.getByTestId('composer.prompt').fill(prompt);
   await page.getByTestId('composer.send').click();
   await expect(page).toHaveURL(TASK_PATH);
-  return TASK_PATH.exec(page.url())![1]!;
+  const task = TASK_PATH.exec(page.url())![1]!;
+  await expect(page.getByTestId('task.tabs.terminal')).toHaveAttribute('aria-current', 'page');
+  if (tab === 'chat') await openChat(page);
+  return task;
+}
+
+/** Opens the Chat tab of the task page (the second tab since KONZEPT E-43). */
+export async function openChat(page: Page): Promise<void> {
+  await page.getByTestId('task.tabs.chat').click();
+  await expect(page.getByTestId('chat')).toBeVisible();
 }
 
 /** No spinner anywhere in the countdown panel (06-web.md sections 1 and 4.4). */

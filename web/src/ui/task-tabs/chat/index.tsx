@@ -1,4 +1,4 @@
-// Task tab "Chat" (06-web.md section 5.2), the default tab of `/o/:org/t/:task`.
+// Task tab "Chat" (06-web.md section 5.2), the second tab of `/o/:org/t/:task` after "Claude Code" (KONZEPT E-43).
 import type { TaskTab } from '../../registries/task-tabs';
 import { ChatTab } from './ChatTab';
 

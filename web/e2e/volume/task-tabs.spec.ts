@@ -1,4 +1,4 @@
-// Volume gate (ADR-086 §4): the other tabs of the volume task – its sessions (a subagent tree deeper and wider than
+// Volume gate (ADR-086 §4): the other tabs of the volume task – "Claude Code" (the terminal of its main session), its sessions (a subagent tree deeper and wider than
 // the hub's limits), 10 000 operations and the detail of the largest result, its whiteboard (300 entries), its audit, its 10 000 charges.
 import type { Page } from '@playwright/test';
 import { orgPath, test } from './fixtures.ts';
@@ -6,6 +6,7 @@ import { measureHere, openView } from './views.ts';
 import { knownGap } from './gaps.ts';
 
 export const COVERS = [
+  'tab:terminal',
   'tab:sessions',
   'list:task.sessions',
   'tab:operations',
@@ -19,6 +20,16 @@ export const COVERS = [
 ];
 
 const tab = (task: string, id: string) => `${task}?tab=${id}`;
+
+// the default tab "Claude Code" (KONZEPT E-43): the terminal of the main session with the prompt input below it
+test('tab:terminal', async ({ volume }, info) => {
+  await openView(volume, info, {
+    id: 'tab:terminal',
+    path: orgPath(volume.data, `/t/${volume.data.big_task}`),
+    ready: (page) => page.getByTestId('task.terminal'),
+    primary: (page) => page.getByTestId('chat.composer.prompt'),
+  });
+});
 
 test('tab:sessions', async ({ volume }, info) => {
   await openView(volume, info, {

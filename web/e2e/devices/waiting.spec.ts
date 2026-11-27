@@ -11,7 +11,7 @@ import { mainSession, TASK_PATH, walk } from '../helpers/director.ts';
 import { layoutProblems } from '../helpers/layout-checks.ts';
 import { answerRequest } from '../helpers/operations.ts';
 import { sessionEvents } from '../helpers/sessions.ts';
-import { freshUser, START_STEPS } from '../helpers/tasks.ts';
+import { freshUser, openChat, START_STEPS } from '../helpers/tasks.ts';
 
 const PROMPT = 'schau dir das neuste issue in example-org/example-repo an';
 const TOKEN = 'ghp_not_a_real_token_0123456789';
@@ -46,6 +46,8 @@ test('a task that needs GitHub asks for the connection in its chat and goes on w
   await page.getByTestId('composer.send').click();
   await expect(page).toHaveURL(TASK_PATH);
   const task = TASK_PATH.exec(page.url())![1]!;
+  // the task opens on "Claude Code" (KONZEPT E-43); the cards are read in the chat
+  await openChat(page);
   const session = await mainSession(task);
   await walk(session.session_id, [...START_STEPS, 'working'], { intervalMs: 20 });
   await expect(page.getByTestId('countdown.summary')).toContainText('Ready in');

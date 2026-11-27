@@ -120,7 +120,7 @@ Volume bounds (ADR-086 §1, `decisions/KOR-35.md` §4):
 | `/o/:org` | home: first-task composer (§4) and recent tasks of the default workgroup | org:member |
 | `/o/:org/tasks` | task overview: all tasks of the readable workgroups (§5.1a, KOR-32) | org:member |
 | `/o/:org/w/:wg` | task list + composer of a workgroup (§5.1) | wg:read |
-| `/o/:org/t/:task` | chat (§5.2), tabs: Chat, Sessions, Pull requests (§5.6), Operations, Whiteboard, Audit | task:read |
+| `/o/:org/t/:task` | Claude Code view (§5.2a, default), tabs: Claude Code, Chat (§5.2), Sessions, Pull requests (§5.6), Operations, Whiteboard, Audit | task:read |
 | `/o/:org/s/:session` | session detail: terminal (§5.5), chat of that session, children | task:read |
 | `/o/:org/whiteboard` and `/o/:org/w/:wg/whiteboard` | whiteboards (§6.1) | org:member / wg:read |
 | `/o/:org/members` | members and rights (§7.1) | org:member (edit: admin) |
@@ -500,7 +500,18 @@ Claude subscription → DFX access over OpenRouter (model) · used up until 14:0
 the time, `unusable`, `released`; an operator subscription is named "operator subscription"). It is read when the page opens, when the task or its main session changes state and
 after a reconnect; without a switch, or when the audit cannot be read, nothing is shown.
 
-### 5.2 Chat (`/o/:org/t/:task`, tab Chat)
+### 5.2a Claude Code (`/o/:org/t/:task`, default tab, [E-43](../KONZEPT.md#e-43), [ADR-104](../adr/104-claude-code-view-as-task-default.md))
+
+- The terminal of the task's main session (§5.5, read-only, Follow and History), labelled "Live view of Claude Code –
+  prompts are entered below"; it follows a new main session after a resume or failover. The page is `max-w-6xl` wide
+  while this tab is open.
+- Below it the prompt input in the style of Claude Code: dark monospace box with `>`, Enter sends, Shift+Enter adds a
+  line (Ctrl/⌘+Enter sends too), Stop and End session as in §5.2. It sends the same signed `prompt` as the chat.
+- Until the main session works, and after its start failed, the countdown panel (§4.4, Retry for writers) is shown
+  above the terminal; before the main session exists a dark placeholder "Claude Code is being started in a VM…".
+- Model access card and queue as in §5.2; readers see "You have read access" and no input.
+
+### 5.2 Chat (`/o/:org/t/:task?tab=chat`, tab Chat)
 
 - When the main session failed with `model_access_unavailable`, the task's owner sees a card "Connect your Claude
   subscription – the task continues by itself once it is connected" that leads to the connection (§8.2); others see

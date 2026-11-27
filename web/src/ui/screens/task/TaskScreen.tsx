@@ -1,6 +1,7 @@
 // The task page (06-web.md sections 2.4 and 5, route `/o/:org/t/:task`, right `task:read`): title and state, the task
 // menu with "Close task" for writers, "Renamed by session" after a `task.set_title` (WEB-09), and the tab frame. Tabs are discovered at `ui/task-tabs/<area>/index.tsx`
-// (ADR-027 section 4): Chat (default) and Sessions here; Operations, Whiteboard and Audit join from their packages.
+// (ADR-027 section 4): Claude Code (default, the main session's terminal with the prompt input, KONZEPT E-43; the page
+// is wider while it is open), Chat and Sessions here; Operations, Whiteboard and Audit join from their packages.
 // Below the header, how the current main session took over the context after a resume (ContextNotice, KOR-33), its
 // interruption by a device failure or its continuation after one (DeviceFailureNotice, ADR-087), and the newest switch
 // of the model access (ModelSwitchLine, ADR-081 section 5).
@@ -145,7 +146,10 @@ function TaskView({ row }: { readonly row: TaskRow }) {
   const tabs = TABS.map((tab) => ({ id: tab.id, label: t(tab.labelKey) }));
   const active = TABS.find((tab) => tab.id === activeTab(location.search, tabs))!;
   return (
-    <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" data-testid="task.screen">
+    <main
+      className={`mx-auto flex w-full ${active.id === 'terminal' ? 'max-w-6xl' : 'max-w-3xl'} flex-col gap-4 p-4`}
+      data-testid="task.screen"
+    >
       <header className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold" data-testid="task.title">

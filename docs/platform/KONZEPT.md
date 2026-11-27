@@ -1013,6 +1013,27 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Umsetzung:** in Arbeit – Aufgabe auf agent mit Fable 5.2. Die Plattform kennt noch keine Modellwahl je Task; das
   Modell kam über die Modellvorgabe des Auftraggebers, die Sitzung hat es bestätigt.
 
+<a id="e-43"></a>
+
+### E-43 – Ein Task sieht aus wie Claude Code, lokal gestartet
+
+- **Datum:** 2026-11-27
+- **Regel:** Die erste Eingabe eines Tasks bleibt, wie sie ist. Sobald die Hauptsession in ihrer VM angelegt ist, zeigt
+  die Task-Seite alles im Stil von Claude Code, wie lokal gestartet: Standardansicht ist das native Terminal der
+  Hauptsession, gross und dunkel, darunter ein Eingabefeld im Stil von Claude Code (Enter sendet). Der Start der
+  Session (Countdown, Wartegrund, „Erneut versuchen“) steht darüber, bis sie arbeitet. Der Chat bleibt als zweite
+  Ansicht. Eingaben bleiben signierte Prompts; das Terminal selbst nimmt keine Tastendrücke an.
+- **Wortlaut:** „ich will auf agent.dfx.swiss die selbe UI Ansicht haben wenn ich eine Claude Session starte wie wenn
+  ich claude local starten würde“ und, auf die Wahl zwischen Terminal-Ansicht mit Eingabefeld (A), Chat im
+  Claude-Code-Stil (B) und echt interaktivem Terminal (C): „A, das allererste Eingabefeld bleibt wie es heute ist, dann
+  wird eine neue Session in einer VM angelegt und von da an soll alles im Claude Code UI Style angezeigt werden“
+- **Bezug:** ändert [§6 Punkt 6](#k-6-b6) (Standardansicht: Chat) – Standardansicht ist jetzt die Terminalansicht
+  von [§6 Punkt 7](#k-6-b7) mit dem Eingabefeld darunter; §6 Punkt 7 gilt weiter: die Terminalansicht bleibt read-only,
+  Prompts kommen nur über das Eingabefeld (jetzt direkt unter dem Terminal). Ein echt interaktives Terminal (C) hat der
+  Auftraggeber nicht gewählt.
+- **Umsetzung:** gebaut – Task-Tab „Claude Code“ ([ADR-104](adr/104-claude-code-view-as-task-default.md),
+  [spec/06-web.md](spec/06-web.md) §5.2a).
+
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
 **Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und

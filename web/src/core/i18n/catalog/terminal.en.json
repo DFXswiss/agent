@@ -1,5 +1,6 @@
 {
   "label": "Read-only view – prompts are entered in the chat",
+  "label.task": "Live view of Claude Code – prompts are entered below",
   "viewport": "Terminal output (read-only)",
   "loading": "Loading the terminal history…",
   "empty": "No terminal output yet.",

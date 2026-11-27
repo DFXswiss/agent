@@ -670,7 +670,7 @@ describe('task page', () => {
     }));
     t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_after: null, head: 0 }));
     t.client.on(`POST /v1/tasks/${row.task_id}/prompts`, () => ({ scope_seq: 3, session_id: 's2' }));
-    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}`);
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}?tab=chat`);
     expect(screen.getByTestId('task.loading')).toHaveTextContent('Loading the task…');
     expect(await screen.findByTestId('task.title')).toHaveTextContent('Loading title …');
     expect(screen.queryByTestId('chat.prompt')).toBeNull();
@@ -740,7 +740,7 @@ describe('task page', () => {
     putTasks(t.store, [row as TaskRow]);
     putSession(t.store, sessionRow(t, { state: 'failed', state_reason: 'oom' }) as never, [], 0);
     t.store.update('me', (me) => ({ ...me, userId: 'reader' }));
-    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}`);
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}?tab=chat`);
     expect(screen.getByTestId('countdown.failed')).toBeInTheDocument();
     expect(screen.queryByTestId('countdown.retry')).toBeNull();
   });
@@ -755,7 +755,7 @@ describe('task page', () => {
     const t = await taskWorld();
     const row = taskRow(t);
     putTasks(t.store, [row as TaskRow]);
-    const path = `/o/${t.org}/t/${row.task_id}`;
+    const path = `/o/${t.org}/t/${row.task_id}?tab=chat`;
     const route = [{ path: '/o/:org/t/:task', element: <TaskScreen /> }];
     // an older hub sends neither field: nothing is shown
     putSession(t.store, sessionRow(t, { state: 'working' }) as never, [], 0);
@@ -835,7 +835,7 @@ describe('task page', () => {
     t.client.on(put, () => ({ task: { ...row, placement: null } }));
     // an older hub sends neither field: nothing is shown
     putSession(t.store, sessionRow(t, { state: 'working' }) as never, [], 0);
-    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}`);
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}?tab=chat`);
     expect(screen.queryByTestId('task.device-failure.interrupted')).toBeNull();
     expect(screen.queryByTestId('task.device-failure.failover')).toBeNull();
     const since = '2026-11-21T12:05:00.000Z';
@@ -889,7 +889,7 @@ describe('task page', () => {
       [],
       0,
     );
-    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}`, 'de');
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}?tab=chat`, 'de');
     expect(screen.getByTestId('task.device-failure.interrupted')).toHaveTextContent(
       'Unterbrochen – das Gerät ist seit',
     );
@@ -907,7 +907,7 @@ describe('task page', () => {
       [],
       0,
     );
-    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}`, 'de');
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}?tab=chat`, 'de');
     expect(screen.getByTestId('task.context.fallback')).toHaveTextContent(
       'Diese Aufgabe wurde mit einer neuen KI fortgesetzt, weil die Wiederherstellung auf der VM fehlschlug.',
     );
@@ -953,7 +953,7 @@ describe('task page', () => {
         body: { text: 3 },
       },
     ]);
-    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}`);
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${row.task_id}?tab=chat`);
     expect(screen.getByTestId('task.screen')).toBeInTheDocument();
     expect(screen.getByTestId('chat.prompt.text')).toHaveTextContent('');
   });

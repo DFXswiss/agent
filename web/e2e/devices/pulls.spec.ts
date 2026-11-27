@@ -12,7 +12,7 @@ import { fixConflictsInstruction } from '../../src/core/pulls/instruction';
 import { mainSession, walk } from '../helpers/director.ts';
 import { layoutProblems } from '../helpers/layout-checks.ts';
 import { answerRequest, operation } from '../helpers/operations.ts';
-import { freshUser, sendPrompt, START_STEPS } from '../helpers/tasks.ts';
+import { freshUser, openChat, sendPrompt, START_STEPS } from '../helpers/tasks.ts';
 import { PageUser } from '../helpers/user.ts';
 import { navigateInApp } from '../helpers/onboard.ts';
 import { visit } from '../helpers/whiteboard.ts';
@@ -136,6 +136,7 @@ test('a linked pull request in conflict is fixed by the task and reported as fix
     { state: 'succeeded', result: { branch: 'release-notes', sha: MERGE, url: `https://github.com/${REF.repo}` } },
   );
   await entry.getByTestId('attention.open').click();
+  await openChat(page); // the chat is the second tab (KONZEPT E-43)
   await expect(page.getByTestId('chat.prompt.text').last()).toHaveText(fixConflictsInstruction(REF));
   await page.getByTestId('task.tabs.pulls').click();
   const panel = page.getByTestId('task.pulls');

@@ -13,6 +13,7 @@ import { terminalFailed } from '../../src/core/store/slices/terminal';
 import { applyNewest, applyPage } from '../../src/core/terminal/entries';
 import { TerminalWatch } from '../../src/core/terminal/watch';
 import { SessionScreen } from '../../src/ui/screens/session/SessionScreen';
+import { TaskScreen } from '../../src/ui/screens/task/TaskScreen';
 import TerminalView, { offsetLabel } from '../../src/ui/terminal/TerminalView';
 import {
   clearScreen,
@@ -469,6 +470,93 @@ describe('terminal view', () => {
       })),
     );
     expect(text(1)).toBe('a');
+  });
+});
+
+describe('task tab "Claude Code" (KONZEPT E-43)', () => {
+  async function taskPage(t: TaskWorld, search = '') {
+    t.client.on(`GET /v1/tasks/${TASK}`, () => ({
+      task: taskRow(t),
+      sessions: [{ session: sessionRow(t, { state: 'working' }), transitions: [] }],
+    }));
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_after: null, head: 0 }));
+    const mounted = mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}${search}`);
+    await screen.findByTestId('task.screen');
+    return mounted;
+  }
+
+  it('shows the terminal of the main session by default, read-only, with the Claude Code input below', async () => {
+    const t = await taskWorld();
+    const mounted = await taskPage(t);
+    expect(screen.getByTestId('task.tabs.terminal')).toHaveAttribute('aria-current', 'page');
+    // the terminal view is a lazy chunk
+    expect(await screen.findByTestId('terminal')).toHaveAttribute('data-variant', 'task');
+    expect(mounted.terminal.watch).toHaveBeenCalledWith(t.org, MAIN);
+    expect(screen.getByTestId('terminal.label')).toHaveTextContent(
+      'Live view of Claude Code – prompts are entered below',
+    );
+    // the screens stay read-only: no input handler, input disabled
+    expect(xterm.terminals.at(-1)!.options.disableStdin).toBe(true);
+    expect(screen.getByTestId('chat.composer')).toHaveAttribute('data-variant', 'cli');
+    expect(screen.getByTestId('chat.composer')).toHaveTextContent('Enter to send · Shift+Enter for a new line');
+    expect(screen.getByTestId('chat.control.stop')).toBeInTheDocument();
+    // a working main session: its start is over, no countdown
+    expect(screen.queryByTestId('countdown.panel')).toBeNull();
+  });
+
+  it('keeps the countdown of a failed start above the terminal, with Retry for writers only', async () => {
+    const t = await taskWorld();
+    t.client.on(`GET /v1/tasks/${TASK}`, () => ({
+      task: taskRow(t),
+      sessions: [{ session: sessionRow(t, { state: 'failed', state_reason: 'oom' }), transitions: [] }],
+    }));
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_after: null, head: 0 }));
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}`);
+    expect(await screen.findByTestId('countdown.failed')).toHaveAttribute('data-reason', 'oom');
+    expect(screen.getByTestId('countdown.retry')).toBeInTheDocument();
+    expect(await screen.findByTestId('terminal')).toBeInTheDocument();
+    act(() => t.store.update('me', (me) => ({ ...me, userId: 'reader' })));
+    expect(screen.getByTestId('countdown.failed')).toBeInTheDocument();
+    expect(screen.queryByTestId('countdown.retry')).toBeNull();
+  });
+
+  it('sends with Enter, keeps Shift+Enter for a new line and ignores Enter while composing', async () => {
+    const t = await taskWorld();
+    await taskPage(t);
+    const bodies: unknown[] = [];
+    t.client.on(`POST /v1/tasks/${TASK}/prompts`, (body) => {
+      bodies.push(body);
+      return { scope_seq: 9, session_id: MAIN };
+    });
+    const prompt = screen.getByTestId('chat.composer.prompt');
+    expect(prompt).toHaveAttribute('rows', '1');
+    fireEvent.change(prompt, { target: { value: 'first\nsecond' } });
+    expect(prompt).toHaveAttribute('rows', '2');
+    fireEvent.keyDown(prompt, { key: 'Enter', shiftKey: true });
+    fireEvent.keyDown(prompt, { key: 'Enter', altKey: true });
+    fireEvent.keyDown(prompt, { key: 'Enter', isComposing: true });
+    fireEvent.keyDown(prompt, { key: 'a' });
+    expect(t.client.of(`POST /v1/tasks/${TASK}/prompts`)).toHaveLength(0);
+    fireEvent.keyDown(prompt, { key: 'Enter' });
+    await waitFor(() => expect(prompt).toHaveValue(''));
+    expect(t.client.of(`POST /v1/tasks/${TASK}/prompts`)).toHaveLength(1);
+    expect(bodies).toHaveLength(1);
+  });
+
+  it('says that Claude Code is starting before the main session exists and shows readers no input', async () => {
+    const t = await taskWorld();
+    t.client.on(`GET /v1/tasks/${TASK}`, () => ({ task: taskRow(t, { main_session_id: null }), sessions: [] }));
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_after: null, head: 0 }));
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}`);
+    expect(await screen.findByTestId('task.terminal.starting')).toHaveTextContent(
+      'Claude Code is being started in a VM…',
+    );
+    expect(screen.queryByTestId('terminal')).toBeNull();
+    // the start of the session is followed by its countdown, as in the chat
+    expect(screen.getByTestId('countdown.panel')).toBeInTheDocument();
+    act(() => t.store.update('me', (me) => ({ ...me, userId: 'reader' })));
+    expect(screen.queryByTestId('chat.composer')).toBeNull();
+    expect(screen.getByTestId('chat.read-only')).toHaveTextContent('You have read access');
   });
 });
 

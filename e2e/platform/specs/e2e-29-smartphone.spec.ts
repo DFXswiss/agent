@@ -101,6 +101,9 @@ test('@E2E-29 @R-6.6 @R-P.5 @needs-vm smartphone: login, first task, chat, termi
   const task = TASK_PATH.exec(page.url())![1]!;
   await expect(page.getByTestId('countdown.panel').first()).toBeVisible({ timeout: 30_000 });
   await expectFits(page, 'countdown');
+  // the task opens on "Claude Code" (KONZEPT E-43): the start above the terminal; the answer is read in the chat
+  await expect(page.getByTestId('task.tabs.terminal')).toHaveAttribute('aria-current', 'page');
+  await page.getByTestId('task.tabs.chat').tap();
   await expectAnswerInChat(page, ANSWER);
   await expect(page.getByTestId('chat.file').first()).toBeVisible();
 

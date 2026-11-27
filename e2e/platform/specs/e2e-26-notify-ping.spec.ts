@@ -25,6 +25,7 @@ import {
   home,
   mainSessions,
   onboard,
+  openChat,
   platformDevice,
   poolReady,
   sendPrompt,
@@ -229,6 +230,7 @@ test('@E2E-26 @R-12.8 @R-12.9 @R-12.10 @R-P.5 @needs-vm a notified entry reaches
 
   // The session's turn continues without a new prompt and answers from the entry it fetched itself.
   await navigateInApp(page, `/o/${org}/t/${task}`);
+  await openChat(page); // the chat is the second tab (KONZEPT E-43)
   await expect
     .poll(async () => (await orchestrator.doubleState('model')).consumed, { timeout: 180_000, intervals: [1000] })
     .toEqual(['quiet', 'write', 'hold', 'fetch', 'board', 'answer']);

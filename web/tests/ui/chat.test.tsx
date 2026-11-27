@@ -27,7 +27,13 @@ afterEach(() => vi.useRealTimers());
 const PAGE = '/o/:org/t/:task';
 
 async function taskPage(
-  options: { task?: Partial<TaskRow>; session?: Record<string, unknown> | null; locale?: 'en' | 'de' } = {},
+  options: {
+    task?: Partial<TaskRow>;
+    session?: Record<string, unknown> | null;
+    locale?: 'en' | 'de';
+    /** The search of the page: the chat tab unless a test names another (`''`: the default tab). */
+    search?: string;
+  } = {},
 ) {
   const t = await taskWorld();
   const row = taskRow(t, options.task ?? {}) as TaskRow;
@@ -36,7 +42,8 @@ async function taskPage(
     sessions: options.session === null ? [] : [{ session: sessionRow(t, options.session ?? {}), transitions: [] }],
   }));
   t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_after: null, head: 0 }));
-  const mounted = mount(t, [{ path: PAGE, element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}`, options.locale);
+  const search = options.search ?? '?tab=chat';
+  const mounted = mount(t, [{ path: PAGE, element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}${search}`, options.locale);
   await screen.findByTestId('task.screen');
   return { t, ...mounted };
 }
@@ -45,15 +52,24 @@ const put = (t: TaskWorld, ...entries: EventEntry[]) => act(() => putEvents(t.st
 
 describe('task page', () => {
   it('shows the tabs from the registry and switches by the tab parameter', async () => {
-    const { t, router } = await taskPage();
-    expect(screen.getByTestId('task.tabs.chat')).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByTestId('chat')).toBeInTheDocument();
+    // the default tab is "Claude Code" (KONZEPT E-43); without a main session it says that Claude Code is starting
+    const { t, router } = await taskPage({ search: '', task: { main_session_id: null }, session: null });
+    const tabs = screen.getAllByTestId(/^task\.tabs\.[a-z]+$/).map((tab) => tab.dataset.testid);
+    expect(tabs.slice(0, 3)).toEqual(['task.tabs.terminal', 'task.tabs.chat', 'task.tabs.sessions']);
+    expect(screen.getByTestId('task.tabs.terminal')).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByTestId('task.tabs.terminal')).toHaveTextContent('Claude Code');
+    expect(screen.getByTestId('task.terminal.starting')).toHaveTextContent('Claude Code is being started in a VM');
+    expect(screen.getByTestId('task.screen')).toHaveClass('max-w-6xl');
+    fireEvent.click(screen.getByTestId('task.tabs.chat'));
+    await screen.findByTestId('chat');
+    expect(router.state.location.search).toBe('?tab=chat');
+    expect(screen.getByTestId('task.screen')).toHaveClass('max-w-3xl');
     fireEvent.click(screen.getByTestId('task.tabs.sessions'));
     await screen.findByTestId('sessions');
     expect(router.state.location.search).toBe('?tab=sessions');
     expect(screen.getByTestId('task.tabs.sessions')).toHaveAttribute('aria-current', 'page');
-    fireEvent.click(screen.getByTestId('task.tabs.chat'));
-    await screen.findByTestId('chat');
+    fireEvent.click(screen.getByTestId('task.tabs.terminal'));
+    await screen.findByTestId('task.terminal');
     expect(router.state.location.search).toBe('');
     expect(activeTab('?tab=nope', [{ id: 'a', label: 'A' }])).toBe('a');
     expect(t.client.of(`GET /v1/tasks/${TASK}`)).toHaveLength(1);
@@ -66,7 +82,7 @@ describe('task page', () => {
       `GET /v1/tasks/${TASK}`,
       () => new Promise((_, reject) => (fail = () => reject(new HubError('forbidden', 403)))),
     );
-    mount(t, [{ path: PAGE, element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}`);
+    mount(t, [{ path: PAGE, element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}?tab=chat`);
     expect(screen.getByTestId('task.loading')).toHaveTextContent('Loading the task…');
     act(() => fail());
     // forbidden and not found look the same (06-web.md section 12.6)

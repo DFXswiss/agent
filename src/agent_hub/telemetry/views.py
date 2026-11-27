@@ -10,6 +10,7 @@ VIEWS = (
     "home",
     "tasks",
     "tasks.overview",
+    "task.terminal",
     "task.chat",
     "task.sessions",
     "task.pulls",

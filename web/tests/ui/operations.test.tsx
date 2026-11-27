@@ -77,7 +77,7 @@ const prResult = (op = OP) => ({
   result: { number: 7, url: 'https://github.com/dfx/agent/pull/7', id: 1, draft: true },
 });
 
-async function page(path = '', setup: (t: TaskWorld) => void = () => undefined) {
+async function page(path = '?tab=chat', setup: (t: TaskWorld) => void = () => undefined) {
   const t = await taskWorld();
   const task = taskRow(t) as TaskRow;
   t.client.on(`GET /v1/tasks/${TASK}`, () => ({
@@ -491,7 +491,7 @@ describe('issue and pull request operations', () => {
 
 describe('operation card loading', () => {
   it('stays without a row when the task operations cannot be loaded', async () => {
-    const { t } = await page('', (w) =>
+    const { t } = await page('?tab=chat', (w) =>
       w.client.on(`GET /v1/tasks/${TASK}/operations`, () => {
         throw new HubError('unavailable', 503);
       }),
@@ -504,7 +504,7 @@ describe('operation card loading', () => {
 
 describe('operations outside the first page and other tasks', () => {
   it('loads the operation of a card by ID when the first page does not hold it', async () => {
-    const { t } = await page('', (w) =>
+    const { t } = await page('?tab=chat', (w) =>
       w.client.on(`GET /v1/operations/${OP}`, () => ({ operation: row(w, { state: 'succeeded' }), transitions: [] })),
     );
     act(() => putEvents(t.store, t.wg, [event(t, 'operation.params', prParams())]));

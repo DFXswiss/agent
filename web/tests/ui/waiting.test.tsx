@@ -102,7 +102,7 @@ async function page(options: { member?: boolean; owner?: 'me' | 'ada' | 'none'; 
     const author = owner === 'me' ? t.me.id : t.ada.id;
     putEvents(t.store, t.wg, [entry(t, 'task.meta', { title: 'Newest issue' }, { author, session: '' })]);
   }
-  mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}`);
+  mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}?tab=chat`);
   await screen.findByTestId('task.screen');
   return t;
 }

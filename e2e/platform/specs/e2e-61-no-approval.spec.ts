@@ -42,6 +42,7 @@ import {
   invite,
   mainSessions,
   onboard,
+  openChat,
   operator,
   platformDevice,
   poolReady,
@@ -377,6 +378,7 @@ test('@E2E-61 @needs-vm no approval as a precondition: switches, operator subscr
     await storeApiKey(page, testApiKey());
     await expect.poll(async () => (await mainSessions(orchestrator, own)).length, { timeout: 60_000 }).toBe(2);
     await navigate(page, `/o/${ada.org}/t/${own}`);
+    await openChat(page); // the chat is the second tab (KONZEPT E-43)
     await expectAnswerInChat(page, 'Own access at last kz59-own-e7k2.');
     const [failed, next] = await mainSessions(orchestrator, own);
     expect((await latestSession(orchestrator, own))!.model_access).toBe('api_key');

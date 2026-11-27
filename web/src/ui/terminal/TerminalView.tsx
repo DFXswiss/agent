@@ -1,5 +1,5 @@
 // The read-only terminal of a session (06-web.md sections 5.5 and 12.1, ADR-016), loaded lazily with the session
-// detail. The session is watched while the view is open (`core/terminal/watch.ts`: live `terminal` frames, the newest
+// detail and with the task tab "Claude Code" (`variant` `task`, section 5.2a, KONZEPT E-43). The session is watched while the view is open (`core/terminal/watch.ts`: live `terminal` frames, the newest
 // page of the history, chunks strictly in `scope_seq` order, the newest 8 MiB of output in memory). Two modes:
 //
 // - **Follow** (default): every newly applied chunk is written to the visible screen (live tail); when the tail starts
@@ -37,6 +37,11 @@ export interface TerminalViewProps {
   readonly org: string;
   readonly wg: string;
   readonly session: string;
+  /**
+   * `session` (default): the session detail, with the label "prompts are entered in the chat". `task`: the default tab
+   * of the task page (KONZEPT E-43), where the prompt input sits right below – a quiet label says so.
+   */
+  readonly variant?: 'session' | 'task';
 }
 
 type Mode = 'follow' | 'history';
@@ -102,7 +107,7 @@ export function offsetLabel(ms: number): string {
   return `${minutes}:${seconds}`;
 }
 
-export default function TerminalView({ org, wg, session }: TerminalViewProps) {
+export default function TerminalView({ org, wg, session, variant = 'session' }: TerminalViewProps) {
   const { app } = useAppEnv();
   const { t, error } = useI18n();
   const entry = useStore((state) => state.terminal.sessions[session] ?? null, app.store);
@@ -272,10 +277,22 @@ export default function TerminalView({ org, wg, session }: TerminalViewProps) {
   const range = mode === 'history' ? recordingRange(chunks) : null;
   const bad = (history ?? entry)?.bad ?? [];
   return (
-    <section className="flex flex-col gap-2" data-testid="terminal" data-mode={mode} data-chunks={chunks.length}>
-      <p className="rounded bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900" data-testid="terminal.label">
-        {t('terminal.label')}
-      </p>
+    <section
+      className="flex flex-col gap-2"
+      data-testid="terminal"
+      data-mode={mode}
+      data-chunks={chunks.length}
+      data-variant={variant}
+    >
+      {variant === 'task' ? (
+        <p className="text-xs text-gray-600" data-testid="terminal.label">
+          {t('terminal.label.task')}
+        </p>
+      ) : (
+        <p className="rounded bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900" data-testid="terminal.label">
+          {t('terminal.label')}
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <div role="group" aria-label={t('terminal.mode.label')} className="flex gap-1">
           {(['follow', 'history'] as const).map((item) => (

@@ -17,6 +17,7 @@ import {
   home,
   mainSessions,
   onboard,
+  openChat,
   platformDevice,
   poolReady,
   sendPrompt,
@@ -193,6 +194,7 @@ test('@E2E-69 @R-6.3 @needs-vm a workgroup VM on an older golden moves to the cu
     // A follow-up of each task resumes the same session and conversation on the new VM, with its file.
     for (const { turn, task, session } of [alpha, beta]) {
       await navigate(page, `/o/${org}/t/${task}`);
+      await openChat(page); // the chat is the second tab (KONZEPT E-43)
       await page.getByTestId('chat.composer.prompt').fill(turn.again);
       await page.getByTestId('chat.composer.send').click();
       await expectAnswerInChat(page, turn.continued);

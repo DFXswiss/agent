@@ -105,7 +105,7 @@ describe('screens after a reconnect or resync', () => {
       ],
       transitions: [],
     }));
-    mount(t, <TaskScreen />, `/o/${t.org}/t/${row().task_id}`, '/o/:org/t/:task');
+    mount(t, <TaskScreen />, `/o/${t.org}/t/${row().task_id}?tab=chat`, '/o/:org/t/:task');
     await waitFor(() => expect(screen.getByTestId('task.state')).toHaveAttribute('data-state', 'starting'));
     const calls = t.client.of(`GET /v1/tasks/${row().task_id}`).length;
     state = 'working';
