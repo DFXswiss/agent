@@ -32,6 +32,9 @@ describe('chunk groups', () => {
     expect(screens.test(`${web}/src/ui/terminal/TerminalView.tsx`)).toBe(false);
     expect(screens.test(`${web}/src/ui/browser/StateCard.tsx`)).toBe(false);
     expect(screens.test(`${web}/src/ui/browser/BrowserTab.tsx`)).toBe(false);
+    // the view of the settings section "Mailboxes" (KOR-74) is loaded lazily from its entry, which stays a screen part
+    expect(screens.test(`${web}/src/ui/settings/sections/mailboxes/MailboxesView.tsx`)).toBe(false);
+    expect(screens.test(`${web}/src/ui/settings/sections/mailboxes/index.tsx`)).toBe(true);
     expect(screens.test(`${web}/node_modules/uplot/dist/uPlot.esm.js`)).toBe(false);
   });
 

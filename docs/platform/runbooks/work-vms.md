@@ -47,7 +47,8 @@ sudo AGENT_RUNNER=<path>/agent-runner images/workvm/host-rehearsal.sh \
    Expected: `main_ruleset=untouched pf_conf=untouched … hook=ok`, exit 0. With `hook=missing` (the running main
    ruleset has no `anchor "com.apple/*"` as its first anchor line) stop here: the installation is refused.
 2. The same command without `--plan`. It creates:
-   - the APFS volume of the slot homes (quota `q`);
+   - the APFS volume of the slot homes (quota `q`) and its `/etc/fstab` entry by volume UUID, so it hangs at
+     `/var/agent-workvm` after every restart (a volume that hangs elsewhere is mounted back, never added twice);
    - the slot accounts `<prefix>wvm00 …` and their group;
    - the `limactl` wrapper and the sudoers rule;
    - the anchor `com.apple/000.agent.workvm`, its template and the watcher's LaunchDaemon
@@ -68,6 +69,10 @@ sudo AGENT_RUNNER=<path>/agent-runner images/workvm/host-rehearsal.sh \
    sudo images/workvm/egress-check.sh --account <prefix>wvm00 --site-ip <site IPv4> --disconnect-test
    ```
 
+   **Update of an existing installation:** after updating the runner run the same command once more (without
+   `--plan`); it keeps what exists and adds what a newer version needs (since HOT-25 the `/etc/fstab` entry; the
+   output line `step=volume … fstab=added|present mount=ok|remounted`). `agent-runner doctor` warns
+   `workvm_volume fstab_missing` until then.
 7. After a restart of the device (and once after the installation, as a baseline):
    `sudo images/workvm/after-reboot-check.sh --accounts <n> --prefix <prefix>`. It checks the volume mount, the
    homes and that each `lima/_config` belongs to its slot account (0700), the watcher, the anchor and the hook; exit 0
@@ -80,7 +85,8 @@ budget with the workgroup VMs. Quota = slots × 100 GiB + 50 GiB. Start with few
 when the measured load allows.
 
 ## 4. Operation
-- `agent-runner workvm status` shows the slots, the accounts and the boundary (`ok`, `internet`, problem codes).
+- `agent-runner workvm status` shows the slots, the accounts, where the volume hangs (`runner.workvm.volume
+  mountpoint=… ok=yes|no`) and the boundary (`ok`, `internet`, problem codes).
 - Work VMs are temporary. The runner tears a VM down:
   - when the session releases it;
   - after 30 minutes idle (`WORKVM_IDLE_SECONDS`);
@@ -101,6 +107,7 @@ when the measured load allows.
 | `not_first` / state `unordered` | another child of `com.apple` sorts before ours | rename or remove that child; report it |
 | state `ok -` while the client shows connected | the route of the work VMs' resolver does not go through `utunN` | check the client's split tunnel; work VMs have no internet meanwhile (fail-closed) |
 | `pf_disabled` | someone disabled pf | The watcher enables it within 2 s; find out who disabled it. |
+| `runner.workvm volume_missing`, `doctor` `workvm_volume not_mounted`, `workvm status` `ok=no` | after a restart the volume of the slot homes hangs elsewhere (an installation without the `/etc/fstab` entry) | `workvm install` again as root (§3): it mounts the volume back and writes the entry; the daemon offers work VMs again at once. Work VMs left from before the restart count as deleted (no slot home, no instance) and never stop the work VM task. |
 
 ## 6. Removal
 ```sh

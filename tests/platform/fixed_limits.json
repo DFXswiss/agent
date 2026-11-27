@@ -292,6 +292,7 @@
   "src/agent_hub/credentials/records.py": {
    "MAX_CT_CHARS": "size",
    "MAX_GITHUB_RECORDS": "open",
+   "MAX_MAILBOXES": "open",
    "MAX_RECORDS": "open",
    "MAX_SUBSCRIPTIONS": "open"
   },
@@ -402,6 +403,12 @@
   },
   "src/agent_hub/log/events.py": {
    "SIZE_LIMITS": "size"
+  },
+  "src/agent_hub/mailboxes/routes.py": {
+   "MAX_SAFE_INTEGER": "integer"
+  },
+  "src/agent_hub/mailboxes/store.py": {
+   "MAX_RELEASED": "answer"
   },
   "src/agent_hub/mainagents/read.py": {
    "LIST_MAX": "page"
@@ -748,7 +755,8 @@
    "MAX_PACKAGE": "time"
   },
   "src/agent_runner/login/automation.py": {
-   "MAX_EMAIL": "size"
+   "MAX_EMAIL": "size",
+   "MAX_STEPS": "retry"
   },
   "src/agent_runner/login/capture.py": {
    "MAX_URL": "size"
@@ -759,6 +767,10 @@
    "MAX_SCOPES": "answer",
    "rate_limit_tier": "size"
   },
+  "src/agent_runner/login/pages.py": {
+   "MAX_BOXES": "answer",
+   "URL_LIMIT": "size"
+  },
   "src/agent_runner/login/pty.py": {
    "MAX_OUTPUT": "size"
   },
@@ -768,6 +780,21 @@
   "src/agent_runner/login/screen.py": {
    "MAX_PARAM": "size",
    "MAX_PARAMS_TEXT": "size"
+  },
+  "src/agent_runner/mail/executors.py": {
+   "DEFAULT_LIMIT": "page",
+   "MAX_ANSWER_BYTES": "size"
+  },
+  "src/agent_runner/mail/reader.py": {
+   "MAX_BODY_BYTES": "size",
+   "MAX_FROM": "size",
+   "MAX_LINK": "size",
+   "MAX_LINKS": "answer",
+   "MAX_SCAN": "page",
+   "MAX_SUBJECT": "size",
+   "MAX_TEXT": "size",
+   "MAX_TO": "size",
+   "limit": "page"
   },
   "src/agent_runner/metrics/outbox.py": {
    "BACKLOG_LIMIT": "page",
@@ -935,6 +962,7 @@
    "MAX_SEQ": "integer"
   },
   "src/agent_runner/requests/service.py": {
+   "MAX_SLOTS": "rate",
    "MAX_WAITING": "time",
    "MISSING_LIMIT": "page"
   },
@@ -1004,6 +1032,7 @@
   },
   "src/agent_runner/sync/push.py": {
    "HEDGE_MAX_BYTES": "size",
+   "LOSS_LIMIT": "integer",
    "MAX_BATCH_BYTES": "size",
    "MAX_ITEMS": "page"
   },
@@ -1166,6 +1195,9 @@
    "f'{TOKEN_NAME} {owner}'[:40]": "size",
    "text[:1024]": "size"
   },
+  "src/agent_runner/mail/mailboxes.py": {
+   "f'No mailbox named {wanted} is released to this workgroup.{here} {REMEDY}'[:1024]": "size"
+  },
   "src/agent_runner/operations/extensions.py": {
    "self.pointers[:32]": "answer"
   },
@@ -1236,6 +1268,9 @@
   },
   "contracts/api/device-logs.response.json": {
    "/properties/entries/maxItems": "answer"
+  },
+  "contracts/api/device-mailboxes-list.response.json": {
+   "/properties/mailboxes/maxItems": "answer"
   },
   "contracts/api/device-outbox.request.json": {
    "/properties/items/maxItems": "answer"
@@ -1324,6 +1359,9 @@
   "contracts/api/invites-lookup.response.json": {
    "/properties/log/maxItems": "answer"
   },
+  "contracts/api/mailboxes-list.response.json": {
+   "/properties/mailboxes/maxItems": "open"
+  },
   "contracts/api/main-agents.response.json": {
    "/properties/items/maxItems": "page"
   },
@@ -1391,6 +1429,7 @@
    "/$defs/creation_options/properties/excludeCredentials/maxItems": "answer",
    "/$defs/creation_options/properties/pubKeyCredParams/maxItems": "answer",
    "/$defs/device_ref/properties/vms/maxItems": "answer",
+   "/$defs/mailbox_use/properties/wgs/maxItems": "answer",
    "/$defs/price_list_body/properties/runtime/properties/per_hour/properties/default/anyOf/0/maximum": "integer",
    "/$defs/price_list_body/properties/runtime/properties/per_hour/properties/large/anyOf/0/maximum": "integer",
    "/$defs/price_list_body/properties/runtime/properties/per_hour/properties/session/anyOf/0/maximum": "integer",
@@ -1601,6 +1640,10 @@
   "contracts/audit/hook.denied.json": {
    "/properties/rule/maximum": "integer"
   },
+  "contracts/audit/mail.read.json": {
+   "/properties/count/maximum": "page",
+   "/properties/waited_seconds/maximum": "time"
+  },
   "contracts/audit/request.refused.json": {
    "/properties/status/maximum": "integer"
   },
@@ -1643,6 +1686,7 @@
    "/$defs/vm_upgrade/properties/sessions/maxItems": "answer"
   },
   "contracts/credentials/claude_subscription.json": {
+   "/$defs/mailbox/properties/imap_port/maximum": "integer",
    "/properties/scopes/maxItems": "answer",
    "/properties/use/properties/orgs/maxItems": "open"
   },
@@ -1650,10 +1694,10 @@
    "/properties/scopes/maxItems": "answer"
   },
   "contracts/credentials/mailbox.json": {
-   "/properties/imap_port/maximum": "integer"
+   "/properties/imap_port/maximum": "integer",
+   "/properties/use/properties/wgs/maxItems": "answer"
   },
   "contracts/events/objects.json": {
-   "/$defs/body_support_info/properties/members/maxProperties": "size",
    "/$defs/body_browser_action/properties/image/anyOf/0/properties/height/maximum": "size",
    "/$defs/body_browser_action/properties/image/anyOf/0/properties/width/maximum": "size",
    "/$defs/body_browser_action/properties/tab/maximum": "integer",
@@ -1661,6 +1705,7 @@
    "/$defs/body_prompt/properties/attachments/maxItems": "answer",
    "/$defs/body_settings_workgroup/properties/protected_branches/maxItems": "open",
    "/$defs/body_settings_workgroup/properties/repositories/maxItems": "open",
+   "/$defs/body_support_info/properties/members/maxProperties": "size",
    "/$defs/body_test_run/properties/exit_code/anyOf/0/maximum": "integer",
    "/$defs/body_workvm_run/properties/exit_code/anyOf/0/maximum": "integer",
    "/$defs/body_workvm_state/properties/cpus/maximum": "integer",
@@ -1792,6 +1837,7 @@
   "contracts/ops/objects.json": {
    "/$defs/error/properties/pointers/maxItems": "answer",
    "/$defs/github_id/maximum": "integer",
+   "/$defs/mail_message/properties/links/maxItems": "answer",
    "/$defs/number/maximum": "integer",
    "/$defs/params_browser_open/properties/idle_seconds/maximum": "time",
    "/$defs/params_github_commit/properties/co_authors/maxItems": "answer",
@@ -1806,6 +1852,8 @@
    "/$defs/params_github_list_pull_requests/properties/page/maximum": "time",
    "/$defs/params_github_list_pull_requests/properties/per_page/maximum": "time",
    "/$defs/params_github_update_issue/properties/labels/maxItems": "answer",
+   "/$defs/params_mail_find/properties/limit/maximum": "page",
+   "/$defs/params_mail_find/properties/wait_seconds/maximum": "time",
    "/$defs/params_review_verdict/properties/evidence/maxItems": "size",
    "/$defs/params_test_run/properties/timeout_seconds/maximum": "time",
    "/$defs/result_browser_open/properties/idle_seconds/maximum": "time",
@@ -1830,6 +1878,8 @@
    "/$defs/result_github_list_reviews/properties/verdicts/maxItems": "page",
    "/$defs/result_github_merge_base/properties/conflicts/maxItems": "answer",
    "/$defs/result_github_update_issue/properties/labels/maxItems": "answer",
+   "/$defs/result_mail_find/properties/messages/maxItems": "page",
+   "/$defs/result_mail_find/properties/waited_seconds/maximum": "time",
    "/$defs/result_test_run/properties/exit_code/anyOf/0/maximum": "integer",
    "/$defs/result_workvm_request/properties/cpus/maximum": "integer",
    "/$defs/result_workvm_request/properties/disk_gib/maximum": "integer",
@@ -1838,6 +1888,8 @@
   "contracts/outbox/objects.json": {
    "/$defs/body_audit/oneOf/0/properties/detail/properties/rule/maximum": "integer",
    "/$defs/body_audit/oneOf/23/properties/detail/properties/value/anyOf/0/maximum": "integer",
+   "/$defs/body_audit/oneOf/28/properties/detail/properties/count/maximum": "page",
+   "/$defs/body_audit/oneOf/28/properties/detail/properties/waited_seconds/maximum": "time",
    "/$defs/body_metrics/properties/samples/maxItems": "answer",
    "/$defs/body_operator_quota/properties/subscriptions/maxItems": "answer",
    "/$defs/body_quota/anyOf/0/properties/windows/maxItems": "answer",
@@ -1845,6 +1897,16 @@
    "/$defs/body_vm_state/properties/cpus/maximum": "integer",
    "/$defs/operator_subscription/properties/windows/maxItems": "answer",
    "/$defs/quota_window/properties/used_percent/maximum": "integer"
+  },
+  "contracts/requests/claude.login.request.json": {
+   "/oneOf/0/properties/account/properties/consents/maxItems": "answer",
+   "/oneOf/2/properties/click/properties/x/maximum": "integer",
+   "/oneOf/2/properties/click/properties/y/maximum": "integer"
+  },
+  "contracts/requests/claude.login.response.json": {
+   "/oneOf/2/properties/frame/maximum": "answer",
+   "/oneOf/2/properties/image/properties/height/maximum": "size",
+   "/oneOf/2/properties/image/properties/width/maximum": "size"
   },
   "contracts/requests/github.connect.response.json": {
    "/oneOf/0/properties/expires_in/maximum": "integer",
@@ -1855,6 +1917,10 @@
   },
   "contracts/requests/github.pull_status.response.json": {
    "/oneOf/0/properties/pulls/maxItems": "answer"
+  },
+  "contracts/requests/mailbox.check.request.json": {
+   "/$defs/mailbox/properties/imap_port/maximum": "integer",
+   "/$defs/mailbox/properties/use/properties/wgs/maxItems": "answer"
   },
   "contracts/requests/objects.json": {
    "/$defs/github_body/properties/scopes/maxItems": "answer",

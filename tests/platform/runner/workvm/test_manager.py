@@ -8,6 +8,7 @@ import io
 import json
 import tarfile
 import time
+from dataclasses import replace
 from datetime import timedelta
 from functools import partial
 from pathlib import Path
@@ -1273,3 +1274,106 @@ def test_the_disk_quota_holds_requests_and_the_pool(world: World) -> None:
 def test_without_a_disk_quota_the_disk_is_not_checked(world: World) -> None:
     world.settings = manager_module.Settings(**{**world.settings.__dict__, "disk_quota_gib": 0})
     assert world.run(request)["created"] is True
+
+
+# -- a restart without the volume of the slot homes (HOT-25) ----------------------------------------------------------
+
+
+def test_a_slot_lima_cannot_list_stops_neither_the_reconciliation_nor_the_sweep(world: World) -> None:
+    async def body(vms: WorkVms) -> int:
+        world.instances["wp-t-wvm-orphan1"] = "Stopped"
+        world.slot_of["wp-t-wvm-orphan1"] = 1
+        world.fail_list = {0}
+        await WorkVms(vms.deps).reconcile()
+        world.instances["wp-t-wvm-orphan2"] = "Stopped"
+        world.slot_of["wp-t-wvm-orphan2"] = 1
+        return await vms.sweep()
+
+    assert world.run(body) == 1
+    assert world.instances == {}
+    assert sum(line.startswith("runner.workvm list_failed slot=0 ") for line in world.logs) == 2
+    assert sum(line == "runner.workvm orphan_deleted slot=1" for line in world.logs) == 2
+
+
+def test_an_orphan_lima_cannot_delete_does_not_stop_the_reconciliation(world: World) -> None:
+    async def body(vms: WorkVms) -> None:
+        world.instances["wp-t-wvm-orphan"] = "Stopped"
+        world.slot_of["wp-t-wvm-orphan"] = 0
+        world.fail = {"delete"}
+        await WorkVms(vms.deps).reconcile()
+
+    world.run(body)
+    assert "wp-t-wvm-orphan" in world.instances
+    assert any(line.startswith("runner.workvm orphan_delete_failed slot=0 ") for line in world.logs)
+
+
+def test_a_work_vm_whose_slot_home_is_gone_counts_as_deleted(world: World) -> None:
+    """The volume hung elsewhere after the restart: the real slot command finds no home and no instance, so the
+    reconciliation deletes the VMs left over without an error and the sweep has nothing to do again."""
+    from agent_runner.vm.lima import Lima  # noqa: PLC0415
+    from agent_runner.workvm.shell import SlotCommand  # noqa: PLC0415
+
+    async def body(vms: WorkVms) -> int:
+        await request(vms)
+        command = SlotCommand(("wpwvm00", "wpwvm01"), home_root=str(world.tmp / "gone"))
+        vms.deps.lima_for = lambda slot: Lima(command.sync_runner(slot), prefix="wp-t-")
+        await WorkVms(vms.deps).reconcile()
+        return await vms.sweep()
+
+    assert world.run(body) == 0
+    assert [row["state"] for row in rows(world)] == ["deleted"]
+    assert not any("delete_failed" in line for line in world.logs)
+
+
+def test_no_work_vm_is_offered_while_the_volume_is_missing(world: World) -> None:
+    async def missing() -> bool:
+        return False
+
+    async def body(vms: WorkVms) -> tuple[str | None, bool, str | None, bool]:
+        assert await vms.check_volume() is True  # the default: in place
+        vms.deps.volume_ok = missing
+        gone = await vms.available(), await vms.check_volume()
+        vms.deps.settings = replace(vms.deps.settings, slots=0)
+        return (*gone, await vms.available(), await vms.check_volume())
+
+    assert world.run(body) == (None, False, None, True)
+    assert world.logs.count("runner.workvm volume_missing") == 1
+
+
+# -- login VMs (KOR-73, ADR-100 section 3) ------------------------------------------------------------------------
+
+
+def test_login_vms_need_no_session_count_for_no_limit_are_not_billed_and_go_with_the_login(world: World) -> None:
+    from agent_runner.workvm import billing_vms  # noqa: PLC0415
+
+    world.settings = manager_module.Settings(
+        **{**world.settings.__dict__, "slots": 3, "max_per_org": 1, "max_per_owner": 1}
+    )
+
+    async def body(vms: WorkVms) -> tuple[Any, Any, list[Any], Any]:
+        first = await vms.obtain_login("0193000a-0000-7000-8000-0000000000a1")
+        second = await vms.obtain_login("0193000a-0000-7000-8000-0000000000a2")
+        task_vm = await request(vms)  # the organization and owner limits of 1 still leave room for it
+        async with vms.deps.db.connection() as conn:
+            billed = await billing_vms.VMS(None, conn)
+        await vms.delete(first, reason="login_ended")
+        return first, second, billed, task_vm
+
+    first, second, billed, task_vm = world.run(body)
+    assert (first.scope, first.session_id, first.task_id, first.owner_id) == (
+        "login",
+        "0193000a-0000-7000-8000-0000000000a1",
+        manager_module.NO_ID,
+        None,
+    )
+    assert second.slot != first.slot
+    assert [vm.vm_id for vm in billed] == [task_vm["workvm_id"]]
+    states = {row["id"]: row["state"] for row in rows(world)}
+    assert (states[first.id], states[second.id]) == ("deleted", "running")
+
+
+def test_no_login_vm_without_a_ready_image(world: World) -> None:
+    world.image = None
+    with pytest.raises(OperationFailed) as caught:
+        world.run(lambda vms: vms.obtain_login("0193000a-0000-7000-8000-0000000000a1"))
+    assert caught.value.code == "workvm_unavailable"

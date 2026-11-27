@@ -105,13 +105,13 @@ async def live(db: Any, *states: str) -> list[WorkVm]:
 
 async def counts(db: Any, *, task_id: str, org_id: str, owner_id: str | None) -> tuple[int, int, int]:
     """Live VMs of the task (without its run and browser VMs), of the organization and of the owner (spec 11 section 2
-    limits, ADR-080 section 2, ADR-085 section 2)."""
+    limits, ADR-080 section 2, ADR-085 section 2); login VMs count for none of them (ADR-100 section 3)."""
     rows = await _rows(
         db,
         "SELECT count(*) FILTER (WHERE task_id = %s AND scope NOT IN ('run', 'browser')) AS task,"
         " count(*) FILTER (WHERE org_id = %s) AS org,"
         " count(*) FILTER (WHERE owner_id IS NOT DISTINCT FROM %s) AS owner"
-        " FROM runner.workvm WHERE state <> 'deleted'",
+        " FROM runner.workvm WHERE state <> 'deleted' AND scope <> 'login'",
         (task_id, org_id, owner_id),
     )
     row = rows[0]

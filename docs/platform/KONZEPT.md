@@ -20,7 +20,7 @@ Punkt), `#e-01` (Regel E-01), `#a-1` (Auslegung A1). Anker werden nie umbenannt 
 |---|---|
 | [A – Das Konzept](#teil-a--das-konzept) | Vollständige Konzeptfassung mit 47 Ideen, im Wortlaut |
 | [B – Regeln und Entscheide](#teil-b--regeln-und-entscheide-des-auftraggebers) | Regeln E-01 … mit Datum, Wortlaut, Bezug und Umsetzung |
-| [C – Auslegungen](#teil-c--auslegungen-bis-der-auftraggeber-anders-entscheidet) | A1–A19 |
+| [C – Auslegungen](#teil-c--auslegungen-bis-der-auftraggeber-anders-entscheidet) | A1–A23 |
 | [D – Pflege](#teil-d--pflege) | Wie eine neue Vorgabe eingetragen wird; offene Abweichungen |
 
 ## Teil A – Das Konzept
@@ -839,14 +839,188 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   (zur Anmeldung von fünf neuen Abos, die nur nacheinander ging, weil die Plattform nur ein Postfach je Konto hält)
 - **Bezug:** präzisiert [§16 Punkt 1](#k-16-b1) (Hunderte parallele Hauptagenten und temporäre Umgebungen) für die
   Vorgänge der Plattform; ergänzt [E-31](#e-31) (jedes Abo zentral angemeldet) und [E-32](#e-32).
-- **Umsetzung:** offen – Postfach je Abo und parallele Anmeldungen in KOR-73.
+- **Umsetzung:** gebaut für die Abo-Anmeldung – [ADR-100](adr/100-parallel-subscription-logins.md) (KOR-73): Postfach je
+  Abo, Anmeldungen nebeneinander, jede in einer eigenen Login-VM, Prüfung für Menschen durch den Inhaber, Registrierung.
+
+<a id="e-34"></a>
+
+### E-34 – Alle selbst gehosteten GitHub-Actions-Läufe über agent.dfx.swiss
+
+- **Datum:** 2026-11-25
+- **Regel:** Alle selbst gehosteten GitHub-Actions-Läufe der DFX-Organisationen laufen über agent.dfx.swiss; das
+  Konzept dazu steht in [spec/16-ci-runners.md](spec/16-ci-runners.md).
+- **Wortlaut:** „ich will alle self hostet runns über agent.dfx.swiss laufen lassen, repo dazu ist dfxswiss/agent“ –
+  als Auftrag zum Konzept: „was muss beachtet werden damit agent.dfx.swiss github runner dienstleistungen erbringen
+  kann? dann das gesamte Konzept vollständig dokumentieren inkl allem, auch die Lösung für MacOs RUnner inkl der
+  Abklärungen von Lizenzen und technischer Machbarkeit, anforderungen an Hardware und co. Das volle SetUp“
+- **Bezug:** ergänzt [Idee 27](#k-idee-27) (Wegwerf-VM je Testlauf, [A9](#a-9)); die VM je Job legt [A20](#a-20)
+  aus. In Spannung zu dieser Regel stehen die gerätegebundenen Läufe (Deploy), die heute auf einem Runner ausserhalb
+  der Plattform laufen; ob sie das dürfen, ist offen (Entscheid D-1 in
+  [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions), [offene Abweichungen](#d-offen)). Ebenfalls
+  in Spannung, Auflösung offen ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)):
+  [Grundprinzip](#k-gp),
+  [§2 Punkt 5](#k-2-b5) und [§16 Punkt 2](#k-16-b2) (ein CI-Job ist keine Nutzeranfrage und gehört zu keiner
+  Workgroup); [§3 Punkt 5](#k-3-b5) (VM je Workgroup, nach [A20](#a-20) je Job); [§5](#k-5) (der Hub sieht keine
+  Inhalte);
+  [§9 Punkt 5](#k-9-b5), [§10 Punkt 3](#k-10-b3) und [§10 Punkt 6](#k-10-b6) (git und freie Shell sind
+  Claude-Sessions verboten, ein CI-Gast braucht sie); [§6 Punkt 4](#k-6-b4) und [§11](#k-11) (Audit je
+  Aktion mit Akteur, Zeitpunkt, Task, Session, Workgroup, Gerät, Ziel, Ergebnis und Änderungen; ein CI-Job hat
+  Akteur (der GitHub-Auslöser), Zeitpunkt, Gerät, Ziel und Ergebnis, aber keinen Task, keine Session und keine
+  Workgroup); [§10 Punkt 8](#k-10-b8) (Protokollierung blockierter Versuche); [E-10](#e-10) (Ausgang),
+  [E-11](#e-11) (Freigaben), [E-25](#e-25) (Härtung nur auf Bestellung); [A16](#a-16) (Workflows); [Idee 46](#k-idee-46) und [Idee 47](#k-idee-47) (Abrechnung).
+- **Umsetzung:** offen – Konzept [spec/16-ci-runners.md](spec/16-ci-runners.md); Entscheide offen.
+
+<a id="e-35"></a>
+
+### E-35 – Eine gemeinsame Kapazität: alle Server des Betreibers gehören agent.dfx.swiss, Runner werden dort bezogen
+
+- **Datum:** 2026-11-25
+- **Regel:** Es gibt keine eigenen Rechner für selbst gehostete Runner neben der Plattform; die gesamte
+  Serverkapazität des Betreibers gehört agent.dfx.swiss, und ein Runner wird bei Bedarf über die Plattform bezogen.
+- **Wortlaut:** „heute haben wir server für agent und server für self hostet runner, das ist inneffizient, ich will
+  alle meine server kapazitäten an agent geben und wenn ich einen self hostet runner brauche dann diesen via agent
+  beziehen“
+- **Bezug:** dass der Runner auf denselben Geräten wie die Arbeits-VMs läuft, ist durch [E-36](#e-36) entschieden;
+  dass er eine VM ist, bleibt Auslegung [A20](#a-20) (zusammengefasst in [A21](#a-21)). Ergänzt [E-34](#e-34) und [§3 Punkt 3](#k-3-b3) (DFX stellt eigene Ausführungsserver);
+  ersetzt die Aufteilung der Ausführungsserver in [§3 Punkt 8](#k-3-b8) (initiale Serverzuordnung: ein Server für die
+  DFX-Cloud-Sessions), soweit sie Kapazität ausserhalb der Plattform voraussetzt; der Hub-Teil bleibt. Betrifft
+  [Idee 38](#k-idee-38) (Gerätewahl nach freier Kapazität), [§7 Punkt 6](#k-7-b6) (kapazitätsbasierte Verteilung)
+  und [E-02](#e-02) (klare Meldung bei erreichter Kapazität). In Spannung zu [E-25](#e-25) (Härtung nur auf
+  Bestellung), Auflösung offen ([spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)). In Spannung
+  zu dieser Regel stehen auch die gerätegebundenen Läufe (Deploy) auf einem Runner ausserhalb der Plattform; Entscheid
+  D-1 offen ([offene Abweichungen](#d-offen)).
+- **Umsetzung:** offen – [spec/16-ci-runners.md](spec/16-ci-runners.md).
+
+<a id="e-36"></a>
+
+### E-36 – CI-Jobs teilen die Geräte mit den Arbeitsbereichen
+
+- **Datum:** 2026-11-26
+- **Regel:** CI-Jobs, auch solche mit fremdem PR-Code, laufen auf denselben Geräten wie die Arbeits-VMs der
+  Workgroups; es gibt kein eigenes CI-Gerät, auch nicht innerhalb der Plattform.
+- **Wortlaut:** Frage: „Ich hatte deinen Entscheid ‚alle Kapazität an agent‘ so ausgelegt, dass CI-Jobs (auch fremder
+  PR-Code) auf denselben Geräten laufen wie die Agent-Arbeitsbereiche. Ein eigenes CI-Gerät innerhalb von
+  agent.dfx.swiss wäre aber auch ‚Kapazität von agent‘ und trennt fremden Code von Kundendaten. Was gilt?“ –
+  Antwort: gewählte Option „Alles teilen“ (Kontext, nicht Worte des Auftraggebers: der Text dieser Option in der
+  Frage sagte, dass er damit entscheidet, CI-Jobs laufen auf denselben Geräten wie die Agent-Arbeitsbereiche, und dass
+  das als sein Entscheid, als neue Regel, eingetragen wird)
+- **Bezug:** ergänzt [E-35](#e-35); macht den Geräte-Teil von [A21](#a-21) zum Entscheid (die VM bleibt Auslegung [A20](#a-20)). In Spannung mit der Sicherheitsempfehlung der
+  Recherche (Trennung fremden Codes vom Klartext der Workgroups): das Gate U bleibt Empfehlung (D-7, D-20 in
+  [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)); [E-25](#e-25) (Härtung nur auf Bestellung).
+- **Umsetzung:** offen – [spec/16-ci-runners.md](spec/16-ci-runners.md).
+
+<a id="e-37"></a>
+
+### E-37 – Was eine Plattform-Operation sein kann, braucht keine VM
+
+- **Datum:** 2026-11-26
+- **Regel:** Ein Vorgang, den die Plattform selbst ausführen kann, ist ein Werkzeug der Plattform und braucht keine
+  Arbeits- oder Browser-VM, zum Beispiel ein Postfach lesen. Eine Sitzung nennt nur den Zugang, etwa das Postfach mit
+  Namen oder ID. Den geheimen Teil wie das Passwort sieht sie nicht, die Plattform nutzt ihn auf dem Gerät. Eine VM bekommt
+  nur, was wirklich eine braucht, etwa eine Webseite im Browser bedienen oder Software bauen und testen.
+- **Wortlaut:** „wenn ein agent einen unbuntu braucht um ein e-mail postfach abzurufen dann haben wir was falsch gemacht“
+  (als fünf Agenten für neue Abos je eine Arbeits-VM starten mussten, nur um ihre Anmeldemail zu lesen)
+- **Bezug:** ergänzt [E-33](#e-33) (parallel, jeder Vorgang in seiner eigenen Sandbox) und [§10 Punkt 3](#k-10-b3)
+  (Sitzungen führen selbst nichts aus, alles über Plattform-Operationen).
+- **Umsetzung:** offen – Postfach als Werkzeug in KOR-74.
+
+<a id="e-38"></a>
+
+### E-38 – Ein eigener Tresor nur für Agenten: Konzept, noch nicht umsetzen
+
+- **Datum:** 2026-11-26
+- **Regel:** agent.dfx.swiss bekommt einen eigenen Tresor für die Zugänge der Agenten, getrennt vom internen Tresor des
+  Betreibers für seine Mitarbeiter: eigene Daten, eigene Schlüssel, kein Abgleich. Agenten benutzen die Geheimnisse
+  daraus, ohne sie zu sehen ([E-37](#e-37)). Bisher ist das **nur ein Konzept**
+  ([ADR-101](adr/101-agent-vault.md), Status „Proposed“). Gebaut wird erst, wenn der Auftraggeber es beauftragt.
+- **Wortlaut:** „wir sollten auch sowas anbiten wie dfxvault.com aber nur für agents, überlege dir dafür bitte ein
+  konzept. (nein wir nehmen das nicht auf die selbe plattofrm, dfxvault ist nur für dfx intern, agent braucht as
+  eigenes)“ und zum vorgelegten Konzept: „nur als Konzept anlegen, noch nicht umsetzen“
+- **Bezug:** baut auf [E-37](#e-37) (eine Sitzung hält nie das Geheimnis, das sie nennt) und [E-33](#e-33) auf. Als
+  Arbeitsweise nie Pflicht und nie von selbst an ([E-32](#e-32)).
+- **Umsetzung:** nicht beauftragt – Konzept [ADR-101](adr/101-agent-vault.md).
+
+<a id="e-39"></a>
+
+### E-39 – Prüfungen für Menschen löst der Mensch, die Plattform öffnet ihm dafür die Fernsteuerung
+
+- **Datum:** 2026-11-26
+- **Regel:** Stößt ein Agent auf eine Prüfung, die einen Menschen verlangt, etwa ein Bilderrätsel, Cloudflare oder ein
+  Captcha, dann umgeht er sie nicht und bricht nicht einfach ab. Die Plattform hält den Vorgang an und öffnet dem Inhaber
+  die Fernsteuerung der betroffenen Sandbox: ein Live-Bild mit Klick- und Eingabeweitergabe, wie VNC, direkt auf
+  agent.dfx.swiss. Er löst die Prüfung selbst, danach läuft der Vorgang weiter. Klicken darf nur der Mensch mit seiner
+  eigenen Identität, nie ein Agent.
+- **Wortlaut:** „bei so einer situation bitte vnc öffnene, dann mach ich das kurz“ (als die Agenten bei der Registrierung
+  neuer Claude-Konten vor einem Bilderrätsel anhielten)
+- **Bezug:** ergänzt [E-33](#e-33) (jeder Vorgang in seiner eigenen Sandbox) und [E-05](#e-05) (Fehlendes wird angestoßen).
+  Die Plattform umgeht nie eine Prüfung.
+- **Umsetzung:** offen – für die Abo-Anmeldung in KOR-73 (Live-Bild mit Klickweitergabe); für alle Browser-Sandboxen der
+  Sitzungen folgt sie.
+
+<a id="e-40"></a>
+
+### E-40 – Angemeldet bleiben: Neuladen und neue Tabs verlangen keine neue Anmeldung
+
+- **Datum:** 2026-11-26
+- **Regel:** Wer sich auf agent.dfx.swiss angemeldet hat, bleibt in diesem Browser angemeldet und entsperrt – nach dem
+  Neuladen, nach dem Schliessen und erneuten Öffnen des Tabs und nach einem Neustart des Browsers –, bis er sich
+  abmeldet. Die Anmeldung erneuert sich selbst, solange der Browser genutzt wird. „Angemeldet bleiben“ ist wählbar und
+  voreingestellt an; ausgeschaltet gilt das bisherige Verhalten. Abmelden entfernt alles, was der Browser dafür hält.
+- **Wortlaut:** „ich will auf agent eingeloggt bleiben, auch wenn ich reload mache oder tab schliesse und komplett neu
+  öffne“
+- **Bezug:** ändert die bisherige Festlegung, dass Identitäts- und Bereichsschlüssel nur im Speicher liegen und ein
+  Neuladen den Passkey verlangt ([spec/06-web.md](spec/06-web.md) §2.3); setzt [Idee 30](#k-idee-30) (Verschlüsselung
+  ohne Nachteile für die Bedienung) für die Anmeldung um.
+- **Umsetzung:** gebaut – [ADR-102](adr/102-stay-signed-in.md) (KOR-76): der Gerätschlüssel des Browsers
+  ([ADR-006](adr/006-passkey-prf-key-management.md)) öffnet die Identität beim Start, die Sitzung erneuert sich mit dem
+  noch gültigen Sitzungsschlüssel (`POST /v1/session/renew`), „Angemeldet bleiben“ auf der Anmeldeseite und in den
+  Einstellungen.
+
+<a id="e-41"></a>
+
+### E-41 – Tasks erfassen wie Tickets in Jira
+
+- **Datum:** 2026-11-26
+- **Regel:** Ein Task lässt sich erfassen wie ein Ticket in Jira, ohne dass dabei ein Agent zu arbeiten beginnt. Ein
+  erfasster Task hat einen Titel und eine Beschreibung („Thema xy muss man anschauen“). Er lässt sich einer Person,
+  einem Thema, einer GitHub-Organisation und einem Repository zuordnen und mit einer Dringlichkeit versehen; sein
+  Status ist todo, inProgress oder completed. Erfassen, Zuordnen und Ändern gehen in der Weboberfläche und mit dem
+  Agentenwerkzeug ([E-04](#e-04)); die Aufgabenübersicht ([E-21](#e-21)) filtert nach diesen Feldern. Ein Agent
+  arbeitet an einem erfassten Task erst, wenn ihn jemand startet oder einem Agenten zuordnet; dann ist der Status
+  inProgress, mit dem Abschluss completed. Eine Anfrage an einen Agenten erzeugt weiterhin sofort einen Task mit
+  Agent; er trägt dieselben Felder.
+- **Wortlaut:** „das entspricht nicht meinen anforderungen, ich will einen erfassten task, analog einem jira ticket“
+  (zu einem Task, der nur aus dem Chat mit einem Agenten bestand) und „ok, das bitte hinzufügen, ich will tasks
+  erfassen können, analog jira, also thema xy muss man anschauen, task soll man einer person zuordnen können, einem
+  thema zuordnen können, einer github orga zuordnen können, einem repo zuordnen können, mit dringlichkeit versehen
+  können, und status, todo, inProgress, completed.“
+- **Bezug:** erweitert [§2 Punkt 5](#k-2-b5) (Task mit ID, Kurzbeschreibung und Workgroup) um diese Felder und um das
+  Erfassen ohne Agent; ändert [Idee 43](#k-idee-43) (jeder Task erhält seinen Hauptagenten) dahin, dass ein erfasster
+  Task seinen Agenten erst beim Start bekommt; ergänzt [E-21](#e-21). Einzelheiten: Auslegung [A22](#a-22).
+- **Umsetzung:** offen – Bau als Aufgabe auf agent.
+
+<a id="e-42"></a>
+
+### E-42 – Eine Landing-Page wie dfx.swiss, gebaut von einem Agenten mit Fable 5.2
+
+- **Datum:** 2026-11-26
+- **Regel:** agent.dfx.swiss hat eine öffentliche Landing-Page, die das Projekt vorstellt und in etwa aussieht wie
+  dfx.swiss: oben rechts der Login-Button, unten der Footer. Bauen muss sie ein Agent mit dem Modell Fable 5.2. Er sieht
+  sich an, was agent kann, und entscheidet selbst, wie man es am besten vermarktet und präsentiert.
+- **Wortlaut:** „auf agent.dfx.swiss soll es in etwa gleich aussehen wie auf dfx.swiss, also eine landing-page welche
+  das projekt vorstellt, oben rechts Login Button, unten den Footer und co“ und „die Landing page für agent soll
+  zwingend ein Fable 5.2 agent bauen, er soll sich dabei ansehen was agent kann und selber entscheiden wir man das am
+  besten vermakrtet und präsentiert“
+- **Bezug:** stellt der Anmeldung ([§1](#k-1)) eine öffentliche Seite voran. Einzelheiten: Auslegung [A23](#a-23).
+- **Umsetzung:** in Arbeit – Aufgabe auf agent mit Fable 5.2. Die Plattform kennt noch keine Modellwahl je Task; das
+  Modell kam über die Modellvorgabe des Auftraggebers, die Sitzung hat es bestätigt.
 
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
 **Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und
 offene Fragen nach dem Wortlaut des Konzepts: A1–A7 aus dem Abgleich der vollständigen Fassung vom 2026-11-23 (dem
 Auftraggeber am selben Abend mitgeteilt), A8–A18 aus dem Restplan vom 2026-11-24, A19 aus
-KOR-72 vom 2026-11-26. Sie gelten für alle Arbeiten, bis er
+KOR-72 vom 2026-11-26, A20 und A21 aus dem CI-Konzept vom 2026-11-25/26. Sie gelten für alle Arbeiten, bis er
 anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Aussage gilt, [E-01](#e-01)).
 
 <a id="a-1"></a>
@@ -927,6 +1101,33 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
   werden nicht wählbar ([E-32](#e-32)). Spine, Checklisten und Done-Gates des Werkzeugs werden nicht nachgebaut, ihre
   Wirkung tragen Operationen, Prüfurteile, Merge-Kriterien und die Treiber der Arbeitsweisen. Umgesetzt mit
   [ADR-098](adr/098-working-modes.md).
+<a id="a-20"></a>
+- **A20 – Eine VM je CI-Job:** Jeder selbst gehostete GitHub-Actions-Job ([E-34](#e-34)) läuft in einer frischen VM,
+  die danach gelöscht wird – Empfehlung der Recherche vom 2026-11-25 und GitHubs Empfehlung für Einmal-Runner, nicht
+  Wortlaut des Auftraggebers. Diese Auslegung betrifft nur „eine VM je Job“. Läufe, die das Gerät selbst ändern oder
+  prüfen (gerätegebundene Läufe), erfasst sie nicht: Eine VM ohne Freigaben sieht das Gerät nicht, und ein Rückweg aus
+  der VM auf das Gerät höbe die Trennung auf
+  ([spec/16-ci-runners.md §1](spec/16-ci-runners.md#1-purpose-and-scope)). Ob sie ausserhalb der Plattform laufen
+  dürfen, ist offen (Entscheid D-1, [offene Abweichungen](#d-offen)).
+<a id="a-21"></a>
+- **A21 – Runner als VM aus dem gemeinsamen Pool:** Ein über die Plattform bezogener Runner ([E-35](#e-35)) ist eine
+  VM, und sie läuft auf denselben Geräten, aus demselben Pool wie die Arbeits-VMs. Die VM folgt aus [A20](#a-20) (eine
+  VM je Job); dass sie auf denselben Geräten läuft, ist entschieden durch [E-36](#e-36) (2026-11-26) und gilt
+  seither als Regel, nicht mehr als Auslegung ([Teil D](#teil-d--pflege) Punkt 4); der Anker bleibt für Verweise
+  ([spec/16-ci-runners.md §6.6](spec/16-ci-runners.md#66-shared-capacity)).
+<a id="a-22"></a>
+- **A22 – Einzelheiten der erfassten Tasks:** Zu [E-41](#e-41), nicht Wortlaut des Auftraggebers. Zuständig sein kann
+  jedes Mitglied der Organization, auch ein Agenten-Konto ([E-26](#e-26)). Themen sind eine einfache Liste je
+  Organization, beim Erfassen anlegbar. GitHub-Organisation und Repository kommen aus den verbundenen GitHub-Zugängen
+  ([E-29](#e-29)) und sind optional. Die Dringlichkeit hat vier Stufen: niedrig, normal (voreingestellt), hoch,
+  dringend. Ein laufender Agenten-Task steht auf inProgress, ein geschlossener auf completed.
+<a id="a-23"></a>
+- **A23 – Was „in etwa gleich wie dfx.swiss“ heisst:** Zu [E-42](#e-42), nicht Wortlaut des Auftraggebers. Aufbau und
+  Erscheinungsbild wie dfx.swiss: Kopfzeile mit Logo und Login oben rechts, Abschnitte, Footer mit den Einträgen von
+  dfx.swiss (etwa Impressum, Datenschutz, Haftungsausschluss, Bedingungen, Support, Status, GitHub, Brand Kit), die auf
+  die bestehenden DFX-Seiten verweisen. Der Inhalt handelt von agent.dfx.swiss, in Deutsch und Englisch, mit nur wahren
+  Aussagen über Vorhandenes. Ist der Browser angemeldet, führt der Button statt zum Login in die App; bestehende Wege
+  wie Einladungen und Links in eine Organization bleiben.
 
 ## Teil D – Pflege
 
@@ -972,6 +1173,9 @@ Stand 2026-11-26. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber nennt, welche Schalter umgelegt werden (gebaut, [ADR-079](adr/079-no-approval-as-precondition.md); ein Startguthaben gibt es nicht, [E-14](#e-14), entschieden 2026-11-25); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
 | [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
+| [E-34](#e-34), [A20](#a-20) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)) |
+| [E-35](#e-35), [E-36](#e-36) Gemeinsame Kapazität ([A21](#a-21)) | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions); [§6.6](spec/16-ci-runners.md#66-shared-capacity)) |
+| [E-34](#e-34), [E-35](#e-35) gerätegebundene Läufe | Gerätegebundene Läufe (Deploy) laufen heute auf einem Runner ausserhalb der Plattform; das widerspricht E-34 und E-35, und [A20](#a-20) erfasst sie nicht | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions), D-1) |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |
 | [A10](#a-10) Subagenten | Ein Subagent endet nach einem Turn und bekommt keine Folge-Anweisung | KOR-45 |

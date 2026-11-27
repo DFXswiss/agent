@@ -29,8 +29,14 @@ export interface Answer {
 export async function answer(
   device: string,
   steps: readonly Answer[],
+  /** `request_id`: answer that open request; `skip`: the newest open one not named (logins side by side, KOR-73). */
+  which: { readonly request_id?: string; readonly skip?: readonly string[] } = {},
 ): Promise<{ request_id: string; kind: string; body: unknown }> {
-  return (await post('/requests/answer', { device, steps })) as { request_id: string; kind: string; body: unknown };
+  return (await post('/requests/answer', { device, steps, ...which })) as {
+    request_id: string;
+    kind: string;
+    body: unknown;
+  };
 }
 
 export interface Window {

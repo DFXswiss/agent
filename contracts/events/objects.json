@@ -1562,6 +1562,30 @@
             "params"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "mail.find"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_mail_find"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
         }
       ]
     },

@@ -20,12 +20,14 @@ import pytest
 from agent_runner.cli import run_cli
 from agent_runner.errors import RunnerError
 from agent_runner.vm.lima import Lima
-from agent_runner.workvm import accounts, firewall
+from agent_runner.workvm import accounts, firewall, volume
 from agent_runner.workvm import cli as workvm_cli
 
 SUDO = (firewall.SUDO, "-n")
 DS_USERS = "/" + "Users"  # dscl record directory, joined so no home path literal appears
 CONTAINER_PLIST = plistlib.dumps({"APFSContainerReference": "disk3"}).decode()
+VOLUME_UUID = "0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D"
+FSTAB_ENTRY = f"UUID={VOLUME_UUID} /var/agent-workvm apfs rw\n"
 HOOKED_MAIN = 'scrub-anchor "com.apple/*" all\nanchor "com.apple/*" all\nanchor "com.cloudflare.warp_svc" all\n'
 
 
@@ -51,6 +53,24 @@ class FakeMachine:
     given: list[tuple[str, int, int]] = field(default_factory=list)
     """`give_lima_config` calls (home, uid, gid); `give_fails` makes it refuse like a planted link."""
     give_fails: bool = False
+    volume_at: str | None = None
+    """Where the volume hangs when it is not mounted at the home root ("" unmounted); None: no volume (unless
+    `mounted`)."""
+    fstab: str | None = None
+    """`/etc/fstab` before the test (None: no such file)."""
+
+    def volumes(self) -> str:
+        """`diskutil list -plist` with the volume when there is one, beside the system volume."""
+        entries: list[dict[str, str]] = [
+            {"VolumeName": "Data", "DeviceIdentifier": "disk3s5", "VolumeUUID": "F" * 8 + "-FFFF-FFFF-FFFF-" + "F" * 12}
+        ]
+        if self.mounted or self.volume_at is not None:
+            entry = {"VolumeName": accounts.VOLUME_NAME, "DeviceIdentifier": "disk3s7", "VolumeUUID": VOLUME_UUID}
+            where = accounts.HOME_ROOT if self.mounted else self.volume_at
+            if where:
+                entry["MountPoint"] = where
+            entries.append(entry)
+        return plistlib.dumps({"AllDisksAndPartitions": [{"APFSVolumes": entries}, {"Partitions": []}]}).decode()
 
     def live(self, argv: tuple[str, ...]) -> tuple[int, str]:
         slots = [
@@ -89,6 +109,8 @@ class FakeMachine:
             code, out = 0, "wheel 0\nstaff 20\nother 600\n"
         elif key[:2] == (accounts.DISKUTIL, "info"):
             code, out = 0, CONTAINER_PLIST
+        elif key == (accounts.DISKUTIL, "list", "-plist"):
+            code, out = 0, self.volumes()
         else:
             code, out = 0, ""
             self.effect(key)
@@ -103,7 +125,13 @@ class FakeMachine:
         elif key == (firewall.PFCTL, "-a", firewall.ANCHOR, "-F", "all"):
             self.flushed = True
         elif key[:3] == (accounts.DISKUTIL, "apfs", "deleteVolume"):
-            self.mounted = False
+            self.mounted, self.volume_at = False, None
+        elif key[:3] == (accounts.DISKUTIL, "apfs", "addVolume"):
+            self.mounted = True
+        elif key[:2] == (accounts.DISKUTIL, "unmount"):
+            self.mounted, self.volume_at = False, ""
+        elif key[:3] == (accounts.DISKUTIL, "mount", "-mountPoint"):
+            self.mounted, self.volume_at = key[3] == accounts.HOME_ROOT, key[3]
 
     def run_input(self, argv: Sequence[str], text: str, timeout: float) -> subprocess.CompletedProcess[str]:
         self.calls.append((*argv, "<stdin>"))
@@ -113,7 +141,13 @@ class FakeMachine:
         self.files[path] = (content, mode)
 
     def read_file(self, path: str) -> str:
-        return self.files[path][0] if path in self.files else self.pf_conf
+        if path in self.files:
+            return self.files[path][0]
+        if path == volume.FSTAB:
+            if self.fstab is None:
+                raise FileNotFoundError(path)
+            return self.fstab
+        return self.pf_conf
 
     def is_mount(self, path: str) -> bool:
         return self.mounted
@@ -174,7 +208,7 @@ def test_install_creates_everything(fake: FakeMachine, cli: Callable[..., tuple[
     code, out, err = cli(*INSTALL)
     assert (code, err) == (0, "")
     assert out.splitlines() == [
-        "runner.workvm.install step=volume action=created path=/var/agent-workvm",
+        "runner.workvm.install step=volume action=created path=/var/agent-workvm fstab=added mount=ok",
         "runner.workvm.install step=images path=/var/agent-workvm/images",
         "runner.workvm.install step=group action=created name=workvm gid=601",
         "runner.workvm.install step=accounts count=2 created=2",
@@ -198,6 +232,8 @@ def test_install_creates_everything(fake: FakeMachine, cli: Callable[..., tuple[
     assert (firewall.PFCTL, "-f", firewall.PF_CONF) not in fake.calls  # the main ruleset is never loaded
     assert (firewall.PFCTL, "-a", firewall.ANCHOR, "-f", firewall.ANCHOR_PATH) in fake.calls
     assert (firewall.LAUNCHCTL, "bootstrap", "system", firewall.DAEMON_PATH) in fake.calls
+    # the mount point survives a restart only through fstab (HOT-25)
+    assert fake.files[volume.FSTAB] == (FSTAB_ENTRY, 0o644)
 
 
 def test_install_keeps_what_exists(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
@@ -207,13 +243,13 @@ def test_install_keeps_what_exists(fake: FakeMachine, cli: Callable[..., tuple[i
     code, out, _ = cli(*INSTALL, "--bandwidth-mbit", "100")
     assert code == 0
     assert out.splitlines()[:4] == [
-        "runner.workvm.install step=volume action=present path=/var/agent-workvm",
+        "runner.workvm.install step=volume action=present path=/var/agent-workvm fstab=added mount=ok",
         "runner.workvm.install step=images path=/var/agent-workvm/images",
         "runner.workvm.install step=group action=present name=workvm gid=650",
         "runner.workvm.install step=accounts count=2 created=0",
     ]
     assert not any(call[:3] == (accounts.DSCL, ".", "-create") for call in fake.calls)
-    assert not any(call[0] == accounts.DISKUTIL for call in fake.calls)
+    assert not any(call[:3] == (accounts.DISKUTIL, "apfs", "addVolume") for call in fake.calls)
     # an installation before HOT-18 left _config root-owned: install gives it to the slot accounts
     assert fake.given == [(f"{accounts.HOME_ROOT}/wvm00", 700, 650), (f"{accounts.HOME_ROOT}/wvm01", 701, 650)]
     slots = [firewall.Slot(0, "wvm00", 700, 47200), firewall.Slot(1, "wvm01", 701, 47201)]
@@ -395,12 +431,43 @@ def test_check_names_the_missing_table_ranges(fake: FakeMachine, cli: Callable[.
 def test_status_with_boundary(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
     fake.uids.update({"wvm00": 602, "wvm01": 603})
     fake.egress = None
+    fake.mounted = True
     code, out, _ = cli("status", euid=501)
     assert code == 0
     assert out.splitlines() == [
         "runner.workvm.status slots=2 self=no accounts=2 missing=0",
+        "runner.workvm.volume name=AgentWorkVM mountpoint=/var/agent-workvm ok=yes",
         "runner.workvm.firewall ok=yes internet=no egress=-",
     ]
+
+
+VOLUME_LINE = "runner.workvm.volume name=AgentWorkVM mountpoint="
+
+
+@pytest.mark.parametrize(
+    ("where", "answer", "lines"),
+    [
+        ("/Volumes/AgentWorkVM", None, [VOLUME_LINE + "/Volumes/AgentWorkVM ok=no"]),
+        ("", None, [VOLUME_LINE + "- ok=no"]),
+        ("/private/var/agent-workvm", None, [VOLUME_LINE + "/private/var/agent-workvm ok=yes"]),
+        (None, (1, ""), [VOLUME_LINE + "- ok=no", "runner.workvm.volume.problem code=diskutil"]),
+    ],
+)
+def test_status_shows_where_the_volume_hangs(
+    fake: FakeMachine,
+    cli: Callable[..., tuple[int, str, str]],
+    where: str | None,
+    answer: tuple[int, str] | None,
+    lines: list[str],
+) -> None:
+    """HOT-25: after a restart without the fstab entry the volume hangs under /Volumes."""
+    fake.uids.update({"wvm00": 602, "wvm01": 603})
+    fake.volume_at = where
+    if answer is not None:
+        fake.answers[(accounts.DISKUTIL, "list", "-plist")] = answer
+    code, out, _ = cli("status", euid=501)
+    assert code == 0
+    assert out.splitlines()[1 : 1 + len(lines)] == lines
 
 
 def test_status_with_missing_accounts(fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]) -> None:
@@ -409,6 +476,7 @@ def test_status_with_missing_accounts(fake: FakeMachine, cli: Callable[..., tupl
     assert code == 0
     assert out.splitlines() == [
         "runner.workvm.status slots=2 self=no accounts=1 missing=1",
+        "runner.workvm.volume name=AgentWorkVM mountpoint=- ok=no",
         "runner.workvm.firewall ok=no internet=no egress=-",
         "runner.workvm.firewall.problem code=accounts_missing",
     ]
@@ -503,7 +571,10 @@ def test_install_plan_changes_nothing(fake: FakeMachine, cli: Callable[..., tupl
     assert lines[-1] == f"runner.workvm.plan main_ruleset=untouched pf_conf=untouched anchor={firewall.ANCHOR} hook=ok"
     assert fake.files == {}
     reads = (workvm_cli.ID, accounts.DSCL)
-    assert [call for call in fake.calls if call[0] not in reads] == [(firewall.PFCTL, "-sr")]
+    assert [call for call in fake.calls if call[0] not in reads] == [
+        (firewall.PFCTL, "-sr"),
+        (accounts.DISKUTIL, "list", "-plist"),
+    ]
     assert all(call[2] in ("-list", "-read") for call in fake.calls if call[0] == accounts.DSCL)
 
 
@@ -805,3 +876,82 @@ def test_remove_empty_dir_removes_only_an_empty_directory(tmp_path: Path) -> Non
     workvm_cli.remove_empty_dir(str(full))
     workvm_cli.remove_empty_dir(str(tmp_path / "missing"))
     assert (empty.exists(), full.exists()) == (False, True)
+
+
+# --- the volume after a restart (HOT-25) ---------------------------------------------------------------------------
+
+
+def test_install_on_a_device_whose_volume_hangs_elsewhere_remounts_it(
+    fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]
+) -> None:
+    """After a restart without the fstab entry: the existing volume is mounted back (never a second one added), the
+    entry replaces an outdated line for the mount point, other lines stay."""
+    fake.volume_at = "/Volumes/AgentWorkVM"
+    fake.fstab = "# keep\nUUID=OLD /var/agent-workvm apfs rw\nLABEL=Other /other apfs rw"
+    plan_code, plan, _ = cli(*INSTALL, "--plan")
+    assert plan.splitlines()[0] == "runner.workvm.plan step=volume action=remount path=/var/agent-workvm quota_gib=200"
+    code, out, err = cli(*INSTALL)
+    assert (plan_code, code, err) == (0, 0, "")
+    assert out.splitlines()[0] == (
+        "runner.workvm.install step=volume action=present path=/var/agent-workvm fstab=added mount=remounted"
+    )
+    assert not any(call[:3] == (accounts.DISKUTIL, "apfs", "addVolume") for call in fake.calls)
+    moves = [call for call in fake.calls if call[:2] in ((accounts.DISKUTIL, "unmount"), (accounts.DISKUTIL, "mount"))]
+    assert moves == [
+        (accounts.DISKUTIL, "unmount", "disk3s7"),
+        (accounts.DISKUTIL, "mount", "-mountPoint", "/var/agent-workvm", "disk3s7"),
+    ]
+    assert ("/bin/mkdir", "-p", "/var/agent-workvm") in fake.calls
+    assert fake.files[volume.FSTAB] == ("# keep\nLABEL=Other /other apfs rw\n" + FSTAB_ENTRY, 0o644)
+    # the second run changes nothing
+    fake.calls.clear()
+    code, out, _ = cli(*INSTALL)
+    assert out.splitlines()[0].endswith("action=present path=/var/agent-workvm fstab=present mount=ok")
+    assert not any(call[:2] == (accounts.DISKUTIL, "mount") for call in fake.calls)
+
+
+def test_install_mounts_an_unmounted_volume_and_stops_when_it_cannot(
+    fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]
+) -> None:
+    fake.volume_at = ""
+    mount = (accounts.DISKUTIL, "mount", "-mountPoint", "/var/agent-workvm", "disk3s7")
+    fake.answers[mount] = (1, "")
+    code, _, err = cli(*INSTALL)
+    assert (code, err) == (1, "runner.error code=workvm_volume name=mount\n")
+    assert not any(call[:2] == (accounts.DISKUTIL, "unmount") for call in fake.calls)  # it hung nowhere
+
+
+def test_install_stops_when_the_volume_does_not_appear(
+    fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]
+) -> None:
+    fake.answers[(accounts.DISKUTIL, "apfs", "addVolume", "disk3", "APFS", "AgentWorkVM", "-quota", str(200 * 2**30),
+                  "-mountpoint", "/var/agent-workvm")] = (0, "")  # fmt: skip
+    code, _, err = cli(*INSTALL)
+    assert (code, err) == (1, "runner.error code=workvm_volume name=missing\n")
+
+
+def test_uninstall_removes_the_fstab_entry_and_reports_one_that_stays(
+    fake: FakeMachine, cli: Callable[..., tuple[int, str, str]]
+) -> None:
+    installed(fake)
+    fake.fstab = "LABEL=Other /other apfs rw\n" + FSTAB_ENTRY
+    code, out, _ = cli("uninstall")
+    assert code == 0, out
+    assert fake.files[volume.FSTAB] == ("LABEL=Other /other apfs rw\n", 0o644)
+    # kept volume: the entry stays with it
+    installed(fake)
+    fake.files.pop(volume.FSTAB)
+    fake.fstab = FSTAB_ENTRY
+    assert cli("uninstall", "--keep-volume")[0] == 0
+    assert volume.FSTAB not in fake.files
+    # a write that does not take: reported
+    installed(fake)
+
+    def lost(path: str, content: str, mode: int) -> None:
+        if path != volume.FSTAB:
+            fake.files[path] = (content, mode)
+
+    fake.write_file = lost  # type: ignore[method-assign]
+    code, out, _ = cli("uninstall")
+    assert code == 1
+    assert "runner.workvm.uninstall.problem code=fstab" in out.splitlines()

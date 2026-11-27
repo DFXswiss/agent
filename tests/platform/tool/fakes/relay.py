@@ -6,8 +6,8 @@
   follow-up names an earlier request of the same user, device and kind (`400 params_invalid`), the device may read the
   user's `CK` by the logs (`403 device_not_assigned`); a plaintext `org_id` (a company account, KOR-47) is accepted
   for a `github.connect` of an admin of that org only (`403 forbidden`) and kept with the request; the same ID again
-  is `replayed` when identical, else `409 id_conflict`; a new root request ends an active one of the same user, device
-  and kind (`failed`);
+  is `replayed` when identical, else `409 id_conflict`; a new root request ends an active one of the same user, device,
+  kind and plaintext `slot` (`failed`; KOR-73: roots of different slots run side by side);
 - `GET /v1/device-requests/{id}` (owner, else `404`): state, expiry and the responses in `seq` order;
 - `GET /v1/me/devices` without seeded rows lists the devices the logs make eligible (assigned to a workgroup the user
   can access), online.
@@ -114,7 +114,7 @@ def install(hub: HubFake) -> None:
         return 200, {"devices": eligible(hub, cast(str, request.user))}
 
     def create(request: Request, body: Any) -> tuple[int, Any]:  # noqa: PLR0911, PLR0912
-        if not isinstance(body, dict) or set(body) - {"org_id"} != {"envelope"}:
+        if not isinstance(body, dict) or set(body) - {"org_id", "slot"} != {"envelope"}:
             return 400, {"error": "request_invalid"}
         user = hub.users[cast(str, request.user)]
         envelope = body["envelope"]
@@ -144,7 +144,7 @@ def install(hub: HubFake) -> None:
         if not follows:
             for other in found.requests.values():
                 same = (other["user"], other["device_id"], other["kind"]) == (user.id, header["device"], header["kind"])
-                if same and other["state"] in ACTIVE and not other["follows"]:
+                if same and other["state"] in ACTIVE and not other["follows"] and other["slot"] == body.get("slot"):
                     other["state"] = "failed"
         found.requests[cast(str, header["id"])] = {
             "request_id": header["id"],
@@ -158,6 +158,7 @@ def install(hub: HubFake) -> None:
             "user": user.id,
             "follows": follows,
             "org_id": org,
+            "slot": body.get("slot"),
         }
         answers = found.script.get(header["kind"])
         for answer, final in answers.pop(0) if answers else []:

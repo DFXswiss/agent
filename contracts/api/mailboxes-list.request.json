@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/mailboxes-list.request.json",
+  "title": "GET /v1/me/mailboxes request",
+  "description": "No query parameters.",
+  "type": "object",
+  "properties": {},
+  "required": [],
+  "additionalProperties": false
+}

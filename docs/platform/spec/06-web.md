@@ -71,8 +71,12 @@ e2e/                      Playwright specs for web-only flows against a hub test
 One store in `core/store` holds: config, me, orgs (verified log state, rights, keys in memory as non-extractable
 `CryptoKey` or raw bytes in closures), workgroups, tasks, sessions, operations, notifications, devices,
 decrypted event bodies, metrics, connection state, job state. Scope keys and the identity private keys live only in
-memory; a page reload requires the passkey (or recovery code / device key) again. The store is updated only by core
-modules; React reads via selectors.
+memory. A browser that **stays signed in** (rule E-40, [ADR-102](../adr/102-stay-signed-in.md); the default, §3.4)
+keeps the identity at rest under its non-extractable device key (`persist/device-key`, §3.3): at start-up `restore()`
+opens it and unlocks (`GET /v1/me`, logs and wraps verified) without a gesture, in every new tab, after closing and
+reopening the tab and after a browser restart. Without that entry ("Stay signed in" off, "Forget on this browser") a
+page reload is `locked` and requires the passkey (or recovery code) again. The store is updated only by core modules;
+React reads via selectors.
 
 Volume bounds (ADR-086 §1, `decisions/KOR-35.md` §4):
 - **Event store.** A bounded store per scope in two classes with a bound each: the bulk kinds of sessions (`session.output`,
@@ -156,10 +160,15 @@ history; it is never sent to the hub, logged or stored.
 
 ### 2.6 Signed requests and the session
 
-`core/net` signs every non-anonymous request with the session key (`03-api.md` §1). On `401 session_expired` or
-less than 5 minutes before `expires_at` the UI shows a non-blocking "Sign in again" prompt; the re-login (§3.4)
-replaces the session key without losing the screen. `POST /v1/session/end` on explicit sign-out, then IndexedDB
-session entries are deleted and memory is cleared.
+`core/net` signs every non-anonymous request with the session key (`03-api.md` §1). A browser that stays signed in
+renews its session by itself (rule E-40, [ADR-102](../adr/102-stay-signed-in.md)): every minute it looks at the stored
+session and takes over an end (or a new key of the same user) another tab wrote; when this browser's last renewal is an
+hour old, or less than 5 minutes are left, one tab – under the Web Lock `agent-platform.session-renew` – sends `POST
+/v1/session/renew`, signed by the still valid key, and stores the new end (30 days) with the time of the renewal; a
+sign-in renews at once. Otherwise (and if a renewal fails), on `401 session_expired` or less than 5 minutes before
+`expires_at` the UI shows a non-blocking "Sign in again" prompt; the re-login (§3.4) replaces the session key without
+losing the screen. `POST /v1/session/end` on explicit sign-out, then IndexedDB session entries and this browser's
+device-key entry of the user are deleted and memory is cleared.
 
 ## 3. Invitation, registration, login, recovery, passkeys
 
@@ -237,11 +246,13 @@ when the login ceremony returns no PRF result (detected **per login**, `04-crypt
 2. Options: (a) enter the recovery code (unlock only: bundle from the signed `GET /v1/me/bundles/recovery`, no rotation and
    no new passkey; the §3.5 recovery flow is only for users without any working passkey); (b) "Remember this browser":
    after unlocking, create a non-extractable AES-GCM key in IndexedDB that encrypts the identity bundle locally
-   (`persist/device-key`); next login on this browser unlocks with it; (c) add a PRF-capable passkey from another
-   signed-in device (§3.6).
-The device key is per browser profile, listed in `/settings` ("This browser is remembered and opens your data even
-without a suitable passkey") with
-"Forget" (deletes the IndexedDB entry).
+   (`persist/device-key`); the browser then stays signed in (rule E-40) and the next login on this browser unlocks
+   with it; (c) add a PRF-capable passkey from another signed-in device (§3.6).
+The device key is per browser profile and is also the key of "Stay signed in" (§3.4, rule E-40,
+[ADR-102](../adr/102-stay-signed-in.md)): written after every unlock while that choice is on, deleted when it is off
+and at sign-out. `/settings` lists it under "Stay signed in" ("This browser stays signed in and opens your data without
+a passkey (since …)") with "Forget on this browser" (deletes the IndexedDB entry and stops the renewal of §2.6; a reload
+then asks for the passkey), or, without an entry, "Stay signed in on this browser".
 
 ### 3.4 Login and unlock (`/login`)
 
@@ -249,6 +260,13 @@ One button "Sign in with passkey" → `POST /v1/passkeys/login/begin` → new se
 statement → `get()` with PRF → `POST /v1/passkeys/login/finish` → decrypt bundle with `KEK_i` (or device key / recovery
 code per §3.3) → load `GET /v1/me`, verify logs of all orgs (§11.3), fetch wraps (`GET /v1/wraps`) and open scope keys
 → route. Unlock failure after a valid login (`decrypt_failed`) shows §3.3 options.
+
+Below the button the checkbox **"Stay signed in"** (rule E-40, [ADR-102](../adr/102-stay-signed-in.md); `login.stay`),
+on by default, with one line on what it does and "not on shared devices". The choice is kept for this browser
+(`localStorage`, `Prefs.staySignedIn`) and applies to every unlock, also the sign-ins of invitations and recovery: on,
+the device key of §3.3 keeps the identity and the session renews itself (§2.6), so a reload, a new tab, a closed and
+reopened tab and a browser restart open unlocked without the passkey until the user signs out; off, this browser's
+entry is deleted and a reload is `locked` as before.
 
 ### 3.5 Recovery (`/recover`)
 
@@ -958,6 +976,38 @@ not open). The page "My subscriptions" (KOR-68) opens the same dialogs at "Add s
 further subscription that is not logged in. A login is started once per attempt; closing the dialog while it starts
 sends nothing more.
 
+**Mailboxes (KOR-74, [ADR-099](../adr/099-mailboxes-read-by-the-platform.md)).** Settings section "Mailboxes"
+(`settings/mailboxes`, core `core/credentials/mailboxes.ts`): every own mailbox (`GET /v1/me/mailboxes`, each record
+opened in the browser) as a card with name, address, purpose, the workgroups it is released to and "for the automatic
+login" on the primary one; "Add a mailbox" (name, purpose, address, IMAP host, port 993, user, password), "Change"
+(the password field stays empty to keep the stored one), "Release" (checkboxes of the workgroups the user has access
+to; the sealed `use {wgs}` and its plaintext mirror), "Check" (device request `mailbox.check` with the mailbox body,
+sealed to the device) and "Remove" (one confirmation). Sessions of a released workgroup read the mailbox with
+`mail.find`; the password never leaves the record and the device. The view and its texts (area `mailbox`) are a chunk
+of their own loaded when the settings show the section, so the first load keeps its budget.
+
+**Subscriptions side by side (KOR-73, [ADR-100](../adr/100-parallel-subscription-logins.md)).** When the preselected
+device announced `subscriptions.parallel` (`subscriptionDevices().parallel`; otherwise everything above stays):
+- "Add a subscription" also takes the subscription's **own mailbox** (IMAP host, port 993, user, password, address –
+  `MailboxFields`), the address to sign in with, the **organizations** that may use it (`use.orgs`, E-31) and, with a
+  mailbox, the data of a **new account** (full name, date of birth, and three consents – terms, minimum age, product
+  e-mails – each unticked and worded as given by the account holder, the person whose address it is). The record is
+  written first (`PUT /v1/subscriptions/{id}`, `expected_version` 0, no token, `kind` `oauth_login`, with the mirror of
+  the use), then `claude.login` goes out with `extended: true` and the subscription as plaintext `slot`; with a mailbox
+  it is automatic and may carry `account`.
+- "Add several subscriptions" (`AddSeveral`, shown only with such a device): rows (label, address, own mailbox, new
+  account) and one choice of organizations for all; "Log them all in" starts every login at once
+  (`addSubscriptions`, one record, request and slot each) and shows the progress of each subscription in its row
+  (stages, the check for humans, link and code, done or failed; "again" restarts that row's login).
+- **Check for humans** (`HumanCheck`): a `verify` response shows the newest picture of the login sandbox; the owner's
+  click into it goes out as the follow-up `{click: {x, y}}` (fractions of the picture), "Sign in myself in my own
+  browser" sends `{relay: true}`. The text says the owner does the check and the platform only carries the click. A
+  fallback names its `reason`.
+- The subscription card shows the address of the own mailbox (never its password) and offers "Mailbox": set or
+  replace it (the password is entered anew), remove it, and "Check mailbox" (`mailbox.check {subscription_id}`). "Log
+  in now/again" of a subscription with its own mailbox is automatic and goes only to such a device
+  (`no_device_available` otherwise).
+
 ### 8.3 Connected agents (KOR-24, `11-agent-access.md`)
 
 - `/settings` → "Connected agents": `GET /v1/me/agents`, each with name and computer (opened from the sealed label),
@@ -1113,7 +1163,9 @@ dialog of KOR-57 stage b adds its texts in both languages (the catalogs stay in 
 code loads lazily. Raised to 224 KiB by KOR-56 (ADR-096): every client verifies support releases, support authors
 and wraps to support persons in the membership and platform logs at sign-in, and the background jobs offer the support
 slots in catch-up and rotate released workgroups after a person left support – about 2.6 KiB gzip in the first load
-together with the packages merged at the same time; the support area, the release dialog and their texts load lazily. The guard runs in every package's gates (`npm run
+together with the packages merged at the same time; the support area, the release dialog and their texts load lazily.
+Raised to 225 KiB by KOR-74 (ADR-099): the settings entry "Mailboxes" and the mailbox fields of the credential
+reader (about 0.2 KiB gzip); the section's view, its core module and its texts (area `mailbox`) load lazily. The guard runs in every package's gates (`npm run
 build:check`, the build tests and the E2E budget test), so growth of the first load is seen deterministically where it
 is caused, not later as a narrow timing failure. It is raised only together with a reason in this section. The first
 load is three scripts: the framework, the app modules imported statically from the entry (chunk group `$initial`) and

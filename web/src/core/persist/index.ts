@@ -1,5 +1,6 @@
 // IndexedDB persistence of the web client (06-web.md section 2.2): exactly the session key (a non-extractable
-// `CryptoKey`, stored by structured clone, its private bytes never leave WebCrypto), the session certificate metadata,
+// `CryptoKey`, stored by structured clone, its private bytes never leave WebCrypto), the session certificate metadata
+// (with the time of the last renewal, rule E-40; the identity of a browser that stays signed in is in `device-key.ts`),
 // the pinned founder key and verified head per org (L3, L9), the verified platform-log head and the last cursors of
 // the live channel. Nothing else – no scope keys, no identity keys, no event content. Values read back are checked
 // and anything malformed is treated as absent.
@@ -26,6 +27,8 @@ export interface StoredSession {
   readonly credentialId: string;
   /** `expires_at` (Unix ms). */
   readonly expiresAt: number;
+  /** When a tab of this browser last renewed the session (Unix ms, rule E-40); absent before the first renewal. */
+  readonly renewedAt?: number;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -52,7 +55,8 @@ function isSession(value: unknown): value is StoredSession {
     value.publicKey.length === 65 &&
     isText(value.userId) &&
     isText(value.credentialId) &&
-    isSeq(value.expiresAt)
+    isSeq(value.expiresAt) &&
+    (value.renewedAt === undefined || isSeq(value.renewedAt))
   );
 }
 
