@@ -135,7 +135,7 @@ async def operator_target(
     if not pool.serves(session.org_id):
         _line(env, f"operator_access_revoked session_id={session.id}")
         return None
-    model = session.model_id
+    model = revocation.model_of(env.context, session)
     usable = pool.allowed(name, session.org_id) and not pool.refuses(name, model)
     current = pool.current(name) if usable else None
     if current is None:

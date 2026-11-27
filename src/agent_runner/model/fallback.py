@@ -360,7 +360,7 @@ async def _model_refused(deliverer: Any, session: LocalSession, refused: revocat
     if session.id not in found.announced:
         found.announced.add(session.id)
         _line(env, f"model_access_wait session_id={session.id} access={label} model={model}")
-        await _audit(env, session, refused.label, label, WAIT_CAUSE)
+        await _audit(env, session, refused.label, label, WAIT_CAUSE, model=model)
     return True
 
 
@@ -370,16 +370,19 @@ def _give_up(env: SessionEnv, session_id: str, reason: str) -> bool:
     return False
 
 
-async def _audit(env: SessionEnv, session: LocalSession, source: str, target: str, cause: str) -> None:
+async def _audit(
+    env: SessionEnv, session: LocalSession, source: str, target: str, cause: str, *, model: str | None = None
+) -> None:
     """`session.model_switched` with a cause of HOT-26 (`renewed`, `model_unavailable`); only towards a hub with
-    `model_fallback.api >= 2`; the session's model on both sides."""
+    `model_fallback.api >= 2`; the session's model (or the refused one) on both sides."""
     if not policy.renewed_api(env.desired):
         return
+    shown = session.model_id or model
     detail = {
         "from_access": access.KIND_OF[source],
         "to_access": access.KIND_OF[target],
-        "from_model": session.model_id,
-        "to_model": session.model_id,
+        "from_model": shown,
+        "to_model": shown,
         "cause": cause,
         "until": None,
     }
@@ -419,7 +422,7 @@ async def _renewed(deliverer: Any, session_id: str, refused: revocation.Refusal,
             return True
     revocation.settle(env.context, session_id, continued=True)
     _line(env, f"model_continued session_id={session_id} from={refused.label} to={target} cause={RENEWED_CAUSE}")
-    await _audit(env, current, refused.label, target, RENEWED_CAUSE)
+    await _audit(env, current, refused.label, target, RENEWED_CAUSE, model=refused.model)
     return False
 
 

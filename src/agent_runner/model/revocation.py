@@ -139,10 +139,20 @@ def _model_refused(env: Any, session: LocalSession, seen: Seen, model: str) -> N
     known.refuse_model(seen.key, model, seen.identity, known.wall())
     env.log(f"runner.model model_refused session_id={session.id} access={seen.label} model={model}")
     current = revocations(env.context).refused.get(session.id)
-    if model != session.model_id or (current is not None and current.model == model):
+    if session.model_id not in (None, model) or (current is not None and current.model == model):
         return
     paused_at = datetime.fromtimestamp(env.wall(), UTC)
     _mark(env, session, Refusal(env.clock(), seen.stamp, seen.label, paused_at, model))
+
+
+def model_of(context: Any, session: Any) -> str | None:
+    """The model a session runs on: its recorded model, else the model its access refused (a session without an
+    explicit model runs on the default model of Claude Code, which the refusal names)."""
+    found = getattr(session, "model_id", None)
+    if found is not None:
+        return str(found)
+    refused = None if context is None else revocations(context).refused.get(session.id)
+    return None if refused is None else refused.model
 
 
 def provisioned(context: Any, session_id: str, at: float) -> None:

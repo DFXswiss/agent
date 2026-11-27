@@ -24,7 +24,7 @@ from agent_runner.model import access, fallback, limits, operator, pauses, revoc
 
 from ..sessions.kit import desired, session_id
 from .fallback_kit import FKit, entry, fallback_kit, state
-from .kit import ALICE, TOKEN, model_env
+from .kit import ALICE, OPUS, TOKEN, model_env
 from .test_operator import pool_dir, put, token
 
 Body = Callable[[FKit], Awaitable[None]]
@@ -59,6 +59,8 @@ def run(dsn: str, tmp_path: Path | None, body: Body, **options: Any) -> None:
 
 
 async def running(found: FKit, n: int = 1, state_: str = "working", **overrides: Any) -> str:
+    """A running session on the model the task must use."""
+    overrides.setdefault("model_id_pref", OPUS)
     assert (await found.start(n, **overrides)).started, found.log()
     await found.state(session_id(n), state_)
     return session_id(n)
