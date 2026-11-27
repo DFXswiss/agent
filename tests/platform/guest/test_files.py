@@ -363,6 +363,45 @@ def test_export_of_the_whole_workspace(ws: Session, control_client: ControlClien
     assert error.value.code == "path_invalid"
 
 
+def test_export_leaves_out_the_content_of_known_files(ws: Session, control_client: ControlClient) -> None:
+    """FIX-02: a file whose key is known stays in the manifest but its content is not sent; ``omitted`` is there
+    exactly when ``known`` was asked for."""
+    root = work(ws) / "repo"
+    (root / "src").mkdir(parents=True)
+    (root / "src" / "app.py").write_bytes(b"x = 1\n")
+    (root / "README.md").write_bytes(b"hi\n")
+    same = files.known_key("src/app.py", hashlib.sha256(b"x = 1\n").hexdigest())
+    stale = files.known_key("README.md", hashlib.sha256(b"old\n").hexdigest())
+    elsewhere = files.known_key("other.py", hashlib.sha256(b"x = 1\n").hexdigest())
+    reply = do_export(control_client, {"dir": "repo", "known": [same, stale, elsewhere]})
+    assert reply.status == 200
+    manifest, contents, _ = unpack(reply.body)
+    assert [item["path"] for item in manifest["files"]] == ["README.md", "src/app.py"]
+    assert manifest["omitted"] == ["src/app.py"]
+    assert contents == {"README.md": b"hi\n"}
+    raw_manifest = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    assert reply.headers["X-Manifest-Sha256"] == hashlib.sha256(raw_manifest).hexdigest()
+    nothing_known = unpack(do_export(control_client, {"dir": "repo", "known": []}).body)
+    assert (nothing_known[0]["omitted"], set(nothing_known[1])) == ([], {"README.md", "src/app.py"})
+    assert "omitted" not in unpack(do_export(control_client, {"dir": "repo"}).body)[0]
+    for bad in (["XYZ"], ["0" * 31], "0" * 32):
+        assert do_export(control_client, {"dir": "repo", "known": bad}).json()["error"] == "request_invalid"
+
+
+def test_known_key_is_the_short_hash_of_path_and_digest() -> None:
+    digest = hashlib.sha256(b"x").hexdigest()
+    assert files.known_key("a/b", digest) == hashlib.sha256(b"a/b\0" + digest.encode()).hexdigest()[:32]
+
+
+def test_export_takes_a_known_list_over_the_json_default_limit(ws: Session, control_client: ControlClient) -> None:
+    (work(ws) / "repo").mkdir()
+    (work(ws) / "repo" / "a").write_bytes(b"a")
+    known = [f"{index:032x}" for index in range(40_000)]  # about 1.4 MB of JSON: above the 1 MiB default
+    reply = do_export(control_client, {"dir": "repo", "known": known})
+    assert reply.status == 200
+    assert unpack(reply.body)[0]["omitted"] == []
+
+
 def test_export_directory_errors(ws: Session, control_client: ControlClient, tmp_path: Path) -> None:
     assert do_export(control_client, {"dir": "nothing"}).json() == {"error": "not_found"}
     (work(ws) / "file").write_text("x")

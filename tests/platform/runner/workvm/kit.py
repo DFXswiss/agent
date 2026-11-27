@@ -270,16 +270,27 @@ class FakeHelper:
         return ShellResult(0, b"", False)
 
 
-def export_tar(files: Mapping[str, bytes]) -> bytes:
-    """A guest export (`files/export`): the manifest first, then the files."""
-    entries = [{"path": p, "size": len(d), "sha256": hashlib.sha256(d).hexdigest()} for p, d in sorted(files.items())]
+def export_tar(files: Mapping[str, bytes], known: Sequence[str] | None = None, also_omit: Sequence[str] = ()) -> bytes:
+    """A guest export (`files/export`): the manifest first, then the files; with `known` (FIX-02) the files whose key
+    is listed - and those of `also_omit`, a guest that leaves out a file the caller needs - are only in the manifest."""
+    digests = {path: hashlib.sha256(data).hexdigest() for path, data in files.items()}
+    entries = [{"path": p, "size": len(files[p]), "sha256": digests[p]} for p in sorted(files)]
+    keys = set(known or ())
+    omitted = sorted(path for path, digest in digests.items() if sync.known_key(path, digest) in keys)
+    if known is not None:
+        omitted = sorted({*omitted, *(path for path in also_omit if path in files)})
+    listing: dict[str, Any] = {"files": entries, "skipped": []}
+    if known is not None:
+        listing["omitted"] = omitted
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w", format=tarfile.PAX_FORMAT) as archive:
-        manifest = json.dumps({"files": entries, "skipped": []}, separators=(",", ":"), sort_keys=True).encode()
+        manifest = json.dumps(listing, separators=(",", ":"), sort_keys=True).encode()
         info = tarfile.TarInfo(sync.EXPORT_MANIFEST)
         info.size = len(manifest)
         archive.addfile(info, io.BytesIO(manifest))
         for path, data in sorted(files.items()):
+            if path in omitted:
+                continue
             info = tarfile.TarInfo(path)
             info.size = len(data)
             archive.addfile(info, io.BytesIO(data))
@@ -311,10 +322,20 @@ class FakeGuest:
     async def __aexit__(self, *_: object) -> None:
         return None
 
-    async def export_files(self, session_id: str, directory: str, write: Callable[[bytes], object]) -> str:
+    async def export_files(
+        self,
+        session_id: str,
+        directory: str,
+        write: Callable[[bytes], object],
+        *,
+        known: Sequence[str] | None = None,
+    ) -> str:
         self.world.exports.append(directory)
+        self.world.known.append(None if known is None else len(known))
         if self.world.export_error is not None:
             raise self.world.export_error
+        if known is not None and self.world.old_guest is not None:
+            raise self.world.old_guest  # a guest without `known` refuses the field
         files = (
             self.world.workspace
             if directory == "."
@@ -324,7 +345,9 @@ class FakeGuest:
                 if path.startswith(directory + "/")
             }
         )
-        write(export_tar(files))
+        transferred = export_tar(files, known, self.world.also_omit)
+        self.world.transferred.append(len(transferred))
+        write(transferred)
         return "sha"
 
     async def import_files(
@@ -357,6 +380,14 @@ class World:
     scripts: dict[str, tuple[bytes, str, int | None]] = field(default_factory=dict)
     workspace: dict[str, bytes] = field(default_factory=dict)
     exports: list[str] = field(default_factory=list)
+    known: list[int | None] = field(default_factory=list)
+    """Per export: how many known keys it named (None: none, a full export)."""
+    transferred: list[int] = field(default_factory=list)
+    """Per answered export: the bytes of the archive the guest sent."""
+    old_guest: Exception | None = None
+    """The refusal of an export that names `known` (a guest without FIX-02)."""
+    also_omit: list[str] = field(default_factory=list)
+    """Paths an export with `known` leaves out although the caller needs them."""
     imports: list[tuple[str, bytes, bool]] = field(default_factory=list)
     export_error: Exception | None = None
     import_error: Exception | None = None

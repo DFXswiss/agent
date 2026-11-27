@@ -12,14 +12,16 @@ other actions are this module's ``CONTROL_ACTIONS``:
   stop the unit and close the window, keep directories and transcript (``sessions.stop_session(..., "suspended")``).
   Resume is a new ``POST /v1/sessions`` with ``resume_claude_session_id`` (GST-02, ``--resume``).
 
-api.sock op ``session.turn_ended {session_id, claude_session_id: string | null, failed: bool} -> {state}`` (called by
-the ``hook_addons/idle.py`` addon for ``Stop`` and, with ``failed`` true, ``StopFailure``): a ``working`` session
-becomes ``idle`` (``session.state idle`` with the Claude session ID of the hook, kept in the session cache for a later
-resume); a failed turn also returns the TUI to its input, its error is journaled by the hook itself
-(``session.hook``). For a subagent session (``depth`` > 0) the transition after a successful ``Stop`` also calls every
-``SUBAGENT_STOP`` callback of the ``control_routes`` modules (``callback(context, session_id)``, module order, checked
-when called; a failing callback is logged and changes nothing): the completion hook of RUN-11 (05 §13: the first Stop
-ends a subagent). The op answers the session state after the call.
+api.sock op ``session.turn_ended {session_id, claude_session_id: string | null, failed: bool, stop_error?} -> {state}``
+(called by the ``hook_addons/idle.py`` addon for ``Stop`` and, with ``failed`` true and the error class
+``stop_error``, ``StopFailure``): a ``working`` session becomes ``idle`` (``session.state idle`` with the Claude
+session ID of the hook, kept in the session cache for a later resume, and for a failed turn ``stop_error``, FIX-02:
+the runner continues a turn a model rate limit ended); a failed turn also returns the TUI to its input, its error is
+journaled by the hook itself (``session.hook``). ``stop_error`` is only allowed with ``failed`` true and must be
+one of ``policy.STOP_ERRORS``. For a subagent session (``depth`` > 0) the transition after a successful ``Stop`` also
+calls every ``SUBAGENT_STOP`` callback of the ``control_routes`` modules (``callback(context, session_id)``, module
+order, checked when called; a failing callback is logged and changes nothing): the completion hook of RUN-11 (05 §13:
+the first Stop ends a subagent). The op answers the session state after the call.
 """
 
 from __future__ import annotations
@@ -36,6 +38,7 @@ from typing import Any
 from agent_guest import delivery, registry, sessions, tmux
 from agent_guest.clock import iso_ms
 from agent_guest.control import ControlContext
+from agent_guest.policy import STOP_ERRORS
 from agent_guest.state import StateError
 
 INTERRUPT_GAP_SECONDS = 2.0
@@ -93,8 +96,11 @@ def suspend(context: ControlContext, session_id: str) -> None:
 CONTROL_ACTIONS = {"interrupt": interrupt, "suspend": suspend}
 
 
-def mark_idle(context: ControlContext, session_id: str, claude_session_id: str | None) -> bool:
-    """``working`` -> ``idle`` (journal and cache in one transaction); ``False`` when the session was not working."""
+def mark_idle(
+    context: ControlContext, session_id: str, claude_session_id: str | None, stop_error: str | None = None
+) -> bool:
+    """``working`` -> ``idle`` (journal and cache in one transaction, with the ``stop_error`` of a failed turn);
+    ``False`` when the session was not working."""
     at = iso_ms(context.journal.clock.now())
     with context.journal.transaction() as db:
         session = context.state.session(session_id)
@@ -108,6 +114,8 @@ def mark_idle(context: ControlContext, session_id: str, claude_session_id: str |
         body: dict[str, str] = {"state": "idle", "at": at}
         if session.claude_session_id is not None:
             body["claude_session_id"] = session.claude_session_id
+        if stop_error is not None:
+            body["stop_error"] = stop_error
         context.journal.insert(db, "session.state", body, session_id)
     return True
 
@@ -131,16 +139,19 @@ def _subagent(context: ControlContext, session_id: str) -> bool:
 
 def turn_ended(context: ControlContext, args: dict[str, Any]) -> dict[str, Any]:
     session_id, claude_session_id = args.get("session_id"), args.get("claude_session_id")
-    failed = args.get("failed")
-    if set(args) != {"session_id", "claude_session_id", "failed"} or not isinstance(session_id, str):
+    failed, stop_error = args.get("failed"), args.get("stop_error")
+    if set(args) - {"stop_error"} != {"session_id", "claude_session_id", "failed"} or not isinstance(session_id, str):
         raise StateError("request_invalid")
     if not isinstance(failed, bool):
+        raise StateError("request_invalid")
+    if stop_error is not None and (not failed or stop_error not in STOP_ERRORS):
         raise StateError("request_invalid")
     if claude_session_id is not None and not (
         isinstance(claude_session_id, str) and _CLAUDE_ID_RE.fullmatch(claude_session_id)
     ):
         raise StateError("request_invalid")
-    if mark_idle(context, session_id, claude_session_id) and not failed and _subagent(context, session_id):
+    ended = mark_idle(context, session_id, claude_session_id, stop_error)
+    if ended and not failed and _subagent(context, session_id):
         _subagent_stopped(context, session_id, subagent_stop_handlers())
     return {"state": _live(context, session_id)}
 

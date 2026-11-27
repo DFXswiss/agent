@@ -2,7 +2,8 @@
 
 * ``POST /v1/sessions/{id}/files/import?dir=<relative dir>&replace=true|false`` - body ``application/x-tar`` with a
   ``Content-Length`` of at most 512 MiB (``413 size_exceeded`` before anything is read) -> ``{files, bytes}``
-* ``POST /v1/sessions/{id}/files/export {dir, paths?}`` -> ``application/x-tar`` with ``X-Manifest-Sha256``
+* ``POST /v1/sessions/{id}/files/export {dir, paths?, known?}`` (body at most ``files.MAX_EXPORT_REQUEST``) ->
+  ``application/x-tar`` with ``X-Manifest-Sha256``
 
 The import is the workspace scanner's baseline, never ``session.file`` records (``Capture.import_guard``, HOT-06).
 
@@ -48,7 +49,7 @@ def import_files(context: ControlContext, request: Request) -> Response:
 def export_files(context: ControlContext, request: Request) -> Response:
     session = _session(context, request.params["id"])
     try:
-        exported = files.export_tar(session, request.data["dir"], request.data.get("paths"))
+        exported = files.export_tar(session, request.data["dir"], request.data.get("paths"), request.data.get("known"))
     except files.FilesError as error:
         raise HttpError(error.code) from None
     return Response(
@@ -71,6 +72,7 @@ ROUTES = [
         "/v1/sessions/{id}/files/export",
         export_files,
         request_schema="guest/session-files-export.request.json",
+        max_body=files.MAX_EXPORT_REQUEST,
         path_params={"id": "common.json#/$defs/uuid"},
     ),
 ]

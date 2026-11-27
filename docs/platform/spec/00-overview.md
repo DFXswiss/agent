@@ -202,7 +202,10 @@ Rules for both repos:
   `HubSigner` requires a key ID matching `[a-z0-9-]`. In `agent`: `agent_cli.pg` (cluster management),
   `agent_cli.keys.request_text`/`response_text` (the client-side `agent-request-v1` texts) and
   `agent_cli.account_login.newest_magic_link` (IMAP magic-link search; it takes a `Mailbox` value that the runner
-  builds from the decrypted `mailbox` credential – `load_mailbox` is not used). The usage parsers of
+  builds from the decrypted `mailbox` credential – `load_mailbox` is not used), and
+  `agent_cli.a38_review.check_comment` with `agent_cli.a38_errors` (the A38 guard's own verdict on one review
+  comment, behind `github.comment` `a38_review`, FIX-02: a copy would drift from the guard it must agree with;
+  `check_comment` is part of the guard and maintained with it). The usage parsers of
   `agent_cli.usage` (`windows_snapshot`, `spend_snapshot`) are **copied and adapted** (they depend on
   `drivers.json` specs and the legacy store); the copy maps the windows explicitly: `five_hour` → `five_hour`,
   `weekly`/`seven_day` → `seven_day`, per-model weekly → `weekly:<model>`. `_parse_login_credentials` is not

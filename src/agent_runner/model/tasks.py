@@ -2,8 +2,9 @@
 
 `model_fallback` (KOR-50, ADR-081 section 4): every `fallback.TICK_S` the run of the reconcile step of the same name
 (`model.fallback.run_once`), so a pause ends within seconds of its release time and a used-up access is acted on
-without waiting for the next desired state. It does nothing while the device is not enrolled (no deliverer); a failing
-round is logged and the loop goes on.
+without waiting for the next desired state; then the due continuations of turns a model rate limit ended
+(`model.retry.run_once`, FIX-02). It does nothing while the device is not enrolled (no deliverer); a failing round of
+either is logged and the loop goes on.
 
 `operator_subscriptions` (KOR-23, ADR-052; 05-runner.md section 10.2): every `TICK_S` the sessions
 bound to a token file of the operator's pool are renewed (`model.gateways.refresh`), so a file replaced from outside
@@ -20,7 +21,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_runner.model import fallback, merge, operator
+from agent_runner.model import fallback, merge, operator, retry
 from agent_runner.model.gateways import RENEWED, live_sessions, refresh, running_service
 from agent_runner.prompts.deliver import deliverer_for
 from agent_runner.registry import TaskSpec
@@ -61,12 +62,13 @@ async def run(context: Any) -> None:
 
 async def run_fallback(context: Any) -> None:
     while not context.stopping.is_set():
-        try:
-            deliverer = deliverer_for(context)
-            if deliverer is not None:
-                await fallback.run_once(deliverer)
-        except Exception as exc:
-            _line(context, f"model_fallback_tick_failed error={type(exc).__name__}")
+        for name, step in (("model_fallback", fallback.run_once), ("model_retry", retry.run_once)):
+            try:
+                deliverer = deliverer_for(context)
+                if deliverer is not None:
+                    await step(deliverer)
+            except Exception as exc:
+                _line(context, f"{name}_tick_failed error={type(exc).__name__}")
         await context.host.sleep(fallback.TICK_S)
 
 

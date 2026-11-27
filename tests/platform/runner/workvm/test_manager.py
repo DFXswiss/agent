@@ -29,7 +29,7 @@ from agent_runner.workvm import manager as manager_module
 from agent_runner.workvm.jobs import ShellResult, WorkVmError
 from agent_runner.workvm.manager import NO_LEASE, NO_VM, CallFailed, WorkVms, sizes_fit
 
-from .kit import CHILD, SESSION, START, TASK, TASK_B, Job, World, pack_tar, session
+from .kit import CHILD, SESSION, START, TASK, TASK_B, VM_ID, Job, World, pack_tar, session
 
 
 @pytest.fixture
@@ -289,6 +289,138 @@ def test_exec_mirrors_the_workspace_runs_and_returns_the_output(world: World) ->
     assert world.started[1]["cwd"] == "/workspace"
     assert world.started[1]["timeout"] == "0"
     assert len(world.helper.applied) == 2  # nothing to send the second time
+
+
+def guest_version(world: World, version: str) -> None:
+    """The session's VM (`kit.VM_ID`) runs a guest of `version` (its golden record)."""
+    with psycopg.connect(world.dsn, autocommit=True) as conn:
+        conn.execute(
+            "INSERT INTO runner.golden (version, lima_name, claude_version, guest_version, image_digest, state)"
+            " VALUES ('g1', 'golden-g1', '1', %s, 'sha256:x', 'ready')",
+            (version,),
+        )
+        conn.execute(
+            "INSERT INTO runner.vm (id, lima_name, golden_version, state, control_token_hash, cpus, memory_mib)"
+            " VALUES (%s, %s, 'g1', 'running', 'x', 1, 1024)",
+            (VM_ID, VM_ID),
+        )
+
+
+def test_a_guest_before_the_known_export_gets_full_exports(world: World) -> None:
+    guest_version(world, "0.7.0")
+    world.workspace = {"a": b"1"}
+
+    async def body(vms: WorkVms) -> None:
+        await request(vms)
+        await vms.call(None, session(), "workvm_exec", {"command": "true"})
+        await vms.call(None, session(), "workvm_exec", {"command": "true"})
+
+    world.run(body)
+    assert world.known == [None, None]
+
+
+def test_mirror_sends_only_changed_files_across_the_guest_link(world: World) -> None:
+    """FIX-02: after the first mirror, the export names the mirrored files as known, so an unchanged workspace
+    crosses the guest link as a manifest only and a changed file alone with its content."""
+    guest_version(world, "0.8.0")
+    world.workspace = {f"repo/f{index}.txt": b"x" * 16384 for index in range(20)}
+
+    async def body(vms: WorkVms) -> list[dict[str, Any]]:
+        await request(vms)
+        first = await vms.call(None, session(), "workvm_exec", {"command": "true"})
+        second = await vms.call(None, session(), "workvm_exec", {"command": "true"})
+        world.workspace = {**world.workspace, "repo/f3.txt": b"changed"}
+        third = await vms.call(None, session(), "workvm_exec", {"command": "true"})
+        return [first["synced"], second["synced"], third["synced"]]
+
+    synced = world.run(body)
+    assert [item["files"] for item in synced] == [20, 0, 1]
+    assert world.known == [None, 20, 20]
+    full, unchanged, one = world.transferred
+    assert full > 20 * 16384
+    assert unchanged < full // 20  # the manifest, no content
+    assert one < full // 20  # the manifest and the one changed file
+    pushes = [line for line in world.logs if line.startswith("runner.workvm push ")]
+    assert len(pushes) == 3
+    assert f"session_id={SESSION}" in pushes[0]
+    assert "files=0 bytes=0 deleted=0" in pushes[1]
+    for line in pushes:
+        assert {"transferred", "export_ms", "apply_ms", "total_ms"} <= {
+            part.split("=", 1)[0] for part in line.split() if "=" in part
+        }
+
+
+@pytest.mark.parametrize("refusal", ["request_invalid", "size_exceeded"])
+def test_mirror_through_a_guest_without_known_exports_everything(world: World, refusal: str) -> None:
+    guest_version(world, "0.8.0")  # a golden record that claims more than the guest knows
+    world.workspace = {"a": b"1", "b": b"2"}
+
+    async def body(vms: WorkVms) -> list[int]:
+        await request(vms)
+        await vms.call(None, session(), "workvm_exec", {"command": "true"})
+        world.old_guest = GuestRefused("files_export", 400 if refusal == "request_invalid" else 413, refusal)
+        world.workspace = {"a": b"1", "b": b"3"}
+        second = await vms.call(None, session(), "workvm_exec", {"command": "true"})
+        return [second["synced"]["files"], second["synced"]["deleted"]]
+
+    assert world.run(body) == [1, 0]
+    assert world.known == [None, 2, None]  # refused with known, then the full export
+    assert len(world.helper.applied) == 2
+
+
+def test_an_export_that_leaves_out_a_needed_file_is_repeated_in_full(world: World) -> None:
+    guest_version(world, "0.8.0")
+    world.workspace = {"a": b"1", "b": b"2"}
+
+    async def body(vms: WorkVms) -> dict[str, Any]:
+        await request(vms)
+        await vms.call(None, session(), "workvm_exec", {"command": "true"})
+        world.workspace = {"a": b"1", "b": b"changed"}
+        world.also_omit = ["b"]  # a guest that leaves out the changed file
+        second = await vms.call(None, session(), "workvm_exec", {"command": "true"})
+        return dict(second["synced"])
+
+    assert world.run(body)["files"] == 1
+    assert world.known == [None, 2, None]
+    _root, pushed = world.helper.applied[-1]
+    with tarfile.open(fileobj=io.BytesIO(pushed)) as archive:
+        assert archive.extractfile("b").read() == b"changed"  # type: ignore[union-attr]
+
+
+def test_push_export_refuses_an_export_without_the_needed_content(world: World, tmp_path: Path) -> None:
+    from .kit import export_tar  # noqa: PLC0415
+
+    exported = tmp_path / "partial.tar"
+    exported.write_bytes(export_tar({"a": b"1"}, known=[], also_omit=["a"]))
+
+    async def body(vms: WorkVms) -> str:
+        await request(vms)
+        vm = await vms._vm_of(session())
+        assert vm is not None
+        try:
+            await vms.push_export(vm, session(), ".", exported)
+        except WorkVmError as error:
+            return error.code
+        return "pushed"
+
+    assert world.run(body) == "workvm_sync_failed"
+
+
+def test_mirrors_of_one_session_run_one_after_the_other(world: World) -> None:
+    """A repeated call while the first mirror still runs waits for it and then sends only what is left."""
+    guest_version(world, "0.8.0")
+    world.workspace = {"a": b"1", "b": b"2"}
+
+    async def body(vms: WorkVms) -> list[int]:
+        await request(vms)
+        calls = [vms.call(None, session(), "workvm_sync", {"direction": "to_vm"}) for _ in range(2)]
+        first, second = await asyncio.gather(*calls)
+        return [first["files"], second["files"]]
+
+    # whichever call takes the lock first mirrors both files; the other then finds nothing left to send
+    assert sorted(world.run(body)) == [0, 2]
+    assert world.known == [None, 2]
+    assert len(world.helper.applied) == 1
 
 
 def test_exec_without_sync_and_a_failing_start(world: World) -> None:

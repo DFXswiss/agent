@@ -48,6 +48,10 @@ Export (``export_tar``), ``{dir, paths?}`` with ``paths`` relative to ``dir``:
 * the answer is ``application/x-tar`` whose first member is ``.agent-export-manifest.json`` = canonical JSON
   ``{files:[{path,size,sha256}], skipped:[{path,reason}]}`` (sorted by path), followed by the files (``0600``,
   owner 0, time 0); the header ``X-Manifest-Sha256`` is the manifest's SHA-256 (decisions CTR-02 no. 8)
+* ``known`` (optional; the work VM mirror, FIX-02): keys ``known_key(path, sha256)`` of files the caller already
+  has. A file whose key is listed stays in ``files`` with its size and SHA-256, but its content is left out of the
+  archive; the manifest then has a third list ``omitted`` (sorted paths) - always present when ``known`` was given,
+  never otherwise. Every file is still read and hashed, so a listed key only saves the copy and the transfer.
 """
 
 from __future__ import annotations
@@ -90,6 +94,9 @@ _FORBIDDEN_SEGMENTS = frozenset({"", ".", ".."})
 WHOLE_WORKSPACE = "."
 PROTECTED = policy.PROTECTED_DIRS | policy.PROTECTED_FILES
 MAX_HEADER = 64 * 1024
+KNOWN_KEY_LENGTH = 32
+MAX_EXPORT_REQUEST = 4 * 1024 * 1024
+"""Body limit of ``files/export``: room for ``MAX_ENTRIES`` known keys (34 bytes each in JSON)."""
 HEADER_TYPES = frozenset(
     {tarfile.XHDTYPE, tarfile.XGLTYPE, tarfile.SOLARIS_XHDTYPE, tarfile.GNUTYPE_LONGNAME, tarfile.GNUTYPE_LONGLINK}
 )
@@ -117,6 +124,12 @@ def owner_of(session: Session) -> Owner:
         return Owner(session.uid, pwd.getpwuid(session.uid).pw_gid)
     except KeyError:
         raise FilesError("unavailable") from None
+
+
+def known_key(path: str, sha256: str) -> str:
+    """The key of a file the export caller already has: the first 32 hex digits of SHA-256(path NUL sha256)
+    (``agent_runner.workvm.sync.known_key`` computes the same)."""
+    return hashlib.sha256(f"{path}\0{sha256}".encode()).hexdigest()[:KNOWN_KEY_LENGTH]
 
 
 def path_ok(path: str) -> bool:
@@ -437,6 +450,10 @@ class _Export:
     added: set[str] = field(default_factory=set)
     bytes: int = 0
     entries: int = 0
+    known_keys: frozenset[str] | None = None
+    """``known`` of the request (None: send every file)."""
+    left_out: list[str] = field(default_factory=list)
+    """The files whose content was left out because their key was known (the manifest's ``omitted``)."""
 
     def count(self, more: int = 1) -> None:
         self.entries += more
@@ -471,11 +488,15 @@ class _Export:
                     raise FilesError("size_exceeded")
                 digest.update(data)
                 spool.write(data)
-            spool.seek(0)
-            self.archive.addfile(member_info(self.prefix + path, size, self.mode), spool)
+            sha256 = digest.hexdigest()
+            if self.known_keys is not None and known_key(path, sha256) in self.known_keys:
+                self.left_out.append(path)
+            else:
+                spool.seek(0)
+                self.archive.addfile(member_info(self.prefix + path, size, self.mode), spool)
         self.bytes += size
         self.added.add(path)
-        self.files.append({"path": path, "size": size, "sha256": digest.hexdigest()})
+        self.files.append({"path": path, "size": size, "sha256": sha256})
 
     def entry(self, parent: int, name: str, path: str, depth: int) -> None:
         """One directory entry ``name`` of ``parent`` (``path`` relative to the exported directory)."""
@@ -604,9 +625,11 @@ class Exported:
     stream: Stream
 
 
-def export_tar(session: Session, directory: str, paths: Sequence[str] | None = None) -> Exported:
-    """Export ``directory`` of the session's workspace (``.``: the whole workspace), or the listed ``paths`` below it
-    (see the module docstring)."""
+def export_tar(
+    session: Session, directory: str, paths: Sequence[str] | None = None, known: Sequence[str] | None = None
+) -> Exported:
+    """Export ``directory`` of the session's workspace (``.``: the whole workspace), or the listed ``paths`` below it;
+    without the content of the ``known`` files (see the module docstring)."""
     parts = [] if directory == WHOLE_WORKSPACE else segments(directory)
     for path in paths or ():
         segments(path)
@@ -620,7 +643,13 @@ def export_tar(session: Session, directory: str, paths: Sequence[str] | None = N
         body = os.path.join(stage, "body.tar")
         try:
             with tarfile.open(body, mode="w", format=tarfile.PAX_FORMAT) as archive:
-                export = _Export(session, stage, archive, limit=MAX_EXPORT_BYTES)
+                export = _Export(
+                    session,
+                    stage,
+                    archive,
+                    limit=MAX_EXPORT_BYTES,
+                    known_keys=None if known is None else frozenset(known),
+                )
                 if paths is None:
                     export.children(root, "", 0)
                 else:
@@ -628,10 +657,12 @@ def export_tar(session: Session, directory: str, paths: Sequence[str] | None = N
                         export.listed(root, path)
         finally:
             os.close(root)
-        manifest = {
+        manifest: dict[str, Any] = {
             "files": sorted(export.files, key=lambda item: item["path"]),
             "skipped": sorted(export.skipped, key=lambda item: item["path"]),
         }
+        if known is not None:
+            manifest["omitted"] = sorted(export.left_out)
         data = canonical(manifest).encode("utf-8")
         head = member_bytes(MANIFEST, data)
     except BaseException:

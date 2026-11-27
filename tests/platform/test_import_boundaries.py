@@ -44,7 +44,17 @@ HUB_LEGACY = frozenset(
     }
 )
 # `agent_cli.store.StoreError` is the error `newest_magic_link` raises (login automation, as built before INF-06).
-RUNNER_LEGACY = frozenset({"agent_cli.pg", "agent_cli.keys", "agent_cli.account_login", "agent_cli.store"})
+# `agent_cli.a38_review` and its errors: the A38 guard's parser behind `github.comment` `a38_review` (FIX-02).
+RUNNER_LEGACY = frozenset(
+    {
+        "agent_cli.pg",
+        "agent_cli.keys",
+        "agent_cli.account_login",
+        "agent_cli.store",
+        "agent_cli.a38_review",
+        "agent_cli.a38_errors",
+    }
+)
 # Packages of the hub image (copied into it); everything the hub reaches must lie inside.
 HUB_IMAGE_PACKAGES = ("agent_hub", "agent_core")
 # Third-party import names that are not the distribution name, and imports that come with another requirement.

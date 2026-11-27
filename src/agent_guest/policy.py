@@ -53,6 +53,22 @@ from dataclasses import dataclass
 from typing import Literal
 
 HARNESS_DIR = "/run/agent-guest/harness"
+STOP_ERRORS = frozenset(
+    {
+        "rate_limit",
+        "overloaded",
+        "server_error",
+        "authentication_failed",
+        "billing_error",
+        "invalid_request",
+        "model_not_found",
+        "max_output_tokens",
+        "unknown",
+    }
+)
+"""The error class of a turn Claude Code ended with ``StopFailure`` (``session.state idle`` ``stop_error``, FIX-02;
+``hook_addons.idle`` in the API process, ``control_routes.control`` in the control process); a class Claude Code
+names that is not listed is ``unknown``."""
 PLATFORM_PREFIX = "mcp__platform__"
 PLATFORM_TOOLS = frozenset(
     {

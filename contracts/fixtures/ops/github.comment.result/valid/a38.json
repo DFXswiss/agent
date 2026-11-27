@@ -1,0 +1,16 @@
+{
+  "comment_id": 992,
+  "url": "https://github.example/c/992",
+  "a38": {
+    "run": "second",
+    "head": "0123456789abcdef0123456789abcdef01234567",
+    "signal": "clear",
+    "timings_ms": {
+      "queued": 40,
+      "account": 120,
+      "check": 900,
+      "post": 300,
+      "total": 1360
+    }
+  }
+}

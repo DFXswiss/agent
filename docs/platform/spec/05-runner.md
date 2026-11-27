@@ -1022,6 +1022,15 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   cause: exhausted|unusable|released, until}`; the access values are `subscription`, `operator` (an operator
   subscription), `api_key` and `platform`. The hub tells the task's owner with the notification `model.switched`
   (`ref` = `<from>:<to>:<until or empty>`).
+- **Model rate limit** (FIX-02, `model.retry`, in the same daemon task): a main session whose turn Claude Code ended
+  with `StopFailure` `rate_limit`, `overloaded` or `server_error` (guest `session.state idle` `stop_error`) is
+  continued by the platform after 60 s, 180 s and 600 s - at most three continuations until a turn ends normally -
+  with the sentence "The model provider refused the last request for a while (rate limit or overload), so your last
+  turn ended early. Continue the interrupted work where you stopped." and the platform's sender line
+  (`runner.turn_retry`). A person's waiting prompt, an ended session or a credit or model pause drops it. Every
+  continuation the platform hands over by itself (credit, model pause, rate limit) acts for the person of the turn it
+  continues (`credentials.acting.continuation`, `runner.platform_prompt`), so that turn keeps the person's GitHub
+  connection.
 
 ### 10.8 Quotas of the operator's subscriptions (ADR-081 section 6)
 
@@ -1351,7 +1360,7 @@ Pipeline for every `request_operation`:
 | `github.push` | check fast-forward (`GET /repos/{r}/compare/{head}...{sha}` status `ahead`/`identical`) → `PATCH /repos/{r}/git/refs/heads/{branch}` `force:false` or `POST /git/refs` if missing; the push of a merge commit marks its preparation `pushed` (KOR-48) |
 | `github.merge_base` (KOR-48, ADR-084 §4) | pre-check: `GET /repos/{r}/pulls/{n}` (open, head in the same repository) → base tip `GET /git/ref/heads/{base}` → merge base `GET /compare/{tip}...{head}` (`up_to_date` when equal) → workspace protection (one export, compared with the head's tree and the stored digest; `workspace_dirty`) · executor: the trees of merge base, head and tip (`GET /git/commits`, `GET /git/trees?recursive=1`) → `merge3.merge_entries` → contents from the head's, then the base's tarball, each member checked against its blob SHA (`GET /git/blobs/{sha}` for the rest, ≤ 1000) → line merges (diff3 style) → one plain tar → `files/import?…&replace=true` → merged blobs of protected names `POST /git/blobs` → `runner.merge_prep` (migration `0027_merge_prep`) and `runner.workspace_state`; both pruned after 7 days by `retention` |
 | `github.create_pull_request` | `GET /repos/{r}/pulls?head=<owner>:<head>&base=<base>&state=open` (existing ⇒ operation `succeeded` with that PR and `result.existing:true`; MCP status `duplicate`) → else `POST /repos/{r}/pulls` |
-| `github.comment` | `POST /repos/{r}/issues/{n}/comments` (issues and pull requests alike) |
+| `github.comment` | `POST /repos/{r}/issues/{n}/comments` (issues and pull requests alike); with `a38_review: true` (FIX-02) first `GET /user` and the A38 guard's verdict on the comment (`agent_cli.a38_review.check_comment`: the pull request, `REVIEW.md` at the base, the head commit time, the changed files, a declared ancestor's history): posted only when the guard would count it, else `params_invalid` with the guard's reasons and nothing posted; the result's `a38` names the run, the head, a second run's signal and `timings_ms` (`queued`, `account`, `check`, `post`, `total` from the operation reaching the runner) |
 | `github.list_issues` | `GET /repos/{r}/issues?state&labels&sort&direction&per_page&page` (one page; entries with `pull_request` are left out; `next_page` from the `Link` header) |
 | `github.get_issue` | `GET /repos/{r}/issues/{n}` → `GET /repos/{r}/issues/{n}/comments?per_page&page` (one page; `comments_total` from the issue's `comments`); cut to 200 KiB (newest comments of the page first, then the body; `truncated`) |
 | `github.create_issue` | `POST /repos/{r}/issues` `{title, body?, labels?}` |

@@ -34,7 +34,8 @@ suspended until its next prompt, which is then delivered. **Credit first**: whil
 the next resume or start resolves anew.
 
 The sentences have a stable prompt ID per pause (`prompt_id`), so a repeated hand-over is the same prompt for the
-guest; they carry no user text.
+guest; they carry no user text, and their turn keeps the acting user of the interrupted turn
+(`credentials.acting.continuation`, FIX-02).
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent_runner.billing import pause as credit
+from agent_runner.credentials import acting
 from agent_runner.crypto.ids import uuid7
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestError
@@ -228,9 +230,12 @@ async def _continue(deliverer: Any, session_id: str, pause: pauses.Pause) -> boo
                 return True
             target, _key = await label_of(env, current)
             text = sentence(pause.from_access, target, pause.until)
+            continued = prompt_id(session_id, pause.paused_at)
+            async with env.transaction() as conn:
+                await acting.continuation(conn, session_id, continued)  # the person of the interrupted turn (FIX-02)
             try:
                 async with await env.client(row) as guest:
-                    await guest.register_prompt(session_id, prompt_id(session_id, pause.paused_at), text)
+                    await guest.register_prompt(session_id, continued, text)
             except (GuestError, RunnerError) as exc:
                 _line(env, f"model_continue_failed session_id={session_id} code={exc.code}")
                 return True

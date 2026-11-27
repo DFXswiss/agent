@@ -266,6 +266,10 @@ def test_turn_ended_without_a_claude_id_keeps_the_known_one(
         {"session_id": SESSION_ID, "claude_session_id": 7, "failed": False},
         {"session_id": SESSION_ID, "claude_session_id": None, "failed": "no"},
         {"session_id": SESSION_ID, "claude_session_id": None, "failed": False, "extra": 1},
+        # FIX-02: an error class only with a failed turn, and only one of the list
+        {"session_id": SESSION_ID, "claude_session_id": None, "failed": False, "stop_error": "rate_limit"},
+        {"session_id": SESSION_ID, "claude_session_id": None, "failed": True, "stop_error": "weird"},
+        {"session_id": SESSION_ID, "claude_session_id": None, "failed": True, "stop_error": 7},
     ],
 )
 def test_turn_ended_refuses_invalid_arguments(context: ControlContext, api_client: ApiClient, args: Any) -> None:
@@ -381,13 +385,17 @@ def test_the_stop_hook_ends_the_turn(
 
 
 def test_stop_failure_ends_the_turn_too(
-    context: ControlContext, hooks: HookClient, manager: sessions.SessionManager
+    context: ControlContext, hooks: HookClient, manager: sessions.SessionManager, schemas: Any
 ) -> None:
     put(context, "working")
     body = hook_body("StopFailure", session_id="not-a-uuid", error="rate_limit")
     assert hooks.post("StopFailure", body).status == 200
     assert current(context) == "idle"
-    assert states(context) == [{"state": "idle"}]
+    # FIX-02: the error class goes with the idle state, so the runner can continue the turn
+    assert states(context) == [{"state": "idle", "stop_error": "rate_limit"}]
+    records, _ = context.journal.read(after=0, limit=100)
+    state = [record for record in records if record["kind"] == "session.state"]
+    assert not schemas.errors("guest/journal/session.state.json", state[0]["body"])
 
 
 def test_an_unreadable_stop_body_still_ends_the_turn(
@@ -409,15 +417,23 @@ def test_the_addon_calls_the_control_process(context: ControlContext) -> None:
     api = ApiContext(config=context.config, schemas=context.schemas, control=Control())  # type: ignore[arg-type]
     cases: list[tuple[str, dict[str, Any] | None]] = [
         ("Stop", {"session_id": CLAUDE_ID}),
-        ("Stop", {"session_id": 5}),
+        ("Stop", {"session_id": 5, "error": "rate_limit"}),
         ("StopFailure", None),
+        ("StopFailure", {"session_id": CLAUDE_ID, "error": "overloaded"}),
+        ("StopFailure", {"error": "something_new"}),
+        ("StopFailure", {"error": 429}),
     ]
     for event, body in cases:
         call = HookCall(event=event, session_id=SESSION_ID, body=body, decision="none", decorate=False)
         assert idle.handle(api, call) is None
-    expected = [(CLAUDE_ID, False), (None, False), (None, True)]
+    base = {"session_id": SESSION_ID}
     assert calls == [
-        ("session.turn_ended", {"session_id": SESSION_ID, "claude_session_id": c, "failed": f}) for c, f in expected
+        ("session.turn_ended", {**base, "claude_session_id": CLAUDE_ID, "failed": False}),
+        ("session.turn_ended", {**base, "claude_session_id": None, "failed": False}),
+        ("session.turn_ended", {**base, "claude_session_id": None, "failed": True, "stop_error": "unknown"}),
+        ("session.turn_ended", {**base, "claude_session_id": CLAUDE_ID, "failed": True, "stop_error": "overloaded"}),
+        ("session.turn_ended", {**base, "claude_session_id": None, "failed": True, "stop_error": "unknown"}),
+        ("session.turn_ended", {**base, "claude_session_id": None, "failed": True, "stop_error": "unknown"}),
     ]
     assert idle.ADDON.events == frozenset({"Stop", "StopFailure"})
     assert json.dumps(sorted(idle.ADDON.events)) == '["Stop", "StopFailure"]'

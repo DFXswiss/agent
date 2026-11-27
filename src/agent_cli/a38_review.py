@@ -30,11 +30,12 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Collection
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 
 from .a38_errors import is_guard_error, is_rate_limit_error
-from .readme_only import github_file_paths, is_markdown_path
+from .readme_only import github_file_paths, is_markdown_path, pull_is_markdown_only
 
 
 def _reraise_rate_limit(exc: BaseException) -> None:
@@ -2267,3 +2268,134 @@ def evaluate_review_gate(
     if reasons:
         return False, reasons
     return True, []
+
+
+PULL_UNAVAILABLE = "pull request unavailable"
+NOT_THE_AUTHOR = "review comment author is not the pull request author"
+NOT_AFTER_HEAD = "review comment would not be newer than the head commit"
+NO_SECOND_SIGNAL = "review second run gives no merge signal"
+_CHECK_COMMENT_ID = 2**53 - 1
+
+
+@dataclass(frozen=True)
+class CommentCheck:
+    """What the guard would make of one review comment before it is posted.
+
+    ``reasons`` is empty when the guard would count it. ``run`` is ``first``
+    or ``second``. ``head`` is the pull request head the check read, empty
+    when the pull request could not be read. ``signal`` is ``blocking`` or
+    ``clear`` for a counted second run and None otherwise.
+    """
+
+    reasons: list[str]
+    run: str
+    head: str = ""
+    signal: str | None = None
+    facts: dict[str, Any] = field(default_factory=dict)
+
+
+def _pull_facts(api: Any, repo: str, number: int) -> tuple[str, str, int] | None:
+    """Head SHA, base SHA and author ID of the pull request; None when unreadable."""
+    try:
+        status, data, _headers = api.request("GET", f"/repos/{repo}/pulls/{number}")
+    except Exception as exc:
+        _reraise_rate_limit(exc)
+        return None
+    if status != 200 or not isinstance(data, Mapping):
+        return None
+    head = data.get("head")
+    base = data.get("base")
+    user = data.get("user")
+    head_sha = head.get("sha") if isinstance(head, Mapping) else None
+    base_sha = base.get("sha") if isinstance(base, Mapping) else None
+    author = user.get("id") if isinstance(user, Mapping) else None
+    if not isinstance(head_sha, str) or _SHA.fullmatch(head_sha) is None:
+        return None
+    if not isinstance(base_sha, str) or _SHA.fullmatch(base_sha) is None:
+        return None
+    if not _is_int(author) or author < 1:
+        return None
+    return head_sha, base_sha, author
+
+
+def check_comment(
+    api: Any,
+    *,
+    repo: str,
+    number: int,
+    body: str,
+    poster_id: int,
+    posted_at: str,
+) -> CommentCheck:
+    """Whether the guard would count ``body`` as a review comment.
+
+    The comment is taken as created by ``poster_id`` at ``posted_at`` (ISO
+    time, normally now) on pull request ``number``. The check reads what
+    the guard reads (the pull request, ``REVIEW.md`` at the base, the head
+    commit time, the changed files and, for a declared ancestor, its
+    history) and runs the guard's own selection on that one comment:
+    ``select_review_comment`` for a first run, ``second_run_status`` for a
+    second run. Only a second run with a merge signal counts. It does not
+    judge the rest of the pull request: another review run, the local CI
+    report and open threads stay the guard's business. A rate limit is
+    raised, as in the guard. Any other unreadable fact fails closed with
+    the guard's reason.
+    """
+    run = "second" if _lane_ids_of(body) == set(RUNS[1]) else "first"
+    pull = _pull_facts(api, repo, number)
+    if pull is None:
+        return CommentCheck([PULL_UNAVAILABLE], run)
+    head, base_sha, author_id = pull
+    reasons: list[str] = []
+    if poster_id != author_id:
+        _add(reasons, NOT_THE_AUTHOR)
+    if mixes_report_and_review(body):
+        _add(reasons, "local CI report and review record must be separate comments")
+    elif not looks_like_review(body):
+        _add(reasons, "review markers missing or duplicated")
+    if reasons:
+        return CommentCheck(reasons, run, head)
+    rules_bound = review_rules_bound(api, repo, base_sha)
+    if rules_bound is None:
+        return CommentCheck(["review rules unavailable"], run, head)
+    committed_at = _head_committed_at(api, repo, head)
+    if committed_at is None:
+        return CommentCheck(["review commit time unavailable"], run, head)
+    posted = _utc(posted_at)
+    committed = _utc(committed_at)
+    if posted is None or committed is None or posted <= committed:
+        return CommentCheck([NOT_AFTER_HEAD], run, head)
+    markdown_only = pull_is_markdown_only(api, repo, number)
+    comment = {"id": _CHECK_COMMENT_ID, "created_at": posted_at, "user": {"id": poster_id}, "body": body}
+    covered, unread, stale = _covering_review_heads(
+        api, repo, head, [comment], base_sha=base_sha, author_id=author_id, guard_user_id=0
+    )
+    covered[head] = committed_at
+    facts = {"rules_bound": rules_bound, "markdown_only": markdown_only}
+    selection: dict[str, Any] = {
+        "author_id": author_id,
+        "guard_user_id": 0,
+        "committed_at": committed_at,
+        "head": head,
+        "markdown_only": markdown_only,
+        "rules_bound": rules_bound,
+        "covered_at": covered,
+        "ancestry_unavailable": unread,
+        "stale_heads": stale,
+    }
+    if run == "first":
+        _selected, reasons = select_review_comment([comment], **selection)
+        return CommentCheck(reasons, run, head, facts=facts)
+    status = second_run_status([comment], **selection)
+    if status in ("blocking", "clear"):
+        return CommentCheck([], run, head, signal=status, facts=facts)
+    if status != "absent":
+        return CommentCheck([status], run, head, facts=facts)
+    declared = _declaration_reasons(
+        body,
+        head=head,
+        markdown_only=markdown_only,
+        rules_bound=rules_bound,
+        covered_heads=covered.keys(),
+    )
+    return CommentCheck(declared or [NO_SECOND_SIGNAL], run, head, facts=facts)

@@ -58,6 +58,12 @@
       "minimum": 1,
       "maximum": 9007199254740991
     },
+    "duration_ms": {
+      "type": "integer",
+      "description": "a measured duration in milliseconds",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
     "error": {
       "type": "object",
       "description": "operation error: code of enums/operation-error-codes.json, JSON pointers for params_invalid, retryable for failed after the retries",
@@ -329,6 +335,10 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 65536
+        },
+        "a38_review": {
+          "type": "boolean",
+          "description": "FIX-02: post only when the A38 guard would count body as a review comment (agent_cli.a38_review); otherwise the operation fails params_invalid with the guard's reasons and nothing is posted"
         },
         "github_identity": {
           "$ref": "../common.json#/$defs/uuid",
@@ -762,6 +772,61 @@
         },
         "url": {
           "$ref": "#/$defs/url"
+        },
+        "a38": {
+          "type": "object",
+          "description": "FIX-02, only with params.a38_review: the run the guard counts, the head it was checked against, the merge signal of a second run and the durations of each step from the operation reaching the runner to the posted comment",
+          "properties": {
+            "run": {
+              "enum": [
+                "first",
+                "second"
+              ]
+            },
+            "head": {
+              "$ref": "#/$defs/sha"
+            },
+            "signal": {
+              "enum": [
+                "blocking",
+                "clear"
+              ]
+            },
+            "timings_ms": {
+              "type": "object",
+              "properties": {
+                "queued": {
+                  "$ref": "#/$defs/duration_ms"
+                },
+                "account": {
+                  "$ref": "#/$defs/duration_ms"
+                },
+                "check": {
+                  "$ref": "#/$defs/duration_ms"
+                },
+                "post": {
+                  "$ref": "#/$defs/duration_ms"
+                },
+                "total": {
+                  "$ref": "#/$defs/duration_ms"
+                }
+              },
+              "required": [
+                "queued",
+                "account",
+                "check",
+                "post",
+                "total"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "run",
+            "head",
+            "timings_ms"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

@@ -79,7 +79,8 @@ SPEC_GUEST = {
     ("POST", "/v1/sessions/{id}/prompts"): ("prompt_id text speaker", "state"),  # speaker: ADR-083
     ("POST", "/v1/sessions/{id}/control"): ("action", ""),
     ("POST", "/v1/sessions/{id}/files/import"): ("dir replace", "files bytes"),
-    ("POST", "/v1/sessions/{id}/files/export"): ("dir paths", "files skipped"),
+    # known and omitted: contracts/changes/FIX-02.md
+    ("POST", "/v1/sessions/{id}/files/export"): ("dir paths known", "files skipped omitted"),
     # context checkpoints: contracts/changes/KOR-33.md
     ("POST", "/v1/sessions/{id}/context/export"): (
         "workspace_max_bytes transcript_max_bytes",
@@ -188,7 +189,7 @@ SPEC_JOURNAL = {
 }
 # Additions (decisions CTR-02): harness_version (05-runner.md section 8), truncated (64 Ki cut), rule (hook.denied).
 JOURNAL_ADDITIONS = {
-    "session.state": "harness_version",
+    "session.state": "harness_version stop_error",  # contracts/changes/FIX-02.md (a turn a model error ended)
     "session.output": "truncated",
     "session.hook": "rule counts tools from to",  # contracts/changes/KOR-35.md (summary of routine calls)
     "usage": "provider_outside_allowlist",  # contracts/changes/GST-04.md
@@ -699,7 +700,8 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
         "repo head base",
         604800,
     ),
-    "github.comment": ("repo number body github_identity", "comment_id url", "repo number body", 86400),
+    # a38_review and a38: contracts/changes/FIX-02.md
+    "github.comment": ("repo number body a38_review github_identity", "comment_id url a38", "repo number body", 86400),
     "github.list_issues": (
         "repo state labels sort direction per_page page github_identity",
         "issues next_page truncated note",

@@ -20,8 +20,9 @@ session, so no prompt is handed over in between:
 2. **Credit back**: a recorded pause whose org is no longer exhausted ends. An interrupted session is resumed
    (`Resumer.resume`, the same path a follow-up prompt takes) and gets the fixed continuation prompt
    `CONTINUATION` (no user text; a stable prompt ID derived from the pause, so a repeated hand-over is the same prompt
-   for the guest) with the platform's sender line `CONTINUATION_LINE` (ADR-083; an older guest gets it without); a
-   session that was idle stays suspended until its next prompt. `resumed_at` marks the pause done.
+   for the guest) with the platform's sender line `CONTINUATION_LINE` (ADR-083; an older guest gets it without); its
+   turn keeps the acting user of the interrupted turn (`credentials.acting.continuation`, FIX-02); a session that was
+   idle stays suspended until its next prompt. `resumed_at` marks the pause done.
 
 `deferred(env, session)`: while its org is exhausted no prompt is handed to a session this device acts on - neither
 to a suspended one (no resume) nor to one that is still idle before the pause; the prompt stays pending and is
@@ -46,6 +47,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent_runner.billing import state
+from agent_runner.credentials import acting
 from agent_runner.crypto.ids import uuid7
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestError, GuestRefused
@@ -213,6 +215,9 @@ async def _continue(env: SessionEnv, resumer: Any, session_id: str, interrupted:
         row = None if current is None else await vm_running(env, current)
         if row is None:
             return
+        continued = prompt_id(session_id, paused_at)
+        async with env.transaction() as conn:
+            await acting.continuation(conn, session_id, continued)  # the person of the interrupted turn (FIX-02)
         try:
             async with await env.client(row) as guest:
                 await speaker.register(
@@ -220,7 +225,7 @@ async def _continue(env: SessionEnv, resumer: Any, session_id: str, interrupted:
                     guest,
                     vm_id=row.id,
                     session_id=session_id,
-                    prompt_id=prompt_id(session_id, paused_at),
+                    prompt_id=continued,
                     text=CONTINUATION,
                     line=CONTINUATION_LINE,
                 )

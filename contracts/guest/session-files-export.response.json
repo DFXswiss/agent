@@ -20,6 +20,15 @@
       },
       "minItems": 0,
       "maxItems": 100000
+    },
+    "omitted": {
+      "description": "Only when the request named known (FIX-02): the paths of files whose content the archive leaves out, sorted; each is also in files.",
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/rel_path"
+      },
+      "minItems": 0,
+      "maxItems": 100000
     }
   },
   "required": [

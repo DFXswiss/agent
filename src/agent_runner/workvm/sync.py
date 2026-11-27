@@ -7,12 +7,18 @@ member in stream mode (`tarfile` `r|`, extended headers capped by `tarsafe.Cappe
 
 `to_vm` (the runner exported the workspace's `path` with `files/export`):
 
+* `known_keys(previous)` are the keys of the last mirror's files (`known_key(path, sha256)`, the guest's
+  `files.known_key`): the runner passes them to `files/export` as `known`, so the guest leaves out the content of every
+  file the VM already holds unchanged and only the changed files cross the guest link (FIX-02). None when nothing was
+  mirrored yet (a fresh VM needs every file).
 * `read_export(tar)` checks a guest export: the first member is `.agent-export-manifest.json` (canonical JSON
-  `{files:[{path,size,sha256}], skipped:[{path,reason}]}`), every other member a regular file of the manifest with its
-  size and SHA-256, each exactly once, and every manifest file present.
+  `{files:[{path,size,sha256}], skipped:[{path,reason}]}`, plus `omitted:[path]` of an export with `known`), every
+  other member a regular file of the manifest with its size and SHA-256, each exactly once, and every manifest file
+  present except the omitted ones (an omitted path must be a manifest file and has no member).
 * `plan_push(previous, export)` compares it with the manifest of the last mirror (`runner.workvm_mirror.manifest`,
   `{path: sha256}`): `changed` = new or different, `deleted` = mirrored before and gone now, `manifest` = the new
-  mirror manifest.
+  mirror manifest. A changed path the export omitted (`PushPlan.incomplete`) cannot be pushed from this export; the
+  caller exports again without `known`.
 * `write_push_tar(export_tar, plan, out, prefix)` writes the **push tar** the VM helper applies
   (`workvm-job apply ROOT`): its first member is always `.workvm-deletions.json`, a regular file holding the canonical
   JSON list of the paths to delete (sorted); then the directories (`0755`) and changed files (`0644`), owner 0,
@@ -32,8 +38,9 @@ member in stream mode (`tarfile` `r|`, extended headers capped by `tarsafe.Cappe
   links, devices, FIFOs, members with a protected name (`tarsafe.PROTECTED_SEGMENTS`, the guest's
   `policy.PROTECTED_DIRS | PROTECTED_FILES` without `.git`) and files the manifest does not list are skipped; their
   paths count as excluded.
-* `merge_from_vm(workspace_tar, pack_tar, pushed, out)` writes one canonical tar (PAX, sorted by path segments,
-  regular files `0600` and directories `0700`, owner 0, modification time now) for the guest import with
+* `merge_from_vm(workspace_tar, pack_tar, pushed, out)` (a workspace export without `known`) writes one canonical tar
+  (PAX, sorted by path segments, regular files `0600` and directories `0700`, owner 0, modification time now) for the
+  guest import with
   `replace=true`: the workspace files overlaid by the VM's files. A workspace file the VM does not have is dropped
   only when the last mirror pushed it with the same SHA-256 (`pushed`) and the VM side neither excluded nor skipped
   it; every other workspace file is kept. Where a kept workspace file and a VM entry collide (a file where the other
@@ -66,6 +73,7 @@ MAX_ENTRIES = 100_000
 MAX_BYTES = 512 * 1024 * 1024
 MAX_MANIFEST_BYTES = 64 * 1024 * 1024
 MAX_PATH = 4096
+KNOWN_KEY_LENGTH = 32
 CHUNK = 1024 * 1024
 EXPORT_MANIFEST = ".agent-export-manifest.json"
 PACK_MANIFEST = ".workvm-pack.json"
@@ -98,10 +106,11 @@ class FileEntry:
 
 @dataclass(frozen=True)
 class Export:
-    """A checked guest export: its files and the entries the guest skipped."""
+    """A checked guest export: its files, the entries the guest skipped and the files whose content it left out."""
 
     manifest: dict[str, FileEntry]
     skipped: list[dict[str, str]]
+    omitted: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -109,6 +118,8 @@ class PushPlan:
     changed: list[str]
     deleted: list[str]
     manifest: dict[str, str]
+    incomplete: list[str] = field(default_factory=list)
+    """Changed paths whose content the export left out: this export cannot be pushed."""
 
 
 @dataclass(frozen=True)
@@ -243,8 +254,19 @@ def _json_member(member: _Member, name: str) -> Any:
         raise _invalid("manifest_invalid") from None
 
 
-def _export_manifest(data: Any) -> tuple[dict[str, FileEntry], list[dict[str, str]]]:
-    if not isinstance(data, dict) or set(data) != {"files", "skipped"}:
+def _omitted(data: dict[str, Any], manifest: Mapping[str, FileEntry]) -> frozenset[str]:
+    """The `omitted` list of an export with `known`: manifest files, each once (empty without the key)."""
+    listed = data.get("omitted", [])
+    if not isinstance(listed, list) or len(listed) > MAX_ENTRIES:
+        raise _invalid("manifest_invalid")
+    omitted = frozenset(item for item in listed if isinstance(item, str) and item in manifest)
+    if len(omitted) != len(listed):
+        raise _invalid("manifest_invalid")
+    return omitted
+
+
+def _export_manifest(data: Any) -> tuple[dict[str, FileEntry], list[dict[str, str]], frozenset[str]]:
+    if not isinstance(data, dict) or set(data) - {"omitted"} != {"files", "skipped"}:
         raise _invalid("manifest_invalid")
     files, skipped = data["files"], data["skipped"]
     if not isinstance(files, list) or not isinstance(skipped, list) or len(files) > MAX_ENTRIES:
@@ -268,30 +290,32 @@ def _export_manifest(data: Any) -> tuple[dict[str, FileEntry], list[dict[str, st
             raise _invalid("manifest_invalid")
         if not isinstance(item["path"], str):
             raise _invalid("manifest_invalid")
-    return manifest, [{"path": item["path"], "reason": item["reason"]} for item in skipped]
+    kept = [{"path": item["path"], "reason": item["reason"]} for item in skipped]
+    return manifest, kept, _omitted(data, manifest)
 
 
 def _scan_export(path: Path | str) -> tuple[Export, dict[str, int]]:
     """The checked export and the data offset of every file in the archive."""
     manifest: dict[str, FileEntry] | None = None
     skipped: list[dict[str, str]] = []
+    omitted: frozenset[str] = frozenset()
     offsets: dict[str, int] = {}
     with open(path, "rb") as source:
         for member in _members(source, MAX_ENTRIES + 1):
             if member.kind != "file" or member.reader is None:
                 raise _invalid("archive_invalid")
             if manifest is None:
-                manifest, skipped = _export_manifest(_json_member(member, EXPORT_MANIFEST))
+                manifest, skipped, omitted = _export_manifest(_json_member(member, EXPORT_MANIFEST))
                 continue
             entry = manifest.get(str(member.path))
-            if entry is None or member.size != entry.size:
+            if entry is None or member.path in omitted or member.size != entry.size:
                 raise _invalid("content_mismatch")
             if _read_exact(member.reader, member.size, _discard) != entry.sha256:
                 raise _invalid("content_mismatch")
             offsets[str(member.path)] = member.offset
-    if manifest is None or set(offsets) != set(manifest):
+    if manifest is None or set(offsets) != set(manifest) - omitted:
         raise _invalid("content_mismatch")
-    return Export(manifest, skipped), offsets
+    return Export(manifest, skipped, omitted), offsets
 
 
 def read_export(tar_path: Path | str) -> Export:
@@ -303,13 +327,25 @@ def read_export(tar_path: Path | str) -> Export:
 # -- to_vm ---------------------------------------------------------------------------------------------------------
 
 
+def known_key(path: str, sha256: str) -> str:
+    """The key of a mirrored file for `files/export` `known` (the guest's `files.known_key`)."""
+    return hashlib.sha256(f"{path}\0{sha256}".encode()).hexdigest()[:KNOWN_KEY_LENGTH]
+
+
+def known_keys(previous: Mapping[str, str] | None) -> list[str] | None:
+    """The sorted keys of the last mirror's files; None when nothing was mirrored yet."""
+    if previous is None:
+        return None
+    return sorted(known_key(path, sha) for path, sha in previous.items())[:MAX_ENTRIES]
+
+
 def plan_push(previous: Mapping[str, str] | None, export: Export) -> PushPlan:
     """The files to push and to delete against the manifest of the last mirror (None: nothing mirrored yet)."""
     before = previous or {}
     manifest = {path: entry.sha256 for path, entry in export.manifest.items()}
     changed = sorted(path for path, sha in manifest.items() if before.get(path) != sha)
     deleted = sorted(path for path in before if path not in manifest)
-    return PushPlan(changed, deleted, manifest)
+    return PushPlan(changed, deleted, manifest, [path for path in changed if path in export.omitted])
 
 
 def _check_prefix(prefix: str) -> str:
@@ -381,7 +417,7 @@ def write_push_tar(
     """Write the push tar of `plan` (see the module docstring); the number of files and their bytes."""
     head = _check_prefix(prefix)
     export, offsets = _scan_export(export_tar_path)
-    missing = [path for path in plan.changed if path not in export.manifest]
+    missing = [path for path in plan.changed if path not in export.manifest or path in export.omitted]
     if missing or any(not valid_path(path) or _git(path) for path in plan.deleted):
         raise _invalid("content_mismatch")
     mtime = int(now())
@@ -502,6 +538,8 @@ def merge_from_vm(
 ) -> MergeResult:
     """Merge the VM's pack into the workspace export as one canonical tar (see the module docstring)."""
     workspace, offsets = _scan_export(workspace_tar_path)
+    if workspace.omitted:
+        raise _invalid("content_mismatch")
     pack = _scan_pack(vm_tar_path)
     mirrored = pushed or {}
     vm_dirs = set(pack.dirs)

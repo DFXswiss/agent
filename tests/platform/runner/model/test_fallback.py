@@ -21,7 +21,7 @@ import pytest
 
 from agent_runner.billing import pause as credit
 from agent_runner.guestlink.errors import GuestUnreachable
-from agent_runner.model import fallback, gateways, limits, operator, pauses, reconcile, tasks
+from agent_runner.model import fallback, gateways, limits, operator, pauses, reconcile, retry, tasks
 from agent_runner.model.limits import EXHAUSTED, Limit
 from agent_runner.prompts.resume import RETRY
 from agent_runner.reconcile.engine import Run
@@ -427,14 +427,26 @@ def test_the_daemon_task_runs_every_few_seconds_and_logs_failing_rounds(monkeypa
             if len(seen) == 1:
                 raise RuntimeError("round")
 
-        deliverers = iter([None, "d1", "d2"])
+        retried: list[Any] = []
+
+        async def retry_once(deliverer: Any) -> None:
+            retried.append(deliverer)
+            if len(retried) == 2:
+                raise ValueError("retry round")
+
+        # each round asks for the deliverer once per step: the fallback, then the retry of FIX-02
+        deliverers = iter([None, None, "d1", "d1", "d2", "d2"])
         monkeypatch.setattr(tasks, "deliverer_for", lambda _context: next(deliverers))
         monkeypatch.setattr(fallback, "run_once", run_once)
+        monkeypatch.setattr(retry, "run_once", retry_once)
         log = io.StringIO()
         context = SimpleNamespace(stopping=stopping, host=SimpleNamespace(sleep=sleep), log=log)
         await tasks.run_fallback(context)
-        assert (seen, sleeps) == (["d1", "d2"], [fallback.TICK_S] * 3)
-        assert log.getvalue() == "runner.model model_fallback_tick_failed error=RuntimeError\n"
+        assert (seen, retried, sleeps) == (["d1", "d2"], ["d1", "d2"], [fallback.TICK_S] * 3)
+        assert log.getvalue() == (
+            "runner.model model_fallback_tick_failed error=RuntimeError\n"
+            "runner.model model_retry_tick_failed error=ValueError\n"
+        )
 
     asyncio.run(main())
 

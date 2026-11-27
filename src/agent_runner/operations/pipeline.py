@@ -400,8 +400,11 @@ class Pipeline:
             version = await self._github_version(op)
             ended = op.held and session.state in SESSION_ENDED
             if acting.needs(op.type) is not None and op.actor_id is None:
-                # nobody (or more than one person) instructed the turn: no personal connection, never held
-                self.line(f"no_acting_user operation_id={op.id}")
+                # nobody (or more than one person) instructed the turn: no personal connection, never held; the log
+                # says why (FIX-02)
+                async with self.env.transaction() as conn:
+                    cause = await acting.unknown_cause(conn, session.id)
+                self.line(f"no_acting_user operation_id={op.id} session_id={session.id} {cause}")
                 error = CheckFailed("github_not_connected", message=acting.NO_ACTOR).error()
             elif ended or (
                 op.held_reason == "github_connection"
