@@ -21,6 +21,9 @@ from tests.platform.hub.events.support import Json
 from tests.platform.hub.operations.support import Ops
 from tests.platform.hub.orgs.support import Actor, new_id
 
+MAIN_SESSION_STATES = {"scheduling": "requested", "starting": "agent_starting", "closed": "stopped"}
+"""The main session's state behind a task state of `Situation.insert_task` (the others are the same word)."""
+
 
 @dataclass(frozen=True)
 class Record:
@@ -129,6 +132,8 @@ class Situation:
     # --- rows written directly (read suites) ---
 
     def insert_task(self, wg: str, owner: str, *, state: str = "working", at: datetime | None = None) -> str:
+        """A task with its main session in the state that gives the task `state` (every task that is not captured
+        has one, ADR-102)."""
         task = new_id()
         now = at or self.hub.clock()
         self.desk.execute(
@@ -143,6 +148,19 @@ class Situation:
             now,
             now,
             now if state == "closed" else None,
+        )
+        session_state = MAIN_SESSION_STATES.get(state, state)
+        self.desk.execute(
+            "INSERT INTO hub.session (id, task_id, org_id, wg_id, owner_id, device_id, depth, state, created_at)"
+            " VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s)",
+            new_id(),
+            task,
+            self.desk.org,
+            wg,
+            owner,
+            None if session_state == "requested" else self.scene.device.id,
+            session_state,
+            now,
         )
         return task
 

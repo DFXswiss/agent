@@ -98,6 +98,7 @@ BOUNDS: dict[str, str] = {
     "/v1/orgs/{org}": "structural: the membership and the workgroups, complete by design (ADR-086 section 2)",
     "/v1/orgs/{org}/attention": "paged",
     "/v1/orgs/{org}/attention/summary": "structural: five counters of the org's attention categories",
+    "/v1/orgs/{org}/tasks/counts": "structural: seven counters and a total of the org's task dashboard (ADR-103)",
     "/v1/orgs/{org}/main-agents": "paged",
     "/v1/orgs/{org}/people/agents": "paged",
     "/v1/orgs/{org}/audit": "paged",

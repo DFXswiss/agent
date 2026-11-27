@@ -6,6 +6,7 @@ import { applyFrame, frameHandlers } from '../../../src/core/net/frames';
 import { createStore } from '../../../src/core/store';
 import {
   frames,
+  inListOrder,
   isSessionRow,
   isTaskRow,
   isTransition,
@@ -61,6 +62,18 @@ describe('lists', () => {
     // the latest activity counts, not the creation time (KOR-32)
     const active = row('d', '2026-11-20T00:00:00.000Z', { last_activity_at: '2026-11-21T12:00:02.000Z' });
     expect(newestFirst({ ...tasks, d: active }, ['a', 'b', 'c', 'd'])).toEqual(['d', 'b', 'c', 'a']);
+  });
+
+  it('keeps a list in the order of its key (ADR-103 section 2)', () => {
+    const tasks = {
+      a: row('a', '2026-11-21T12:00:00.000Z', { urgency: 'low' }),
+      b: row('b', '2026-11-21T12:00:01.000Z'),
+      c: row('c', '2026-11-21T12:00:02.000Z', { urgency: 'urgent' }),
+    };
+    expect(inListOrder(tasks, ['a', 'b', 'c', 'a'], null)).toEqual(['c', 'b', 'a']);
+    expect(inListOrder(tasks, ['b', 'a', 'c'], 'status=todo&order=urgency')).toEqual(['c', 'b', 'a']);
+    expect(inListOrder(tasks, ['c', 'a', 'b'], 'order=urgency')).toEqual(['c', 'b', 'a']);
+    expect(inListOrder(tasks, ['a', 'c', 'b'], 'order=created')).toEqual(['c', 'b', 'a']);
   });
 
   it('returns the same idle list object until a list is loaded', () => {
@@ -125,6 +138,32 @@ describe('lists', () => {
     putTasks(store, [row('b', '2026-11-21T12:00:05.000Z', { state: 'idle' })]);
     expect(lists()).toEqual([['b', 'a'], [], ['a']]);
     expect(taskList(store.getState().tasks, 'other', null).ids).toEqual([]);
+  });
+
+  it('keeps the rows of a list by overview and takes no new one (the row does not say its overview, ADR-103)', () => {
+    const store = createStore();
+    const key = 'overview=no_agent';
+    listPage(store, {
+      wg: 'w',
+      state: key,
+      rows: [row('a', '2026-11-21T12:00:00.000Z', { state: 'idle' })],
+      nextBefore: null,
+      first: true,
+    });
+    putTasks(store, [row('b', '2026-11-21T12:00:05.000Z', { state: 'idle' })]);
+    expect(taskList(store.getState().tasks, 'w', key).ids).toEqual(['a']);
+    putTasks(store, [row('a', '2026-11-21T12:00:09.000Z', { state: 'idle' })]);
+    expect(taskList(store.getState().tasks, 'w', key).ids).toEqual(['a']);
+    // the other filters still apply to the rows it holds
+    listPage(store, {
+      wg: 'w',
+      state: `status=todo&${key}`,
+      rows: [row('c', '2026-11-21T12:00:00.000Z', { status: 'todo' })],
+      nextBefore: null,
+      first: true,
+    });
+    putTasks(store, [row('c', '2026-11-21T12:00:10.000Z', { status: 'completed', state: 'closed' })]);
+    expect(taskList(store.getState().tasks, 'w', `status=todo&${key}`).ids).toEqual([]);
   });
 });
 

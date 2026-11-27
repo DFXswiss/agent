@@ -15,10 +15,14 @@
 - `session terminal`: the `session.terminal` chunks of the session (`kinds=session.terminal&session=<id>`), checked
   with the session's device as author (E7), as text: the output frames (`o`) in order, raw and without terminal
   control sequences; `next_after` continues after the last chunk read.
-- `task overview`: every task of the workgroups of an org the user can read (from the verified log; others are never
-  asked), merged newest activity first, with verified title and owner (the signed author of the task's first
-  user-written `task.meta`; the hub's `owner_id` is ignored); `--mine` and `--search` filter here because titles are
-  encrypted.
+- `task overview`, the task dashboard (ADR-103 section 4): every task of the workgroups the user can read in
+  every organization of the user (or of `--org`, or of the workgroup `--wg`; from the verified log, others are never
+  asked), captured tasks and agent tasks in one list, merged in the chosen order (latest activity, creation or
+  urgency), with verified title, owner (the signed author of the task's first `task.meta` of a person or an agent
+  account; the hub's `owner_id` is ignored) and the ticket fields of ADR-102. Status, urgency, person and topic filter
+  at the hub; `--mine` (the owner or the person of the owning agent account), `--search`, GitHub organisation and
+  repository here because they are sealed. `counts` are the hub's counters per status and urgency
+  (`GET /v1/orgs/{org}/tasks/counts`) summed over the organizations.
 """
 
 from __future__ import annotations
@@ -27,10 +31,11 @@ import math
 import re
 import time
 import unicodedata
+from dataclasses import dataclass
 from typing import Any, cast
-from urllib.parse import urlencode
+from urllib.parse import parse_qsl, urlencode
 
-from agent_platform import identities
+from agent_platform import identities, tickets
 from agent_platform.account import Account, unverified
 from agent_platform.commands import Context, Tree
 from agent_platform.errors import PlatformError
@@ -39,7 +44,7 @@ from agent_platform.hub import segment
 from agent_platform.orgs import find_org
 from agent_runner.crypto.encoding import parse_time
 from agent_runner.crypto.errors import CryptoError
-from agent_runner.crypto.log.state import USER, WG
+from agent_runner.crypto.log.state import AGENT, USER, WG
 
 ACTIONS = ("stop", "interrupt")
 OPERATION_KINDS = "operation.params,operation.result"
@@ -49,6 +54,8 @@ TASK_PAGE = 50
 ENDED_STATES = frozenset({"stopped", "failed", "suspended"})
 TASK_STATES = ("scheduling", "starting", "working", "idle", "failed", "closed")
 OVERVIEW_PAGES = 20
+OPEN = "open"
+"""The list state of `task overview` for every task state but `closed`."""
 # The terminal's view without its control sequences: CSI, OSC (BEL or ST terminated), character set designations,
 # other two-character escapes and C0 controls except tab and line feed.
 _CONTROL = re.compile(
@@ -240,11 +247,15 @@ def search_text(text: str) -> str:
     return unicodedata.normalize("NFKC", text).lower().strip()
 
 
-def _wg_tasks(account: Account, wg: str, state: str | None) -> list[dict[str, Any]]:
+def _wg_tasks(
+    account: Account, wg: str, state: str | None, extra: dict[str, str] | None = None
+) -> list[dict[str, Any]]:
+    """The rows of a workgroup's list, page by page (at most `OVERVIEW_PAGES`); `extra` the order and the hub's
+    ticket filters (default newest activity first)."""
     rows: list[dict[str, Any]] = []
     before: str | None = None
     for _page in range(OVERVIEW_PAGES):
-        query = {"limit": TASK_PAGE, "order": "activity", **({"state": state} if state else {})}
+        query = {"limit": TASK_PAGE, "order": "activity", **({"state": state} if state else {}), **(extra or {})}
         answer = account.call("GET", f"/v1/workgroups/{segment(wg)}/tasks?{urlencode({**query, **_cursor(before)})}")
         rows += [row for row in rows_of(answer, "tasks") if row.get("wg_id") == wg]
         following = answer.get("next_before")
@@ -259,7 +270,8 @@ def _cursor(before: str | None) -> dict[str, str]:
 
 
 def metas(account: Account, org: str, wg: str) -> dict[str, tuple[str | None, str | None]]:
-    """Per task: the newest verified title and the author of the first user-written `task.meta`."""
+    """Per task: the newest verified title and the author of the first `task.meta` written by a person or an agent
+    account (a device's is skipped), as the web reads the owner (`selectOwner`)."""
     log = account.org_log(org)
     items, _last = pull(account, wg, {"kinds": "task.meta"})
     events, _skipped = open_all(account, org, (WG, wg), items)
@@ -270,41 +282,138 @@ def metas(account: Account, org: str, wg: str) -> dict[str, tuple[str | None, st
         if isinstance(body, dict) and isinstance(body.get("title"), str):
             title = body["title"]
         author = log.state.principals.get(event["author"])
-        if owner is None and author is not None and author.kind == USER:
+        if owner is None and author is not None and author.kind in (USER, AGENT):
             owner = author.id
         found[event["task"]] = (title, owner)
     return found
 
 
-def task_overview(account: Account, org: str, state: str | None, mine: bool, search: str) -> dict[str, Any]:
-    log = account.org_log(uuid_argument(org))
-    readable = [wg for wg in sorted(log.state.workgroups) if log.state.can_read(account.user_id, WG, wg)]
+@dataclass(frozen=True)
+class Dashboard:
+    """What `task overview` asks for (ADR-103 section 4): the place (every organization of the user, one org or
+    one workgroup), the task state, "only mine" (the signed owner), the title search, the ticket filters of ADR-102
+    and the order."""
+
+    org: str | None = None
+    wg: str | None = None
+    state: str | None = None
+    mine: bool = False
+    search: str = ""
+    filters: tickets.Filters | None = None
+    order: str = "activity"
+
+
+def _places(account: Account, query: Dashboard) -> list[tuple[str, list[str]]]:
+    """Per organization the workgroups the user reads (from the verified log; the others are never asked)."""
+    if query.org is not None and query.wg is not None:
+        raise PlatformError("invalid_argument")
+    if query.wg is not None:
+        return [(find_org(account, uuid_argument(query.wg)), [query.wg])]
+    orgs = [uuid_argument(query.org)] if query.org is not None else [str(o["org_id"]) for o in account.me()["orgs"]]
+    found = []
+    for org in orgs:
+        state = account.org_log(org).state
+        found.append((org, [wg for wg in sorted(state.workgroups) if state.can_read(account.user_id, WG, wg)]))
+    return found
+
+
+def _org_rows(account: Account, org: str, wgs: list[str], query: Dashboard) -> list[dict[str, Any]]:
+    """The rows of one organization's workgroups for the query (before the filters applied here)."""
+    hub = dict(parse_qsl(tickets.list_query(account, org, query.filters).lstrip("&")))
+    sealed = query.filters is not None and query.filters.sealed()
     names = account.names(org).workgroups
-    merged: list[dict[str, Any]] = []
-    for wg in readable:
+    rows: list[dict[str, Any]] = []
+    for wg in wgs:
         metas_of = metas(account, org, wg)
-        for row in _wg_tasks(account, wg, state):
-            title, owner = metas_of.get(str(row.get("task_id")), (None, None))
-            merged.append(
+        ticket_meta = tickets.ticket_meta(account, org, wg) if sealed else {}
+        state = None if query.state == OPEN else query.state
+        listed = [
+            row
+            for row in _wg_tasks(account, wg, state, {**hub, "order": query.order})
+            if query.state != OPEN or row.get("state") != "closed"
+        ]
+        topics = tickets.topics(account, org) if any(row.get("topic_id") for row in listed) else {}
+        for row in listed:
+            task = str(row.get("task_id"))
+            if sealed and not cast(tickets.Filters, query.filters).matches(ticket_meta.get(task, {})):
+                continue
+            title, owner = metas_of.get(task, (None, None))
+            rows.append(
                 {
                     "task_id": row.get("task_id"),
+                    "org_id": org,
                     "wg_id": wg,
                     "workgroup": names.get(wg),
                     "state": row.get("state"),
                     "title": title,
                     "owner_id": owner,
+                    **tickets.row_fields(row, topics),
+                    "created_at": row.get("created_at"),
                     "last_activity_at": row.get("last_activity_at"),
                 }
             )
-    merged.sort(key=lambda row: (str(row["last_activity_at"]), str(row["task_id"])), reverse=True)
-    wanted = search_text(search)
+    return rows
+
+
+def _counts(account: Account, org: str, query: Dashboard) -> dict[str, Any]:
+    """The hub's counters of one organization (`GET /v1/orgs/{org}/tasks/counts`) for the hub filters."""
+    params = dict(parse_qsl(tickets.list_query(account, org, query.filters).lstrip("&")))
+    state = None if query.state == OPEN else query.state  # the counters cover every task state but closed alike
+    params.update({**({"state": state} if state else {}), **({"wg": query.wg} if query.wg else {})})
+    # no bare "?" without parameters: the signed target must be the path alone then
+    target = f"/v1/orgs/{segment(org)}/tasks/counts" + (f"?{urlencode(params)}" if params else "")
+    answer = account.call("GET", target)
+    if not all(isinstance(answer.get(name), dict) for name in ("by_status", "by_urgency")):
+        raise unverified("response_invalid")
+    return answer
+
+
+OVERVIEW_KEYS = ("working", "waiting", "no_agent")
+OVERVIEW_HELP = "only open tasks: in progress (working), waiting for a question (waiting), without an agent (no-agent)"
+
+
+def _summed(found: list[dict[str, Any]]) -> dict[str, Any]:
+    by_status = {name: sum(int(item["by_status"].get(name, 0)) for item in found) for name in tickets.STATUSES}
+    by_urgency = {name: sum(int(item["by_urgency"].get(name, 0)) for item in found) for name in tickets.URGENCIES}
+    # the open tasks per overview of the start page (an older hub answers none: zero)
+    by_overview = {
+        name: sum(int((item.get("by_overview") or {}).get(name, 0)) for item in found) for name in OVERVIEW_KEYS
+    }
+    return {
+        "by_status": by_status,
+        "by_urgency": by_urgency,
+        "by_overview": by_overview,
+        "total": sum(int(item.get("total", 0)) for item in found),
+    }
+
+
+def task_overview(account: Account, query: Dashboard) -> dict[str, Any]:
+    """`task overview` (module docstring)."""
+    if query.order not in tickets.ORDERS or query.state not in (None, OPEN, *TASK_STATES):
+        raise PlatformError("invalid_argument")
+    places = _places(account, query)
+    merged = [row for org, wgs in places for row in _org_rows(account, org, wgs, query)]
+    merged.sort(key=tickets.sort_key(query.order), reverse=True)
+    wanted = search_text(query.search)
+
+    def is_mine(row: dict[str, Any]) -> bool:
+        # the owner, or the person whose agent account wrote the task (as the web's "only mine")
+        owner = row["owner_id"]
+        return owner is not None and account.org_log(row["org_id"]).state.acting(owner) == account.user_id
+
     rows = [
         row
         for row in merged
-        if (not mine or row["owner_id"] == account.user_id)
+        if (not query.mine or is_mine(row))
         and (not wanted or (row["title"] is not None and wanted in search_text(row["title"])))
     ]
-    return {"org_id": org, "workgroups": readable, "tasks": rows}
+    return {
+        "org_id": query.org,
+        "organizations": [org for org, _wgs in places],
+        "workgroups": [wg for _org, wgs in places for wg in wgs],
+        "counts": _summed([_counts(account, org, query) for org, _wgs in places]),
+        "tasks": rows,
+    }
 
 
 # --- commands ---
@@ -318,8 +427,31 @@ def _operations(account: Account, args: Any, context: Context) -> dict[str, Any]
     return task_operations(account, args.task, args.before, args.operation)
 
 
+def dashboard_filters(args: Any) -> tickets.Filters | None:
+    """The ticket filters of the arguments (None without one)."""
+    found = tickets.Filters(
+        status=args.status,
+        urgency=args.urgency,
+        assignee=args.assignee,
+        topic=args.topic,
+        github_org=args.github_org,
+        github_repo=args.repo,
+        overview=args.overview,
+    )
+    return None if found == tickets.Filters() else found
+
+
 def _overview(account: Account, args: Any, context: Context) -> dict[str, Any]:
-    return task_overview(account, args.org, args.state, args.mine, args.search)
+    query = Dashboard(
+        org=args.org,
+        wg=args.wg,
+        state=args.state,
+        mine=args.mine,
+        search=args.search,
+        filters=dashboard_filters(args),
+        order=args.order or "activity",
+    )
+    return task_overview(account, query)
 
 
 def _show(account: Account, args: Any, context: Context) -> dict[str, Any]:
@@ -377,16 +509,29 @@ def register(tree: Tree) -> None:
         group,
         "overview",
         _overview,
-        "tasks of every readable workgroup of an org",
-        example='agent-platform task overview --org <org_id> [--state working] [--mine] [--search "deploy"]',
-        words="gesamtübersicht alle aufgaben organisation suchen all tasks dashboard",
+        "the task dashboard: every task the user reads in all organizations (or one), filtered, sorted, counted",
+        example='agent-platform task overview [--org <org_id>] [--state working] [--mine] [--search "deploy"]',
+        words=(
+            "gesamtübersicht dashboard alle aufgaben organisationen suchen zuständig prio priorität dringlichkeit"
+            " status zähler sortieren all tasks organizations responsible priority urgency counts sort search"
+        ),
         then="agent-platform task show --task <task_id>",
         trim="first",
     )
-    sub.add_argument("--org", required=True)
-    sub.add_argument("--state", choices=list(TASK_STATES))
+    place = sub.add_mutually_exclusive_group()
+    place.add_argument("--org", help="only this organization (default every organization of the user)")
+    place.add_argument("--wg", help="only this workgroup")
+    sub.add_argument("--state", choices=[*TASK_STATES, OPEN], help="a task state, or open (every state but closed)")
     sub.add_argument("--mine", action="store_true", help="only tasks the user created")
     sub.add_argument("--search", default="", help="part of the title")
+    sub.add_argument("--status", choices=tickets.STATUSES, help="only tasks with this status")
+    sub.add_argument("--urgency", choices=tickets.URGENCIES, help="only tasks with this urgency (prio)")
+    sub.add_argument("--assignee", help="only tasks of this person (a user ID, me, or none)")
+    sub.add_argument("--topic", help="only tasks of this topic (from `topic list`, or none)")
+    sub.add_argument("--github-org", help="only tasks of this GitHub organisation")
+    sub.add_argument("--repo", help="only tasks of this repository (owner/name)")
+    sub.add_argument("--overview", choices=tickets.OVERVIEWS, help=OVERVIEW_HELP)
+    sub.add_argument("--order", choices=tickets.ORDERS, help="activity (default), created or urgency")
     group = tree.group("session", "sessions of tasks")
     sub = tree.command(
         group,

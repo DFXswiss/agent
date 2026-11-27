@@ -36,6 +36,7 @@ import type { VerifiedLog } from './verify';
 export const GRACE_MS = 600_000;
 
 export const ORG_ADMIN = 'org_admin';
+export const ORG_MEMBER = 'org_member';
 export const ORG_MEMBER_SELF = 'org_member_self';
 export const WG_WRITE = 'wg_write';
 export const DEVICE_ASSIGNED_WG = 'device_assigned_wg';
@@ -43,6 +44,7 @@ export const DEVICE_ASSIGNED_WG_SESSION = 'device_assigned_wg_session';
 export const WG_RELEASE = 'wg_release';
 export const RIGHTS: Readonly<Record<string, string>> = {
   [ORG_ADMIN]: 'author is an admin of the org',
+  [ORG_MEMBER]: 'author is a member of the org',
   [ORG_MEMBER_SELF]: 'author is an org member and ref == author',
   [WG_WRITE]: 'author has write access to the workgroup',
   [DEVICE_ASSIGNED_WG]: 'author device is assigned to the workgroup',
@@ -102,6 +104,8 @@ export const KIND_RULES: readonly KindRule[] = [
   rule('device.profile', 'org', [USER], ORG_ADMIN, { wg: 'empty', ref: 'device' }),
   // an admin-given name of a member or of an invitation's person (ADR-073)
   rule('member.name', 'org', [USER], ORG_ADMIN, { wg: 'empty', ref: 'subject' }),
+  // a topic of captured tasks (ADR-102 section 3): any member writes it, `ref` = the topic ID
+  rule('topic.profile', 'org', [USER], ORG_MEMBER, { wg: 'empty', task: 'empty', ref: 'set' }),
   ...['whiteboard.entry', 'whiteboard.edit', 'whiteboard.delete'].flatMap((kind) => [
     rule(kind, 'org', [USER], ORG_ADMIN, ORG_ENTRY, ORG_LEVEL),
     rule(kind, 'wg', [USER], WG_WRITE, WG_ENTRY, WG_LEVEL),
@@ -196,6 +200,8 @@ export function hasRight(kind: KindRule, state: OrgState, header: F.Fields, supp
   switch (kind.right) {
     case ORG_ADMIN:
       return state.isAdmin(author);
+    case ORG_MEMBER:
+      return state.member(author) !== null;
     case ORG_MEMBER_SELF:
       return state.member(author) !== null && header.ref === state.acting(author);
     case WG_WRITE:

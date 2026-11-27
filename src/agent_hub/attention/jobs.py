@@ -1,7 +1,8 @@
 """The jobs of the attention area (ADR-076 section 4, ADR-027 section 4 `<area>/jobs.py:JOBS`).
 
 `attention.backfill` runs every `INTERVAL_SECONDS` and derives the record of every task that has none (the tasks
-created before migration 0017, a lost row) with `agent_hub.attention.store.refresh`, at most `BATCH` tasks per
+created before migration 0017, a lost row, a captured task of before ADR-103) with
+`agent_hub.attention.store.refresh`, at most `BATCH` tasks per
 transaction (each takes the audit lock, so a batch is kept short), until none is left. It is idempotent: a task with
 a record is never selected, and a refresh of the same state writes nothing. A backfilled record announces nothing
 (no frame, no notification): it describes a state the users already knew, and the clients read it with the lists.

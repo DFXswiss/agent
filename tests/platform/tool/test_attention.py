@@ -240,9 +240,10 @@ def test_malformed_attention_answers(world: World, hub: HubFake, tool: Tool) -> 
 
 
 def test_bad_attention_arguments(world: World, tool: Tool) -> None:
+    # without an attention category, `--org` lists the task dashboard of that organization (ADR-103)
+    assert tool.run("task", "list", "--org", world.org)[0] == 0
+    assert tool.run("task", "list", "--org", world.org, "--state", "open")[0] == 0
     for argv in (
-        ("task", "list", "--org", world.org),
-        ("task", "list", "--org", world.org, "--state", "open"),
         ("task", "list", "--org", world.org, "--state", "done", "--limit", "0"),
         ("task", "list", "--org", world.org, "--state", "done", "--limit", "1001"),
         ("task", "list", "--org", "not-a-uuid", "--state", "done"),

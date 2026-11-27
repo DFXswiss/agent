@@ -11,14 +11,17 @@
 // - "Load more" loads the next page of the list that holds the cut-off (the binding list) until at least one page more
 //   of merged rows is shown or no list has a further page.
 // - "Only mine" (the signed owner or an agent of the user, never the hub's `owner_id`) and the title search run in
-//   the browser over the merged rows, because titles are encrypted.
-import { parseTime } from '../encoding/time';
+//   the browser over the merged rows, because titles are encrypted; so do the GitHub organisation and repository of
+//   a captured task (sealed in its `task.meta`, ADR-102 section 2). Status, urgency, person and topic are hub filters
+//   (the list key, `filters.ts`).
 import { type OrgState, WG } from '../log/state';
 import { workgroupOrder } from '../org/members';
 import { orgEntry } from '../store/slices/orgs';
 import { type TaskList, taskList, type TaskRow, type TasksState } from '../store/slices/tasks';
 import type { StoreState } from '../store/store';
 import { selectOwner, selectTitle } from './directory';
+import { comesAfter, orderOf } from './filters';
+import { selectMeta } from './tickets';
 import { loadTasks, PAGE_SIZE } from './list';
 import type { TasksContext } from './pull';
 
@@ -37,7 +40,18 @@ export interface OverviewQuery {
   readonly mine: string | null;
   /** Title search (case-insensitive part of the title; empty: no search). */
   readonly search: string;
+  /** GitHub organisation of the sealed `task.meta` (case-insensitive, whole login; empty or absent: any; ADR-102). */
+  readonly githubOrg?: string;
+  /** Repository `owner/name` of the sealed `task.meta` (case-insensitive, whole name; empty or absent: any). */
+  readonly githubRepo?: string;
 }
+
+/** Whether the browser-side filters of `query` are set (search, only mine, GitHub organisation or repository). */
+export const clientFiltered = (query: Pick<OverviewQuery, 'mine' | 'search' | 'githubOrg' | 'githubRepo'>): boolean =>
+  query.mine !== null ||
+  query.search.trim() !== '' ||
+  (query.githubOrg ?? '').trim() !== '' ||
+  (query.githubRepo ?? '').trim() !== '';
 
 export interface Overview {
   /** `loading` while a list has not answered its first page yet. */
@@ -55,16 +69,12 @@ export interface Overview {
   readonly code: string | null;
 }
 
-/** The order key of a row: latest activity, then task ID (both descending). */
-const after = (a: TaskRow, b: TaskRow): boolean => {
-  const delta = parseTime(a.last_activity_at) - parseTime(b.last_activity_at);
-  return delta < 0 || (delta === 0 && a.task_id < b.task_id);
-};
-
-/** The user a task belongs to: its owner, or the user of an owner that is an agent (null while unknown). */
-function mineOf(state: StoreState, org: string, row: TaskRow): string | null {
-  const owner = selectOwner(org, row.wg_id, row.task_id)(state);
-  return owner === null ? null : orgEntry(state.orgs, org).log!.state.acting(owner);
+/** The user a task belongs to: its owner, or the user of an owner that is an agent (null while unknown); in the row's
+ * own organization (the dashboard merges several, ADR-103). */
+function mineOf(state: StoreState, row: TaskRow): string | null {
+  const owner = selectOwner(row.org_id, row.wg_id, row.task_id)(state);
+  const log = orgEntry(state.orgs, row.org_id).log;
+  return owner === null || log === null ? null : log.state.acting(owner);
 }
 
 /** A list that has not answered its first page yet. */
@@ -77,6 +87,8 @@ export const searchText = (text: string): string => text.normalize('NFKC').toLoc
 /** The overview of `query` in `state` (pure; `selectOverview` memoizes it for React). */
 export function overview(state: StoreState, query: OverviewQuery): Overview {
   const tasks: TasksState = state.tasks;
+  const order = orderOf(query.state);
+  const after = (a: TaskRow, b: TaskRow): boolean => comesAfter(order, a, b);
   const lists = query.wgs.map((wg) => taskList(tasks, wg, query.state));
   const failed = lists.filter((list) => list.status === 'error');
   const busy = lists.some((list) => list.status === 'loading');
@@ -97,8 +109,15 @@ export function overview(state: StoreState, query: OverviewQuery): Overview {
   const sorted = all.sort((a, b) => (after(a, b) ? 1 : -1));
   const merged = binding === null ? sorted : cut === null ? [] : sorted.filter((row) => !after(row, cut));
   const needle = searchText(query.search);
+  const org = (query.githubOrg ?? '').trim().toLowerCase();
+  const repo = (query.githubRepo ?? '').trim().toLowerCase();
   const rows = merged.filter((row) => {
-    if (query.mine !== null && mineOf(state, query.org, row) !== query.mine) return false;
+    if (query.mine !== null && mineOf(state, row) !== query.mine) return false;
+    if (org !== '' || repo !== '') {
+      const meta = selectMeta(row.wg_id, row.task_id)(state);
+      if (org !== '' && meta?.github_org.toLowerCase() !== org) return false;
+      if (repo !== '' && meta?.github_repo.toLowerCase() !== repo) return false;
+    }
     if (needle === '') return true;
     const title = selectTitle(row.wg_id, row.task_id, row.title_event_id)(state);
     return title.status === 'verified' && searchText(title.text).includes(needle);

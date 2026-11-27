@@ -7,7 +7,9 @@ commit), the reads in `agent_hub.tasks.read` and `agent_hub.tasks.queue`. Reads 
 malformed and forbidden IDs alike; writes `403 forbidden` on a known task without `task:write` (03-api.md section 1).
 There is no project level anywhere (R-2.10): organization → workgroup → task. The task's GitHub identity
 (`github_identity` of `POST /v1/tasks`, ADR-078) is checked by the service; `PUT /v1/tasks/{task}/github-identity`
-lives in `agent_hub.github.routes`.
+lives in `agent_hub.github.routes`. The ticket fields (ADR-102, E-41): `POST /v1/tasks` with only the `task.meta`
+captures a task without an agent, `PUT /v1/tasks/{task}/fields` changes status, urgency, person and topic
+(`agent_hub.tasks.fields`), and the task list filters by them.
 """
 
 from __future__ import annotations
@@ -21,6 +23,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 from agent_hub.agents.identity import actor
+from agent_hub.attention.derive import OVERVIEW
+from agent_hub.attention.read import readable_workgroups
 from agent_hub.errors import HubError
 from agent_hub.events.routes import parse_count, parse_uuid
 from agent_hub.http.context import Context, CurrentPrincipal, HubContext
@@ -29,7 +33,7 @@ from agent_hub.orgs import rights
 from agent_hub.scheduler import settings as scheduler_settings
 from agent_hub.scheduler import signals as scheduler_signals
 from agent_hub.sessions.derive import TASK_STATES
-from agent_hub.tasks import queue, read, service
+from agent_hub.tasks import fields, queue, read, service
 from agent_hub.workgroups.routes import path_id
 
 router = HubRouter()
@@ -50,10 +54,23 @@ class CreateTaskRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task_id: str
     wg_id: str
-    events: list[dict[str, Any]] = Field(min_length=2, max_length=2)
+    events: list[dict[str, Any]] = Field(min_length=1, max_length=2)
     placement: Placement | None = None
     github_identity: str | None = None
     analysis: dict[str, Any] | None = None
+    urgency: str | None = None
+    assignee_id: str | None = None
+    topic_id: str | None = None
+
+
+class FieldsRequest(BaseModel):
+    """Body of `PUT /v1/tasks/{task}/fields` (ADR-102 section 5): at least one field; null clears person or topic."""
+
+    model_config = ConfigDict(extra="forbid")
+    status: str | None = None
+    urgency: str | None = None
+    assignee_id: str | None = None
+    topic_id: str | None = None
 
 
 class PromptRequest(BaseModel):
@@ -103,20 +120,60 @@ async def create_task(context: Context, principal: CurrentPrincipal, body: Creat
             raise HubError("request_invalid", detail={"pointers": ["/placement/vm_id"]})
         requested = (body_id(body.placement.device_id, "/placement/device_id"), vm)
     identity = None if body.github_identity is None else body_id(body.github_identity, "/github_identity")
+    ticket = service.Ticket(
+        urgency=fields.URGENCIES[1]
+        if body.urgency is None
+        else fields.check_code(body.urgency, fields.URGENCIES, "/urgency"),
+        assignee_id=None if body.assignee_id is None else body_id(body.assignee_id, "/assignee_id"),
+        topic_id=None if body.topic_id is None else body_id(body.topic_id, "/topic_id"),
+    )
     write = functools.partial(
         service.create_task,
         requested=requested,
         github_identity=identity,
         author=actor(principal).id,
         analysis=body.analysis,
+        ticket=ticket,
     )
     return await asyncio.to_thread(_run, context, write, user, task_id, wg_id, body.events)
+
+
+def _changes(body: FieldsRequest) -> dict[str, Any]:
+    """The fields the body names, checked for their form (`request_invalid` with the pointer)."""
+    named = body.model_fields_set
+    if not named:
+        raise HubError("request_invalid", detail={"pointers": [""]})
+    changes: dict[str, Any] = {}
+    for name, allowed in (("status", fields.STATUSES), ("urgency", fields.URGENCIES)):
+        if name in named:
+            changes[name] = fields.check_code(getattr(body, name), allowed, f"/{name}")
+    for name in ("assignee_id", "topic_id"):
+        if name in named:
+            value = getattr(body, name)
+            changes[name] = None if value is None else body_id(value, f"/{name}")
+    return changes
+
+
+@router.put("/v1/tasks/{task}/fields", auth="browser", right="task:write")
+async def put_fields(context: Context, principal: CurrentPrincipal, task: str, body: FieldsRequest) -> dict[str, Any]:
+    user = cast(UUID, principal.principal_id)
+    changes = _changes(body)
+    answer, effects = await asyncio.to_thread(fields.put_fields, context, user, path_id(task), changes)
+    effects.flush()
+    return answer
 
 
 def _list(context: HubContext, user: UUID, wg: UUID, **options: Any) -> dict[str, Any]:
     with context.pool.connection() as connection:
         rights.require(connection, user, rights.WG_READ, wg_id=wg)
         return read.list_tasks(connection, wg, **options)
+
+
+def _filter_id(value: str | None, pointer: str) -> UUID | str | None:
+    """A list filter naming an ID or `none` (ADR-102 section 5)."""
+    if value is None or value == fields.NONE:
+        return value
+    return body_id(value, pointer)
 
 
 @router.get("/v1/workgroups/{wg}/tasks", auth="browser", right="wg:read", read_resource="workgroup.tasks")
@@ -129,15 +186,81 @@ async def list_tasks(
     before: str | None = None,
     limit: str | None = None,
     order: str | None = None,
+    status: str | None = None,
+    urgency: str | None = None,
+    assignee: str | None = None,
+    topic: str | None = None,
+    overview: str | None = None,
 ) -> dict[str, Any]:
     if state is not None and state not in TASK_STATES:
         raise HubError("request_invalid", detail={"pointers": ["/state"]})
-    if order is not None and order not in read.ORDERS:
+    if order is not None and order not in (*read.ORDERS, read.URGENCY):
         raise HubError("request_invalid", detail={"pointers": ["/order"]})
     count = parse_count(limit, read.LIST_DEFAULT, 1, read.LIST_MAX)
     user = cast(UUID, principal.principal_id)
-    options = {"state": state, "before": before, "limit": count, "order": order or "created"}
+    options = {
+        "state": state,
+        "before": before,
+        "limit": count,
+        "order": order or "created",
+        "ticket": _ticket_filter(status, urgency, assignee, topic, overview=overview),
+    }
     return await asyncio.to_thread(_list, context, user, path_id(wg), **options)
+
+
+def _ticket_filter(
+    status: str | None, urgency: str | None, assignee: str | None, topic: str | None, *, overview: str | None
+) -> read.TicketFilter:
+    """The ticket filters of a query and the overview of the open tasks (`400 request_invalid` with the pointer for a
+    value outside its form)."""
+    if status is not None:
+        fields.check_code(status, fields.STATUSES, "/status")
+    if urgency is not None:
+        fields.check_code(urgency, fields.URGENCIES, "/urgency")
+    if overview is not None:
+        fields.check_code(overview, tuple(OVERVIEW), "/overview")
+    return read.TicketFilter(
+        status=status,
+        urgency=urgency,
+        assignee=_filter_id(assignee, "/assignee"),
+        topic=_filter_id(topic, "/topic"),
+        overview=overview,
+    )
+
+
+def _counts(
+    context: HubContext, user: UUID, org: UUID, *, wg: UUID | None, state: str | None, ticket: read.TicketFilter
+) -> dict[str, Any]:
+    with context.pool.connection() as connection:
+        rights.require(connection, user, rights.ORG_MEMBER, org_id=org)
+        readable = readable_workgroups(connection, org, user)
+        if wg is not None and wg not in readable:
+            raise HubError("not_found")
+        return read.count_tasks(connection, readable if wg is None else [wg], state=state, ticket=ticket)
+
+
+@router.get("/v1/orgs/{org}/tasks/counts", auth="browser", right="org:member", read_resource="org.tasks.counts")
+async def task_counts(
+    context: Context,
+    principal: CurrentPrincipal,
+    org: str,
+    *,
+    wg: str | None = None,
+    state: str | None = None,
+    status: str | None = None,
+    urgency: str | None = None,
+    assignee: str | None = None,
+    topic: str | None = None,
+    overview: str | None = None,
+) -> dict[str, Any]:
+    """The counters of the task dashboard (ADR-103 section 1) over the readable workgroups of the org."""
+    if state is not None and state not in TASK_STATES:
+        raise HubError("request_invalid", detail={"pointers": ["/state"]})
+    ticket = _ticket_filter(status, urgency, assignee, topic, overview=overview)
+    chosen = None if wg is None else body_id(wg, "/wg")
+    user = cast(UUID, principal.principal_id)
+    work = functools.partial(_counts, wg=chosen, state=state, ticket=ticket)
+    return await asyncio.to_thread(work, context, user, path_id(org))
 
 
 def _task(context: HubContext, user: UUID, task: UUID) -> dict[str, Any]:

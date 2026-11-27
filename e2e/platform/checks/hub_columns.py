@@ -206,7 +206,7 @@ session_transition: tasks | session_id:uuid seq:number state:code reason:code at
 task: tasks | id:uuid org_id:uuid wg_id:uuid owner_id:uuid state:code state_reason:code created_at:time
   state_at:time last_activity_at:time closed_at:time placement_device_id:uuid placement_vm_id:code
   github_identity:uuid model_consent:flag agent_profile:json@profiles analysis:json
-  number:number@mainagents
+  number:number@mainagents status:code urgency:code assignee_id:uuid topic_id:uuid
 task_attention: attention | task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid category:code reason:code
   ref_kind:code ref_id:uuid since:time seq:number subagents_total:number subagents_active:number updated_at:time
   wait_until:time

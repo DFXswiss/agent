@@ -180,6 +180,8 @@ KOR51_AUDIT = "agent_profile.set agent_profile.delete task.agent_profile"
 """Rights profiles (ADR-094): own profiles of an org or a workgroup, the profile of a task."""
 # ADR-096 (KOR-56): the support release
 KOR56_AUDIT = "support.people support.write support.name"
+# ADR-102 section 5 (contracts/changes/KOR-75.md): the ticket fields of a task changed
+KOR75_AUDIT = "task.fields"
 # ADR-099 section 7 (contracts/changes/KOR-74.md): a session read a mailbox; the reads come from INDEX.json.
 KOR74_AUDIT = "mail.read"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
@@ -203,6 +205,7 @@ SPEC_EVENT_MATRIX = [
     ("wg.profile", "org", "user", "org_admin"),
     ("member.profile", "org", "user", "org_member_self"),
     ("member.name", "org", "user", "org_admin"),
+    ("topic.profile", "org", "user", "org_member"),  # ADR-102 section 3 (contracts/changes/KOR-75.md)
     ("device.profile", "org", "user", "org_admin"),
     ("whiteboard.entry", "org", "user", "org_admin"),
     ("whiteboard.edit", "org", "user", "org_admin"),
@@ -237,7 +240,8 @@ SPEC_EVENT_MATRIX = [
 ]
 # 03-api.md section 10 (event bodies): every kind.
 SPEC_EVENT_KINDS = (
-    "org.profile wg.profile member.profile member.name device.profile task.meta task.agent_name prompt whiteboard.entry"
+    "org.profile wg.profile member.profile member.name topic.profile device.profile task.meta task.agent_name prompt"
+    " whiteboard.entry"
     " whiteboard.edit whiteboard.delete settings.workgroup support.info session.output session.tool session.hook"
     " session.file"
     " session.terminal session.status session.error operation.params operation.result platform.read workvm.run"
@@ -315,6 +319,7 @@ def test_audit_actions(index: dict[str, Any]) -> None:
     expected = set(SPEC_AUDIT_FIXED.split()) | set(DECIDED_AUDIT.split()) | set(KOR31_AUDIT.split())
     expected |= set(KOR47_AUDIT.split()) | set(KOR50_AUDIT.split()) | set(KOR48_AUDIT.split())
     expected |= set(KOR58_AUDIT.split()) | set(KOR51_AUDIT.split()) | set(KOR56_AUDIT.split())
+    expected |= set(KOR75_AUDIT.split())
     expected |= set(KOR74_AUDIT.split())
     for prefix, values in SPEC_AUDIT_PATTERNS.items():
         expected |= {f"{prefix}.{value}" for value in values.split()}

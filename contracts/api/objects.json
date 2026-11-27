@@ -166,6 +166,36 @@
             }
           ],
           "description": "the scope and period of an analysis task (ADR-097 section 1), null for every other task"
+        },
+        "status": {
+          "$ref": "../common.json#/$defs/task_status",
+          "description": "the ticket status (ADR-102 section 1); absent from an older hub"
+        },
+        "urgency": {
+          "$ref": "../common.json#/$defs/task_urgency",
+          "description": "the urgency (ADR-102 section 1); absent from an older hub"
+        },
+        "assignee_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the responsible user of the organization (ADR-102 section 1), null without one; absent from an older hub"
+        },
+        "topic_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the topic, the ref of a topic.profile event (ADR-102 section 3), null without one; absent from an older hub"
         }
       },
       "required": [

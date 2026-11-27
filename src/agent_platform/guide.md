@@ -296,6 +296,29 @@ Prompts and answers are encrypted on this computer; the hub never sees them. A t
 when the workgroup has no execution device yet: it waits with `no_device` until one is assigned (`device assign --wg
 <wg_id>`).
 
+**Capturing a task like a ticket** (no agent starts yet): when your user says "note that topic xy must be looked
+at", capture it and start it later:
+
+```sh
+agent-platform task capture --wg <wg_id> --title "Look at topic xy" --assignee me --urgency high
+# more fields: --description - (stdin), --topic <topic_id> or --new-topic "Payments", --github-org, --repo owner/name
+agent-platform task list --wg <wg_id> --status todo [--assignee me] [--topic <id>|none] [--repo <owner/name>]
+agent-platform task edit --task <task_id> --status completed
+# or --urgency, --assignee <id>|me|none, --topic <id>|none, --title, --description, --github-org, --repo ('' clears)
+agent-platform task start --task <task_id>
+# the agent starts with the title and description as its first prompt (--text replaces them)
+agent-platform topic list --org <org_id>
+agent-platform topic create --org <org_id> --name "Payments"
+agent-platform task overview --status todo --urgency high --order urgency
+agent-platform task overview --overview no-agent   # open tasks: working | waiting (a question) | no-agent
+# the task dashboard: every task you may read in all organizations (or --org / --wg), with the counters per status
+# and urgency (counts); the same filters, --search and --order work for task list --wg|--org
+```
+
+Status is `todo` (captured), `inProgress` (an agent was started, or set by hand) or `completed` (the task is closed;
+`completed` closes it, `todo`/`inProgress` reopen it without an agent). Title, description, organisation, repository
+and topic names are encrypted here; the hub sees only status, urgency, the person's ID and the topic's ID.
+
 **Your user's own Mac as an execution device** (optional; DFX devices are the default). When your user wants this
 Mac to run their tasks, connect it – your user never needs a terminal for it (ADR-074):
 
@@ -336,7 +359,7 @@ the text from stdin. Ids are the `*_id` values other commands return.
 **Tasks and sessions**
 
 ```sh
-agent-platform task overview --org <org_id> [--state working] [--mine] [--search "deploy"]   # all workgroups
+agent-platform task overview [--org <org_id>] [--state working] [--mine] [--search "deploy"] # all orgs, dashboard
 agent-platform task close --task <task_id>
 agent-platform task operations --task <task_id> [--operation <operation_id>]                 # pushes, PRs, results
 agent-platform task charges --task <task_id>                    # its costs per session (tokens, VM runtime), total

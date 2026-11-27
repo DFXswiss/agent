@@ -464,6 +464,30 @@ list says "Searched the N most recent tasks." ("Searched X of N tasks." once the
 further" button that starts the next request of at most 10 pages. While a search is active, "Search further" replaces
 "Load more".
 
+**Captured tasks (KOR-75, [ADR-102](../adr/102-captured-tasks.md), E-41).** Beside the composer of §5.1 and in §5.1a,
+"Capture task" opens a form: title (required), description, person (members of the organization, agent accounts
+included), topic (choose, or create a sealed `topic.profile`), GitHub organisation and repository (suggestions, free
+input allowed), urgency (preset normal); it sends `POST /v1/tasks` with the sealed `task.meta` alone, so no agent
+starts. Rows show status, urgency, person and topic. Both lists filter by person, topic, urgency and status at the hub
+(`assignee`, `topic`, `urgency`, `status`) and by GitHub organisation and repository in the browser with the bounded
+search above. The task page shows the fields with "Edit" (`PUT /v1/tasks/{task}/fields`; title, description,
+organisation and repository as a new sealed `task.meta`), the status as a choice (completed closes the task), and for a
+task without a main session "Start agent" (its first prompt: title, blank line, description; editable).
+
+**Task dashboard (KOR-75, [ADR-103](../adr/103-task-dashboard.md)).** §5.1a is the dashboard of every task the
+user reads: every organization of `GET /v1/me` with a verified log and every readable workgroup there, captured tasks
+and agent tasks in one list; with several organizations each row names "organization · workgroup", and the filters
+offer the organization and the workgroups of all of them. On top the counters of the start page's three groups of
+the open tasks ("In progress", "Waiting for a question", "No agent"; the hub's `overview`, a captured task that was
+never started has no agent), then per status and per urgency
+(`GET /v1/orgs/{org}/tasks/counts` per organization shown, summed; under the hub filters of the list); a click on a
+counter sets that filter, a second click clears it (the three groups are also a filter of both task lists). They load
+again when a filter changes, when a row of the shown workgroups appears or changes its state, status or urgency, and
+after a reconnect; a list filtered by group loads again then too (a row frame does not carry the group); a failed request keeps
+the last numbers and says so. Sort: latest activity (default), newest, most urgent (`order=urgency`). Home links the
+dashboard ("Dashboard of all tasks"), so it is one click from Home and from the menu. "Capture task" captures in the
+route's organization.
+
 ### 5.1b Resume notice (task page, KOR-33, ADR-072 §7)
 
 Below the task header, `ContextNotice` reads `context_restore`/`context_reason` of the task's current main session

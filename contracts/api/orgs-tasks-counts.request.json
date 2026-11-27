@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/orgs-tasks-counts.request.json",
+  "title": "GET /v1/orgs/{org}/tasks/counts request",
+  "description": "query parameters: the filters of the task dashboard (ADR-103 section 1); wg narrows to one readable workgroup",
+  "type": "object",
+  "properties": {
+    "wg": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "state": {
+      "$ref": "../common.json#/$defs/task_state"
+    },
+    "status": {
+      "$ref": "../common.json#/$defs/task_status"
+    },
+    "urgency": {
+      "$ref": "../common.json#/$defs/task_urgency"
+    },
+    "assignee": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "topic": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "overview": {
+      "type": "string",
+      "enum": [
+        "working",
+        "waiting",
+        "no_agent"
+      ],
+      "description": "the overview of the open tasks as in GET /v1/workgroups/{wg}/tasks"
+    }
+  },
+  "additionalProperties": false
+}

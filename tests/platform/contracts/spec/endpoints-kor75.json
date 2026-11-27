@@ -1,0 +1,28 @@
+{
+  "description": "Endpoints added by KOR-75 (ADR-102, E-41; ADR-103): the ticket fields of a task - status, urgency, person and topic - and the counters of the task dashboard (03-api.md section 4.6).",
+  "rights": [
+    "task:write",
+    "org:member"
+  ],
+  "auth": [
+    "browser"
+  ],
+  "endpoints": [
+    {
+      "method": "PUT",
+      "path": "/v1/tasks/{task}/fields",
+      "rights": [
+        "task:write"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/orgs/{org}/tasks/counts",
+      "rights": [
+        "org:member"
+      ],
+      "section": "4.6"
+    }
+  ]
+}

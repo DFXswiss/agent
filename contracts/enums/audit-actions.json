@@ -634,6 +634,10 @@
       "group": "read"
     },
     {
+      "action": "read.org.tasks.counts",
+      "group": "read"
+    },
+    {
       "action": "read.org.audit",
       "group": "read"
     },
@@ -919,6 +923,10 @@
     },
     {
       "action": "task.github_identity",
+      "group": "task"
+    },
+    {
+      "action": "task.fields",
       "group": "task"
     },
     {
