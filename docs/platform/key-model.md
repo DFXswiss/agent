@@ -375,6 +375,7 @@ bearing on keys).
 | [E-40](KONZEPT.md#e-40) | Stay signed in: the identity bundle is kept under the browser's non-extractable device key (ADR-006), so a reload unlocks without the passkey; how the session key renews itself is decided with the build. | none | – |
 | [E-41](KONZEPT.md#e-41) | Recorded tasks: their fields are task content and sealed like its title; which of them the hub may read as metadata for the filters is decided with the build. | none | – |
 | [E-42](KONZEPT.md#e-42) | Public landing page: no keys; nothing of a user is read before sign-in. | none | – |
+| [E-43](KONZEPT.md#e-43) | Claude Code view of a task: the terminal chunks are read with the workgroup's scope key as in the session detail, the web input sends the same sealed, signed `prompt` as the chat; no new key, no keystroke path. | none | – |
 | [A1](KONZEPT.md#a-1) | Subagents have the parent's rights and no keys. | carried | [§1](#1-principals) |
 | [A2](KONZEPT.md#a-2) | Conflict fix by merge commit. | none | – |
 | [A3](KONZEPT.md#a-3) | The hardening is built: the agent has its own identity as a sub-principal and is rotated out on revocation (ADR-082); the rekey of the user's identity for copies made before is a decision of the owner. | decision needed | KM-28, KM-30, KM-39 |
