@@ -1366,9 +1366,9 @@ class WorkVms:
         the guest leaves out every file the VM already holds unchanged. A guest before `guest_features.KNOWN_EXPORT`
         gets no `known` and answers with every file, as before; one that refuses `known` all the same is asked again
         without it (`OLD_GUEST_REFUSALS`). The mirrors of one VM and session run one after the other, so a call the
-        guest stopped waiting for and its repetition never export the workspace twice at once. An export that left out a file the
-        plan needs (a mirror that does not match) is repeated without `known`. The durations go to the log
-        (`runner.workvm push`)."""
+        guest stopped waiting for and its repetition never export the workspace twice at once. An export that left
+        out a file the plan needs (a mirror that does not match) is repeated without `known`. The durations go to the
+        log (`runner.workvm push`)."""
         async with self.mirror_locks.setdefault((vm.id, session.id), asyncio.Lock()):
             begun = time.monotonic()
             previous = await records.mirror(self.deps.db, vm.id, session.id, root)

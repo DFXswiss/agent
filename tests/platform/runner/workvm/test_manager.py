@@ -417,7 +417,8 @@ def test_mirrors_of_one_session_run_one_after_the_other(world: World) -> None:
         first, second = await asyncio.gather(*calls)
         return [first["files"], second["files"]]
 
-    assert world.run(body) == [2, 0]
+    # whichever call takes the lock first mirrors both files; the other then finds nothing left to send
+    assert sorted(world.run(body)) == [0, 2]
     assert world.known == [None, 2]
     assert len(world.helper.applied) == 1
 
