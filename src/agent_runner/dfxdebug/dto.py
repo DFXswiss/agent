@@ -88,10 +88,6 @@ def order_by(value: object) -> bool:
     )
 
 
-def count(low: int, high: int) -> Any:
-    return lambda value: type(value) is int and low <= value <= high
-
-
 def _scalar(value: object) -> bool:
     if isinstance(value, str):
         return len(value) <= MAX_TEXT

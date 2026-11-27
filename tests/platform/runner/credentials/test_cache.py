@@ -174,7 +174,7 @@ def test_refresh_owner_reads_every_kind_and_continues_after_a_failure(store_dsn:
         env.hub.get_refusals.append((403, {"error": "forbidden"}))
         await cache.refresh_owner(env.context, ALICE)
         targets = [r.target.rsplit("/", 1)[1] for r in env.hub.requests if "/credentials/" in r.target]
-        assert targets == ["anthropic_api_key", "claude_subscription", "github", "mailbox"]
+        assert targets == ["anthropic_api_key", "claude_subscription", "dfx_debug", "github", "mailbox"]
         assert "refresh_failed owner=" + ALICE + " kind=anthropic_api_key error=HubRefusal code=forbidden" in env.log()
         assert "kind=mailbox error=RecordRefused code=wrap_unauthorized" in env.log()
         assert [row[1] for row in await env.cache_rows()] == ["github"]

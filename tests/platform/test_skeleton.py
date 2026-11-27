@@ -80,6 +80,7 @@ AREAS: dict[ModuleType, list[str]] = {
         "contexts",
         "credentials",
         "crypto",
+        "dfxdebug",
         "dfxkeys",
         "doctor",
         "enroll",

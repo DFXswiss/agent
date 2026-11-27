@@ -623,13 +623,13 @@ timed_out}`; the sign-in link is in `messages[0].links`.
 **DFX debug endpoint**
 
 ```sh
-printf '%s\n%s\n' "$DEBUG_ADDRESS" "$DEBUG_SIGNATURE" | agent-platform credentials set-dfx-debug --api-url https://api.example.com/v1 --release <wg_id>
+printf '%s' "$SIGNATURE" | agent-platform credentials set-dfx-debug --address <wallet address> --api-url https://api.example.com/v1 --release <wg_id>
 agent-platform credentials release-dfx-debug --wg <wg_id>        # only the release changes; --none: no workgroup
 ```
 
-The debug sign-in of the DFX API (ADR-102, rule E-31): the address of a wallet with the Debug role and the signature of
-the API's sign-in message, one per line on stdin, never on the command line; `--api-url` is the API's base URL with
-its version (`https` only). The record is sealed under your user's credential key like every credential: the hub, the
+The debug sign-in of the DFX API (ADR-102, rule E-31): `--address` is the address of a wallet with the Debug role,
+the signature of the API's sign-in message comes from stdin only, never from the command line; `--api-url` is the
+API's base URL with its version (`https` only). The record is sealed under your user's credential key like every credential: the hub, the
 sessions and the VMs never see address, signature or token. `--release` (repeatable, workgroup IDs) releases it; a new
 signature without `--release` keeps the release. Only sessions of your user's own tasks in a released workgroup use it,
 and only for a turn your user instructed; `credentials list` shows the API URL and the released workgroups.
@@ -648,8 +648,8 @@ endpoint allows is `limit_exceeded` until 00:00 UTC; a switched-off endpoint (pr
   "type": "dfx.debug",
   "params": {
     "table": "buy_crypto",
-    "select": [{"kind": "aggregate", "column": "id", "aggregate": "count", "as": "n"}],
-    "where": {"kind": "leaf", "column": "amlCheck", "op": "=", "value": "Pass"},
+    "select": [{ "kind": "aggregate", "column": "id", "aggregate": "count", "as": "n" }],
+    "where": { "kind": "leaf", "column": "amlCheck", "op": "=", "value": "Pass" },
     "limit": 1
   }
 }

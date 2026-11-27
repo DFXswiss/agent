@@ -13,8 +13,9 @@ Package: sessions of agent.dfx.swiss query the DFX production data through the d
    audience; the owner's own instruction keeps every query attributable to the person whose Debug account the
    endpoint counts (daily limit of persons read, its own audit log). Tasks of other people in a released workgroup
    would need the hub's release mirror of ADR-099 §3; that is left to a later order.
-3. **Stdin only.** `credentials set-dfx-debug` reads the address and the signature from standard input, one per line,
-   like `set-mailbox` reads the password; the API URL comes as an option (no default host in the public repository).
+3. **The secret on stdin only.** `credentials set-dfx-debug` reads the signature from standard input, like
+   `set-mailbox` reads the password; the wallet address (public on its chain) and the API URL come as options (no
+   default host in the public repository). The list shows neither the address nor the signature.
 4. **The token in memory only.** The device signs in for each query and forgets the token at its end: no token cache
    on disk or in the store; a sign-in per query is cheap compared with the query and keeps the token's lifetime short.
 5. **No allowlist copy.** The runner checks the DTO's form and the bounds of the WHERE tree; tables and columns are

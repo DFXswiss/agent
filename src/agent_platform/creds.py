@@ -7,10 +7,10 @@
   token, key or password. A record that fails is `unverifiable` with its code.
 - `credentials set-mailbox`: the mailbox of the login automation; the password comes from stdin; the name, purpose
   and release of the stored primary mailbox stay (ADR-099).
-- `credentials set-dfx-debug`: the debug sign-in of the DFX API (ADR-102): wallet address and signature from stdin
-  (one per line, never on the command line), `--api-url`, `--release <wg>` (repeatable; without it the stored release
-  stays). `credentials release-dfx-debug --wg <wg>... | --none` changes only the release. The list shows the API URL
-  and the released workgroups, never the address or the signature.
+- `credentials set-dfx-debug`: the debug sign-in of the DFX API (ADR-102): the signature from stdin (never on the
+  command line), `--address`, `--api-url`, `--release <wg>` (repeatable; without it the stored release stays).
+  `credentials release-dfx-debug --wg <wg>... | --none` changes only the release. The list shows the API URL and the
+  released workgroups, never the address or the signature.
 - `credentials delete --kind`: `DELETE /v1/me/credentials/{kind}` (`404` counts as done).
 - `credentials check --kind`: the device request `credential.check` (API key, subscription) or `mailbox.check`.
 - `github status|connect|disconnect`: the GitHub connection (the `github` record, written by the device that made the
@@ -209,16 +209,13 @@ def keep_dfx_release(body: Mapping[str, Any], _record: object, current: Mapping[
 
 
 def set_dfx_debug(account: Account, args: Any, text: str) -> dict[str, Any]:
-    """`credentials set-dfx-debug`: the debug sign-in of the DFX API (ADR-102 section 2). The wallet address and the
-    signature come from standard input, one per line, never from the command line; `--release` replaces the release,
-    without it the stored release stays."""
-    lines = text.splitlines()
-    if len(lines) != 2:
-        raise PlatformError("invalid_argument", reason="stdin")
+    """`credentials set-dfx-debug`: the debug sign-in of the DFX API (ADR-102 section 2). The signature (the secret)
+    comes from standard input only, never from the command line, like the password of `set-mailbox`; the wallet
+    address and the API URL are options. `--release` replaces the release, without it the stored release stays."""
     wgs = _releases(args.release)
     body: dict[str, Any] = {
-        "address": lines[0].strip(),
-        "signature": lines[1].strip(),
+        "address": args.address.strip(),
+        "signature": text.strip(),
         "api_url": args.api_url.strip().rstrip("/"),
     }
     if wgs:
@@ -454,13 +451,14 @@ def register(tree: Tree) -> None:
         group,
         "set-dfx-debug",
         _dfx_debug_command,
-        "store the DFX API debug sign-in (address and signature on stdin, one per line); sessions of your tasks query "
+        "store the DFX API debug sign-in (signature on stdin); sessions of your tasks query "
         "the debug endpoint read-only (dfx.debug) only in the workgroups it is released to",
         writes=True,
-        example='printf \'%s\\n%s\\n\' "$DEBUG_ADDRESS" "$DEBUG_SIGNATURE" | agent-platform credentials '
-        "set-dfx-debug --api-url https://api.example.com/v1 --release <workgroup id>",
+        example="printf '%s' \"$SIGNATURE\" | agent-platform credentials set-dfx-debug --address <wallet address> "
+        "--api-url https://api.example.com/v1 --release <wg_id>",
         words="dfx debug datenbank produktion prod zugang signatur wallet freigeben database production signature",
     )
+    sub.add_argument("--address", required=True, help="the address of the wallet with the Debug role")
     sub.add_argument("--api-url", required=True, help="base URL of the DFX API including /v1 (https)")
     sub.add_argument(
         "--release", action="append", help="release it to this workgroup ID (repeatable; without: the stored release)"
@@ -471,7 +469,7 @@ def register(tree: Tree) -> None:
         _dfx_release_command,
         "release the stored DFX API debug sign-in to exactly these workgroups (--none: to none)",
         writes=True,
-        example="agent-platform credentials release-dfx-debug --wg <workgroup id>",
+        example="agent-platform credentials release-dfx-debug --wg <wg_id>",
         words="dfx debug freigeben freigabe workgroup entziehen release revoke",
     )
     sub.add_argument("--wg", action="append", help="a workgroup ID (repeatable)")

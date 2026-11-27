@@ -1,7 +1,7 @@
 """The DFX debug sign-in of the agent tool against the hub double (DBG-01, ADR-102 sections 2 and 3):
-`credentials set-dfx-debug` (address and signature only on standard input, the API URL and the release as options,
-the stored release kept without `--release`), `credentials release-dfx-debug` (only the release changes) and the
-list, which shows the API URL and the released workgroups but never the address or the signature."""
+`credentials set-dfx-debug` (the signature only on standard input, the address, the API URL and the release as
+options, the stored release kept without `--release`), `credentials release-dfx-debug` (only the release changes)
+and the list, which shows the API URL and the released workgroups but never the address or the signature."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ SIGNATURE = "DFXDEBUGCANARY-signature-0123"
 API = "https://api.example.com/v1"
 WG = "01930001-0000-7000-8000-0000000000aa"
 WG2 = "01930001-0000-7000-8000-0000000000bb"
-SET = ("credentials", "set-dfx-debug", "--api-url")
+SET = ("credentials", "set-dfx-debug", "--address", ADDRESS, "--api-url")
 
 
 def stored(tool: Tool) -> dict[str, Any]:
@@ -29,13 +29,13 @@ def stored(tool: Tool) -> dict[str, Any]:
 
 
 def test_the_sign_in_is_stored_from_stdin_and_released_to_workgroups(tool: Tool, hub: HubFake, account: User) -> None:
-    code, answer = tool.run(*SET, API + "/", "--release", WG2, "--release", WG, stdin=f"{ADDRESS}\n{SIGNATURE}\n")
+    code, answer = tool.run(*SET, API + "/", "--release", WG2, "--release", WG, stdin=f"{SIGNATURE}\n")
     assert code == 0, answer
     assert answer == {"ok": True, "stored": True, "version": 1, "kind": "dfx_debug", "api_url": API, "wgs": [WG, WG2]}
     row = stored(tool)
     assert (row["status"], row["api_url"], row["wgs"]) == ("verified", API, [WG, WG2])
     # a new signature without --release keeps the release
-    code, answer = tool.run(*SET, API, stdin=f"{ADDRESS}\nrenewed-{SIGNATURE}\n")
+    code, answer = tool.run(*SET, API, stdin=f"renewed-{SIGNATURE}")
     assert (code, answer["version"], answer["wgs"]) == (0, 2, [WG, WG2])
     # only the release changes
     code, answer = tool.run("credentials", "release-dfx-debug", "--wg", WG)
@@ -54,12 +54,12 @@ def test_the_sign_in_is_stored_from_stdin_and_released_to_workgroups(tool: Tool,
 @pytest.mark.parametrize(
     ("argv", "stdin", "reason"),
     [
-        ((*SET, API), f"{ADDRESS}\n", "stdin"),
-        ((*SET, API), f"{ADDRESS}\n{SIGNATURE}\nmore\n", "stdin"),
-        ((*SET, "http://api.example.com/v1"), f"{ADDRESS}\n{SIGNATURE}\n", "dfx_debug"),
-        ((*SET, API), f"{ADDRESS}\nwith space\n", "dfx_debug"),
-        ((*SET, API), f"\n{SIGNATURE}\n", "dfx_debug"),
-        ((*SET, API, "--release", "no-uuid"), f"{ADDRESS}\n{SIGNATURE}\n", None),
+        ((*SET, API), "", "dfx_debug"),
+        ((*SET, API), f"{SIGNATURE}\nmore\n", "dfx_debug"),
+        ((*SET, "http://api.example.com/v1"), SIGNATURE, "dfx_debug"),
+        ((*SET, API), "with space", "dfx_debug"),
+        (("credentials", "set-dfx-debug", "--address", "a b", "--api-url", API), SIGNATURE, "dfx_debug"),
+        ((*SET, API, "--release", "no-uuid"), SIGNATURE, None),
         (("credentials", "release-dfx-debug"), "", "wg"),
         (("credentials", "release-dfx-debug", "--none", "--wg", WG), "", "wg"),
         (("credentials", "release-dfx-debug", "--wg", WG), "", "dfx_debug_missing"),
@@ -78,7 +78,7 @@ def test_wrong_input_is_refused_and_never_echoed(
 def test_too_many_workgroups_are_refused(tool: Tool, account: User) -> None:
     wgs = [f"01930001-0000-7000-8000-0000000001{index:02x}" for index in range(51)]
     argv = [arg for wg in wgs for arg in ("--release", wg)]
-    _code, answer = tool.run(*SET, API, *argv, stdin=f"{ADDRESS}\n{SIGNATURE}\n")
+    _code, answer = tool.run(*SET, API, *argv, stdin=SIGNATURE)
     assert (answer["error"], answer["reason"]) == ("invalid_argument", "wg")
 
 

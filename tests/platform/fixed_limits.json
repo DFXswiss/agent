@@ -626,6 +626,24 @@
    "MAX_BIGINT": "integer",
    "MAX_CONTEXT": "size"
   },
+  "src/agent_runner/dfxdebug/dto.py": {
+   "MAX_CHILDREN": "answer",
+   "MAX_DEPTH": "structure",
+   "MAX_IN": "answer",
+   "MAX_LEAVES": "answer",
+   "MAX_LIST": "answer",
+   "MAX_NODES": "answer",
+   "MAX_SELECT": "answer",
+   "MAX_SUMMARY": "size",
+   "MAX_TEXT": "size"
+  },
+  "src/agent_runner/dfxdebug/executors.py": {
+   "MAX_ANSWER_BYTES": "size",
+   "MAX_KEYS": "answer",
+   "MAX_KEY_LENGTH": "size",
+   "MAX_MESSAGE": "size",
+   "MAX_ROWS": "answer"
+  },
   "src/agent_runner/dfxkeys/issuer.py": {
    "DEFAULT_MAX_PER_ORG": "setting",
    "MAX_LOGGED": "page",
@@ -1634,6 +1652,9 @@
    "/properties/amount_micro_usd/maximum": "integer",
    "/properties/balance_micro_usd/maximum": "integer"
   },
+  "contracts/audit/dfx.read.json": {
+   "/properties/rows/maximum": "page"
+  },
   "contracts/audit/hook.denied.json": {
    "/properties/rule/maximum": "integer"
   },
@@ -1686,6 +1707,9 @@
    "/$defs/mailbox/properties/imap_port/maximum": "integer",
    "/properties/scopes/maxItems": "answer",
    "/properties/use/properties/orgs/maxItems": "open"
+  },
+  "contracts/credentials/dfx_debug.json": {
+   "/properties/use/properties/wgs/maxItems": "answer"
   },
   "contracts/credentials/github.json": {
    "/properties/scopes/maxItems": "answer"
@@ -1770,6 +1794,11 @@
    "/$defs/input_browser_upload/properties/paths/maxItems": "answer",
    "/$defs/input_browser_wait/properties/ms/maximum": "integer",
    "/$defs/input_browser_wait/properties/timeout_ms/maximum": "time",
+   "/$defs/input_dfx_debug/properties/groupBy/maxItems": "answer",
+   "/$defs/input_dfx_debug/properties/limit/maximum": "page",
+   "/$defs/input_dfx_debug/properties/offset/maximum": "page",
+   "/$defs/input_dfx_debug/properties/orderBy/maxItems": "answer",
+   "/$defs/input_dfx_debug/properties/select/maxItems": "answer",
    "/$defs/input_get_metrics/properties/step/maximum": "integer",
    "/$defs/input_get_operation/properties/wait_seconds/maximum": "time",
    "/$defs/input_get_subagent_result/properties/wait_seconds/maximum": "time",
@@ -1832,11 +1861,18 @@
    "/properties/models/additionalProperties/properties/max_output/maximum": "integer"
   },
   "contracts/ops/objects.json": {
+   "/$defs/dfx_debug_where/oneOf/0/properties/value/anyOf/1/maxItems": "answer",
+   "/$defs/dfx_debug_where/oneOf/1/properties/children/maxItems": "answer",
    "/$defs/error/properties/pointers/maxItems": "answer",
    "/$defs/github_id/maximum": "integer",
    "/$defs/mail_message/properties/links/maxItems": "answer",
    "/$defs/number/maximum": "integer",
    "/$defs/params_browser_open/properties/idle_seconds/maximum": "time",
+   "/$defs/params_dfx_debug/properties/groupBy/maxItems": "answer",
+   "/$defs/params_dfx_debug/properties/limit/maximum": "page",
+   "/$defs/params_dfx_debug/properties/offset/maximum": "page",
+   "/$defs/params_dfx_debug/properties/orderBy/maxItems": "answer",
+   "/$defs/params_dfx_debug/properties/select/maxItems": "answer",
    "/$defs/params_github_commit/properties/co_authors/maxItems": "answer",
    "/$defs/params_github_commit/properties/decisions/maxItems": "answer",
    "/$defs/params_github_commit/properties/paths/maxItems": "answer",
@@ -1854,6 +1890,9 @@
    "/$defs/params_review_verdict/properties/evidence/maxItems": "size",
    "/$defs/params_test_run/properties/timeout_seconds/maximum": "time",
    "/$defs/result_browser_open/properties/idle_seconds/maximum": "time",
+   "/$defs/result_dfx_debug/properties/keys/maxItems": "answer",
+   "/$defs/result_dfx_debug/properties/rows/maxItems": "answer",
+   "/$defs/result_dfx_debug/properties/rows_total/maximum": "page",
    "/$defs/result_github_get_checks/properties/check_runs/maxItems": "page",
    "/$defs/result_github_get_checks/properties/statuses/maxItems": "page",
    "/$defs/result_github_get_issue/properties/assignees/maxItems": "answer",
@@ -1887,6 +1926,7 @@
    "/$defs/body_audit/oneOf/23/properties/detail/properties/value/anyOf/0/maximum": "integer",
    "/$defs/body_audit/oneOf/28/properties/detail/properties/count/maximum": "page",
    "/$defs/body_audit/oneOf/28/properties/detail/properties/waited_seconds/maximum": "time",
+   "/$defs/body_audit/oneOf/29/properties/detail/properties/rows/maximum": "page",
    "/$defs/body_metrics/properties/samples/maxItems": "answer",
    "/$defs/body_operator_quota/properties/subscriptions/maxItems": "answer",
    "/$defs/body_quota/anyOf/0/properties/windows/maxItems": "answer",

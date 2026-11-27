@@ -32,9 +32,9 @@ signature nor the address nor the token reaches a session, a VM, an event, a log
   `CK`; the hub never sees its content. Body (`contracts/credentials/dfx_debug.json`): `address`, `signature`
   (printable ASCII), `api_url` (`https://` host, optional port, up to eight path segments: the API base with its
   version) and the release `use {wgs}` (§3).
-- Agent tool: `agent-platform credentials set-dfx-debug --api-url <url> [--release <wg>]...` reads the address and
-  the signature from standard input, one per line, never from the command line; without `--release` the stored
-  release stays. `agent-platform credentials release-dfx-debug --wg <wg>... | --none` changes only the release.
+- Agent tool: `agent-platform credentials set-dfx-debug --address <wallet> --api-url <url> [--release <wg>]...` reads
+  the signature from standard input only, never from the command line (like the password of `set-mailbox`); without
+  `--release` the stored release stays. `agent-platform credentials release-dfx-debug --wg <wg>... | --none` changes only the release.
   `credentials list` shows the API URL and the released workgroups, never the address or the signature;
   `credentials delete --kind dfx_debug` removes it. The hub's change notices learn the kind (migration 0042); a `CK`
   rotation carries up to five records now.

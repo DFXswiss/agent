@@ -6,9 +6,9 @@
 
 There is no other request: the client has no write path (the CLI's `poll`, `POST /payIn/poll`, does not exist here;
 a test keeps it so). Every request has its own `TIMEOUT_SECONDS`, redirects are not followed (the sign-in must not
-travel to another host) and the API URL is `https` (the credential's form). A refusal is `Refused(stage, status,
-code, message)` with the endpoint's message and code as it sent them (a message list joined by `; `), never the
-request; a body that is no JSON object is `Refused(stage, status, None, None)`. A slow or unreachable API raises
+travel to another host) and the API URL is `https` (the credential's form). A refusal is `Refused(status, code,
+message, stage=...)` with the endpoint's message and code as it sent them (a message list joined by `; `), never the
+request; a body that is no JSON object is `Refused(status, None, None)`. A slow or unreachable API raises
 `httpx.TimeoutException` / `httpx.TransportError`.
 """
 
@@ -30,10 +30,11 @@ transport: httpx.AsyncBaseTransport | None = None
 
 
 class Refused(Exception):
-    """A non-2xx answer or an unusable body of the sign-in (`stage` `sign_in`) or the query (`query`)."""
+    """A non-2xx answer or an unusable body of the sign-in (`stage` `sign_in`) or the query (`query`): the HTTP status
+    and the endpoint's code and message (no platform code of its own)."""
 
-    def __init__(self, stage: str, status: int, code: str | None, message: str | None) -> None:
-        super().__init__(stage)
+    def __init__(self, status: int, code: str | None, message: str | None, *, stage: str) -> None:
+        super().__init__(status)
         self.stage = stage
         self.status = status
         self.code = code
@@ -61,10 +62,10 @@ def _refused(stage: str, response: httpx.Response) -> Refused:
         message = "; ".join(str(item) for item in message)
     code = body.get("code")
     return Refused(
-        stage,
         response.status_code,
         code if isinstance(code, str) else None,
         message if isinstance(message, str) else None,
+        stage=stage,
     )
 
 
@@ -80,7 +81,7 @@ async def query(sign_in: SignIn, dto: Mapping[str, Any]) -> Answer:
             raise _refused("sign_in", response)
         token = (_json(response) or {}).get("accessToken")
         if not isinstance(token, str) or not token:
-            raise Refused("sign_in", response.status_code, None, None)
+            raise Refused(response.status_code, None, None, stage="sign_in")
         response = await client.post(
             f"{sign_in.api_url}/{DEBUG}", json=dict(dto), headers={"Authorization": f"Bearer {token}"}
         )
@@ -90,5 +91,5 @@ async def query(sign_in: SignIn, dto: Mapping[str, Any]) -> Answer:
     body = _json(response) or {}
     keys, rows = body.get("keys"), body.get("rows")
     if not isinstance(keys, list) or not isinstance(rows, list) or not all(isinstance(row, list) for row in rows):
-        raise Refused("query", response.status_code, None, None)
+        raise Refused(response.status_code, None, None, stage="query")
     return Answer(keys, rows)
