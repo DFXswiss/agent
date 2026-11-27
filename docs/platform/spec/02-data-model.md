@@ -197,7 +197,7 @@ children numbered by `created_at`, `id`); the partial index `task_open_owner` (`
 | `audit_checkpoint` [AO] | (`hub_key_id`,`seq`) PK, `hash`, `published_at`, `signature` | hourly, text `agent-audit-head-v1\n<key>\n<seq>\n<hash>\n<time>` signed with the hub key (format of `record/checkpoint.py`) |
 
 `action` values (closed list, `contracts/enums/audit-actions.json`; the subset runners may send via the outbox is `contracts/enums/outbox-audit-actions.json`, `03-api.md` §6.1): authentication (`auth.register`, `auth.login`,
-`auth.recovery` (detail `step`: `begin`, `finish`, `rotate`), `auth.passkey_add`, `auth.passkey_remove`, `auth.session_end`, `auth.refused`), invitations,
+`auth.recovery` (detail `step`: `begin`, `finish`, `rotate`), `auth.passkey_add`, `auth.passkey_remove`, `auth.session_end`, `auth.session_renew` (rule E-40, ADR-102), `auth.refused`), invitations,
 log appends (`log.<type>`), `event.append`, `task.create`, `task.close`, `session.<state>`, `session.control`,
 `operation.<state>`, `credential.put`, `credential.delete`, `device_request.<state>`, `device.enroll`,
 `device.certify`, `device.connect`, `device.disconnect`, `whiteboard.notify`, `ping.delivered`,

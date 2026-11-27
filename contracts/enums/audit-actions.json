@@ -26,6 +26,10 @@
       "group": "auth"
     },
     {
+      "action": "auth.session_renew",
+      "group": "auth"
+    },
+    {
       "action": "auth.refused",
       "group": "auth"
     },

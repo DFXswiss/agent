@@ -229,6 +229,10 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"key_id": [{"type": "string", "pattern": "^session\\.[0-9a-f]{32}$"}]},
         "required": ["key_id"],
     },
+    "auth.session_renew": {
+        "properties": {"key_id": [{"type": "string", "pattern": "^session\\.[0-9a-f]{32}$"}]},
+        "required": ["key_id"],
+    },
     "billing.export": {
         "properties": {
             "from": [{"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}],

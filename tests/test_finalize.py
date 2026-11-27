@@ -303,6 +303,71 @@ def test_a_worker_that_exited_zero_with_a_new_review_records_success_and_work_pe
         store.close()
 
 
+def test_a_successful_log_error_worker_records_the_marker_contract_as_work(tmp_path: Path) -> None:
+    # A log-error job has no review output, so its done kind derives to the
+    # transcript marker. The worker's `DONE log-error <n>` line is therefore
+    # the contract evidence, and finalize records work_performed=yes.
+    store = Store(tmp_path)
+    try:
+        row = job_row(
+            session_id="s",
+            repo="owner/name",
+            ref="7",
+            job_type="log-error",
+            actor="davidleomay",
+        )
+        row.update(
+            {
+                "state": "running",
+                "session": "agent-job-7",
+                "worktree": "/tmp/work/job-7",
+                "started": "2026-01-01T00:00:00Z",
+                "baseline_output_ids": [],
+            }
+        )
+        store.write("job", "insert", row["id"], row)
+        calls: list[list[str]] = []
+        # The analysis the worker posted is the runner login's one new comment
+        # since the job started; without it the job would be downgraded.
+        posted = json.dumps(
+            {
+                "data": {
+                    "repository": {
+                        "issueOrPullRequest": {
+                            "__typename": "Issue",
+                            "comments": {
+                                "nodes": [
+                                    {
+                                        "id": "IC_analysis",
+                                        "author": {"login": "davidleomay"},
+                                        "createdAt": "2026-01-02T00:00:00Z",
+                                    }
+                                ]
+                            },
+                        }
+                    }
+                }
+            }
+        )
+
+        finalized, skipped = _finalize(
+            store,
+            _runner(calls=calls, baseline_stdout=posted),
+            exit_code_of=lambda jid: 0,
+            transcript_of=lambda jid: "worker: analysis posted\nDONE log-error 7\n",
+        )
+
+        assert finalized == [row["id"]]
+        assert skipped == 0
+        saved = store.row("job", row["id"])
+        assert saved["state"] == "done"
+        assert saved["outcome"] == "success"
+        assert saved["done_kind"] == "marker"
+        assert saved["work_performed"] == "yes"
+    finally:
+        store.close()
+
+
 def test_a_worker_that_exited_zero_but_published_nothing_downgrades_to_agent_failed(tmp_path: Path) -> None:
     # Exit 0 with no new output must downgrade to state=failed, outcome=agent_failed.
     store = Store(tmp_path)
