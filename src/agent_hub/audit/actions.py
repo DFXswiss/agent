@@ -70,6 +70,7 @@ AUDIT_ACTIONS = frozenset(
         "credit.changed",
         "billing.fx_set",
         "billing.export",
+        "ci.job",
         "device.certify",
         "device.connect",
         "device.disconnect",

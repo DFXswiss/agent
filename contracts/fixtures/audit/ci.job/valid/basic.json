@@ -1,0 +1,10 @@
+{
+  "stage": "accepted",
+  "event": "pull_request",
+  "basis": "pull_request",
+  "reason": null,
+  "result": null,
+  "size": "standard",
+  "duration_ms": null,
+  "workvm_id": "wvm-0123abcd"
+}

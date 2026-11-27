@@ -71,6 +71,7 @@ OUTBOX_AUDIT_ACTIONS = (
     "session.context_fallback",
     "runner.operator_github_users",
     "session.model_switched",
+    "ci.job",
 )
 """A copy of `contracts/enums/outbox-audit-actions.json` (a test compares them)."""
 OPERATION_ERROR_CODES = (
@@ -373,7 +374,8 @@ class RuntimeBody(Strict):
 
     session_id: Uuid7
     vm_id: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{1,62}$")]
-    vm_kind: Literal["session", "work"]
+    vm_kind: Literal["session", "work", "ci"]
+    """`ci`: a CI VM (spec 16 section 17), priced by its size like a work VM and booked to the session's task."""
     size: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,31}$")]
     from_: Time = Field(alias="from")
     to: Time
@@ -634,6 +636,19 @@ class ModelSwitched(Strict):
     until: Time | None
 
 
+class CiJob(Strict):
+    """`ci.job` (spec 16 section 17.6): one step of a GitHub Actions job; IDs and closed codes only."""
+
+    stage: Literal["accepted", "refused", "ended"]
+    event: Annotated[str, StringConstraints(pattern=r"^[a-z_]{1,64}$")]
+    basis: Literal["pull_request", "commit_pull_request", "repository_task"] | None
+    reason: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,63}$")] | None
+    result: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,31}$")] | None
+    size: Literal["standard", "large", "xlarge"] | None
+    duration_ms: Count | None
+    workvm_id: Annotated[str, StringConstraints(pattern=r"^wvm-[0-9a-f]{8}$")] | None
+
+
 AUDIT_DETAILS: dict[str, type[Strict]] = {
     "hook.denied": HookDenied,
     **{action: ReadCount for action in OUTBOX_AUDIT_ACTIONS if action.startswith("read.session.")},
@@ -649,6 +664,7 @@ AUDIT_DETAILS: dict[str, type[Strict]] = {
     "runner.operator_github_users": OperatorGithubUsers,
     "session.model_switched": ModelSwitched,
     "session.prompt_withdrawn": NoDetail,
+    "ci.job": CiJob,
 }
 
 
@@ -683,6 +699,7 @@ class AuditBody(Strict):
         "session.context_restored",
         "session.context_fallback",
         "session.model_switched",
+        "ci.job",
     ]
     result: Literal["ok", "denied", "rejected", "duplicate", "failed"]
     task_id: Uuid7 | None = None

@@ -28,6 +28,7 @@
     "session.context_restored",
     "session.context_fallback",
     "runner.operator_github_users",
-    "session.model_switched"
+    "session.model_switched",
+    "ci.job"
   ]
 }

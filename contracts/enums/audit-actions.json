@@ -422,6 +422,10 @@
       "group": "runner"
     },
     {
+      "action": "ci.job",
+      "group": "runner"
+    },
+    {
       "action": "outbox.rejected",
       "group": "outbox"
     },

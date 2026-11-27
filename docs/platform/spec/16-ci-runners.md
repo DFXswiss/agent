@@ -2,7 +2,9 @@
 
 Rules [E-34](../KONZEPT.md#e-34), [E-35](../KONZEPT.md#e-35), [E-36](../KONZEPT.md#e-36). Also touched:
 [E-32](../KONZEPT.md#e-32) (nothing of agent runs on a user's computer except at most one Claude session; it excludes
-work devices as pool devices, §10.2, D-25). Status: concept – not built; open decisions in §13.
+work devices as pool devices, §10.2, D-25). Status: decisions D-1, D-2, D-3, D-4, D-9, D-12 and D-13 taken by the
+client on 2026-11-27 (§13); stage 0 documented ([ci/stage0-inventory.md](../ci/stage0-inventory.md)); stage 1 built
+(§17); the other decisions of §13 stay open.
 
 This document is the complete concept for running the self-hosted GitHub Actions jobs of the DFX organisations
 through agent.dfx.swiss, on the same devices as its work VMs ([E-35](../KONZEPT.md#e-35) and
@@ -20,7 +22,12 @@ not repeated here).
 - Every job of a repository in a DFX organisation whose `runs-on` today names a self-hosted label runs, after the
   migration (§12), on a runner that agent.dfx.swiss starts for exactly one job (by the assumption of §3.2, any
   matching job GitHub assigns to it) in a fresh VM and deletes afterwards ([E-34](../KONZEPT.md#e-34), VM per job:
-  [A20](../KONZEPT.md#a-20)). The host-bound jobs of §1.3 are not covered by A20: open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)).
+  [A20](../KONZEPT.md#a-20)). The host-bound jobs of §1.3 are not covered by A20; decided (D-1 (c), 2026-11-27):
+  they move to a signed pull deployment without an Actions runner ([KONZEPT part D](../KONZEPT.md#d-offen) keeps the
+  deviation open until it is built).
+- **Which jobs run (D-12):** only jobs that belong to a pull request a session of agent.dfx.swiss created, the push
+  after its merge, and the scheduled runs and deploys of a repository under its fixed task (§17.3). A pull request a
+  person opens directly on GitHub does not run on agent.dfx.swiss.
 - Organisations in scope: the DFX organisations on GitHub, each with its own installation of the CI app (§4). The
   exact list of organisations, repositories and labels is the inventory of stage 0 (§12) and is kept in [OPS].
 - Public repositories documented with self-hosted CI in [OPS] include `DFXswiss/backend` and `DFXswiss/realunit-app`
@@ -37,7 +44,7 @@ not repeated here).
 | Linux, build | container image builds and publishing | Linux CI VM, trust class T (§5) | Needs Docker/Buildx and short-lived registry credentials only |
 | macOS | iOS/macOS app builds, iOS simulator, golden (pixel) tests, script tests that need real macOS tools | macOS CI VM (§8), at most 2 per device | Needs Xcode or macOS/BSD tools |
 | Privileged | infrastructure plans and applies, tunnel token handling | Linux CI VM, class P, last (§12) | Not host-bound in principle: state and provider credentials need a place and a credential concept first (§12 stage 7; current state: [OPS]) |
-| Host-bound | deploy jobs in which a device sets itself up, drift checks of a device, reconcile/ensure jobs against one device, key generation and connector installation on a device | **No VM** – open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)); options: minimal deploy runner per device, signed pull deployment or another way (§13 D-1) | See 1.3 |
+| Host-bound | deploy jobs in which a device sets itself up, drift checks of a device, reconcile/ensure jobs against one device, key generation and connector installation on a device | **No VM, no runner** – signed pull deployment: the target device fetches and verifies its update itself (D-1 (c), decided 2026-11-27; deviation open until built, [KONZEPT part D](../KONZEPT.md#d-offen)) | See 1.3 |
 
 ### 1.3 Why host-bound jobs cannot run in a VM
 - A deploy job of this kind installs operator keys and user-session settings on the device itself [OPS]. A CI VM has
@@ -49,9 +56,10 @@ not repeated here).
   was rejected [OPS].
 - Consequence: these jobs cannot move into a CI VM. Today they run on a deploy runner outside the platform, which
   contradicts [E-34](../KONZEPT.md#e-34) and [E-35](../KONZEPT.md#e-35); [A20](../KONZEPT.md#a-20) does not cover
-  them. Open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)): the options include a minimal deploy
-  runner per device (class H, under the requirements of §5) as an exception and a signed pull deployment without an
-  Actions runner (§13 D-1).
+  them. **Decided (D-1 (c), 2026-11-27): signed pull deployment.** The target device fetches its update itself and
+  applies it only after verifying the signature; no Actions runner runs on it, and no class H runner exists. Until the
+  pull deployment is built the deploy runner outside the platform stays an open deviation
+  ([KONZEPT part D](../KONZEPT.md#d-offen)); it is not part of stage 1.
 
 ### 1.4 Linux and macOS share
 - Most jobs are Linux jobs. The macOS share is probably small: most script tests inspected use stubs; only a few need
@@ -147,8 +155,8 @@ not repeated here).
 | **C** polling + JIT | Close to the operator's current feeder | API budget, latency, assignment races |
 | **D** fixed JIT stock per pool | Simple | Holds RAM; waiting limit of an unassigned JIT runner unknown (§3.2) |
 
-Factual tendency (research 1, not decided): A deviates least from the trust boundaries (outbound only, nothing at the
-hub). Decision D-2 (§13).
+**Decided (D-2 (a), 2026-11-27): option A**, `actions/scaleset` as a Go sidecar of the controller (pinned version,
+§17.2); it deviates least from the trust boundaries (outbound only, nothing at the hub).
 
 ## 4. Organisations, permissions, plans, cost
 
@@ -159,16 +167,27 @@ hub). Decision D-2 (§13).
   Administration: read/write plus Metadata: read, which reaches much further; a classic PAT would need `admin:org` or
   `repo` [GH-ARC-AUTH], [GH-APP-PERMS]. Actions: read is added only for webhooks or job metrics.
 - The CI app is **separate** from the existing user app of [ADR-015](../adr/015-github-app-device-flow-rest-only.md)
-  (Contents, Pull requests, Issues; user-to-server tokens). Owner of the CI app and its key: decision D-4.
+  (Contents, Pull requests, Issues; user-to-server tokens). **Decided (D-4, 2026-11-27):** an own GitHub App "agent CI"
+  owned by DFX, only with the right to register runners; its key lies only with the controller on the pool devices,
+  never in a VM, never at the hub. The client then ordered (2026-11-27) that agent.dfx.swiss creates the app itself
+  through GitHub's app-manifest flow in the platform browser, with only the organisation permission **Self-hosted
+  runners: write** (`organization_self_hosted_runners`; Metadata: read is granted to every app) – §17.9. The scale
+  sets are therefore registered at the organisation (its default runner group, available on the Free plan), one per
+  repository; the repository permission Administration is not requested. Tracing a `push` after a merge to its pull
+  request (D-12) would additionally need **Actions: read** and **Pull requests: read**; without them such jobs are not
+  taken (§17.3, open point of §13).
 - **Unsure:** whether one of the operator identities on GitHub is an organisation or a user account [OPS]; a user
   account offers only repository-level runners (**Assumption**).
 
 ### 4.2 Runner groups and plan
 - Additional organisation runner groups are documented from the Team plan; default access is private repositories
   only; policies restrict repositories and workflows [GH-ACCESS], [GH-GROUPS].
-- The runner groups of §5 need the plan check of D-9 (the plans in use: [OPS]). Without additional groups only the
-  default group exists, and public cannot be separated cleanly from private; the alternative is repository-level
-  runners with the wider app permission, which cannot separate classes within one repository (D-9).
+- **Decided (D-9 (b), 2026-11-27): the Free plan stays, with repository runners** – one scale set per repository
+  (§17.1). With the app's organisation permission (§17.9) each repository's scale set is registered in the
+  organisation's default runner group under the repository's label; jobs of other repositories that name it are not
+  taken (§17.3). Repository runners cannot separate classes within one repository; with D-12 no foreign PR code runs (only
+  pull requests a session of the platform created), so one class per repository suffices and the separation problem of
+  the Free plan falls away.
 - Enterprise: groups can be shared across organisations and the scale-set client supports the scope. Whether DFX has
   an enterprise account is not documented; technically it is not needed.
 
@@ -184,11 +203,17 @@ hub). Decision D-2 (§13).
   [GH-BILLING]. The billing page mentions different rates for Copilot code review on ARC runners; to be checked.
 - Comparison: GitHub-hosted macOS USD 0.062/min [GH-RUNNER-PRICING]; GitHub-hosted runners are forbidden in the main
   infrastructure repository [OPS].
-- Platform billing: CI VM runtime is a DFX resource ([Idee 46](../KONZEPT.md#k-idee-46),
-  [Idee 47](../KONZEPT.md#k-idee-47)); internal exemption or an internal cost centre is decision D-13.
+- Platform billing (**decided, D-13, 2026-11-27**): "Die Abrechnung erfolgt dann über ci job --> zugehörender pr -->
+  zugehörender task --> Workgroop in dem sich der task befindet". CI VM runtime is billed like work VM runtime
+  ([ADR-062](../adr/062-prepaid-credit-and-usage-billing.md), [Idee 46](../KONZEPT.md#k-idee-46)) to the workgroup of
+  the job's task (§17.6).
 - **To be measured:** M-3 (minutes per organisation and month, the cost risk if the fee returns).
 
 ## 5. Trust classes
+
+**Note after D-9 and D-12 (2026-11-27):** with repository runners every repository is one scale set and one class,
+and only code of pull requests a session of the platform created runs (no fork or foreign PR code); classes are kept
+apart by repository, not by runner groups. The class model below stays the reference for D-20 and D-26.
 
 **Recommendation, not decided** (research 1 §4.2; class model: decision D-26, separation per class: D-20). Labels are
 chosen by the workflow author and are therefore **no security boundary**. Every class has its own runner
@@ -221,8 +246,8 @@ shared pool of [E-35](../KONZEPT.md#e-35) and [E-36](../KONZEPT.md#e-36) (§6.6)
 
 | Component | Runs on | Task |
 |---|---|---|
-| CI controller (listener) | Pool device, own macOS account (**recommendation**, decision D-3) | One scale-set session per organisation and class; long poll to GitHub, outbound only; asks the VM manager for a VM per assigned job; requests the JIT configuration |
-| Key signer | Pool device or a separate signer | Holds the CI app key; signs app JWTs for the controller; recommendation: the key never enters a VM or the hub (open, D-4) |
+| CI controller `agent-ci` with the listener sidecar | Pool device, own service with its own macOS account next to `agent-runner` (**decided**, D-3 (b)) | One scale-set session per repository (D-9); long poll to GitHub, outbound only; attributes each job (§17.3); asks the runner for a VM per accepted job; requests the JIT configuration (§17.5) |
+| Key signer | Inside the controller's account (**decided**, D-4) | Holds the key of the app "agent CI"; signs app JWTs; the key never enters a VM or the hub |
 | VM manager | Pool device (runner area of `agent-runner`, reusing the work VM machinery) | Pool, APFS clone, slot account, pf anchor, start, handover, teardown, sweep (`13-work-vm.md` §6, §7) |
 | Admission | Pool device, one per device for all workload kinds | CPU, RAM, disk and macOS VM budget of the device (§6.6); no VM of any kind starts without it |
 | CI VM | Pool device | Linux (`ci-linux-arm64`) or macOS CI image; GitHub `run.sh` with the JIT configuration; one job |
@@ -272,26 +297,36 @@ shared pool of [E-35](../KONZEPT.md#e-35) and [E-36](../KONZEPT.md#e-36) (§6.6)
   not needed for jobs (GitHub carries the logs) but useful for diagnosis.
 
 ### 6.3 Role of the hub
-- Default (recommendation): the CI loop runs without the hub. The hub sees at most device status and content-free
-  metrics (counts, durations, error classes), no repository names, no job payloads, no JIT configuration, no app key.
-  This keeps [§5](../KONZEPT.md#k-5) and the rule that outside services are reached only from the execution device
-  ([00 §1](00-overview.md#1-architecture-in-one-picture)).
-- Alternative "hub": a webhook receiver or controller at the hub. The hub is publicly reachable
-  ([E-24](../KONZEPT.md#e-24)), but would see repository and job metadata and need a webhook secret; this needs a
-  KONZEPT change (metadata rule) before it may be built. Decision D-3.
+- Decided with D-3 (b): the CI loop runs without the hub. The hub sees what billing and audit need and nothing more:
+  the runtime of a CI VM booked to a session of the job's task (`runtime`, `vm_kind` `ci`) and the audit rows `ci.job`
+  (IDs and closed codes, §17.6) – no repository, branch or workflow names, no job payloads, no JIT configuration, no
+  app key. This keeps [§5](../KONZEPT.md#k-5) and the rule that outside services are reached only from the execution
+  device ([00 §1](00-overview.md#1-architecture-in-one-picture)).
+- The alternative "controller at the hub" (D-3 (d)) is not chosen.
 - If the hub is down, sessions keep running and operations wait ([ADR-002](../adr/002-hub-as-coordinator.md)); the CI
   loop must not depend on it (§11.3).
 
-### 6.4 Where the KONZEPT model needs a decision
-A CI job is no user request and belongs to no workgroup ([Grundprinzip](../KONZEPT.md#k-gp),
-[§2 Punkt 5](../KONZEPT.md#k-2-b5), [§16 Punkt 2](../KONZEPT.md#k-16-b2)); a VM per job ([A20](../KONZEPT.md#a-20)) differs from a VM per
-workgroup ([§3 Punkt 5](../KONZEPT.md#k-3-b5)). Options: an infrastructure workload without task, or a technical
-organisation/workgroup – decision D-12. An own product next to the platform is excluded by
-[E-35](../KONZEPT.md#e-35). Job audit: which record a job leaves
-([§6 Punkt 4](../KONZEPT.md#k-6-b4): every action with actor, time, task, session, workgroup, device, target, result
-and changes – a CI job has an actor (the GitHub trigger), a time, a device, a target and a result, but no task, no
-session and no workgroup; [§11](../KONZEPT.md#k-11); blocked attempts: [§10 Punkt 8](../KONZEPT.md#k-10-b8)); [E-09](../KONZEPT.md#e-09) (no monitoring inside
-the work VM) is not carried over unchecked.
+### 6.4 How a CI job fits the KONZEPT model (decided, D-12)
+The concern was that a CI job is no user request and belongs to no workgroup ([Grundprinzip](../KONZEPT.md#k-gp),
+[§2 Punkt 5](../KONZEPT.md#k-2-b5), [§16 Punkt 2](../KONZEPT.md#k-16-b2)); a VM per job ([A20](../KONZEPT.md#a-20))
+differs from a VM per workgroup ([§3 Punkt 5](../KONZEPT.md#k-3-b5)). **Decided (D-12, 2026-11-27)**, verbatim: „am
+beste ist es, wenn der ci job nur läuft, wenn der pr auch über agent gestartet worden ist, und dann ist die kette klar.
+es gibt einen task, der task ist auf einen pr verknüpft, die ci läufe hängen dann an diesem pr“. Confirmed with it:
+
+- A push to develop/main after the merge belongs to the merged pull request and so to its task.
+- Scheduled runs and deploys run under a fixed task per repository (e.g. "CI DFXswiss/api") in the repository's
+  workgroup.
+- A pull request a person opens directly on GitHub does not run on agent.dfx.swiss.
+
+So every job has a task, a workgroup and an organization: it is a workload of that task, like a test run
+([A9](../KONZEPT.md#a-9)), not an infrastructure workload and not a technical workgroup. Job audit
+([§6 Punkt 4](../KONZEPT.md#k-6-b4), [§11](../KONZEPT.md#k-11)): every taken, refused and ended job leaves an audit
+row `ci.job` with time, device, task, workgroup, target (run and request ID) and result; a job that is not taken is a
+blocked attempt ([§10 Punkt 8](../KONZEPT.md#k-10-b8)) and is written under the repository's fixed task (§17.6). It has
+no session of its own; the session that bears its runtime is the one that created the pull request.
+[E-09](../KONZEPT.md#e-09) (no monitoring inside the work VM) holds for CI VMs too: nothing is measured inside them.
+The CI-guest clarification of §7.3 remains with D-12: a CI VM runs no Claude Code, so the session rules on git and
+shell do not apply to it.
 
 ### 6.5 Trust boundaries
 
@@ -738,7 +773,8 @@ Today there is no dependency cache across runs (`13-work-vm.md` §12.2). Compari
   short-lived credentials. Signing keys never in PR VMs; signed releases on a separate way.
 - The token that creates JIT runners needs organisation admin for runners [GH-REST]; it stays with the controller /
   key signer; only `encoded_jit_config` enters the VM.
-- Recommendation (open, D-4): the app key never lies in a VM or at the hub; a separate account, better an external
+- Decided (D-4): the app key never lies in a VM or at the hub, only with the controller's own account (an external
+  signer stays possible later). Former recommendation: a separate account, better an external
   signer (§6.1).
 
 ### 9.7 Supply chain
@@ -893,8 +929,8 @@ Present: 15 s sampling and textfile (`05-runner.md` §14, sinks in `08-monitorin
 
 | Stage | Content | Exit |
 |---|---|---|
-| 0 | Inventory of real runners, plans, organisations, labels; secret, environment and `GITHUB_TOKEN` settings per repository against the U preconditions of §9.6; clear the label gap of §1.5; amd64 need | – |
-| 1 | Test organisation/repository, option A, one VM class, attack and failure tests on a pool device to which no workgroup is assigned yet; admission of §6.6 built | Uninstall the app |
+| 0 | Inventory of real runners, plans, organisations, labels; secret, environment and `GITHUB_TOKEN` settings per repository against the U preconditions of §9.6; clear the label gap of §1.5; amd64 need. Documented as a procedure without production data: [ci/stage0-inventory.md](../ci/stage0-inventory.md) | – |
+| 1 | Test repository, option A, one VM class (Linux, one scale set per repository), attack and failure tests on a pool device; the device serves only a test workgroup with the repository's fixed task (D-12 needs the workgroup of each job's task); admission of §6.6 shared (one admission per device, kind `ci`). Built: §17 | Uninstall the app |
 | 2 | Shadow operation: copy of a light check (e.g. Dockerfile lint) with a new label, not required, trusted triggers only; M-19 and M-20 on a device with agent VMs of a test workgroup | Switch the workflow off |
 | Gate U (recommendation) | D-7 and D-20 put to the client; if ordered: interface boundary, `hostLoopback: false`, M-6 and M-21 passed, M-18 for macOS guests (§9.3) | No class U job on the device |
 | 3 | Light PR checks (class U; proposed default: not before D-20 is decided, §9.3); at least 5 runs per load class [OPS] | Label back |
@@ -929,31 +965,39 @@ host-bound. Machines with other roles: D-25.
 M-18, M-9), (5) pilot with one trusted DFX repository, (6) decision on Xcode and RealUnit (D-16, D-17).
 
 ### 12.5 Host-bound jobs
-Open deviation, decision D-1 ([KONZEPT part D](../KONZEPT.md#d-offen)): today they run on a deploy runner outside the
-platform, against [E-34](../KONZEPT.md#e-34) and [E-35](../KONZEPT.md#e-35) (§1.3). The options – among them a minimal
-deploy runner per device (class H, under the requirements of §5) as an exception and a signed pull deployment without
-an Actions runner – are listed in D-1.
+Decided (D-1 (c), 2026-11-27): signed pull deployment without an Actions runner – the target device fetches its update
+itself and applies it only after verifying the signature (§1.3). Until it is built, the deploy runner outside the
+platform stays an open deviation against [E-34](../KONZEPT.md#e-34) and [E-35](../KONZEPT.md#e-35)
+([KONZEPT part D](../KONZEPT.md#d-offen)). The pull deployment is a stage of its own, not part of stage 1.
 
 ## 13. Open decisions
 
-**Decided is only D-5, by [E-35](../KONZEPT.md#e-35) and [E-36](../KONZEPT.md#e-36);** where E-35 or E-36 excludes a
-single option, the row says so. Everything else is open. The tendency is the factual assessment of the research reports, not a choice.
+**Decided by the client:** D-5 by [E-35](../KONZEPT.md#e-35) and [E-36](../KONZEPT.md#e-36); D-1, D-2, D-3, D-4,
+D-9, D-12 and D-13 on 2026-11-27 (after the question back, answer „ok, passt so“). They are decisions within the rules
+E-34 to E-36, not new rules. Where E-35 or E-36 excludes a single option, the row says so. Everything else is open; its
+tendency is the factual assessment of the research reports, not a choice.
 
-| ID | Decision | Options | Tendency (not decided) |
+**Open point from the decisions (for the client):** D-4 says the app has "only the right to register runners"; D-12
+needs, for a `push` after the merge, the merged pull request of the pushed commit, which GitHub only gives with
+`Actions: read` and `Pull requests: read`. Stage 1 asks for neither: without them push jobs are not taken
+(`push_unattributable`, fail-closed, §17.3) and the pull request jobs, scheduled runs and deploys work. Granting the two
+read rights (configuration `push_attribution`) is a decision of the client.
+
+| ID | Decision | Options | Decision or tendency |
 |---|---|---|---|
-| D-1 | Scope, and host-bound jobs (§1.3; not covered by [A20](../KONZEPT.md#a-20); open deviation, [KONZEPT part D](../KONZEPT.md#d-offen)) | (a) Linux, not host-bound only; (b) plus macOS VMs. Host-bound jobs: (c) signed pull deployment without an Actions runner; (d) minimal deploy runner per device outside the platform as an exception to [E-34](../KONZEPT.md#e-34) and [E-35](../KONZEPT.md#e-35), class H (§5); (e) another way the client names. Whether such jobs may run outside the platform at all is part of this decision | (a) first, (b) after the spike; host-bound jobs: no choice made, all of (c)–(e) open; on pool devices without runner groups (D-9) §5 recommends (c) rather than (d) |
-| D-2 | Trigger | (a) `actions/scaleset`; (b) webhook + JIT; (c) polling + JIT; (d) fixed JIT stock | (a) |
-| D-3 | Location of the controller | (a) inside `agent-runner`; (b) sidecar with its own account; (c) separate host (not as a machine outside the platform (E-35), nor as an own CI device inside it (E-36)); (d) hub with KONZEPT change | (b) |
-| D-4 | Owner of the CI app and of the key that creates JIT runners, and where that key lies | operator; separate service account; external signer | separate from the user app ([ADR-015](../adr/015-github-app-device-flow-rest-only.md)); key never in VM or hub |
+| D-1 | Scope, and host-bound jobs (§1.3; not covered by [A20](../KONZEPT.md#a-20)) | (a) Linux, not host-bound only; (b) plus macOS VMs. Host-bound jobs: (c) signed pull deployment without an Actions runner; (d) minimal deploy runner per device outside the platform as an exception to [E-34](../KONZEPT.md#e-34) and [E-35](../KONZEPT.md#e-35), class H (§5); (e) another way the client names | **Decided 2026-11-27: (a) first, (b) after the spike (§8, §12.4); host-bound jobs (c), signed pull deployment – the target server fetches its update itself, no runner on it.** The deviation stays open in [KONZEPT part D](../KONZEPT.md#d-offen) until the pull deployment is built |
+| D-2 | Trigger | (a) `actions/scaleset`; (b) webhook + JIT; (c) polling + JIT; (d) fixed JIT stock | **Decided 2026-11-27: (a)** (§17.2) |
+| D-3 | Location of the controller | (a) inside `agent-runner`; (b) sidecar with its own account; (c) separate host (not as a machine outside the platform (E-35), nor as an own CI device inside it (E-36)); (d) hub with KONZEPT change | **Decided 2026-11-27: (b)**, an own service with its own account next to `agent-runner` on the pool devices (§17.1) |
+| D-4 | Owner of the CI app and of the key that creates JIT runners, and where that key lies | operator; separate service account; external signer | **Decided 2026-11-27: an own GitHub App "agent CI" of DFX, only with the right to register runners, separate from the user app ([ADR-015](../adr/015-github-app-device-flow-rest-only.md)); its key lies only with the controller on the devices, never in a VM, never at the hub.** Created by agent.dfx.swiss itself through the app-manifest flow, permission `organization_self_hosted_runners: write` only (§17.9). Read rights for push jobs: open point above |
 | D-5 | Hardware | Were: (a) share the productive runner device; (b) idle runner device as own CI host; (c) repurpose the current macOS CI hosts; (d) mixed | **Decided by [E-35](../KONZEPT.md#e-35) (2026-11-25) and [E-36](../KONZEPT.md#e-36) (2026-11-26): one shared pool; CI jobs, also with foreign PR code, run on the same devices as the work VMs.** The research's tendency to an own CI host (separation from workgroup plaintext) is rejected, also as an own CI device inside the platform; reason: E-35 and E-36. What follows for class U is open (D-7, D-20; recommendation: gate U, §9.3). Shares: D-22 |
 | D-6 | Public fork PRs (Linux and macOS) and who approves | (a) not self-hosted; (b) only after A38 approval in U; (c) all in U | open; the service never approves itself |
 | D-7 | pf residual risk | (a) accept for CI, per class (U, B, T, P); (b) `hostLoopback: false` + interface/VLAN boundary before start; (c) own physical network in addition. Includes: how the interface boundary is built | (b); for class U recommended as gate U (§9.3) |
 | D-8 | Egress: rule on outgoing addresses and destination list (only free Cloudflare plans, [E-10](../KONZEPT.md#e-10); §9.4) | (a) adopt E-10's rule on outgoing addresses; (b) own CI rule – must work without a paid plan; (c) domain allow-list through a proxy – must work without a paid plan | open |
-| D-9 | GitHub plan | (a) Team for runner groups; (b) Free with repository runners – cannot meet §5 within one repository: then a repository may carry only one class, otherwise (b) is not viable; (c) Enterprise; in each case: does the plan offer environments bound to protected branches for the repositories with U jobs (§9.6)? | open |
+| D-9 | GitHub plan | (a) Team for runner groups; (b) Free with repository runners – cannot meet §5 within one repository: then a repository may carry only one class, otherwise (b) is not viable; (c) Enterprise; in each case: does the plan offer environments bound to protected branches for the repositories with U jobs (§9.6)? | **Decided 2026-11-27: (b) Free stays, repository runners.** With D-12 no foreign PR code runs, so one class per repository suffices (§4.2) |
 | D-10 | CPU and runtime invariant | (a) no overcommit; (b) measured quota per class; does the 20 % invariant apply to VM pools? Which CPU ratio holds for agent VMs on the same device? | open, after M-5/M-9/M-19 |
 | D-11 | Heavy jobs | (a) larger profile; (b) split jobs; (c) keep the current large host – excluded as a machine outside the platform (E-35), and as an own CI device inside it (E-36) | open between (a) and (b) |
-| D-12 | Model in KONZEPT | (a) infrastructure workload without task; (b) technical organisation/workgroup; (c) own product next to the platform – **excluded by [E-35](../KONZEPT.md#e-35)**; plus the CI-guest clarification of §7.3 and the job audit of §6.4 | open |
-| D-13 | Billing | (a) internal exemption; (b) internal cost centre | open |
+| D-12 | Model in KONZEPT | (a) infrastructure workload without task; (b) technical organisation/workgroup; (c) own product next to the platform – **excluded by [E-35](../KONZEPT.md#e-35)**; plus the CI-guest clarification of §7.3 and the job audit of §6.4 | **Decided 2026-11-27: none of (a)–(c); a CI job runs only when its pull request was started through agent.dfx.swiss, and belongs to that pull request's task** (wording and confirmations in §6.4): push after the merge → the merged pull request's task; scheduled runs and deploys → a fixed task per repository in its workgroup; a pull request a person opens on GitHub does not run |
+| D-13 | Billing | (a) internal exemption; (b) internal cost centre | **Decided 2026-11-27: neither; billing follows CI job → its pull request → its task → the workgroup the task is in** (wording in §4.3; §17.6) |
 | D-14 | Upgrade | (a) drain; (b) VM takeover | open |
 | D-15 | Trust in the golden image | (a) digest + SBOM; (b) also signed; (c) reproducible build | open |
 | D-16 | Who counts as own use for macOS | RealUnit and 21gifts own use or third party; customers of agent.dfx.swiss excluded until legal review | customers excluded |
@@ -1123,3 +1167,126 @@ quotations are excerpts and are to be checked against the original before any le
 [OPS]: the operator's internal infrastructure repository (runner policy, CI runner policy, fleet inventory, host
 READMEs, runbooks and records). It is private; this public document neither names its paths nor its devices. The
 two research reports of 2026-11-25 that this concept is built from cite it line by line.
+
+## 17. Stage 1 as built
+
+Stage 1 of §12.2 after the decisions of 2026-11-27 (§13). It runs Linux jobs of configured repositories in
+throw-away VMs of the shared pool and ties every job to a task. Contract changes: `contracts/changes/CI-01.md`.
+
+### 17.1 Parts and configuration
+- **`agent-ci`** (`src/agent_runner/ci/controller.py`, entry point `agent-ci --config <file> [--textfile-dir <dir>]`):
+  the controller, a service of its own under its own macOS account (D-3 (b)). Its JSON configuration
+  (`src/agent_runner/ci/repos.py`) names the app's client ID and key file, the listener binary, the runner's socket and
+  one entry per repository: installation ID, scale-set name (= label), the repository's fixed task (organization,
+  workgroup, task and its main session; D-12) and the VM size. One scale set per repository (D-9).
+- **`agent-ci-listener`** (`cmd/agent-ci-listener`, Go, `github.com/actions/scaleset` pinned in `go.mod`): one process
+  per scale set; it holds the message session and speaks JSON lines with the controller. It decides nothing (§17.2).
+- **The CI area of `agent-runner`** (`src/agent_runner/ci/area.py`, daemon task `ci`): switched on by
+  `<HOME>/ci/area.json` (`{socket, gid}`); a Unix socket with mode 0660 and the controller's group
+  (`src/agent_runner/ci/link.py`), never a network port.
+- **CI VMs** are work VMs of scope `ci` (`runner.workvm`, migration `0039_ci_vms.sql`): the work image with the
+  GitHub runner pinned by version and SHA-256 (`images/workvm/provision.sh`, updates off); a separate `ci-linux-arm64`
+  profile (§7) follows when its content differs.
+
+### 17.2 Listener and acquisition
+Every message of the service goes to the controller as one `batch` (available, assigned, started, completed jobs and
+the statistics); the sidecar acknowledges it only after the controller answered `acquire` with the request IDs to
+take, acquires them and reports `acquired`. The controller asks the sidecar for a JIT configuration (`jit`) and sets
+the offered capacity (`capacity`, `SetMaxRunners`: 1 while a CI VM would start on the device, else 0). The app key is
+read by the sidecar from the key file of the controller's account and never leaves the process.
+
+### 17.3 Attribution: job → pull request → task → workgroup (D-12)
+`src/agent_runner/ci/attribution.py`:
+
+| Event | Chain | Not taken |
+|---|---|---|
+| `pull_request` | the number in the job's ref (`refs/pull/<n>/merge`) → the pull request a session created → its task | `ref_unreadable`, `pull_request_not_from_agent` |
+| `push` | run → head commit → the pull requests GitHub associates with it (merged first) → the first a session created | `push_unattributable` (without `push_attribution`, §13 open point), `github_unavailable`, `pull_request_not_from_agent` |
+| `schedule`, `workflow_dispatch` | the repository's fixed task | – |
+| other events (e.g. `pull_request_target`) | – | `event_not_served` |
+| repository not configured | – | `repository_not_served` |
+
+A pull request counts only when a session created it (`github.create_pull_request` succeeded, origin `device`); a
+pull request a person opened on GitHub or merely linked to a task is not taken. The lookup is the runner's own record
+of the operation; stage 1 therefore serves pull requests created on the same device (one pool device). Looking up a
+pull request created on another device through the hub's opaque link (04-crypto.md section 4.11a) is the entry
+condition of stage 2. A job that is not taken is not acquired and stays at GitHub.
+
+### 17.4 VM, capacity and runner process
+- `capacity`: `WorkVms.can_start(size, kind=ci)` - ready image and boundary, a free slot, the device's one admission
+  (`agent_runner.admission`, kind `ci`, fewest active first) and the disk quota. The controller acquires a job only
+  while this holds (§6.6: no job without capacity).
+- `vm`: `WorkVms.obtain(scope=ci, kind=ci)`; the row names the job's task, workgroup, organization and the session
+  that bears its runtime. An organization without credit gets none (`credit_exhausted`).
+- `run`: the runner starts as a job of the VM's job helper; the JIT configuration goes on standard input into
+  `ACTIONS_RUNNER_INPUT_JITCONFIG`, never into an argument on the host. The runner area follows it and deletes the VM
+  when it exits (`ci_ended`), after 360 minutes (`ci_timeout`, GitHub's default job limit) or when the VM stops
+  answering; `end` deletes it at once (`ci_cancelled`).
+- GitHub may give an accepted job to another idle runner of the scale set (§3.2): the controller then re-binds the
+  rows of both VMs to the job each carries (`rebind`), so runtime follows the right chain. A job the controller did not
+  accept on one of its runners ends the VM at once (`job_not_accepted`).
+- A runner without a job for 600 s is ended (`runner_idle`). A restart of the runner deletes all CI VMs (D-14 open);
+  the job fails at GitHub and is never repeated silently.
+
+### 17.5 Failure handling
+Failed steps of a runner start (`vm_refused`, `jit_failed`, `run_failed`) end its VM and are audited. A listener that
+exits is restarted after 10 s. The runner's socket missing (`LinkDown`) means: no capacity, nothing acquired.
+
+### 17.6 Billing, audit, monitoring
+- **Billing (D-13):** the runtime meter bills a running CI VM to the second as `runtime` with `vm_kind` `ci` and its
+  size to the session its row names (`src/agent_runner/workvm/billing_vms.py`); the hub books it to that session's task
+  and workgroup by the price of the size (`agent_hub.billing.outbox.book_runtime`). Pull request job → the session that
+  created the pull request → its task → its workgroup; scheduled runs and deploys → the fixed task's main session.
+- **Audit:** the runner audit action `ci.job` (`contracts/audit/ci.job.json`) with `task_id` (the hub takes the
+  workgroup and organization from the task and requires that the device serves it), target `ci_job`
+  `run:<run id>:<request id>`, and the detail `stage` (`accepted`, `refused` with result `denied`, `ended`), event,
+  basis, reason, GitHub's result, size, duration and work VM. Refused jobs are written under the repository's fixed
+  task. No repository, branch, workflow or person names reach the hub.
+- **Monitoring:** `agent_ci.prom` in the textfile directory (offered, accepted by basis, refused by reason,
+  deferred, ended by reason, start failures by stage, running, waiting, oldest waiting age, listeners up, pickup, VM
+  ready and job duration sums) and the admission's `agent_runner_admission_active{kind="ci"}` /
+  `agent_runner_admission_waiting{kind="ci"}`; labels are closed codes only.
+
+### 17.7 Tests
+`tests/platform/runner/ci/` against doubles of GitHub: the REST surface of the app (`agent_doubles.ci.github`:
+installation tokens from the app JWT, workflow runs, pull requests of a commit, missing permissions, faults) and the
+listener sidecar (`agent_doubles.ci.listener`); the runner area with the real PostgreSQL store and the fake Lima of
+the work VM tests. The sidecar has its own Go tests (`cd cmd/agent-ci-listener && go test ./...`).
+
+### 17.8 Not in stage 1
+macOS jobs (D-1 (b), after the spike), the signed pull deployment (D-1 (c)), cross-device lookup of pull requests
+(stage 2), separate CI image profile, gate U and the hardening of D-20, drain or takeover on upgrades (D-14).
+
+### 17.9 The app "agent CI" is created by agent.dfx.swiss (`agent-ci setup`)
+Ordered by the client on 2026-11-27 ("mach du das mit browser use"): no person creates the app by hand.
+`src/agent_runner/ci/setup.py`, command `agent-ci --config <file> setup`:
+
+1. **Create** in the organisation of the first repository through GitHub's app-manifest flow, in a session of the
+   platform browser ([ADR-085](../adr/085-browser-as-platform-operation.md)) of the repository's fixed task, driven
+   by the controller over the runner's socket (op `browser`, only navigate, evaluate, click, snapshot, wait): open
+   `organizations/<org>/settings/apps/new`, post the manifest with a random `state`, confirm "Create GitHub App".
+   Manifest: name "agent CI", webhook off, no events, `public` only when several organisations install it, and only
+   the permission `organization_self_hosted_runners: write` – the right to register runners of the organisation,
+   which is what an organisation scale set needs.
+2. **Convert**: GitHub redirects with a one-time code. The controller reads it from the browser's answer over the
+   local socket, checks `state` and exchanges it itself (`POST /app-manifests/{code}/conversions`, no credential).
+   The private key goes from GitHub straight into the key file of the controller's account (0600, atomic); it is never
+   in a VM, at the hub, in a chat or a log. Client secret and webhook secret are dropped. The browser record (row and
+   `browser.action` event) masks `code` and `state` of every URL (`workvm.browser.redact_url`); the code is used up
+   within seconds.
+3. **Install** in every organisation of the configuration (from the stage 0 inventory):
+   `apps/<slug>/installations/new/permissions?target_id=<organisation ID>`, "Install". The installation IDs are read
+   with the app's JWT (`GET /app/installations`).
+4. The controller's configuration gets the client ID and the installation IDs; `agent-ci` serves only then.
+
+**Where GitHub wants a person** – signing in as an owner of the organisation, two-factor, passkey, device
+verification, "Confirm access" – the flow stops (`ci.setup person_needed step=<step> reason=<sign_in|confirm>`), the
+owner takes the browser over per remote control (VNC, PR #276) and completes the step there; the flow looks every 10 s and
+goes on by itself once the page no longer needs a person (at most 30 min, then `person_timeout`). The flow never types
+anything into a page and holds no credential of the owner. A person who is not an owner of the organisation ends the
+setup (`not_an_owner`).
+
+Tests: `tests/platform/runner/ci/test_setup.py` against doubles of GitHub's pages (`agent_doubles.ci.web`: sign-in,
+manifest form, "Confirm access", redirect, installation) and API (`agent_doubles.ci.github`: conversion, organisations,
+installations). The live run follows after the merge of #276 and this stage; until #276 is merged the owner opens the
+remote control of the fixed task's browser session.

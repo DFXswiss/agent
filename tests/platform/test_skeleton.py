@@ -76,6 +76,7 @@ AREAS: dict[ModuleType, list[str]] = {
         "assignments",
         "billing",
         "catchup",
+        "ci",
         "contexts",
         "credentials",
         "crypto",
@@ -111,7 +112,7 @@ AREAS: dict[ModuleType, list[str]] = {
         "workvm",
     ],
     agent_guest: ["api_routes", "control_routes", "hook_addons", "mcp_tools", "sandbox"],
-    agent_doubles: ["atk", "common", "github", "login_cli", "mail", "model"],
+    agent_doubles: ["atk", "ci", "common", "github", "login_cli", "mail", "model"],
 }
 COMMANDS: dict[str, tuple[Callable[[Sequence[str] | None], int], str]] = {
     "agent-runner": (runner_main, agent_runner.__version__),

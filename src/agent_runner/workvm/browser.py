@@ -12,7 +12,8 @@ of scope `browser` (`WorkVms.obtain`: warm pool, FIFO queue, slot, RAM, disk, bo
   `BROWSER_SEARCH_URL` (or `ok: false` while it is off), `browser_upload` copies the workspace files into the VM
   (`UPLOADS/<random>/<n>/<name>`, passed as `files`), the helper runs the action (`workvm-browser call`, untrusted
   answer, `browser_helper`), a download or screenshot is brought into the workspace (`WorkVms.fetch_file`), the
-  `browser.action` event records it (password text masked, the picture when it fits) and the answer carries
+  `browser.action` event records it (password text masked, one-time `code`/`state` of a URL redacted - `redact_url` -,
+  the picture when it fits) and the answer carries
   `browser_id` and `seq`. A failed action is `ok: false`, not a tool error.
 - **failure and restart**: a call that runs into its time limit is `ok: false` `timeout` and keeps the VM; only a VM
   that then fails the `selftest` probe (10 s), or whose helper answered outside the closed schema, is deleted
@@ -41,7 +42,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import parse_qsl, quote_plus, urlencode, urlsplit, urlunsplit
 
 from agent_runner.encoding import b64u_encode
 from agent_runner.errors import RunnerError
@@ -97,6 +98,20 @@ IMAGE_WIDTH = 960
 UPLOAD_BYTES = 100 * 1024 * 1024
 UPLOAD_SCRIPT = 'umask 022 && mkdir -p "$1" && exec tar -x --no-same-owner -f - -C "$1"'
 FILE_TOOLS = frozenset({"browser_download", "browser_screenshot"})
+SECRET_PARAMETERS = frozenset({"code", "state"})
+"""Query parameters whose values are one-time secrets of a redirect (OAuth, GitHub's app manifest flow)."""
+REDACTED = "redacted"
+
+
+def redact_url(url: str) -> str:
+    """The URL as the record keeps it: the values of `SECRET_PARAMETERS` replaced (spec 16 section 17.9). The answer to
+    the caller keeps the real URL; only the row and the `browser.action` event are redacted."""
+    parts = urlsplit(url)
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    if not any(name in SECRET_PARAMETERS for name, _value in pairs):
+        return url
+    query = urlencode([(name, REDACTED if name in SECRET_PARAMETERS else value) for name, value in pairs])
+    return urlunsplit(parts._replace(query=query))
 
 
 @dataclass(frozen=True)
@@ -394,7 +409,7 @@ class Browsers:
     ) -> str | None:
         """Update the row and write the `browser.action` entry of `seq`; the answer's notice."""
         notice = clean(" ".join([*notices, *([answer.notice] if answer.notice else [])]), NOTICE_LIMIT) or None
-        await rows.update(self.db, row.browser_id, url=answer.url, last_call_at=self.now())
+        await rows.update(self.db, row.browser_id, url=redact_url(answer.url), last_call_at=self.now())
         duration_ms = max(0, int((self.clock() - begun) * 1000))
         await self._action_event(
             row, seq, tool=tool, arguments=arguments, answer=answer, notice=notice, duration_ms=duration_ms
@@ -494,7 +509,7 @@ class Browsers:
             "action": clean(action, ACTION_LIMIT),
             "target": _short(target),
             "text": MASK if answer.masked and text is not None else _short(text),
-            "url": answer.url,
+            "url": redact_url(answer.url),
             "title": answer.title,
             "tab": answer.tab,
             "ok": answer.ok,

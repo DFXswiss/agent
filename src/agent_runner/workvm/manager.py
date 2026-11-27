@@ -30,6 +30,9 @@
   call of the resumed session starts it again (`_resume`) through the queue, in its own slot.
 - **run VMs** (scope `run`, `obtain_run_vm`): one fresh VM per `test.run` of `agent_runner.workvm.testrun`.
 - **browser VMs** (scope `browser`): the VM of a session's platform browser (`agent_runner.workvm.browser`).
+- **CI VMs** (scope `ci`, `agent_runner.ci.area`): one fresh VM per GitHub Actions job, admitted as kind `ci`
+  (`can_start` looks whether one would start now); its row names the job's task and the session that bears its
+  runtime (spec 16 section 17).
 - **logs**: a job whose output is longer than its event keeps (`RUN_OUTPUT_LIMIT`) is captured as an encrypted log
   object in the background (`capture`, injected); its final `workvm.run` event names the log, and the teardown of its
   VM waits for the capture (at most `CAPTURE_TIMEOUT`).
@@ -60,7 +63,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
-from agent_runner.admission import WORK, Admission, Demand, Device, Ticket
+from agent_runner.admission import CI, WORK, Admission, Demand, Device, Ticket
 from agent_runner.credentials import acting
 from agent_runner.errors import RunnerError
 from agent_runner.operations.extensions import OperationFailed
@@ -124,9 +127,11 @@ NO_CREDIT = (
 )
 RUN_SCOPE = "run"
 BROWSER_SCOPE = "browser"
-OWNED_SCOPES = frozenset({RUN_SCOPE, BROWSER_SCOPE})
-"""VMs owned by one test run or one browser session (ADR-080, ADR-085): no `workvm.state` events, no per-task limit,
-not torn down by the idle pass or stopped by the credit stop of this manager (their owner ends them)."""
+CI_SCOPE = "ci"
+OWNED_SCOPES = frozenset({RUN_SCOPE, BROWSER_SCOPE, CI_SCOPE})
+"""VMs owned by one test run, one browser session or one CI job (ADR-080, ADR-085, spec 16 section 17): no
+`workvm.state` events, no per-task limit, not torn down by the idle pass or stopped by the credit stop of this manager
+(their owner ends them). CI VMs are admitted as kind `ci` (`agent_runner.admission.CI`), the others as `work`."""
 
 
 def lima_reason(detail: str) -> str:
@@ -175,6 +180,8 @@ class Waiter:
     granted: bool = False
     admit: Ticket | None = None
     """Its place in the device's admission while it waits (fewest active first, then the older)."""
+    kind: str = WORK
+    """Its kind in the device's admission (`work`, or `ci` for a CI VM)."""
 
 
 @dataclass(frozen=True)
@@ -311,10 +318,19 @@ class WorkVms:
         """Running log captures per work VM (its teardown waits for them)."""
         deps.admission.counters[WORK] = self.active
         """The active work, browser and test VMs count for the order of the kinds in the device's admission."""
+        deps.admission.counters[CI] = self.active_ci
+        """The active CI VMs count as kind `ci`."""
+
+    async def _not_stopped(self) -> list[WorkVm]:
+        return await records.live(self.deps.db, "starting", "running", "stopping", "deleting")
 
     async def active(self) -> int:
-        """Work VMs that are not stopped (a pool entry is not active: it is speculative)."""
-        return len(await records.live(self.deps.db, "starting", "running", "stopping", "deleting"))
+        """Work VMs that are not stopped, CI VMs aside (a pool entry is not active: it is speculative)."""
+        return sum(1 for vm in await self._not_stopped() if vm.scope != CI_SCOPE)
+
+    async def active_ci(self) -> int:
+        """CI VMs that are not stopped."""
+        return sum(1 for vm in await self._not_stopped() if vm.scope == CI_SCOPE)
 
     # -- availability ------------------------------------------------------------------------------------------
 
@@ -376,8 +392,10 @@ class WorkVms:
         implicit: bool = False,
         workvm_id: str | None = None,
         triggered_by: str | None = None,
+        kind: str = WORK,
     ) -> WorkVm:
-        """A new running VM of the scope (formal checks, warm pool, else the FIFO queue and a cold clone)."""
+        """A new running VM of the scope (formal checks, warm pool, else the FIFO queue and a cold clone), admitted as
+        `kind` by the device's admission."""
         image = await self.check_new(session, size=size)
 
         async def from_pool() -> WorkVm | None:
@@ -404,7 +422,7 @@ class WorkVms:
             )
 
         memory_mib, disk_gib = SIZES[size][1], SIZES[size][2]
-        waiter = Waiter(secrets.token_hex(8))
+        waiter = Waiter(secrets.token_hex(8), kind=kind)
 
         async def attempt() -> WorkVm | None:
             """A ready pool entry (`running`, standard size only), else a free slot with RAM and disk: the row
@@ -416,7 +434,7 @@ class WorkVms:
                     return pooled
                 async with self.slot_lock:
                     slot = await self._free_slot()
-                    fits, free = await self._fits(memory_mib, waiter.admit)
+                    fits, free = await self._fits(memory_mib, waiter.admit, kind=kind)
                     disk = await self._disk_fits(disk_gib)
                     if slot is not None and fits and disk:
                         row = build(slot)
@@ -446,7 +464,7 @@ class WorkVms:
         deadline = self.deps.now() + timedelta(seconds=self.deps.settings.queue_seconds)
         try:
             await records.wait_add(self.deps.db, waiter.ticket, waiter.slot, self.deps.now())
-            async with self.deps.admission.waits(WORK, memory_mib) as admit:
+            async with self.deps.admission.waits(waiter.kind, memory_mib) as admit:
                 waiter.admit = admit
                 while True:
                     if await self._turn(waiter):
@@ -504,7 +522,19 @@ class WorkVms:
         await self.delete(stopped[0], reason="idle")
         return True
 
-    async def _fits(self, memory_mib: int, own: Ticket | None = None) -> tuple[bool, int]:
+    async def can_start(self, size: str, *, kind: str = WORK) -> bool:
+        """Whether a new VM of `size` would start now as `kind` (a ready image and boundary, a free slot, the device's
+        admission, the disk quota) - a look, no reservation; the CI controller acquires a job only then."""
+        if await self.available() is None:
+            return False
+        _cpus, memory_mib, disk_gib = SIZES[size]
+        async with self.slot_lock:
+            if await self._free_slot() is None:
+                return False
+            fits, _free = await self._fits(memory_mib, kind=kind)
+            return fits and await self._disk_fits(disk_gib)
+
+    async def _fits(self, memory_mib: int, own: Ticket | None = None, *, kind: str = WORK) -> tuple[bool, int]:
         """Whether the device's one admission admits a work, browser or test VM of `memory_mib` now (CPU; the RAM
         above `MEMORY_RESERVE_MIB` that every VM and every admitted workgroup VM in flight leave, less what waiting
         requests of other kinds that go first need - `own` is the request's place), and that free RAM. The disk quota is
@@ -512,7 +542,7 @@ class WorkVms:
         room = await self.deps.free_memory_mib()
         # the VM's memory and its host share (its Lima helper, `vm.capacity.VM_HOST_MIB`), counted at its start
         verdict = await self.deps.admission.judge(
-            Demand(WORK, vm_footprint_mib(memory_mib)), Device(free_mib=room), own
+            Demand(kind, vm_footprint_mib(memory_mib)), Device(free_mib=room), own
         )
         return verdict.admitted, room
 

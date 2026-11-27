@@ -15,6 +15,8 @@ IMAGES=$BUNDLE/images
 FILES=$IMAGES/workvm/files
 CACHE=/var/cache/workvm-image
 PLAYWRIGHT_VERSION=1.65.1
+RUNNER_VERSION=2.338.2
+RUNNER_SHA256=670adb2f268fe21dcbb58b3db0e0aa9d5b3bddfe2c651481336e561ff86de945
 
 log() { echo "workvm-image: $*"; }
 die() {
@@ -76,6 +78,16 @@ tar -xJf "$CACHE/node-$node_version.tar.xz" -C /usr/local/lib/nodejs --strip-com
 for tool in node npm npx corepack; do
   ln -sf "/usr/local/lib/nodejs/bin/$tool" "/usr/local/bin/$tool"
 done
+
+log "GitHub Actions runner (CI VMs, docs/platform/spec/16-ci-runners.md section 17.4)"
+# Pinned by version and SHA-256, updates off (the scale set is created with runner updates disabled). Only CI VMs
+# start it, with a JIT configuration on stdin; a work VM never does.
+fetch "https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/actions-runner-linux-arm64-$RUNNER_VERSION.tar.gz" \
+  "$RUNNER_SHA256" "actions-runner-$RUNNER_VERSION.tar.gz"
+rm -rf /opt/actions-runner
+install -d -m 0755 /opt/actions-runner
+tar -xzf "$CACHE/actions-runner-$RUNNER_VERSION.tar.gz" -C /opt/actions-runner --no-same-owner
+/opt/actions-runner/bin/installdependencies.sh >/dev/null
 
 log "browser (Playwright $PLAYWRIGHT_VERSION with Chromium)"
 export PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers

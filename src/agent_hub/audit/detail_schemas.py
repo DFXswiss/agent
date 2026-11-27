@@ -244,6 +244,22 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["day", "chf_per_usd_e8", "source", "kind"],
     },
+    "ci.job": {
+        "properties": {
+            "stage": [{"type": "string", "enum": ["accepted", "refused", "ended"]}],
+            "event": [{"type": "string", "pattern": "^[a-z_]{1,64}$"}],
+            "basis": [
+                {"type": "string", "enum": ["pull_request", "commit_pull_request", "repository_task"]},
+                {"type": "null"},
+            ],
+            "reason": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, {"type": "null"}],
+            "result": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$"}, {"type": "null"}],
+            "size": [{"type": "string", "enum": ["standard", "large", "xlarge"]}, {"type": "null"}],
+            "duration_ms": [{"type": "integer", "minimum": 0, "maximum": 9007199254740991}, {"type": "null"}],
+            "workvm_id": [{"type": "string", "pattern": "^wvm-[0-9a-f]{8}$"}, {"type": "null"}],
+        },
+        "required": ["stage", "event", "basis", "reason", "result", "size", "duration_ms", "workvm_id"],
+    },
     "community.delete": {
         "properties": {
             "as": [{"type": "string", "enum": ["author", "moderator"]}],

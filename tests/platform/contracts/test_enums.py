@@ -106,6 +106,7 @@ SPEC_OUTBOX_AUDIT = (
     " session.context_restored session.context_fallback"
     " runner.operator_github_users"  # ADR-078 section 7 (contracts/changes/KOR-47.md)
     " session.model_switched"  # ADR-081 section 5 (contracts/changes/KOR-50.md)
+    " ci.job"  # spec 16 section 17.6 (contracts/changes/CI-01.md)
 )
 # 03-api.md section 8.1: the session platform tools that read (request_operation writes).
 SPEC_MCP_TOOLS = (
@@ -179,6 +180,8 @@ KOR51_AUDIT = "agent_profile.set agent_profile.delete task.agent_profile"
 """Rights profiles (ADR-094): own profiles of an org or a workgroup, the profile of a task."""
 # ADR-096 (KOR-56): the support release
 KOR56_AUDIT = "support.people support.write support.name"
+# spec 16 section 17.6 (CI-01): one step of a self-hosted CI job
+CI01_AUDIT = "ci.job"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 03-api.md section 4.6.2, ADR-075 section 7: reasons of a waiting task beyond the session failure reasons
 SPEC_WAITING_REASONS = "no_device platform_access_required wg_vm_limit placement_full placement_offline keys_pending"
@@ -312,6 +315,7 @@ def test_audit_actions(index: dict[str, Any]) -> None:
     expected = set(SPEC_AUDIT_FIXED.split()) | set(DECIDED_AUDIT.split()) | set(KOR31_AUDIT.split())
     expected |= set(KOR47_AUDIT.split()) | set(KOR50_AUDIT.split()) | set(KOR48_AUDIT.split())
     expected |= set(KOR58_AUDIT.split()) | set(KOR51_AUDIT.split()) | set(KOR56_AUDIT.split())
+    expected |= set(CI01_AUDIT.split())
     for prefix, values in SPEC_AUDIT_PATTERNS.items():
         expected |= {f"{prefix}.{value}" for value in values.split()}
     expected |= {f"read.{e['read_resource']}" for e in index["endpoints"] if e["read_resource"]}

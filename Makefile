@@ -76,6 +76,10 @@ platform-test-hub:
 platform-test-runner:
 	$(call platform_tests,$(RUNNER_TESTS) $(TOP_TESTS),--omit='*/agent_hub/*')
 
+# The scale-set sidecar of the CI controller (docs/platform/spec/16-ci-runners.md section 17.2): Go, its own module.
+ci-listener-test:
+	cd cmd/agent-ci-listener && go vet ./... && go test -count=1 ./...
+
 platform-contracts:
 	$(PYTHON) -m pytest $(PYTEST_ARGS) -q tests/platform/test_contracts_version.py
 

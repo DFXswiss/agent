@@ -543,6 +543,19 @@
   "src/agent_runner/catchup/plan.py": {
    "MAX_WRAPS": "answer"
   },
+  "src/agent_runner/ci/area.py": {
+   "JOB_LIMIT_S": "external",
+   "job_limit_s": "external"
+  },
+  "src/agent_runner/ci/bridge.py": {
+   "LINE_MAX": "size"
+  },
+  "src/agent_runner/ci/jobs.py": {
+   "NUMBER_MAX": "integer"
+  },
+  "src/agent_runner/ci/link.py": {
+   "LINE_MAX": "size"
+  },
   "src/agent_runner/config.py": {
    "DEFAULT_DFX_KEY_MAX_HEADROOM_MICRO_USD": "integer",
    "_MAX_DFX_KEY_HEADROOM_MICRO_USD": "integer",
@@ -1571,6 +1584,9 @@
   "contracts/audit/billing.fx_set.json": {
    "/properties/chf_per_usd_e8/maximum": "integer"
   },
+  "contracts/audit/ci.job.json": {
+   "/properties/duration_ms/anyOf/0/maximum": "integer"
+  },
   "contracts/audit/community.delete.json": {
    "/properties/seq/maximum": "integer"
   },
@@ -1834,7 +1850,8 @@
    "/$defs/body_runtime/properties/runtime_ms/maximum": "time",
    "/$defs/body_vm_state/properties/cpus/maximum": "integer",
    "/$defs/operator_subscription/properties/windows/maxItems": "answer",
-   "/$defs/quota_window/properties/used_percent/maximum": "integer"
+   "/$defs/quota_window/properties/used_percent/maximum": "integer",
+   "/$defs/body_audit/oneOf/28/properties/detail/properties/duration_ms/anyOf/0/maximum": "integer"
   },
   "contracts/requests/github.connect.response.json": {
    "/oneOf/0/properties/expires_in/maximum": "integer",

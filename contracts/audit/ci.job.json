@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/ci.job.json",
+  "title": "audit detail ci.job",
+  "description": "detail of audit rows with action ci.job: one step of a self-hosted GitHub Actions job (docs/platform/spec/16-ci-runners.md section 17.6): accepted (taken, with the basis of its task), refused (not taken, with the reason; written under the repository's fixed task) or ended (its VM went, with GitHub's result and the end reason). Metadata only (02-data-model.md section 2.9): no repository, branch, workflow or person names.",
+  "type": "object",
+  "properties": {
+    "stage": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "refused",
+        "ended"
+      ]
+    },
+    "event": {
+      "type": "string",
+      "pattern": "^[a-z_]{1,64}$"
+    },
+    "basis": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "pull_request",
+            "commit_pull_request",
+            "repository_task"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "result": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,31}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "size": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "standard",
+            "large",
+            "xlarge"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "duration_ms": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "workvm_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^wvm-[0-9a-f]{8}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "stage",
+    "event",
+    "basis",
+    "reason",
+    "result",
+    "size",
+    "duration_ms",
+    "workvm_id"
+  ],
+  "additionalProperties": false
+}

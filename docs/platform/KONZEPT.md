@@ -1046,7 +1046,7 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
 
 ### Offene Abweichungen
 
-Stand 2026-11-26. Was hier steht, widerspricht dem gebauten Stand noch und wird vom genannten Paket geschlossen.
+Stand 2026-11-27. Was hier steht, widerspricht dem gebauten Stand noch und wird vom genannten Paket geschlossen.
 
 | Regel / Stelle | Gebauter Stand heute | Schließt |
 |---|---|---|
@@ -1055,7 +1055,7 @@ Stand 2026-11-26. Was hier steht, widerspricht dem gebauten Stand noch und wird 
 | [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
 | [E-34](#e-34), [A20](#a-20) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)) |
 | [E-35](#e-35), [E-36](#e-36) Gemeinsame Kapazität ([A21](#a-21)) | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions); [§6.6](spec/16-ci-runners.md#66-shared-capacity)) |
-| [E-34](#e-34), [E-35](#e-35) gerätegebundene Läufe | Gerätegebundene Läufe (Deploy) laufen heute auf einem Runner ausserhalb der Plattform; das widerspricht E-34 und E-35, und [A20](#a-20) erfasst sie nicht | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions), D-1) |
+| [E-34](#e-34), [E-35](#e-35) gerätegebundene Läufe | Gerätegebundene Läufe (Deploy) laufen heute auf einem Runner ausserhalb der Plattform; das widerspricht E-34 und E-35, und [A20](#a-20) erfasst sie nicht. Entschieden am 2026-11-27 (D-1 (c), [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)): signiertes Pull-Deployment – der Zielserver holt sein Update selbst, kein Runner auf ihm | Signiertes Pull-Deployment nach D-1 (c); Paket noch nicht vergeben |
 | [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
 | [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |
 | [A10](#a-10) Subagenten | Ein Subagent endet nach einem Turn und bekommt keine Folge-Anweisung | KOR-45 |

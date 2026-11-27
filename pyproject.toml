@@ -66,6 +66,7 @@ login = ["playwright>=1.65"]
 [project.scripts]
 agent = "agent_cli.main:main"
 agent-runner = "agent_runner.__main__:main"
+agent-ci = "agent_runner.ci.controller:main"
 agent-guest = "agent_guest.__main__:main"
 agent-platform = "agent_platform.__main__:main"
 agent-core = "agent_core.__main__:main"

@@ -1,0 +1,17 @@
+{
+  "action": "ci.job",
+  "result": "ok",
+  "task_id": "0193001e-0000-7000-8000-00000000001e",
+  "target_kind": "ci_job",
+  "target_id": "run:4711:42",
+  "detail": {
+    "stage": "accepted",
+    "event": "pull_request",
+    "basis": "pull_request",
+    "reason": null,
+    "result": null,
+    "size": "standard",
+    "duration_ms": null,
+    "workvm_id": "wvm-0123abcd"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "stage": "refused",
+  "event": "pull_request",
+  "basis": null,
+  "reason": "pull_request_not_from_agent",
+  "result": null,
+  "size": null,
+  "duration_ms": null,
+  "workvm_id": null
+}

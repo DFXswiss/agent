@@ -1,0 +1,10 @@
+{
+  "stage": "ended",
+  "event": "push",
+  "basis": "commit_pull_request",
+  "reason": "ci_ended",
+  "result": "succeeded",
+  "size": "large",
+  "duration_ms": 734000,
+  "workvm_id": "wvm-0123abcd"
+}
