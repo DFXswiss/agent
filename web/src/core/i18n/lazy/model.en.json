@@ -65,7 +65,7 @@
   "org.state.deferred": "briefly deferred",
   "org.state.ignored": "not used",
   "org.state.unknown": "state unknown",
-  "org.used": "{percent} used",
+  "org.free": "{percent} free",
   "org.unreadable": "quota not readable",
   "org.reset": "release {time}",
   "org.until": "Used up until {time}",

@@ -12,7 +12,10 @@ and delete it. Further records are created without the mark and never get it.
 - `rows_for(connection, user)`: `GET /v1/me/subscriptions` - every record of the user, newest change first (then ID
   descending), each with its newest reading: the primary record's from the owner's `quota_snapshot` (the newest
   fetch and its device, every window of that device's newest report) or `quota_unreadable`; a further record's from
-  `subscription_quota`; `null` before the first reading.
+  `subscription_quota`; `null` before the first reading. With a reading, `state` names whether the subscription is
+  usable now, the window that binds it and the release of an exhausted one - the rule of the summary of `GET
+  /v1/orgs/{org}/quotas` (`agent_hub.models.quotas`, ADR-081 section 6; for the primary record exactly the one it
+  counts, with its latest limit); `null` without a reading.
 - `set_use(...)` / `shared_for(...)`: the plaintext mirror of a further subscription's `use` (ADR-090 section 3) and
   the subscriptions a device is told about (`GET /v1/device/state` `subscriptions.shared`).
 - `store_reading(connection, ...)`: the `quota` item of a further subscription (`agent_hub.usage.outbox`): kept when
@@ -41,6 +44,7 @@ from agent_hub.credentials.records import (
 )
 from agent_hub.crypto.encoding import format_time
 from agent_hub.errors import HubError
+from agent_hub.models.quotas import own_usage, subscription_usage
 from agent_hub.usage.routes import quota_rows
 
 Connection = psycopg.Connection[Any]
@@ -113,7 +117,7 @@ def _primary_reading(connection: Connection, user: UUID) -> dict[str, Any] | Non
     }
 
 
-def rows_for(connection: Connection, user: UUID) -> list[dict[str, Any]]:
+def rows_for(connection: Connection, user: UUID, now: datetime) -> list[dict[str, Any]]:
     """`GET /v1/me/subscriptions` (module docstring)."""
     readings = {
         row[0]: {
@@ -130,8 +134,13 @@ def rows_for(connection: Connection, user: UUID) -> list[dict[str, Any]]:
     }
     found = []
     for identity in owner_records(connection, user):
-        reading = _primary_reading(connection, user) if identity.primary else readings.get(identity.id)
-        found.append({**subscription_meta(identity), "reading": reading})
+        if identity.primary:
+            reading = _primary_reading(connection, user)
+            state = None if reading is None else own_usage(connection, user, now)
+        else:
+            reading = readings.get(identity.id)
+            state = None if reading is None else subscription_usage(reading["windows"], now)
+        found.append({**subscription_meta(identity), "reading": reading, "state": state})
     return found
 
 

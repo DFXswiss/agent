@@ -6,8 +6,10 @@ announces `subscriptions.api`."""
 from __future__ import annotations
 
 import secrets
+from datetime import timedelta
 from uuid import UUID
 
+from agent_hub.crypto.encoding import format_time
 from agent_hub.subscriptions import store
 from tests.platform.hub.orgs.support import Actor, new_id
 from tests.platform.hub.usage.support import Meter, window
@@ -141,6 +143,37 @@ def test_the_primary_reading_names_the_newest_device_only(meter: Meter) -> None:
             device,
         )
     with meter.hub.pool.connection() as connection:
-        found = store.rows_for(connection, UUID(writer.id))
+        found = store.rows_for(connection, UUID(writer.id), meter.hub.clock())
     assert found[0]["reading"]["device_id"] == meter.high.id
     assert [item["window"] for item in found[0]["reading"]["windows"]] == ["seven_day"]
+
+
+def _states(owner: Actor) -> dict[str, object]:
+    response = owner.browser.get("/v1/me/subscriptions")
+    assert response.status_code == 200, response.text
+    return {item["id"]: item["state"] for item in response.json()["subscriptions"]}
+
+
+def test_every_subscription_names_its_state_by_the_rule_of_the_org_summary(meter: Meter) -> None:
+    writer = meter.scene.writer
+    meter.subscribe(writer)
+    primary = str(meter.rows("SELECT id FROM hub.credential WHERE owner_id = %s", writer.id)[0][0])
+    used_up, free, unread = _further(meter, writer), _further(meter, writer), _further(meter, writer)
+    soon, later = meter.hub.clock() + timedelta(hours=1), meter.hub.clock() + timedelta(days=2)
+    assert _states(writer)[used_up] is None  # no reading, no state
+    # 5 hours used up, the week nearly free: exhausted until the 5 hours reset
+    five = window("five_hour", 100, format_time(soon))
+    assert _reading(meter, writer, used_up, five, window("seven_day", 13, format_time(later))) == ("ok", None)
+    # 5 hours used up but already reset: free again, the week binds
+    past = window("five_hour", 100, format_time(meter.hub.clock() - timedelta(minutes=1)))
+    assert _reading(meter, writer, free, past, window("seven_day", 40, format_time(later))) == ("ok", None)
+    gone = {"owner_id": writer.id, "subscription_id": unread, "unavailable": True, "fetched_at": meter.time(-1)}
+    assert meter.status("quota", gone, meter.low) == ("ok", None)
+    # the primary one: exactly as the summary of the org quotas counts it (both windows at 100 %, the later reset)
+    windows = (window("five_hour", 100, format_time(soon)), window("seven_day", 100, format_time(later)))
+    assert meter.quota(writer.id, *windows, fetched=meter.time(-2)) == ("ok", None)
+    states = _states(writer)
+    assert states[used_up] == {"usable": False, "binding": "five_hour", "release": format_time(soon)}
+    assert states[free] == {"usable": True, "binding": "seven_day", "release": None}
+    assert states[unread] == {"usable": True, "binding": None, "release": None}
+    assert states[primary] == {"usable": False, "binding": "seven_day", "release": format_time(later)}

@@ -770,6 +770,14 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Bezug:** ergänzt [§4 Punkt 4](#k-4-b4) und [§7](#k-7); die zentrale Anmeldung und Messung regelt [E-31](#e-31).
 - **Umsetzung:** gebaut – [ADR-091](adr/091-subscriptions-at-a-glance.md) (KOR-68: Karte auf der Startseite, Seite
   „Meine Abos“) auf den Messungen von [ADR-090](adr/090-every-subscription-logged-in-centrally.md) (KOR-69).
+  Korrigiert 2026-11-26 ([ADR-091](adr/091-subscriptions-at-a-glance.md) §3): überall das verbleibende Kontingent
+  („frei“) statt des verbrauchten, je Abo alle Fenster mit Balken und Reset, das bindende Fenster hervorgehoben und
+  ein Abo ohne Rest darin als „gerade nicht nutzbar bis …“ markiert, je Anbieter „jetzt nutzbar: X von N“ und die
+  nächste Freigabe. Aus den vorhandenen Bausteinen: Zustand, bindendes Fenster und Freigabe je Abo nach der einen
+  Regel von [ADR-081](adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md) §6 im Hub (auf alle Abos
+  erweitert), „frei“ gemeinsam für Seite, Karte und die Einstellungsabschnitte (ein Fenster mit vergangenem Reset
+  gilt als frei). Die Zeile je Anbieter zeigt als „frei“ das Mittel dessen, was jedes Abo in seinem bindenden Fenster
+  noch frei hat (ein Abo mit vollem 5-Stunden-Fenster oder voller Woche zählt 0 %, 2026-11-27).
 
 <a id="e-31"></a>
 

@@ -80,9 +80,12 @@ describe('operator subscriptions', () => {
       until: null,
       fetchedAt: null,
     });
-    expect(subscriptionShare(unreadable!)).toBeNull();
-    expect(subscriptionShare(operatorSubscription(subscription({ used_percent: 140 }))!)).toBe(1);
-    expect(subscriptionShare(operatorSubscription(subscription({ used_percent: 40 }))!)).toBe(0.4);
+    // what is left of the binding window (`freePercent`): free again once its reset has passed
+    const before = Date.parse(LATER) - 1;
+    expect(subscriptionShare(unreadable!, before)).toBeNull();
+    expect(subscriptionShare(operatorSubscription(subscription({ used_percent: 140 }))!, before)).toBe(0);
+    expect(subscriptionShare(operatorSubscription(subscription({ used_percent: 40 }))!, before)).toBe(0.6);
+    expect(subscriptionShare(operatorSubscription(subscription({ used_percent: 100 }))!, Date.parse(LATER))).toBe(1);
     for (const broken of [
       'x',
       subscription({ label: 3 }),

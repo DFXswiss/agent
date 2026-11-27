@@ -13,14 +13,14 @@ import { setIdentity, setProfile } from '../../../src/core/store/slices/me';
 import { setPlatform } from '../../../src/core/store/slices/orgs';
 import {
   ageParts,
+  bindingFree,
+  freeLevel,
   FULLEST,
-  headlineOf,
   KIND,
   listedItems,
   loadSubscriptions,
   OPERATOR_ROLE,
   openedBody,
-  ordered,
   providerGroups,
   providerName,
   type QuotaWindow,
@@ -28,7 +28,8 @@ import {
   type SubscriptionRow,
   totalWindows,
   untilParts,
-  usedLevel,
+  usage,
+  type Usage,
 } from '../../../src/core/subscriptions/subscriptions';
 import { credWorld, type CredWorld, storedRecord, SUBSCRIPTION } from '../credentials/world';
 import { actor, idOf, seed } from '../log/world';
@@ -134,10 +135,27 @@ describe('parsing', () => {
       unreadable: true,
       windows: [],
     });
-    const windows = (names: string[]) => names.map((name) => ({ window: name, usedPercent: 1, resetsAt: null }));
-    expect(
-      ordered(windows(['weekly:b', 'weekly:a', 'seven_day', 'weekly:a', 'five_hour'])).map((w) => w.window),
-    ).toEqual(['five_hour', 'seven_day', 'weekly:a', 'weekly:a', 'weekly:b']);
+  });
+
+  it("reads the hub's state of a subscription; it never derives one itself", () => {
+    expect(usage(null)).toBeNull();
+    expect(usage({ usable: 'yes', binding: null, release: null })).toBeNull();
+    expect(usage({ usable: true, binding: 'seven_day', release: null })).toEqual({
+      state: 'usable',
+      binding: 'seven_day',
+      release: null,
+    });
+    expect(usage({ usable: false, binding: 'five_hour', release: LATER })).toEqual({
+      state: 'exhausted',
+      binding: 'five_hour',
+      release: ms(LATER),
+    });
+    // an unknown window or a malformed time is left out
+    expect(usage({ usable: false, binding: 'weekly:opus', release: 'soon' })).toEqual({
+      state: 'exhausted',
+      binding: null,
+      release: null,
+    });
   });
 
   it('refuses a malformed list and leaves malformed items out', () => {
@@ -148,7 +166,7 @@ describe('parsing', () => {
         'x',
         item(1, { id: 1 }),
         item(2, { primary: 'yes' }),
-        item(3, { primary: true, reading: measured([]) }),
+        item(3, { primary: true, reading: measured([]), state: { usable: true, binding: null, release: null } }),
         item(4, { updated_at: 'never' }),
       ],
     });
@@ -157,9 +175,11 @@ describe('parsing', () => {
         id: id(3),
         primary: true,
         reading: { fetchedAt: ms(AT), deviceId: DEVICE, unreadable: false, windows: [] },
+        usage: { state: 'usable', binding: null, release: null },
         updatedAt: ms(AT),
       },
-      { id: id(4), primary: false, reading: null, updatedAt: null },
+      // an older hub without `state`
+      { id: id(4), primary: false, reading: null, usage: null, updatedAt: null },
     ]);
   });
 
@@ -287,6 +307,8 @@ describe('loadSubscriptions', () => {
       use: 'own',
       state: null,
       reading: { fetchedAt: ms(AT), deviceId: DEVICE, unreadable: false, windows: [expect.anything()] },
+      // the answer names no state (an older hub)
+      usage: null,
       changedAt: ms(AT),
     });
     expect(byKey[id(1)]).toMatchObject({
@@ -404,6 +426,7 @@ describe('loadSubscriptions', () => {
       use: { pool: true, orgs: [] },
       state: 'usable',
       reading: { fetchedAt: ms(LATER), deviceId: null, unreadable: false, windows: expect.anything() },
+      usage: { state: 'usable', binding: FULLEST, release: null },
       changedAt: null,
     });
     // not readable and never read: no reading
@@ -511,33 +534,56 @@ describe('token files named like an own record', () => {
     await serveRecord(t, 1, { ...SUBSCRIPTION, name: 'Kuno' });
     await serveRecord(t, 2, { ...SUBSCRIPTION, name: 'Abo5' });
     await serveRecord(t, 3, { ...SUBSCRIPTION });
-    const file = (label: string, used: number) => ({
+    const file = (label: string, used: number | null, state = 'usable', until: string | null = null) => ({
       label,
-      state: 'usable',
+      state,
       readable: true,
       used_percent: used,
       resets_at: LATER,
       limited_at: null,
-      until: null,
+      until,
       fetched_at: AT,
     });
     t.client.on(`GET /v1/orgs/${t.org}/quotas`, () => ({
       own: { windows: [], unreadable: null, limited: null },
-      operator: { granted: true, subscriptions: [file('kuno', 90), file('ABO5', 40), file('other', 5)] },
+      operator: {
+        granted: true,
+        subscriptions: [
+          file('kuno', 90),
+          file('ABO5', 100, 'exhausted', LATER),
+          file('other', 5),
+          file('off', null, 'blocked'),
+        ],
+      },
       platform: { available: true },
       summary: { usable: 3, exhausted: 0, next_release: null },
     }));
     const rows = await loadSubscriptions(t.context);
     expect(rows.map((row) => [row.key, row.source, row.reading?.windows[0]?.usedPercent ?? null])).toEqual([
       [id(3), 'record', null],
-      [id(2), 'record', 40],
+      [id(2), 'record', 100],
       [id(1), 'record', 12],
+      ['operator:off', 'operator', null],
       ['operator:other', 'operator', 5],
+    ]);
+    // the hub's state of a file: the record that takes its reading takes its state too
+    expect(rows.map((row) => row.usage)).toEqual([
+      null,
+      { state: 'exhausted', binding: FULLEST, release: ms(LATER) },
+      null,
+      { state: 'other', binding: null, release: null },
+      { state: 'usable', binding: FULLEST, release: null },
     ]);
   });
 });
 
-const rowOf = (key: string, provider: string, windows: QuotaWindow[] | null, fetchedAt = ms(AT)): SubscriptionRow => ({
+const rowOf = (
+  key: string,
+  provider: string,
+  windows: QuotaWindow[] | null,
+  fetchedAt = ms(AT),
+  usage: Usage | null = null,
+): SubscriptionRow => ({
   key,
   provider,
   source: 'record',
@@ -550,9 +596,11 @@ const rowOf = (key: string, provider: string, windows: QuotaWindow[] | null, fet
   use: null,
   state: null,
   reading: windows === null ? null : { fetchedAt, deviceId: null, unreadable: false, windows },
+  usage,
   changedAt: null,
 });
 const w = (name: string, used: number): QuotaWindow => ({ window: name, usedPercent: used, resetsAt: null });
+const NOW = ms(AT);
 
 describe('providers', () => {
   it('names a provider, an unknown one by its ID', () => {
@@ -561,55 +609,149 @@ describe('providers', () => {
     expect(providerName('mistral')).toBe('mistral');
   });
 
-  it('takes the week as the headline, else the fullest window', () => {
-    expect(headlineOf(rowOf('a', 'claude', null))).toBeNull();
-    expect(headlineOf(rowOf('a', 'claude', []))).toBeNull();
-    expect(headlineOf(rowOf('a', 'claude', [w('five_hour', 90), w('seven_day', 10)]))?.window).toBe('seven_day');
-    expect(headlineOf(rowOf('a', 'claude', [w('five_hour', 20), w('weekly:x', 60), w('weekly:y', 5)]))?.window).toBe(
-      'weekly:x',
+  it("counts the hub's states: usable now and the earliest future release of an exhausted account", () => {
+    const state = (kind: Usage['state'], release: string | null = null): Usage => ({
+      state: kind,
+      binding: null,
+      release: release === null ? null : ms(release),
+    });
+    const group = providerGroups(
+      [
+        rowOf('a', 'claude', [w('five_hour', 100), w('seven_day', 13)], NOW, state('exhausted', LATER)),
+        rowOf('b', 'claude', [w('seven_day', 100)], NOW, state('exhausted', '2026-11-24T13:35:00.000Z')),
+        // a release already passed or unknown names nothing
+        rowOf('c', 'claude', [w('seven_day', 100)], NOW, state('exhausted', EARLIER)),
+        rowOf('d', 'claude', [w('seven_day', 100)], NOW, state('exhausted')),
+        rowOf('e', 'claude', [w('seven_day', 40)], NOW, state('usable')),
+        // neither counts: a blocked token file, a record without a state
+        rowOf('f', 'claude', [w(FULLEST, 10)], NOW, state('other')),
+        rowOf('g', 'claude', null),
+      ],
+      NOW,
+    )[0]!;
+    expect(group.usable).toBe(1);
+    expect(group.rows).toHaveLength(7);
+    expect(group.nextRelease).toBe(ms('2026-11-24T13:35:00.000Z'));
+    expect(providerGroups([rowOf('a', 'claude', [w('seven_day', 40)], NOW, state('usable'))], NOW)[0]).toMatchObject({
+      usable: 1,
+      nextRelease: null,
+    });
+  });
+
+  it('totals the provider as the mean of what each subscription has left in its binding window', () => {
+    // the readings of 27.11. 09:24, under invented names: a subscription whose 5 hours or week are used up counts 0 %
+    const sub = (key: string, five: number, week: number, binding: 'five_hour' | 'seven_day', usable = true) =>
+      rowOf(key, 'claude', [w('five_hour', five), w('seven_day', week)], NOW, {
+        state: usable ? 'usable' : 'exhausted',
+        binding,
+        release: usable ? null : ms(LATER),
+      });
+    const unreadable: SubscriptionRow = {
+      ...rowOf('x', 'claude', null),
+      status: 'not_readable',
+      reading: { fetchedAt: NOW, deviceId: null, unreadable: true, windows: [] },
+    };
+    const group = providerGroups(
+      [
+        sub('a', 10, 17, 'seven_day'), // 83
+        sub('b', 10, 18, 'seven_day'), // 82
+        sub('c', 10, 21, 'seven_day'), // 79
+        sub('d', 10, 28, 'seven_day'), // 72
+        sub('e', 53, 20, 'five_hour'), // 47: the 5 hours bind
+        sub('f', 10, 67, 'seven_day'), // 33
+        sub('g', 10, 89, 'seven_day'), // 11
+        sub('h', 10, 99, 'seven_day'), // 1
+        sub('i', 100, 15, 'five_hour', false), // 0: 5 hours full, the week nearly free
+        sub('j', 100, 15, 'five_hour', false), // 0
+        sub('k', 0, 100, 'seven_day', false), // 0: week full
+        sub('l', 0, 100, 'seven_day', false), // 0
+        unreadable,
+      ],
+      NOW,
+    )[0]!;
+    expect(group.headline).toMatchObject({ accounts: 12 });
+    // 408 / 12 – not the week alone (48.3 % used on the old view)
+    expect(group.headline!.freePercent).toBeCloseTo(34.0, 10);
+    expect(group.unreadable).toBe(1);
+    expect(group.usable).toBe(8);
+    expect(group.nextRelease).toBe(ms(LATER));
+    // without the hub's state the same rule reads it from the windows (the week on a tie)
+    const plain = (five: number, week: number) =>
+      bindingFree(rowOf('p', 'claude', [w('five_hour', five), w('seven_day', week)]), NOW)?.freePercent;
+    expect([plain(100, 15), plain(0, 100), plain(53, 20), plain(40, 40)]).toEqual([0, 0, 47, 60]);
+    expect(bindingFree(rowOf('p', 'claude', [w('weekly:opus', 100)]), NOW)).toBeNull();
+    expect(bindingFree(unreadable, NOW)).toBeNull();
+  });
+
+  it('counts a window whose reset has passed as free in the total', () => {
+    const at = (name: string, used: number, resets: string): QuotaWindow => ({
+      window: name,
+      usedPercent: used,
+      resetsAt: ms(resets),
+    });
+    const totals = totalWindows(
+      [
+        rowOf('a', 'claude', [at('five_hour', 100, EARLIER), at('seven_day', 60, LATER)]),
+        rowOf('b', 'claude', [at('five_hour', 50, LATER), at('seven_day', 100, LATER)]),
+      ],
+      NOW,
     );
+    expect(totals.map((total) => [total.window, total.usedPercent, total.freePercent])).toEqual([
+      ['five_hour', 75, 75],
+      ['seven_day', 80, 20],
+    ]);
   });
 
   it('totals a window over several accounts: the mean, every account weighted equally', () => {
-    const totals = totalWindows([
-      rowOf('a', 'claude', [w('seven_day', 99), w('five_hour', 40)], ms(LATER)),
-      rowOf('b', 'claude', [w('seven_day', 60), w('five_hour', 10)], ms(AT)),
-      rowOf('c', 'claude', [w('seven_day', 81), w('weekly:opus', 30)], ms(LATER)),
-    ]);
+    const totals = totalWindows(
+      [
+        rowOf('a', 'claude', [w('seven_day', 99), w('five_hour', 40)], ms(LATER)),
+        rowOf('b', 'claude', [w('seven_day', 60), w('five_hour', 10)], ms(AT)),
+        rowOf('c', 'claude', [w('seven_day', 81), w('weekly:opus', 30)], ms(LATER)),
+      ],
+      NOW,
+    );
     expect(totals).toEqual([
-      { window: 'five_hour', usedPercent: 25, resetsAt: null, accounts: 2, measuredAt: ms(AT) },
-      { window: 'seven_day', usedPercent: 80, resetsAt: null, accounts: 3, measuredAt: ms(AT) },
-      { window: 'weekly:opus', usedPercent: 30, resetsAt: null, accounts: 1, measuredAt: ms(LATER) },
+      { window: 'five_hour', usedPercent: 25, freePercent: 75, resetsAt: null, accounts: 2, measuredAt: ms(AT) },
+      { window: 'seven_day', usedPercent: 80, freePercent: 20, resetsAt: null, accounts: 3, measuredAt: ms(AT) },
+      { window: 'weekly:opus', usedPercent: 30, freePercent: 70, resetsAt: null, accounts: 1, measuredAt: ms(LATER) },
     ]);
+    // what is left is the mean of each account's share left, so a reading beyond 100 % counts as 0 % left
+    expect(
+      totalWindows([rowOf('a', 'claude', [w('seven_day', 130)]), rowOf('b', 'claude', [w('seven_day', 90)])], NOW)[0],
+    ).toMatchObject({ usedPercent: 110, freePercent: 5 });
     // nine accounts, one of them nearly used up: the total, not the fullest account
     const nine = Array.from({ length: 9 }, (_, n) => rowOf(`s${n}`, 'claude', [w('seven_day', n === 0 ? 99 : 80)]));
-    expect(totalWindows(nine)[0]).toMatchObject({ window: 'seven_day', accounts: 9 });
-    expect(totalWindows(nine)[0]!.usedPercent).toBeCloseTo((99 + 8 * 80) / 9);
+    expect(totalWindows(nine, NOW)[0]).toMatchObject({ window: 'seven_day', accounts: 9 });
+    expect(totalWindows(nine, NOW)[0]!.usedPercent).toBeCloseTo((99 + 8 * 80) / 9);
   });
 
   it('leaves an account without the window out of its total', () => {
-    const totals = totalWindows([
-      rowOf('a', 'claude', [w('five_hour', 90), w('seven_day', 20)]),
-      rowOf('b', 'claude', [w('seven_day', 40)]),
-      rowOf('c', 'claude', [w(FULLEST, 70)]),
-      rowOf('d', 'claude', [], ms(LATER)),
-    ]);
+    const totals = totalWindows(
+      [
+        rowOf('a', 'claude', [w('five_hour', 90), w('seven_day', 20)]),
+        rowOf('b', 'claude', [w('seven_day', 40)]),
+        rowOf('c', 'claude', [w(FULLEST, 70)]),
+        rowOf('d', 'claude', [], ms(LATER)),
+      ],
+      NOW,
+    );
     expect(totals.map((total) => [total.window, total.usedPercent, total.accounts])).toEqual([
       ['five_hour', 90, 1],
       ['seven_day', 30, 2],
       [FULLEST, 70, 1],
     ]);
     // a window repeated in one reading counts once for that account
-    expect(totalWindows([rowOf('a', 'claude', [w('seven_day', 10), w('seven_day', 90)])])[0]).toMatchObject({
+    expect(totalWindows([rowOf('a', 'claude', [w('seven_day', 10), w('seven_day', 90)])], NOW)[0]).toMatchObject({
       usedPercent: 10,
       accounts: 1,
     });
   });
 
   it('has no total when nothing is measured', () => {
-    expect(totalWindows([])).toEqual([]);
-    expect(totalWindows([rowOf('a', 'claude', null), rowOf('b', 'claude', [])])).toEqual([]);
-    expect(providerGroups([rowOf('a', 'claude', null), rowOf('b', 'claude', [])])[0]).toMatchObject({
+    expect(totalWindows([], NOW)).toEqual([]);
+    expect(totalWindows([rowOf('a', 'claude', null), rowOf('b', 'claude', [])], NOW)).toEqual([]);
+    expect(providerGroups([rowOf('a', 'claude', null), rowOf('b', 'claude', [])], NOW)[0]).toMatchObject({
       headline: null,
       headlineAt: null,
       windows: [],
@@ -622,18 +764,21 @@ describe('providers', () => {
       usedPercent: used,
       resetsAt: at === null ? null : ms(at),
     });
-    const totals = totalWindows([
-      rowOf('a', 'claude', [reset('seven_day', 50, LATER), reset('five_hour', 10, null)]),
-      rowOf('b', 'claude', [reset('seven_day', 50, EARLIER)]),
-      rowOf('c', 'claude', [reset('seven_day', 50, null), reset('five_hour', 10, null)]),
-      // a reset of an account without the window does not count
-      rowOf('d', 'claude', [reset('weekly:opus', 50, '2026-11-24T00:00:00.000Z')]),
-    ]);
+    const totals = totalWindows(
+      [
+        rowOf('a', 'claude', [reset('seven_day', 50, LATER), reset('five_hour', 10, null)]),
+        rowOf('b', 'claude', [reset('seven_day', 50, EARLIER)]),
+        rowOf('c', 'claude', [reset('seven_day', 50, null), reset('five_hour', 10, null)]),
+        // a reset of an account without the window does not count
+        rowOf('d', 'claude', [reset('weekly:opus', 50, '2026-11-24T00:00:00.000Z')]),
+      ],
+      NOW,
+    );
     expect(totals.find((total) => total.window === 'seven_day')?.resetsAt).toBe(ms(EARLIER));
     expect(totals.find((total) => total.window === 'five_hour')?.resetsAt).toBeNull();
   });
 
-  it('groups by provider with the total per window, by ID or by the used share of the total', () => {
+  it('groups by provider with the total per window, by ID or least left first', () => {
     const rows = [
       rowOf('c1', 'claude', [w('five_hour', 30), w('seven_day', 50)], ms(AT)),
       rowOf('c2', 'claude', [w('seven_day', 80), w('five_hour', 10)], ms(LATER)),
@@ -644,38 +789,45 @@ describe('providers', () => {
       rowOf('y2', 'yota', [w('seven_day', 20)]),
       rowOf('a1', 'alpha', null),
     ];
-    const groups = providerGroups(rows);
+    const groups = providerGroups(rows, NOW);
     expect(groups.map((group) => group.provider)).toEqual(['alpha', 'claude', 'openai', 'yota', 'zeta']);
     const claude = groups[1]!;
     expect(claude).toMatchObject({
       name: 'Claude',
-      headline: { window: 'seven_day', usedPercent: 65, accounts: 2 },
+      // what each subscription has left in its binding window: (50 + 20 + 1) / 3
+      headline: { accounts: 3, resetsAt: null, measuredAt: ms(EARLIER) },
       windows: [
-        { window: 'five_hour', usedPercent: 20, accounts: 2 },
-        { window: 'seven_day', usedPercent: 65, accounts: 2 },
-        { window: FULLEST, usedPercent: 99, accounts: 1 },
+        { window: 'five_hour', usedPercent: 20, freePercent: 80, accounts: 2 },
+        { window: 'seven_day', usedPercent: 65, freePercent: 35, accounts: 2 },
+        { window: FULLEST, usedPercent: 99, freePercent: 1, accounts: 1 },
       ],
       newest: ms(LATER),
-      // the oldest reading the headline counts (c3 has no week)
-      headlineAt: ms(AT),
+      // the oldest reading the headline counts
+      headlineAt: ms(EARLIER),
+      unreadable: 0,
     });
+    expect(claude.headline!.freePercent).toBeCloseTo(71 / 3);
     expect(claude.rows.map((found) => found.key)).toEqual(['c1', 'c2', 'c3']);
     expect(groups[2]).toMatchObject({ name: 'ChatGPT', headline: null, headlineAt: null, windows: [], newest: null });
-    // without a week the fullest total window is the headline
-    expect(groups[4]!.headline).toMatchObject({ window: FULLEST, usedPercent: 95 });
-    // sorted by the total: yota (60 %) after claude (65 %), although one of its accounts is used up
-    expect(providerGroups(rows, true).map((group) => group.provider)).toEqual([
+    expect(groups[4]!.headline).toMatchObject({ freePercent: 5, accounts: 1 });
+    // a week per model never binds the subscription
+    expect(
+      providerGroups([rowOf('q1', 'quux', [w('five_hour', 20), w(FULLEST, 70), w('weekly:opus', 95)])], NOW)[0]!
+        .headline,
+    ).toMatchObject({ freePercent: 30, accounts: 1 });
+    // least left first: zeta (5 %), claude (23.7 %), yota (40 %)
+    expect(providerGroups(rows, NOW, true).map((group) => group.provider)).toEqual([
       'zeta',
       'claude',
       'yota',
       'alpha',
       'openai',
     ]);
-    expect(providerGroups([])).toEqual([]);
+    expect(providerGroups([], NOW)).toEqual([]);
   });
 
   it('colours by what is left', () => {
-    expect([0, 69.9, 70, 89.9, 90, 140].map(usedLevel)).toEqual(['ok', 'ok', 'warn', 'warn', 'low', 'low']);
+    expect([100, 30.1, 30, 10.1, 10, 0].map(freeLevel)).toEqual(['ok', 'ok', 'warn', 'warn', 'low', 'low']);
   });
 
   it('writes the time to a reset and the age of a read', () => {

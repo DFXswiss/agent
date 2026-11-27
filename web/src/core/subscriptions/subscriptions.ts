@@ -12,21 +12,31 @@
 //   platform log grants them, once per label (the newest read wins); an organization whose answer fails is left out.
 //   A token file named like an own record (ignoring case) is that subscription: only the record's row is listed, with
 //   the file's reading when the record has none.
-//   The hub gives only their fullest window.
+//   The hub gives only their binding window.
+// - Whether a subscription is usable now, the window that binds it and the release of an exhausted one are never
+//   computed here: they are the hub's, by the rule of ADR-081 section 6 (`agent_hub.models.quotas`) – `state` of each
+//   record in `GET /v1/me/subscriptions`, the state and release (`until`) of a token file (`usage`, ADR-091 section 3).
 // - `providerGroups` groups the rows by provider (`PROVIDERS`; an unknown provider ID shows itself, so a further
 //   provider needs no change here) and shows the total of all its accounts, never the fullest account (`totalWindows`,
 //   ADR-091 section 3): each window (5 hours, week, week per model, fullest) counts the accounts that measured it – the
-//   used share is their mean, every account weighted equally (an account without that window does not count), the
-//   reset the next one of them. The headline is the total of the week (else the fullest total window); the details are
-//   the total windows, then every account with its own bar. "sort by used" orders the providers by that headline.
+//   share left is their mean, every account weighted equally (an account without that window does not count), the
+//   reset the next one of them. The headline is the mean of what each subscription has left in its binding window
+//   (`bindingFree`: a subscription whose 5 hours or week are used up counts 0 %; unreadable ones are left out and
+//   counted apart), with "usable
+//   now: X of N" and the next release over the hub's states of its rows (counted here, as the summary of ADR-081
+//   section 6 counts them: only the browser knows which rows are listed – names are sealed, a token file named like a
+//   record is that record); the details are the total windows, then every account with all its windows.
 //
-// Percentages are the used share as measured; the bars are coloured by what is left (from 70 % used amber = 30 %
-// left, from 90 % red = 10 % left). Nothing missing is shown as 0 %. The page is the owner's own: nobody else reads it.
+// The readings carry the used share; the view shows what is left (`freePercent` of `credentials/quotas.ts`, shared
+// with the settings sections: 100 % less the used share, at least 0 %, a window whose reset has passed free again)
+// and colours it by that (30 % left or less amber, 10 % or less red, `freeLevel`). Nothing missing is shown as 0 %.
+// The page is the owner's own: nobody else reads it.
 import { parseJson } from '../encoding/json';
 import { openCredential, verifyCredential } from '../crypto/credential';
 import type { Fields } from '../crypto/fields';
 import { meOrgs } from '../account/session';
 import { parseOrgQuotas } from '../credentials/orgQuotas';
+import { freePercent, orderedWindows, WINDOW_RE } from '../credentials/quotas';
 import { listOwnKeys, type OwnKey } from '../credentials/records';
 import { authorKey } from '../github/connection';
 import { HubError } from '../net/signedFetch';
@@ -35,8 +45,7 @@ import { type RequestsContext, RequestError, requestErrorCode } from '../request
 
 export const KIND = 'claude_subscription';
 export const OPERATOR_ROLE = 'operator';
-const WINDOW_RE = /^(five_hour|seven_day|weekly:[A-Za-z0-9._-]{1,64})$/;
-/** The window id of an operator subscription whose hub reading names only its fullest window (KOR-50). */
+/** The window id of an operator subscription whose hub reading names only its binding window (KOR-50). */
 export const FULLEST = 'fullest';
 
 /** A provider (driver) by ID: its display name. A further provider is one more entry; unknown IDs show themselves. */
@@ -70,6 +79,16 @@ export interface Use {
   readonly orgs: readonly string[];
 }
 
+/** The hub's state of a subscription (ADR-081 section 6; module comment). */
+export interface Usage {
+  /** `other`: an operator subscription that is neither (`blocked`, `deferred`, …): it counts as neither. */
+  readonly state: 'usable' | 'exhausted' | 'other';
+  /** The window that binds it now, null when none is named. */
+  readonly binding: string | null;
+  /** Unix ms of the release of an exhausted one, null when unknown. */
+  readonly release: number | null;
+}
+
 export interface SubscriptionRow {
   /** The record ID, or `operator:<label>` for an operator subscription of a token file. */
   readonly key: string;
@@ -89,6 +108,8 @@ export interface SubscriptionRow {
   /** `usable`, `exhausted`, … of an operator subscription; null for a record. */
   readonly state: string | null;
   readonly reading: Reading | null;
+  /** The hub's state, null without one (no reading, an older hub). */
+  readonly usage: Usage | null;
   /** Unix ms of the newest change of the record, null for an operator subscription. */
   readonly changedAt: number | null;
 }
@@ -107,15 +128,6 @@ function quotaWindow(value: unknown): QuotaWindow | null {
   return { window: value.window, usedPercent: used, resetsAt };
 }
 
-const windowRank = (window: string): number => (window === 'five_hour' ? 0 : window === 'seven_day' ? 1 : 2);
-
-/** Windows in the order 5 hours, week, week per model (by model). */
-export function ordered<T extends QuotaWindow>(windows: readonly T[]): T[] {
-  return [...windows].sort(
-    (a, b) => windowRank(a.window) - windowRank(b.window) || Number(a.window > b.window) - Number(a.window < b.window),
-  );
-}
-
 /** The reading of a listed record, or null when there is none or it is malformed. */
 export function reading(value: unknown): Reading | null {
   const fetchedAt = isRecord(value) ? time(value.fetched_at) : null;
@@ -124,8 +136,15 @@ export function reading(value: unknown): Reading | null {
     fetchedAt,
     deviceId: typeof value.device_id === 'string' ? value.device_id : null,
     unreadable: value.unreadable === true,
-    windows: ordered(value.windows.map(quotaWindow).filter((window) => window !== null)),
+    windows: orderedWindows(value.windows.map(quotaWindow).filter((window) => window !== null)),
   };
+}
+
+/** The hub's `state` of a listed record, or null when there is none or it is malformed. */
+export function usage(value: unknown): Usage | null {
+  if (!isRecord(value) || typeof value.usable !== 'boolean') return null;
+  const binding = value.binding === 'five_hour' || value.binding === 'seven_day' ? value.binding : null;
+  return { state: value.usable ? 'usable' : 'exhausted', binding, release: time(value.release) };
 }
 
 /** An item of `GET /v1/me/subscriptions`. */
@@ -133,6 +152,7 @@ export interface Listed {
   readonly id: string;
   readonly primary: boolean;
   readonly reading: Reading | null;
+  readonly usage: Usage | null;
   readonly updatedAt: number | null;
 }
 
@@ -147,7 +167,15 @@ export function listedItems(body: unknown): Listed[] {
     typeof item.primary === 'boolean' &&
     !seen.has(item.id) &&
     seen.add(item.id)
-      ? [{ id: item.id, primary: item.primary, reading: reading(item.reading), updatedAt: time(item.updated_at) }]
+      ? [
+          {
+            id: item.id,
+            primary: item.primary,
+            reading: reading(item.reading),
+            usage: usage(item.state),
+            updatedAt: time(item.updated_at),
+          },
+        ]
       : [],
   );
 }
@@ -222,6 +250,7 @@ function recordRow(item: Listed, opened: Opened | null, code: string | null): Su
     use: item.primary ? 'own' : (opened?.use ?? (opened === null ? null : { pool: false, orgs: [] })),
     state: null,
     reading: item.reading,
+    usage: item.usage,
     changedAt: item.updatedAt,
   };
 }
@@ -269,6 +298,12 @@ async function operatorRows(context: RequestsContext): Promise<SubscriptionRow[]
                     ? []
                     : [{ window: FULLEST, usedPercent: sub.usedPercent, resetsAt: sub.resetsAt }],
               },
+        // the hub's state of the file (ADR-081 section 6): `usable` and `exhausted` count, the others not
+        usage: {
+          state: sub.state === 'usable' || sub.state === 'exhausted' ? sub.state : 'other',
+          binding: sub.usedPercent === null ? null : FULLEST,
+          release: sub.state === 'exhausted' ? sub.until : null,
+        },
         changedAt: null,
       });
     }
@@ -318,38 +353,85 @@ export async function loadSubscriptions(context: LoadContext): Promise<Subscript
   for (const file of await operatorRows(context)) {
     const record = byName.get(file.key.slice('operator:'.length).toLowerCase());
     if (record === undefined) files.push(file);
-    else if (record.reading === null) rows[rows.indexOf(record)] = { ...record, reading: file.reading };
+    else if (record.reading === null)
+      rows[rows.indexOf(record)] = { ...record, reading: file.reading, usage: file.usage };
   }
   return [...rows, ...files];
 }
 
 // --- providers ---
 
-/** The headline of a list of windows: the week, else the fullest window. */
-function headlineIn<T extends QuotaWindow>(windows: readonly T[]): T | null {
-  return (
-    windows.find((window) => window.window === 'seven_day') ??
-    [...windows].sort((a, b) => b.usedPercent - a.usedPercent)[0] ??
-    null
-  );
+/** The windows of the whole subscription: 5 hours, week, or the binding one of a token file; a window per model binds
+ *  only its model (ADR-081 section 2). */
+const WHOLE = new Set(['five_hour', 'seven_day', FULLEST]);
+
+/**
+ * What one subscription has left now (ADR-091 section 3): the share left (`freePercent`) of its binding window – the
+ * hub's (`Usage.binding`), else the same rule on its reading (of 5 hours and week the one with the least left, the week
+ * on a tie). A subscription whose 5 hours are used up has 0 % left, however much its week has. Null without a reading,
+ * for an unreadable one and without a window of the whole subscription.
+ */
+export function bindingFree(
+  row: SubscriptionRow,
+  now: number,
+): { readonly freePercent: number; readonly resetsAt: number | null } | null {
+  if (row.reading === null || row.reading.unreadable) return null;
+  const whole = row.reading.windows.filter((window) => WHOLE.has(window.window));
+  const named = whole.find((window) => window.window === row.usage?.binding);
+  const left = (window: QuotaWindow) => freePercent(window.usedPercent, window.resetsAt, now);
+  const found =
+    named ??
+    [...whole].sort(
+      (a, b) => left(a) - left(b) || Number(b.window === 'seven_day') - Number(a.window === 'seven_day'),
+    )[0];
+  return found === undefined ? null : { freePercent: left(found), resetsAt: found.resetsAt };
 }
 
-/** The headline window of one row: its week, else its fullest window. */
-export const headlineOf = (row: SubscriptionRow): QuotaWindow | null => headlineIn(row.reading?.windows ?? []);
+/** The headline of a provider: the mean of what its subscriptions have left in their binding windows. */
+export interface Headline {
+  /** The mean share left, every counted subscription weighted equally. */
+  readonly freePercent: number;
+  /** How many subscriptions it counts (at least 1). */
+  readonly accounts: number;
+  /** Unix ms of the next reset among their binding windows, null when none is known. */
+  readonly resetsAt: number | null;
+  /** Unix ms of the oldest reading it counts. */
+  readonly measuredAt: number;
+}
+
+function headlineOf(rows: readonly SubscriptionRow[], now: number): Headline | null {
+  const counted = rows.flatMap((row) => {
+    const found = bindingFree(row, now);
+    return found === null || row.reading === null ? [] : [{ ...found, fetchedAt: row.reading.fetchedAt }];
+  });
+  if (counted.length === 0) return null;
+  const resets = counted.flatMap((item) => (item.resetsAt === null ? [] : [item.resetsAt]));
+  return {
+    freePercent: counted.reduce((sum, item) => sum + item.freePercent, 0) / counted.length,
+    accounts: counted.length,
+    resetsAt: resets.length === 0 ? null : Math.min(...resets),
+    measuredAt: Math.min(...counted.map((item) => item.fetchedAt)),
+  };
+}
 
 /** One window as the total of the accounts that measured it. */
 export interface TotalWindow extends QuotaWindow {
+  /** The mean share left of the accounts that measured it (each account's share left is at least 0 %). */
+  readonly freePercent: number;
   /** How many accounts measured this window (at least 1). */
   readonly accounts: number;
   /** Unix ms of the oldest reading among them. */
   readonly measuredAt: number;
 }
 
-/** Each window as the total of the accounts that measured it (module comment), ordered: the used share is their
- *  mean, every account weighted equally – an account without the window does not count –, the reset the next one of
- *  them (null when none of them knows it). Nothing measured gives no window. */
-export function totalWindows(rows: readonly SubscriptionRow[]): TotalWindow[] {
-  const sums = new Map<string, { used: number; accounts: number; resetsAt: number | null; measuredAt: number }>();
+/** Each window as the total of the accounts that measured it (module comment), ordered: the used share and the share
+ *  left (`freePercent` at `now`) are their means, every account weighted equally – an account without the window does
+ *  not count –, the reset the next one of them (null when none of them knows it). Nothing measured gives no window. */
+export function totalWindows(rows: readonly SubscriptionRow[], now: number): TotalWindow[] {
+  const sums = new Map<
+    string,
+    { used: number; free: number; accounts: number; resetsAt: number | null; measuredAt: number }
+  >();
   for (const row of rows) {
     if (row.reading === null) continue;
     const seen = new Set<string>();
@@ -361,16 +443,18 @@ export function totalWindows(rows: readonly SubscriptionRow[]): TotalWindow[] {
       const resets = [known?.resetsAt ?? null, window.resetsAt].filter((at) => at !== null);
       sums.set(window.window, {
         used: (known?.used ?? 0) + window.usedPercent,
+        free: (known?.free ?? 0) + freePercent(window.usedPercent, window.resetsAt, now),
         accounts: (known?.accounts ?? 0) + 1,
         resetsAt: resets.length === 0 ? null : Math.min(...resets),
         measuredAt: Math.min(known?.measuredAt ?? Infinity, row.reading.fetchedAt),
       });
     }
   }
-  return ordered(
+  return orderedWindows(
     [...sums.entries()].map(([window, sum]) => ({
       window,
       usedPercent: sum.used / sum.accounts,
+      freePercent: sum.free / sum.accounts,
       resetsAt: sum.resetsAt,
       accounts: sum.accounts,
       measuredAt: sum.measuredAt,
@@ -381,46 +465,60 @@ export function totalWindows(rows: readonly SubscriptionRow[]): TotalWindow[] {
 export interface ProviderGroup {
   readonly provider: string;
   readonly name: string;
-  /** The total of the week of all accounts (else the fullest total window); null when nothing is measured. */
-  readonly headline: TotalWindow | null;
+  /** The mean of what its subscriptions have left in their binding windows (`bindingFree`); null when none counts. */
+  readonly headline: Headline | null;
+  /** How many of its subscriptions are not readable (they are left out of the headline). */
+  readonly unreadable: number;
   /** Unix ms of the oldest reading the headline counts, null without a headline. */
   readonly headlineAt: number | null;
   /** Each window as the total of the accounts that measured it, ordered. */
   readonly windows: readonly TotalWindow[];
   readonly rows: readonly SubscriptionRow[];
+  /** How many of its accounts the hub counts as usable now (`Usage`, ADR-081 section 6). */
+  readonly usable: number;
+  /** Unix ms of the next release: the earliest future release among its exhausted accounts (as the summary of ADR-081
+   *  section 6 names it); null when none waits for a known one. */
+  readonly nextRelease: number | null;
   /** Unix ms of the newest read of any account, null when none was read. */
   readonly newest: number | null;
 }
 
-/** The rows grouped by provider with their totals; providers by ID, or with `sortByUsed` by the used share of the
- *  headline total (descending, unknown last). */
-export function providerGroups(rows: readonly SubscriptionRow[], sortByUsed = false): ProviderGroup[] {
+/** The rows grouped by provider with their totals; providers by ID, or with `sortByUsed` by the share left of the
+ *  headline total (least left first, unknown last). */
+export function providerGroups(rows: readonly SubscriptionRow[], now: number, sortByUsed = false): ProviderGroup[] {
   const groups = new Map<string, SubscriptionRow[]>();
   for (const row of rows) groups.set(row.provider, [...(groups.get(row.provider) ?? []), row]);
   const made = [...groups.entries()].map(([provider, members]): ProviderGroup => {
-    const windows = totalWindows(members);
-    const headline = headlineIn(windows);
+    const windows = totalWindows(members, now);
+    const headline = headlineOf(members, now);
     const reads = members.flatMap((row) => (row.reading === null ? [] : [row.reading.fetchedAt]));
+    const releases = members.flatMap((row) =>
+      row.usage?.state === 'exhausted' && row.usage.release !== null && row.usage.release > now
+        ? [row.usage.release]
+        : [],
+    );
     return {
       provider,
       name: providerName(provider),
       headline,
       headlineAt: headline?.measuredAt ?? null,
+      unreadable: members.filter((row) => row.reading?.unreadable === true).length,
       windows,
       rows: members,
+      usable: members.filter((row) => row.usage?.state === 'usable').length,
+      nextRelease: releases.length === 0 ? null : Math.min(...releases),
       newest: reads.length === 0 ? null : Math.max(...reads),
     };
   });
   const byId = (a: ProviderGroup, b: ProviderGroup) =>
     Number(a.provider > b.provider) - Number(a.provider < b.provider);
-  const used = (group: ProviderGroup) => group.headline?.usedPercent ?? -1;
-  return made.sort(sortByUsed ? (a, b) => used(b) - used(a) || byId(a, b) : byId);
+  const free = (group: ProviderGroup) => group.headline?.freePercent ?? Infinity;
+  return made.sort(sortByUsed ? (a, b) => free(a) - free(b) || byId(a, b) : byId);
 }
 
-/** `ok`, `warn` (from 70 % used, 30 % left) or `low` (from 90 % used, 10 % left). */
-export const usedLevel = (usedPercent: number): 'ok' | 'warn' | 'low' =>
-  usedPercent >= 90 ? 'low' : usedPercent >= 70 ? 'warn' : 'ok';
-
+/** By what is left: `ok`, `warn` (30 % left or less, from 70 % used) or `low` (10 % left or less, from 90 % used). */
+export const freeLevel = (freePercent: number): 'ok' | 'warn' | 'low' =>
+  freePercent <= 10 ? 'low' : freePercent <= 30 ? 'warn' : 'ok';
 /** The time until `at` as the local dashboard writes it: days and hours, hours and minutes, minutes, below a
  *  minute, or due. */
 export function untilParts(

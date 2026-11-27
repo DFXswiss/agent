@@ -65,7 +65,7 @@
   "org.state.deferred": "kurz zurückgestellt",
   "org.state.ignored": "nicht genutzt",
   "org.state.unknown": "Zustand unbekannt",
-  "org.used": "{percent} genutzt",
+  "org.free": "{percent} frei",
   "org.unreadable": "Kontingent nicht lesbar",
   "org.reset": "Freigabe {time}",
   "org.until": "Erschöpft bis {time}",

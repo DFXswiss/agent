@@ -131,7 +131,8 @@ test('connects the subscription by the relay, shows the quotas and rotates CK wh
     { window: 'weekly:claude-opus-5-5', used_percent: 12 },
   ]);
   await page.getByTestId('quotas.reload').click();
-  await expect(page.getByTestId('quotas.bar.five_hour.used')).toHaveText('37.5%');
+  // what is left, as on the page "My subscriptions"
+  await expect(page.getByTestId('quotas.bar.five_hour.free')).toHaveText('62.5% free');
   await expect(page.getByTestId('quotas.bar.five_hour.reset')).toContainText('Resets');
   await expect(page.getByTestId('quotas.bar.seven_day.reset')).toHaveText('Reset time unknown');
   await expect(page.getByTestId('quotas.bar.weekly:claude-opus-5-5')).toContainText('Week, claude-opus-5-5');

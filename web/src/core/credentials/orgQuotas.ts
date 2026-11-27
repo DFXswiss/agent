@@ -1,7 +1,7 @@
 // Model access and quotas of an organization (ADR-081 section 6, 03-api.md `GET /v1/orgs/{org}/quotas`): the caller's
 // own subscription (its windows as `quotas.ts` reads them, since when it is not readable, the latest observed limit),
 // the operator's subscriptions when the organization may use them (per subscription its label, state, whether its
-// quota is readable, the used share of its fullest window, the reset, the latest observed limit and its end), whether
+// quota is readable, the used share of its binding window, the reset, the latest observed limit and its end), whether
 // DFX access over OpenRouter is available, and the summary (`usable`, `exhausted`, `next_release`). "Not readable" is
 // shown as such with the last observed limit time; nothing is estimated. Malformed rows are left out; an answer
 // without the own part, the two flags or the summary is `unavailable` (a hub of an older release has no such route and
@@ -10,7 +10,7 @@ import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
 import type { RequestsContext } from '../requests/client';
 import type { QuotaBar } from '../store/slices/quotas';
-import { quotaBars } from './quotas';
+import { freePercent, quotaBars } from './quotas';
 
 /** The states of an operator subscription (`operator_quota` of ADR-081 section 6). */
 export const SUBSCRIPTION_STATES = ['usable', 'exhausted', 'blocked', 'deferred', 'ignored'] as const;
@@ -123,6 +123,6 @@ export async function loadOrgQuotas(context: RequestsContext, org: string): Prom
   return parseOrgQuotas(await context.client.request('GET', `/v1/orgs/${encodeURIComponent(org)}/quotas`));
 }
 
-/** The used share of a subscription for a meter: 0…1 (above 100 % fills it), null when unknown. */
-export const subscriptionShare = (row: OperatorSubscription): number | null =>
-  row.usedPercent === null ? null : Math.min(row.usedPercent, 100) / 100;
+/** What is left of a subscription's binding window for a meter: 0…1 (`freePercent`), null when unknown. */
+export const subscriptionShare = (row: OperatorSubscription, now: number): number | null =>
+  row.usedPercent === null ? null : freePercent(row.usedPercent, row.resetsAt, now) / 100;

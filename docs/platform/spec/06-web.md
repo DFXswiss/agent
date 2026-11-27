@@ -293,25 +293,36 @@ The home of an organization shows where people are needed, across all workgroups
   every minute, a link to the section of §8.2; hidden without any subscription to list or when the hub cannot answer;
   KOR-50, [ADR-081](../adr/081-model-access-fallback-and-dfx-access-on-own-hardware.md) §6).
 - **My subscriptions** (KOR-68, [ADR-091](../adr/091-subscriptions-at-a-glance.md), rule E-30): below the counters a
-  card with every subscription of the user, measured centrally – per provider a collapsible line with the time to
-  the reset, a bar and the used share of the week as the total of all its accounts, never its fullest account (named
-  as such: "all 9", with one account "1 account"); opened, the 5-hour window, the week and the week per model as
-  totals, every account with its own bar and the age of its reading, and the age of the provider's newest read. A
-  total counts the accounts that have a reading of that window: the used share is their mean, every account weighted
-  equally (an account without the window does not count), the time the one to the next reset among them; without a
-  week the headline is the fullest total window (ADR-091 §3). Amber from 70 % used, red from 90 %, a reading older
-  than 60 minutes marked old. Data: `GET /v1/me/subscriptions` and every record opened in the browser (name, note,
-  address, logged in or not, use; ADR-090), for the platform role `operator` also the token-file subscriptions of `GET
-  /v1/orgs/{org}/quotas` of the granted organizations (an organization whose answer fails is left out; a token file
-  named like an own record, ignoring case, is not listed again – the record's row stays, with the file's reading when it
-  has none); refreshed every minute. Every account names the source of its reading (device or token file); a closed
-  provider line one of whose counted headline readings is older than 60 minutes is marked old. Without any subscription
-  the card leads to "Add subscription". The card links the page `/subscriptions`: the same provider lines with
-  "detailed" (opens all; the user's own choices come back when it is switched off) and "sort by used" (providers by
-  their headline total), and a table with provider, account, name, status (logged in, not logged in with "Log in now",
-  not readable, cannot be opened), note, use, listed (record or token file), plan, used and reset per window, measuring
-  device, checked (time of the reading) and changed (time of the record). The card, the page and their texts load
-  lazily. The settings link the page.
+  card with every subscription of the user, measured centrally, showing everywhere what is LEFT ("82% free": 100 %
+  less the used share, at least 0 %, a window whose reset has passed free again – `freePercent` of
+  `core/credentials/quotas.ts`, the same in the sections of §8.2 and "Model access and quotas") – per provider a
+  collapsible line with the time to the reset, a bar and the share left of all its accounts together, never its
+  fullest account (named as such: "all 9", with one account "1 account"): the mean of what each subscription has left
+  in its binding window – the smaller rest of its 5-hour window and its week (a week per model does not count,
+  ADR-081 §2), so a subscription whose 5 hours or week are used up counts 0 % however much the other has; unreadable
+  subscriptions are left out and named with their number ("1 not readable"); next to it "usable now: X of N" and,
+  when an account waits for a known one, the next release ("next release 14:05 (in 1 h 30 min)"); opened, the
+  5-hour window, the week and the week per model as totals, every account with the source and age of its reading and
+  ALL its windows (5 hours, week, week per model; a token file its binding one), each with share left, bar and time to
+  its reset, and the age of the provider's newest read. A total counts the accounts that have a reading of that window:
+  what is left is the mean of their shares left, every account weighted equally (an account without the window does
+  not count), the time the one to the next reset among them. Whether an account is usable, the window that binds it
+  ("binding") and the release of an exhausted one ("not usable now until 14:05 (in 1 h 30 min)") are the hub's, by
+  the rule of ADR-081 §6 (`state` of `GET /v1/me/subscriptions`, the state and `until` of a token file); "usable
+  now" and the next release count them as that summary does (ADR-091 §3). Amber at 30 % left or less, red at 10 % or
+  less, a reading older than 60 minutes marked old. Data: `GET /v1/me/subscriptions` and every record opened in the
+  browser (name, note, address, logged in or not, use; ADR-090), for the platform role `operator` also the
+  token-file subscriptions of `GET /v1/orgs/{org}/quotas` of the granted organizations (an organization whose answer
+  fails is left out; a token file named like an own record, ignoring case, is not listed again – the record's row
+  stays, with the file's reading when it has none); refreshed every minute. Every account names the source of its
+  reading (device or token file); a closed provider line one of whose counted headline readings is older than 60
+  minutes is marked old. Without any subscription the card leads to "Add subscription". The card links the page
+  `/subscriptions`: the same provider lines with "detailed" (opens all; the user's own choices come back when it is
+  switched off) and "least free first" (providers by what is left of their headline), and a table with provider,
+  account, name, status (logged in, not logged in with "Log in now", not readable, cannot be opened), note, use,
+  listed (record or token file), plan, free (share left) and reset per window, measuring device, checked (time of the
+  reading) and changed (time of the record). The card, the page and their texts load lazily. The settings link the
+  page.
 - **Groups** in this order: "Needs your decision" (`needs_decision`, longest waiting first), "Stuck" (`blocked`),
   "Running" (`working`), "Recently finished" (`done`, last 7 days, with the link to the default workgroup's task
   list); the last three newest first. Each group is a windowed list paged by the hub (50 per page; at most 50 entries
@@ -941,8 +952,10 @@ newest `CK` after a rotation.
   KOR-68): `GET /v1/orgs/{org}/quotas` of the
   active organization, named and chosen in place (below) – the summary ("Subscriptions: n available · m used up – next release 14:05"), the user's own
   subscription (its windows, or "Not readable" honestly, with the last observed limit time), the operator's
-  subscriptions when the organization may use them (label, state, used share or "quota not readable", release or
-  "used up until", last observed limit) and whether DFX access over OpenRouter is available.
+  subscriptions when the organization may use them (label, state, what is left of the binding window or "quota not
+  readable", release or "used up until", last observed limit) and whether DFX access over OpenRouter is available.
+  Shares here and in the section "My own subscription" are what is left, as on the page "My subscriptions"
+  (`freePercent`, ADR-091 §3).
 - **Anthropic API key:** paste field (password type), stored as `anthropic_api_key` credential (encrypt with `CK`,
   `PUT /v1/me/credentials/anthropic_api_key`); optional "Check key" device request `credential.check`.
 - **Claude subscription (setup-token relay):** device request `claude.login` → response shows the authorize link →
