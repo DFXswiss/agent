@@ -399,6 +399,21 @@
     "body": "Closed, merged or a fork.",
     "action": "Open it at GitHub."
   },
+  "mode_needs": {
+    "title": "This working mode needs another one",
+    "body": "A working mode that needs another one can only be switched on together with it.",
+    "action": "Switch on the needed working modes as well."
+  },
+  "mode_needs_instruction": {
+    "title": "Only an instruction can switch this on",
+    "body": "An agent that works in a session switches on a working mode only when a person's instruction asks for it.",
+    "action": "Ask for the working mode in your instruction to the task."
+  },
+  "mode_not_instructed": {
+    "title": "Not asked for by a person",
+    "body": "Only a person's instruction can switch on a working mode; the session quoted none.",
+    "action": "Name the working mode in your instruction, or switch it on on the task page."
+  },
   "model_access_unavailable": {
     "title": "No model access",
     "body": "No usable model access is configured for this task.",

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ops/task.mode.params.json",
+  "title": "operation task.mode params",
+  "description": "Parameters of the operation type task.mode (03-api.md section 9, ADR-098 section 3); additionalProperties false. on true needs quote (rejected mode_not_instructed otherwise).",
+  "$ref": "objects.json#/$defs/params_task_mode"
+}

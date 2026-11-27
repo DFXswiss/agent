@@ -1,0 +1,27 @@
+{
+  "name": "A38",
+  "version": 1,
+  "title": {
+    "de": "A38",
+    "en": "A38"
+  },
+  "summary": {
+    "de": "A38.",
+    "en": "A38."
+  },
+  "brief": "Working mode: a38",
+  "operations": [],
+  "drivers": [],
+  "settings": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "needs": {
+    "modes": [],
+    "prerequisites": []
+  },
+  "accesses": [],
+  "passes_on": false,
+  "test": false
+}

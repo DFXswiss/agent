@@ -399,6 +399,21 @@
     "body": "Geschlossen, gemergt oder Fork.",
     "action": "Bei GitHub öffnen."
   },
+  "mode_needs": {
+    "title": "Diese Arbeitsweise braucht eine andere",
+    "body": "Eine Arbeitsweise, die eine andere braucht, kann nur zusammen mit ihr eingeschaltet werden.",
+    "action": "Schalte die benötigten Arbeitsweisen mit ein."
+  },
+  "mode_needs_instruction": {
+    "title": "Nur eine Anweisung kann das einschalten",
+    "body": "Ein Agent, der in einer Session arbeitet, schaltet eine Arbeitsweise nur ein, wenn die Anweisung einer Person das verlangt.",
+    "action": "Verlange die Arbeitsweise in deiner Anweisung an die Aufgabe."
+  },
+  "mode_not_instructed": {
+    "title": "Von keiner Person verlangt",
+    "body": "Nur die Anweisung einer Person kann eine Arbeitsweise einschalten; die Session hat keine zitiert.",
+    "action": "Nenne die Arbeitsweise in deiner Anweisung oder schalte sie auf der Aufgabenseite ein."
+  },
   "model_access_unavailable": {
     "title": "Kein Modellzugang",
     "body": "Für diesen Task ist kein nutzbarer Modellzugang eingerichtet.",

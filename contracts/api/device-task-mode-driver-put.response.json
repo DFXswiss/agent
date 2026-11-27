@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-task-mode-driver-put.response.json",
+  "title": "PUT /v1/device/tasks/{task}/modes/{mode}/driver response",
+  "description": "on: whether the mode is still on for the task (false: the driver stops at this step boundary).",
+  "type": "object",
+  "properties": {
+    "on": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "on"
+  ],
+  "additionalProperties": false
+}

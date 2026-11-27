@@ -67,6 +67,8 @@ HUB_ERROR_CODES = frozenset(
         "no_device_available",
         "non_ascii",
         "nonce_replayed",
+        "mode_needs",
+        "mode_needs_instruction",
         "not_found",
         "not_watched",
         "orchestrator_unavailable",

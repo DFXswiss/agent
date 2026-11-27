@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/modes-list.response.json",
+  "title": "GET /v1/modes response",
+  "description": "The catalogue of working modes this hub offers (ADR-098 section 1; contracts/modes): every entry of the catalogue in its order, a test mode only where the hub is configured for tests (KOR-75). Listing a mode chooses nothing.",
+  "type": "object",
+  "properties": {
+    "modes": {
+      "type": "array",
+      "items": {
+        "$ref": "../modes/mode.json#/$defs/mode"
+      },
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "modes"
+  ],
+  "additionalProperties": false
+}

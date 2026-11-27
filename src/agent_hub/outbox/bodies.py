@@ -107,6 +107,8 @@ OPERATION_ERROR_CODES = (
     "merge_unsupported",
     "workspace_dirty",
     "device_failed",
+    "mode_not_instructed",
+    "mode_needs",
 )
 """A copy of `contracts/enums/operation-error-codes.json` (a test compares them)."""
 
@@ -176,6 +178,8 @@ OperationErrorCode = Literal[
     "merge_unsupported",
     "workspace_dirty",
     "device_failed",
+    "mode_not_instructed",
+    "mode_needs",
 ]
 
 

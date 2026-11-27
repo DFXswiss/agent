@@ -37,6 +37,7 @@ SPEC_FILES = (
     "14-community.md",
     "15-prerequisites.md",
     "16-ci-runners.md",
+    "17-working-modes.md",
 )
 # Runbooks the work packages require (09-milestones.md WP-M3-07, DOC-01 scope).
 RUNBOOKS = (

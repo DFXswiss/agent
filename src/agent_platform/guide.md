@@ -357,6 +357,22 @@ agent-platform browser frames --session <session_id> --output pictures          
 agent-platform browser frames --session <session_id> --output live --follow [--kbps 1000] [--seconds 60]   # watch live
 ```
 
+**Working modes** (the field "Arbeitsweisen" of the task form and the chips of the task page, ADR-098): a mode adds a
+way of working to a task (for example `a38`). None is ever on by itself; choose one only when your user asks for it.
+
+```sh
+agent-platform modes list                                         # the catalogue: one line per mode, what it needs
+agent-platform task create --wg <wg_id> --text - --mode <mode>  < prompt.txt   # choose modes with the task
+agent-platform task mode on --task <task_id> --mode <mode>        # several --mode: in this order, needed ones first
+agent-platform task mode off --task <task_id> --mode <mode>       # off at once for new steps
+```
+
+`task show` lists the modes that are on (`modes`, and `modes_line` such as `Modes: test (tool, chosen by Ada)`). A mode
+that needs another that is off is refused with `mode_needs` and `missing`: switch on both in one call, the needed one
+first. Inside a platform session the hub refuses the switch (`mode_needs_instruction`): there only the operation
+`task.mode` with a quote of the person's instruction switches a mode on. Modes have no settings yet. In a chat program
+the tool `set_task_mode` (`task_id`, `mode`, `on`) does the same as `task mode on|off`.
+
 When an operation of a session needs GitHub and your user has no usable GitHub connection, or the connection does not
 reach the repository, the platform holds it and the chat of `task show` and `task follow` carries one event with a
 `waiting` card (`reason` `github_connection` or `github_access`, `operation_type`, `repo`, `operations`, `until_ms`,

@@ -13,6 +13,8 @@
 // /v1/tasks/{task}/placement`, best effort), since a request without `placement` takes the default.
 // When the user may choose a GitHub identity (ADR-078 section 3: own accounts, company accounts of the
 // organization), a choice "GitHub account" goes with the task (`github_identity`; default automatic).
+// The field "Working modes" (`ModeChoice`, ADR-098 section 3) starts empty with every composer; the chosen modes go with
+// the task as `modes` (left out when none is chosen).
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { loadGithub } from '../../core/github/connection';
@@ -28,6 +30,10 @@ import { useAboveKeyboard } from '../responsive/keyboard';
 import { GithubConnect } from '../settings/sections/github/Connect';
 import { useDirectory } from '../screens/tasks/hooks';
 import { AUTOMATIC, IdentityChoice } from './IdentityChoice';
+import { ModeChoice } from './ModeChoice';
+
+const sameModes = (a: readonly string[], b: readonly string[]): boolean =>
+  a.length === b.length && a.every((name, index) => name === b[index]);
 
 /** Failures after which the same request (same IDs) is sent again: the hub may not have seen it or may succeed later. */
 export const RETRYABLE: ReadonlySet<string> = new Set(['unavailable', 'rate_limited', 'seq_conflict']);
@@ -57,6 +63,7 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
   const [github, setGithub] = useState(false);
   const [identity, setIdentity] = useState(AUTOMATIC);
+  const [modes, setModes] = useState<readonly string[]>([]);
   const directory = useDirectory(org, false);
   const prepared = useRef<PreparedTask | null>(null);
   const { devices, choice, setChoice } = useDeviceChoice(wg);
@@ -90,13 +97,15 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
         known.wg === wg &&
         known.prompt === text &&
         samePlacement(known.placement, choice) &&
-        (known.body.github_identity ?? AUTOMATIC) === identity
+        (known.body.github_identity ?? AUTOMATIC) === identity &&
+        sameModes(known.body.modes ?? [], modes)
           ? known
           : await prepareTask(app.tasks, {
               org,
               wg,
               prompt: text,
               placement: choice,
+              modes,
               ...(identity !== AUTOMATIC && { githubIdentity: identity }),
             });
       prepared.current = task;
@@ -187,6 +196,7 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
           disabled={sending}
           testId="composer.identity"
         />
+        <ModeChoice value={modes} onChange={setModes} disabled={sending} />
         <div className="flex items-center gap-3">
           <button
             type="submit"

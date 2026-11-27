@@ -67,6 +67,7 @@ SECTION_FIELDS: Mapping[str, Callable[[], Any]] = {
     "vm_switch_at": dict,  # HOT-24: the hub's time of each request of `vm_switch`
     "vm_upgrade_version": lambda: OMIT,  # HOT-24: always provided by `vmswitch` (2: `checkpoint_impossible` known)
     "agent_profiles": lambda: OMIT,
+    "task_modes": lambda: OMIT,
 }
 """The fields sections provide, with the value of a field no area provides."""
 

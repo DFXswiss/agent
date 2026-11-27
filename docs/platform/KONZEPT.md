@@ -823,7 +823,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   nichts aus, alles läuft über Plattform-Operationen ([§10 Punkt 3](#k-10-b3)). Der delegierte Hauptorchestrator ist
   [Idee 34](#k-idee-34).
 - **Umsetzung:** offen – Zielbild, Wahl und Abbaupfad [ADR-098](adr/098-working-modes.md) (KOR-72); gebaut wird in
-  den dort in §9 genannten Paketen.
+  den dort in §9 genannten Paketen. Schritt 1 (Grundlage: Katalog, Wahl per Oberfläche, Werkzeug und Satz, Ausschalten,
+  Treiber-Rahmen, nur ein Testmodus) in KOR-75, [spec/17-working-modes.md](spec/17-working-modes.md).
 
 <a id="e-33"></a>
 

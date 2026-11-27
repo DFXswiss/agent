@@ -3325,6 +3325,103 @@
     },
     {
       "method": "GET",
+      "path": "/v1/modes",
+      "name": "modes-list",
+      "section": "4.15",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/modes-list.request.json",
+      "response": "api/modes-list.response.json",
+      "read_resource": "modes",
+      "streaming": false,
+      "owner": "KOR-75"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/tasks/{task}/modes/{mode}",
+      "name": "task-mode-put",
+      "section": "4.15",
+      "auth": "browser",
+      "rights": [
+        "wg:write"
+      ],
+      "path_params": {
+        "task": "uuid",
+        "mode": "mode_name"
+      },
+      "request_kind": "body",
+      "request": "api/task-mode-put.request.json",
+      "response": "api/task-mode-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-75"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/tasks/{task}/modes/{mode}",
+      "name": "task-mode-delete",
+      "section": "4.15",
+      "auth": "browser",
+      "rights": [
+        "wg:write"
+      ],
+      "path_params": {
+        "task": "uuid",
+        "mode": "mode_name"
+      },
+      "request_kind": "query",
+      "request": "api/task-mode-delete.request.json",
+      "response": "api/task-mode-delete.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-75"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/device/tasks/{task}/modes/{mode}",
+      "name": "device-task-mode-put",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:wg"
+      ],
+      "path_params": {
+        "task": "uuid",
+        "mode": "mode_name"
+      },
+      "request_kind": "body",
+      "request": "api/device-task-mode-put.request.json",
+      "response": "api/device-task-mode-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-75"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/device/tasks/{task}/modes/{mode}/driver",
+      "name": "device-task-mode-driver-put",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:wg"
+      ],
+      "path_params": {
+        "task": "uuid",
+        "mode": "mode_name"
+      },
+      "request_kind": "body",
+      "request": "api/device-task-mode-driver-put.request.json",
+      "response": "api/device-task-mode-driver-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-75"
+    },
+    {
+      "method": "GET",
       "path": "/v1/support/releases",
       "name": "support-releases",
       "section": "4.14",

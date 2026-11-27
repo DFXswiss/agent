@@ -389,6 +389,10 @@ TABLES = {
     "session_profile": ["session_id", "profile", "created_at"],
     # 0038 (KOR-74, ADR-099 section 3): the newest verified version of each mailbox record (no rollback)
     "mailbox_seen": ["id", "owner_id", "version"],
+    # 0040 (KOR-75, ADR-098 sections 3 and 4): the modes of the device's tasks, their drivers and the rate budget
+    "task_mode": ["task_id", "mode", "version", "chosen_by", "way", "changed_at", "driver"],
+    "mode_driver": ["task_id", "mode", "step", "counters", "next_at", "updated_at"],
+    "mode_rate": ["identity", "window_start", "used"],
     "schema_version": ["version", "name", "checksum", "applied_at"],
 }
 OUTBOX_KINDS = [

@@ -57,6 +57,8 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-
 TRAILER_RE = re.compile(r"^[ \t]*(co-authored-by|signed-off-by|committed-by):", re.IGNORECASE | re.MULTILINE)
 """A trailer-like line that would name an author (KOR-47, ADR-078 section 4)."""
 MAX_CO_AUTHORS = 10
+MODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
+"""`contracts/common.json#/$defs/mode_name` (ADR-098 section 1)."""
 LABEL_RE = re.compile(r"^[^,\x00-\x1f\x7f]{1,100}$")
 """A label name of the issue types: no comma (GitHub joins label filters with commas), no control character."""
 MAX_LABELS = 20
@@ -359,6 +361,15 @@ TYPES: Mapping[str, TypeRules] = {
     ),
     "subagent.stop": TypeRules({"session_id": UUID}, ("session_id",)),
     "task.set_title": TypeRules({"title": rules.title_valid}, ("title",)),
+    # ADR-098 section 3 (KOR-75): whether the quote is the person's is the modes area's pre-check
+    "task.mode": TypeRules(
+        {
+            "mode": lambda value: isinstance(value, str) and MODE_RE.fullmatch(value) is not None,
+            "on": BOOL,
+            "quote": _text(3, 1000),
+        },
+        ("mode", "on"),
+    ),
     # docs/platform/spec/13-work-vm.md section 2 (ADR-059)
     "workvm.request": TypeRules(
         {"size": _one_of("standard", "large", "xlarge"), "scope": _one_of("task", "session")}, ()

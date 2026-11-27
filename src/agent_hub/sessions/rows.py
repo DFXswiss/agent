@@ -17,7 +17,8 @@ ADR-094 section 1): a child without one works with what its parent has. The hand
 task row names the task's `number` in its organization and `name_event_id`, the newest `task.agent_name` event of the
 task (the main agent's name, null without one); a session row its `agent_path` (null for a main session).
 `analysis` marks an analysis task with its scope and period (`{scope, since, until}`, null for every other task;
-ADR-097 section 1).
+ADR-097 section 1). `modes` lists the working modes that are on for a task (`task_mode`, by name; ADR-098 section 3)
+and is left out while none is on.
 """
 
 from __future__ import annotations
@@ -59,9 +60,14 @@ TASK_COLUMNS = (
     " t.github_identity, t.agent_profile, t.number,"
     " (SELECT e.id FROM hub.event e WHERE e.task_id = t.id AND e.kind = 'task.agent_name'"
     " ORDER BY e.scope_seq DESC LIMIT 1),"
-    " t.analysis, t.placement_device_id, t.placement_vm_id"
+    " t.analysis, t.placement_device_id, t.placement_vm_id,"
+    " (SELECT jsonb_agg(jsonb_build_object('mode', m.mode, 'version', m.version, 'chosen_by', m.chosen_by,"
+    " 'way', m.way, 'origin_task', m.origin_task,"
+    " 'changed_at', to_char(m.changed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"')) ORDER BY m.mode)"
+    " FROM hub.task_mode m WHERE m.task_id = t.id AND m.state = 'on')"
 )
-"""The task columns: `TASK_FIELDS`, then the chosen device and VM (ADR-075; `placement` only when one is chosen)."""
+"""The task columns: `TASK_FIELDS`, then the chosen device and VM (ADR-075; `placement` only when one is chosen) and
+the working modes that are on (ADR-098 section 3; `modes` only when there is one)."""
 SESSION_FIELDS = (
     "session_id",
     "task_id",
@@ -143,9 +149,11 @@ def _zip(names: tuple[str, ...], row: tuple[Any, ...]) -> dict[str, Any]:
 
 def _task(row: tuple[Any, ...]) -> dict[str, Any]:
     found = _zip(TASK_FIELDS, row[: len(TASK_FIELDS)])
-    device, vm = row[len(TASK_FIELDS) :]
+    device, vm, modes = row[len(TASK_FIELDS) :]
     if device is not None:
         found["placement"] = {"device_id": str(device), "vm_id": vm}
+    if modes is not None:
+        found["modes"] = modes
     return found
 
 

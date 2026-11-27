@@ -1,0 +1,39 @@
+{
+  "name": "merge_lane",
+  "version": 3,
+  "title": {
+    "de": "Merge-Spur",
+    "en": "Merge lane"
+  },
+  "summary": {
+    "de": "Zug der wartenden Branches.",
+    "en": "A train of the waiting branches."
+  },
+  "brief": "Working mode: merge_lane",
+  "operations": [
+    "github.merge",
+    "test.run"
+  ],
+  "drivers": [
+    "train"
+  ],
+  "settings": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "needs": {
+    "modes": [
+      "a38"
+    ],
+    "prerequisites": [
+      "GH-1"
+    ]
+  },
+  "accesses": [
+    "D8",
+    "D9"
+  ],
+  "passes_on": false,
+  "test": false
+}

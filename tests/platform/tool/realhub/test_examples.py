@@ -173,6 +173,7 @@ def account(real: RealHub) -> tuple[dict[str, str], Tool]:
         "<invitation link>": str(second["invite_link"]),
         "<your user's name>": "Ada",
         "<name>": "Carol",
+        "<mode>": "test",  # a working mode (ADR-098); the real hub of the test offers no test mode: refused 404
         "$KEY": "sk-test-" + "k" * 20,
         "$PASSWORD": "example-password",
         "…": "Also the logout",

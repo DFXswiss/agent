@@ -204,6 +204,12 @@ class Estate:
                 (self.task, org, wg, writer.id, now, now),
             ),
             (
+                # a working mode of the task (ADR-098 section 3)
+                "INSERT INTO hub.task_mode (task_id, mode, version, state, chosen_by, way, changed_at, changed_by)"
+                " VALUES (%s, 'test', 1, 'on', %s, 'web', %s, %s)",
+                (self.task, writer.id, now, writer.id),
+            ),
+            (
                 "INSERT INTO hub.session_transition (session_id, seq, state, at, received_at, reported_by)"
                 " VALUES (%s, 1, 'working', %s, %s, %s)",
                 (self.session, now, now, device.id),

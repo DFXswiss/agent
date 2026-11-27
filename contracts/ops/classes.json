@@ -40,6 +40,7 @@
     "subagent.instruct": "delegate",
     "subagent.request": "delegate",
     "subagent.stop": "delegate",
+    "task.mode": "write",
     "task.set_title": "write",
     "test.run": "run",
     "workvm.release": "run",

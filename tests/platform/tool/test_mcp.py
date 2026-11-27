@@ -99,7 +99,7 @@ def test_stdio_session_with_the_real_process(tool: Tool) -> None:
     assert init["capabilities"] == {"tools": {"listChanged": False}}
     assert init["serverInfo"]["name"] == "agent-dfx-swiss"
     assert "guide" in init["instructions"]
-    assert [item["name"] for item in replies[1]["result"]["tools"]] == ["search", "run"]
+    assert [item["name"] for item in replies[1]["result"]["tools"]] == ["search", "run", "set_task_mode"]
     found = tool_result(replies[2])
     assert "task create" in [hit["command"] for hit in found["results"]]
     guide = tool_result(replies[3])
