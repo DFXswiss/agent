@@ -5,10 +5,10 @@
 Before the registration the runner checks the subagent limits of the platform (`limits.current`, the section `limits`
 of the last desired state; 0 = no limit) with what it knows: the depth of the requesting session, and the children of
 the task on this device in total - sessions with `depth` > 0 plus accepted requests whose child has not started yet.
-How many run at once is no fixed number (ADR-075 addendum 2): the parent's VM must have the free resources for one
-more session (`limits.vm_room_refusal`, measured on the VM). Without the section (an older hub) the depth and total
-checks are left to the hub. On a VM whose guest is older than ADR-088 (`guest_features`) a child deeper than 2 is
-refused as well (that guest's contract). A request over a limit is refused locally with `limit_exceeded` and a
+How many run at once is no fixed number (ADR-075 addendum 2), and a child is never refused because its task's VM is
+full (HOT-32: the placement of new tasks keeps the reserve, `vm.room`). Without the section (an older hub) the depth
+and total checks are left to the hub. On a VM whose guest is older than ADR-088 (`guest_features`) a child deeper than
+2 is refused as well (that guest's contract). A request over a limit is refused locally with `limit_exceeded` and a
 sentence that names the limit, its value and the setting (registered as `rejected`, never executed). The hub decides
 the limits bindingly (check H4, `denied` `limit_exceeded`), so a request that passes here may still be denied.
 
@@ -43,7 +43,6 @@ async def limits(request: PrecheckRequest) -> PrecheckResult:
     async with store_session(request.context.pool) as conn:
         if not await current_guest(conn, session.vm_id):
             _refuse(subagent_limits.old_guest_depth_refusal(session.depth))
-        _refuse(await subagent_limits.vm_room_refusal(request.context, conn, session.vm_id))
         _running, total = await store.counts(conn, request.operation.task_id)
     _refuse(subagent_limits.total_refusal(found, total))
     return PrecheckResult()

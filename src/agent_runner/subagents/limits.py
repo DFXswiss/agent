@@ -11,9 +11,10 @@ no copy: it reads the section of the desired state of the last reconcile (`Sessi
   runner does no local pre-check (the hub decides, check H4) and shows the limits as unknown.
 - `depth_refusal`, `total_refusal`: the sentence of a refusal (`limit_exceeded`) that names the limit, its value and
   the setting; None within the limit, without limits or for a limit of 0.
-- `vm_room_refusal(context, conn, vm_id)`: a child (or a resumed child) fits on its VM while the VM's own free
-  resources take one more session (`vm.room`, measured through the daemon's VM manager; no fixed number); a VM that
-  could not be measured refuses nothing.
+- No refusal for room (HOT-32): a child runs in the VM of its task, which holds the task's work, so a child or a
+  resumed child is never refused because that VM is full - that would refuse running work. The room for subagents is
+  kept when a **new** task is placed: it goes to a VM only while one more task as large as the largest one there,
+  subagents included, still fits (`vm.room`, 05-runner.md section 3.3.1).
 - `denied_message(found)`: the sentence of a hub `denied` `limit_exceeded` of `subagent.request` with the current
   limits (the hub's answer does not name the limit).
 - `values(found)`: `(depth, running, total, runtime)` for the harness line, None each when unknown; `running` is 0
@@ -31,8 +32,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from psycopg import AsyncConnection
-
 SECTION = "limits"
 SERVICE_ATTRIBUTE = "session_service"
 """`sessions.service.ATTRIBUTE` (not imported: the session start reads this module; a test compares them)."""
@@ -40,14 +39,13 @@ FIELDS = ("subagent_max_depth", "subagent_max_total", "subagent_max_runtime_seco
 OLD_GUEST_MAX_DEPTH = 2
 OLD_GUEST_MAX_PARALLEL = 3
 OLD_GUEST_MAX_TOTAL = 10
-VM_MANAGER_KEY = "_vm_manager"
-"""`vm.tasks.MANAGER_KEY` (not imported, like `SERVICE_ATTRIBUTE`; a test compares them)."""
 
 
 @dataclass(frozen=True)
 class SubagentLimits:
     """The settings of the hub; 0 = no limit. There is no number of subagents running at once (ADR-075 addendum 2): an
-    older hub's `subagent_max_running` is read past; the VM's free resources decide (`vm_room_refusal`)."""
+    older hub's `subagent_max_running` is read past, and no subagent is refused for the room of its task's VM (HOT-32:
+    the placement of new tasks keeps the reserve, `vm.room`)."""
 
     max_depth: int
     max_total: int
@@ -109,27 +107,6 @@ def total_refusal(found: SubagentLimits | None, total: int) -> str | None:
     return (
         f"This task already started {_plural(found.max_total, 'subagent')}, the limit of this platform (setting"
         " subagent_max_total). Give further instructions to a subagent it has with subagent.instruct."
-    )
-
-
-async def vm_room_refusal(context: Any, conn: AsyncConnection[Any], vm_id: str | None) -> str | None:
-    """The sentence when the VM `vm_id` has no free resources for one more session (module docstring), else None: the
-    VM's own measurement (`vm.room`, through the daemon's VM manager; nothing is refused where there is none)."""
-    from agent_runner.vm import records as vm_records  # noqa: PLC0415 - the session start reads this module
-
-    del conn  # the measurement reads the VM, not the store
-    manager = vars(context).get(VM_MANAGER_KEY)
-    if vm_id is None or manager is None:
-        return None
-    row = await vm_records.get(manager.env.db, vm_id)
-    if row is None or row.state != "running":
-        return None
-    room = await manager.env.session_room(row)
-    if room.fits or not room.measured:  # only a measured full VM refuses; an unmeasured one is no reason to refuse
-        return None
-    return (
-        "The computer of this task has no free resources for one more session right now (its RAM or CPU is used up)."
-        " Stop a subagent with subagent.stop or wait until one ends."
     )
 
 

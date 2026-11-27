@@ -34,14 +34,33 @@ def measured(used_gib: float, load1: float, sessions: dict[str, int] | list[int]
 
 def test_one_more_session_fits_while_the_vms_ram_and_cpu_last() -> None:
     # no measured session yet: only the guest's own share stays free
-    assert room.judge(measured(2, 1.0), cpus=4, load_max=0.85) == room.Room(True, 6 * 1024, 0, 0.25)
-    # the largest session that has not ended is what one more needs (no fixed number)
+    assert room.judge(measured(2, 1.0), cpus=4, load_max=0.85) == room.Room(True, 6 * 1024, 0, 0.25, 0.25)
+    # the largest task that has not ended is what one more needs (no fixed number); without known tasks every session
+    # is a task of its own; its CPU share is the load per open session (1.0 / 2) times its sessions
     busy = measured(5, 1.0, {"working": 2 * GIB, "idle": 1 * GIB, "stopped": 3 * GIB})
-    assert room.judge(busy, cpus=4, load_max=0.85) == room.Room(True, 3 * 1024, 2048, 0.25)
+    assert room.judge(busy, cpus=4, load_max=0.85) == room.Room(True, 3 * 1024, 2048, 0.25, 0.375)
     # 1.5 GiB free, 2 GiB needed: no more session on this VM
     assert room.judge(measured(6.5, 1.0, {"working": 2 * GIB}), cpus=4, load_max=0.85).fits is False
     assert room.judge(measured(2, 3.6), cpus=4, load_max=0.85).fits is False  # 90 % load per vCPU
     assert room.judge(measured(9, 0.0), cpus=0, load_max=0.85).available_mib == 0
+
+
+def test_a_new_task_keeps_the_reserve_for_the_subagents_of_the_tasks_there() -> None:
+    """HOT-32: subagents run in the VM of their task and are never refused, so the room is kept when a new task is
+    placed - one more task as large as the largest one there, its subagents included, must still fit."""
+    ids = [f"0193000a-0000-7000-8000-0000000000{index:02d}" for index in range(4)]
+    # four sessions of 1 GiB at a load of 2.0 on 4 vCPUs (50 %)
+    four = measured(5, 2.0, [GIB] * 4)
+    alone = room.judge(four, cpus=4, load_max=0.85)  # four tasks of one session each
+    assert (alone.fits, alone.need_mib, alone.fields()["after_pct"]) == (True, 1024, 62)
+    # the same four sessions are one task: a main session and three subagents - that task's size is the reserve
+    one_task = dict.fromkeys(ids, "task-a")
+    grouped = room.judge(four, cpus=4, load_max=0.85, tasks=one_task)
+    assert (grouped.fits, grouped.need_mib, grouped.fields()["after_pct"]) == (False, 4096, 100)
+    # two tasks of two sessions: the larger one by memory decides
+    two = {ids[0]: "task-a", ids[1]: "task-a", ids[2]: "task-b", ids[3]: "task-b"}
+    split = room.judge(measured(4, 2.0, [GIB, GIB, GIB, 2 * GIB]), cpus=4, load_max=0.85, tasks=two)
+    assert (split.fits, split.need_mib, split.fields()["after_pct"]) == (True, 3072, 75)
 
 
 SESSIONS = [350 * MB, 380 * MB, 410 * MB, 430 * MB, 450 * MB, 480 * MB, 510 * MB]
@@ -127,8 +146,11 @@ def test_the_checker_logs_its_judgement_and_an_unmeasured_vm_has_no_room() -> No
     async def client(_row: Any) -> Client:
         return Client(answers.pop(0))
 
+    async def tasks_of(_row: Any) -> dict[str, str]:
+        return {}
+
     env = SimpleNamespace(client=client, settings=SimpleNamespace(cpus=16), log=lambda n, f: logs.append((n, f)))
-    check = room.checker(env, load_max=0.85)
+    check = room.checker(env, load_max=0.85, tasks_of=tasks_of)
     found = asyncio.run(check(ROW))
     assert (found.fits, found.measured) == (True, True)
     assert asyncio.run(check(ROW)) == room.Room(False)  # not measured: no room
@@ -136,7 +158,7 @@ def test_the_checker_logs_its_judgement_and_an_unmeasured_vm_has_no_room() -> No
     assert logs == [
         # the VM's own 4 vCPUs, not the 16 of a new VM: 0.5 / 4
         ("vm.session_room", {"vm_id": "vm-0000000a", "fits": "yes", "available_mib": 6144, "need_mib": 0,
-                             "load_pct": 12}),
+                             "load_pct": 12, "after_pct": 12}),
         ("vm.session_room", {"vm_id": "vm-0000000a", "fits": "unknown"}),
     ]  # fmt: skip
 
@@ -146,6 +168,6 @@ def test_the_finding_of_2026_11_27_is_full() -> None:
     next session goes to another VM - even with RAM left."""
     found = room.judge(measured(5, 4.3, [450 * MB] * 11), cpus=4, load_max=0.85)
     assert found.fits is False
-    assert found.fields() == {"fits": "no", "available_mib": 3072, "need_mib": 429, "load_pct": 108}
+    assert found.fields() == {"fits": "no", "available_mib": 3072, "need_mib": 429, "load_pct": 108, "after_pct": 117}
     # the same use in a VM of 16 vCPUs: 27 % per vCPU, and that VM's RAM decides
     assert room.judge(measured(5, 4.3, [450 * MB] * 11), cpus=16, load_max=0.85).fits is True

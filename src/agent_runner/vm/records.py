@@ -107,6 +107,18 @@ async def of_workgroup(db: Any, wg_id: str) -> list[VmRow]:
     return [VmRow(**row) for row in rows]
 
 
+async def session_tasks(db: Any, vm_id: str) -> dict[str, str]:
+    """The task of every session on the VM that has not ended (`vm.room` groups a task's main session and its
+    subagents, HOT-32)."""
+    rows = await _rows(
+        db,
+        "SELECT id::text AS id, task_id::text AS task_id FROM runner.session"
+        " WHERE vm_id = %s AND state NOT IN ('stopped', 'failed')",
+        (vm_id,),
+    )
+    return {row["id"]: row["task_id"] for row in rows}
+
+
 async def assign_session(db: Any, session_id: str, vm_id: str) -> None:
     """Name the VM of a session on its local row (the booking of its place, ADR-075 section 4)."""
     await _execute(db, "UPDATE runner.session SET vm_id = %s WHERE id = %s", (vm_id, session_id))

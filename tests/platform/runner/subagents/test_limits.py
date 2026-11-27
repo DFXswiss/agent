@@ -16,7 +16,6 @@ from agent_runner.store.pool import open_pool
 from agent_runner.subagents import guest_features, limits
 from agent_runner.subagents.limits import SubagentLimits
 from agent_runner.vm import records as vm_records
-from agent_runner.vm.room import Room
 
 SECTION = {
     "api": 1,
@@ -143,38 +142,7 @@ def test_the_guest_version_comes_from_the_golden_of_the_vm(store_dsn: str) -> No
     asyncio.run(main())
 
 
-def test_the_vms_measured_resources_decide_whether_a_child_fits(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No fixed number of sessions per VM (ADR-075 addendum 2): a child fits on its parent's VM while the VM's free
-    resources last; without a VM or a VM manager nothing is refused here."""
-    from agent_runner.vm import tasks as vm_tasks  # noqa: PLC0415
-
-    assert limits.VM_MANAGER_KEY == vm_tasks.MANAGER_KEY
-    assert asyncio.run(limits.vm_room_refusal(SimpleNamespace(), None, "vm-0000000a")) is None  # type: ignore[arg-type]
-    rows = {
-        "vm-0000000a": SimpleNamespace(id="vm-0000000a", state="running"),
-        "vm-0000000b": SimpleNamespace(id="vm-0000000b", state="running"),
-        "vm-0000000c": SimpleNamespace(id="vm-0000000c", state="stopped"),
-        "vm-0000000e": SimpleNamespace(id="vm-0000000e", state="running"),
-    }
-
-    async def get(db: Any, vm_id: str) -> Any:
-        return rows.get(vm_id)
-
-    async def session_room(row: Any) -> Room:
-        if row.id == "vm-0000000e":
-            return Room(False)  # its guest did not answer
-        return Room(row.id == "vm-0000000a", 1024, 512, 0.5)
-
-    monkeypatch.setattr(vm_records, "get", get)
-    context: Any = SimpleNamespace()
-    vars(context)[limits.VM_MANAGER_KEY] = SimpleNamespace(env=SimpleNamespace(db=None, session_room=session_room))
-
-    def refusal(vm_id: str) -> str | None:
-        return asyncio.run(limits.vm_room_refusal(context, None, vm_id))  # type: ignore[arg-type]
-
-    assert refusal("vm-0000000a") is None  # room measured
-    assert str(refusal("vm-0000000b")).startswith("The computer of this task has no free resources")
-    assert refusal("vm-0000000c") is None  # not running: its start decides
-    assert refusal("vm-0000000e") is None  # not measured: no reason to refuse
-    assert refusal("vm-0000000d") is None  # unknown VM
-    assert asyncio.run(limits.vm_room_refusal(context, None, None)) is None  # type: ignore[arg-type]  # no VM yet
+def test_no_refusal_for_the_room_of_the_vm() -> None:
+    """HOT-32: a child runs in the VM of its task and is never refused because that VM is full - the reserve is kept
+    when new tasks are placed (`vm.room`); the limits have no room check any more."""
+    assert not hasattr(limits, "vm_room_refusal")

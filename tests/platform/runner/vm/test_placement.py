@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from agent_runner.errors import RunnerError
+from agent_runner.vm import records
 from agent_runner.vm.lifecycle import VmManager
 from agent_runner.vm.pool import VmSettings
 from agent_runner.vm.room import Room
@@ -131,6 +132,51 @@ def test_a_vm_with_room_the_new_session_lands_in_the_same_vm(harness: Harness) -
         "passed_over": "none",
     }
     assert (counted, checks) == ({"new_vm": 1, "room": 1}, {"room": 1})
+
+
+def test_a_full_preferred_vm_still_takes_the_subagent_and_the_log_shows_it(harness: Harness) -> None:
+    """A preferred VM (here the parent's VM of a subagent) is taken even when full - the task's work lives there and
+    refusing would refuse running work; it is measured, so the log shows the full VM. A new task goes elsewhere."""
+    harness.add_golden()
+    harness.settings = settings(pool_size=0)
+    parent, child, other = new_session(harness), new_session(harness), new_session(harness)
+    rooms: dict[str, Room] = {}
+
+    async def body(manager: VmManager) -> Any:
+        measured(manager, rooms)
+        vm = await manager.ensure_vm(ORG, WG_A, session_id=parent)
+        rooms[vm.id] = FULL
+        subagent = await manager.ensure_vm(ORG, WG_A, session_id=child, prefer=[vm.id])
+        new_task = await manager.ensure_vm(ORG, WG_A, session_id=other)
+        return vm, subagent, new_task
+
+    vm, subagent, new_task = harness.run(body)
+    assert subagent.id == vm.id
+    assert new_task.id != vm.id
+    preferred = placements(harness)[1]
+    assert (preferred["reason"], preferred["vm_id"], preferred["fits"], preferred["load_pct"]) == (
+        "preferred", vm.id, "no", 108,
+    )  # fmt: skip
+    assert placements(harness)[2]["passed_over"] == f"{vm.id}:full"
+
+
+def test_the_sessions_of_a_vm_are_grouped_by_their_task(harness: Harness) -> None:
+    """`records.session_tasks`: the task of every session on the VM that has not ended (main session and subagents
+    of one task count together in `vm.room`)."""
+
+    async def body(manager: VmManager) -> Any:
+        await records.insert(
+            manager.env.db, vm_id="vm-00000001", lima_name="row-vm-00000001", golden_version="g1", state="running",
+            token_sha256="0" * 64, cpus=4, memory_mib=8192, created_at=NOW, org_id=ORG, wg_id=WG_A,
+        )  # fmt: skip
+        working = harness.session("vm-00000001", WG_A, "working")
+        harness.session("vm-00000001", WG_A, "stopped")
+        return working, await records.session_tasks(manager.env.db, "vm-00000001")
+
+    harness.add_golden()
+    working, found = harness.run(body, reconcile=False)
+    task = harness.sql("SELECT task_id::text AS task FROM runner.session WHERE id = %s", (working,))[0]["task"]
+    assert found == {working: task}
 
 
 def test_an_unmeasured_vm_gets_no_new_session(harness: Harness) -> None:

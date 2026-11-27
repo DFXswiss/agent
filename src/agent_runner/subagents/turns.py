@@ -53,7 +53,7 @@ from agent_runner.sessions import records
 from agent_runner.sessions.events import fail
 from agent_runner.sessions.records import FINAL, START_CHAIN, LocalSession, time_text
 from agent_runner.sessions.stop import stop_guest, stop_session
-from agent_runner.subagents import instructions, results, store, target_checks
+from agent_runner.subagents import instructions, results, store
 from agent_runner.subagents.guest_features import current_guest
 from agent_runner.subagents.instructions import Instruction
 
@@ -68,7 +68,7 @@ UNREACHABLE = "The computer of the subagent cannot be reached now."
 REFUSED = "The computer of the subagent refused the instruction."
 WAIT_S = 1.0
 TASK_LOCK = "task:"
-"""Prefix of the lock key that serialises resuming children of one task (running limit, VM room)."""
+"""Prefix of the lock key that serialises resuming children of one task (one resume at a time per task)."""
 
 
 def ping_id(child_session_id: str, instruction_id: str) -> str:
@@ -187,10 +187,7 @@ class Turns:
             return None
         if child.state in SUSPENDED:
             async with self.lock(TASK_LOCK + child.task_id):
-                async with store_session(self.env.db) as conn:
-                    refused = await target_checks.resume_refusal(self.env.context, conn, child)
-                if refused is not None:
-                    raise OperationFailed("limit_exceeded", message=refused)
+                # never refused for room: the child belongs to running work of its task (HOT-32)
                 outcome = await self.resumer.resume(child, self.c.resume_request)
             if outcome == RETRY:
                 raise OperationFailed("upstream_error", retryable=True, message=UNREACHABLE)

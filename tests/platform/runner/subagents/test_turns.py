@@ -20,9 +20,10 @@ from agent_runner.crypto.ids import uuid7
 from agent_runner.guestlink.errors import GuestRefused, GuestUnreachable
 from agent_runner.operations.extensions import OperationContext, OperationFailed, prechecks
 from agent_runner.prompts.resume import RETRY
-from agent_runner.subagents import instructions, limits, session_state, store, target_checks, turns
+from agent_runner.subagents import instructions, session_state, store, target_checks, turns
 from agent_runner.subagents.controller import GRACE_S, SETTLE_S, Subagents, ping_id
 from agent_runner.subagents.instructions import Instruction
+from agent_runner.vm import tasks as vm_tasks
 from agent_runner.vm.room import Room
 
 from ..operations.kit import OpGuest
@@ -156,13 +157,13 @@ def limited(found: SKit, running: int) -> None:
     }
 
 
-def vm_room(found: SKit, room: bool) -> None:
-    """The measured room of the task's VM (`vm.room`, through the daemon's VM manager; ADR-075 addendum 2)."""
+def vm_full(found: SKit) -> None:
+    """The task's VM measured full (`vm.room`, through the daemon's VM manager): RAM and CPU used up (HOT-32)."""
 
     async def session_room(_row: Any) -> Room:
-        return Room(room, 1024, 512, 0.5)
+        return Room(False, 512, 2048, 1.1, 1.2)
 
-    vars(found.env.context)[limits.VM_MANAGER_KEY] = SimpleNamespace(
+    vars(found.env.context)[vm_tasks.MANAGER_KEY] = SimpleNamespace(
         env=SimpleNamespace(db=found.env.pool, session_room=session_room)
     )
 
@@ -356,17 +357,11 @@ def test_an_idle_child_is_suspended_and_resumed_by_its_next_instruction(rig: Rig
         assert (await found.stored(child)).state == "suspended"
         answer = await result(found, parent, child)
         assert (answer["state"], answer["final_text"], answer["instruction_id"]) == ("suspended", "Answer.", first)
-        # resuming makes it run again: the measured room of the VM is pre-checked (no number of running children:
-        # an older hub's `subagent_max_running` is read past, ADR-075 addendum 2)
+        # resuming makes it run again: no number of running children (an older hub's `subagent_max_running` is read
+        # past, ADR-075 addendum 2) and no refusal although the task's VM is measured full (HOT-32: running work)
         _other_parent, _busy, _ = await full_child(found, await found.parent(2))
         limited(found, running=1)
-        vm_room(found, False)
-        full = await instruct(found, parent, child, rejected="limit_exceeded")
-        assert (full.state, full.error_code) == ("rejected", "limit_exceeded")
-        assert full.answer is not None
-        assert "has no free resources for one more session" in full.answer["error"]["message"]
-        assert found.ops.hub.requests[-1]["local_check"] == "rejected"
-        vm_room(found, True)
+        vm_full(found)
         creates_before = len([1 for name, _ in found.guest.calls if name == "create_session"])
         op = await instruct(found, parent, child)
         assert op.state == "succeeded"
@@ -656,7 +651,7 @@ def test_an_acceptance_journaled_before_the_guests_answer_arrives_counts(rig: Ri
     run(rig, body)
 
 
-def test_a_child_suspended_while_its_instruction_waited_is_resumed_only_within_the_limits(rig: Rig) -> None:
+def test_a_child_suspended_while_its_instruction_waited_is_resumed_also_on_a_full_vm(rig: Rig) -> None:
     async def body(env: Any) -> None:
         found = await setup(env)
         parent, child, first = await full_child(found)
@@ -675,16 +670,15 @@ def test_a_child_suspended_while_its_instruction_waited_is_resumed_only_within_t
             found.controller.wake()
             return await waiting
 
-        # the VM's measured room (no number of running children, ADR-075 addendum 2)
+        # no number of running children (ADR-075 addendum 2) and no refusal on a full VM (HOT-32: running work)
         limited(found, running=1)
-        vm_room(found, False)
+        vm_full(found)
+        creates_before = len([1 for name, _ in found.guest.calls if name == "create_session"])
         await_rows = await rows(found, child)
-        full = await suspended_meanwhile()
-        assert (full.state, full.error_code) == ("failed", "limit_exceeded")
-        assert full.answer is not None
-        assert "has no free resources for one more session" in full.answer["error"]["message"]
-        assert guest(found).registered() == []
-        assert (await found.stored(child)).state == "suspended"
+        resumed = await suspended_meanwhile()
+        assert resumed.state == "succeeded"
+        resumes = [value for name, value in found.guest.calls if name == "create_session"][creates_before:]
+        assert [request["session_id"] for request in resumes] == [child]
 
     run(rig, body)
 

@@ -5,13 +5,15 @@
 workgroup for a session, in the deterministic order of ADR-075 section 4 (05-runner.md section 3.3):
 
 1. the VMs of `prefer` in their order - the hub's `vm_id_pref` (a user's choice), then the VM of the parent session
-   (subagent) or of the `resume_from` session - when it is a live VM of **this** workgroup, regardless of the limit:
-   running -> use it, stopped -> restart it (no golden replacement: the choice, or the work, lives there);
-2. a running VM of the workgroup of the current size (`VM_CPUS` / `VM_MEMORY_MIB`) whose room is measured before the
-   placement and has free resources of its own for one more session (`env.session_room`, measured on the VM:
-   `vm.room`; no fixed number of sessions per VM, ADR-075 addendum 2; a VM that cannot be measured has no room),
-   smallest VM ID first. A VM of an older size takes no new session: it keeps its sessions and stops when its last one
-   ended (`idle_pass`; HOT-32, after the model of the golden switch, ADR-093);
+   (subagent) or of the `resume_from` session - when it is a live VM of **this** workgroup, regardless of its room
+   and size: running -> measured for the log, then used even when full (the work of the task lives there; refusing it
+   would refuse running work, HOT-32), stopped -> restart it (no golden replacement);
+2. for a new task: a running VM of the workgroup of the current size (`VM_CPUS` / `VM_MEMORY_MIB`) whose room is
+   measured before the placement and still takes one more task as large as its largest one, with its subagents
+   (`env.session_room`, `vm.room`: the reserve for the subagents of the tasks already there; no fixed number of
+   sessions per VM, ADR-075 addendum 2; a VM that cannot be measured has no room), smallest VM ID first. A VM of an
+   older size takes no new session: it keeps its sessions and stops when its last one ended (`idle_pass`; HOT-32,
+   after the model of the golden switch, ADR-093);
 3. a stopped VM of the workgroup of the current size, in store order -> restart it (`limactl start`, health
    `assigned` to this workgroup), unless its golden is not the newest ready one, no retire hook keeps it
    (`vm.extensions`: e.g. context checkpoints still due, KOR-33) and it may move (`golden_switch.judge`: every session
@@ -240,6 +242,9 @@ class VmManager:
         for vm_id in prefer:
             found = by_id.get(vm_id)
             if found is not None and found.state == "running":
+                # the work of the task lives there (its workspace, its parent): taken even when full, never refused;
+                # measured so the log shows a preferred VM that runs full (05-runner.md section 3.3.1)
+                placement.room = await env.session_room(found)
                 await self.touch(found.id)
                 return found
             if found is not None and found.state in STOPPED_STATES:

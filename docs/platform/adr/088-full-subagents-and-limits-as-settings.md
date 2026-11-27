@@ -77,7 +77,9 @@ message when one is reached, reporting caps never make monitoring blind), rules 
   limits as unknown.
 - **Room of the VM.** Children run in their parent's VM. Before a child is started or resumed the runner also checks the
   VM's room (`AGENT_RUNNER_SESSIONS_PER_VM`, ADR-075 §1): a full VM refuses with `limit_exceeded` and the sentence
-  naming that setting, never with a crash of the VM.
+  naming that setting, never with a crash of the VM. *Replaced (2026-11-27, HOT-32, ADR-075 addendum 5): a child is
+  never refused for the room of its VM - it belongs to running work; the reserve for children is kept when a new task
+  is placed (05-runner.md §3.3.1).*
 - **Clear message.** A request over a limit ends `rejected` (runner pre-check) or `denied` (hub) with `limit_exceeded`
   and a sentence that names the limit, its value and the setting, e.g. "This task already has 50 running subagents,
   the limit of this platform (setting subagent_max_running). Stop one with subagent.stop or wait until one ends." The

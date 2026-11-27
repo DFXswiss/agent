@@ -115,7 +115,7 @@ counts as "no limit" (the behaviour before this ADR).
 > VMs' input and output (an eighth of the cores, at least 1, at most 2, `vm.capacity.host_cpu_ratio`);
 > `CPU_LOAD_MAX_PERCENT`, empty by default, replaces that rule when set. 05-runner.md §1.3, §1.3.1, §3.4, §3.8.
 
-> **Addendum 5 (2026-11-27, HOT-32): look first, then place; a larger VM only for new VMs.** Finding on the platform
+> **Addendum 5 (2026-11-27, HOT-32): look first, then place; small VMs, more of them.** Finding on the platform
 > device at about 10:00: every session of a workgroup ran in one VM of 4 vCPU and 8 GiB - the device ran without the
 > measured room of the addenda above, and `SESSIONS_PER_VM=0` meant unlimited room, so no second VM ever started -,
 > 11 sessions at a load of 4.3 on 4 cores, tool calls timing out, while the device (36 cores, 512 GB) was 70 % free.
@@ -123,11 +123,18 @@ counts as "no limit" (the behaviour before this ADR).
 > einfach laufende sessions beenden"; "du musst schon erst kucken hats noch platz und wenn nicht dann eine neue vm
 > nehmen".
 >
-> - **Room check before every placement** (05-runner.md §3.3.1): the runner measures a running VM before it places a
->   session there - RAM left after the largest session ≥ 10 % of the VM, load per vCPU of the VM's own vCPUs ≤
->   `VM_LOAD_MAX_PERCENT` (85). A VM whose guest does not answer in 2 s is **not** a VM with room any more (it was in
->   addendum 1): that is the overloaded VM of the finding. No room: another VM with room, a stopped VM, else a new VM
->   from the pool or a clone through the device admission; else `capacity_exhausted`.
+> - **Room check before every placement of a new task** (05-runner.md §3.3.1): the runner measures a running VM
+>   before it places a new task there; the task fits while one more task as large as the largest one on the VM (its
+>   main session and its subagents, measured) still fits - RAM left ≥ 10 % of the VM, load per vCPU of the VM's own
+>   vCPUs ≤ `VM_LOAD_MAX_PERCENT` (85). A VM whose guest does not answer in 2 s is **not** a VM with room any more (it
+>   was in addendum 1): that is the overloaded VM of the finding. No room: another VM with room, a stopped VM, else a
+>   new VM from the pool or a clone through the device admission; else `capacity_exhausted`.
+> - **Nothing running is refused**: subagents run in the VM of their task and are no longer refused when it is full
+>   (`subagents.limits.vm_room_refusal` is gone, also for resuming a suspended child; ADR-088 §2 "Room of the VM"
+>   replaced). Their reserve is the "one more task as large as the largest" kept at the placement of new tasks.
+>   Preferred VMs (the user's choice, the parent's VM, the VM of `resume_from`) are taken without refusal even when
+>   full - the task's work lives there - and measured for the log. Not chosen: a fixed number of subagents reserved per
+>   task, a second lower threshold for new tasks, refusing subagents above a hard bound.
 > - **One small size, more VMs** (05-runner.md §3.3.2): client, 2026-11-27: "die grösse der vm sollten wir zum start
 >   immer gleich halten für claude sachen und eher klein, lieber mehrere vm". Every session VM keeps `VM_CPUS` /
 >   `VM_MEMORY_MIB` at 4 vCPUs and 8 GiB; more need means more VMs through the room check. Not chosen: larger VMs

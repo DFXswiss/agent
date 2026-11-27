@@ -308,14 +308,13 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
   VM of a session is chosen under the in-process lock of its workgroup, and the session row names its VM before the
   lock is released, so two starts never both take the last place of a VM. Order (deterministic): (1) the VM the hub
   names (`vm_id_pref`, a user's choice) when it is a live VM of the workgroup; (2) for a subagent the VM of its parent,
-  for a main session with `resume_from` the VM of that session – both regardless of their room and size (the
-  choice, or the work, lives there); (3) a running VM of the workgroup of the current size whose room was measured
-  **before** the placement and that has free resources of its own for one more session (§3.3.1) - no fixed number of
-  sessions per VM (ADR-075 addendum 2, HOT-32) -, smallest VM ID first. The same measurement decides whether a
-  subagent fits on its parent's VM (`subagents.limits.vm_room_refusal`; there only a measured full VM refuses). A VM
-  keeps the size it started with (it does not grow, ADR-075 addendum 3), so its fixed RAM and CPUs and its sessions'
-  measured use decide how many sessions it takes (DFX workgroup VM, 8 GiB, sessions of 350-510 MB: about 13-15 by
-  RAM). No VM with room: the order goes on - a stopped VM, then a further VM of the workgroup on a free slot of the
+  for a main session with `resume_from` the VM of that session – all three regardless of their room and size: a
+  running one is measured for the log and then taken even when full, never refused (§3.3.1 "Preferred VMs"); (3) for
+  a new task a running VM of the workgroup of the current size whose room was measured **before** the placement and
+  that still takes one more task as large as its largest one, subagents included (§3.3.1) - no fixed number of
+  sessions per VM (ADR-075 addendum 2, HOT-32) -, smallest VM ID first. A VM keeps the size it started with (it does
+  not grow, ADR-075 addendum 3), so its fixed RAM and CPUs and its tasks' measured use decide how many tasks it takes.
+  No VM with room: the order goes on - a stopped VM, then a further VM of the workgroup on a free slot of the
   device (§3.4, §3.8), else `capacity_exhausted` and the hub places the next attempt, ADR-013, ADR-049;
   (4) a stopped VM of the workgroup of the current size (restart; replaced by a VM of the newest golden instead when
   it may move, §3.6 – the new VM first, then the old one is deleted), in store order; then a stopped VM of an older
@@ -325,8 +324,8 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
   builds it) `capacity_exhausted` (`golden`), not `vm_start_failed` (KOR-67); (6) else the session fails
   `capacity_exhausted`.
 - Every placement is logged and counted (HOT-32): `runner.vm.placement wg_id= vm_id= reason= cpus= memory_mib=
-  fits= available_mib= need_mib= load_pct= passed_over= [session_id=] [code=]` - the chosen VM, its size, the room
-  measured there, the VMs passed over with their result (`<vm_id>:full|unmeasured|size`) and the reason `preferred`,
+  fits= available_mib= need_mib= load_pct= after_pct= passed_over= [session_id=] [code=]` - the chosen VM, its size,
+  the room measured there (also on a preferred VM: `reason=preferred fits=no` shows a task whose VM runs full), the VMs passed over with their result (`<vm_id>:full|unmeasured|size`) and the reason `preferred`,
   `room` (room measured on a running VM), `restart`, `replaced`, `new_vm` (pool or clone; the start's `start_step
   path=` names which) or `refused`; each measurement also as `runner.vm.session_room vm_id= fits=yes|no|unknown …`.
   Metrics `agent_runner_vm_placements_total{reason}` and `agent_runner_vm_room_checks_total{result}` (`room`, `full`,
@@ -334,19 +333,36 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
 
 #### 3.3.1 Room of a running VM (HOT-32)
 
-Before a session is placed on a running VM, the runner measures that VM through its guest (`GET /v1/metrics`, the
-answer the monitoring samples, 08-monitoring.md §2; at most 2 s, `vm.room`). One more session fits while **both**
-hold:
+Before a **new task** (a main session without a preferred VM) is placed on a running VM, the runner measures that VM
+through its guest (`GET /v1/metrics`, the answer the monitoring samples, 08-monitoring.md §2; at most 2 s, `vm.room`).
+The unit is the **task** - its main session and its subagents, grouped by `runner.session.task_id` -, because
+subagents run in the VM of their task. The new task fits while one more task as large as the largest task on the VM
+now still fits - **both** hold:
 
 | Resource | Rule | Threshold and why |
 |---|---|---|
-| RAM | `MemAvailable` of the VM − what one more session needs ≥ 10 % of the VM's RAM | What one more session needs is measured, no fixed number: the largest `memory.current` among the VM's sessions that have not ended (a new session grows to what the others use; DFX workgroup VM 2026-11-26: 350-510 MB each). The 10 % stay for the guest itself (guest API, journald, page cache) and short peaks of the sessions already there; below it the guest's OOM killer would end a running session, which must never happen. |
-| CPU | 1-minute load of the VM / its **own** vCPUs (`runner.vm.cpus`) ≤ `VM_LOAD_MAX_PERCENT` (default 85 %) | At a load per vCPU of 1.0 processes wait for a CPU and every tool call of every session of the VM gets slower; 85 % keeps about one vCPU in seven free for the bursts of the sessions already there (a build, a test run) and for the start of the new one. The finding of 2026-11-27 - 11 sessions, load 4.3 on 4 vCPUs = 108 %, tool calls timing out - is full by this rule; the 1-minute load is the value the guest reports and smooths single spikes. |
+| RAM | `MemAvailable` of the VM − what the largest task uses ≥ 10 % of the VM's RAM | What a task needs is measured, no fixed number: the sum of `memory.current` of the sessions of the largest task that have not ended (DFX workgroup VM 2026-11-26: 350-510 MB per session). The 10 % stay for the guest itself (guest API, journald, page cache) and short peaks; below it the guest's OOM killer would end a running session, which must never happen. |
+| CPU | (1-minute load of the VM + the largest task's share) / its **own** vCPUs (`runner.vm.cpus`) ≤ `VM_LOAD_MAX_PERCENT` (default 85 %) | The guest reports no CPU rate per session, so the load is shared evenly over the open sessions and the largest task's share is that per-session load times its sessions. At a load per vCPU of 1.0 processes wait for a CPU and every tool call gets slower; 85 % after one more such task keeps about one vCPU in seven free for bursts (a build, a test run). The finding of 2026-11-27 - 11 sessions, load 4.3 on 4 vCPUs = 108 % already before, tool calls timing out - is full by this rule; the 1-minute load smooths single spikes. |
 
-A VM whose guest does not answer within 2 s is **not measured** and counts as having no room for a new session: a
+**Reserve for subagents, and why this way.** A subagent is never refused because the VM of its task is full
+(`subagents.limits`, §13): it belongs to running work, and its files are in that VM, so it cannot go elsewhere;
+refusing it would take a running task its subagents. Instead the room is kept where nothing runs yet - at the
+placement of a new task. Requiring room for one more task *as large as the largest one there* (subagents included)
+leaves every task already on the VM about the room of a whole task for further subagents, and gives the new task room
+of the same size; it is measured, so it grows with tasks that use many subagents and needs nothing extra on a VM of
+single sessions. Not chosen: a fixed number of reserved subagents per task (a number, and wrong for most tasks), a
+separate lower threshold for new tasks (a second number without a measured reason), and refusing subagents above a
+hard bound (refuses running work). A task whose subagents outgrow its VM slows down instead of being refused; the
+placement log (`reason=preferred fits=no`) and `agent_runner_vm_placements_total` show it.
+
+**Preferred VMs** (the user's choice `vm_id_pref`, the parent's VM of a subagent, the VM of the `resume_from` session)
+stay without refusal, also when full: the task's work - its workspace, its parent - lives there, and a different VM
+would start the task without it or refuse it. They are measured all the same, so the log shows when such a VM runs
+full. New tasks avoid that VM by the rule above.
+
+A VM whose guest does not answer within 2 s is **not measured** and counts as having no room for a new task: a
 guest that cannot answer its own metrics in 2 s is the overloaded VM of the finding, not a VM with room ("first look
-whether there is room, and if not take a new VM"). A missing measurement never refuses a subagent on its parent's VM.
-The device itself is not measured here: whether a further VM may start is the device admission's (§3.8: free RAM
+whether there is room, and if not take a new VM"). The device itself is not measured here: whether a further VM may start is the device admission's (§3.8: free RAM
 above the reserve, the host's CPU load, disk). The numbers are no count of sessions; a VM takes as many as its
 measured resources allow.
 
@@ -1541,9 +1557,10 @@ Every GitHub request carries `Accept: application/vnd.github+json`, `X-GitHub-Ap
 ## 13. Subagents (ADR-088, ADR-038)
 
 - Created only after hub acceptance of `subagent.request` (the limits depth and total are settings of the hub,
-  ADR-088 §2, enforced in check H4; the runner pre-checks them with the values of the device state's `limits` and the
-  measured room of the parent's VM, `vm.room`). How many children run at once is no fixed number (ADR-075 addendum
-  2): the free resources decide; an older hub's `subagent_max_running` is read past.
+  ADR-088 §2, enforced in check H4; the runner pre-checks them with the values of the device state's `limits`). How
+  many children run at once is no fixed number (ADR-075 addendum 2); an older hub's `subagent_max_running` is read
+  past. A child - and the resume of a suspended child - is never refused because the VM of its task is full: it
+  belongs to running work (HOT-32). The room for children is kept when a new task is placed (§3.3.1).
 - Same VM, new sandbox, `depth = parent.depth + 1`, `parent_session_id` set, same task, same model access as the
   parent unless `model_id` given and allowed. Initial prompt = `"Purpose: <purpose>\n\n<prompt>"` (prompt ID = the
   operation ID: the child's first instruction); harness adds "You are a subagent session of session <parent> for task

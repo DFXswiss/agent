@@ -10,7 +10,7 @@ from typing import Any
 from agent_guest.schema import SchemaSet
 from agent_runner.crypto.ids import uuid7
 from agent_runner.sessions import records
-from agent_runner.subagents import limits
+from agent_runner.vm import tasks as vm_tasks
 from agent_runner.vm.room import Room
 
 from ..reconcile.rig import Rig
@@ -256,31 +256,22 @@ def test_a_vm_with_an_older_guest_takes_no_child_deeper_than_2(rig: Rig) -> None
     run(rig, body)
 
 
-def test_a_vm_without_free_resources_refuses_a_child(rig: Rig) -> None:
-    """No fixed number of sessions per VM (ADR-075 addendum 2): the VM's measured room decides (`vm.room`)."""
+def test_a_full_vm_never_refuses_a_child(rig: Rig) -> None:
+    """HOT-32: a child runs in the VM of its task and belongs to running work - it is never refused because that VM
+    is full (measured full here); the reserve for children is kept when new tasks are placed (`vm.room`)."""
 
     async def body(env: Any) -> None:
         found = await setup(env)
         parent = await found.parent()
-        room = [True]
 
         async def session_room(row: Any) -> Room:
-            return Room(room[0], 1024, 512, 0.5)
+            return Room(False, 512, 2048, 1.1, 1.2)  # full: RAM and CPU used up
 
-        vars(env.context)[limits.VM_MANAGER_KEY] = SimpleNamespace(
+        vars(env.context)[vm_tasks.MANAGER_KEY] = SimpleNamespace(
             env=SimpleNamespace(db=found.env.pool, session_room=session_room)
         )
-        for n in range(11):  # eleven children run: no number refuses the twelfth
+        for n in range(11):  # eleven children run: no number and no full VM refuses the twelfth
             await add_child(found, parent, "working", n)
-        assert (await found.subagent(parent)).state == "succeeded"
-        room[0] = False
-        op = await found.subagent(parent, decision={"state": "rejected", "error_code": "limit_exceeded"})
-        assert op.answer is not None
-        assert op.answer["error"]["message"] == (
-            "The computer of this task has no free resources for one more session right now (its RAM or CPU is used"
-            " up). Stop a subagent with subagent.stop or wait until one ends."
-        )
-        room[0] = True
         assert (await found.subagent(parent)).state == "succeeded"
 
     run(rig, body)
