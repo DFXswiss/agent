@@ -4,7 +4,7 @@
 // rows the quota is "not readable" when the subscription refused the read (KOR-40), else "not available" (no
 // subscription, or the usage endpoint did not answer). Spend of API keys and the
 // platform is in monitoring.
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { barShare, loadQuotas } from '../../../../core/credentials/quotas';
 import { formatEventTime } from '../../../../core/i18n';
 import { formatPercent } from '../../../../core/monitoring/units';
@@ -58,13 +58,20 @@ export function QuotasSection() {
   const bars = useStore((state) => state.quotas.bars, app.store);
   const unreadable = useStore((state) => state.quotas.unreadableSince, app.store);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const load = useCallback(() => {
-    loadQuotas(app.tasks).catch((error: unknown) => setLoadError(requestErrorCode(error)));
-  }, [app]);
-  useEffect(load, [load]);
+  const [round, setRound] = useState(0);
+  useEffect(() => {
+    // a read that ends after the section was left sets no state (the page may be gone, also in tests)
+    let live = true;
+    loadQuotas(app.tasks).catch((error: unknown) => {
+      if (live) setLoadError(requestErrorCode(error));
+    });
+    return () => {
+      live = false;
+    };
+  }, [app, round]);
   const reload = () => {
     setLoadError(null);
-    load();
+    setRound((value) => value + 1);
   };
   return (
     <div className="flex flex-col gap-3" data-testid="quotas.section">
