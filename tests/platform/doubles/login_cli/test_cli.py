@@ -24,12 +24,18 @@ from agent_runner.login.screen import Screen
 
 from .conftest import Login, Terminal
 
+LOCAL_REDIRECT = "http://localhost:45454/callback"
+
 
 def url_rows(lines: list[str]) -> str:
     """The URL as shown: its first row and the rows it is wrapped onto, joined."""
     start = next(i for i, line in enumerate(lines) if line.startswith("https://"))
     end = lines.index("", start)
     return "".join(lines[start:end])
+
+
+def localhost_url(page_url: str, seed: str) -> str:
+    return authorize_url(page_url, seed, redirect_uri=LOCAL_REDIRECT)
 
 
 TOKEN_LINE = " Use this token by setting: export CLAUDE_CODE_OAUTH_TOKEN=<token>"
@@ -50,9 +56,11 @@ def test_setup_token_relay_in_a_pty(login: Login, terminal: Callable[..., Termin
     term = terminal(*_argv(login, "--prompt-delay", "0.5"), extra_env={"CLAUDE_CONFIG_DIR": str(config)})
     lines = term.read_until_shown(PROMPT)
     assert PROMPT not in term.text  # placed word by word, like the real program
-    url = (tmp_path / "url.txt").read_text()
-    assert url == authorize_url(login.auth.page_url, "s")
-    assert url_rows(lines) == url  # wrapped at 120 columns
+    url = url_rows(lines)
+    captured = (tmp_path / "url.txt").read_text()
+    assert url == authorize_url(login.auth.page_url, "s")  # wrapped at 120 columns, joined
+    assert captured == localhost_url(login.auth.page_url, "s")
+    assert captured != url
     assert " Browser didn't open? Use the URL below to sign in (c to copy)" in lines
     assert lines[lines.index(" " + PROMPT) + 1].startswith(" ╭─")
     term.type(login.code_for(url))
@@ -87,12 +95,18 @@ def test_a_wrong_code_shows_the_error_and_the_double_stays_open(
     assert codes.TOKEN_PREFIX not in term.text
 
 
-def test_a_code_typed_before_the_input_field_is_dropped(login: Login, terminal: Callable[..., Terminal]) -> None:
+def test_a_code_typed_before_the_input_field_is_dropped(
+    login: Login, terminal: Callable[..., Terminal], tmp_path: Path
+) -> None:
     term = terminal(*_argv(login, "--prompt-delay", "2"))
     term.read_until_shown("Opening browser to sign in…")
     term.type("early-code#" + codes.oauth_state("s"))  # would be refused if it were read
-    term.read_until_shown(PROMPT)
-    url = authorize_url(login.auth.page_url, "s")
+    lines = term.read_until_shown(PROMPT)
+    url = url_rows(lines)
+    captured = (tmp_path / "url.txt").read_text()
+    assert url == authorize_url(login.auth.page_url, "s")
+    assert captured == localhost_url(login.auth.page_url, "s")
+    assert captured != url
     term.type(login.code_for(url))
     assert term.finish() == 0
     assert codes.access_token(codes.DEFAULT_SEED, 1) in "".join(term.lines)
@@ -100,8 +114,12 @@ def test_a_code_typed_before_the_input_field_is_dropped(login: Login, terminal: 
 
 def test_a_narrow_window_wraps_the_token(login: Login, terminal: Callable[..., Terminal], tmp_path: Path) -> None:
     term = terminal(*_argv(login, "--prompt-delay", "0"), columns=40)
-    term.read_until_shown(PROMPT)
-    term.type(login.code_for((tmp_path / "url.txt").read_text()))
+    lines = term.read_until_shown(PROMPT)
+    url = url_rows(lines)
+    captured = (tmp_path / "url.txt").read_text()
+    assert captured == localhost_url(login.auth.page_url, "s")
+    assert captured != url
+    term.type(login.code_for(url))
     assert term.finish() == 0
     lines = term.lines
     start = lines.index(" Your OAuth token (valid for 1 year):") + 2
@@ -112,9 +130,12 @@ def test_a_narrow_window_wraps_the_token(login: Login, terminal: Callable[..., T
 
 def test_timeout_variant_ignores_the_code(login: Login, terminal: Callable[..., Terminal], tmp_path: Path) -> None:
     term = terminal(*_argv(login, "--variant", "timeout", "--code-timeout", "1", "--prompt-delay", "0"))
-    term.read_until_shown(PROMPT)
-    assert (tmp_path / "url.txt").is_file()
-    term.type(login.code_for((tmp_path / "url.txt").read_text()))
+    lines = term.read_until_shown(PROMPT)
+    url = url_rows(lines)
+    captured = (tmp_path / "url.txt").read_text()
+    assert captured == localhost_url(login.auth.page_url, "s")
+    assert captured != url
+    term.type(login.code_for(url))
     assert term.finish() == 1
     assert ERROR + "timed out waiting for the authorization code" in term.lines
     assert "token" not in login.auth.state()["milestones"]
@@ -184,7 +205,7 @@ def test_in_process_success_and_browser_call(login: Login) -> None:
     pasted = login.code_for(url)
     code, lines = _run(_argv(login), (pasted + "\n").encode(), environ={"BROWSER": "/capture"}, run=run)
     assert code == 0, lines
-    assert calls == [["/capture", url]]
+    assert calls == [["/capture", localhost_url(login.auth.page_url, "s")]]
     assert lines[-1] == TOKEN_LINE
 
 

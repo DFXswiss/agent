@@ -1,9 +1,11 @@
-"""The `BROWSER` capture helper of the subscription login (05-runner.md section 11.2 step 2).
+"""The `BROWSER` helper of the subscription login (05-runner.md section 11.2).
 
-`claude setup-token` opens its authorize URL with `$BROWSER <url>`. The runner points `BROWSER` at a tiny shell script
-in the login's temporary directory that writes its first argument atomically to `url.txt` (write to a partial file,
-then rename), so the URL never has to be scraped from the terminal UI, which wraps long lines. Pattern copied from
-`agent_cli.account_login._write_capture_helper` (legacy, unchanged).
+`claude setup-token` and `claude auth login` open an authorize URL with `$BROWSER <url>`. That URL redirects to
+`http://localhost:<port>/callback` and is not relayed. The runner points `BROWSER` at a tiny shell script in the
+login's temporary directory so the program does not open a browser on the device. The script writes its first
+argument atomically to `url.txt` (a partial file, then rename); tests read that file. The code page link is read
+from the screen (`full_login.screen_url`). Pattern copied from `agent_cli.account_login._write_capture_helper`
+(legacy, unchanged).
 """
 
 from __future__ import annotations
@@ -21,7 +23,7 @@ URL_RE = re.compile(r"^(https://[!-~]{1,2040}|http://(127\.0\.0\.1|localhost)(:[
 
 
 class UrlInvalid(Exception):
-    """The captured text is not an authorize URL the response contract accepts."""
+    """The screen link (read by `full_login.screen_url`) is not an authorize URL the response contract accepts."""
 
 
 def write_helper(workdir: Path) -> Path:
@@ -38,18 +40,3 @@ def write_helper(workdir: Path) -> Path:
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
         stream.write(script)
     return helper
-
-
-def captured(workdir: Path) -> str | None:
-    """The captured URL once the helper ran, None before; `UrlInvalid` for anything that is not an authorize URL."""
-    target = workdir / TARGET
-    if not target.is_file():
-        return None
-    data = target.read_bytes()[: MAX_URL + 1]
-    try:
-        url = data.decode("ascii").strip()
-    except UnicodeDecodeError:
-        raise UrlInvalid from None
-    if len(url) > MAX_URL or not URL_RE.fullmatch(url):
-        raise UrlInvalid
-    return url

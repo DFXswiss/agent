@@ -6,7 +6,7 @@ device up to the code input:
 
 - **The link.** The URL the program hands to `BROWSER` redirects to `http://localhost:<port>/callback`, which a user
   who is not at the device cannot reach. The link for the code page is on the screen, on the rows after
-  `VISIT_LABEL` (`screen_url`); the input field is the one of `claude setup-token` (`setup_token.PROMPT_LABEL`).
+  `VISIT_LABEL` (`screen_url`, once `setup_token.PROMPT_LABEL` is shown below it); the input field is that one.
 - **No keychain.** The program reaches the macOS keychain only through `security` in its `PATH`. The login's private
   `bin` directory comes first in `PATH` and holds `SECURITY_SCRIPT`, which refuses every call and writes nothing
   (`write_security`), so the program keeps the login in its plaintext store inside the temporary directory.
@@ -100,20 +100,29 @@ def write_security(bin_dir: Path) -> Path:
     return target
 
 
-def screen_url(lines: Sequence[str]) -> str | None:
-    """The link of the code page: the non-empty rows after the row with `VISIT_LABEL` up to the next empty row or the
-    input field, joined (a narrow window wraps it); None while it is not shown. `capture.UrlInvalid` when the rows are
-    not an authorize URL."""
+def screen_url(lines: Sequence[str], label: str = VISIT_LABEL) -> str | None:
+    """The link of the code page: the non-empty rows after the row containing `label`.
+
+    Empty rows directly under that row are skipped; the following non-empty rows are joined up to the next empty row
+    or the input field (a narrow window wraps the link). `label` must fit in one row of the screen (the PTY is
+    `pty.COLUMNS` wide), as a wrapped label is not found. None while the link is missing, or while the input field
+    (`setup_token.PROMPT_LABEL`) is not yet on the screen below it: the PTY can be read in any piece size, so the
+    link may be only partly drawn. `capture.UrlInvalid` when the rows are not an authorize URL."""
     rows = [line.strip() for line in lines]
-    marker = next((index for index, row in enumerate(rows) if VISIT_LABEL in row), None)
+    marker = next((index for index, row in enumerate(rows) if label in row), None)
     if marker is None:
         return None
+    start = marker + 1
+    while start < len(rows) and not rows[start]:
+        start += 1
     pieces: list[str] = []
-    for row in rows[marker + 1 :]:
+    index = start
+    for row in rows[start:]:
         if not row or setup_token.PROMPT_LABEL in row:
             break
         pieces.append(row)
-    if not pieces:
+        index += 1
+    if not pieces or not any(setup_token.PROMPT_LABEL in row for row in rows[index:]):
         return None
     url = "".join(pieces)
     if len(url) > capture.MAX_URL or not capture.URL_RE.fullmatch(url):

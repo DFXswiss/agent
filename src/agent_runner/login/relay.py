@@ -6,14 +6,15 @@
    `TMPDIR` below it, writes the `BROWSER` capture helper (`capture.py`) and starts the command in a PTY (`pty.py`)
    with an allow-list environment built from scratch (`login_env`): nothing of the runner's environment is inherited,
    so existing subscription profiles (`~/.claude`, `~/.local/share/agent/providers/…`, keychain names) are never
-   read or written. It returns the authorize URL the command handed to `BROWSER` within `url_wait` seconds.
+   read or written. It returns the authorize URL within `url_wait` seconds: the code page link read from the screen
+   below `setup_token.URL_LABEL` (the URL handed to `BROWSER` redirects to localhost and is not used).
 2. `finish(code)` waits until the input field is on the screen (`prompt_wait`; the program shows it a few seconds
    after the URL and drops what is typed before), types the authorization code and watches the screen: the error
    message ends the login at once with `code_invalid` (the program stays open with "Press Enter to retry"); otherwise
    the command must end within `token_wait`, and the token is read from its last screen (`setup_token.parse_token`).
-   With `full` (`SUBSCRIPTION_LOGIN_ARGV`, a further subscription; ADR-092, `full_login.py`) the URL is the code
-   page's link on the screen, a refusing `security` comes first in `PATH`, and `finish_full` reads the login the
-   program stored (`scope_missing` without `user:profile` and `user:inference`).
+   With `full` (`SUBSCRIPTION_LOGIN_ARGV`, a further subscription; ADR-092, `full_login.py`) the URL is read from the
+   screen the same way, below `full_login.VISIT_LABEL`. A refusing `security` comes first in `PATH`, and `finish_full`
+   reads the login the program stored (`scope_missing` without `user:profile` and `user:inference`).
 3. `close` kills the command's process group and removes the temporary directory; it is idempotent and runs on every
    path (success, failure, cancellation by the request service).
 
@@ -61,7 +62,7 @@ class LoginOptions:
     """Time limits and seams of the login (tests replace them through `context.login_options`)."""
 
     url_wait: float = 30.0
-    """Seconds until the command must have opened the authorize URL (section 11.2 step 2)."""
+    """Seconds until the code page link must be on the screen with the input field below it (section 11.2 step 2)."""
     prompt_wait: float = 30.0
     """Seconds (from typing the code on) until the input field must be on the screen."""
     token_wait: float = 60.0
@@ -161,7 +162,8 @@ class LoginSession:
         deadline = process.loop.time() + seconds
         while True:
             try:
-                url = full_login.screen_url(process.screen.lines()) if self.full else capture.captured(self.workdir)
+                label = full_login.VISIT_LABEL if self.full else setup_token.URL_LABEL
+                url = full_login.screen_url(process.screen.lines(), label)
             except capture.UrlInvalid:
                 raise LoginFailed("login_cli_failed") from None
             if url is not None:

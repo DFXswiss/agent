@@ -18,27 +18,12 @@ from agent_runner.login.pty import PtyProcess, SpawnFailed
 def test_the_capture_helper_writes_the_url_atomically(tmp_path: Path) -> None:
     helper = capture.write_helper(tmp_path)
     assert helper.stat().st_mode & 0o777 == 0o700
-    assert capture.captured(tmp_path) is None
     subprocess.run([str(helper), "https://auth.example/oauth/authorize?a=1"], check=True)
-    assert capture.captured(tmp_path) == "https://auth.example/oauth/authorize?a=1"
+    assert (tmp_path / "url.txt").read_text() == "https://auth.example/oauth/authorize?a=1"
+    assert not (tmp_path / "url.txt.partial").exists()
     assert sorted(p.name for p in tmp_path.iterdir()) == ["capture-url", "url.txt"]
     with pytest.raises(FileExistsError):
         capture.write_helper(tmp_path)
-
-
-@pytest.mark.parametrize(
-    "data",
-    [b"ftp://x", b"http://example.test/x", b"https://" + b"a" * 2050, "https://ä.example".encode(), b"https://a b"],
-)
-def test_a_captured_text_that_is_no_authorize_url_is_refused(tmp_path: Path, data: bytes) -> None:
-    (tmp_path / "url.txt").write_bytes(data)
-    with pytest.raises(capture.UrlInvalid):
-        capture.captured(tmp_path)
-
-
-def test_loopback_http_urls_of_doubles_are_accepted(tmp_path: Path) -> None:
-    (tmp_path / "url.txt").write_text("http://127.0.0.1:8080/oauth/authorize?x=1\n")
-    assert capture.captured(tmp_path) == "http://127.0.0.1:8080/oauth/authorize?x=1"
 
 
 def test_a_relative_program_is_looked_up_and_a_missing_one_refused(tmp_path: Path) -> None:

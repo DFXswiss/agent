@@ -62,8 +62,9 @@ def test_relay_stores_the_subscription_and_removes_the_temporary_directory(
 def test_a_token_wrapped_in_a_narrow_window_is_joined(
     store_dsn: str, tmp_path: Path, doubles: Callable[..., Login], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The double lays out for the PTY's width like the real UI: in 40 columns the token spans three rows."""
-    monkeypatch.setattr(pty, "COLUMNS", 40)
+    """The double lays out for the PTY's width like the real UI; in 64 columns (the setup-token label row, 62
+    characters, must fit one row) the 108-character token spans two rows and the link several, and both are joined."""
+    monkeypatch.setattr(pty, "COLUMNS", 64)
     login = doubles()
 
     async def check(run: Run) -> None:
@@ -103,30 +104,41 @@ def test_a_refused_code_ends_code_invalid_at_once_while_the_cli_stays_open(
     )
 
 
-def test_a_code_sent_before_the_input_field_shows_is_typed_once_it_shows(
+def test_the_link_is_relayed_only_once_the_input_field_shows(
     store_dsn: str, tmp_path: Path, doubles: Callable[..., Login]
 ) -> None:
-    """The real program drops what is typed before its input field shows (KOR-21); the code arrives while the double
-    still shows "Opening browser…" and is only typed once the field is on the screen."""
+    """The double draws the link and the input field in one frame after `--prompt-delay`; the relay answers the link
+    only then, because the real program drops what is typed before its input field shows (KOR-21), so the code is
+    typed into a shown field."""
     login = doubles()
 
     async def check(run: Run) -> None:
+        started = time.monotonic()
         first = await run.wait_bodies(1)
-        shown = time.monotonic()
+        assert time.monotonic() - started >= 8  # link and field are one frame, after the delay
         pasted = await asyncio.to_thread(code_for, login, first[0]["url"])
-        assert time.monotonic() - shown < 6  # before the field shows
         follow = await run.follow({"code": pasted})
         await run.settle()
         assert run.bodies(follow) == [{"step": "done"}]
-        assert time.monotonic() - shown >= 8
 
     argv = cli_argv(login, "--prompt-delay", "8")
     run_request(store_dsn, tmp_path, "claude.login", MANUAL, check, argv=argv)
 
 
 SILENT_CLI = (
-    "import os, subprocess, sys, time; "
-    "subprocess.run([os.environ['BROWSER'], 'https://auth.example/oauth/authorize?x=1']); "
+    "import os, subprocess, sys, time\n"
+    "subprocess.run([os.environ['BROWSER'], 'http://localhost:45454/callback-redirect?x=1'])\n"
+    'print("Browser didn\'t open? Use the URL below to sign in (c to copy)", flush=True)\n'
+    "print(flush=True)\n"
+    "print('https://auth.example/oauth/authorize?x=1', flush=True)\n"
+    "print(flush=True)\n"
+    "print('Paste code here if prompted', flush=True)\n"
+    "gate = sys.argv[1]\n"
+    "while not os.path.exists(os.path.join(gate, 'go')):\n"
+    "    time.sleep(0.05)\n"
+    "sys.stdout.write('\\x1b[2J\\x1b[H')\n"
+    "sys.stdout.flush()\n"
+    "open(os.path.join(gate, 'erased'), 'w').close()\n"
 )
 
 
@@ -137,16 +149,28 @@ SILENT_CLI = (
         ("print('bye'); sys.exit(0)", "login_cli_failed"),
     ],
 )
-def test_an_input_field_that_never_shows_ends_the_login(store_dsn: str, tmp_path: Path, tail: str, code: str) -> None:
+def test_an_input_field_erased_before_the_code_is_typed_ends_the_login(
+    store_dsn: str, tmp_path: Path, tail: str, code: str
+) -> None:
+    gate = tmp_path / "gate"
+    gate.mkdir()
+
     async def check(run: Run) -> None:
-        await run.wait_bodies(1)
+        await run.wait_bodies(1)  # the link and the field are on the screen
+        (gate / "go").touch()
+        deadline = time.monotonic() + 20
+        while not (gate / "erased").exists() and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+        assert (gate / "erased").exists()  # the stand-in then erases the field before the code is sent
         follow = await run.follow({"code": "some#code"})
         await run.settle()
         assert run.bodies(follow) == [{"step": "failed", "code": code}]
         assert "runner.login screen rows=1 marker=no token_blocks=0 prompt=no error=" in run.env.log()
 
     opts = dataclasses.replace(FAST, prompt_wait=0.5)
-    run_request(store_dsn, tmp_path, "claude.login", MANUAL, check, argv=script_argv(SILENT_CLI + tail), opts=opts)
+    run_request(
+        store_dsn, tmp_path, "claude.login", MANUAL, check, argv=script_argv(SILENT_CLI + tail, str(gate)), opts=opts
+    )
 
 
 @pytest.mark.parametrize("body", [{"code": "two words"}, {"code": 7}, {"mode": "manual"}, {"code": "x", "more": 1}])
@@ -308,7 +332,12 @@ def test_the_cli_runs_with_an_allow_list_environment_inside_the_temporary_direct
         (script_argv("import sys; sys.exit(0)"), "login_cli_failed"),
         (
             script_argv(
-                "import os, subprocess, time; subprocess.run([os.environ['BROWSER'], 'ftp://x']); time.sleep(30)"
+                "import os, subprocess, time; "
+                "subprocess.run([os.environ['BROWSER'], 'ftp://x']); "
+                'print("Browser didn\'t open? Use the URL below to sign in (c to copy)", flush=True); '
+                "print('ftp://x', flush=True); "
+                "print('Paste code here if prompted', flush=True); "
+                "time.sleep(30)"
             ),
             "login_cli_failed",
         ),
@@ -326,7 +355,11 @@ def test_a_cli_that_cannot_start_or_opens_no_valid_url_fails(
 
 URL_THEN = (
     "import os, subprocess, sys; "
-    "subprocess.run([os.environ['BROWSER'], 'https://auth.example/oauth/authorize?x=1']); "
+    "subprocess.run([os.environ['BROWSER'], 'http://localhost:45454/callback-redirect?x=1']); "
+    'print("Browser didn\'t open? Use the URL below to sign in (c to copy)", flush=True); '
+    "print(flush=True); "
+    "print('https://auth.example/oauth/authorize?x=1', flush=True); "
+    "print(flush=True); "
     "print('Paste code here if prompted', flush=True); "
     "line = sys.stdin.readline(); "
 )
@@ -361,7 +394,7 @@ def test_an_unreadable_token_screen_logs_its_shape_only(store_dsn: str, tmp_path
         await run.settle()
         assert run.bodies(follow) == [{"step": "failed", "code": "token_invalid"}]
         log = run.env.log()
-        assert "runner.login screen rows=4 marker=yes token_blocks=0 prompt=yes error=no request_id=" in log
+        assert "runner.login screen rows=6 marker=yes token_blocks=0 prompt=yes error=no request_id=" in log
         for text in ("B" * 40, "auth.example", "some#code", "OAuth token"):
             assert text not in log  # the form of the screen only, never its text, the URL or the code
 

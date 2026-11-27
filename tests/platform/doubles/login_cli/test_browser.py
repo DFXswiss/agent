@@ -1,7 +1,8 @@
 """U-DBL-login: headless-browser smoke of the auth pages (Playwright for Python, installed with the ``login`` extra).
 
-The whole subscription-login chain runs hermetically: the login-CLI double in a PTY prints the authorize URL (captured
-through BROWSER), headless Chromium enters the e-mail, the legacy IMAP poll finds the magic link in the Junk folder of
+The whole subscription-login chain runs hermetically: the login-CLI double in a PTY prints the code page link on its
+screen, Chromium opens that link; `url.txt` (through `BROWSER`) holds the localhost redirect. Headless Chromium enters
+the e-mail, the legacy IMAP poll finds the magic link in the Junk folder of
 the mail double, Chromium opens it (the page's script posts the fragment), clicks "Authorize" and reads the code, which
 is typed into the PTY; the CLI prints the token. Chromium trusts the auth pages only through the SPKI pin of the
 runtime CA's server key. Without the ``login`` extra the same chain is covered on the HTTP level
@@ -21,6 +22,7 @@ from agent_doubles.login_cli.authpage import Scenario
 from agent_doubles.login_cli.cli import PROMPT, authorize_url
 
 from .conftest import USER, Login, Terminal
+from .test_cli import url_rows
 
 sync_api = pytest.importorskip("playwright.sync_api", reason="Playwright for Python comes with the login extra")
 
@@ -33,8 +35,12 @@ def test_mailbox_automation_chain_in_headless_chromium(
     )
     assert login.ca is not None
     term = terminal("setup-token", "--auth-url", login.auth.page_url, "--ca-file", str(login.ca.ca_file), "--seed", "b")
-    term.read_until_shown(PROMPT)
-    url = (tmp_path / "url.txt").read_text()
+    lines = term.read_until_shown(PROMPT)
+    url = url_rows(lines)
+    captured = (tmp_path / "url.txt").read_text()
+    assert url == authorize_url(login.auth.page_url, "b")
+    assert captured == authorize_url(login.auth.page_url, "b", redirect_uri="http://localhost:45454/callback")
+    assert captured != url
     with sync_api.sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             headless=True, args=[f"--ignore-certificate-errors-spki-list={login.ca.spki_sha256()}"]

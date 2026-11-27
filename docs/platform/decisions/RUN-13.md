@@ -27,10 +27,13 @@ there is no ADR.
    `LANG`, `COLUMNS`, `NO_COLOR`. Nothing of the runner's environment is inherited (no `SSL_CERT_FILE`,
    `NODE_EXTRA_CA_CERTS`, proxy or keychain variables), so no existing profile can be reached. The program is resolved
    with the runner's `PATH` before the start.
-6. The authorize URL is taken only from the `BROWSER` capture helper (atomic write + rename, pattern of the legacy
-   helper), never scraped from the terminal; it must fit the response contract (https, or http on loopback for
-   doubles). The PTY is 1000 columns wide; the token is read from the token block after the line containing
-   `OAuth token`: ANSI sequences removed, the non-empty lines up to the next empty line joined (hard-wrapped token),
+6. The authorize URL is the code page link read from the PTY screen, the rows below "Browser didn't open? Use the URL
+   below to sign in" (`setup_token.URL_LABEL`, `full_login.screen_url`), once the input field is drawn below it; the URL
+   the program hands to the `BROWSER` capture helper redirects to `http://localhost:<port>/callback` and is not relayed,
+   the helper keeps the device from opening a browser and writes that URL to `url.txt`, which the relay does not read;
+   the link must fit the response contract (https, or http on loopback for doubles). The PTY is 1000 columns wide; the
+   token is read from the replayed terminal screen (`login/screen.py`; the control sequences are not stripped): the
+   first run of non-empty rows after the row containing `OAuth token`, joined (hard-wrapped token),
    format `sk-ant-oatNN-[A-Za-z0-9_-]{16,4000}`. The master side is read until EOF before the child is reaped (macOS
    drops unread output otherwise).
 7. Time limits and codes: no URL within 30 s → `timeout`; the command exits before a URL, cannot be started or hands
