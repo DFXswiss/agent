@@ -1,4 +1,4 @@
-// The overview "Who used how much" of the page "My subscriptions" (ADR-102, `core/subscriptions/usage.ts`): per
+// The overview "Who used how much" of the page "My subscriptions" (ADR-103, `core/subscriptions/usage.ts`): per
 // subscription a table of the people who used it – tokens (input, output, cache read, cache write, total), sessions,
 // the share of the tokens and the estimated share of the quota – for the running 5-hour window, the running week or a
 // span the user chooses. The share of the quota is always marked as estimated (the provider measures per

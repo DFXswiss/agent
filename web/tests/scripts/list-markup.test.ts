@@ -279,7 +279,7 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     count: 4,
     reason:
       'the three periods and the fixed columns, the subscriptions of one answer (the own ones, at most 40, and those ' +
-      'of others the user used) and the people who used one subscription in the span (ADR-102)',
+      'of others the user used) and the people who used one subscription in the span (ADR-103)',
   },
   'src/ui/screens/subscriptions/SubscriptionsScreen.tsx': {
     count: 4,

@@ -1,4 +1,4 @@
-"""U-RUN-model (KOR-75, ADR-102 section 1): towards a hub whose device state has `subscriptions.api >= 2` a `usage`
+"""U-RUN-model (KOR-75, ADR-103 section 1): towards a hub whose device state has `subscriptions.api >= 2` a `usage`
 item names the Claude subscription record that served the request (`model.served`): the owner's own primary record,
 the record of a shared pool entry `sub-<id>`, and nothing for a token file of the operator, for a session that was
 provisioned from the pool once, or for any other access; an older hub gets no `subscription_id`."""

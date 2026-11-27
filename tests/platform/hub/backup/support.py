@@ -398,7 +398,7 @@ class Estate:
                 " VALUES (%s, %s, false, %s, %s)",
                 (self.subscription, writer.id, Jsonb([org]), now),
             ),
-            # the tokens of a person on it (KOR-75, ADR-102)
+            # the tokens of a person on it (KOR-75, ADR-103)
             (
                 "INSERT INTO hub.subscription_usage (credential_id, owner_id, user_id, org_id, session_id, slot,"
                 " requests, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)"

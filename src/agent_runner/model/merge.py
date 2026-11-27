@@ -10,7 +10,7 @@ only, no content) inside the journal page's transaction, so a merged delta is ne
   one by one ("latest reported values") - and writes the outbox item at once when the first delta is `WINDOW_S` old.
   Only deltas of the same billing key merge: the hub charges an item under its `model` and `access_origin` (KOR-31,
   12-billing.md section 4), books it to the person in its `triggered_by` (KOR-46) and to the subscription in its
-  `subscription_id` (ADR-102), prices it with the price list in
+  `subscription_id` (ADR-103), prices it with the price list in
   force at its `at` and books it on the UTC day of its `at` (`hub.charge_daily`), so a delta whose `model`,
   `access_origin`, `triggered_by`, `subscription_id` or UTC day of `at` differs from the pending row's writes that row
   out first and

@@ -14,7 +14,7 @@ written straight into `hub.metric_rollup`.
 - `POST /devices/<id>/metrics {"samples": [{"entity_kind", "entity_id", "age_s"?, <values>?}]}` (`age_s`: seconds
   before now; missing values are typical figures, so a spec names only what it checks)
 - `POST /devices/<id>/usage {"session_id", <usage fields>?, "subscription_id"?, "triggered_by"?}` (the last two as the
-  runner sends them: the subscription record that served the requests and the person behind them, ADR-102)
+  runner sends them: the subscription record that served the requests and the person behind them, ADR-103)
 - `POST /devices/<id>/rollups {"rollups": [{"entity_kind", "entity_id", "age_h", <field>_avg?, ...}]}`
 - `POST /devices/<id>/quotas {"owner_id", "windows": [{"window", "used_percent", "resets_in_s"?, "severity"?}]}`: the
   subscription windows of an owner as the polling device reports them (`quota` item; the hub accepts it only from the

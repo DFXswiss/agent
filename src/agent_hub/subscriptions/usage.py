@@ -1,4 +1,4 @@
-"""Who used how much of which Claude subscription (ADR-102 section 2; 03-api.md section 4.8): the answer of `GET
+"""Who used how much of which Claude subscription (ADR-103 section 2; 03-api.md section 4.8): the answer of `GET
 /v1/me/subscriptions/usage`.
 
 Periods (`period`):
@@ -18,7 +18,7 @@ without `measured`). The provider measures the quota per subscription only, so t
 **estimate**: it splits the measured use - also any use outside the platform - in proportion to the tokens the
 platform saw.
 
-Who sees what (ADR-102 section 3): every subscription the caller **owns** is listed (also without any use), with every
+Who sees what (ADR-103 section 3): every subscription the caller **owns** is listed (also without any use), with every
 person and the `total`; a subscription of another owner is listed when the caller used it in the span, with the
 caller's own row only and `total` null. Numbers only: no content, no name, no address (the owner's client opens its
 own records for names; another person's subscription is named by its owner).

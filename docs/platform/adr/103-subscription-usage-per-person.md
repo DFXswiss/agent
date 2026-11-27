@@ -1,4 +1,4 @@
-# ADR-102: Who used how much of my subscriptions – tokens per person and subscription, an estimated share of the quota
+# ADR-103: Who used how much of my subscriptions – tokens per person and subscription, an estimated share of the quota
 
 Status: Accepted (2026-11-26)
 

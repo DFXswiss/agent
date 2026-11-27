@@ -368,7 +368,7 @@ class UsageBody(Strict):
     """The person whose turn made the request (ADR-083 section 2); null for several authors or none, absent from an
     older runner."""
     subscription_id: Uuid7 | None = None
-    """The Claude subscription record that served the request (ADR-102 section 1); null when the access was no
+    """The Claude subscription record that served the request (ADR-103 section 1); null when the access was no
     subscription record, absent from an older runner."""
 
 

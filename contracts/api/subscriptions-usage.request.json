@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/subscriptions-usage.request.json",
   "title": "GET /v1/me/subscriptions/usage request",
-  "description": "query parameters (03-api.md section 4.8, ADR-102): `period` five_hour (the running 5-hour window of each subscription), week (its running week) or range (`since` required, `until` default now, at most 92 days; only with range).",
+  "description": "query parameters (03-api.md section 4.8, ADR-103): `period` five_hour (the running 5-hour window of each subscription), week (its running week) or range (`since` required, `until` default now, at most 92 days; only with range).",
   "type": "object",
   "properties": {
     "period": {

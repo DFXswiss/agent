@@ -21,6 +21,8 @@ import fixture from '../../fixtures/net/signing.json';
 export const ORIGIN = 'https://hub.example:8443';
 export const HOST = 'hub.example:8443';
 export const T0 = Date.UTC(2026, 10, 21, 12, 0, 0);
+/** The lifetime of a renewed session (`agent_hub.auth.sessions.SESSION_RENEW_SECONDS`). */
+export const RENEW_MS = 30 * 24 * 3_600_000;
 
 export const CONFIG = {
   rp_id: 'hub.example',
@@ -80,6 +82,8 @@ export class SimHub {
   /** `recovery/begin` answers `429 rate_limited` with this `Retry-After` (seconds; '' for none) while set. */
   retryAfter: string | null = null;
   readonly credentialUser = new Map<string, string>();
+  /** The session keys that called `POST /v1/session/renew`, in order. */
+  readonly renewals: string[] = [];
   readonly log: { method: string; target: string; body: string; signed: boolean }[] = [];
   /** Answer a path with a failure instead (`METHOD target` → failure or answer override). */
   readonly override = new Map<string, HubFailure | ((body: unknown) => unknown)>();
@@ -251,6 +255,13 @@ export class SimHub {
       return (_b, _user, _target, key) => {
         this.sessions.get(key!)!.ended = true;
         return {};
+      };
+    }
+    if (method === 'POST' && path === '/v1/session/renew') {
+      // the caller's session for 30 days, like `agent_hub.auth.sessions.renew_session`
+      return (_b, _user, _target, key) => {
+        this.renewals.push(key!);
+        return { key_id: key, expires_at: formatTime(this.now + RENEW_MS) };
       };
     }
     if (method === 'POST' && path === '/v1/orgs') return (body, user) => this.#createOrg(body, user!);

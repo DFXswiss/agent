@@ -36,7 +36,7 @@ measure only). The token is created on the device and never printed here.
   only for a user with the platform role `operator` (the organizations of the root-signed platform log). Every write
   of `rename`, `note`, `logout` and `use` sends the mirror of the use it sealed.
 - `subscriptions remove --id`: `DELETE /v1/subscriptions/{id}` (`404` counts as done).
-- `subscriptions usage [--period five_hour|week|range] [--since] [--until]` (ADR-102): `GET
+- `subscriptions usage [--period five_hour|week|range] [--since] [--until]` (ADR-103): `GET
   /v1/me/subscriptions/usage` - per subscription the span, the measured window, the total (own subscriptions only) and
   per person requests, tokens (input, output, cache read, cache write), sessions, `token_share` and
   `estimated_percent` (an estimate, `estimate` says why); `you` marks the caller. Own subscriptions carry `name` and
@@ -818,7 +818,7 @@ def _list(account: Account, _args: Any, _context: Context) -> dict[str, Any]:
     return overview(account)
 
 
-# --- who used how much (ADR-102) ---
+# --- who used how much (ADR-103) ---
 
 
 def _usage_entry(item: object) -> dict[str, Any]:
@@ -889,7 +889,7 @@ def _mailbox_options(sub: Any) -> None:
 
 
 def _register_usage(tree: Tree, group: Any) -> None:
-    """`subscriptions usage` (ADR-102)."""
+    """`subscriptions usage` (ADR-103)."""
     sub = tree.command(
         group,
         "usage",

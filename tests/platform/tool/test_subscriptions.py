@@ -323,7 +323,7 @@ def _person(user: str, tokens: int, share: float, estimated: float | None) -> Js
 
 
 def test_usage_shows_who_used_how_much(tool: Tool, hub: HubFake, account: User) -> None:
-    """KOR-75, ADR-102: `subscriptions usage` shows the hub's figures per subscription and person, names the own
+    """KOR-75, ADR-103: `subscriptions usage` shows the hub's figures per subscription and person, names the own
     subscriptions as `list` does, marks the caller and says that the share of the quota is an estimate."""
     own = add(hub, account.id, sealed(hub, account, body(name="Team")), reading(40.0))
     colleague, owner = uuid7(), uuid7()

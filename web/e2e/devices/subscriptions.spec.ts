@@ -3,7 +3,7 @@
 // and the page show the provider line, its windows and the account with its address, "detailed", "sort by used" and
 // the table – on the desktop and on both phones (layout, touch targets and accessibility). The pictures of the card
 // and the page are kept in the test output (comparison with the local dashboard's page "Subscriptions"). "Who used how
-// much" (KOR-75, ADR-102): the device reports a session's tokens on that subscription; the page shows the person, the
+// much" (KOR-75, ADR-103): the device reports a session's tokens on that subscription; the page shows the person, the
 // tokens and the estimated share of the measured 5-hour window, then the week and a chosen span.
 import { expect, test } from '../fixtures/test.ts';
 import { answer, reportQuotas } from '../helpers/credentials.ts';

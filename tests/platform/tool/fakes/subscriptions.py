@@ -8,7 +8,7 @@ section 4.8):
 - `PUT /v1/subscriptions/{id}`: an own further record (the primary one is `403 forbidden`) signed by the caller under
   the current `CK` epoch (`409 epoch_stale`), at the stored version (`409 version_conflict`);
 - `DELETE /v1/subscriptions/{id}`: an own record (also the primary one), else `404`;
-- `GET /v1/me/subscriptions/usage`: the answer in `usage` as it is (ADR-102), the queries in `usage_queries`;
+- `GET /v1/me/subscriptions/usage`: the answer in `usage` as it is (ADR-103), the queries in `usage_queries`;
 - `GET /v1/me/devices` lists `features` once `announce` is on: `subscriptions` for every device but those in
   `outdated`, and `subscriptions.parallel` (KOR-73) for the devices in `parallel`.
 """
@@ -44,7 +44,7 @@ class Subscriptions:
     refuse_put: bool = False
     """Every PUT is answered `403 forbidden`."""
     usage: Json | None = None
-    """The answer of `GET /v1/me/subscriptions/usage` (ADR-102), sent as it is; None answers no subscription."""
+    """The answer of `GET /v1/me/subscriptions/usage` (ADR-103), sent as it is; None answers no subscription."""
     usage_queries: list[dict[str, str]] = field(default_factory=list)
 
 

@@ -1,4 +1,4 @@
-// Who used how much of which subscription (ADR-102; twin of `agent_platform/subscriptions.py` `subscriptions usage`):
+// Who used how much of which subscription (ADR-103; twin of `agent_platform/subscriptions.py` `subscriptions usage`):
 // `GET /v1/me/subscriptions/usage?period=five_hour|week|range[&since&until]`.
 //
 // - `five_hour` / `week`: the running window of each subscription as its newest reading names it; `measured` carries

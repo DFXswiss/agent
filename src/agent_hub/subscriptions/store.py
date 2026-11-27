@@ -13,7 +13,7 @@ and delete it. Further records are created without the mark and never get it.
   descending), each with its newest reading: the primary record's from the owner's `quota_snapshot` (the newest
   fetch and its device, every window of that device's newest report) or `quota_unreadable`; a further record's from
   `subscription_quota`; `null` before the first reading. `reading_of(...)`: that reading of one record (also of
-  another owner's record, for the usage overview of ADR-102).
+  another owner's record, for the usage overview of ADR-103).
 - `set_use(...)` / `shared_for(...)`: the plaintext mirror of a further subscription's `use` (ADR-090 section 3) and
   the subscriptions a device is told about (`GET /v1/device/state` `subscriptions.shared`).
 - `store_reading(connection, ...)`: the `quota` item of a further subscription (`agent_hub.usage.outbox`): kept when
@@ -132,7 +132,7 @@ def _further_readings(connection: Connection, where: str, value: UUID) -> dict[U
 
 
 def reading_of(connection: Connection, record: UUID, owner: UUID, primary: bool) -> dict[str, Any] | None:
-    """The newest reading of one subscription record, as `rows_for` gives it (ADR-102 section 2)."""
+    """The newest reading of one subscription record, as `rows_for` gives it (ADR-103 section 2)."""
     if primary:
         return _primary_reading(connection, owner)
     return _further_readings(connection, "credential_id = %s", record).get(record)

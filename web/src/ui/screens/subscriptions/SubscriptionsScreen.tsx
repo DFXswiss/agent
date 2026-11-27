@@ -4,7 +4,7 @@
 // reset, device, checked, changed. Only the user reads it (the data are the user's own, `loadSubscriptions`).
 // "Add subscription" and "Log in now" open the login dialogs of KOR-69 (ADR-090 section 2: the login runs on a
 // platform device, the user opens the link and pastes the code); name, note, use, log out and remove are in the
-// settings section "Claude subscriptions". Below, "Who used how much" (ADR-102, `UsageOverview`): the people who used
+// settings section "Claude subscriptions". Below, "Who used how much" (ADR-103, `UsageOverview`): the people who used
 // the user's subscriptions, and the user's own use of other people's.
 import { useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';

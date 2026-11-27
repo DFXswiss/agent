@@ -3,7 +3,7 @@
 | Route | Right |
 |---|---|
 | `GET /v1/me/subscriptions` | `user`: every own subscription with its newest reading (`store.rows_for`) |
-| `GET /v1/me/subscriptions/usage` | `user`: who used how much of the own subscriptions (`usage.answer`, ADR-102) |
+| `GET /v1/me/subscriptions/usage` | `user`: who used how much of the own subscriptions (`usage.answer`, ADR-103) |
 | `GET /v1/subscriptions/{id}` | `user`: an own subscription record |
 | `PUT /v1/subscriptions/{id}` | `user`: an own further subscription (never the primary record) |
 | `DELETE /v1/subscriptions/{id}` | `user`: an own subscription record (also the primary one) |

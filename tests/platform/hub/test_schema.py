@@ -544,7 +544,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     "quota_unreadable": [("owner_id", U), ("since", TS), ("device_id", U)],
     # the use of a further subscription as its owner's client tells it (KOR-69, migration 0034, ADR-090 section 3)
     "subscription_use": [("credential_id", U), ("owner_id", U), ("pool", BOOL), ("orgs", J), ("set_at", TS)],
-    # the tokens per person on each subscription (KOR-75, migration 0042, ADR-102)
+    # the tokens per person on each subscription (KOR-75, migration 0042, ADR-103)
     "subscription_usage": [
         ("credential_id", U),
         ("owner_id", U),
@@ -1000,7 +1000,7 @@ def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns:
         ("credential", "(owner_id, kind) WHERE is_primary"),
         ("credential", "(owner_id, updated_at DESC, id DESC) WHERE (kind = 'claude_subscription'::text)"),
         ("subscription_quota", "(owner_id)"),
-        ("subscription_usage", "(user_id, slot)"),  # KOR-75, migration 0042 (ADR-102)
+        ("subscription_usage", "(user_id, slot)"),  # KOR-75, migration 0042 (ADR-103)
         ("subscription_usage", "(owner_id)"),
         ("credential", "(owner_id, updated_at DESC, id DESC) WHERE (kind = 'mailbox'::text)"),  # KOR-74, migration 0040
         ("mailbox_use", "USING gin (wgs)"),

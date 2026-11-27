@@ -35,6 +35,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | login-unlock | screens/login | (the agent's own key signs every request and its state holds the unlocked identity, also for an account of an agent alone: there is no sign-in step) | n/a |
 | recover | screens/recover (an account without a passkey takes its account to this computer with the recovery code, KOR-62; a person's recovery registers a new passkey) | `recover --hub` | done |
 | sign-out | shell | (ends a browser session; an agent is disconnected with `agents revoke`) | n/a |
+| stay-signed-in | shell, screens/login, settings/passkeys (rule E-40: a browser that stays signed in renews its session by itself) | (renews a browser session; an agent's own key does not expire and needs no renewal) | n/a |
 | me-view | shell | `status` | done |
 | settings-language | settings/language | `settings set --locale` | done |
 | settings-model | settings/model (also the two fallback settings of ADR-081: own subscription used up → DFX access, default off; operator subscriptions used up → DFX access over OpenRouter, default on) | `settings set --model-access --model --fallback --fallback-platform` | done |
@@ -50,7 +51,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | credential-rotate | jobs (CK re-wrap) | `credentials rotate` | done |
 | quotas | settings/quotas | `quotas` | done |
 | subscriptions-list | screens/subscriptions and the card "My subscriptions" of screens/home (every own subscription with status - also `relogin` when the device could not renew it -, use, expiry, plan and the remaining quota per window, for the operator also the token-file subscriptions; ADR-091, ADR-092, rules E-30, E-31) | `subscriptions list` (token files: `quotas --org`) | done |
-| subscriptions-usage | screens/subscriptions, section "Who used how much" (tokens, sessions, share of the tokens and the estimated share of the quota per person and subscription for the 5-hour window, the week or a chosen span; the owner sees everybody, everybody else their own use; usage through DFX access per person; ADR-102) | `subscriptions usage --period --since --until` (DFX access: `billing --org`) | done |
+| subscriptions-usage | screens/subscriptions, section "Who used how much" (tokens, sessions, share of the tokens and the estimated share of the quota per person and subscription for the 5-hour window, the week or a chosen span; the owner sees everybody, everybody else their own use; usage through DFX access per person; ADR-103) | `subscriptions usage --period --since --until` (DFX access: `billing --org`) | done |
 | settings-subscriptions | settings/subscriptions (the link to the page "My subscriptions", ADR-091) | `subscriptions list` | done |
 | subscriptions-add | screens/subscriptions ("Add subscription") and settings/subscription-logins (a new subscription logged in on a platform device, ADR-090; with its own mailbox, use and registration, ADR-100) | `subscriptions add --name --note --automatic --email --mailbox-host --mailbox-user --mailbox-email --mailbox-password-stdin --org --register-name --birth-date --consent` | done |
 | subscriptions-add-many | screens/subscriptions ("Mehrere Abos hinzufügen": several subscriptions at once, each with its own mailbox, use and registration, progress per subscription; ADR-100, rule E-33) | `subscriptions add-many --file --wait` | done |
@@ -301,6 +302,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/recovery/finish` | recover |
 | `GET /v1/scopes/{scope}/events` | task-view, session-follow, session-terminal, operations, wg-settings, tasks-overview, session-workvm, task-workvm-items, task-waiting, task-guest-errors, platform-browser |
 | `POST /v1/session/end` | sign-out |
+| `POST /v1/session/renew` | stay-signed-in |
 | `GET /v1/sessions/{session}` | session-view, monitoring, session-workvm, task-runtime, triggered-by |
 | `POST /v1/sessions/{session}/control` | session-control |
 | `GET /v1/sessions/{session}/orchestrator` | session-orchestrator |

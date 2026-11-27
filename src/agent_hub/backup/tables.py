@@ -149,7 +149,7 @@ RULES: tuple[TableRule, ...] = (
     # the newest reading of each non-primary subscription of the org's users (KOR-69, ADR-090)
     TableRule("subscription_quota", "owner_id = ANY(%(users)s)"),
     TableRule("subscription_use", "owner_id = ANY(%(users)s)"),
-    # the tokens per person on each subscription of the org's users (ADR-102)
+    # the tokens per person on each subscription of the org's users (ADR-103)
     TableRule("subscription_usage", "owner_id = ANY(%(users)s)"),
     TableRule("mailbox_use", "owner_id = ANY(%(users)s)"),  # KOR-74, ADR-099 section 3
     # model access with fallback (KOR-50, ADR-081): the limit of an owner, the snapshots and issuers of the devices,
