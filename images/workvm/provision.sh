@@ -101,7 +101,7 @@ rm -rf "$CACHE"
 /usr/local/sbin/workvm-job selftest
 # The platform browser (13-work-vm.md section 13.3): start the daemon once, then leave no profile in the image.
 /usr/local/bin/workvm-browser selftest
-# The screen of a check for humans (ADR-101): the VNC server and the virtual display are installed.
+# The screen of a check for humans (ADR-103): the VNC server and the virtual display are installed.
 /usr/local/bin/workvm-vnc selftest
 systemctl stop workvm-browser.service 2>/dev/null || true
 rm -rf /var/lib/workvm-browser /run/workvm-browser.sock

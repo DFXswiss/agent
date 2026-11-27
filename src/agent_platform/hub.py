@@ -117,7 +117,7 @@ class AgentClient:
         self._loop.close()
 
     def upgrade(self, path: str) -> tuple[str, dict[str, str]]:
-        """The WebSocket URL of `path` and the signed headers of its upgrade request (a VNC tunnel, ADR-101);
+        """The WebSocket URL of `path` and the signed headers of its upgrade request (a VNC tunnel, ADR-103);
         `not_in_session` in session mode, whose relay carries no WebSocket."""
         if relay.relay_path() is not None:
             raise PlatformError("not_in_session")

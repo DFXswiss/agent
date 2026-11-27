@@ -1,4 +1,4 @@
-"""U-RUN-vnc (screen): the VNC server of a VM's screen through `workvm-vnc` (ADR-101 section 2) - the one-time password,
+"""U-RUN-vnc (screen): the VNC server of a VM's screen through `workvm-vnc` (ADR-103 section 2) - the one-time password,
 the untrusted answer of `start`, the long-lived `connect`, `stop`, the end of a connection - and the screens offered
 to their owner (`agent_runner.vnc.screens`)."""
 

@@ -14,7 +14,7 @@
 // attribute `data-wb-ref` (`e12`, `f1e3` in frame f1), valid until the next snapshot. Nothing here restricts what a
 // page does: the VM is a temporary browser VM and the runner treats every answer as untrusted.
 //
-// The screen (ADR-101): when Xvfb is installed, `serve` starts the virtual display `DISPLAY_NAME` (the size of the
+// The screen (ADR-103): when Xvfb is installed, `serve` starts the virtual display `DISPLAY_NAME` (the size of the
 // viewport) and runs Chromium with a window on it, so a person can take the screen over by VNC (`workvm-vnc`) when a
 // page asks for a human; without Xvfb Chromium runs headless as before.
 //
@@ -902,7 +902,7 @@ function parseStreamOptions(value) {
   return { fps, quality, width };
 }
 
-// The virtual display of the screen (ADR-101): the display name once Xvfb draws, null without Xvfb (headless).
+// The virtual display of the screen (ADR-103): the display name once Xvfb draws, null without Xvfb (headless).
 async function startDisplay() {
   if (process.env.WORKVM_BROWSER_DISPLAY === 'none' || !fs.existsSync(XVFB)) return null;
   const socketPath = `/tmp/.X11-unix/X${DISPLAY_NAME.slice(1)}`;

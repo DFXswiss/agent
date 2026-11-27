@@ -1,4 +1,4 @@
-"""The screens of this device that wait for their owner (ADR-101 section 2).
+"""The screens of this device that wait for their owner (ADR-103 section 2).
 
 A process that needs a human offers the screen of its sandbox while it waits: the check for humans of a login
 (`agent_runner.login.requests.HumanCheck`) offers the login VM's screen under `("login", <request ID>)` from the

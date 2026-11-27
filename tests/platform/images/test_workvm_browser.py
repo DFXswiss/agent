@@ -121,7 +121,7 @@ def test_the_helper_keeps_the_production_defaults() -> None:
     assert "`--unit=${UNIT}`, '--collect'" in source
     assert "const UNIT = 'workvm-browser';" in source
     assert "const CALL_MS = 25000;" in source
-    # ADR-101: with Xvfb Chromium draws into the display :99 (a person can take it over by VNC), else headless
+    # ADR-103: with Xvfb Chromium draws into the display :99 (a person can take it over by VNC), else headless
     assert "headless: screen === null" in source
     assert "const DISPLAY_NAME = ':99';" in source
     assert "const XVFB = '/usr/bin/Xvfb';" in source

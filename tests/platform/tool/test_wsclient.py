@@ -1,4 +1,4 @@
-"""The agent tool's WebSocket client of the VNC tunnel (`agent_platform.wsclient`, RFC 6455, ADR-101 section 3)
+"""The agent tool's WebSocket client of the VNC tunnel (`agent_platform.wsclient`, RFC 6455, ADR-103 section 3)
 against a real `websockets` server and a scripted raw server on the loopback: the signed upgrade, binary and text
 messages, fragments, ping and pong, TLS with the CA of `SSL_CERT_FILE`, every refused handshake and every frame that
 closes the socket."""

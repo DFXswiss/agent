@@ -1,4 +1,4 @@
-"""The WebSocket client of the agent tool for the VNC tunnel (ADR-101 section 3; RFC 6455, standard library only: the
+"""The WebSocket client of the agent tool for the VNC tunnel (ADR-103 section 3; RFC 6455, standard library only: the
 tool reaches no third-party package beyond `httpx` and `cryptography`).
 
 `connect(url, headers)` opens `ws://` or `wss://` (TLS with the system's trust store, also `SSL_CERT_FILE`), sends the

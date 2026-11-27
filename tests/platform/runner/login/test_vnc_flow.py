@@ -1,4 +1,4 @@
-"""U-RUN-login (VNC, ADR-101): check for humans → VNC → the login continues, end to end on one device.
+"""U-RUN-login (VNC, ADR-103): check for humans → VNC → the login continues, end to end on one device.
 
 The login runs through the real request service in the process sandbox (headless Chromium of Playwright) against the
 auth-page double with a check for humans (`Scenario(fault="challenge")`); its screen is the VNC double, whose clicks

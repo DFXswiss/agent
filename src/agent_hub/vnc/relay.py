@@ -1,4 +1,4 @@
-"""The relay of VNC tunnels (ADR-101 section 3).
+"""The relay of VNC tunnels (ADR-103 section 3).
 
 A tunnel belongs to one active `vnc.open` device request: its two ends are the WebSocket of the owner's client
 (`GET /v1/vnc/{request}`) and the WebSocket of the request's device (`GET /v1/device/vnc/{request}`). `Tunnels.run`

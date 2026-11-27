@@ -90,7 +90,7 @@ def test_entries_are_well_formed(index: dict[str, Any]) -> None:
         assert e["name"].startswith("device-") == e["path"].startswith("/v1/device/"), e
         if e["auth"] == "anon":
             assert e["rights"] == ["anon"], e
-    # ADR-101: the two ends of a VNC tunnel are WebSockets as well
+    # ADR-103: the two ends of a VNC tunnel are WebSockets as well
     tunnels = {"/v1/vnc/{request}", "/v1/device/vnc/{request}"}
     assert {e["path"] for e in endpoints(index) if e["streaming"]} == {"/v1/stream", "/v1/device/ws"} | tunnels
 

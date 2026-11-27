@@ -1,4 +1,4 @@
-"""`agent-platform vnc` and `subscriptions add|login --vnc` against the hub double (ADR-101): only the user's own
+"""`agent-platform vnc` and `subscriptions add|login --vnc` against the hub double (ADR-103): only the user's own
 identity takes a screen over, the tunnel is listened for on the loopback only, the viewer is started by the tool (Screen
 Sharing on macOS, `vncviewer`, else port and password on stderr), the device's records are opened with the key of the
 `vnc` step, `needs_human` opens the connection by itself and the login is followed again afterwards; the responses of

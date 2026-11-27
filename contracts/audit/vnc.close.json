@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/audit/vnc.close.json",
   "title": "audit detail vnc.close",
-  "description": "detail of audit rows with action vnc.close: a VNC tunnel ended (ADR-101) - reason (client_left, device_left, record_invalid, record_too_large, expired), how long it was open and how many encrypted bytes the hub relayed. Metadata only (02-data-model.md section 2.9): nothing of the screen or the input.",
+  "description": "detail of audit rows with action vnc.close: a VNC tunnel ended (ADR-103) - reason (client_left, device_left, record_invalid, record_too_large, expired), how long it was open and how many encrypted bytes the hub relayed. Metadata only (02-data-model.md section 2.9): nothing of the screen or the input.",
   "type": "object",
   "properties": {
     "reason": {

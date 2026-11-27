@@ -1,4 +1,4 @@
-"""The encrypted VNC tunnel between the owner's client and the device (ADR-101 section 3).
+"""The encrypted VNC tunnel between the owner's client and the device (ADR-103 section 3).
 
 The device draws a fresh tunnel key (`KEY_BYTES`) for every `vnc.open` and sends it to the requester inside the sealed
 response (`step: "vnc"`); the hub relays records it cannot open and never sees the screen, the keys typed or the

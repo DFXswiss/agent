@@ -1,4 +1,4 @@
-"""U-RUN-vnc (tunnel): the records of a VNC tunnel (ADR-101 section 3) - a key per direction, the record number as
+"""U-RUN-vnc (tunnel): the records of a VNC tunnel (ADR-103 section 3) - a key per direction, the record number as
 nonce, forged, repeated, reordered and foreign records refused, and `splice` between a local stream and the socket
 with its end reasons."""
 

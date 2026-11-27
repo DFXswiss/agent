@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/ws/vnc/query.json",
   "title": "GET /v1/vnc/{request} and GET /v1/device/vnc/{request} query",
-  "description": "The signed upgrade request has no query parameters (ADR-101).",
+  "description": "The signed upgrade request has no query parameters (ADR-103).",
   "type": "object",
   "properties": {},
   "additionalProperties": false

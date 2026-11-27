@@ -1,4 +1,4 @@
-# ADR-101: Remote control by VNC when a process needs a human – a real RFB connection to the sandbox's screen, only for the owner's own identity, tunnelled end to end through the hub, opened by the agent tool without a link
+# ADR-103: Remote control by VNC when a process needs a human – a real RFB connection to the sandbox's screen, only for the owner's own identity, tunnelled end to end through the hub, opened by the agent tool without a link
 
 Status: Accepted (2026-11-26)
 
@@ -8,7 +8,7 @@ Status: Accepted (2026-11-26)
   new Claude accounts are registered, claude.ai shows a check for humans. It is never circumvented; the person solves
   it. The rule on remote control at such checks is E-39 of the concept (branch of the concept text, not repeated here).
 - Built before: the check for humans of a login, paused and handed to the owner as a sealed picture with clicks carried
-  as `{click: {x, y}}` (only the owner's own identity, `VERIFY_WAIT` 180 s; [ADR-099](099-parallel-subscription-logins.md)
+  as `{click: {x, y}}` (only the owner's own identity, `VERIFY_WAIT` 180 s; [ADR-100](100-parallel-subscription-logins.md)
   section 4, KOR-73); the platform browser in its own browser VM ([ADR-085](085-browser-as-platform-operation.md)); the
   work VM ([ADR-059](059-work-vm-on-request.md)); device requests sealed end to end between the user and one device
   (03-api.md section 4.10, 04-crypto.md section 4.5); the rights check and the audit.
@@ -20,26 +20,26 @@ Status: Accepted (2026-11-26)
 ### 1. What is offered, and to whom
 - Every sandbox with a screen offers a real VNC connection (RFB) **while a process in it waits for a human**, and only
   to the **owner of that process**:
-  - the check for humans of a login (ADR-099 section 4) – owner: the login's user;
+  - the check for humans of a login (ADR-100 section 4) – owner: the login's user;
   - the platform browser of a session (ADR-085) – owner: the task owner (`credential_owner` of the session on the
     device); the browser is offered while it is open.
 - Only the owner's **own identity** may take a screen over (the web's passkey browser, or the agent tool signing as the
   user), **never an agent**: the device answers an agent's `vnc.open` with `failed forbidden` (log line
   `runner.vnc refused reason=agent`), and the hub closes the client end of a tunnel whose request was not signed by
-  the user. Limit (as in ADR-099): the device cannot tell a person from a program that holds the user's own key; the
+  the user. Limit (as in ADR-100): the device cannot tell a person from a program that holds the user's own key; the
   tool says in its help and errors that a person works on the screen.
 
 ### 2. The screen
 - The platform browser helper runs Chromium **with a window** on a virtual display (`Xvfb :99`, the size of the
   viewport) when Xvfb is installed, headless otherwise. The browser looks to a page like a normal desktop browser
-  without any disguise: nothing is changed to pass a check (ADR-099 section 4 stays: no solver, no stealth).
+  without any disguise: nothing is changed to pass a check (ADR-100 section 4 stays: no solver, no stealth).
 - The work image installs `xvfb` and `x11vnc` and the helper `workvm-vnc`: `start` reads a one-time password
   (8 letters or digits; classic VNC authentication uses at most eight characters) on stdin and serves the display on
   the VM's **loopback** only for exactly that password; `connect` joins stdin and stdout with that port; `stop` ends
   the server and removes the password file. The runner calls it with `sudo -n` over the slot's `limactl shell`, like
   `workvm-browser`. Login VMs and browser VMs use the same image.
 - A login sandbox without a VM (`LOGIN_SANDBOX=process`) has no screen: `needs_human` says `vnc_available: false`
-  and the picture with clicks of ADR-099 stays the way.
+  and the picture with clicks of ADR-100 stays the way.
 
 ### 3. The connection
 - **Request** `vnc.open {kind: "login"|"session", id}` (a new device-request kind, sealed to the device, `slot` = `id`,
@@ -93,7 +93,7 @@ Status: Accepted (2026-11-26)
 - Feature `vnc` (ADR-060 decision 6): a runner that answers `vnc.open`, understands the root field `vnc` and sends
   `needs_human` announces it; clients send them only to such a device. An older runner answers `vnc.open` like every
   unknown kind (`failed upstream_error`); an older client never sends `vnc` and never sees `needs_human`.
-- Roll-out: hub first (migration `0041_vnc_open`: the request kind), then runners and the work image, then the agent
+- Roll-out: hub first (migration `0042_vnc_open`: the request kind), then runners and the work image, then the agent
   tool.
 
 ### 7. Tests

@@ -1,4 +1,4 @@
-"""The screen of a sandbox and its VNC server (ADR-101 section 2).
+"""The screen of a sandbox and its VNC server (ADR-103 section 2).
 
 A sandbox with a screen is a VM whose browser draws into a display (the platform browser helper runs Chromium with a
 window on the VM's own X display, `workvm-browser`). The helper `workvm-vnc` of the work image serves that display

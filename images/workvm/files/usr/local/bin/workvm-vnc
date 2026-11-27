@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""VNC server of the work VM's screen for a person who takes over a check for humans (ADR-101 section 2).
+"""VNC server of the work VM's screen for a person who takes over a check for humans (ADR-103 section 2).
 
 The platform browser (`workvm-browser`) draws Chromium with a window into the X display `DISPLAY_NAME`. This helper
 serves that display over RFB on the VM's loopback only, for one one-time password at a time:

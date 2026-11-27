@@ -1,4 +1,4 @@
-"""VNC double (ADR-101 section 7): a minimal RFB 3.8 server with classic VNC authentication, a viewer that
+"""VNC double (ADR-103 section 7): a minimal RFB 3.8 server with classic VNC authentication, a viewer that
 authenticates and clicks, and a screen (`agent_runner.vnc.screen.Screen`) whose VNC server is the double.
 
 - `VncServer` serves one framebuffer of `width` x `height` on 127.0.0.1: version `RFB 003.008`, the single security

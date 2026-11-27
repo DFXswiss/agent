@@ -1,5 +1,5 @@
 {
-  "description": "Endpoints added by ADR-101: the two ends of a VNC tunnel to a sandbox's screen (03-api.md sections 4.10 and 6.1).",
+  "description": "Endpoints added by ADR-103: the two ends of a VNC tunnel to a sandbox's screen (03-api.md sections 4.10 and 6.1).",
   "rights": [
     "owner",
     "device_addressed"

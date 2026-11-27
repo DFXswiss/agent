@@ -1,4 +1,4 @@
-"""Device-request handler `vnc.open` (`<area>/requests.py:HANDLERS`; ADR-101, `contracts/requests/vnc.open.*`).
+"""Device-request handler `vnc.open` (`<area>/requests.py:HANDLERS`; ADR-103, `contracts/requests/vnc.open.*`).
 
 The owner asks for a VNC connection to the screen of a sandbox that waits for a human; the root body names it:
 

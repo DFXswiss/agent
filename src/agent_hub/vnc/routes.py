@@ -1,4 +1,4 @@
-"""Routes of the VNC tunnels (ADR-101 section 3; 03-api.md sections 4.10a and 6.3).
+"""Routes of the VNC tunnels (ADR-103 section 3; 03-api.md sections 4.10a and 6.3).
 
 | Route | Right |
 |---|---|

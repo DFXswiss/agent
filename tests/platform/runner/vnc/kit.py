@@ -1,4 +1,4 @@
-"""Test kit of the VNC suites (ADR-101): in-memory WebSockets of both tunnel ends joined by the hub's real relay
+"""Test kit of the VNC suites (ADR-103): in-memory WebSockets of both tunnel ends joined by the hub's real relay
 (`agent_hub.vnc.relay.Tunnels`), and a fake flow for the `vnc.open` handler."""
 
 from __future__ import annotations

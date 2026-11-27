@@ -1,4 +1,4 @@
-"""U-HUB-vnc (relay): the pairing and copying of a VNC tunnel's two ends in memory (ADR-101 section 3) - one end per
+"""U-HUB-vnc (relay): the pairing and copying of a VNC tunnel's two ends in memory (ADR-103 section 3) - one end per
 side, `{"type":"paired"}` to both, binary records unchanged in both directions, the end reasons, the limits and the
 audit rows without content."""
 

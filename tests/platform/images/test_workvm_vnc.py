@@ -1,4 +1,4 @@
-"""U-RUN-vnc (image): the VNC helper `workvm-vnc` of the work image (ADR-101 section 2).
+"""U-RUN-vnc (image): the VNC helper `workvm-vnc` of the work image (ADR-103 section 2).
 
 The helper runs with the system Python against a fake server program (`WORKVM_VNC_SERVER`): `-storepasswd` writes the
 password file, otherwise it listens on the loopback port and answers every connection with its version line and an

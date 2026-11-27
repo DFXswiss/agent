@@ -1,4 +1,4 @@
-"""Taking over the screen of a sandbox by VNC when a process needs a human (ADR-101; rule E-39 of the client: "ich
+"""Taking over the screen of a sandbox by VNC when a process needs a human (ADR-103; rule E-39 of the client: "ich
 will keinen link, ich will dass du alles erledigst und wenn ich eingreifen muss dann gibst du mir kurz vnc").
 
 `agent-platform vnc (--login REQUEST | --session ID | --task ID) [--wait S]`:

@@ -1,5 +1,5 @@
 """U-HUB-vnc (routes): `GET /v1/vnc/{request}` and `GET /v1/device/vnc/{request}` on a real uvicorn server with
-`websockets` clients (ADR-101 section 3): the owner's own identity and the addressed device are paired and their
+`websockets` clients (ADR-103 section 3): the owner's own identity and the addressed device are paired and their
 records relayed unchanged; another user, a request the user's agent sent, another device, another kind, a follow-up,
 a closed or unknown request are refused before anything is relayed; the audit rows carry no content."""
 

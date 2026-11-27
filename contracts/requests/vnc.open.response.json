@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/requests/vnc.open.response.json",
   "title": "device response body vnc.open",
-  "description": "Plaintext body of a device response to vnc.open (ADR-101). vnc: the VNC server of the sandbox runs; key (32 bytes, base64url without padding) encrypts the tunnel records of GET /v1/vnc/{request} (the hub relays them unopened), password is the one-time password of this connection, idle_seconds the time without input after which the connection closes. done (final): the connection ended - ended (the process the screen was offered for went on or ended), idle, closed (the viewer or the server closed it), unpaired (no client joined in time), timeout (the request's time ran out), broken (a record did not open), unreachable (the hub could not be reached). Sealed to the requester like every response.",
+  "description": "Plaintext body of a device response to vnc.open (ADR-103). vnc: the VNC server of the sandbox runs; key (32 bytes, base64url without padding) encrypts the tunnel records of GET /v1/vnc/{request} (the hub relays them unopened), password is the one-time password of this connection, idle_seconds the time without input after which the connection closes. done (final): the connection ended - ended (the process the screen was offered for went on or ended), idle, closed (the viewer or the server closed it), unpaired (no client joined in time), timeout (the request's time ran out), broken (a record did not open), unreachable (the hub could not be reached). Sealed to the requester like every response.",
   "oneOf": [
     {
       "type": "object",

@@ -1,4 +1,4 @@
-"""U-RUN-vnc (offers): what the check for humans does while a person works on its screen by VNC (ADR-101 section 4) -
+"""U-RUN-vnc (offers): what the check for humans does while a person works on its screen by VNC (ADR-103 section 4) -
 no picture goes out and the check keeps waiting - and the long-lived helper process of a login VM's or a browser VM's
 screen (`workvm-vnc connect`)."""
 

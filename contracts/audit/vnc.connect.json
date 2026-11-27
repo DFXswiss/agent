@@ -2,6 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/audit/vnc.connect.json",
   "title": "audit detail vnc.connect",
-  "description": "detail of audit rows with action vnc.connect: the owner's client and the device joined the VNC tunnel of a vnc.open request (ADR-101); actor the user, target the request. Metadata only (02-data-model.md section 2.9): nothing of the screen or the input.",
+  "description": "detail of audit rows with action vnc.connect: the owner's client and the device joined the VNC tunnel of a vnc.open request (ADR-103); actor the user, target the request. Metadata only (02-data-model.md section 2.9): nothing of the screen or the input.",
   "$ref": "../common.json#/$defs/empty"
 }
