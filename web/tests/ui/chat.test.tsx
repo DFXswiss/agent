@@ -58,12 +58,17 @@ describe('task page', () => {
     expect(tabs.slice(0, 3)).toEqual(['task.tabs.terminal', 'task.tabs.chat', 'task.tabs.sessions']);
     expect(screen.getByTestId('task.tabs.terminal')).toHaveAttribute('aria-current', 'page');
     expect(screen.getByTestId('task.tabs.terminal')).toHaveTextContent('Claude Code');
-    expect(screen.getByTestId('task.terminal.starting')).toHaveTextContent('Claude Code is being started in a VM');
-    expect(screen.getByTestId('task.screen')).toHaveClass('max-w-6xl');
+    expect(screen.getByTestId('task.terminal.waiting')).toBeInTheDocument();
+    expect(screen.getByTestId('task.screen')).toHaveAttribute('data-layout', 'terminal');
+    // the slim bar's tabs are light on the dark page
+    expect(screen.getByTestId('task.tabs.terminal')).toHaveClass('text-white');
+    expect(screen.getByTestId('task.tabs.chat')).toHaveClass('text-gray-400');
     fireEvent.click(screen.getByTestId('task.tabs.chat'));
     await screen.findByTestId('chat');
     expect(router.state.location.search).toBe('?tab=chat');
     expect(screen.getByTestId('task.screen')).toHaveClass('max-w-3xl');
+    expect(screen.getByTestId('task.screen')).not.toHaveAttribute('data-layout');
+    expect(screen.getByTestId('task.tabs.chat')).toHaveClass('border-blue-700');
     fireEvent.click(screen.getByTestId('task.tabs.sessions'));
     await screen.findByTestId('sessions');
     expect(router.state.location.search).toBe('?tab=sessions');

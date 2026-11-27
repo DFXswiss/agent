@@ -78,7 +78,7 @@ test('follows history and live chunks, replays up to an offset and plays back', 
   expect(await page.locator('html').getAttribute('data-style-injections')).toBeNull();
 });
 
-test('the task opens on "Claude Code": the live terminal with the Claude Code input below (KONZEPT E-43)', async ({
+test('a task opened afresh shows "Claude Code" first and keeps its terminal across tab switches (KONZEPT E-43)', async ({
   page,
   baseURL,
 }) => {
@@ -86,10 +86,10 @@ test('the task opens on "Claude Code": the live terminal with the Claude Code in
   const user = await freshUser(page, baseURL!, { poolReady: 2 });
   const task = await sendPrompt(page, 'Show me Claude Code', 'terminal');
   const session = (await mainSession(task)).session_id;
-  // the start above the terminal until the session works
-  await expect(page.getByTestId('countdown.panel')).toBeVisible();
+  // the start as terminal lines until the session works
+  await expect(page.getByTestId('terminal.start')).toBeVisible();
   await walk(session, [...START_STEPS, 'working'], { intervalMs: 20 });
-  await expect(page.getByTestId('countdown.panel')).toHaveCount(0);
+  await expect(page.getByTestId('terminal.start')).toHaveCount(0);
   await expect(page.getByTestId('terminal')).toHaveAttribute('data-variant', 'task');
   const banner = '\x1b[1m* Welcome to Claude Code\x1b[0m\r\n\r\n> Show me Claude Code';
   await sessionEvents(session, [terminalChunk([[0, banner]])]);
@@ -100,11 +100,10 @@ test('the task opens on "Claude Code": the live terminal with the Claude Code in
   const terminal = page.getByTestId('terminal');
   await expect(terminal).toHaveAttribute('data-variant', 'task');
   await expect(terminal).toHaveAttribute('data-chunks', '1');
-  await expect(page.getByTestId('terminal.label')).toHaveText('Live view of Claude Code – prompts are entered below');
+  await expect(page.getByTestId('terminal.label')).toHaveCount(0);
   await expect(page.getByTestId('terminal.viewport').locator('canvas').first()).toBeVisible();
-  // Shift+Enter is a new line, Enter sends: a signed prompt like the chat's
-  const composer = page.getByTestId('chat.composer');
-  await expect(composer).toHaveAttribute('data-variant', 'cli');
+  // this screen has no input box of the TUI: the one input is docked below it
+  await expect(page.getByTestId('terminal.input')).toHaveAttribute('data-placement', 'docked');
   const prompt = page.getByTestId('chat.composer.prompt');
   await prompt.fill('First line');
   await prompt.press('Shift+Enter');

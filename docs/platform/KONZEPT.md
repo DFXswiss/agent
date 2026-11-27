@@ -971,8 +971,10 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Bezug:** ändert die bisherige Festlegung, dass Identitäts- und Bereichsschlüssel nur im Speicher liegen und ein
   Neuladen den Passkey verlangt ([spec/06-web.md](spec/06-web.md) §2.3); setzt [Idee 30](#k-idee-30) (Verschlüsselung
   ohne Nachteile für die Bedienung) für die Anmeldung um.
-- **Umsetzung:** in Arbeit – Aufgabe auf agent; baut auf dem Gerätschlüssel des Browsers auf
-  ([ADR-006](adr/006-passkey-prf-key-management.md)).
+- **Umsetzung:** gebaut – [ADR-102](adr/102-stay-signed-in.md) (KOR-76): der Gerätschlüssel des Browsers
+  ([ADR-006](adr/006-passkey-prf-key-management.md)) öffnet die Identität beim Start, die Sitzung erneuert sich mit dem
+  noch gültigen Sitzungsschlüssel (`POST /v1/session/renew`), „Angemeldet bleiben“ auf der Anmeldeseite und in den
+  Einstellungen.
 
 <a id="e-41"></a>
 
@@ -1017,22 +1019,27 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 
 ### E-43 – Ein Task sieht aus wie Claude Code, lokal gestartet
 
-- **Datum:** 2026-11-27
-- **Regel:** Die erste Eingabe eines Tasks bleibt, wie sie ist. Sobald die Hauptsession in ihrer VM angelegt ist, zeigt
-  die Task-Seite alles im Stil von Claude Code, wie lokal gestartet: Standardansicht ist das native Terminal der
-  Hauptsession, gross und dunkel, darunter ein Eingabefeld im Stil von Claude Code (Enter sendet). Der Start der
-  Session (Countdown, Wartegrund, „Erneut versuchen“) steht darüber, bis sie arbeitet. Der Chat bleibt als zweite
-  Ansicht. Eingaben bleiben signierte Prompts; das Terminal selbst nimmt keine Tastendrücke an.
+- **Datum:** 2026-11-27 (Präzisierung am Abend desselben Tages)
+- **Regel:** Die erste Eingabe eines Tasks bleibt, wie sie ist. Sobald die Hauptsession in ihrer VM angelegt ist, ist
+  die Task-Seite im Browser vom lokal gestarteten Claude-Code-Terminal nicht zu unterscheiden: die echte Ausgabe der
+  TUI über die ganze Fläche, dunkel, in Terminalschrift, Farben und Symbolen von Claude Code, ohne Web-Rahmen, Karten
+  oder Chat-Blasen; die Navigation ist eine schlanke Leiste. Es gibt genau ein Eingabefeld: es sieht aus wie die
+  Eingabebox von Claude Code und steht an ihrer Stelle, darunter die Statuszeile der TUI. Enter sendet, Umschalt+Enter
+  macht einen Zeilenumbruch, Esc unterbricht den laufenden Turn. Auch auf dem Handy wie ein Terminal, lesbar, die
+  Eingabe unten. Eingaben bleiben signierte Prompts; das Terminal selbst nimmt keine Tastendrücke an. Der Chat bleibt
+  als zweite Ansicht.
 - **Wortlaut:** „ich will auf agent.dfx.swiss die selbe UI Ansicht haben wenn ich eine Claude Session starte wie wenn
   ich claude local starten würde“ und, auf die Wahl zwischen Terminal-Ansicht mit Eingabefeld (A), Chat im
   Claude-Code-Stil (B) und echt interaktivem Terminal (C): „A, das allererste Eingabefeld bleibt wie es heute ist, dann
-  wird eine neue Session in einer VM angelegt und von da an soll alles im Claude Code UI Style angezeigt werden“
+  wird eine neue Session in einer VM angelegt und von da an soll alles im Claude Code UI Style angezeigt werden“; am
+  Abend als Abnahme: „es soll wirklich gleich aussehen wie das claude terminal, im browser“
 - **Bezug:** ändert [§6 Punkt 6](#k-6-b6) (Standardansicht: Chat) – Standardansicht ist jetzt die Terminalansicht
-  von [§6 Punkt 7](#k-6-b7) mit dem Eingabefeld darunter; §6 Punkt 7 gilt weiter: die Terminalansicht bleibt read-only,
-  Prompts kommen nur über das Eingabefeld (jetzt direkt unter dem Terminal). Ein echt interaktives Terminal (C) hat der
-  Auftraggeber nicht gewählt.
+  von [§6 Punkt 7](#k-6-b7) mit dem Eingabefeld an der Stelle der Eingabebox; §6 Punkt 7 gilt weiter: die
+  Terminalansicht bleibt read-only, Prompts kommen nur über dieses Eingabefeld. Ein echt interaktives Terminal (C) hat
+  der Auftraggeber nicht gewählt; was deshalb anders bleibt als lokal (Scrollen in der TUI, Tasten wie Umschalt+Tab,
+  Pfeiltasten, Slash-Befehle), nennt [ADR-104](adr/104-claude-code-view-as-task-default.md) („What stays different“).
 - **Umsetzung:** gebaut – Task-Tab „Claude Code“ ([ADR-104](adr/104-claude-code-view-as-task-default.md),
-  [spec/06-web.md](spec/06-web.md) §5.2a).
+  [spec/06-web.md](spec/06-web.md) §5.2a, Nachweis [acceptance/E-43](acceptance/E-43/README.md)).
 
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 

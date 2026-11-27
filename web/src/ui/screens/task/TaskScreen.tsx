@@ -1,7 +1,8 @@
 // The task page (06-web.md sections 2.4 and 5, route `/o/:org/t/:task`, right `task:read`): title and state, the task
 // menu with "Close task" for writers, "Renamed by session" after a `task.set_title` (WEB-09), and the tab frame. Tabs are discovered at `ui/task-tabs/<area>/index.tsx`
-// (ADR-027 section 4): Claude Code (default, the main session's terminal with the prompt input, KONZEPT E-43; the page
-// is wider while it is open), Chat and Sessions here; Operations, Whiteboard and Audit join from their packages.
+// (ADR-027 section 4): Claude Code (default, KONZEPT E-43, ADR-104), Chat and Sessions here; Operations, Whiteboard and
+// Audit join from their packages. While "Claude Code" is open the page is the terminal over the whole window with one
+// slim bar (back to the tasks, title, tabs) – no header, notices or task menu; those are on every other tab.
 // Below the header, how the current main session took over the context after a resume (ContextNotice, KOR-33), its
 // interruption by a device failure or its continuation after one (DeviceFailureNotice, ADR-087), and the newest switch
 // of the model access (ModelSwitchLine, ADR-081 section 5).
@@ -11,7 +12,8 @@
 // name and handle of the task's main agent, with "Rename" for writers (`TaskAgent.tsx`, ADR-095).
 // An analysis task carries the badge "Analysis" next to its state (ADR-097 section 6).
 import { useEffect, useMemo, useState } from 'react';
-import { useLocation, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
+import { THEME } from '../../../core/terminal/screen';
 import { closeTask, loadChat } from '../../../core/chat/actions';
 import { formatDuration } from '../../../core/monitoring/units';
 import { selectNewestTitle, selectRenamed } from '../../../core/operations/renamed';
@@ -145,17 +147,50 @@ function TaskView({ row }: { readonly row: TaskRow }) {
   const writer = state !== null && userId !== null && state.canWriteWg(userId, row.wg_id);
   const tabs = TABS.map((tab) => ({ id: tab.id, label: t(tab.labelKey) }));
   const active = TABS.find((tab) => tab.id === activeTab(location.search, tabs))!;
+  const heading = (
+    <>
+      {title.status === 'verified' && title.text}
+      {title.status === 'missing' && t('tasks.title.loading')}
+      {title.status === 'unverifiable' && t('tasks.title.unverifiable', { code: title.code })}
+    </>
+  );
+  if (active.id === 'terminal') {
+    // "Claude Code" (KONZEPT E-43): the terminal over the whole window, above it one slim bar – back to the tasks, the
+    // title and the tabs; the details of the task are on the other tabs
+    return (
+      <main
+        className="fixed inset-0 z-50 flex flex-col"
+        style={{ background: THEME.background, color: THEME.foreground }}
+        data-testid="task.screen"
+        data-layout="terminal"
+      >
+        <header className="flex min-w-0 items-center gap-3 border-b border-white/10 px-2 text-xs">
+          <Link
+            to={`/o/${encodeURIComponent(row.org_id)}/w/${encodeURIComponent(row.wg_id)}`}
+            className="flex min-h-11 shrink-0 items-center px-1 text-gray-300 hover:text-white"
+            data-testid="task.back"
+          >
+            {t('task.terminal.back')}
+          </Link>
+          <h1 className="min-w-0 truncate font-normal text-gray-300" data-testid="task.title">
+            {heading}
+          </h1>
+          <div className="ml-auto min-w-0">
+            <Tabs tabs={tabs} label={t('task.tabs.label')} testId="task.tabs" tone="dark" />
+          </div>
+        </header>
+        <Unlocking org={row.org_id} wg={row.wg_id}>
+          <active.Component orgId={row.org_id} taskId={row.task_id} />
+        </Unlocking>
+      </main>
+    );
+  }
   return (
-    <main
-      className={`mx-auto flex w-full ${active.id === 'terminal' ? 'max-w-6xl' : 'max-w-3xl'} flex-col gap-4 p-4`}
-      data-testid="task.screen"
-    >
+    <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" data-testid="task.screen">
       <header className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold" data-testid="task.title">
-            {title.status === 'verified' && title.text}
-            {title.status === 'missing' && t('tasks.title.loading')}
-            {title.status === 'unverifiable' && t('tasks.title.unverifiable', { code: title.code })}
+            {heading}
           </h1>
           {renamed && (
             <span className="text-xs text-gray-600" data-testid="task.renamed">

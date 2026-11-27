@@ -1,6 +1,5 @@
 {
   "label": "Nur-Lese-Ansicht – Prompts werden im Chat eingegeben",
-  "label.task": "Live-Ansicht von Claude Code – Prompts werden unten eingegeben",
   "viewport": "Terminal-Ausgabe (nur lesen)",
   "loading": "Terminal-Verlauf wird geladen …",
   "empty": "Noch keine Terminal-Ausgabe.",

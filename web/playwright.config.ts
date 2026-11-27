@@ -37,6 +37,7 @@ const MOBILE_DEVICE_SPECS = [
   '**/devices/attention.spec.ts',
   '**/devices/pulls.spec.ts',
   '**/devices/browser.spec.ts',
+  '**/devices/claude-code.spec.ts',
   '**/devices/subscriptions.spec.ts',
   '**/devices/agents.spec.ts',
 ];

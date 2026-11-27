@@ -13,8 +13,16 @@
 // There is no input path: the screens have input disabled and no handlers (`xterm.ts`), paste is cancelled; selection
 // and copy work. The label "Read-only view – prompts are entered in the chat" is always visible. The screens keep the
 // recorded geometry and scroll horizontally on narrow screens; the font follows the container width.
-import { type ChangeEvent, useEffect, useRef, useState } from 'react';
+//
+// Variant `task` (the task tab "Claude Code", KONZEPT E-43, ADR-104) is the terminal alone, as a local terminal shows
+// it: no label, no mode controls (always Follow; the history stays in the session detail), no frame. The font fits
+// columns and rows into the space (`fitToSpace`; on a phone the rows fill the height). After every write, fit and
+// scroll it reads the visible screen and reports a `TerminalLayout` (cell size, font, the TUI's input box with the
+// colours of its rule and marker) to `onLayout` – only when it changed; `children` are drawn over the screen in its
+// coordinates (the input that covers the TUI's box).
+import { type ChangeEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { formatEventTime } from '../../core/i18n';
+import { findInputBox, type InputBox, THEME } from '../../core/terminal/screen';
 import type { TerminalEntry } from '../../core/store/slices/terminal';
 import {
   absoluteAt,
@@ -31,17 +39,71 @@ import { useNow } from '../countdown/useNow';
 import { useStore } from '../hooks/useStore';
 import { useI18n } from '../i18n';
 import { useAppEnv } from '../shell/context';
-import { clearScreen, fitFont, openScreen, type Screen } from './xterm';
+import { cellColorAt, cellSize, clearScreen, fitFont, fitToSpace, openScreen, type Screen, visibleRows } from './xterm';
+
+/** Below this width (px) the screen is on a phone: the rows fill the height, the columns scroll sideways. */
+export const PHONE_WIDTH = 768;
+
+/** The TUI's input box as drawn: its rows and the text and colours of its rule and prompt marker. */
+export interface DrawnBox extends InputBox {
+  readonly rule: string;
+  readonly ruleColor: string;
+  readonly markColor: string;
+}
+
+/** What the variant `task` reports about its screen (px; rows from the first visible row). */
+export interface TerminalLayout {
+  readonly cols: number;
+  readonly rows: number;
+  readonly cellWidth: number;
+  readonly cellHeight: number;
+  readonly fontSize: number;
+  /** Visible width of the viewport (a phone shows only part of the columns) and how far it is scrolled sideways. */
+  readonly width: number;
+  readonly scrollLeft: number;
+  readonly box: DrawnBox | null;
+}
 
 export interface TerminalViewProps {
   readonly org: string;
   readonly wg: string;
   readonly session: string;
   /**
-   * `session` (default): the session detail, with the label "prompts are entered in the chat". `task`: the default tab
-   * of the task page (KONZEPT E-43), where the prompt input sits right below – a quiet label says so.
+   * `session` (default): the session detail, with the label "prompts are entered in the chat" and the mode controls.
+   * `task`: the task tab "Claude Code" (KONZEPT E-43): the terminal alone over the whole space.
    */
   readonly variant?: 'session' | 'task';
+  /** Variant `task`: the layout of the screen, whenever it changed. */
+  readonly onLayout?: (layout: TerminalLayout) => void;
+  /** Variant `task`: drawn over the screen, in its coordinates. */
+  readonly children?: ReactNode;
+}
+
+/** The layout of the front screen in its viewport `space`: cells, font, scroll position and the TUI's input box. */
+function layoutOf(screen: Screen, space: HTMLElement): TerminalLayout {
+  const { terminal } = screen;
+  const cell = cellSize(screen) ?? { width: 0, height: 0 };
+  const rows = visibleRows(screen);
+  const found = findInputBox(rows);
+  const box =
+    found === null
+      ? null
+      : {
+          ...found,
+          rule: rows[found.top]!,
+          ruleColor: cellColorAt(screen, found.top, rows[found.top]!.indexOf('─')),
+          markColor: cellColorAt(screen, found.marker, found.column),
+        };
+  return {
+    cols: terminal.cols,
+    rows: terminal.rows,
+    cellWidth: cell.width,
+    cellHeight: cell.height,
+    fontSize: terminal.options.fontSize as number,
+    width: space.clientWidth,
+    scrollLeft: space.scrollLeft,
+    box,
+  };
 }
 
 type Mode = 'follow' | 'history';
@@ -60,6 +122,8 @@ interface Screens {
   rows: number;
   /** Fits the font of both screens to the container. */
   fit: () => void;
+  /** Variant `task`: reports the layout of the front screen once the current writes are done. */
+  measure: () => void;
   /** A replay into the hidden screen is running; the newest further request waits in `queued`. */
   swapping: boolean;
   queued: { readonly make: () => string; readonly done: () => void } | null;
@@ -107,8 +171,17 @@ export function offsetLabel(ms: number): string {
   return `${minutes}:${seconds}`;
 }
 
-export default function TerminalView({ org, wg, session, variant = 'session' }: TerminalViewProps) {
+export default function TerminalView({ org, wg, session, variant = 'session', onLayout, children }: TerminalViewProps) {
+  const fill = variant === 'task';
   const { app } = useAppEnv();
+  const viewport = useRef<HTMLDivElement>(null);
+  /** The variant when the screens opened, the layout reported last and the newest `onLayout`. */
+  const fills = useRef(fill);
+  const reported = useRef('');
+  const report = useRef(onLayout);
+  useEffect(() => {
+    report.current = onLayout;
+  });
   const { t, error } = useI18n();
   const entry = useStore((state) => state.terminal.sessions[session] ?? null, app.store);
   const tail: readonly Chunk[] = entry === null ? NO_CHUNKS : entry.chunks;
@@ -141,6 +214,21 @@ export default function TerminalView({ org, wg, session, variant = 'session' }: 
     const hosts = { a: hostA.current!, b: hostB.current! };
     hosts.a.dataset.chars = '0';
     hosts.b.dataset.chars = '0';
+    // held here, not read from the ref later: React detaches refs before the cleanup clears a pending measurement
+    const space = viewport.current!;
+    let measuring = 0;
+    // variant `task`: reads the front screen after the current writes and reports a changed layout
+    const measure = () => {
+      if (!fills.current) return;
+      window.clearTimeout(measuring);
+      measuring = window.setTimeout(() => {
+        const layout = layoutOf(mounted[mounted.front], space);
+        const text = JSON.stringify(layout);
+        if (text === reported.current) return;
+        reported.current = text;
+        report.current!(layout);
+      }, 0);
+    };
     const mounted: Screens = {
       a: openScreen(hosts.a, cols, rows),
       b: openScreen(hosts.b, cols, rows),
@@ -151,10 +239,22 @@ export default function TerminalView({ org, wg, session, variant = 'session' }: 
       cols,
       rows,
       fit: () => {
-        const size = fitFont(mounted[mounted.front]);
-        mounted.a.terminal.options.fontSize = size;
-        mounted.b.terminal.options.fontSize = size;
+        const front = mounted[mounted.front];
+        const apply = (size: number) => {
+          mounted.a.terminal.options.fontSize = size;
+          mounted.b.terminal.options.fontSize = size;
+        };
+        if (fills.current) {
+          const phone = space.clientWidth < PHONE_WIDTH;
+          // twice: the cells measured at the first size make the second exact
+          apply(fitToSpace(front, space.clientWidth, space.clientHeight, phone));
+          apply(fitToSpace(front, space.clientWidth, space.clientHeight, phone));
+        } else {
+          apply(fitFont(front));
+        }
+        measure();
       },
+      measure,
       swapping: false,
       queued: null,
     };
@@ -162,6 +262,12 @@ export default function TerminalView({ org, wg, session, variant = 'session' }: 
     const fit = mounted.fit;
     fit();
     window.addEventListener('resize', fit);
+    const scrolled = [mounted.a, mounted.b].map((screen) => screen.terminal.onScroll(measure));
+    // the viewport scrolled sideways (a phone): the input follows; its size changed (the start lines above it left, a
+    // phone keyboard opened): the font is fitted again
+    space.addEventListener('scroll', measure);
+    const resizing = new ResizeObserver(fit);
+    resizing.observe(space);
     player.current = new Player({
       chunks: () => latest.current,
       onOutput: (data) => write(mounted, mounted.front, data),
@@ -173,6 +279,10 @@ export default function TerminalView({ org, wg, session, variant = 'session' }: 
     });
     return () => {
       window.removeEventListener('resize', fit);
+      window.clearTimeout(measuring);
+      scrolled.forEach((listener) => listener.dispose());
+      space.removeEventListener('scroll', measure);
+      resizing.disconnect();
       player.current!.pause();
       mounted.a.terminal.dispose();
       mounted.b.terminal.dispose();
@@ -201,7 +311,7 @@ export default function TerminalView({ org, wg, session, variant = 'session' }: 
     let from = tail.length;
     while (from > 0 && tail[from - 1]!.seq > mounted.lastSeq) from -= 1;
     if (from === tail.length) return;
-    write(mounted, mounted.front, outputOf(tail.slice(from), REPLAY_CHARS));
+    write(mounted, mounted.front, outputOf(tail.slice(from), REPLAY_CHARS), mounted.measure);
     mounted.lastSeq = tail.at(-1)!.seq;
   }, [entry, tail, loaded, mode]);
 
@@ -276,154 +386,42 @@ export default function TerminalView({ org, wg, session, variant = 'session' }: 
   const chunks = history?.chunks ?? (mode === 'history' ? NO_CHUNKS : tail);
   const range = mode === 'history' ? recordingRange(chunks) : null;
   const bad = (history ?? entry)?.bad ?? [];
+  // the notices that both variants show (on the dark page of variant `task` in light colours)
+  const note = fill ? 'px-2 font-mono text-sm text-gray-400' : 'text-sm text-gray-600';
+  const alert = fill ? 'px-2 font-mono text-sm text-red-400' : 'text-sm text-red-800';
   return (
     <section
-      className="flex flex-col gap-2"
+      className={fill ? 'flex min-h-0 flex-1 flex-col' : 'flex flex-col gap-2'}
       data-testid="terminal"
       data-mode={mode}
       data-chunks={chunks.length}
       data-variant={variant}
     >
-      {variant === 'task' ? (
-        <p className="text-xs text-gray-600" data-testid="terminal.label">
-          {t('terminal.label.task')}
-        </p>
-      ) : (
-        <p className="rounded bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900" data-testid="terminal.label">
-          {t('terminal.label')}
-        </p>
-      )}
-      <div className="flex flex-wrap items-center gap-2">
-        <div role="group" aria-label={t('terminal.mode.label')} className="flex gap-1">
-          {(['follow', 'history'] as const).map((item) => (
-            <button
-              key={item}
-              type="button"
-              aria-pressed={mode === item}
-              className={`min-h-11 min-w-11 rounded border px-3 ${mode === item ? 'border-blue-700 bg-blue-50' : 'border-gray-300'}`}
-              onClick={item === 'follow' ? toFollow : toHistory}
-              data-testid={`terminal.mode.${item}`}
-            >
-              {t(`terminal.mode.${item}`)}
-            </button>
-          ))}
-        </div>
-        {mode === 'history' && range !== null && (
-          <div className="flex flex-1 flex-wrap items-center gap-2" data-testid="terminal.history">
-            <button
-              type="button"
-              className="min-h-11 min-w-11 rounded border border-gray-300 px-3"
-              onClick={() => (playing ? player.current!.pause() : player.current!.play())}
-              data-testid="terminal.play"
-              data-playing={playing}
-            >
-              {playing ? t('terminal.pause') : t('terminal.play')}
-            </button>
-            <div role="group" aria-label={t('terminal.speed.label')} className="flex gap-1">
-              {SPEEDS.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  aria-pressed={speed === item}
-                  className={`min-h-11 min-w-11 rounded border px-2 ${speed === item ? 'border-blue-700 bg-blue-50' : 'border-gray-300'}`}
-                  onClick={() => {
-                    setSpeed(item);
-                    player.current!.setSpeed(item);
-                  }}
-                  data-testid={`terminal.speed.${item}`}
-                >
-                  {t('terminal.speed', { speed: item })}
-                </button>
-              ))}
-            </div>
-            <input
-              type="range"
-              className="min-h-11 min-w-40 flex-1"
-              min={range.startMs}
-              max={range.endMs}
-              step={100}
-              value={Math.min(range.endMs, Math.max(range.startMs, position))}
-              aria-label={t('terminal.slider')}
-              onChange={(event: ChangeEvent<HTMLInputElement>) => seek(Number(event.target.value))}
-              data-testid="terminal.slider"
-            />
-            <span className="text-xs tabular-nums text-gray-600" data-testid="terminal.position">
-              {t('terminal.position', { position: offsetLabel(position), end: offsetLabel(range.endMs) })}
-            </span>
-            <PositionTime chunks={chunks} position={position} />
-          </div>
-        )}
-      </div>
-      {history !== null && (
-        <div className="flex flex-wrap items-center gap-2" data-testid="terminal.earlier" data-state={history.status}>
-          {history.before === null ? (
-            <span className="text-sm text-gray-600" data-testid="terminal.earlier.start">
-              {t('terminal.earlier.start')}
-            </span>
-          ) : (
-            <button
-              type="button"
-              className="min-h-11 min-w-11 rounded border border-gray-300 px-3"
-              disabled={history.status === 'loading'}
-              onClick={() => void watcher.current!.loadEarlier()}
-              data-testid="terminal.earlier.load"
-            >
-              {history.status === 'loading' ? t('terminal.earlier.loading') : t('terminal.earlier.load')}
-            </button>
-          )}
-          <span className="text-xs tabular-nums text-gray-600" data-testid="terminal.earlier.count">
-            {t('terminal.earlier.loaded', { count: history.chunks.length })}
-          </span>
-          {history.status === 'error' && (
-            <p
-              className="text-sm text-red-800"
-              role="alert"
-              data-testid="terminal.earlier.error"
-              data-code={history.code}
-            >
-              {t('terminal.earlier.failed', { reason: error(history.code!).title })}
-            </p>
-          )}
-          {history.cut && (
-            <p className="text-sm text-gray-600" data-testid="terminal.earlier.cut">
-              {t('terminal.earlier.cut')}
-            </p>
-          )}
-        </div>
-      )}
-      {mode === 'follow' && entry !== null && entry.earlier !== null && (
-        <p className="text-sm text-gray-600" data-testid="terminal.earlier.follow">
-          {t('terminal.earlier.follow')}
-        </p>
-      )}
-      {entry?.status === 'loading' && (
-        <p className="text-sm text-gray-600" data-testid="terminal.history-loading">
-          {t('terminal.loading')}
-        </p>
-      )}
+      {!fill && sessionControls()}
       {entry?.status === 'error' && (
-        <p className="text-sm text-red-800" role="alert" data-testid="terminal.error" data-code={entry.code}>
+        <p className={alert} role="alert" data-testid="terminal.error" data-code={entry.code}>
           {t('terminal.failed', { reason: error(entry.code!).title })}
         </p>
       )}
-      {entry?.status === 'ready' && tail.length === 0 && entry.earlier === null && (
-        <p className="text-sm text-gray-600" data-testid="terminal.empty">
-          {t('terminal.empty')}
-        </p>
-      )}
       {bad.length > 0 && (
-        <p className="text-sm text-gray-600" data-testid="terminal.unverifiable" data-count={bad.length}>
+        <p className={note} data-testid="terminal.unverifiable" data-count={bad.length}>
           {t('terminal.unverifiable', { count: bad.length, code: bad[0]!.code })}
         </p>
       )}
       <div
-        className="touch-pan-x touch-pan-y touch-pinch-zoom overflow-x-auto rounded bg-black p-1"
+        ref={viewport}
+        className={
+          fill
+            ? 'min-h-0 flex-1 touch-pan-x touch-pan-y touch-pinch-zoom overflow-auto'
+            : 'touch-pan-x touch-pan-y touch-pinch-zoom overflow-x-auto rounded bg-black p-1'
+        }
+        style={{ background: THEME.background }}
         role="region"
         aria-label={t('terminal.viewport')}
         onPasteCapture={(event) => event.preventDefault()}
         data-testid="terminal.viewport"
       >
-        <div className="relative">
+        <div className={fill ? 'relative w-max min-w-full' : 'relative'}>
           <div
             ref={hostA}
             className={frontId === 'a' ? '' : 'invisible absolute inset-0'}
@@ -434,8 +432,133 @@ export default function TerminalView({ org, wg, session, variant = 'session' }: 
             className={frontId === 'b' ? '' : 'invisible absolute inset-0'}
             data-testid="terminal.screen.b"
           />
+          {children}
         </div>
       </div>
     </section>
   );
+
+  /** The label, the modes, the history and the notices of the session detail (called, not a component: no remount). */
+  function sessionControls() {
+    return (
+      <>
+        <p className="rounded bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900" data-testid="terminal.label">
+          {t('terminal.label')}
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <div role="group" aria-label={t('terminal.mode.label')} className="flex gap-1">
+            {(['follow', 'history'] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                aria-pressed={mode === item}
+                className={`min-h-11 min-w-11 rounded border px-3 ${mode === item ? 'border-blue-700 bg-blue-50' : 'border-gray-300'}`}
+                onClick={item === 'follow' ? toFollow : toHistory}
+                data-testid={`terminal.mode.${item}`}
+              >
+                {t(`terminal.mode.${item}`)}
+              </button>
+            ))}
+          </div>
+          {mode === 'history' && range !== null && (
+            <div className="flex flex-1 flex-wrap items-center gap-2" data-testid="terminal.history">
+              <button
+                type="button"
+                className="min-h-11 min-w-11 rounded border border-gray-300 px-3"
+                onClick={() => (playing ? player.current!.pause() : player.current!.play())}
+                data-testid="terminal.play"
+                data-playing={playing}
+              >
+                {playing ? t('terminal.pause') : t('terminal.play')}
+              </button>
+              <div role="group" aria-label={t('terminal.speed.label')} className="flex gap-1">
+                {SPEEDS.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    aria-pressed={speed === item}
+                    className={`min-h-11 min-w-11 rounded border px-2 ${speed === item ? 'border-blue-700 bg-blue-50' : 'border-gray-300'}`}
+                    onClick={() => {
+                      setSpeed(item);
+                      player.current!.setSpeed(item);
+                    }}
+                    data-testid={`terminal.speed.${item}`}
+                  >
+                    {t('terminal.speed', { speed: item })}
+                  </button>
+                ))}
+              </div>
+              <input
+                type="range"
+                className="min-h-11 min-w-40 flex-1"
+                min={range.startMs}
+                max={range.endMs}
+                step={100}
+                value={Math.min(range.endMs, Math.max(range.startMs, position))}
+                aria-label={t('terminal.slider')}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => seek(Number(event.target.value))}
+                data-testid="terminal.slider"
+              />
+              <span className="text-xs tabular-nums text-gray-600" data-testid="terminal.position">
+                {t('terminal.position', { position: offsetLabel(position), end: offsetLabel(range.endMs) })}
+              </span>
+              <PositionTime chunks={chunks} position={position} />
+            </div>
+          )}
+        </div>
+        {history !== null && (
+          <div className="flex flex-wrap items-center gap-2" data-testid="terminal.earlier" data-state={history.status}>
+            {history.before === null ? (
+              <span className="text-sm text-gray-600" data-testid="terminal.earlier.start">
+                {t('terminal.earlier.start')}
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="min-h-11 min-w-11 rounded border border-gray-300 px-3"
+                disabled={history.status === 'loading'}
+                onClick={() => void watcher.current!.loadEarlier()}
+                data-testid="terminal.earlier.load"
+              >
+                {history.status === 'loading' ? t('terminal.earlier.loading') : t('terminal.earlier.load')}
+              </button>
+            )}
+            <span className="text-xs tabular-nums text-gray-600" data-testid="terminal.earlier.count">
+              {t('terminal.earlier.loaded', { count: history.chunks.length })}
+            </span>
+            {history.status === 'error' && (
+              <p
+                className="text-sm text-red-800"
+                role="alert"
+                data-testid="terminal.earlier.error"
+                data-code={history.code}
+              >
+                {t('terminal.earlier.failed', { reason: error(history.code!).title })}
+              </p>
+            )}
+            {history.cut && (
+              <p className="text-sm text-gray-600" data-testid="terminal.earlier.cut">
+                {t('terminal.earlier.cut')}
+              </p>
+            )}
+          </div>
+        )}
+        {mode === 'follow' && entry !== null && entry.earlier !== null && (
+          <p className="text-sm text-gray-600" data-testid="terminal.earlier.follow">
+            {t('terminal.earlier.follow')}
+          </p>
+        )}
+        {entry?.status === 'loading' && (
+          <p className="text-sm text-gray-600" data-testid="terminal.history-loading">
+            {t('terminal.loading')}
+          </p>
+        )}
+        {entry?.status === 'ready' && tail.length === 0 && entry.earlier === null && (
+          <p className="text-sm text-gray-600" data-testid="terminal.empty">
+            {t('terminal.empty')}
+          </p>
+        )}
+      </>
+    );
+  }
 }

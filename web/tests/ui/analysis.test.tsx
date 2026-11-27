@@ -229,7 +229,7 @@ describe('analysis tasks', () => {
     expect(await screen.findByTestId('task.profile.analysis')).toBeInTheDocument();
     expect(screen.queryByTestId('task.profile.new')).toBeNull();
     document.body.innerHTML = '';
-    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/plain`);
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/plain?tab=chat`);
     expect(await screen.findByTestId('task.profile.change')).toBeInTheDocument();
     expect(screen.queryByTestId('task.profile.analysis')).toBeNull();
     expect(screen.queryByTestId('task.analysis')).toBeNull();

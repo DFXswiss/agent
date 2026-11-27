@@ -22,16 +22,16 @@ test('the first task assigns a platform device and lands on the task page', asyn
   expect(posts).toEqual(expect.arrayContaining([`/v1/orgs/${user.org}/log`, '/v1/wraps', '/v1/tasks']));
   expect(posts.indexOf(`/v1/orgs/${user.org}/log`)).toBeLessThan(posts.indexOf('/v1/tasks'));
   await expect(page.getByTestId('task.title')).toHaveText('What is 2+2?');
-  // the task opens on "Claude Code" (KONZEPT E-43): the start's countdown above, the Claude Code input below
+  // the task opens on "Claude Code" (KONZEPT E-43): the start as terminal lines, the Claude Code input below
   await expect(page.getByTestId('task.tabs.terminal')).toHaveAttribute('aria-current', 'page');
-  await expect(page.getByTestId('countdown.step.assigning')).toHaveAttribute('data-status', 'done');
-  await expect(page.getByTestId('chat.composer')).toHaveAttribute('data-variant', 'cli');
+  await expect(page.getByTestId('terminal.start.step.requested')).toBeVisible();
+  await expect(page.getByTestId('terminal.input')).toBeVisible();
   const session = await mainSession(task);
   expect(session.device_id).toBe(user.device);
   await walk(session.session_id, [...START_STEPS, 'working'], { intervalMs: 50 });
-  // once the session works, the countdown gives way to its terminal
+  // once the session works, the start gives way to its terminal
   await expect(page.getByTestId('terminal')).toBeVisible();
-  await expect(page.getByTestId('countdown.panel')).toHaveCount(0);
+  await expect(page.getByTestId('terminal.start')).toHaveCount(0);
   // the chat keeps the prompt and the summary of the start
   await page.getByTestId('task.tabs.chat').click();
   await expect(page.getByTestId('chat.prompt.text')).toHaveText('What is 2+2?');

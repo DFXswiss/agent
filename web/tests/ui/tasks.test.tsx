@@ -19,6 +19,7 @@ import { TaskScreen } from '../../src/ui/screens/task/TaskScreen';
 import { relativeLabel } from '../../src/ui/screens/tasks/TaskItem';
 import { TaskListScreen } from '../../src/ui/screens/tasks/TaskListScreen';
 import { AppEnvProvider } from '../../src/ui/shell/context';
+import { ACCENT, TerminalStart } from '../../src/ui/task-tabs/terminal/TerminalStart';
 import { sessionRow, taskRow, type TaskWorld, taskWorld } from '../core/tasks/world';
 
 afterEach(() => vi.useRealTimers());
@@ -493,6 +494,117 @@ describe('countdown panel', () => {
     expect(screen.getByTestId('countdown.digits')).toHaveTextContent('5');
     act(() => void vi.advanceTimersByTime(2600));
     expect(screen.getByTestId('countdown.digits')).toHaveTextContent('2.4');
+  });
+});
+
+describe('start as terminal lines (task tab "Claude Code", KONZEPT E-43)', () => {
+  const T = (t: TaskWorld) => ({ org: t.org, wg: t.wg, me: t.me });
+
+  async function start(
+    setup: (t: TaskWorld, task: TaskRow) => void,
+    taskOverrides: Record<string, unknown> = {},
+    onRetry?: () => Promise<void>,
+  ) {
+    const t = await taskWorld();
+    const task = taskRow(T(t), { created_at: new Date().toISOString(), ...taskOverrides }) as TaskRow;
+    setup(t, task);
+    mount(t, [{ path: '/', element: <TerminalStart task={task} {...(onRetry && { onRetry })} /> }], '/');
+    return t;
+  }
+
+  it("counts down in Claude Code's accent with the steps as lines below", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false, toFake: ['Date'] });
+    await start(
+      (t, task) =>
+        putLaunch(t.store, task.task_id, { sessionId: 's9', localAt: Date.now(), estimateMs: 8000, assignedMs: null }),
+      { main_session_id: null },
+    );
+    expect(screen.getByTestId('terminal.start')).toHaveAttribute('data-phase', 'counting');
+    expect(screen.getByTestId('terminal.start.head')).toHaveTextContent(/^✻Starting Claude Code in a VM… [78]\.0 s$/);
+    expect(screen.getByTestId('terminal.start.head')).toHaveStyle({ color: ACCENT });
+    const steps = screen.getByTestId('terminal.start.steps').children;
+    expect(steps[0]).toHaveTextContent(/^⎿ → Task accepted$/);
+    expect(steps[1]).toHaveTextContent(/^· Assigning a VM$/);
+    expect(screen.getByTestId('terminal.start.step.requested')).toHaveAttribute('data-status', 'current');
+    expect(screen.queryByTestId('terminal.start.retry')).toBeNull();
+  });
+
+  it('names the current step after the estimate, with the elapsed time of each step reached', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false, toFake: ['Date'] });
+    await start(
+      (t, task) =>
+        putSession(
+          t.store,
+          sessionRow(T(t), {
+            task_id: task.task_id,
+            created_at: task.created_at,
+            estimate_ms: 0,
+            state: 'vm_ready',
+          }) as never,
+          [{ seq: 1, state: 'vm_ready', reason: null, at: task.created_at, received_at: task.created_at }],
+          0,
+        ),
+      { created_at: new Date(Date.now() - 12_400).toISOString() },
+    );
+    expect(screen.getByTestId('terminal.start')).toHaveAttribute('data-phase', 'delayed');
+    expect(screen.getByTestId('terminal.start.head')).toHaveTextContent(
+      'Starting Claude Code in a VM – Sandbox ready (12.4 s)',
+    );
+    expect(screen.getByTestId('terminal.start.step.vm-ready')).toHaveTextContent(/VM ready \+0\.0 s$/);
+    expect(screen.getByTestId('terminal.start.step.vm-ready')).toHaveAttribute('data-status', 'done');
+  });
+
+  it('names the waiting reason with the step the user can take, a generic text without one', async () => {
+    await start(
+      (world) => world.client.on(`GET /v1/workgroups/${world.wg}/device-candidates`, () => ({ candidates: [] })),
+      { state: 'scheduling', state_reason: 'no_device', main_session_id: null },
+    );
+    expect(screen.getByTestId('terminal.start')).toHaveAttribute('data-phase', 'waiting');
+    expect(screen.getByTestId('countdown.reason')).toHaveTextContent('No execution device is assigned');
+    expect(screen.getByTestId('countdown.assign-device')).toBeInTheDocument();
+    document.body.innerHTML = '';
+    await start(() => undefined, { main_session_id: null });
+    expect(screen.getByTestId('countdown.reason')).toHaveAttribute('data-reason', 'unknown');
+  });
+
+  it('shows a failed start with its reason and Retry, which reports its own failure', async () => {
+    let attempts = 0;
+    const retry = vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new HubError('rate_limited', 429);
+    });
+    await start(
+      (t, task) =>
+        putSession(
+          t.store,
+          sessionRow(T(t), {
+            task_id: task.task_id,
+            created_at: task.created_at,
+            state: 'failed',
+            state_reason: 'oom',
+          }) as never,
+          [],
+          0,
+        ),
+      {},
+      retry,
+    );
+    const error = createI18n('en').error('oom');
+    expect(screen.getByTestId('terminal.start')).toHaveAttribute('data-phase', 'failed');
+    expect(screen.getByTestId('terminal.start.head')).toHaveTextContent(`✕ ${error.title}`);
+    expect(screen.getByTestId('terminal.start.body')).toHaveTextContent(error.body);
+    fireEvent.click(screen.getByTestId('terminal.start.retry'));
+    expect(await screen.findByTestId('terminal.start.retry-error')).toHaveTextContent(
+      createI18n('en').error('rate_limited').title,
+    );
+    fireEvent.click(screen.getByTestId('terminal.start.retry'));
+    await waitFor(() => expect(screen.queryByTestId('terminal.start.retry-error')).toBeNull());
+    expect(retry).toHaveBeenCalledTimes(2);
+    // without a reason the generic error; without a handler (a reader) no Retry
+    document.body.innerHTML = '';
+    await start(() => undefined, { state: 'failed', state_reason: null, main_session_id: null });
+    expect(screen.getByTestId('terminal.start.head')).toHaveTextContent(createI18n('en').error('unavailable').title);
+    expect(screen.queryByTestId('terminal.start.retry')).toBeNull();
   });
 });
 

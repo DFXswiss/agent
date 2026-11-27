@@ -736,6 +736,7 @@ test('@E2E-63 @needs-vm stage b: a running main session becomes the main orchest
   // 5. The end of a session ends its orchestrator: Ada closes the task, makes the main session of a new task her
   // orchestrator and closes that task too - its agent is revoked with the session (`session_ended`).
   await visit(page, `/o/${org}/t/${task}`);
+  await openChat(page); // the task menu is on every tab but "Claude Code" (KONZEPT E-43)
   await page.getByTestId('task.close').click();
   await page.getByTestId('task.close.confirm').click();
   await expect.poll(() => sessionState(orchestrator, session), { timeout: 120_000, intervals: [1000] }).toBe('stopped');
@@ -747,6 +748,7 @@ test('@E2E-63 @needs-vm stage b: a running main session becomes the main orchest
   const ended = await makeSessionOrchestrator(orchestrator, page, org, secondMain!.id, 'Claude Code');
   expect(await activeAgents(orchestrator, adaId)).toEqual([ended]);
   await visit(page, `/o/${org}/t/${second}`);
+  await openChat(page); // the task menu is on every tab but "Claude Code" (KONZEPT E-43)
   await page.getByTestId('task.close').click();
   await page.getByTestId('task.close.confirm').click();
   await expect
