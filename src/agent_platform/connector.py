@@ -1,9 +1,10 @@
 """The tool for AI chat programs without a command line (KOR-63): `mcp` serves it as a local MCP server over stdio,
 `install-connector` enters that server in the configuration of Claude Desktop.
 
-The server speaks newline-delimited JSON-RPC 2.0 on stdin/stdout (MCP, stdio transport) and has two tools: `search`
-(the lookup of `agent-platform search`) and `run` (one command, run in-process exactly as `cli.run` runs it, with the
-same result object). It serves both eras of the protocol: a client that sends `initialize` gets the handshake of
+The server speaks newline-delimited JSON-RPC 2.0 on stdin/stdout (MCP, stdio transport) and has three tools: `search`
+(the lookup of `agent-platform search`), `run` (one command, run in-process exactly as `cli.run` runs it, with the
+same result object) and `set_task_mode` (`{task_id, mode, on}`: the command `task mode on|off --task --mode`, KOR-75,
+ADR-098 section 3). It serves both eras of the protocol: a client that sends `initialize` gets the handshake of
 revision 2025-11-25 and earlier, a request carrying the version in `_meta` is served without one (2026-07-28,
 https://modelcontextprotocol.io/specification/latest). Nothing but protocol messages reaches stdout: while serving,
 `sys.stdout` is stderr, and commands get their stdin from the tool call, never from the protocol stream.
@@ -87,6 +88,25 @@ TOOLS: list[dict[str, Any]] = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "set_task_mode",
+        "title": "Switch a working mode of a task on or off",
+        "description": (
+            "Switch one working mode of a task on (on: true) or off (on: false) for your user, as the command "
+            '"task mode on|off --task <task_id> --mode <name>" does, with the same JSON result. The modes are listed '
+            'by run with args ["modes", "list"]. Only when your user asks for it: nothing switches a mode on by itself.'
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "the task's ID"},
+                "mode": {"type": "string", "description": "the mode's name, e.g. a38"},
+                "on": {"type": "boolean", "description": "true: switch it on, false: switch it off"},
+            },
+            "required": ["task_id", "mode", "on"],
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -131,9 +151,22 @@ def tool_run(arguments: Mapping[str, Any], environ: Mapping[str, str]) -> dict[s
     return document
 
 
+def tool_set_task_mode(arguments: Mapping[str, Any], environ: Mapping[str, str]) -> dict[str, Any]:
+    task, mode, on = arguments.get("task_id"), arguments.get("mode"), arguments.get("on")
+    if (
+        not isinstance(task, str)
+        or not isinstance(mode, str)
+        or not isinstance(on, bool)
+        or set(arguments) != {"task_id", "mode", "on"}
+    ):
+        return _bad()
+    return tool_run({"args": ["task", "mode", "on" if on else "off", f"--task={task}", f"--mode={mode}"]}, environ)
+
+
 HANDLERS: dict[str, Callable[[Mapping[str, Any], Mapping[str, str]], dict[str, Any]]] = {
     "search": tool_search,
     "run": tool_run,
+    "set_task_mode": tool_set_task_mode,
 }
 
 

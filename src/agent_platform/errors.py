@@ -170,6 +170,19 @@ NEXT_FOR_REASON: dict[tuple[str, str], str] = {
         'A check for humans is done by a person: the user clicks into the picture in the web ("Meine Abos") or with '
         "this tool signed in as the user; an agent may only give the automation up (`subscriptions check --relay`)."
     ),
+    ("hub_refused", "mode_needs_instruction"): (
+        "An agent inside a platform session cannot switch on a mode; ask the person, or use the operation task.mode "
+        "with a quote of the instruction."
+    ),
+    ("hub_refused", "mode_needs"): (
+        "The mode needs other modes that are off (`missing`, when the hub names them; `modes list` shows what each "
+        "mode needs). Switch them on together, the needed ones first: `task mode on --task <task_id> --mode <needed> "
+        "--mode <name>`, or with a new task `task create --mode <needed> --mode <name>`."
+    ),
+    ("not_found", "mode_or_task"): (
+        "The task or the mode is not known: check the task ID with `task list --wg <wg_id>` and the mode's name with "
+        "`modes list`."
+    ),
     ("device_request_failed", "github_not_connected"): (
         "No GitHub connection may read this pull request: connect one with `agent-platform github connect --from-gh` "
         "or `agent-platform github connect --token -`, then run the command again."

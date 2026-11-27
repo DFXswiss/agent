@@ -733,6 +733,8 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
     "subagent.instruct": ("session_id prompt", "session_id instruction_id", "", None),
     "subagent.stop": ("session_id", "session_id state", "", None),
     "task.set_title": ("title", "", "", None),
+    # ADR-098 section 3 (contracts/changes/KOR-75.md)
+    "task.mode": ("mode on quote", "mode on", "", None),
     # 13-work-vm.md section 2 (contracts/changes/KOR-29.md)
     "workvm.request": (
         "size scope",

@@ -32,6 +32,8 @@
     "merge_pending",
     "merge_unsupported",
     "workspace_dirty",
-    "device_failed"
+    "device_failed",
+    "mode_not_instructed",
+    "mode_needs"
   ]
 }

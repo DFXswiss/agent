@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/modes/mode.json",
+  "title": "working mode catalogue entry",
+  "description": "One entry of the catalogue of working modes (ADR-098 section 1); the definition is $defs/mode.",
+  "$ref": "#/$defs/mode",
+  "$defs": {
+    "mode": {
+      "type": "object",
+      "description": "stable name, version, titles and summaries per language, the section of the harness rules that is its brief, the operation types and drivers it uses, the schema of its settings, the modes and prerequisites it needs and the accesses it can use. passes_on: a session of a task with this mode may put the modes of its own task on the tasks it creates (way inherited, ADR-098 section 3). test: the hub lists the mode only where it is configured for tests (KOR-75).",
+      "properties": {
+        "name": {
+          "$ref": "../common.json#/$defs/mode_name"
+        },
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "title": {
+          "$ref": "#/$defs/texts"
+        },
+        "summary": {
+          "$ref": "#/$defs/texts"
+        },
+        "brief": {
+          "type": "string",
+          "description": "the heading of the section of images/harness/RULES.md that tells a session what the mode expects",
+          "pattern": "^Working mode: [a-z][a-z0-9_]{0,31}$"
+        },
+        "operations": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/operation_type"
+          },
+          "maxItems": 64
+        },
+        "drivers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,31}$"
+          },
+          "maxItems": 16
+        },
+        "settings": {
+          "$ref": "#/$defs/settings"
+        },
+        "needs": {
+          "$ref": "#/$defs/needs"
+        },
+        "accesses": {
+          "type": "array",
+          "description": "the accesses of ADR-098 section 7 the mode can use (D1-D9); each optional",
+          "items": {
+            "type": "string",
+            "pattern": "^D[1-9]$"
+          },
+          "maxItems": 9
+        },
+        "passes_on": {
+          "type": "boolean"
+        },
+        "test": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "title",
+        "summary",
+        "brief",
+        "operations",
+        "drivers",
+        "settings",
+        "needs",
+        "accesses",
+        "passes_on",
+        "test"
+      ],
+      "additionalProperties": false
+    },
+    "needs": {
+      "type": "object",
+      "properties": {
+        "modes": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/mode_name"
+          },
+          "maxItems": 16
+        },
+        "prerequisites": {
+          "type": "array",
+          "description": "IDs of the register docs/platform/spec/15-prerequisites.md",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9-]{0,31}$"
+          },
+          "maxItems": 16
+        }
+      },
+      "required": [
+        "modes",
+        "prerequisites"
+      ],
+      "additionalProperties": false
+    },
+    "texts": {
+      "type": "object",
+      "properties": {
+        "de": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "en": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        }
+      },
+      "required": [
+        "de",
+        "en"
+      ],
+      "additionalProperties": false
+    },
+    "settings": {
+      "type": "object",
+      "description": "JSON schema of what a person may set for the mode; catalogue v1 has no mode with settings, so only the empty closed object is allowed until the first one (KOR-75)",
+      "properties": {
+        "type": {
+          "const": "object"
+        },
+        "properties": {
+          "$ref": "../common.json#/$defs/empty"
+        },
+        "additionalProperties": {
+          "const": false
+        }
+      },
+      "required": [
+        "type",
+        "properties",
+        "additionalProperties"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

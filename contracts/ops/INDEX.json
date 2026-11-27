@@ -111,6 +111,12 @@
       "dedupe": false
     },
     {
+      "type": "task.mode",
+      "params": "ops/task.mode.params.json",
+      "result": "ops/task.mode.result.json",
+      "dedupe": false
+    },
+    {
       "type": "workvm.request",
       "params": "ops/workvm.request.params.json",
       "result": "ops/workvm.request.result.json",

@@ -53,6 +53,7 @@ from psycopg.types.json import Jsonb
 from agent_hub.analysis import request as analysis_request
 from agent_hub.audit.chain import ACTING_AGENT
 from agent_hub.audit.recorder import unchanged
+from agent_hub.auth.keys import Principal
 from agent_hub.crypto.errors import CryptoError
 from agent_hub.crypto.ids import uuid7
 from agent_hub.errors import HubError
@@ -61,6 +62,7 @@ from agent_hub.events.store import StoredEvent, append_events, hub_error, stored
 from agent_hub.github import identities
 from agent_hub.http.context import HubContext
 from agent_hub.log.events import check_replay
+from agent_hub.modes.choice import choose
 from agent_hub.notifications import rules
 from agent_hub.orgs import rights
 from agent_hub.placement import service as placement
@@ -190,10 +192,13 @@ def create_task(
     github_identity: UUID | None = None,
     author: str | None = None,
     analysis: Mapping[str, Any] | None = None,
+    modes: Sequence[str] = (),
+    principal: Principal | None = None,
 ) -> Outcome:
     """`POST /v1/tasks` (module docstring); `requested` is the chosen device and VM of the request, `author` the
     author of the events (the user's own-identity agent, ADR-082; default the user), `analysis` the request's
-    analysis (ADR-097)."""
+    analysis (ADR-097), `modes` the working modes the creating person chooses and `principal` the request's principal
+    (ADR-098 section 3, `agent_hub.modes.choice`)."""
     now = context.clock()
     given = Given(
         github_identity=github_identity, requested=requested, analysis=None if analysis is None else dict(analysis)
@@ -262,6 +267,17 @@ def create_task(
         create_main_session(
             connection, task, session_id, decision, now, actor=actor, effects=outcome.effects, triggered_by=user
         )
+        if modes:
+            # only what the person names: nothing is chosen by default (ADR-098 section 2)
+            choose(
+                context,
+                connection,
+                principal=cast(Principal, principal),
+                user=user,
+                task=task,
+                names=modes,
+                effects=outcome.effects,
+            )
         outcome.body = {
             "task": rows.task_json(connection, task_id),
             "session": _session_answer(connection, str(session_id)),

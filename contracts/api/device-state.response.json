@@ -870,6 +870,35 @@
             "workgroups"
           ],
           "additionalProperties": false
+        },
+        "task_modes": {
+          "type": "object",
+          "description": "working modes (ADR-098 sections 3 and 4; KOR-75): the modes that are on for every task with a live session on the device, with the driver state last reported for each (a device that takes a task over goes on from it); always sent by a hub of this release, optional in the schema for older hubs",
+          "properties": {
+            "api": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "modes interface version"
+            },
+            "tasks": {
+              "type": "object",
+              "propertyNames": {
+                "$ref": "../common.json#/$defs/uuid"
+              },
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "$ref": "../common.json#/$defs/device_task_mode"
+                },
+                "maxItems": 64
+              }
+            }
+          },
+          "required": [
+            "api",
+            "tasks"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

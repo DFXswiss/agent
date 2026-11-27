@@ -139,6 +139,15 @@
           ],
           "description": "the rights profile of the task's main sessions (ADR-094 section 1), null without"
         },
+        "modes": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/task_mode"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "description": "the working modes that are on for the task, by name (ADR-098 section 3); absent while none is on (and from older hubs)"
+        },
         "number": {
           "type": "integer",
           "minimum": 1,

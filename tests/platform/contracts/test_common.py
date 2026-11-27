@@ -141,6 +141,11 @@ CASES: list[tuple[str, object, bool]] = [
     ("agent_profile_name", "review", True),
     ("agent_profile_name", "a-b_9", True),
     ("agent_profile_name", "Review", False),
+    # ADR-098 section 1 (KOR-75)
+    ("mode_name", "merge_lane", True),
+    ("mode_name", "a38", True),
+    ("mode_name", "A38", False),
+    ("mode_name", "merge-lane", False),
     ("agent_profile_name", "9x", False),
     ("agent_gen", 1, True),
     ("agent_gen", 0, False),

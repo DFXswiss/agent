@@ -63,6 +63,9 @@ CATEGORIES: dict[str, str] = {
     "body of fixed length (ADR-084); restore outcomes",
     "profiles": "Rights profiles (ADR-094): names of own profiles, the operation types they allow, their read reach, "
     "who changed them and when; the profile snapshot of a task or a child session",
+    "modes": "Working modes (ADR-098): the names and catalogue versions of the modes of a task, on or off, who chose "
+    "them, how (web, tool, sentence, inherited), the operation and the originating task, who changed them when and "
+    "why; the driver state (step name, counters, times); the settings only sealed",
 }
 
 # Content type → SQL types it may have.
@@ -207,6 +210,8 @@ task: tasks | id:uuid org_id:uuid wg_id:uuid owner_id:uuid state:code state_reas
   state_at:time last_activity_at:time closed_at:time placement_device_id:uuid placement_vm_id:code
   github_identity:uuid model_consent:flag agent_profile:json@profiles analysis:json
   number:number@mainagents
+task_mode: modes | task_id:uuid mode:code version:number state:code chosen_by:uuid way:code op_id:uuid
+  origin_task:uuid changed_at:time changed_by:uuid reason:code driver_state:json settings_sealed:json@ciphertext
 task_attention: attention | task_id:uuid org_id:uuid wg_id:uuid owner_id:uuid category:code reason:code
   ref_kind:code ref_id:uuid since:time seq:number subagents_total:number subagents_active:number updated_at:time
   wait_until:time

@@ -1,0 +1,10 @@
+{
+  "description": "The catalogue of working modes (ADR-098 section 1): one data file per mode, each valid against modes/mode.json. Catalogue v1 (KOR-75) holds only the test mode; the modes of ADR-098 section 1 join with their build packages. A new mode or a new version never switches anything on (ADR-098 section 2).",
+  "schema": "modes/mode.json",
+  "modes": [
+    {
+      "name": "test",
+      "file": "modes/test.json"
+    }
+  ]
+}

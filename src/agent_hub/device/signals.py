@@ -44,6 +44,11 @@ def bind(context: Any) -> None:
     _context["hub"] = context
 
 
+def bound() -> Any:
+    """The bound hub context (None before the first `bind`); other areas' subscribers read with its pool too."""
+    return _context.get("hub")
+
+
 def devices_to_reconcile(connection: Any, org_id: UUID, seq: int) -> list[UUID]:
     """The active device members of the org and the devices named by the batch that ends at `seq`."""
     rows = connection.execute(

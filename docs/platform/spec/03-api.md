@@ -455,6 +455,20 @@ Every other route answers as for an outsider (`404`/`403`). The browser live cha
 view reads by polling, each read recorded in the read log. Notifications `support.release`, `support.access`,
 `support.people` (02-data-model.md §2.6).
 
+### 4.15 Working modes **(new, ADR-098, KOR-75)**
+
+The catalogue, the ways of choosing and the drivers are specified in [17-working-modes.md](17-working-modes.md).
+
+| Method and path | Auth, right | Answer |
+|---|---|---|
+| `GET /v1/modes` | browser, `user` | `{modes: [entry of contracts/modes/mode.json]}` in catalogue order; an entry with `test: true` only with `AGENT_HUB_MODES_TEST=1` (read resource `modes`) |
+| `PUT /v1/tasks/{task}/modes/{mode}` | browser, `wg:write` (`task:write`) | body `{}` → `{mode: task_mode}`; way `web` (browser) or `tool` (a person's agent); an agent paired in a session `403 mode_needs_instruction` unless it passes on a mode of its own task with `passes_on` to a task it created (way `inherited`); unknown mode `404`; needs off `409 mode_needs` with `detail.modes`; a repetition answers the record unchanged; audit `task.mode_on`; the `task` frame and `reconcile {}` to the task's devices |
+| `DELETE /v1/tasks/{task}/modes/{mode}` | browser, `wg:write` | `{}`; also when off already; reason `person` (`session` for a session's agent); audit `task.mode_off` |
+
+`POST /v1/tasks` takes the optional `modes` (names, at most 16): the creating person chooses them in the same
+transaction (ways as above). The task row carries `modes` (`task_mode` list) while at least one is on.
+`AGENT_HUB_MODES_TEST` (`0`/`1`, default `0`) is a hub setting of §2.
+
 ## 5. Browser live channel
 
 `GET /v1/stream` (signed, read with `fetch` streaming; `Accept: text/event-stream`). Query: `org=<id>` (one
@@ -518,6 +532,8 @@ receive → browser frame: p95 < 300 ms on LAN.
 | `POST /v1/device/contexts/{object}/commit` | device:session | `{manifest,sig}` → `{completed_at,replayed}`: only the author device of an assigned workgroup (`403`); the manifest (`04-crypto.md` §4.11) names exactly the object's IDs and an epoch of the workgroup (`400 request_invalid` at the field), its signature verifies with the device key (`401 signature_invalid`), `chunks`/`size`/`digest` equal the stored chunks `0..chunks-1` (`400` at the field). Atomically `complete`; the same manifest and signature again `replayed`, anything else afterwards `409 id_conflict`. In the same transaction (one commit per task at a time) the task's complete checkpoints beyond the newest `AGENT_HUB_CONTEXT_KEEP` (order §4.6.3; never the one just committed) are deleted; audit `session.context_saved {chunks,size,pruned}` |
 | `GET /v1/device/contexts/{object}` / `GET /v1/device/contexts/{object}/chunks/{index}` | device:wg | → `{manifest,sig,created_at,completed_at}` / `{ct}` of a **complete** object of a workgroup the device is assigned to (a restore may run on any device of the workgroup); an upload in progress, an object of another workgroup or a missing chunk is `404 not_found` |
 | `POST /v1/device/sessions/{session}/browser/live` | device:session | `{frame?}` → `{until,kbps}`: the live frame of the session's platform browser (`04-crypto.md` §4.13, ≤ 512 KiB ciphertext; KOR-44, `13-work-vm.md` §13.6); the session must run on the calling device in a workgroup it is assigned to (`403 forbidden`); `frame.session` must be the path's session and `frame.wg` its workgroup (`400 request_invalid`); without a valid watch lease `409 not_watched`. The frame replaces the session's latest frame and is sent to the watching streams; an empty body only answers the lease |
+| `PUT /v1/device/tasks/{task}/modes/{mode}` **(KOR-75)** | device:wg | `{on, operation_id}` → `{mode: task_mode \| null}`: the outcome of an `accepted`/`executing` `task.mode` of this task that the calling device registered (else `404`); on needs the operation's `triggered_by` with `wg:write` (`403`), who becomes `chosen_by` (way `sentence`); `409 mode_needs`; audit `task.mode_on`/`task.mode_off` with the device as actor (17-working-modes.md §3) |
+| `PUT /v1/device/tasks/{task}/modes/{mode}/driver` **(KOR-75)** | device:wg | `{driver: {step, counters, next_at, at}}` → `{on}`: the driver state as metadata while the mode is on (an older report changes nothing; a new step name is audited `task.mode_driver`); the device state section `task_modes {api, tasks}` carries the modes and the last reported state of the tasks of the device's live sessions |
 | `POST /v1/device/pr-links` | device:session | `{session_id,epoch,tag,sealed?}` → `{replayed}`: the opaque tag of a pull request the main session created (ADR-072 §8) and its sealed body (`04-crypto.md` §4.11a, KOR-48; absent or null from an older runner), rights as for a chunk; the epoch must be one of the workgroup (`400` at `/epoch`); the same tag for the same task again `replayed`, for another task `409 id_conflict` (the first task keeps it); a tag a person linked is replaced by the device's link (audit `pr.linked {epoch, replaced:true}`, ADR-084 §1). An older hub refuses `sealed` (`request_invalid` at `/sealed`); the runner then registers once more without it |
 
 Outbox item kinds and their effect at the hub (closed list `contracts/enums/outbox-item-kinds.json`; credentials, operation registrations and device responses use their own endpoints, never the outbox):
@@ -819,6 +835,7 @@ original released its slot (`failed`, `expired`), or with other content (e.g. an
 | `security.report` | `{repo,ref,tool,passed,findings:{critical,high,medium,low,info},run_id?,summary?}` | `tool` `^[A-Za-z0-9._+-]{1,64}$`; `run_id` a `test.run` of this task (`not_found`) (KOR-51) | – (idempotency key only) | – | `{report_id,repo,ref,tool,passed,findings}` |
 | `github.merge` | `{repo,number,head_sha,method?:"merge"|"squash"|"rebase",github_identity?}` | allow-list (when set); pre-check and again right before the call: open and no draft (`merge_unsupported`), head = `head_sha` (`merge_outdated`), base not protected by the workgroup (`branch_protected`), the workgroup's `merge_criteria` and `separate_duties` (`rights_denied` with the sentence of the first criterion not met; ADR-094 §§5–6) | repo, number, head_sha | 24 h | `{merged:true,sha,number}`; `PUT …/pulls/{n}/merge` with `sha` = `head_sha`; GitHub's `405` ⇒ `rights_denied`, `409` ⇒ `merge_outdated` |
 | `task.set_title` | `{title}` | 1–120 chars, single line | – | – | `{}` (runner writes a device-authored `task.meta` event) |
+| `task.mode` | `{mode,on,quote?}` | `mode` a mode name; `on: true` needs `quote` (3–1000 chars), a part of the acting person's verified instruction of the turn (white space and case folded) – else `mode_not_instructed` (pre-check, KOR-75, ADR-098 §3; 17-working-modes.md §3) | – (idempotency key only) | – | `{mode,on}`; the runner reports the outcome with `PUT /v1/device/tasks/{task}/modes/{mode}` (`404` ⇒ `not_found`, `403` ⇒ `rights_denied`, `409 mode_needs` ⇒ `mode_needs`) |
 | `human.question` | `{question}` | 1–4000 chars; main sessions only (a subagent ⇒ `denied`, `rights_denied`) (KOR-39, ADR-076 §3) | – | – | `{}` – succeeds at once; the task waits for a person (`needs_decision/question`) until the next prompt answers it |
 | `human.approval` | `{question}` | as `human.question` | – | – | `{}` – as `human.question`, the view offers approve / decline (`needs_decision/approval`); the answer prompt starts with `Approved.` or `Declined.` |
 | `mail.find` (KOR-74, ADR-099 §4) | `{mailbox, from?, subject?, since?, until?, folder?, limit?, body?, id?, wait_seconds?}` | `mailbox` the name or ID of a mailbox released to the session's workgroup; `from`/`subject` 1–200 printable ASCII without `"` and `\`; `folder` `inbox`/`spam`/`all` (default); `limit` 1–20 (5); `id` `<folder>:<uid>`; `wait_seconds` 0–300 (0) | – | – | `{mailbox:{id,name,email}, messages:[{id,folder,from,to,subject,date,size,text?,links?,text_truncated?}], waited_seconds, timed_out}` – executed by the device over IMAP without a VM; waits for a matching mail that arrived at or after `since` (default two minutes before the request); `not_found` names the released mailboxes; read only |
@@ -906,7 +923,7 @@ Operation codes (in operation results): `unknown_type`, `params_invalid`, `repo_
 `agent_exited`, `prompt_refused`, `delivery_failed`, `device_offline`, `device_shutdown`, `capacity_exhausted`,
 `runtime_exceeded`, `budget_exceeded`, `credit_exhausted` (also a task's `scheduling` reason, `12-billing.md` §7), `oom`, `unassigned`. Additional operation codes: `tree_mismatch`, `no_changes`; `identity_forbidden` and `identity_unavailable` (KOR-47,
 ADR-078); `conflict_markers`, `conflicts_unresolved`, `merge_outdated`, `merge_pending`, `merge_unsupported`,
-`workspace_dirty` (KOR-48, ADR-084 §4). Additional: `identity_forbidden` (403, a GitHub identity the caller may not choose there; KOR-47).
+`workspace_dirty` (KOR-48, ADR-084 §4); `mode_not_instructed`, `mode_needs` (KOR-75, ADR-098 §3). Additional: `identity_forbidden` (403, a GitHub identity the caller may not choose there; KOR-47); working modes (KOR-75, ADR-098 §3): `mode_needs` (409, `detail.modes`), `mode_needs_instruction` (403, an agent paired in a session).
 
 ## 12. Limits and timeouts (defaults; configurable only where marked)
 

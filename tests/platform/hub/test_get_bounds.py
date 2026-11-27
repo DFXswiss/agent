@@ -67,6 +67,7 @@ BOUNDS: dict[str, str] = {
     "/v1/github-identities/{id}": ONE,
     "/v1/subscriptions/{id}": ONE,
     "/v1/mailboxes/{id}": ONE,
+    "/v1/modes": "structural: the catalogue of working modes, fixed by the contract (at most 64 entries, ADR-098)",
     "/v1/workgroups/{wg}/agent-profiles": (
         "structural: the built-in roles and the own profiles of one organization and workgroup, each created by an"
         " explicit change of a writer or an admin (administrative set)"

@@ -92,8 +92,9 @@ def test_device_rows_are_complete(index: dict[str, Any], contracts: Contracts) -
     assert "CTR-03" not in index["pending_owners"]
     rows = [e for e in index["endpoints"] if e["owner"] == "CTR-03"]
     # later packages add device rows of their own (KOR-33: context checkpoints; KOR-44: the browser; KOR-57: the
-    # orchestrator session; KOR-69: subscriptions; KOR-53: the analysis reads of a workgroup; KOR-74: mailboxes)
-    owners = ("KOR-33", "KOR-44", "KOR-57", "KOR-69", "KOR-53", "KOR-74")
+    # orchestrator session; KOR-69: subscriptions; KOR-53: the analysis reads of a workgroup; KOR-74: mailboxes;
+    # KOR-75: working modes)
+    owners = ("KOR-33", "KOR-44", "KOR-57", "KOR-69", "KOR-53", "KOR-74", "KOR-75")
     later = {e["path"] for e in index["endpoints"] if e["owner"] in owners}
     assert {e["path"] for e in rows} | later >= {
         e["path"] for e in index["endpoints"] if e["path"].startswith("/v1/device/")

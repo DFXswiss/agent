@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/task.mode_driver.json",
+  "title": "audit detail task.mode_driver",
+  "description": "detail of audit rows with action task.mode_driver: the driver of a working mode of a task reached a new step (target the task; actor the device that runs it; ADR-098 section 4). Metadata only: the mode and the step name; every value is flat.",
+  "type": "object",
+  "properties": {
+    "mode": {
+      "$ref": "../common.json#/$defs/mode_name"
+    },
+    "step": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,31}$"
+    }
+  },
+  "required": [
+    "mode",
+    "step"
+  ],
+  "additionalProperties": false
+}

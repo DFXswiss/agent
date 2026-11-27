@@ -1,0 +1,29 @@
+{
+  "name": "test",
+  "version": 1,
+  "title": {
+    "de": "Testmodus",
+    "en": "Test mode"
+  },
+  "summary": {
+    "de": "Prüft die Grundlage der Arbeitsweisen: Wahl, Anzeige, Ausschalten und einen Treiber, der die Sitzung einmal weckt. Nur in Testumgebungen.",
+    "en": "Checks the foundation of working modes: choice, display, switching off and a driver that wakes the session once. Test environments only."
+  },
+  "brief": "Working mode: test",
+  "operations": [],
+  "drivers": [
+    "test"
+  ],
+  "settings": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "needs": {
+    "modes": [],
+    "prerequisites": []
+  },
+  "accesses": [],
+  "passes_on": true,
+  "test": true
+}

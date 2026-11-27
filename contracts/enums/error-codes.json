@@ -687,6 +687,22 @@
       "source": "ADR-060"
     },
     {
+      "code": "mode_needs",
+      "statuses": [
+        409
+      ],
+      "origin": "hub",
+      "source": "ADR-098"
+    },
+    {
+      "code": "mode_needs_instruction",
+      "statuses": [
+        403
+      ],
+      "origin": "hub",
+      "source": "ADR-098"
+    },
+    {
       "code": "account_code_invalid",
       "statuses": [
         400

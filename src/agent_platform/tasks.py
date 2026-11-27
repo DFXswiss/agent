@@ -45,6 +45,10 @@ decides; a device that cannot decide yet is `peer_outdated`.
 
 KOR-52 (ADR-095): the task rows of `task list` and `task show` carry the main agent as people see it (`agent`:
 `<name> #<number>`, with `number` and `name_source`; `agentnames`).
+
+KOR-75 (ADR-098 section 3): `task create --mode NAME` (repeatable) chooses working modes with the task (`modes` of
+`POST /v1/tasks`; a refusal as `modes.refusal`), and `task show` lists the modes that are on (`modes`, `modes_line`;
+`modes.view`).
 """
 
 from __future__ import annotations
@@ -60,6 +64,8 @@ from agent_platform.diagnose import WAITING, task_next
 from agent_platform.errors import PlatformError
 from agent_platform.eventio import open_item, seal
 from agent_platform.hub import segment
+from agent_platform.modes import mode_names, refusal
+from agent_platform.modes import view as mode_view
 from agent_platform.orgs import VM_ID, device_assign, find_org
 from agent_platform.reader import scope_events
 from agent_platform.sessions import runtime_seconds
@@ -180,16 +186,19 @@ def task_create(
     github_identity: str | None = None,
     title: str | None = None,
     analysis: dict[str, str] | None = None,
+    modes: list[str] | None = None,
 ) -> dict[str, Any]:
     """A new task with its first prompt in workgroup `wg` (on the chosen device and VM and with the chosen GitHub
-    identity, if any; without a device choice an admin's workgroup without a device gets one first, `ensure_device`).
-    `title` replaces the title derived from the prompt and `analysis` makes it an analysis task (`agent_platform.
-    optimize`, ADR-097 section 1)."""
+    identity and working modes, if any; without a device choice an admin's workgroup without a device gets one first,
+    `ensure_device`). `title` replaces the title derived from the prompt and `analysis` makes it an analysis task
+    (`agent_platform.optimize`, ADR-097 section 1)."""
     org = find_org(account, _id(wg))
     prompt = _prompt(text)
     fixed = derive_title(prompt) if title is None else title
     placement = _placement(device, vm)
-    chosen = {} if github_identity is None else {"github_identity": _id(github_identity)}
+    chosen: dict[str, object] = {} if github_identity is None else {"github_identity": _id(github_identity)}
+    if modes:
+        chosen["modes"] = mode_names(modes)
     assigned = ensure_device(account, org, wg) if placement is None else None
     task = uuid7()
     events = [
@@ -206,7 +215,7 @@ def task_create(
     except PlatformError as error:
         if error.fields.get("hub_error") == "no_device":
             raise PlatformError("no_device") from None
-        raise
+        raise refusal(error) from None
     session = answer.get("session")
     return {
         "org_id": org,
@@ -370,6 +379,7 @@ def task_show(account: Account, task: str) -> dict[str, Any]:
         "device_failure": device_failure(_main_row(answer)),
         "waiting": waiting_reason(row),
         "next": task_next(row),
+        **mode_view(account, org, row),
         "title": titles[-1] if titles else None,
         "events": annotate(account, (org, wg, task), chat, metas),
         "unverified": skipped,

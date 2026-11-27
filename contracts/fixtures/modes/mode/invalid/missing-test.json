@@ -1,0 +1,26 @@
+{
+  "name": "test",
+  "version": 1,
+  "title": {
+    "de": "Testmodus",
+    "en": "Test mode"
+  },
+  "summary": {
+    "de": "Nur in Testumgebungen.",
+    "en": "Test environments only."
+  },
+  "brief": "Working mode: test",
+  "operations": [],
+  "drivers": [],
+  "settings": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "needs": {
+    "modes": [],
+    "prerequisites": []
+  },
+  "accesses": [],
+  "passes_on": false
+}

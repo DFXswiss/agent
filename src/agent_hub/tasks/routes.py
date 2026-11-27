@@ -15,10 +15,10 @@ from __future__ import annotations
 import asyncio
 import functools
 import re
-from typing import Any, cast
+from typing import Annotated, Any, cast
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from agent_hub.agents.identity import actor
 from agent_hub.errors import HubError
@@ -54,6 +54,9 @@ class CreateTaskRequest(BaseModel):
     placement: Placement | None = None
     github_identity: str | None = None
     analysis: dict[str, Any] | None = None
+    modes: list[Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,31}$")]] = Field(
+        default_factory=list, max_length=16
+    )
 
 
 class PromptRequest(BaseModel):
@@ -109,6 +112,8 @@ async def create_task(context: Context, principal: CurrentPrincipal, body: Creat
         github_identity=identity,
         author=actor(principal).id,
         analysis=body.analysis,
+        modes=list(dict.fromkeys(body.modes)),
+        principal=principal,
     )
     return await asyncio.to_thread(_run, context, write, user, task_id, wg_id, body.events)
 

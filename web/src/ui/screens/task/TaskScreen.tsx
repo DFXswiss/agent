@@ -8,7 +8,8 @@
 // names device and VM of the main session ("on <device> · vm-…", ADR-075 section 6).
 // The task's GitHub identity is shown below it; writers change it (`TaskIdentity.tsx`, ADR-078). Below the title the
 // name and handle of the task's main agent, with "Rename" for writers (`TaskAgent.tsx`, ADR-095).
-// An analysis task carries the badge "Analysis" next to its state (ADR-097 section 6).
+// An analysis task carries the badge "Analysis" next to its state (ADR-097 section 6). Below identity and profile the
+// task's working modes as chips with "Switch off" and the notice line of the newest choice (`TaskModes.tsx`, ADR-098).
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { closeTask, loadChat } from '../../../core/chat/actions';
@@ -32,6 +33,7 @@ import { ModelSwitchLine } from './ModelSwitchLine';
 import { TaskAgent } from './TaskAgent';
 import { activeTab, Tabs } from './Tabs';
 import { TaskIdentity } from './TaskIdentity';
+import { TaskModes } from './TaskModes';
 import { TaskProfile } from './TaskProfile';
 import { AnalysisBadge } from '../../analysis/AnalysisBadge';
 import { Unlocking } from '../../unlock/Unlocking';
@@ -171,6 +173,7 @@ function TaskView({ row }: { readonly row: TaskRow }) {
             <TaskIdentity row={row} writer={writer && row.state !== 'closed'} orgName={directory.orgName} />
             <TaskProfile row={row} writer={writer && row.state !== 'closed'} />
           </div>
+          <TaskModes row={row} writer={writer && row.state !== 'closed'} directory={directory} />
         </div>
         {writer && <TaskMenu task={row} />}
       </header>

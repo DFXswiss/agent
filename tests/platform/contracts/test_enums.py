@@ -44,7 +44,9 @@ SPEC_ERRORS: dict[int, str] = {
     # 14-community.md section 4.1 (KOR-26)
     " community_muted"
     # ADR-078 (contracts/changes/KOR-47.md)
-    " identity_forbidden",
+    " identity_forbidden"
+    # ADR-098 (contracts/changes/KOR-75.md): a session's agent cannot switch a mode on without an instruction
+    " mode_needs_instruction",
     404: "not_found invite_unknown pairing_unknown identity_unproven",
     409: "id_conflict event_conflict seq_conflict version_conflict origin_seq_gap origin_seq_conflict no_device"
     " already_assigned rotation_required no_device_available invite_registered peer_outdated"
@@ -53,7 +55,9 @@ SPEC_ERRORS: dict[int, str] = {
     # 14-community.md section 4.1 (KOR-26)
     " community_not_member community_epoch_exists community_no_key placement_invalid"
     # 13-work-vm.md section 13.6 (contracts/changes/KOR-44.md): no valid watch lease for live frames
-    " not_watched",
+    " not_watched"
+    # ADR-098 (contracts/changes/KOR-75.md): a mode whose needs are off
+    " mode_needs",
     410: "invite_expired",
     413: "quota_exceeded",  # KOR-33 (ADR-072 section 6): a context checkpoint over its quota
     429: "rate_limited",
@@ -81,6 +85,7 @@ SPEC_OPERATION_ERRORS = (
     " conflict_markers conflicts_unresolved merge_outdated merge_pending merge_unsupported"
     " workspace_dirty"  # ADR-084 (contracts/changes/KOR-48.md)
     " device_failed"  # ADR-087 section 4 (contracts/changes/KOR-58.md)
+    " mode_not_instructed mode_needs"  # ADR-098 section 3 (contracts/changes/KOR-75.md)
 )
 SPEC_SESSION_FAILURES = (
     "model_access_unavailable vm_start_failed guest_unreachable sandbox_failed agent_start_failed agent_exited"
@@ -182,6 +187,7 @@ KOR51_AUDIT = "agent_profile.set agent_profile.delete task.agent_profile"
 KOR56_AUDIT = "support.people support.write support.name"
 # ADR-099 section 7 (contracts/changes/KOR-74.md): a session read a mailbox; the reads come from INDEX.json.
 KOR74_AUDIT = "mail.read"
+KOR75_AUDIT = "task.mode_on task.mode_off task.mode_driver"  # ADR-098 sections 3 and 4
 # rule E-40, ADR-102 (KOR-76): the renewal of a browser session
 KOR76_AUDIT = "auth.session_renew"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
@@ -317,7 +323,7 @@ def test_audit_actions(index: dict[str, Any]) -> None:
     expected = set(SPEC_AUDIT_FIXED.split()) | set(DECIDED_AUDIT.split()) | set(KOR31_AUDIT.split())
     expected |= set(KOR47_AUDIT.split()) | set(KOR50_AUDIT.split()) | set(KOR48_AUDIT.split())
     expected |= set(KOR58_AUDIT.split()) | set(KOR51_AUDIT.split()) | set(KOR56_AUDIT.split())
-    expected |= set(KOR74_AUDIT.split()) | set(KOR76_AUDIT.split())
+    expected |= set(KOR74_AUDIT.split()) | set(KOR75_AUDIT.split()) | set(KOR76_AUDIT.split())
     for prefix, values in SPEC_AUDIT_PATTERNS.items():
         expected |= {f"{prefix}.{value}" for value in values.split()}
     expected |= {f"read.{e['read_resource']}" for e in index["endpoints"] if e["read_resource"]}
