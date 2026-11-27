@@ -1022,6 +1022,15 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   cause: exhausted|unusable|released, until}`; the access values are `subscription`, `operator` (an operator
   subscription), `api_key` and `platform`. The hub tells the task's owner with the notification `model.switched`
   (`ref` = `<from>:<to>:<until or empty>`).
+- **Model rate limit** (FIX-02, `model.retry`, in the same daemon task): a main session whose turn Claude Code ended
+  with `StopFailure` `rate_limit`, `overloaded` or `server_error` (guest `session.state idle` `stop_error`) is
+  continued by the platform after 60 s, 180 s and 600 s - at most three continuations until a turn ends normally -
+  with the sentence "The model provider refused the last request for a while (rate limit or overload), so your last
+  turn ended early. Continue the interrupted work where you stopped." and the platform's sender line
+  (`runner.turn_retry`). A person's waiting prompt, an ended session or a credit or model pause drops it. Every
+  continuation the platform hands over by itself (credit, model pause, rate limit) acts for the person of the turn it
+  continues (`credentials.acting.continuation`, `runner.platform_prompt`), so that turn keeps the person's GitHub
+  connection.
 
 ### 10.8 Quotas of the operator's subscriptions (ADR-081 section 6)
 

@@ -248,6 +248,10 @@ TABLES = {
         "suspended",
         "resumed_at",
     ],
+    # 0040 (FIX-02): prompts the platform hands over by itself with the person of the turn they continue; turns a
+    # retryable model error ended and that the platform continues
+    "platform_prompt": ["prompt_id", "session_id", "actor_id", "created_at"],
+    "turn_retry": ["session_id", "stop_error", "failed_at", "attempts", "due_at", "continued_at"],
     # 0023 (KOR-50, ADR-081 section 7): the sealed DFX key envelopes of an org device, the requests an issuer answered
     "dfx_key": ["org_id", "key_ref", "issuer_device_id", "envelope", "accepted_at"],
     "dfx_key_issued": ["request_id", "org_id", "device_id", "key_ref", "issued_at"],

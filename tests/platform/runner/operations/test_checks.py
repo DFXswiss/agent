@@ -125,6 +125,13 @@ def test_every_type_accepts_valid_parameters(op_type: str) -> None:
     assert checks.check(request(op_type, VALID[op_type])) == checks.effective(op_type, VALID[op_type], SETTINGS)
 
 
+def test_a_comment_may_ask_for_the_a38_check() -> None:
+    """FIX-02: `a38_review` passes the formal checks as a boolean and nothing else."""
+    params = {"repo": REPO, "number": 1, "body": "x", "a38_review": True}
+    assert checks.check(request("github.comment", params))["a38_review"] is True
+    assert refused("github.comment", {**params, "a38_review": "yes"}).code == "params_invalid"
+
+
 def test_unknown_types_are_refused() -> None:
     failed = refused("github.delete_repo", {})
     assert failed.code == "unknown_type"

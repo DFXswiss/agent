@@ -251,7 +251,9 @@ wipe never changes the identity (legacy rule).
 Further runner tables added by later migrations (`profile_event`, `prompt_event`, `workgroup_settings`,
 `operation_result`, `metric_pending`, `read_event`, `operator_binding` – the operator's token file a session is bound
 to, file name only, ADR-052; KOR-50 / ADR-081: `access_limit` – used-up or blocked subscription accesses kept across
-restarts, `model_pause` – sessions paused for model quota, `dfx_key` – the sealed envelope of an org device's DFX key
+restarts, `model_pause` – sessions paused for model quota; FIX-02: `platform_prompt` – prompts the platform hands
+over by itself with the acting user of the turn they continue, `turn_retry` – turns a model rate limit ended and their
+continuation; `dfx_key` – the sealed envelope of an org device's DFX key
 per organization, `dfx_key_issued` – the requests an issuing platform device answered; KOR-35: `usage_pending` – the
 usage deltas of a session merged over 10 s before they become one outbox item `usage`, counts only, ADR-086; KOR-45:
 `subagent_instruction` – the instructions of a child session in their order of creation with their acting user and

@@ -14,6 +14,12 @@ ADR-027 section 3 (additive). Decisions: [docs/platform/decisions/FIX-02.md](../
 - Result: new optional `a38 {run, head, signal?, timings_ms {queued, account, check, post, total}}`; new `$defs`
   `duration_ms`.
 
+## Guest journal `session.state` (`guest/journal/record.json`)
+- New optional `stop_error` of the state change, only with `idle` after Claude Code's `StopFailure`: the error class
+  (`rate_limit`, `overloaded`, `server_error`, `authentication_failed`, `billing_error`, `invalid_request`,
+  `model_not_found`, `max_output_tokens`, `unknown`). The runner continues a turn ended by `rate_limit`, `overloaded`
+  or `server_error` (`model.retry`); an older runner ignores the field.
+
 ## Guest
 Version 0.8.0: the contracts the guest bundles change. The runner sends `known` only to guests from 0.8.0
 (`guest_features.KNOWN_EXPORT`); an older guest cannot request `a38_review` (its bundled contracts refuse the

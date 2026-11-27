@@ -278,6 +278,7 @@ TYPES: Mapping[str, TypeRules] = {
             "repo": REPO,
             "number": _number,
             "body": _text(1, rules.COMMENT_LIMITS["body_max_length"]),
+            "a38_review": BOOL,  # FIX-02: posted only when the A38 guard would count it
             "github_identity": UUID,
         },
         ("repo", "number", "body"),

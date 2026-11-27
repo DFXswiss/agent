@@ -1,7 +1,8 @@
 # FIX-02 – decisions: a finished review comment reaches GitHub in seconds
 
 A session that had finished an A38 review text needed minutes to post it: its work VM calls timed out again and
-again, and before posting it rebuilt the A38 format check by hand. Both causes are closed as classes
+again, before posting it rebuilt the A38 format check by hand, its posting step was then refused because the turn had
+no acting user, and a model rate limit stopped it until the person wrote again. All four causes are closed as classes
 ([KONZEPT.md E-19](../KONZEPT.md#e-19)); the check is a platform operation that needs no VM
 ([KONZEPT.md E-37](../KONZEPT.md#e-37)).
 
@@ -58,7 +59,44 @@ otherwise the operation fails `params_invalid` with the guard's reasons, and not
 - The harness rules tell sessions to use it and to put the finished text into `body` directly instead of a file of
   the work VM.
 
-## 4. Measurement
+## 4. The posting step lost the person (`github_not_connected`)
+
+Same task, 17:01:21 UTC: `github.comment` of the main session was rejected `github_not_connected` with
+`acting.NO_ACTOR` - the operation was stamped without an acting user. What the platform recorded: the person's prompt
+"done" at 16:53:52 opened the turn (`session.working` 16:53:54); the session did not become `idle` before 17:04:31, it
+journaled two `session.error` events at 16:56:13 and 16:56:17, and the rejected request came in that same stretch. The
+event bodies are sealed, so which record left `runner.session.turn_actor` empty cannot be read back; the pipeline only
+logged `no_acting_user operation_id=...`.
+
+The acting user belongs to a turn and is taken only from the verified author of an accepted prompt. Every turn the
+platform starts by itself has no such author, and its operations are refused although they continue a person's
+instruction: the continuation after credit (`billing.pause`) and after a model pause (`model.fallback`) - and, with
+this change, after a model rate limit. Changed:
+
+- `credentials.acting.continuation` records a platform prompt before it is registered, with the session's
+  `turn_actor` at that moment (the person of the interrupted turn; it stays after `idle`). When the guest accepts the
+  prompt, that person acts in the new turn (`prompt_accepted`), once and only in that session; another person's open
+  turn still makes it unknown, as before. Migration `0040`, table `runner.platform_prompt`. All three continuations use
+  it.
+- A refusal for a missing acting user now logs why: `no_acting_user operation_id= session_id= turn_open=<bool>
+  last_prompt=<author|no_author|none>` (`acting.unknown_cause`), so the next case names its cause.
+
+## 5. The model rate limit stopped the session (`429`)
+
+17:02:29 UTC: `API Error: Request rejected (429)`. Claude Code ends such a turn with the hook `StopFailure`, whose body
+names the error class (`error`: `rate_limit`, `overloaded`, `server_error`, ...). The guest made the session `idle` and
+dropped the class; the model fallback acts only on used-up quota readings, so nothing continued the turn and the
+posting waited for a new prompt (the person wrote twice, 17:04:39 and 17:06:04). Changed:
+
+- The guest journals the class with the `idle` state (`stop_error`, guest 0.8.0; `hook_addons.idle`,
+  `control_routes.control.turn_ended`).
+- `model.retry`: an `idle` with `rate_limit`, `overloaded` or `server_error` of a main session is continued by the
+  platform after 1, 3 and 10 minutes (at most three continuations until a turn ends normally), with the platform's
+  sender line and the person of the interrupted turn (section 4). It does nothing when a person's prompt waits, the
+  session ended, or a credit or model pause holds the session (that pause continues it). Migration `0040`, table
+  `runner.turn_retry`; run by the daemon task `model_fallback`.
+
+## 6. Measurement
 
 The result's `a38.timings_ms` and the log line `runner.github a38_review` record every step from the operation
 reaching the runner ("comment text ready") to the posted comment: `queued`, `account`, `check`, `post`, `total`; a

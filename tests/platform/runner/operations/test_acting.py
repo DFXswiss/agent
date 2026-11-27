@@ -171,6 +171,77 @@ def test_a_prompt_without_known_author_leaves_the_turn_without_acting_user(rig: 
     run(rig, body)
 
 
+def test_a_platform_continuation_keeps_the_person_of_the_interrupted_turn(rig: Rig) -> None:
+    """FIX-02: the continuation the platform hands over by itself (credit back, model pause, model rate limit) acts
+    for the person whose turn it continues - once, only in its own session, and never over another person's open
+    turn."""
+
+    async def body(env: Any) -> None:
+        kit = await setup(env)
+        turns = Turns(kit, await kit.session(actor=None))
+        other = await kit.session(2, actor=None)
+        async with env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.session SET turn_open = false")
+        await turns.accepted(await turns.prompt(ALICE))
+        await turns.idle()  # the turn ended early (a rate limit): alice stays the last acting user
+        continued = uuid7()
+        async with env.pool.connection() as conn:
+            assert await acting.continuation(conn, turns.sid, continued) == ALICE
+            assert await acting.continuation(conn, turns.sid, continued) == ALICE  # a repeated hand-over
+        await turns.accepted(continued)
+        assert await turns.turn() == (ALICE, True)
+        assert await turns.request() == ALICE
+        async with env.pool.connection() as conn:
+            cur = await conn.execute("SELECT count(*) FROM runner.platform_prompt")
+            assert await cur.fetchone() == (0,)  # used once
+        await turns.idle()
+        await turns.accepted(continued)  # a replayed acceptance is no continuation any more
+        assert await turns.turn() == (None, True)
+        await turns.idle()
+        # a continuation recorded for this session does not act in another one
+        elsewhere = uuid7()
+        async with env.pool.connection() as conn:
+            assert await acting.continuation(conn, turns.sid, elsewhere) is None  # the last turn had nobody
+            assert await acting.continuation(conn, other, uuid7()) is None
+        await turns.journal(
+            "session.state", {"state": "prompt_accepted", "prompt_id": elsewhere, "at": REQUESTED_AT}, other
+        )
+        await turns.accepted(elsewhere)
+        assert await turns.turn() == (None, True)
+        await turns.idle()
+        # bob's turn is open: a continuation of alice's earlier turn joining it leaves nobody acting
+        await turns.accepted(await turns.prompt(ALICE))
+        await turns.idle()
+        late = uuid7()
+        async with env.pool.connection() as conn:
+            assert await acting.continuation(conn, turns.sid, late) == ALICE
+        await turns.accepted(await turns.prompt(BOB))
+        await turns.accepted(late)
+        assert await turns.turn() == (None, True)
+        assert await turns.request() is None
+
+    run(rig, body)
+
+
+def test_the_cause_of_a_missing_acting_user_is_named(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        kit = await setup(env)
+        turns = Turns(kit, await kit.session(actor=None))
+        async with env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.session SET turn_open = false WHERE id = %s", (turns.sid,))
+            assert await acting.unknown_cause(conn, turns.sid) == "turn_open=false last_prompt=none"
+            assert await acting.unknown_cause(conn, uuid7()) == "turn_open=unknown last_prompt=none"
+        alice = await turns.prompt(ALICE)
+        await turns.accepted(alice)
+        async with env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.prompt_delivery SET state = 'accepted' WHERE event_id = %s", (alice,))
+            assert await acting.unknown_cause(conn, turns.sid) == "turn_open=true last_prompt=author"
+            await conn.execute("UPDATE runner.prompt_event SET author_id = NULL WHERE event_id = %s", (alice,))
+            assert await acting.unknown_cause(conn, turns.sid) == "turn_open=true last_prompt=no_author"
+
+    run(rig, body)
+
+
 def test_a_child_session_acts_for_the_person_who_instructed_its_parent(rig: Rig) -> None:
     async def body(env: Any) -> None:
         kit = await setup(env)

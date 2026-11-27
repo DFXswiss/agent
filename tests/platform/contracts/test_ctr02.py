@@ -189,7 +189,7 @@ SPEC_JOURNAL = {
 }
 # Additions (decisions CTR-02): harness_version (05-runner.md section 8), truncated (64 Ki cut), rule (hook.denied).
 JOURNAL_ADDITIONS = {
-    "session.state": "harness_version",
+    "session.state": "harness_version stop_error",  # contracts/changes/FIX-02.md (a turn a model error ended)
     "session.output": "truncated",
     "session.hook": "rule counts tools from to",  # contracts/changes/KOR-35.md (summary of routine calls)
     "usage": "provider_outside_allowlist",  # contracts/changes/GST-04.md

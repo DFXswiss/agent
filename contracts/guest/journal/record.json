@@ -37,6 +37,21 @@
             "harness_version": {
               "$ref": "../../common.json#/$defs/sha256_hex"
             },
+            "stop_error": {
+              "description": "FIX-02, only with state idle after a StopFailure: the error class Claude Code named; a class not listed is unknown",
+              "type": "string",
+              "enum": [
+                "rate_limit",
+                "overloaded",
+                "server_error",
+                "authentication_failed",
+                "billing_error",
+                "invalid_request",
+                "model_not_found",
+                "max_output_tokens",
+                "unknown"
+              ]
+            },
             "at": {
               "$ref": "../../common.json#/$defs/time"
             }

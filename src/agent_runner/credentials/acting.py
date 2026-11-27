@@ -19,6 +19,13 @@ keeps it so).
   user's, ADR-082) becomes the acting user of the main session when no turn is open; a second prompt in the same
   open turn (no `idle` since) by another or an unknown author makes it unknown (NULL) until the next turn. `idle`
   closes the turn; the last acting user stays for what the turn still journals.
+- **Platform continuation** (FIX-02): a prompt the platform hands a main session by itself - the continuation after
+  credit (`billing.pause`), after a model pause (`model.fallback`) or after a model rate limit (`model.retry`) - is
+  no person's prompt, but it continues the turn a person started. `continuation(conn, session_id, prompt_id)` records
+  it before it is registered, with the session's `turn_actor` at that moment (the person of the interrupted turn); when
+  the guest accepts it, that person acts in the new turn under the rule above (a person's prompt in the same open turn
+  still makes it unknown). Without this the continued turn had no acting user, and a GitHub operation the person had
+  asked for was refused with `NO_ACTOR`.
 - **Turn of a child session** (`instruction_accepted`, ADR-088 section 1): a child's prompts are the instructions of
   its parent (`runner.subagent_instruction`, prompt ID = operation ID), one per turn. When the child accepts one, the
   acting user of that instruction's operation (`subagent.request` or `subagent.instruct`, the person who instructed
@@ -111,8 +118,21 @@ async def prompt_accepted(conn: AsyncConnection[Any], session_id: str, prompt_id
     """A prompt of the session was accepted: its verified author acts in the turn (module docstring, "Turn"). A prompt
     ID that names no stored prompt being delivered to this session (its delivery row `registered` or `typed`; this
     observer runs before the delivery's, which marks it `accepted`) has no known author - a replayed or forged
-    acceptance of an earlier prompt never brings back its author."""
+    acceptance of an earlier prompt never brings back its author. A platform continuation of this session
+    (`continuation`) acts for the person recorded with it, once: its row is removed on acceptance."""
     known = prompt_id if _UUID_RE.fullmatch(prompt_id) else None
+    cursor = await conn.execute(
+        "DELETE FROM runner.platform_prompt WHERE prompt_id = %s AND session_id = %s RETURNING actor_id::text",
+        (known, session_id),
+    )
+    continued = await cursor.fetchone()
+    if continued is not None:
+        await conn.execute(
+            "UPDATE runner.session SET turn_actor = CASE WHEN turn_open AND turn_actor IS DISTINCT FROM %s::uuid"
+            " THEN NULL ELSE %s::uuid END, turn_open = true WHERE id = %s",
+            (continued[0], continued[0], session_id),
+        )
+        return
     await conn.execute(
         "UPDATE runner.session s SET turn_actor = CASE WHEN s.turn_open AND s.turn_actor IS DISTINCT FROM a.author"
         " THEN NULL ELSE a.author END, turn_open = true FROM (SELECT (SELECT e.author_id FROM runner.prompt_event e"
@@ -121,6 +141,42 @@ async def prompt_accepted(conn: AsyncConnection[Any], session_id: str, prompt_id
         " AS author) a WHERE s.id = %s",
         (known, session_id, session_id),
     )
+
+
+async def unknown_cause(conn: AsyncConnection[Any], session_id: str) -> str:
+    """Why a session's operation had no acting user, for the log (FIX-02): `turn_open=<bool> last_prompt=<author|
+    no_author|none>` - whether the turn was still running and whether the session's latest accepted prompt of a person
+    had a verified author. A turn that is running while that prompt had an author was started by something else than
+    that prompt (a second prompt in the same turn, or a turn without a prompt of a person)."""
+    cursor = await conn.execute(
+        "SELECT s.turn_open, (SELECT e.author_id IS NOT NULL FROM runner.prompt_delivery d JOIN runner.prompt_event e"
+        " ON e.event_id = d.event_id WHERE d.session_id = s.id AND d.state = 'accepted'"
+        " ORDER BY d.updated_at DESC, d.scope_seq DESC LIMIT 1) FROM runner.session s WHERE s.id = %s",
+        (session_id,),
+    )
+    found = await cursor.fetchone()
+    if found is None:
+        return "turn_open=unknown last_prompt=none"
+    last = "none" if found[1] is None else "author" if found[1] else "no_author"
+    return f"turn_open={'true' if found[0] else 'false'} last_prompt={last}"
+
+
+async def continuation(conn: AsyncConnection[Any], session_id: str, prompt_id: str) -> str | None:
+    """Record a prompt the platform hands the session by itself (credit back, model pause ended, model rate limit;
+    FIX-02) with the acting user of the turn it continues - the session's `turn_actor`, which stays after `idle` - and
+    return that person (None: the continued turn had none). A repeated hand-over of the same prompt keeps the first
+    record. Call it before the prompt is registered at the guest."""
+    await conn.execute(
+        "INSERT INTO runner.platform_prompt (prompt_id, session_id, actor_id)"
+        " SELECT %s, s.id, s.turn_actor FROM runner.session s WHERE s.id = %s ON CONFLICT (prompt_id) DO NOTHING",
+        (prompt_id, session_id),
+    )
+    cursor = await conn.execute(
+        "SELECT actor_id::text FROM runner.platform_prompt WHERE prompt_id = %s AND session_id = %s",
+        (prompt_id, session_id),
+    )
+    found = await cursor.fetchone()
+    return None if found is None else found[0]
 
 
 async def instruction_accepted(conn: AsyncConnection[Any], session_id: str, prompt_id: str) -> None:

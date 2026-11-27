@@ -26,8 +26,8 @@ produce it.
   `"` becomes `'`, `(` and `)` become `[` and `]` (a name cannot imitate the `(member ...)` part); white space
   collapsed; at most `NAME_MAX` characters. Without a usable name the line reads
   `an unnamed member` (unquoted, so it is never mistaken for a chosen name).
-- **Platform** (`PLATFORM_CONTINUATION`): the continuation prompt the runner itself writes after a credit
-  (`billing.pause`) names the platform, never a person.
+- **Platform** (`PLATFORM_CONTINUATION`, `PLATFORM_RETRY`): the continuation prompt the runner itself writes after a
+  credit (`billing.pause`) or after a model rate limit (`model.retry`, FIX-02) names the platform, never a person.
 - **Older guest** (`register`, `unsupported`): a guest whose golden does not know the field refuses it with
   `400 request_invalid` (the line passed the contract, so nothing else can be meant). The registration is sent once
   more without it; this is logged (`runner.prompts speaker_unsupported ...`) and reported once per VM and daemon as
@@ -74,6 +74,10 @@ IMITATIONS = ("agent dfx swiss instruction from", "hook additional context", "sy
 PLATFORM_CONTINUATION = (
     PREFIX + "the platform (not a person): the organization's credit is available again and the interrupted"
     " instruction continues."
+)
+PLATFORM_RETRY = (
+    PREFIX + "the platform (not a person): the model provider refused the last request for a while (rate limit or"
+    " overload) and the interrupted instruction continues."
 )
 UNSUPPORTED = "speaker_unsupported"
 _SEPARATORS_RE = re.compile(r"[\W_]+")
