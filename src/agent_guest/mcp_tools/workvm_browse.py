@@ -2,8 +2,9 @@
 
 Forwarded as ``workvm.call`` (``_forward.workvm_tool``, no ``wait_seconds``: the guest waits up to 33 s). The runner
 drives the preinstalled Chromium of the session's work VM (obtaining a standard task VM first when the session has
-none) and answers with the page; a screenshot is brought into the workspace at ``path``. The result is checked against
-``mcp/tools/workvm_browse.output.json``.
+none) and answers with the page; a screenshot is brought into the workspace at ``path``. While the implicit start of
+the VM goes on the runner answers in time with ``state`` ``starting`` instead (13-work-vm.md §3). The result is
+checked against ``mcp/tools/workvm_browse.output.json``.
 """
 
 from __future__ import annotations
@@ -16,9 +17,10 @@ TOOL = _forward.workvm_tool(
     "(default) returns the final URL, HTTP status, title and visible text; screenshot saves a full page PNG into "
     "your workspace at path (default .workvm/screenshots/<job_id>.png), view it with Read; click clicks selector, "
     "fill types text into selector, both then read the page. wait_ms waits after loading. Obtains a work VM "
-    "automatically if you have none. For complex flows (logins, several steps, assertions) write a Playwright "
-    "script and run it with workvm_exec. This browser is neither recorded nor watched by the user and is meant for "
-    "automation, tests and apps running in your work VM; for what a person would do in a browser (sign-ins, forms, "
-    "downloads, checking a page on the internet) use the platform browser (browser_* tools), which is recorded and "
-    "watched live.",
+    "automatically if you have none; while it is still starting the answer is state starting: call again in a "
+    "minute or follow the start with workvm_status. For complex flows (logins, several steps, assertions) write a "
+    "Playwright script and run it with workvm_exec. This browser is neither recorded nor watched by the user and is "
+    "meant for automation, tests and apps running in your work VM; for what a person would do in a browser "
+    "(sign-ins, forms, downloads, checking a page on the internet) use the platform browser (browser_* tools), which "
+    "is recorded and watched live.",
 )

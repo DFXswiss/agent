@@ -12,7 +12,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -30,6 +30,8 @@ from agent_runner.sync import outbox as sync_outbox
 from agent_runner.sync.runtime import SyncRuntime
 from agent_runner.vm import tasks as vm_tasks
 from agent_runner.vm.capacity import Capacity
+from agent_runner.workvm import service as workvm_service
+from agent_runner.workvm.manager import Deps, StartTimes, WorkVms
 
 from .conftest import FIXTURES
 
@@ -70,7 +72,12 @@ def snapshot(**overrides: Any) -> Snapshot:
         backlog=3,
         counters={"agent_runner_device_verify_failures_total": 2, "agent_runner_device_metrics_dropped_total": 0,
                   "agent_runner_vm_start_failures_total": 1, "agent_runner_operator_github_connects_total": 0,
-                  "agent_runner_operator_github_connect_failures_total": 0},
+                  "agent_runner_operator_github_connect_failures_total": 0,
+                  "agent_runner_workvm_starts_total": 3, "agent_runner_workvm_cold_starts_total": 1,
+                  "agent_runner_workvm_start_queue_seconds_total": 0.5,
+                  "agent_runner_workvm_start_clone_seconds_total": 12.25,
+                  "agent_runner_workvm_start_boot_seconds_total": 30.0,
+                  "agent_runner_workvm_start_ready_seconds_total": 4.125},
     )  # fmt: skip
     running = VmEntry(
         vm_id="vm-0a1b2c3d",
@@ -104,7 +111,8 @@ def snapshot(**overrides: Any) -> Snapshot:
 def test_rendered_textfile_matches_the_promtool_checked_sample() -> None:
     """`fixtures/agent_runner.prom` is the sample `promtool check metrics` (Prometheus 3.11.0) passed on
     (board report RUN-15; the two gauges of the outbox scope queues were added by KOR-10 in the same form, checked by
-    reading); the renderer must keep producing exactly it."""
+    reading; the work VM start counters were added with their sample and passed `promtool check metrics` 3.11.0
+    again); the renderer must keep producing exactly it."""
     text = textfile.render(textfile.metrics_of(snapshot()))
     assert text == (FIXTURES / "agent_runner.prom").read_text(encoding="utf-8")
 
@@ -123,6 +131,9 @@ def test_every_metric_has_help_and_type_and_labels_are_ids() -> None:
         "agent_runner_device_capacity_low", "agent_runner_device_verify_failures_total",
         "agent_runner_device_metrics_dropped_total", "agent_runner_vm_start_failures_total",
         "agent_runner_operator_github_connects_total", "agent_runner_operator_github_connect_failures_total",
+        "agent_runner_workvm_starts_total", "agent_runner_workvm_cold_starts_total",
+        "agent_runner_workvm_start_queue_seconds_total", "agent_runner_workvm_start_clone_seconds_total",
+        "agent_runner_workvm_start_boot_seconds_total", "agent_runner_workvm_start_ready_seconds_total",
         "agent_runner_device_model_spend_usd", "agent_runner_vm_probe_ok", "agent_runner_vm_state",
         "agent_runner_vm_cpu_ratio", "agent_runner_vm_memory_bytes", "agent_runner_vm_memory_limit_bytes",
         "agent_runner_vm_disk_used_bytes", "agent_runner_vm_disk_limit_bytes", "agent_runner_vm_uptime_seconds",
@@ -338,6 +349,16 @@ def test_sink_without_enrollment_stores_nothing_and_keeps_rows_when_the_outbox_f
 # -- counter registry ---------------------------------------------------------------------------------------------
 
 
+NO_STARTS = {
+    "agent_runner_workvm_starts_total": 0,
+    "agent_runner_workvm_cold_starts_total": 0,
+    "agent_runner_workvm_start_queue_seconds_total": 0.0,
+    "agent_runner_workvm_start_clone_seconds_total": 0.0,
+    "agent_runner_workvm_start_boot_seconds_total": 0.0,
+    "agent_runner_workvm_start_ready_seconds_total": 0.0,
+}
+
+
 def test_device_counters_read_their_sources() -> None:
     context = SimpleNamespace()
     assert counters.device_values(context, 4) == {
@@ -346,17 +367,29 @@ def test_device_counters_read_their_sources() -> None:
         "agent_runner_vm_start_failures_total": 0,
         "agent_runner_operator_github_connects_total": 0,
         "agent_runner_operator_github_connect_failures_total": 0,
+        **NO_STARTS,
     }
     audit.counters(context)[audit.VERIFY_FAILURES] += 3
     vars(context)[vm_tasks.MANAGER_KEY] = SimpleNamespace(env=SimpleNamespace(start_failures=2))
     operator_github.state_for(context).connects += 5
     operator_github.state_for(context).failures += 1
+    workvms = WorkVms(cast(Deps, None))
+    workvms.start_times = StartTimes(
+        starts=3, cold=1, seconds={"queue": 0.25, "clone": 12.3456, "boot": 30.0, "ready": 4.0004}
+    )
+    workvm_service.install(context, workvms)
     assert counters.device_values(context, 0) == {
         "agent_runner_device_verify_failures_total": 3,
         "agent_runner_device_metrics_dropped_total": 0,
         "agent_runner_vm_start_failures_total": 2,
         "agent_runner_operator_github_connects_total": 5,
         "agent_runner_operator_github_connect_failures_total": 1,
+        "agent_runner_workvm_starts_total": 3,
+        "agent_runner_workvm_cold_starts_total": 1,
+        "agent_runner_workvm_start_queue_seconds_total": 0.25,
+        "agent_runner_workvm_start_clone_seconds_total": 12.346,
+        "agent_runner_workvm_start_boot_seconds_total": 30.0,
+        "agent_runner_workvm_start_ready_seconds_total": 4.0,
     }
     assert {counter.name for counter in counters.SESSION_COUNTERS} >= {"agent_runner_session_model_tokens_total"}
     assert (

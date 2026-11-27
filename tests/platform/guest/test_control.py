@@ -90,7 +90,7 @@ def test_health_unassigned(control_client: ControlClient, schemas: SchemaSet) ->
     assert reply.status == 200
     body = reply.json()
     assert body == {
-        "guest_version": "0.7.0",
+        "guest_version": "0.8.0",
         "claude_version": "2.1.330",
         "state": "unassigned",
         "sessions": [],
@@ -356,7 +356,7 @@ def test_concurrent_appends_through_api_sock(
 
 
 def test_hello_and_resolve(api_client: ApiClient, context: ControlContext, session: Session) -> None:
-    assert api_client.hello() == {"guest_version": "0.7.0"}
+    assert api_client.hello() == {"guest_version": "0.8.0"}
     assert api_client.resolve_session(SESSION_TOKEN) == {
         "id": SESSION_ID,
         "uid": 20000,

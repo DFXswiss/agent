@@ -1,0 +1,7 @@
+{
+  "workvm_id": "wvm-0123abcd",
+  "state": "running",
+  "started_at": "2026-11-23T10:00:00.000Z",
+  "queue_position": null,
+  "message": "The work VM is still starting."
+}

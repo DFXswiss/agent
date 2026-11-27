@@ -277,10 +277,12 @@ SPEC_TOOLS = {
         "entity_kind entity_id metric points",
     ),
     "get_subagent_result": ("session_id wait_seconds", "session_id state final_text finished_at instruction_id"),
-    # 13-work-vm.md section 3 (contracts/changes/KOR-29.md): the work VM tools, answered through workvm.call
+    # 13-work-vm.md section 3 (contracts/changes/KOR-29.md): the work VM tools, answered through workvm.call;
+    # workvm_exec and workvm_browse also answer a work VM still starting (contracts/changes/KOR-29-implicit-start.md)
     "workvm_exec": (
         "command cwd env stdin timeout_seconds wait_seconds sync",
-        "job_id command state exit_code output output_start output_bytes duration_ms synced",
+        "job_id command state exit_code output output_start output_bytes duration_ms synced"
+        " workvm_id started_at queue_position message",
     ),
     "workvm_output": (
         "job_id offset limit wait_seconds",
@@ -292,7 +294,10 @@ SPEC_TOOLS = {
     ),
     "workvm_status": ("", "workvm jobs=job_id,command,state,exit_code,started_at,duration_ms"),
     "workvm_sync": ("direction path", "direction path files bytes deleted skipped"),
-    "workvm_browse": ("url action selector text wait_ms path", "url final_url status title text screenshot job_id"),
+    "workvm_browse": (
+        "url action selector text wait_ms path",
+        "url final_url status title text screenshot job_id workvm_id state started_at queue_position message",
+    ),
     # 13-work-vm.md section 13.4 (contracts/changes/KOR-44.md): the platform browser tools, answered through
     # workvm.call; every one answers output_browser (its nested rows: SPEC_NESTED)
     "browser_navigate": ("url history query wait_until snapshot", BROWSER_ANSWER),

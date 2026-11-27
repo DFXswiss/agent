@@ -49,6 +49,12 @@ def snapshot(wall: float, step: int = 0, capacity_low: bool = False) -> Snapshot
             "agent_runner_vm_start_failures_total": 1,
             "agent_runner_operator_github_connects_total": 0,
             "agent_runner_operator_github_connect_failures_total": 0,
+            "agent_runner_workvm_starts_total": 3 + step,
+            "agent_runner_workvm_cold_starts_total": 1 + step,
+            "agent_runner_workvm_start_queue_seconds_total": 0.5 + 2.0 * step,
+            "agent_runner_workvm_start_clone_seconds_total": 12.25 + 12.0 * step,
+            "agent_runner_workvm_start_boot_seconds_total": 30.0 + 25.0 * step,
+            "agent_runner_workvm_start_ready_seconds_total": 4.125 + 4.0 * step,
         },
     )
     running = VmEntry(

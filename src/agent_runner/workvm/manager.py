@@ -13,6 +13,18 @@
 - **release** (`workvm.release` executor) and `delete`: `limactl delete -f`, row `deleted`.
 - **calls** of the five tools (`journal.py`): the VM is always resolved from the session of the journal that carried
   the call (its own session VM, else the task VM), never from arguments; a stopped VM is started on the way.
+- **implicit start in flight**: the start of an implicit VM runs as its own asyncio task, remembered per scope (the
+  task, or the session of a subagent: `_vm_of`) in memory only (`starting`); a further `workvm_exec` or
+  `workvm_browse` of the scope joins it instead of starting another VM. A call waits for the start at most
+  `START_JOIN_SECONDS` (within the guest's budget) and otherwise answers `starting` (`workvm_id`, `started_at`,
+  `queue_position`, a sentence) instead of running into the guest's time limit; `workvm_status` reports the start. The
+  marker goes when the start ends (success, failure or cancellation); a restart forgets it and deletes what it left.
+  A failed or cancelled start is logged (`implicit_start_failed`), its row and instance are torn down (one `deleted`
+  event), and a failure no waiting call saw is answered once to the next call of the scope before a new start; it is
+  forgotten when the scope gets a VM through `request`, its session ends or its task closes. A session end or task
+  close first cancels a start of its scopes still in flight (it tears down what it left and keeps no failure).
+- **start phases**: every start of a VM is measured (queue wait, clone, boot, ready check): log line
+  `runner.workvm start_phases` and the counters of `start_times` (`agent_runner.metrics.workvm`).
 - **idle pass**: a VM without a running job and without a call for `WORKVM_IDLE_SECONDS` is deleted, a stopped VM
   (paused session) once it stood that long; a VM whose deletion failed is deleted again, and own `wvm-` instances
   without a row (left by a failed deletion) are swept.
@@ -48,15 +60,19 @@ import secrets
 import tempfile
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
 from agent_runner.credentials import acting
+from agent_runner.crypto.encoding import format_time
 from agent_runner.errors import RunnerError
 from agent_runner.operations.extensions import OperationFailed
 from agent_runner.sessions.records import LocalSession
+from agent_runner.subagents.guest_features import START_ANSWER, current_guest
 from agent_runner.vm.lima import Instance, Lima, LimaError
 from agent_runner.workvm import firewall, jobs, records, sync
 from agent_runner.workvm.jobs import JobView, Shell, WorkVmError
@@ -99,6 +115,21 @@ NOT_READY = (
 )
 NO_VM = "No work VM: request one with request_operation type workvm.request."
 IMPLICIT_TOOLS = frozenset({"workvm_exec", "workvm_browse"})
+START_JOIN_SECONDS = 15.0
+"""How long an implicit-start call waits at most for the start it began or joined (less when the guest's budget is
+smaller, `_join_seconds`) before it answers `starting`."""
+STARTING = (
+    "The work VM is still starting (a cold start can take several minutes); nothing was run yet. Call the tool again"
+    " in a minute, or follow the start with workvm_status."
+)
+"""The `message` of the non-error `starting` answer of `workvm_exec` and `workvm_browse`."""
+NOT_RUNNING = "The work VM is starting or being removed. Try again shortly."
+"""The tool error `unavailable` of a call whose VM does not run (yet): a VM being removed, the other tools during an
+implicit start, and a guest that does not know the `starting` answer."""
+NOT_STARTED = "The work VM did not start."
+START_CANCELLED = "The start of the work VM was cancelled. Call the tool again to start a new one."
+START_PHASES = ("queue", "clone", "boot", "ready")
+"""Measured phases of a VM start: waiting in the capacity queue, clone (with the slot's base), boot, ready check."""
 RUN_COMMAND_LIMIT = 4096
 RUN_OUTPUT_LIMIT = 65536
 BROWSE_COMMAND = "/usr/local/bin/workvm-browse"
@@ -228,6 +259,31 @@ class Run:
     started_at: datetime
 
 
+@dataclass
+class Starting:
+    """An implicit start in progress (`WorkVms.starting`): the shape of the VM about to start (its `starting` event),
+    the task that starts it, its ticket in the capacity queue once it waits there, and the failure sentence once it
+    failed."""
+
+    vm: WorkVm
+    task: asyncio.Task[WorkVm] = field(init=False)
+    ticket: str | None = None
+    failure: str | None = None
+
+
+_START: ContextVar[Starting | None] = ContextVar("workvm_start", default=None)
+"""The implicit start the current asyncio task runs (set by `WorkVms._start`), so the queue can name its ticket."""
+
+
+@dataclass
+class StartTimes:
+    """Counters of the VM starts of this runner (in memory; a restart starts them at 0, 08-monitoring.md section 3)."""
+
+    starts: int = 0
+    cold: int = 0
+    seconds: dict[str, float] = field(default_factory=lambda: dict.fromkeys(START_PHASES, 0.0))
+
+
 Emit = Callable[[Identity, str, Mapping[str, Any]], Awaitable[None]]
 
 
@@ -260,6 +316,11 @@ class WorkVms:
         """Set when a pool entry was assigned: the daemon task refills the pool at once (`tasks.py`)."""
         self.captures: dict[str, set[asyncio.Task[None]]] = {}
         """Running log captures per work VM (its teardown waits for them)."""
+        self.starting: dict[tuple[str, str], Starting] = {}
+        """Implicit starts in flight per scope (`_start_key`)."""
+        self.start_failed: dict[tuple[str, str], Starting] = {}
+        """The last failed implicit start per scope that no waiting call saw: its failure goes once to the next call."""
+        self.start_times = StartTimes()
 
     # -- availability ------------------------------------------------------------------------------------------
 
@@ -299,10 +360,13 @@ class WorkVms:
         if existing is not None and existing.state == "stopped":
             self._check_credit(session)
             existing = await self._resume(existing)
+        key = ("session", session.id) if scope == "session" else ("task", session.task_id)
         if existing is not None:
             vm = await self.ensure_running(existing)
+            self.start_failed.pop(key, None)  # the scope that got the VM: its kept failure is stale
             return self._result(vm, created=False, started=started)
         vm = await self.obtain(session, scope=scope, size=size, implicit=implicit, triggered_by=triggered_by)
+        self.start_failed.pop(key, None)
         return self._result(vm, created=True, started=started)
 
     def _check_credit(self, session: LocalSession) -> None:
@@ -386,6 +450,7 @@ class WorkVms:
         if not self.queue:
             pooled = await from_pool()
             if pooled is not None:
+                self._measured(pooled, {"queue": 0.0})
                 return pooled
 
         def build(slot: int) -> WorkVm:
@@ -401,13 +466,30 @@ class WorkVms:
                 triggered_by=triggered_by,
             )
 
+        queued = time.monotonic()
         vm = await self._wait_for_capacity(SIZES[size][1], SIZES[size][2], build, from_pool)
+        phases = {"queue": time.monotonic() - queued}
         try:
             if vm.state == "starting":
-                vm = await self._boot(vm)
+                vm = await self._boot(vm, phases)
         finally:
             self._leave_queue()
+        self._measured(vm, phases)
         return vm
+
+    def _measured(self, vm: WorkVm, phases: Mapping[str, float]) -> None:
+        """Count the phases of a VM start (`start_times`) and log them (`start_phases`; pooled: no clone)."""
+        cold = "clone" in phases
+        times = self.start_times
+        times.starts += 1
+        times.cold += cold
+        for phase, seconds in phases.items():
+            times.seconds[phase] += seconds
+        parts = " ".join(f"{phase}_ms={int(phases.get(phase, 0.0) * 1000)}" for phase in START_PHASES)
+        self.deps.log(
+            f"runner.workvm start_phases workvm_id={vm.id} scope={vm.scope} pooled={int(not cold)} {parts}"
+            f" total_ms={int(sum(phases.values()) * 1000)}"
+        )
 
     async def _wait_for_capacity(
         self,
@@ -421,6 +503,7 @@ class WorkVms:
         waiting request that does not fit otherwise."""
         ticket = secrets.token_hex(8)
         self.queue.append(ticket)
+        _mark_queued(ticket)
         deadline = self.deps.now() + timedelta(seconds=self.deps.settings.queue_seconds)
         try:
             while True:
@@ -517,21 +600,26 @@ class WorkVms:
         sets.append(".dns=[" + ",".join(f'"{address}"' for address in firewall.resolvers()) + "]")
         return sets
 
-    async def _clone_and_start(self, probe: WorkVm, size: str) -> None:
+    async def _clone_and_start(self, probe: WorkVm, size: str, phases: dict[str, float] | None = None) -> None:
+        """Clone, start and wait for the VM; the seconds of each phase go into `phases` when given."""
         lima = self.deps.lima_for(probe.slot)
+        lap = time.monotonic()
         base = await self.deps.base_for(probe.slot, probe.image)
         await asyncio.to_thread(lima.clone, base, probe.lima_name, sets=self._sets(size, probe.slot))
+        lap = _lap(phases, "clone", lap)
         await asyncio.to_thread(lima.start, probe.lima_name)
+        lap = _lap(phases, "boot", lap)
         await self._wait_ready(probe)
+        _lap(phases, "ready", lap)
 
-    async def _boot(self, vm: WorkVm) -> WorkVm:
+    async def _boot(self, vm: WorkVm, phases: dict[str, float]) -> WorkVm:
         """Clone, start and wait for the `starting` row's VM (the cold path, empty pool or a larger size)."""
         try:
-            await self._clone_and_start(vm, vm.size)
+            await self._clone_and_start(vm, vm.size, phases)
         except (LimaError, WorkVmError) as error:
             self.deps.log(f"runner.workvm start_failed workvm_id={vm.id} {failure(error)}")
             await self._remove(vm, reason="failed")
-            raise OperationFailed("upstream_error", retryable=True, message="The work VM did not start.") from None
+            raise OperationFailed("upstream_error", retryable=True, message=NOT_STARTED) from None
         running = await records.update(self.deps.db, vm.id, state="running", last_used_at=self.deps.now())
         assert running is not None
         self.deps.log(
@@ -969,7 +1057,12 @@ class WorkVms:
         return None
 
     async def close_task(self, task_id: str) -> list[str]:
-        """Every VM of a closed task goes at once (`task_closed`, ADR-080 section 5); returns their IDs."""
+        """Every VM of a closed task goes at once (`task_closed`, ADR-080 section 5): first every implicit start of the
+        task still in flight is cancelled (`_cancel_starts`), then every kept start failure of the task
+        (`start_failed`, task and subagent scopes) is forgotten; returns the IDs of the VMs."""
+        await self._cancel_starts([key for key, start in self.starting.items() if start.vm.task_id == task_id])
+        for key in [key for key, failed in self.start_failed.items() if failed.vm.task_id == task_id]:
+            del self.start_failed[key]
         removed: list[str] = []
         for vm in await records.live(self.deps.db):
             if vm.task_id == task_id and vm.state != "deleting":
@@ -1054,16 +1147,30 @@ class WorkVms:
     async def session_ended(self, session: LocalSession, *, reason: str = "session_ended") -> None:
         """Its session VM goes; the task VM goes when no other session of the task is active (decision 8); `reason`
         is `task_closed` when the session ended because its task was closed. Its test runs are cancelled by the
-        observer (`testrun.TestRuns.cancel`)."""
+        observer (`testrun.TestRuns.cancel`). An implicit start of its session scope still in flight is cancelled
+        (`_cancel_starts`) and a kept start failure of that scope forgotten - for the task scope too when no other
+        session of the task is active - before the VMs go."""
+        await self._cancel_starts([("session", session.id)])
+        self.start_failed.pop(("session", session.id), None)
         own = await records.for_scope(self.deps.db, task_id=session.task_id, session_id=session.id)
         if own is not None:
             await self.delete(own, reason=reason)
-        task_vm = await records.for_scope(self.deps.db, task_id=session.task_id, session_id=None)
-        if (
-            task_vm is not None
-            and await records.active_sessions(self.deps.db, session.task_id, except_id=session.id) == 0
-        ):
-            await self.delete(task_vm, reason=reason)
+        if await records.active_sessions(self.deps.db, session.task_id, except_id=session.id) == 0:
+            await self._cancel_starts([("task", session.task_id)])
+            self.start_failed.pop(("task", session.task_id), None)
+            task_vm = await records.for_scope(self.deps.db, task_id=session.task_id, session_id=None)
+            if task_vm is not None:
+                await self.delete(task_vm, reason=reason)
+
+    async def _cancel_starts(self, keys: Sequence[tuple[str, str]]) -> None:
+        """Cancel the implicit starts in flight of these scopes and wait until each has ended: a cancelled start tears
+        down what it left (`_end_start`, one `deleted` event) and keeps no failure (`_start_done`)."""
+        tasks = [start.task for key in keys if (start := self.starting.get(key)) is not None]
+        for task in tasks:
+            if not task.cancelling():  # a start already being cancelled is only waited for
+                task.cancel()
+        if tasks:
+            await asyncio.wait(tasks)
 
     async def left_over(self) -> list[WorkVm]:
         """The live VMs at the start of the daemon (taken before the test-run reconciliation, `tasks.py`)."""
@@ -1103,25 +1210,21 @@ class WorkVms:
 
     # -- tool calls --------------------------------------------------------------------------------------------
 
-    async def call(self, env: Any, session: LocalSession, tool: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
+    async def call(  # noqa: PLR0911 - one return per tool, and the answer of a start that goes on
+        self, env: Any, session: LocalSession, tool: str, arguments: Mapping[str, Any]
+    ) -> dict[str, Any]:
         """The result of one tool call (raises `CallFailed` for a tool error)."""
         if tool == "workvm_status":
             return await self._status(session)
         self._check_lease(session, tool)
         begun = time.monotonic()
-        vm = await self._vm_of(session)
-        if vm is not None and vm.state == "stopped":
-            if self.deps.exhausted(session.org_id):
-                raise CallFailed("unavailable", NO_CREDIT)
-            vm = await self._resume(vm)
-        if vm is None and tool in IMPLICIT_TOOLS:
-            vm = await self._implicit(session)
-        if vm is None:
-            raise CallFailed("not_found", NO_VM)
+        found = await self._call_vm(session, tool, arguments, begun)
+        if isinstance(found, dict):
+            return found
         try:
-            vm = await self.ensure_running(vm)
+            vm = await self.ensure_running(found)
         except WorkVmError:
-            raise CallFailed("unavailable", "The work VM is starting or being removed. Try again shortly.") from None
+            raise CallFailed("unavailable", NOT_RUNNING) from None
         self.last_call[vm.id] = self.deps.now()
         try:
             if tool == "workvm_exec":
@@ -1141,6 +1244,26 @@ class WorkVms:
                 raise CallFailed("not_found", "There is no job with this job_id in the work VM.") from None
             raise CallFailed("unavailable", "The work VM did not answer as expected. Try again.") from None
 
+    async def _call_vm(
+        self, session: LocalSession, tool: str, arguments: Mapping[str, Any], begun: float
+    ) -> WorkVm | dict[str, Any]:
+        """The VM of a call: a stopped one is started again; `workvm_exec` and `workvm_browse` without one start it or
+        join the start in flight (its `starting` answer while it goes on); the other tools wait for no start."""
+        vm = await self._vm_of(session)
+        if vm is not None and vm.state == "stopped":
+            if self.deps.exhausted(session.org_id):
+                raise CallFailed("unavailable", NO_CREDIT)
+            vm = await self._resume(vm)
+        start = self._in_flight(session, vm)
+        found: WorkVm | dict[str, Any] | None = vm
+        if tool in IMPLICIT_TOOLS and (vm is None or start is not None):
+            found = await self._implicit(session, _join_seconds(tool, arguments, begun))
+        elif start is not None:
+            raise CallFailed("unavailable", NOT_RUNNING)
+        if found is None:
+            raise CallFailed("not_found", NO_VM)
+        return found
+
     def _check_lease(self, session: LocalSession, tool: str) -> None:
         """The tools with internet egress need the runner's lease (module docstring)."""
         if tool in IMPLICIT_TOOLS and not self.deps.hub_lease():
@@ -1154,28 +1277,109 @@ class WorkVms:
             return await records.for_scope(self.deps.db, task_id=session.task_id, session_id=session.id)
         return await records.for_session(self.deps.db, task_id=session.task_id, session_id=session.id)
 
-    async def _implicit(self, session: LocalSession) -> WorkVm | None:
-        """A standard VM for a tool call without one; the `workvm.state` `starting` event comes first, so the panel
-        shows the countdown as for `workvm.request` (ADR-080 section 5). It keeps the session's acting user at this
-        moment as the person who triggered it (ADR-083 section 2)."""
-        scope = "session" if session.parent_id is not None else "task"
-        workvm_id = new_workvm_id()
+    def _in_flight(self, session: LocalSession, vm: WorkVm | None) -> Starting | None:
+        """The implicit start of the session's scope while it runs, unless the session works in another VM."""
+        start = self.starting.get(_start_key(session))
+        return start if start is not None and (vm is None or vm.id == start.vm.id) else None
+
+    async def _implicit(self, session: LocalSession, wait: float) -> WorkVm | dict[str, Any] | None:
+        """A standard VM for a tool call without one: the start of the scope that is in flight is joined, else a new
+        one begins (`_begin`) - unless the last start of the scope failed while no call waited for it: that failure is
+        answered first, once. The call waits for the start at most `wait` seconds, then answers `starting` (a guest
+        before `START_ANSWER` does not know that answer: it gets `NOT_RUNNING` as the tool error `unavailable`); the
+        start goes on without the call."""
+        key = _start_key(session)
+        start = self.starting.get(key)
+        if start is None:
+            failed = self.start_failed.pop(key, None)
+            if failed is not None:
+                raise CallFailed("unavailable", str(failed.failure))
+            start = self._begin(session)
+        done, _ = await asyncio.wait({start.task}, timeout=wait)
+        if not done:
+            if not await current_guest(self.deps.db, session.vm_id, START_ANSWER):
+                raise CallFailed("unavailable", NOT_RUNNING)
+            return self._starting_answer(start)
+        if start.task.cancelled():
+            raise CallFailed("unavailable", START_CANCELLED)
+        if start.failure is not None:
+            if self.start_failed.get(key) is start:
+                del self.start_failed[key]  # a waiting call saw it: the next call starts anew
+            raise CallFailed("unavailable", start.failure)
+        return await self._vm_of(session)
+
+    def _begin(self, session: LocalSession) -> Starting:
+        """Remember the start of the scope and run it as its own task; the marker goes when the task ends, however it
+        ends. No `await` between the lookup in `_implicit` and the insertion, so concurrent calls never start twice."""
+        key = _start_key(session)
+        start = Starting(self._starting(session, key[0], new_workvm_id()))
+        start.task = asyncio.ensure_future(self._start(session, start))
+        self.starting[key] = start
+        start.task.add_done_callback(partial(self._start_done, key, start))
+        return start
+
+    def _start_done(self, key: tuple[str, str], start: Starting, task: asyncio.Task[WorkVm]) -> None:
+        """Remove the marker; log a start that failed or was cancelled, and keep a failure for the next call of the
+        scope (`start_failed`). It runs before any waiting call resumes (its callback was added first)."""
+        del self.starting[key]
+        if task.cancelled():
+            error = "cancelled"
+        else:
+            failure = task.exception()
+            if failure is None:
+                return
+            error = failure.code if isinstance(failure, OperationFailed) else type(failure).__name__
+            sentence = failure.message if isinstance(failure, OperationFailed) else NOT_STARTED
+            start.failure = f"No work VM could be obtained: {sentence}"
+            self.start_failed[key] = start
+        self.deps.log(
+            f"runner.workvm implicit_start_failed workvm_id={start.vm.id} scope={start.vm.scope} error={error}"
+        )
+
+    async def _start(self, session: LocalSession, start: Starting) -> WorkVm:
+        """Obtain the implicit VM; the `workvm.state` `starting` event comes first, so the panel shows the countdown as
+        for `workvm.request` (ADR-080 section 5). It keeps the session's acting user at this moment as the person who
+        triggered it (ADR-083 section 2)."""
+        _START.set(start)
+        scope = start.vm.scope
         async with self.deps.db.connection() as conn:
             stamp = await acting.stamp(conn, session)
+        await self.check_new(session, scope=scope, size="standard")
+        await self._emit_state(start.vm, "starting")
         try:
-            await self.check_new(session, scope=scope, size="standard")
-            starting = self._starting(session, scope, workvm_id)
-            await self._emit_state(starting, "starting")
-            try:
-                await self.obtain(
-                    session, scope=scope, size="standard", implicit=True, workvm_id=workvm_id, triggered_by=stamp
-                )
-            except OperationFailed:
-                await self._emit_state(starting, "deleted", reason="failed")  # the countdown ends
-                raise
-        except OperationFailed as failed:
-            raise CallFailed("unavailable", f"No work VM could be obtained: {failed.message}") from None
-        return await self._vm_of(session)
+            return await self.obtain(
+                session, scope=scope, size="standard", implicit=True, workvm_id=start.vm.id, triggered_by=stamp
+            )
+        except BaseException:  # a failure, an unexpected error or the cancellation: the countdown ends, then re-raised
+            await _to_the_end(self._end_start(start.vm))
+            raise
+
+    async def _end_start(self, shape: WorkVm) -> None:
+        """End a start that did not succeed with one `deleted` event: a row it left (cancelled or broken during clone,
+        boot or ready check) is torn down like any VM (`delete`, shielded, which writes the event); else only the
+        event is written."""
+        row = await records.get(self.deps.db, shape.id)
+        if row is not None and row.state != "deleted":
+            await self.delete(row, reason="failed")
+        else:
+            await self._emit_state(shape, "deleted", reason="failed")
+
+    def _starting_answer(self, start: Starting) -> dict[str, Any]:
+        """The answer of `workvm_exec` and `workvm_browse` while the start goes on (`mcp/objects.json#/$defs/
+        output_workvm_starting`)."""
+        return {
+            "workvm_id": start.vm.id,
+            "state": "starting",
+            "started_at": _iso(start.vm.created_at),
+            "queue_position": self._queue_position(start),
+            "message": STARTING,
+        }
+
+    def _queue_position(self, start: Starting) -> int | None:
+        """1 at the head of the capacity queue (it clones and boots there), None when it does not wait in it."""
+        if start.ticket is None or start.ticket not in self.queue:
+            return None
+        return self.queue.index(start.ticket) + 1
 
     def _starting(self, session: LocalSession, scope: str, workvm_id: str) -> WorkVm:
         """The shape of the VM about to start (for its `starting` event; no row exists yet)."""
@@ -1330,29 +1534,36 @@ class WorkVms:
         return jobs.parse_list(await shell(jobs.list_argv(), stdin=None, timeout=10.0, limit=jobs.LIST_LIMIT))
 
     async def _status(self, session: LocalSession) -> dict[str, Any]:
+        """The session's VM and its jobs; an implicit start in flight is reported `starting` before its row exists,
+        with `started_at` and `queue_position` for a guest from `START_ANSWER` (an older one refuses fields its
+        contracts do not know)."""
         vm = await self._vm_of(session)
+        start = self._in_flight(session, vm)
         if vm is None:
-            return {"workvm": None, "jobs": []}
+            if start is None:
+                return {"workvm": None, "jobs": []}
+            vm = start.vm
         found: list[dict[str, Any]] = []
         if vm.state == "running":
             with contextlib.suppress(WorkVmError):
                 found = [{**job, "started_at": _time(job["started_at"])} for job in await self._jobs(vm)]
         state = vm.state if vm.state in ("starting", "running") else "stopping"
         last = max(vm.last_used_at, self.last_call.get(vm.id, vm.last_used_at))
-        return {
-            "workvm": {
-                "workvm_id": vm.id,
-                "state": state,
-                "scope": vm.scope,
-                "size": vm.size,
-                "cpus": vm.cpus,
-                "memory_mib": vm.memory_mib,
-                "disk_gib": vm.disk_gib,
-                "created_at": _iso(vm.created_at),
-                "last_used_at": _iso(last),
-            },
-            "jobs": found,
+        workvm: dict[str, Any] = {
+            "workvm_id": vm.id,
+            "state": state,
+            "scope": vm.scope,
+            "size": vm.size,
+            "cpus": vm.cpus,
+            "memory_mib": vm.memory_mib,
+            "disk_gib": vm.disk_gib,
+            "created_at": _iso(vm.created_at),
+            "last_used_at": _iso(last),
         }
+        if start is not None and await current_guest(self.deps.db, session.vm_id, START_ANSWER):
+            workvm["started_at"] = _iso(start.vm.created_at)
+            workvm["queue_position"] = self._queue_position(start)
+        return {"workvm": workvm, "jobs": found}
 
     # -- workspace mirror --------------------------------------------------------------------------------------
 
@@ -1429,10 +1640,60 @@ def new_workvm_id() -> str:
     return "wvm-" + secrets.token_hex(4)
 
 
+def _budget(requested: float, begun: float, reserve: float) -> float:
+    """The seconds left until the guest stops waiting for the call (it waits `GUEST_MARGIN + requested`, at most
+    `GUEST_MAX`), minus the runner's `reserve` for its answer; negative when the budget is spent."""
+    return min(GUEST_MARGIN + requested, GUEST_MAX) - reserve - (time.monotonic() - begun)
+
+
 def _remaining(requested: float, begun: float, reserve: float) -> float:
     """How long the job may still be waited for so the answer reaches the guest within its budget."""
-    budget = min(GUEST_MARGIN + requested, GUEST_MAX) - reserve - (time.monotonic() - begun)
-    return max(0.0, min(requested, budget))
+    return max(0.0, min(requested, _budget(requested, begun, reserve)))
+
+
+def _join_seconds(tool: str, arguments: Mapping[str, Any], begun: float) -> float:
+    """How long an implicit-start call may wait for the start: at most `START_JOIN_SECONDS` within the budget of the
+    call (`workvm_exec`: its `wait_seconds` and `ANSWER_RESERVE`; `workvm_browse`: 30 s and `BROWSE_RESERVE`, as for
+    its page)."""
+    exec_call = tool == "workvm_exec"
+    requested = float(arguments.get("wait_seconds", 30)) if exec_call else 30.0
+    reserve = ANSWER_RESERVE if exec_call else BROWSE_RESERVE
+    return max(0.0, min(START_JOIN_SECONDS, _budget(requested, begun, reserve)))
+
+
+def _start_key(session: LocalSession) -> tuple[str, str]:
+    """The scope of a session's implicit VM, as `_vm_of` resolves it: a subagent's own session VM, else the task VM."""
+    return ("session", session.id) if session.parent_id is not None else ("task", session.task_id)
+
+
+async def _to_the_end(coroutine: Awaitable[None]) -> None:
+    """Run `coroutine` to its end even when the calling task is cancelled meanwhile (shielded, as `delete`); a cancel
+    that arrived is raised once it has ended."""
+    future = asyncio.ensure_future(coroutine)
+    cancelled = False
+    while not future.done():
+        try:
+            await asyncio.shield(future)
+        except asyncio.CancelledError:
+            cancelled = True
+    if cancelled:
+        raise asyncio.CancelledError
+    future.result()
+
+
+def _mark_queued(ticket: str) -> None:
+    """Note the queue ticket of the implicit start the current task runs (none for any other request)."""
+    start = _START.get()
+    if start is not None:
+        start.ticket = ticket
+
+
+def _lap(phases: dict[str, float] | None, phase: str, since: float) -> float:
+    """Record the seconds since `since` as `phase` (when phases are measured); returns the current monotonic time."""
+    now = time.monotonic()
+    if phases is not None:
+        phases[phase] = now - since
+    return now
 
 
 def _empty_export(path: Path) -> None:
@@ -1453,7 +1714,9 @@ def _below(manifest: Mapping[str, str], root: str) -> dict[str, str]:
 
 
 def _iso(value: datetime) -> str:
-    return value.strftime("%Y-%m-%dT%H:%M:%S.") + f"{value.microsecond // 1000:03d}Z"
+    """UTC with milliseconds and `Z`. Times read from the store come in the session time zone of PostgreSQL (the
+    device's local zone), so the value is converted first, never formatted as it is."""
+    return format_time(value)
 
 
 def _time(milliseconds: int) -> str:
