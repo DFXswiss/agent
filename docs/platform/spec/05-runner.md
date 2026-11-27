@@ -1022,6 +1022,15 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   cause: exhausted|unusable|released, until}`; the access values are `subscription`, `operator` (an operator
   subscription), `api_key` and `platform`. The hub tells the task's owner with the notification `model.switched`
   (`ref` = `<from>:<to>:<until or empty>`).
+- **Continuation keeps the person** (HOT-28, ADR-070): a continuation the runner writes itself – the sentences above
+  and the continuation after a credit (`billing.pause`, ADR-062 section 6) – is no new instruction, but it continues the turn of one. The pause
+  records the acting user of the interrupted turn (`model_pause.actor_id`, `credit_pause.actor_id`: the session's
+  `turn_actor` then); the prompt is stored with that person (`runner.platform_prompt`) before it is handed to the
+  guest, and its `prompt_accepted` makes that person the acting user of the continued turn (once, only for that
+  session), so `github.*` and every other personal action after the continuation acts as before - also after a
+  restart of the daemon. A turn without acting user stays without one. The sender line stays the platform's
+  (`agent.dfx.swiss instruction from: the platform (not a person): …`). The outbox audit `session.continued`
+  `{cause: credit|model, prompt_id, triggered_by}` names the person taken over (null: none).
 
 ### 10.8 Quotas of the operator's subscriptions (ADR-081 section 6)
 

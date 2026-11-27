@@ -62,6 +62,23 @@ attributed to each person) and [E-19](../KONZEPT.md#e-19) (exclude the class, no
 - The harness line still names the GitHub login of the task owner at the session's start (a fact for the agent; no
   token is used).
 
+## Addendum HOT-28 (2026-11-27): a continuation of the platform keeps the person of its turn
+- **Gap.** The decision above names the acting user of a turn: the verified author of the prompt that started it.
+  It does not exclude continuations of the platform; it did not consider them. The runner writes such a prompt itself
+  when it continues a turn it interrupted - after a credit pause (`billing.pause`, ADR-062 §6) and after a model pause
+  or a move to another model access (`model.fallback`, ADR-081 §§2, 4, 5). That prompt has no stored author, so its
+  acceptance left the continued turn without acting user, and every `github.*` step of it was rejected
+  `github_not_connected` until the person wrote again.
+- **Decision.** A continuation of the platform is no new instruction; it continues the turn of one. The pause records
+  the acting user of the interrupted turn (`credit_pause.actor_id`, `model_pause.actor_id`, persisted, so it holds
+  after a restart of the daemon); the runner stores the continuation with that person (`runner.platform_prompt`)
+  before it hands it to the guest; its `prompt_accepted` sets that person as the turn's acting user like the author of
+  any prompt - once, only for the session it was written for, and a running turn of another person still becomes
+  unknown. A turn without acting user stays without one. The sender line stays the platform's (ADR-083 §1); the audit
+  `session.continued` names the person taken over (`triggered_by`).
+- **Not affected.** A session the hub moves after a device failure gets the interrupted instruction again with its
+  author (ADR-087), a resumed session gets the prompt of a person; both keep the person already.
+
 ## Alternatives considered
 - Refuse writes of other members in a task: contradicts Idee 36 (shared sessions).
 - Decide per operation from the latest prompt delivered at execution time: a held operation would change its

@@ -72,6 +72,7 @@ OUTBOX_AUDIT_ACTIONS = (
     "runner.operator_github_users",
     "session.model_switched",
     "mail.read",
+    "session.continued",
 )
 """A copy of `contracts/enums/outbox-audit-actions.json` (a test compares them)."""
 OPERATION_ERROR_CODES = (
@@ -647,6 +648,14 @@ class MailRead(Strict):
     result: Literal["ok", "not_found", "upstream_error", "timeout"]
 
 
+class Continued(Strict):
+    """`session.continued` (HOT-28): the runner continued an interrupted turn itself; the person of that turn."""
+
+    cause: Literal["credit", "model"]
+    prompt_id: Uuid7
+    triggered_by: Uuid7 | None
+
+
 AUDIT_DETAILS: dict[str, type[Strict]] = {
     "hook.denied": HookDenied,
     **{action: ReadCount for action in OUTBOX_AUDIT_ACTIONS if action.startswith("read.session.")},
@@ -663,6 +672,7 @@ AUDIT_DETAILS: dict[str, type[Strict]] = {
     "session.model_switched": ModelSwitched,
     "session.prompt_withdrawn": NoDetail,
     "mail.read": MailRead,
+    "session.continued": Continued,
 }
 
 
@@ -698,6 +708,7 @@ class AuditBody(Strict):
         "session.context_fallback",
         "session.model_switched",
         "mail.read",
+        "session.continued",
     ]
     result: Literal["ok", "denied", "rejected", "duplicate", "failed"]
     task_id: Uuid7 | None = None

@@ -23,9 +23,13 @@ from agent_runner.billing import pause as credit
 from agent_runner.guestlink.errors import GuestUnreachable
 from agent_runner.model import fallback, gateways, limits, operator, pauses, reconcile, tasks
 from agent_runner.model.limits import EXHAUSTED, Limit
+from agent_runner.prompts.deliver import Deliverer, install
 from agent_runner.prompts.resume import RETRY
 from agent_runner.reconcile.engine import Run
+from agent_runner.vm import records as vm_records
 
+from ..credentials.continued import continued_audits, continued_request, set_turn
+from ..credentials.kit import BOB
 from ..sessions.kit import desired, session_id
 from .fallback_kit import AT, HOUR, T0, FKit, entry, fallback_kit, state
 from .kit import ALICE, TOKEN, api_key_body, model_env, store_record
@@ -549,3 +553,70 @@ def test_a_waiting_start_ends_its_pause_when_another_access_is_allowed(store_dsn
         assert sid not in pauses.holding(found.context)
 
     run(store_dsn, tmp_path, body, desired_state=state(entry(1)))
+
+
+async def vm_row(found: FKit) -> Any:
+    row = await vm_records.get(found.env.pool, "vm-00000001")
+    assert row is not None
+    return row
+
+
+@pytest.mark.parametrize("actor", [BOB, None])
+def test_the_move_to_another_access_keeps_the_person_of_the_interrupted_turn(
+    store_dsn: str, tmp_path: Path, actor: str | None
+) -> None:
+    """HOT-28: bob instructs the running turn in alice's task; the own subscription is used up, the session moves to
+    the operator's pool and the platform continues it - a `github.*` step after it acts for bob (a turn without a
+    person stays without one). The sentence carries the platform's sender line; the audit names the person."""
+
+    async def body(found: FKit) -> None:
+        sid = await running(found)
+        await set_turn(found.env.pool, sid, actor)
+        await mark(found, OWN)
+        await fallback.run_once(found.deliverer)
+        assert found.guest.texts()[-1].startswith("The platform switched this session's model access")
+        assert found.guest.speakers() == [fallback.LINE]
+        assert fallback.LINE.startswith("agent.dfx.swiss instruction from: the platform (not a person): ")
+        (prompt_id,) = found.guest.sent()
+        op = await continued_request(found.kit.session_env, await vm_row(found), sid, prompt_id)
+        assert op.actor_id == actor
+        assert continued_audits(await found.env.audits()) == [
+            {"cause": "model", "prompt_id": prompt_id, "triggered_by": actor}
+        ]
+        assert f"model_continued session_id={sid} from=subscription to=operator acting={actor or '-'}" in found.log()
+        await found.env.sync.pusher.drain()  # the contract-checking hub takes the audit
+
+    run(store_dsn, tmp_path, body, desired_state=state(entry(1, own_to_dfx=True)))
+
+
+def test_a_wait_continued_after_a_restart_and_a_resume_keeps_the_person(store_dsn: str) -> None:
+    """HOT-28: the turn of bob waits for model quota; the daemon restarts meanwhile (a new deliverer, nothing held in
+    memory) and the session's turn state changes; once the task's consent allows another access the session is
+    resumed and continued - for bob, from the recorded pause."""
+
+    async def body(found: FKit) -> None:
+        sid = await running(found)
+        await set_turn(found.env.pool, sid, BOB)
+        await mark(found, OWN)
+        await fallback.run_once(found.deliverer)
+        pause = await found.pause_row(sid)
+        assert pause is not None
+        assert (pause.kind, pause.interrupted, pause.actor_id) == ("wait", True, BOB)
+        assert found.guest.texts() == []
+        # restart: a new deliverer and no model pause state in memory; the turn state no longer names bob
+        setattr(found.context, pauses.ATTRIBUTE, None)
+        deliverer = install(found.context, Deliverer(found.kit.session_env, idle_seconds=3600.0))
+        await set_turn(found.env.pool, sid, None)
+        found.guest.calls.clear()
+        found.set_desired(state(entry(1, consent=True)))
+        await fallback.run_once(deliverer)
+        assert "create_session" in found.guest.names()  # resumed
+        assert found.guest.speakers() == [fallback.LINE]
+        (prompt_id,) = found.guest.sent()
+        op = await continued_request(found.kit.session_env, await vm_row(found), sid, prompt_id)
+        assert op.actor_id == BOB
+        assert continued_audits(await found.env.audits()) == [
+            {"cause": "model", "prompt_id": prompt_id, "triggered_by": BOB}
+        ]
+
+    run(store_dsn, None, body, desired_state=state(entry(1)))

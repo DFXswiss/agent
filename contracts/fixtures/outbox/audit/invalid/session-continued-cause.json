@@ -1,0 +1,13 @@
+{
+  "action": "session.continued",
+  "result": "ok",
+  "task_id": "0193001e-0000-7000-8000-00000000001e",
+  "session_id": "01930028-0000-7000-8000-000000000028",
+  "target_kind": "session",
+  "target_id": "01930028-0000-7000-8000-000000000028",
+  "detail": {
+    "cause": "restart",
+    "prompt_id": "01930029-0000-7000-8000-000000000029",
+    "triggered_by": null
+  }
+}

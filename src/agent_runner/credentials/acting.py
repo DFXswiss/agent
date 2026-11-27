@@ -25,6 +25,15 @@ keeps it so).
   the parent's turn) becomes the acting user of the child's turn; a prompt ID that names no delivered instruction of
   this child makes it unknown. An instruction still waiting for its turn changes nothing, and neither does a
   repeated acceptance of an instruction older than one the child already accepted.
+- **Continuation by the platform** (HOT-28): a continuation prompt the runner writes itself for an interrupted turn
+  (`billing.pause` after a credit, `model.fallback` after a move to another model access or the end of a model
+  wait; both survive a restart of the daemon in their pause rows) is no new instruction of a person, but it continues
+  the turn of one. The pause records the acting user of the interrupted turn (`TURN_ACTOR`: the session's
+  `turn_actor` when the pause is recorded, NULL when that turn had none); before the prompt is handed to the guest,
+  `continuation` stores that person with the prompt (`runner.platform_prompt`). Its `prompt_accepted` then makes
+  that person the acting user, exactly like the prompt of the turn it continues - once (`accepted_at`), only for the
+  session it was written for; the sender line stays the platform's (`prompts.speaker`). `continued(...)` is its
+  audit row `session.continued`, naming the person taken over (`triggered_by`).
 - `stamp(conn, session)`: the acting user at the receipt of an operation request (journal handler) and of a forwarded
   read (ADR-089): the turn's acting user of a main session; of a child session (`depth` > 0) the acting user of its
   turn once it accepted an instruction, before that (and for a child older than the instructions) the acting user of
@@ -82,6 +91,10 @@ NO_ACTOR = (
     "This instruction cannot be attributed to exactly one person, so no personal GitHub connection is used. Ask the"
     " person who wants the GitHub action to write the request again."
 )
+TURN_ACTOR = "(SELECT s.turn_actor FROM runner.session s WHERE s.id = %s)"
+"""SQL of the acting user of a session's turn (parameter: the session ID), recorded with a pause."""
+CONTINUED = "session.continued"
+CAUSES = frozenset({"credit", "model"})
 
 
 class Acting(Protocol):
@@ -111,16 +124,51 @@ async def prompt_accepted(conn: AsyncConnection[Any], session_id: str, prompt_id
     """A prompt of the session was accepted: its verified author acts in the turn (module docstring, "Turn"). A prompt
     ID that names no stored prompt being delivered to this session (its delivery row `registered` or `typed`; this
     observer runs before the delivery's, which marks it `accepted`) has no known author - a replayed or forged
-    acceptance of an earlier prompt never brings back its author."""
+    acceptance of an earlier prompt never brings back its author. A continuation the platform wrote for this session
+    (`continuation`, not accepted before) acts for the person of the turn it continues (module docstring)."""
     known = prompt_id if _UUID_RE.fullmatch(prompt_id) else None
     await conn.execute(
         "UPDATE runner.session s SET turn_actor = CASE WHEN s.turn_open AND s.turn_actor IS DISTINCT FROM a.author"
-        " THEN NULL ELSE a.author END, turn_open = true FROM (SELECT (SELECT e.author_id FROM runner.prompt_event e"
-        " JOIN runner.prompt_delivery d ON d.event_id = e.event_id WHERE e.event_id = %s AND d.session_id = %s"
-        " AND d.state IN ('registered', 'typed'))"
+        " THEN NULL ELSE a.author END, turn_open = true FROM (SELECT COALESCE((SELECT e.author_id"
+        " FROM runner.prompt_event e JOIN runner.prompt_delivery d ON d.event_id = e.event_id WHERE e.event_id = %s"
+        " AND d.session_id = %s AND d.state IN ('registered', 'typed')), (SELECT p.actor_id"
+        " FROM runner.platform_prompt p WHERE p.prompt_id = %s AND p.session_id = %s AND p.accepted_at IS NULL))"
         " AS author) a WHERE s.id = %s",
-        (known, session_id, session_id),
+        (known, session_id, known, session_id, session_id),
     )
+    await conn.execute(
+        "UPDATE runner.platform_prompt SET accepted_at = now() WHERE prompt_id = %s AND session_id = %s"
+        " AND accepted_at IS NULL",
+        (known, session_id),
+    )
+
+
+async def continuation(
+    conn: AsyncConnection[Any], *, session_id: str, prompt_id: str, actor_id: str | None, cause: str
+) -> None:
+    """Store a continuation prompt the platform writes for the session's interrupted turn with that turn's acting user
+    (module docstring); a repeated hand-over of the same prompt keeps the first row."""
+    if cause not in CAUSES:
+        raise ValueError("unknown continuation cause")
+    await conn.execute(
+        "INSERT INTO runner.platform_prompt (prompt_id, session_id, actor_id, cause) VALUES (%s, %s, %s, %s)"
+        " ON CONFLICT (prompt_id) DO NOTHING",
+        (prompt_id, session_id, actor_id, cause),
+    )
+
+
+def continued(*, task_id: str, session_id: str, prompt_id: str, actor_id: str | None, cause: str) -> dict[str, Any]:
+    """The outbox audit row `session.continued` of a continuation handed to the guest: the person taken over
+    (`triggered_by`, null when the interrupted turn had none)."""
+    return {
+        "action": CONTINUED,
+        "result": "ok",
+        "task_id": task_id,
+        "session_id": session_id,
+        "target_kind": "session",
+        "target_id": session_id,
+        "detail": {"cause": cause, "prompt_id": prompt_id, "triggered_by": actor_id},
+    }
 
 
 async def instruction_accepted(conn: AsyncConnection[Any], session_id: str, prompt_id: str) -> None:

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/session.continued.json",
+  "title": "audit detail session.continued",
+  "description": "detail of audit rows with action session.continued: the runner handed a session the continuation prompt it writes itself for a turn it interrupted (HOT-28): after a credit pause (cause credit) or a model pause (cause model, ADR-081 sections 4 and 5). The continuation is no new instruction of a person; its turn keeps the acting user of the interrupted turn, named in triggered_by (null when that turn had none, ADR-070). The prompt ID is the continuation's, never its text. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "cause": {
+      "type": "string",
+      "enum": [
+        "credit",
+        "model"
+      ]
+    },
+    "prompt_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "triggered_by": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "cause",
+    "prompt_id",
+    "triggered_by"
+  ],
+  "additionalProperties": false
+}

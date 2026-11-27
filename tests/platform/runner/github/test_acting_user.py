@@ -37,6 +37,7 @@ from agent_runner.operations.settings import DEFAULTS
 from agent_runner.orgs.db import session
 from agent_runner.orgs.keys import store_scope_key
 
+from ..credentials.continued import continued_request
 from ..credentials.kit import ALICE, BOB, CLIENT_ID, Env, ck, github_body, make_record
 from ..operations.kit import OKit, setup
 from ..reconcile.rig import Rig, standard_world
@@ -268,6 +269,36 @@ def test_a_shared_task_uses_the_github_of_whoever_gave_the_instruction(
         comments = [c for c in github.repo()["comments"] if c["body"] == "From alice."]
         assert [c["user"] for c in comments] == ["octo-user"]
         assert any(f"held operation_id={op_id}" in line for line in kit.lines)
+
+    two_people(store_dsn, github, body)
+
+
+def test_a_continuation_of_the_platform_acts_with_the_github_of_the_interrupted_turn(
+    store_dsn: str, start_github: Callable[..., GitHub]
+) -> None:
+    """HOT-28: bob instructs a turn in alice's task; the platform interrupts it (credit or model pause) and continues it
+    with its own prompt. The `github.*` step after the continuation runs with bob's token - not alice's, and not
+    refused `github_not_connected` for lack of a person."""
+    world = seed()
+    world["installations"][0]["users"].append("other-user")
+    github = start_github(world=world)
+
+    async def body(kit: OKit, served: dict[str, Any]) -> None:
+        await connect(kit, served, ALICE)
+        await connect(kit, served, BOB)
+        sid = await kit.session(actor=BOB)
+        prompt_id = uuid7()
+        async with kit.env.pool.connection() as conn:
+            # what the pause recorded for bob's interrupted turn, stored with the platform's continuation
+            await acting.continuation(conn, session_id=sid, prompt_id=prompt_id, actor_id=BOB, cause="model")
+        requested = await continued_request(kit.kit.session_env, await kit.vm(), sid, prompt_id)
+        await kit.pipeline.process(requested.id)
+        done = await kit.op(requested.id)
+        assert (done.state, done.actor_id) == ("succeeded", BOB)
+        assert callers(github) == ["bob", "bob", "bob"]  # the account check, the access check, the comment
+        comments = [c for c in github.repo()["comments"] if c["body"] == "Continued."]
+        assert [c["user"] for c in comments] == ["other-user"]
+        assert await results(kit) == [(requested.id, BOB)]
 
     two_people(store_dsn, github, body)
 

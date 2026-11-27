@@ -1796,6 +1796,19 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
         },
         "required": ["chunks", "size", "pruned"],
     },
+    "session.continued": {
+        "properties": {
+            "cause": [{"type": "string", "enum": ["credit", "model"]}],
+            "prompt_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ],
+            "triggered_by": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"},
+                {"type": "null"},
+            ],
+        },
+        "required": ["cause", "prompt_id", "triggered_by"],
+    },
     "session.control": {
         "properties": {"action": [{"type": "string", "enum": ["interrupt", "stop", "suspend"]}]},
         "required": ["action"],

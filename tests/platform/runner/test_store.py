@@ -233,7 +233,7 @@ TABLES = {
     "operator_binding": ["session_id", "file_name", "bound_at"],
     "billing_meter": ["vm_id", "measured_through"],
     "operator_origin": ["session_id", "bound_at"],
-    "credit_pause": ["session_id", "org_id", "interrupted", "paused_at", "resumed_at"],
+    "credit_pause": ["session_id", "org_id", "interrupted", "paused_at", "resumed_at", "actor_id"],  # actor_id: 0040
     # 0022 (KOR-50, ADR-081 sections 2-4): used-up and refused accesses, the model pauses of main sessions
     "access_limit": ["access_key", "kind", "until", "readable", "limited_at", "identity"],
     "model_pause": [
@@ -247,7 +247,10 @@ TABLES = {
         "from_model",
         "suspended",
         "resumed_at",
+        "actor_id",  # 0040 (HOT-28)
     ],
+    # 0040 (HOT-28): the continuation prompts the platform wrote, with the person of the turn they continue
+    "platform_prompt": ["prompt_id", "session_id", "actor_id", "cause", "created_at", "accepted_at"],
     # 0023 (KOR-50, ADR-081 section 7): the sealed DFX key envelopes of an org device, the requests an issuer answered
     "dfx_key": ["org_id", "key_ref", "issuer_device_id", "envelope", "accepted_at"],
     "dfx_key_issued": ["request_id", "org_id", "device_id", "key_ref", "issued_at"],
