@@ -39,7 +39,7 @@ class DeviceEntry:
     hub_connected: bool
     sync_fatal: bool
     backlog: int
-    counters: Mapping[str, int]
+    counters: Mapping[str, float]
     held: int = 0
     """Items in the scope queues of the outbox (KOR-08), outside the backlog (KOR-10, AUD-02 NB-09)."""
     held_scopes: int = 0

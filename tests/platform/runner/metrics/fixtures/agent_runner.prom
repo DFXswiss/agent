@@ -52,6 +52,24 @@ agent_runner_operator_github_connects_total 0
 # HELP agent_runner_operator_github_connect_failures_total GitHub connections with the operator's GitHub token that failed.
 # TYPE agent_runner_operator_github_connect_failures_total counter
 agent_runner_operator_github_connect_failures_total 0
+# HELP agent_runner_workvm_starts_total Work VMs started (from the warm pool or cloned on demand).
+# TYPE agent_runner_workvm_starts_total counter
+agent_runner_workvm_starts_total 3
+# HELP agent_runner_workvm_cold_starts_total Work VMs cloned and booted on demand (not from the warm pool).
+# TYPE agent_runner_workvm_cold_starts_total counter
+agent_runner_workvm_cold_starts_total 1
+# HELP agent_runner_workvm_start_queue_seconds_total Seconds work VM starts spent waiting in the capacity queue for a free slot, RAM and disk.
+# TYPE agent_runner_workvm_start_queue_seconds_total counter
+agent_runner_workvm_start_queue_seconds_total 0.5
+# HELP agent_runner_workvm_start_clone_seconds_total Seconds work VM starts spent cloning from the slot's base of the work image.
+# TYPE agent_runner_workvm_start_clone_seconds_total counter
+agent_runner_workvm_start_clone_seconds_total 12.25
+# HELP agent_runner_workvm_start_boot_seconds_total Seconds work VM starts spent booting the clone.
+# TYPE agent_runner_workvm_start_boot_seconds_total counter
+agent_runner_workvm_start_boot_seconds_total 30.0
+# HELP agent_runner_workvm_start_ready_seconds_total Seconds work VM starts spent until the job helper in the VM answered.
+# TYPE agent_runner_workvm_start_ready_seconds_total counter
+agent_runner_workvm_start_ready_seconds_total 4.125
 # HELP agent_runner_vm_probe_ok 1 when the guest of a VM that should run answered.
 # TYPE agent_runner_vm_probe_ok gauge
 agent_runner_vm_probe_ok{vm="vm-0a1b2c3d",wg="01930002-0000-7000-8000-00000000000a"} 1

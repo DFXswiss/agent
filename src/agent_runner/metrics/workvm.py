@@ -10,11 +10,18 @@ With slot accounts the runner may not be able to read a slot's Lima home or its 
 only the runner's own processes); the probes then answer None and the entry still carries the configured memory and
 disk sizes, the state and the runtime since the VM was created (`uptime_seconds`, KONZEPT idea 46). A slot whose
 listing fails is left out of the host values (`runner.metrics workvm_list_failed slot=<n> code=<code>`).
+
+Start phases (device counters of 08-monitoring.md section 3, read from `WorkVms.start_times`): the number of VM starts
+(`agent_runner_workvm_starts_total`), of those cloned on demand (`agent_runner_workvm_cold_starts_total`), and the
+summed seconds of each phase (`agent_runner_workvm_start_<phase>_seconds_total`, phases `queue`, `clone`, `boot`,
+`ready`), so a slow cold start can be attributed (`rate` of a phase over `rate` of the starts is its mean). Without the
+daemon's work VMs every value is 0.
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -23,6 +30,7 @@ from agent_runner.metrics import vm
 from agent_runner.metrics.probes import Tools
 from agent_runner.vm.lima import Instance, LimaError
 from agent_runner.workvm import records
+from agent_runner.workvm.manager import StartTimes
 from agent_runner.workvm.service import existing
 
 LIST_TIMEOUT_S = 10.0
@@ -44,6 +52,30 @@ class WorkvmEntry:
     uptime_seconds: int
     net_rx_bytes: int | None
     net_tx_bytes: int | None
+
+
+def _start_times(context: Any) -> StartTimes:
+    workvms = existing(context)
+    return StartTimes() if workvms is None else workvms.start_times
+
+
+def starts(context: Any, _dropped: int) -> int:
+    """`agent_runner_workvm_starts_total` (module docstring)."""
+    return _start_times(context).starts
+
+
+def cold_starts(context: Any, _dropped: int) -> int:
+    """`agent_runner_workvm_cold_starts_total` (module docstring)."""
+    return _start_times(context).cold
+
+
+def start_seconds(phase: str) -> Callable[[Any, int], float]:
+    """The reader of `agent_runner_workvm_start_<phase>_seconds_total` (module docstring)."""
+
+    def read(context: Any, _dropped: int) -> float:
+        return round(_start_times(context).seconds[phase], 3)
+
+    return read
 
 
 async def entries(context: Any, tools: Tools, at: datetime, line: Any) -> tuple[WorkvmEntry, ...]:

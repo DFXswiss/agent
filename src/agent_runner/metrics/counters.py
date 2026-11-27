@@ -10,6 +10,9 @@ Device counters are read from the daemon at each sample; the areas that count th
 | `agent_runner_vm_start_failures_total` | `VmEnv.start_failures` of the shared VM manager (VM-02), else 0 |
 | `agent_runner_operator_github_connects_total` | `github.operator.state_for(context).connects` (KOR-27) |
 | `agent_runner_operator_github_connect_failures_total` | `github.operator.state_for(context).failures` (KOR-27) |
+| `agent_runner_workvm_starts_total` | `WorkVms.start_times.starts` (`metrics.workvm`) |
+| `agent_runner_workvm_cold_starts_total` | `WorkVms.start_times.cold` (`metrics.workvm`) |
+| `agent_runner_workvm_start_<phase>_seconds_total` | `WorkVms.start_times.seconds[<phase>]` (`metrics.workvm`) |
 
 Session counters come from the guest's `GET /v1/metrics` (cgroup and journal counts of the guest, contracts/changes/
 RUN-15.md); a counter the guest does not send is left out for that session.
@@ -25,15 +28,24 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_runner.github import operator as operator_github
+from agent_runner.metrics import workvm
 from agent_runner.orgs import audit
 from agent_runner.vm import tasks as vm_tasks
+from agent_runner.workvm.manager import START_PHASES
+
+PHASE_HELP = {
+    "queue": "waiting in the capacity queue for a free slot, RAM and disk",
+    "clone": "cloning from the slot's base of the work image",
+    "boot": "booting the clone",
+    "ready": "until the job helper in the VM answered",
+}
 
 
 @dataclass(frozen=True)
 class DeviceCounter:
     name: str
     help: str
-    read: Callable[[Any, int], int]
+    read: Callable[[Any, int], float]
 
 
 @dataclass(frozen=True)
@@ -91,6 +103,24 @@ DEVICE_COUNTERS = (
         "GitHub connections with the operator's GitHub token that failed.",
         _operator_failures,
     ),
+    DeviceCounter(
+        "agent_runner_workvm_starts_total",
+        "Work VMs started (from the warm pool or cloned on demand).",
+        workvm.starts,
+    ),
+    DeviceCounter(
+        "agent_runner_workvm_cold_starts_total",
+        "Work VMs cloned and booted on demand (not from the warm pool).",
+        workvm.cold_starts,
+    ),
+    *(
+        DeviceCounter(
+            f"agent_runner_workvm_start_{phase}_seconds_total",
+            f"Seconds work VM starts spent {PHASE_HELP[phase]}.",
+            workvm.start_seconds(phase),
+        )
+        for phase in START_PHASES
+    ),
 )
 
 TOKENS_HELP = "Model tokens of the session (input: input and cache tokens, output: output and thinking tokens)."
@@ -117,5 +147,5 @@ SESSION_COUNTERS = (
 )
 
 
-def device_values(context: Any, dropped: int) -> dict[str, int]:
+def device_values(context: Any, dropped: int) -> dict[str, float]:
     return {counter.name: counter.read(context, dropped) for counter in DEVICE_COUNTERS}

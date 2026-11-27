@@ -2,6 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/mcp/tools/workvm_browse.output.json",
   "title": "platform tool workvm_browse output",
-  "description": "Result of the platform tool workvm_browse (13-work-vm.md section 3).",
-  "$ref": "../objects.json#/$defs/output_workvm_browse"
+  "description": "Result of the platform tool workvm_browse (13-work-vm.md section 3): the page, or the work VM that is still starting.",
+  "oneOf": [
+    {
+      "$ref": "../objects.json#/$defs/output_workvm_browse"
+    },
+    {
+      "$ref": "../objects.json#/$defs/output_workvm_starting"
+    }
+  ]
 }

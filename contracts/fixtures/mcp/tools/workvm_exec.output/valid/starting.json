@@ -1,0 +1,7 @@
+{
+  "workvm_id": "wvm-0123abcd",
+  "state": "starting",
+  "started_at": "2026-11-23T10:00:00.000Z",
+  "queue_position": 2,
+  "message": "The work VM is still starting (a cold start can take several minutes); nothing was run yet. Call the tool again in a minute, or follow the start with workvm_status."
+}

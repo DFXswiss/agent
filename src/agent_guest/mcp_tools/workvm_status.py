@@ -12,5 +12,6 @@ TOOL = _forward.workvm_tool(
     "workvm_status",
     "Show your work VM (state, size, CPUs, memory, disk; null when you have none: work VMs are temporary, and "
     "workvm_exec or workvm_browse obtain a new one automatically) and its last 50 jobs with their state and exit "
-    "code. Use it to find a job_id again, or after a call that timed out.",
+    "code. A VM on its way is state starting, with started_at and its queue_position (1: it is being cloned and "
+    "booted). Use it to find a job_id again, to follow a start, or after a call that timed out.",
 )

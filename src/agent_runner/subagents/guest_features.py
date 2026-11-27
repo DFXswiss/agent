@@ -4,8 +4,10 @@ A guest validates its answers against the contracts bundled with it and refuses 
 (`request_invalid`: the tool call then times out). A guest before ADR-088 (golden with guest version below `CURRENT`)
 still has the former contracts: `get_context.limits` with depth at most 2, parallel at most 3, total at most 10 and no
 nulls; `get_subagent_result` without a result while `idle`; no `subagent.instruct` or `subagent.stop`. A guest before
-`NAMES` knows no `agent` and no `children` in `get_context` (KOR-52, ADR-095 section 3; HOT-23). The runner reads the
-guest version from the VM's golden record (`runner.vm.golden_version` -> `runner.golden.guest_version`).
+`NAMES` knows no `agent` and no `children` in `get_context` (KOR-52, ADR-095 section 3; HOT-23). A guest before
+`START_ANSWER` knows neither the `starting` answer of `workvm_exec` and `workvm_browse` nor `started_at` and
+`queue_position` in `workvm_status` (13-work-vm.md section 3, contracts/changes/KOR-29-implicit-start.md). The runner
+reads the guest version from the VM's golden record (`runner.vm.golden_version` -> `runner.golden.guest_version`).
 
 - `current_guest(db_or_conn, vm_id, version=CURRENT)`: True when the VM's guest is at least `version` - also for no VM
   yet (`vm_id` None: a new VM is cloned from the current golden). A VM or golden the store does not know, or a version
@@ -23,6 +25,8 @@ CURRENT = (0, 3, 0)
 """The first guest version that knows ADR-088."""
 NAMES = (0, 5, 0)
 """The first guest version that knows `agent` and `children` in `get_context` (KOR-52, ADR-095 section 3)."""
+START_ANSWER = (0, 8, 0)
+"""The first guest version that knows the answer of a work VM that is still starting (13-work-vm.md section 3)."""
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
 _QUERY = "SELECT g.guest_version FROM runner.vm v JOIN runner.golden g ON g.version = v.golden_version WHERE v.id = %s"
 
