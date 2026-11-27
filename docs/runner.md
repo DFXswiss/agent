@@ -478,8 +478,9 @@ Successful passes print nothing beyond the steps' own output.
 
 The loop takes no runner lock itself. Each step takes it; a busy lock makes
 that step print `runner busy` and return success until the next pass.
-SIGTERM or SIGINT ends a wait at once. During a running step, the step finishes
-and is never killed; the loop then exits 0 without starting another step.
+SIGTERM or SIGINT ends a wait within one second. During a running step, the
+step finishes and is never killed; the loop then exits 0 without starting
+another step.
 Steps start in their own session so a terminal's Ctrl-C does not reach them.
 
 The device daemon (`agent daemon`) does not start the loop. On a host without
@@ -532,8 +533,11 @@ docker build -f deploy/runner/Dockerfile -t agent-cli-runner .
 ```
 
 The image contains Python, the installed CLI, git, gh, tmux, procps (`ps`),
-and PostgreSQL for the store's self-managed cluster. Debian's PostgreSQL major
-follows the base image release. The build requires exactly one installed
+and PostgreSQL for the store's self-managed cluster. The base image is pinned
+to Debian trixie, which installs PostgreSQL 17. Moving the pin to another
+release changes the major; an existing cluster under `/agent-home` must then
+be upgraded with PostgreSQL's own tools (`pg_upgrade`, or a dump and restore)
+before the new image starts. The build requires exactly one installed
 `/usr/lib/postgresql/*/bin` directory, links it to `/opt/postgresql/bin`, and
 sets `AGENT_PG_BIN` to that link so the store finds it regardless of the major.
 No model-provider CLI is installed: this repository ships no driver table.

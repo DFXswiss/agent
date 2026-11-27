@@ -10,10 +10,35 @@ from __future__ import annotations
 import signal
 import subprocess
 import sys
-import threading
+import time
 from collections.abc import Callable
 
 STEP_NAMES: tuple[str, ...] = ("ingest", "dispatch", "supervise", "prune")
+
+
+class _Stop:
+    """A stop flag safe to assign from a Python signal handler."""
+
+    requested: bool = False
+
+
+def _wait(
+    seconds: float,
+    stop: _Stop,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> bool:
+    """Wait in slices of at most one second, stopping when requested."""
+    # Event.wait/set share a non-reentrant lock: a signal handler interrupting
+    # wait while it holds that lock could deadlock. Use only a plain flag.
+    deadline = monotonic() + seconds
+    while not stop.requested:
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            return False
+        sleep(min(1.0, remaining))
+    return True
 
 
 def step_argvs(prefix: list[str], session_id: str) -> list[tuple[str, list[str]]]:
@@ -42,18 +67,18 @@ def run_loop(
     run: Callable[[list[str]], int] | None = None,
     wait: Callable[[float], bool] | None = None,
     install_signals: bool = True,
-    stop: threading.Event | None = None,
+    stop: _Stop | None = None,
 ) -> int:
     """Repeat passes until stopped, letting an active step finish first.
 
     Always return 0 on a requested stop; other failures raise exceptions.
     """
-    stopping = threading.Event() if stop is None else stop
+    stopping = _Stop() if stop is None else stop
     run_step = _run if run is None else run
-    wait_pass = stopping.wait if wait is None else wait
+    wait_pass = (lambda seconds: _wait(seconds, stopping)) if wait is None else wait
 
     def on_signal(_signum: int, _frame: object) -> None:
-        stopping.set()
+        stopping.requested = True
 
     previous = {}
     try:
@@ -62,7 +87,7 @@ def run_loop(
                 previous[signum] = signal.signal(signum, on_signal)
         while True:
             for name, argv in steps:
-                if stopping.is_set():
+                if stopping.requested:
                     return 0
                 try:
                     status = run_step(argv)
@@ -72,7 +97,7 @@ def run_loop(
                     continue
                 if status != 0:
                     print(f"runner loop {name} exited {status}", file=sys.stderr)
-            if wait_pass(interval) or stopping.is_set():
+            if wait_pass(interval) or stopping.requested:
                 return 0
     finally:
         for signum, handler in previous.items():

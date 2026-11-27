@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-trixie
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -18,8 +18,8 @@ RUN apt-get update \
     && mkdir -p /opt/postgresql \
     && ln -s "${pg_dirs[0]}" /opt/postgresql/bin \
     && rm -rf /var/lib/apt/lists/*
-# Debian's PostgreSQL major follows its release. Use AGENT_PG_BIN instead of
-# relying on the store's built-in search for only majors 15 and 16.
+# PostgreSQL's major follows the pinned Debian release (trixie: 17).
+# Use AGENT_PG_BIN instead of the store's built-in search for majors 15 and 16.
 ENV AGENT_PG_BIN=/opt/postgresql/bin
 
 RUN python -m venv /opt/agent-venv
