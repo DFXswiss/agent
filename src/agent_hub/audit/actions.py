@@ -32,6 +32,7 @@ AUDIT_ACTIONS = frozenset(
         "read.mailbox",
         "read.device.mailboxes",
         "mail.read",
+        "dfx.read",
         "task.github_identity",
         "task.model_consent",
         "session.model_switched",

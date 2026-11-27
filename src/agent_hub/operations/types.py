@@ -48,6 +48,7 @@ OPERATION_TYPES = frozenset(
         "security.report",
         "github.merge",
         "mail.find",
+        "dfx.debug",
     }
 )
 SUBAGENT_REQUEST = "subagent.request"

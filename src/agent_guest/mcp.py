@@ -50,13 +50,14 @@ best effort: an unreachable control process does not change the answer.
 
 Read limit (KOR-10, AUD-02 NB-07): every read is journaled and becomes an audit row and an event at the hub, so a
 session calling in a loop would grow both without bound. ``ReadLimiter`` gives each session a token bucket for the
-read tools (every tool but ``request_operation``, which the operation budget limits): ``READ_BURST`` calls at once,
-``READ_RATE`` per second after that. A read over the limit is the tool error ``rate_limited``; only the first refused
-read of a stretch is journaled (``platform.refused {code:"rate_limited", tool}``). Every journaled refusal (protocol
-errors, ``params_invalid``, an oversized body, ``rate_limited``) passes a second bucket of the same size per session:
-the first refusal of a stretch over it is journaled, the rest is not, so the records of one session stay bounded by
-the two rates whatever it sends. A tool's own refusal that names a code (``ToolRefused``, e.g. ``get_subagent_result``
-asked for the session itself: ``not_found``) is journaled as well (KOR-10, NB-08).
+read tools (every tool but ``request_operation`` and ``dfx_debug``, which the operation budget limits):
+``READ_BURST`` calls at once, ``READ_RATE`` per second after that. A read over the limit is the tool error
+``rate_limited``; only the first refused read of a stretch is journaled (``platform.refused {code:"rate_limited",
+tool}``). Every journaled refusal (protocol errors, ``params_invalid``, an oversized body, ``rate_limited``) passes a
+second bucket of the same size per session: the first refusal of a stretch over it is journaled, the rest is not, so
+the records of one session stay bounded by the two rates whatever it sends. A tool's own refusal that names a code
+(``ToolRefused``, e.g. ``get_subagent_result`` asked for the session itself: ``not_found``) is journaled as well
+(KOR-10, NB-08).
 """
 
 from __future__ import annotations
@@ -80,7 +81,7 @@ QUERY_WAIT_SECONDS = 20.0
 MAX_DEREF_DEPTH = 32
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS = -32700, -32600, -32601, -32602
 REFUSED = "platform.refused"
-WRITE_TOOLS = frozenset({"request_operation"})
+WRITE_TOOLS = frozenset({"request_operation", "dfx_debug"})
 READ_BURST = 120
 READ_RATE = 2.0
 RATE_LIMITED = "rate_limited"

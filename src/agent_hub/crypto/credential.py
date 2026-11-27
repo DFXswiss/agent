@@ -18,7 +18,7 @@ from agent_hub.crypto.kdf import LABEL_CREDENTIAL_SIG, SALT_BYTES, credential_ke
 VERSION = 1
 ALG = "A256GCM-HKDF"
 HEADER_KEYS = frozenset({"v", "alg", "id", "owner", "kind", "version", "epoch", "author", "ts", "salt", "nonce"})
-KINDS = frozenset({"github", "anthropic_api_key", "claude_subscription", "mailbox"})
+KINDS = frozenset({"github", "anthropic_api_key", "claude_subscription", "mailbox", "dfx_debug"})
 MAX_CT_BYTES = 1024 * 1024
 """No own limit in the specification; bounded by the signed request body limit of 03-api.md section 1."""
 

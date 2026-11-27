@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/dfx.read.json",
+  "title": "audit detail dfx.read",
+  "description": "detail of audit rows with action dfx.read: a session queried the DFX API debug endpoint with the operation dfx.debug (ADR-102 section 6); the debug sign-in is target_id (target_kind credential). The operation, the sign-in's owner, the table, a summary of the filter (columns and operators of the WHERE tree, never a value), the number of rows answered and the outcome - never a result value. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "operation_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "owner_id": {
+      "$ref": "../common.json#/$defs/uuid"
+    },
+    "table": {
+      "type": "string",
+      "pattern": "^[a-z_][a-z0-9_]{0,63}$"
+    },
+    "filter": {
+      "type": "string",
+      "pattern": "^[ -~]{0,256}$"
+    },
+    "rows": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10000
+    },
+    "result": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "params_invalid",
+        "limit_exceeded",
+        "switched_off",
+        "upstream_error",
+        "timeout"
+      ]
+    }
+  },
+  "required": [
+    "operation_id",
+    "owner_id",
+    "table",
+    "filter",
+    "rows",
+    "result"
+  ],
+  "additionalProperties": false
+}

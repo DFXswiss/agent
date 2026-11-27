@@ -168,6 +168,11 @@ TOOLS: tuple[tuple[str, str, dict[str, Any]], ...] = (
     ("browser_tabs", "list, open, select or close tabs", {"action": "list"}),
     ("browser_download", "download a file into the workspace", {"target": "e9"}),
     ("browser_screenshot", "a PNG of the page into the workspace (view it with Read)", {"full_page": True}),
+    (
+        "dfx_debug",
+        "a read-only query of the DFX production database through the debug endpoint (released sign-in only)",
+        {"table": "asset", "select": [{"kind": "column", "column": "id"}], "limit": 5},
+    ),
 )
 
 

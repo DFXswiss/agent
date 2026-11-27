@@ -310,12 +310,16 @@ SPEC_TOOLS = {
     "browser_tabs": ("action index url snapshot", BROWSER_ANSWER),
     "browser_download": ("target url path snapshot", BROWSER_ANSWER),
     "browser_screenshot": ("path full_page snapshot", BROWSER_ANSWER),
+    # ADR-102 section 5 (contracts/changes/DBG-01.md): the query DTO of the operation dfx.debug, its outcome
+    "dfx_debug": ("table select where groupBy orderBy limit offset", "operation_id status result error duplicate_of"),
 }
 BROWSER_TOOLS = frozenset(tool for tool in SPEC_TOOLS if tool.startswith("browser_"))
 WORKVM_TOOLS = (
     frozenset({"workvm_exec", "workvm_output", "workvm_kill", "workvm_status", "workvm_sync", "workvm_browse"})
     | BROWSER_TOOLS
 )
+OPERATION_TOOLS = frozenset({"request_operation", "dfx_debug"})
+"""Tools that request an operation (the operation's records and audit, no read audit)."""
 SPEC_TOOL_STATUS = "succeeded failed rejected duplicate denied pending"
 # 03-api.md section 8.1 and 12: upper limits of integer arguments (and the idempotency key length).
 SPEC_TOOL_LIMITS = [
@@ -387,7 +391,7 @@ def test_tools_match_the_specification(mcp_index: dict[str, Any], contracts: Con
         assert fields(contracts, row["output"]) == top, tool
         for name, inner in nested.items():
             assert fields(contracts, "mcp/objects.json", f"/$defs/output_{tool}/properties/{name}/items") == inner
-        unaudited = tool == "request_operation" or tool in WORKVM_TOOLS
+        unaudited = tool in OPERATION_TOOLS or tool in WORKVM_TOOLS
         assert row["read_audit"] == (None if unaudited else f"read.session.{tool}")
         assert row["via"] == ("workvm.call" if tool in WORKVM_TOOLS else row["via"])
     audit = {row["action"] for row in load_json(CONTRACTS / "enums/audit-actions.json")["actions"]}
@@ -787,6 +791,13 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
     "mail.find": (
         "mailbox from subject since until folder limit body id wait_seconds",
         "mailbox messages waited_seconds timed_out",
+        "",
+        None,
+    ),
+    # ADR-102 section 4 (contracts/changes/DBG-01.md)
+    "dfx.debug": (
+        "table select where groupBy orderBy limit offset",
+        "table keys rows rows_total truncated",
         "",
         None,
     ),

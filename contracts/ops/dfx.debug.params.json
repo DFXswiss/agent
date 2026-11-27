@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/ops/dfx.debug.params.json",
+  "title": "operation dfx.debug params",
+  "description": "Parameters of the operation type dfx.debug (03-api.md section 9, ADR-102 section 4); additionalProperties false, integers without booleans.",
+  "$ref": "objects.json#/$defs/params_dfx_debug"
+}

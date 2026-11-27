@@ -11,7 +11,7 @@ import * as signed from './signed';
 export const VERSION = 1;
 export const ALG = 'A256GCM-HKDF';
 export const HEADER_KEYS = ['v', 'alg', 'id', 'owner', 'kind', 'version', 'epoch', 'author', 'ts', 'salt', 'nonce'];
-export const KINDS = ['github', 'anthropic_api_key', 'claude_subscription', 'mailbox'];
+export const KINDS = ['github', 'anthropic_api_key', 'claude_subscription', 'mailbox', 'dfx_debug'];
 /** No own limit in the specification; bounded by the signed request body limit of 03-api.md section 1. */
 export const MAX_CT_BYTES = 1024 * 1024;
 

@@ -1,0 +1,5 @@
+{
+  "table": "asset",
+  "select": [],
+  "limit": 5
+}

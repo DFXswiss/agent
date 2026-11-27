@@ -7,6 +7,10 @@
   token, key or password. A record that fails is `unverifiable` with its code.
 - `credentials set-mailbox`: the mailbox of the login automation; the password comes from stdin; the name, purpose
   and release of the stored primary mailbox stay (ADR-099).
+- `credentials set-dfx-debug`: the debug sign-in of the DFX API (ADR-102): wallet address and signature from stdin
+  (one per line, never on the command line), `--api-url`, `--release <wg>` (repeatable; without it the stored release
+  stays). `credentials release-dfx-debug --wg <wg>... | --none` changes only the release. The list shows the API URL
+  and the released workgroups, never the address or the signature.
 - `credentials delete --kind`: `DELETE /v1/me/credentials/{kind}` (`404` counts as done).
 - `credentials check --kind`: the device request `credential.check` (API key, subscription) or `mailbox.check`.
 - `github status|connect|disconnect`: the GitHub connection (the `github` record, written by the device that made the
@@ -48,16 +52,19 @@ from agent_platform.account import Account
 from agent_platform.commands import Context, Tree
 from agent_platform.credentials import (
     KINDS,
+    MAX_RELEASES,
     PRINTABLE_RE,
     SOURCES,
     put_record,
+    read_record,
     revocable,
     valid_body,
+    valid_dfx_debug,
     valid_mailbox,
 )
 from agent_platform.devicereq import choose_device, finish, resume, show_in_browser, submit, wait
 from agent_platform.errors import PlatformError
-from agent_platform.eventio import rows_of
+from agent_platform.eventio import rows_of, uuid_argument
 from agent_runner.crypto.credential import open_credential, verify_credential
 from agent_runner.crypto.encoding import parse_json
 from agent_runner.crypto.errors import CryptoError
@@ -84,6 +91,8 @@ def summary(kind: str, body: dict[str, Any]) -> dict[str, Any]:
         return {"email": body["email"], "origin": body["kind"], "expires_at": body.get("expires_at")}
     if kind == "mailbox":
         return {"email": body["email"], "host": body["imap_host"]}
+    if kind == "dfx_debug":
+        return {"api_url": body["api_url"], "wgs": list(body.get("use", {"wgs": []})["wgs"])}
     return {}
 
 
@@ -181,6 +190,62 @@ def set_mailbox(account: Account, args: Any, password: str) -> dict[str, Any]:
     if not valid_mailbox(body):
         raise PlatformError("invalid_argument")
     return {**put_record(account, "mailbox", body, keep_release), "kind": "mailbox"}
+
+
+DFX_DEBUG = "dfx_debug"
+
+
+def _releases(values: list[str] | None) -> list[str]:
+    wgs = sorted({uuid_argument(wg) for wg in values or []})
+    if len(wgs) > MAX_RELEASES:
+        raise PlatformError("invalid_argument", reason="wg")
+    return wgs
+
+
+def keep_dfx_release(body: Mapping[str, Any], _record: object, current: Mapping[str, Any] | None) -> None:
+    """Keep the release of the stored debug sign-in in a new version written without `--release` (ADR-102 section 3)."""
+    if current is not None and "use" in current:
+        cast(dict[str, Any], body).setdefault("use", current["use"])
+
+
+def set_dfx_debug(account: Account, args: Any, text: str) -> dict[str, Any]:
+    """`credentials set-dfx-debug`: the debug sign-in of the DFX API (ADR-102 section 2). The wallet address and the
+    signature come from standard input, one per line, never from the command line; `--release` replaces the release,
+    without it the stored release stays."""
+    lines = text.splitlines()
+    if len(lines) != 2:
+        raise PlatformError("invalid_argument", reason="stdin")
+    wgs = _releases(args.release)
+    body: dict[str, Any] = {
+        "address": lines[0].strip(),
+        "signature": lines[1].strip(),
+        "api_url": args.api_url.strip().rstrip("/"),
+    }
+    if wgs:
+        body["use"] = {"wgs": wgs}
+    if not valid_dfx_debug(body):
+        raise PlatformError("invalid_argument", reason="dfx_debug")
+    result = put_record(account, DFX_DEBUG, body, None if wgs else keep_dfx_release)
+    released = list(body.get("use", {"wgs": []})["wgs"])
+    body.clear()
+    return {**result, "kind": DFX_DEBUG, "api_url": args.api_url.strip().rstrip("/"), "wgs": released}
+
+
+def release_dfx_debug(account: Account, args: Any) -> dict[str, Any]:
+    """`credentials release-dfx-debug`: release the stored debug sign-in to exactly these workgroups (`--none`:
+    to none); the record is opened, changed and sealed again, the sign-in itself is not asked for again."""
+    wgs = _releases(args.wg)
+    if args.none == bool(wgs):
+        raise PlatformError("invalid_argument", reason="wg")
+    _record, body = read_record(account, DFX_DEBUG)
+    if body is None or not valid_dfx_debug(body):
+        raise PlatformError("invalid_argument", reason="dfx_debug_missing")
+    body.pop("use", None)
+    if wgs:
+        body["use"] = {"wgs": wgs}
+    result = put_record(account, DFX_DEBUG, body)
+    body.clear()
+    return {**result, "kind": DFX_DEBUG, "wgs": wgs}
 
 
 # --- device flows ---
@@ -326,6 +391,14 @@ def _mailbox_command(account: Account, args: Any, context: Context) -> dict[str,
     return set_mailbox(account, args, context.read_stdin())
 
 
+def _dfx_debug_command(account: Account, args: Any, context: Context) -> dict[str, Any]:
+    return set_dfx_debug(account, args, context.read_stdin())
+
+
+def _dfx_release_command(account: Account, args: Any, context: Context) -> dict[str, Any]:
+    return release_dfx_debug(account, args)
+
+
 def _check(account: Account, args: Any, context: Context) -> dict[str, Any]:
     return credentials_check(account, args, context.environ)
 
@@ -377,6 +450,32 @@ def register(tree: Tree) -> None:
     sub.add_argument("--imap-port", type=int, default=993)
     sub.add_argument("--imap-user", required=True)
     sub.add_argument("--email", required=True)
+    sub = tree.command(
+        group,
+        "set-dfx-debug",
+        _dfx_debug_command,
+        "store the DFX API debug sign-in (address and signature on stdin, one per line); sessions of your tasks query "
+        "the debug endpoint read-only (dfx.debug) only in the workgroups it is released to",
+        writes=True,
+        example='printf \'%s\\n%s\\n\' "$DEBUG_ADDRESS" "$DEBUG_SIGNATURE" | agent-platform credentials '
+        "set-dfx-debug --api-url https://api.example.com/v1 --release <workgroup id>",
+        words="dfx debug datenbank produktion prod zugang signatur wallet freigeben database production signature",
+    )
+    sub.add_argument("--api-url", required=True, help="base URL of the DFX API including /v1 (https)")
+    sub.add_argument(
+        "--release", action="append", help="release it to this workgroup ID (repeatable; without: the stored release)"
+    )
+    sub = tree.command(
+        group,
+        "release-dfx-debug",
+        _dfx_release_command,
+        "release the stored DFX API debug sign-in to exactly these workgroups (--none: to none)",
+        writes=True,
+        example="agent-platform credentials release-dfx-debug --wg <workgroup id>",
+        words="dfx debug freigeben freigabe workgroup entziehen release revoke",
+    )
+    sub.add_argument("--wg", action="append", help="a workgroup ID (repeatable)")
+    sub.add_argument("--none", action="store_true", help="release it to no workgroup")
     sub = tree.command(
         group,
         "delete",

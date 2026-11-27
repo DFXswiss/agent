@@ -199,6 +199,12 @@
       "params": "ops/mail.find.params.json",
       "result": "ops/mail.find.result.json",
       "dedupe": false
+    },
+    {
+      "type": "dfx.debug",
+      "params": "ops/dfx.debug.params.json",
+      "result": "ops/dfx.debug.result.json",
+      "dedupe": false
     }
   ]
 }

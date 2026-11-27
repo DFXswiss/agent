@@ -13,6 +13,7 @@
   "types": {
     "browser.close": "run",
     "browser.open": "run",
+    "dfx.debug": "read",
     "github.checkout": "read",
     "github.comment": "write",
     "github.commit": "write",
@@ -82,7 +83,8 @@
     "get_usage": "read",
     "list_audit": "read",
     "list_workgroup_operations": "read",
-    "get_metrics": "read"
+    "get_metrics": "read",
+    "dfx_debug": "dfx.debug"
   },
   "head_changing": [
     "github.commit",

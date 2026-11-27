@@ -1036,6 +1036,10 @@
     {
       "action": "mail.read",
       "group": "runner"
+    },
+    {
+      "action": "dfx.read",
+      "group": "runner"
     }
   ]
 }

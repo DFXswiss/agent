@@ -49,7 +49,8 @@
               "browser_dialog",
               "browser_tabs",
               "browser_download",
-              "browser_screenshot"
+              "browser_screenshot",
+              "dfx_debug"
             ]
           },
           "description": {

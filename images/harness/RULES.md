@@ -226,6 +226,11 @@ Operation types and parameter examples:
   `wait_seconds` (up to 300) the platform waits for a new mail for you. Never read a mailbox in a work VM and never
   ask for a mailbox password:
   `{"type": "mail.find", "params": {"mailbox": "signup", "from": "noreply@example.com", "wait_seconds": 300, "body": true}}`
+- `dfx.debug` – a read-only query of the DFX production database through the debug endpoint, with the debug sign-in
+  your task owner released to this workgroup (the tool `dfx_debug` takes the same query): table, select, where,
+  groupBy, orderBy, limit and offset as the dfx-debug CLI takes them; the server's allowlist decides tables and
+  columns. There is no write. Never sign in to the DFX API yourself and never ask for its signature:
+  `{"type": "dfx.debug", "params": {"table": "buy_crypto", "select": [{"kind": "aggregate", "column": "id", "aggregate": "count", "as": "n"}], "where": {"kind": "leaf", "column": "amlCheck", "op": "=", "value": "Pass"}, "limit": 1}}`
 
 If the task needs GitHub, request the operation – even when GitHub is not connected; the platform asks the user to
 connect and continues your operation afterwards. Do not explain what is missing and do not offer workarounds. If no

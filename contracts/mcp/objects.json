@@ -1493,6 +1493,9 @@
         },
         {
           "$ref": "#/$defs/output_browser"
+        },
+        {
+          "$ref": "#/$defs/output_dfx_debug"
         }
       ],
       "description": "output of any platform tool"
@@ -3509,6 +3512,177 @@
         "points"
       ],
       "additionalProperties": false
+    },
+    "input_dfx_debug": {
+      "type": "object",
+      "description": "the query DTO of the dfx-debug CLI (POST /support/debug of the DFX API): checked against ops/dfx.debug.params.json and run as the operation dfx.debug",
+      "properties": {
+        "table": {
+          "type": "string",
+          "description": "an allowlisted table, e.g. buy_crypto, buy_fiat, transaction, bank_tx, crypto_input, user_data, user, asset, fiat, log",
+          "pattern": "^[a-z_][a-z0-9_]{0,63}$"
+        },
+        "select": {
+          "type": "array",
+          "description": "1-100 items: {kind:column, column, as?}, {kind:aggregate, column, aggregate:count|sum|min|max|avg, as?} or {kind:jsonb, column, jsonbPath:a.b.c} (only jsonb-enabled columns such as log.message)",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "$ref": "../ops/objects.json#/$defs/dfx_debug_select_item"
+          }
+        },
+        "where": {
+          "type": "object",
+          "description": "WHERE tree: leaf {kind:leaf, column, op, value?} with op = != < <= > >= IN 'NOT IN' LIKE ILIKE 'IS NULL' 'IS NOT NULL' (IN/NOT IN: an array of at most 100 values; IS NULL/IS NOT NULL: no value; strings at most 1024 characters); {kind:and|or, children:[1-5 nodes]}; {kind:not, child:node}. Depth at most 5, at most 200 nodes and 50 leaves.",
+          "additionalProperties": {}
+        },
+        "groupBy": {
+          "type": "array",
+          "description": "at most 20 column names or select aliases",
+          "maxItems": 20,
+          "items": {
+            "$ref": "../ops/objects.json#/$defs/dfx_debug_identifier"
+          }
+        },
+        "orderBy": {
+          "type": "array",
+          "description": "at most 20 {column, direction?: ASC|DESC}; column is a column or a select alias",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "properties": {
+              "column": {
+                "$ref": "../ops/objects.json#/$defs/dfx_debug_identifier"
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "ASC",
+                  "DESC"
+                ]
+              }
+            },
+            "required": [
+              "column"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "limit": {
+          "type": "integer",
+          "description": "required, 1-10000 (out of range is refused, never clamped); keep it small while exploring",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      },
+      "required": [
+        "table",
+        "select",
+        "limit"
+      ],
+      "additionalProperties": false
+    },
+    "output_dfx_debug": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "const": "succeeded"
+            },
+            "result": {
+              "$ref": "../ops/objects.json#/$defs/result"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "result of the original operation (duplicate_of), or of an existing open pull request found by the executor (no duplicate_of, result.existing true)",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "const": "duplicate"
+            },
+            "duplicate_of": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "result": {
+              "$ref": "../ops/objects.json#/$defs/result"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "result"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "failed",
+                "rejected",
+                "denied"
+              ]
+            },
+            "error": {
+              "$ref": "../ops/objects.json#/$defs/error"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status",
+            "error"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "description": "not final within the wait time; duplicate_of when the original is still running",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "status": {
+              "type": "string",
+              "const": "pending"
+            },
+            "duplicate_of": {
+              "$ref": "../common.json#/$defs/uuid"
+            }
+          },
+          "required": [
+            "operation_id",
+            "status"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "dfx_debug result: the outcome of the operation dfx.debug (03-api.md sections 8.1 and 9, ADR-102 section 5)"
     }
   }
 }

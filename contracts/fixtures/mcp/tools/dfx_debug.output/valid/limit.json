@@ -1,0 +1,8 @@
+{
+  "operation_id": "0193002d-0000-7000-8000-0000000000b2",
+  "status": "failed",
+  "error": {
+    "code": "limit_exceeded",
+    "message": "The DFX API refused the query: Daily limit reached. The endpoint counts the persons whose sensitive personal data an account reads per UTC day and refuses beyond its daily limit; the count starts again at 00:00 UTC. Until then, query without sensitive columns."
+  }
+}

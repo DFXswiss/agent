@@ -1,5 +1,6 @@
 // The stored credentials (06-web.md section 8.2): kind, version, last change and what may be shown of it (GitHub login,
-// subscription e-mail, mailbox address and host – never a token, key or password), unverifiable records with their
+// subscription e-mail, mailbox address and host, the API URL and the number of released workgroups of the DFX debug
+// sign-in – never a token, key, password, signature or wallet address), unverifiable records with their
 // code, and "Delete" with a confirmation (`DELETE /v1/me/credentials/{kind}`; devices purge their caches).
 import { useState } from 'react';
 import { type CredentialKind, deleteCredential, type Summary } from '../../../../core/credentials/records';
@@ -23,6 +24,8 @@ function useDetail(): (summary: Summary) => string | null {
         return summary.email === null ? null : t('credentials.list.email', { email: summary.email });
       case 'mailbox':
         return t('credentials.list.mailbox', { email: summary.email, host: summary.host });
+      case 'dfx_debug':
+        return t('credentials.list.dfx_debug', { url: summary.apiUrl, workgroups: String(summary.wgs.length) });
       case 'anthropic_api_key':
         return null;
     }

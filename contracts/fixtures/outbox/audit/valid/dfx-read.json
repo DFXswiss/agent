@@ -1,0 +1,16 @@
+{
+  "action": "dfx.read",
+  "result": "ok",
+  "task_id": "0193001e-0000-7000-8000-00000000001e",
+  "session_id": "01930028-0000-7000-8000-000000000028",
+  "target_kind": "credential",
+  "target_id": "0193002d-0000-7000-8000-0000000000c2",
+  "detail": {
+    "operation_id": "0193002d-0000-7000-8000-0000000000b2",
+    "owner_id": "0193000a-0000-7000-8000-00000000000a",
+    "table": "buy_crypto",
+    "filter": "and(amlCheck =, not(comment IS NULL))",
+    "rows": 2,
+    "result": "ok"
+  }
+}

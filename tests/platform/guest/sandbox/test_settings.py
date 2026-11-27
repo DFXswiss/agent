@@ -62,6 +62,7 @@ SPEC_MCP_TOOLS = [
     "browser_tabs",
     "browser_download",
     "browser_screenshot",
+    "dfx_debug",
 ]
 # 05-runner.md section 5.2.
 SPEC_EVENTS = [

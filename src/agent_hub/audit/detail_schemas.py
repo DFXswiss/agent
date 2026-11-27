@@ -281,7 +281,12 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "community.unmute": {"properties": {}, "required": []},
     "credential.delete": {
         "properties": {
-            "kind": [{"type": "string", "enum": ["github", "anthropic_api_key", "claude_subscription", "mailbox"]}],
+            "kind": [
+                {
+                    "type": "string",
+                    "enum": ["github", "anthropic_api_key", "claude_subscription", "mailbox", "dfx_debug"],
+                }
+            ],
             "version": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
             "owner_kind": [{"type": "string", "enum": ["user", "org"]}],
         },
@@ -289,7 +294,12 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "credential.put": {
         "properties": {
-            "kind": [{"type": "string", "enum": ["github", "anthropic_api_key", "claude_subscription", "mailbox"]}],
+            "kind": [
+                {
+                    "type": "string",
+                    "enum": ["github", "anthropic_api_key", "claude_subscription", "mailbox", "dfx_debug"],
+                }
+            ],
             "version": [{"type": "integer", "minimum": 1, "maximum": 9007199254740991}],
             "owner_kind": [{"type": "string", "enum": ["user", "org"]}],
         },
@@ -413,6 +423,26 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
             "error_code": [{"type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$"}, {"type": "null"}],
         },
         "required": ["kind", "error_code"],
+    },
+    "dfx.read": {
+        "properties": {
+            "operation_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ],
+            "owner_id": [
+                {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"}
+            ],
+            "table": [{"type": "string", "pattern": "^[a-z_][a-z0-9_]{0,63}$"}],
+            "filter": [{"type": "string", "pattern": "^[ -~]{0,256}$"}],
+            "rows": [{"type": "integer", "minimum": 0, "maximum": 10000}],
+            "result": [
+                {
+                    "type": "string",
+                    "enum": ["ok", "params_invalid", "limit_exceeded", "switched_off", "upstream_error", "timeout"],
+                }
+            ],
+        },
+        "required": ["operation_id", "owner_id", "table", "filter", "rows", "result"],
     },
     "event.append": {
         "properties": {
