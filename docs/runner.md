@@ -4,7 +4,8 @@
 notifications and queues the mentions it is admitted for (`ingest`), starts
 queued jobs (`dispatch`), runs one job inside its worktree (`work`), supervises
 and cleans up jobs (`supervise`, `prune`, `retry`), and reports on the queue and
-the configuration (`status`, `doctor`). The command group owns the external
+the configuration (`status`, `doctor`). It repeats the scheduled steps with
+`loop`. The command group owns the external
 effects; the rules it applies live in the tested modules `jobs`, `ingest`,
 `dispatch`, `finalize`, `reap`, `queue`, `health`, `runner_worker` and
 `runner_status`.
@@ -462,6 +463,29 @@ authenticated GitHub login matches the policy; a failed `gh` call is reported as
 Output: one `doctor problem: <text>` line per problem followed by
 `doctor <n> problems`, exiting 1; or `doctor ok`.
 
+### `agent runner loop --session ID --interval SECONDS`
+
+Runs forever. Each pass runs `runner ingest --session ID`, `runner dispatch`,
+`runner supervise` and `runner prune`, in that order, then waits the given
+number of seconds. The interval must be a decimal whole number from 1 to
+86400 (one day); there is no default interval. Each step is a child process
+with its own store connection.
+A failing step neither ends the loop nor skips the later steps of that pass.
+A nonzero exit prints `runner loop <name> exited <status>` to standard error;
+a step that cannot start prints
+`runner loop <name> could not start: <strerror or exception class name>`.
+Successful passes print nothing beyond the steps' own output.
+
+The loop takes no runner lock itself. Each step takes it; a busy lock makes
+that step print `runner busy` and return success until the next pass.
+SIGTERM or SIGINT ends a wait within one second. During a running step, the
+step finishes and is never killed; the loop then exits 0 without starting
+another step.
+Steps start in their own session so a terminal's Ctrl-C does not reach them.
+
+The device daemon (`agent daemon`) does not start the loop. On a host without
+the container, the operator runs it under the host's own service manager.
+
 ## The runner lock
 
 `ingest`, `dispatch`, `supervise`, `prune` and `retry` take one exclusive,
@@ -483,6 +507,7 @@ behind a single lane. Dispatch starts the worker just before writing the row as
 running; the worker waits for its own queued row to become running, changes no
 worktree, and races with no mutating command.
 
+`loop` takes no lock itself; its child steps take the lock independently.
 `status` and `doctor` are read-only and take no lock. The worker is not a
 mutating runner command, so it neither takes nor waits for this lock.
 
@@ -499,6 +524,82 @@ run jobs also ignore a row whose stored `worktree` is anything but
 deliberate exception: it reads the whole store for de-duplication, because a
 mention already queued by another device must not be inserted again.
 
+## Container
+
+Build from the repository root:
+
+```sh
+docker build -f deploy/runner/Dockerfile -t agent-cli-runner .
+```
+
+The image contains Python, the installed CLI, git, gh, tmux, procps (`ps`),
+and PostgreSQL for the store's self-managed cluster. The base image is pinned
+to Debian trixie, which installs PostgreSQL 17. Moving the pin to another
+release changes the major; an existing cluster under `/agent-home` must then
+be upgraded with PostgreSQL's own tools (`pg_upgrade`, or a dump and restore)
+before the new image starts. The build requires exactly one installed
+`/usr/lib/postgresql/*/bin` directory, links it to `/opt/postgresql/bin`, and
+sets `AGENT_PG_BIN` to that link so the store finds it regardless of the major.
+No model-provider CLI is installed: this repository ships no driver table.
+Add the executables named by your `drivers.json` in a derived image.
+
+Copy `deploy/runner/compose.example.yaml` into the instance directory as
+`compose.yaml`. Keep one copy per instance, in its own directory with a
+distinct basename: Compose uses that basename as its default project name.
+Build the image first with the `docker build` command above, from the
+repository root. The image has no default command: set `AGENT_RUNNER_SESSION`
+and `AGENT_RUNNER_INTERVAL` explicitly, for example in an `.env` file next to
+`compose.yaml`, then run `docker compose up -d` in the instance directory.
+
+The process runs as `agent`, with fixed uid and gid 1000, because PostgreSQL
+refuses to initialize its cluster as root. Before the first start, create
+`agent-home` and `gh-config` next to the Compose file and give both folders to
+uid and gid 1000. They mount at `/agent-home` (`AGENT_HOME`) and
+`/home/agent/.config/gh`. The latter persists gh credentials and the global git
+configuration: `GIT_CONFIG_GLOBAL` points to its `gitconfig`, where
+`gh auth setup-git` writes. Mount the driver configuration directories named
+by `config_dir` in `ai-accounts.json` the same way.
+
+After starting the container, authenticate inside it:
+
+```sh
+docker compose exec runner gh auth login
+docker compose exec runner gh auth setup-git
+```
+
+Initialize the store and device identity before creating the configuration files:
+
+```sh
+docker compose exec runner agent init --no-service
+```
+
+Use `--no-service` because the container has no user service manager and the
+loop is its main process, so the device daemon is not installed.
+The PostgreSQL cluster lives under `/agent-home`, survives a container
+recreation, and is started again by a step after a container restart if stopped.
+
+Create `/agent-home/runner` and `/agent-home/runner/prompts` along with the
+runner configuration files listed in Layout: `policy.json`, `runner.json`,
+`skills-catalog.json`, `agent.json`, and
+`prompts/<skill id>.md` for each configured worker. Configure
+`/agent-home/ai-accounts.json`, `/agent-home/drivers.json`, and
+`/agent-home/github-accounts.json` explicitly as well. Write these through the
+mounted folders, or use `docker compose exec runner` with your configuration
+tooling. Then check the running container:
+
+```sh
+docker compose exec runner agent runner doctor
+```
+
+Until configuration exists, every pass prints its steps' errors and the loop
+continues. The loop is the container's main process because jobs run in tmux
+sessions whose server must outlive each step. If the main process ended, the
+container would take the tmux server and every running job with it.
+Compose uses an init process to reap leftover processes. A stop lets the
+running step finish, but Docker kills the container after the configured
+`stop_grace_period` of two minutes; allow more time if a step needs it.
+There is no health endpoint, and `runner status` is not a liveness probe.
+
 ## Not yet
 
 - Only `pr-review` and `log-error` have workers. Other skills
@@ -509,8 +610,9 @@ mention already queued by another device must not be inserted again.
   posts a comment on the issue or pull request instead.
 - More prompt templates than `prompts/pr-review.md` and
   `prompts/log-error.md`.
-- A schedule or service unit for the subcommands.
-- Container packaging.
+- A host service unit for the loop.
+- Model-provider CLIs in the container image; operators add their configured
+  drivers in a derived image.
 - The mergeable probe for `pr-mergeable` jobs; those jobs record
   `work_performed` as `unknown` until it is ported.
 - @-mentions in a lane's review text are posted as written: the worker does

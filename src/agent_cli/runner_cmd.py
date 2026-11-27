@@ -1,4 +1,4 @@
-"""Operate the runner: ingest mentions, dispatch, supervise, prune and retry.
+"""Operate the runner: ingest mentions, dispatch, supervise, prune, retry and loop.
 
 The pure modules (`jobs`, `ingest`, `dispatch`, `finalize`, `reap`, `queue`,
 `health`) decide what should happen. This module is the command layer: it reads
@@ -47,7 +47,7 @@ from .store import Store
 
 USAGE = (
     "Usage: agent runner ingest --session ID|dispatch|work|supervise|prune|"
-    "retry JOB_ID|status|doctor"
+    "retry JOB_ID|status|doctor|loop --session ID --interval SECONDS"
 )
 
 _EXIT_CODE_RE = re.compile(r"^-?[0-9]+$")
@@ -1183,6 +1183,50 @@ def _cmd_doctor(args: list[str]) -> None:
     print("doctor ok")
 
 
+def _cmd_loop(
+    args: list[str],
+    *,
+    run: Callable[[list[str]], int] | None = None,
+    wait: Callable[[float], bool] | None = None,
+    install_signals: bool = True,
+) -> None:
+    """Repeat the scheduled steps with an explicit session and interval."""
+    from . import runner_loop
+    from .daemon import agent_argv
+    from .main import die, require_flag
+    from .supervise import SESSION_RE
+
+    values: dict[str, str] = {}
+    for index in range(0, len(args), 2):
+        name = args[index]
+        if name not in ("--session", "--interval") or name in values:
+            die(USAGE)
+        if index + 1 >= len(args):
+            die(f"{name} needs a value")
+        values[name] = args[index + 1]
+        if (
+            name == "--session" and values[name]
+            and SESSION_RE.fullmatch(values[name]) is None
+        ):
+            die("session id may contain only A-Za-z0-9_-")
+
+    session_id = require_flag(args, "--session")
+    raw_interval = require_flag(args, "--interval")
+    # Bound the significant digits before converting an arbitrarily long input.
+    digits = raw_interval.lstrip("0")
+    if (
+        re.fullmatch(r"[0-9]+", raw_interval) is None
+        or (len(digits), digits) > (5, "86400")
+        or int(digits or "0") < 1
+    ):
+        die("--interval must be a whole number of seconds from 1 to 86400")
+    runner_loop.run_loop(
+        steps=runner_loop.step_argvs(agent_argv(), session_id),
+        interval=int(digits), run=run, wait=wait,
+        install_signals=install_signals,
+    )
+
+
 # ------------------------------------------------------------------ entry
 
 
@@ -1216,5 +1260,8 @@ def cmd_runner(args: list[str]) -> None:
         return
     if sub == "doctor":
         _cmd_doctor(rest)
+        return
+    if sub == "loop":
+        _cmd_loop(rest)
         return
     die(USAGE)

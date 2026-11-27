@@ -4021,3 +4021,95 @@ def test_doctor_reports_a_login_that_does_not_match_the_policy(
         "policy expects example-bot" in out
     )
     assert "doctor 1 problems" in out
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize(("args", "message"), [
+    ([], "--session is required"),
+    (["--session"], "--session needs a value"),
+    (["--session", ""], "--session is required"),
+    (["--session", "bad id"], "session id may contain only A-Za-z0-9_-"),
+    (["--session", "s\n", "--interval", "1"], "session id may contain only A-Za-z0-9_-"),
+    (["--session", "s"], "--interval is required"),
+    (["--interval", "1"], "--session is required"),
+    (["--interval"], "--interval needs a value"),
+    (["--session", "s", "--interval"], "--interval needs a value"),
+    (["--session", "s", "--interval", ""], "--interval is required"),
+])
+def test_loop_required_flags(
+    args: list[str], message: str,
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        runner_cmd._cmd_loop(args, install_signals=False)
+    assert message in str(exc.value)
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize("interval", [
+    "0", "-1", "+1", " 1", "1 ", "1.5", "abc", "١", "86401", "100000", "9" * 5000,
+])
+def test_loop_bad_interval(interval: str) -> None:
+    with pytest.raises(SystemExit) as exc:
+        runner_cmd._cmd_loop(["--session", "s", "--interval", interval])
+    assert "--interval must be a whole number of seconds from 1 to 86400" in str(exc.value)
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize("extra", [
+    ["extra"], ["--unknown", "x"], ["--session", "other"], ["--interval", "2"],
+])
+def test_loop_unknown_args(extra: list[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        runner_cmd._cmd_loop(["--session", "s", "--interval", "1", *extra])
+    assert runner_cmd.USAGE in str(exc.value)
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize("interval", ["1", "2", "86400", "0002"])
+def test_loop_injected_success(monkeypatch: pytest.MonkeyPatch, interval: str) -> None:
+    from agent_cli import daemon, runner_loop
+
+    monkeypatch.setattr(daemon, "agent_argv", lambda: ["cli"])
+    calls: list[list[str]] = []
+
+    def run(argv: list[str]) -> int:
+        calls.append(argv)
+        return 0
+
+    def wait(seconds: float) -> bool:
+        assert seconds == int(interval)
+        return True
+
+    runner_cmd._cmd_loop(
+        ["--interval", interval, "--session", "s_1-A"],
+        run=run, wait=wait, install_signals=False,
+    )
+    assert calls == [argv for _, argv in runner_loop.step_argvs(["cli"], "s_1-A")]
+
+
+@pytest.mark.no_pg
+def test_loop_overlapping_flags() -> None:
+    with pytest.raises(SystemExit) as exc:
+        runner_cmd._cmd_loop(["--session", "--interval", "1"])
+    assert runner_cmd.USAGE in str(exc.value)
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize("subcommand", [
+    "ingest", "dispatch", "work", "supervise", "prune", "retry", "status",
+    "doctor", "loop",
+])
+def test_runner_dispatch(monkeypatch: pytest.MonkeyPatch, subcommand: str) -> None:
+    seen: list[list[str]] = []
+    monkeypatch.setattr(runner_cmd, f"_cmd_{subcommand}", seen.append)
+    rest = ["--session", "s", "--interval", "1"]
+    cmd_runner([subcommand, *rest])
+    assert seen == [rest]
+
+
+@pytest.mark.no_pg
+@pytest.mark.parametrize("args", [[], ["unknown"]])
+def test_runner_usage(args: list[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        cmd_runner(args)
+    assert runner_cmd.USAGE in str(exc.value)
