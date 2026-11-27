@@ -983,7 +983,11 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   only when the owner's `fallback.own_to_dfx` (default off) or the task's `model_consent` allows it. From the operator
   pool to `platform` only with `fallback.operator_to_platform` (default on). Both settings come with every session of
   the owner in `GET /v1/device/state` (`sessions[].fallback`, `sessions[].model_consent`); an older hub that sends
-  neither means the defaults. An explicit `api_key` or `platform` preference has no fallback.
+  neither means the defaults. An explicit `api_key` or `platform` preference has no fallback. A session the desired
+  state does not list yet – a subagent starts right after its `subagent.request`, before the hub names it in
+  `sessions` – takes the owner's preference, `fallback` and `model_consent` from its parent's entry, else from an entry
+  of the same task and owner (HOT-31): a subagent and a resumed session cross to `dfx` exactly when their main session
+  does, and never start on an access known to be used up while another allowed one is free.
 - **Exhaustion** (subscriptions only; access key `own:<owner_id>` or `operator:<file name>`). Trigger: a gateway
   `usage` record with status `429`. Readable quota: the runner reads the usage endpoint with the same token at once
   (at most once per access per 60 s); exhausted when `five_hour` or `seven_day` reports `used_percent >= 100` with

@@ -26,7 +26,9 @@ owner has such a record (`owner_status` is not `MISSING`); then a `dfx` step is 
 `fallback.own_to_dfx` or the task's consent allows it (`model.policy`), never silently - neither because the own
 access is used up nor because it cannot be used right now. `platform` after a used-up operator pool needs
 `fallback.operator_to_platform` (default on). The result depends only on the stored limits, the latest quota
-readings, the bindings and the settings.
+readings, the bindings and the settings. A session the desired state does not list yet (a subagent right after its
+`subagent.request`) follows the settings of its parent's entry (`policy.settings`, HOT-31), so it crosses to a `dfx`
+access exactly when its main session would.
 
 Nothing allowed is left: with a release time among the skipped accesses (an own credential that cannot be used now:
 `now + limits.RECHECK_S`) the result is a **wait** (`Wait`: `until` = the earliest release, `choice` = a `dfx` access
@@ -427,7 +429,13 @@ async def walk(env: Any, desired: Desired, *, probe: bool = False) -> Walk:
         device_kind=env.device_kind,
         owner_id=desired.owner_id,
     )
-    settings = policy.settings(env.desired, desired.session_id)
+    settings = policy.settings(
+        env.desired,
+        desired.session_id,
+        task_id=desired.task_id,
+        owner_id=desired.owner_id,
+        parent_id=desired.parent_session_id,
+    )
     found = Walk()
     own = pool_used_up = False
     for step in plan(kinds):
