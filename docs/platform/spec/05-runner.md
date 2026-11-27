@@ -1041,7 +1041,11 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   the outbox audit `session.model_switched` with `cause: renewed`, `until: null` and the session's model on both
   sides. Given up (`access_renewal_given_up reason=tries|no_access`, the error stays visible and the prompts are
   delivered) after 3 continuations without a successful answer or without a valid access within 300 s; the marks of
-  ended sessions are dropped. A restart of the daemon drops the marks (the session stays as it is). Subagent sessions
+  ended sessions are dropped. A shared subscription whose token expired or was refused is fetched from the hub before
+  the pool uses it again (at most every 60 s; while the hub has nothing newer an expired entry is no entry), and the
+  guest removes Claude Code's own login file `home/.claude/.credentials.json` at every create, resume and restore, so
+  neither a missed hint nor a kept sandbox brings an old token back (ADR-092 §5). A restart of the daemon drops the
+  marks (the session stays as it is). Subagent sessions
   and `api_key`/`platform` sessions are not marked. No `runner.model_pause` row, no suspension.
 - **Model not in the plan** (HOT-26, ADR-081 §4 point 8). A `usage` record with `refusal: "model_not_in_plan"` (any
   status, typically `429`) is neither a deferral of an operator file nor part of an exhaustion streak. The runner

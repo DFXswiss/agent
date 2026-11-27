@@ -301,6 +301,7 @@ async def hand_over(context: Any, record_id: str, version: int, token: str) -> N
     if pool is None or service is None or name not in pool.shared or operator.parse_token(token.encode()) is None:
         return
     pool.shared[name] = operator.Entry((0, 0, version, 0), token, None)
+    pool.expires.pop(name, None)  # the former token's expiry; the record that holds the new one brings its own
     env = service.env
     for session in await live_sessions(env, set(service.tasks), RENEWED):
         if pool.bindings.get(session.id) == name:

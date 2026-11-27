@@ -58,6 +58,11 @@ runner log and the metrics.
   pool exists without the directory once the desired state lists a shared subscription (`ensure`); metrics, `doctor`
   and `operator_quota` show the token files only; the quota of a shared entry is read like a file's (`quota.operator`)
   for the choice and the exhaustion. A token file named `sub-...` is no part of the pool (the prefix is reserved).
+  The device's copy of a record is not trusted beyond its token (HOT-26): when the token's `expires_at` passed or the
+  provider refused it, the record is fetched from the hub before the entry is used again (at most every
+  `FETCH_RETRY_S`) - a renewal of the measuring device whose `credentials` hint this device missed would else hand
+  every new or resumed session the expired token ("401 OAuth access token has expired"). While the hub has nothing
+  newer an expired entry is no entry (sessions move to another one or wait).
 - Tokens are kept in memory only (the cache of the current content of each file) and handed to the guest in the
   provisioning body; they never appear in a log line, a metric, an error or the store.
 """
@@ -72,6 +77,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -112,7 +118,9 @@ Identity = tuple[int, int, int, int]
 SHARED_PREFIX = "sub-"
 OPERATOR_ROLE = "operator"
 FETCH_RETRY_S = 60.0
-"""A shared subscription whose record could not be fetched is not asked for again within this time."""
+"""A shared subscription's record is fetched from the hub at most once in this time (a failed fetch, a stale token)."""
+EXPIRY_MARGIN_S = 60.0
+"""A shared token this close to its `expires_at` counts as expired (a request takes a while)."""
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
@@ -222,6 +230,10 @@ class Pool:
     uses: dict[str, Use] = field(default_factory=dict)
     failed: dict[str, float] = field(default_factory=dict)
     """Record ID -> time its last fetch failed."""
+    checked: dict[str, float] = field(default_factory=dict)
+    """Record ID -> time it was last fetched because the token the pool held was stale (HOT-26, `_fetch`)."""
+    expires: dict[str, float] = field(default_factory=dict)
+    """`sub-<record ID>` -> wall time its access token expires (`expires_at` of a full login, ADR-092)."""
 
     def __repr__(self) -> str:
         return f"Pool(files={sorted(self.files)!r}, shared={sorted(self.shared)!r}, problem={self.problem!r})"
@@ -710,25 +722,62 @@ def _use(owner: str, version: int, value: object) -> Use | None:
     return Use(owner=owner, pool=value["pool"], orgs=frozenset(orgs), version=version)
 
 
+def _stale(pool: Pool, name: str) -> bool:
+    """The entry's token cannot be good any more: its expiry passed (with `EXPIRY_MARGIN_S`) or the provider refused
+    the content the pool holds (`401`/`403` block). A renewal at the hub then has a newer record (HOT-26)."""
+    expiry = pool.expires.get(name)
+    expired = expiry is not None and pool.wall() >= expiry - EXPIRY_MARGIN_S
+    entry = pool.shared.get(name)
+    refused = entry is not None and pool.blocked.get(name) == entry.identity
+    return expired or refused
+
+
+async def _fetch(context: Any, pool: Pool, record_id: str, *, stale: bool) -> subscriptions.Subscription | None:
+    """The record from the hub; None when it cannot be had now. Not again within `FETCH_RETRY_S` after a failed
+    fetch, nor - for a stale token (`stale`) - after the last fetch for it."""
+    now = pool.clock()
+    if now - pool.failed.get(record_id, float("-inf")) < FETCH_RETRY_S:
+        return None
+    if stale:
+        if now - pool.checked.get(record_id, float("-inf")) < FETCH_RETRY_S:
+            return None
+        pool.checked[record_id] = now
+    try:
+        return await subscriptions.fetch(context, record_id)
+    except Exception as exc:
+        pool.failed[record_id] = now
+        pool.note(f"shared:{record_id}", type(exc).__name__, f"shared_unusable id={record_id} reason=fetch")
+        return None
+
+
+def _expiry(value: object) -> float | None:
+    try:
+        return None if not isinstance(value, str) else datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
 async def _shared_entry(context: Any, pool: Pool, record_id: str, owner: str) -> bool:
-    """Read one listed shared subscription into the pool; True when it is an entry now."""
+    """Read one listed shared subscription into the pool; True when it is an entry now. A token that expired or was
+    refused is never handed out again from the device's copy: the record is fetched from the hub first (a renewal on
+    another device whose hint this device missed, HOT-26); while the hub has nothing newer the entry stays out (an
+    expired token) or blocked (a refused one)."""
     name = SHARED_PREFIX + record_id
     async with store_session(context.pool) as conn:
         found = await subscriptions.cached(conn, record_id)
-    if found is None and pool.clock() - pool.failed.get(record_id, float("-inf")) >= FETCH_RETRY_S:
-        try:
-            found = await subscriptions.fetch(context, record_id)
-        except Exception as exc:
-            pool.failed[record_id] = pool.clock()
-            pool.note(f"shared:{record_id}", type(exc).__name__, f"shared_unusable id={record_id} reason=fetch")
+    if found is None:
+        found = await _fetch(context, pool, record_id, stale=False)
+    elif _stale(pool, name):
+        found = await _fetch(context, pool, record_id, stale=True) or found
     if found is None or found.owner != owner or found.primary:
         return False
     known = pool.uses.get(name)
     if known is not None and known.version == found.version and name in pool.shared:
-        return True
+        return not _expired(pool, name)
     try:
         async with subscriptions.opened(context, found) as body:
             token, use = parse_token(str(body.get("token", "")).encode()), _use(owner, found.version, body.get("use"))
+            expiry = _expiry(body.get("expires_at"))
     except CredentialUnavailable as exc:
         pool.note(f"shared:{record_id}", exc.reason, f"shared_unusable id={record_id} reason={exc.reason}")
         return False
@@ -737,7 +786,20 @@ async def _shared_entry(context: Any, pool: Pool, record_id: str, owner: str) ->
         return False
     pool.shared[name] = Entry((0, 0, found.version, 0), token, None)
     pool.uses[name] = use
+    if expiry is None:
+        pool.expires.pop(name, None)
+    else:
+        pool.expires[name] = expiry
     pool.reported.pop(f"shared:{record_id}", None)
+    return not _expired(pool, name)
+
+
+def _expired(pool: Pool, name: str) -> bool:
+    """The entry's token expired and the hub had nothing newer: no entry (logged once per expiry)."""
+    expiry = pool.expires.get(name)
+    if expiry is None or pool.wall() < expiry - EXPIRY_MARGIN_S:
+        return False
+    pool.note(f"expired:{name}", expiry, f"shared_unusable id={name[len(SHARED_PREFIX) :]} reason=expired")
     return True
 
 

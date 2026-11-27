@@ -144,6 +144,20 @@ the session as before HOT-26 (the error is visible, the next prompt is delivered
 `runner.model_pause` would replace the row of a quota pause of the same session and lose its `released` cause.
 Subagent sessions are not continued (their one turn ends with the error, like a used-up access ends them).
 
+**Same class: a restarted session with an old token.** A session ended because of "Please run /login" and started
+again failed at once with "401 OAuth access token has expired", although every subscription token at the hub was
+valid and renewed. Two holes, both closed:
+- The pool read a shared subscription again only when the device's *cached* record version changed. A device that
+  missed the `credentials` hint of a renewal kept handing every new or resumed session the expired token. Now the
+  device's copy is not trusted beyond its token: when its `expires_at` passed (less 60 s) or the provider refused the
+  content (`401`/`403` block), the record is fetched from the hub before the entry is used again (at most every 60 s);
+  while the hub has nothing newer, an expired entry is no entry. A renewal on this device (`hand_over`) drops the
+  former expiry.
+- Claude Code keeps a login of its own in `$CLAUDE_CONFIG_DIR/.credentials.json`; it would win over the gateway's
+  access. A suspended sandbox resumed in place and a session restored from its checkpoint under its own ID keep
+  `home/.claude` (the checkpoint itself never carries credentials). The guest now removes that file at every create,
+  resume and restore (`sessions.forget_logins`, without following a link), so no start brings an old login back.
+
 **Same class: a subscription that does not cover the model.** A move after a `429` brought a session that must run on
 one model to a freshly added subscription whose plan did not include that model ("Request rejected (429) · Usage
 credits are required for this model"); the session stood still. Such an answer is now journaled by the gateway as
