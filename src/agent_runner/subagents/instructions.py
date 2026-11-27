@@ -69,6 +69,19 @@ async def add(
     )
 
 
+async def requested_model(conn: AsyncConnection[Any], child_id: str) -> str | None:
+    """The `model_id` the `subagent.request` that started the child asked for, None without one (or when the
+    operation row is gone)."""
+    cursor = await conn.execute(
+        "SELECT o.params->>'model_id' FROM runner.subagent_instruction i"
+        " JOIN runner.operation o ON o.id = i.operation_id"
+        " WHERE i.child_session_id = %s AND o.type = 'subagent.request' ORDER BY i.created_at LIMIT 1",
+        (child_id,),
+    )
+    row = await cursor.fetchone()
+    return None if row is None else row[0]
+
+
 async def get(conn: AsyncConnection[Any], operation_id: str) -> Instruction | None:
     cursor = conn.cursor(row_factory=dict_row)
     await cursor.execute(f"SELECT {COLUMNS} FROM runner.subagent_instruction WHERE operation_id = %s", (operation_id,))

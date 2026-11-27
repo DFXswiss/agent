@@ -1415,8 +1415,12 @@ A new need of sessions is checked against this rule before a VM tool is offered 
 - Created only after hub acceptance of `subagent.request` (the limits depth, running and total are settings of the
   hub, ADR-088 §2, enforced in check H4; the runner pre-checks them with the values of the device state's `limits`
   and the room of the parent's VM).
-- Same VM, new sandbox, `depth = parent.depth + 1`, `parent_session_id` set, same task, same model access as the
-  parent unless `model_id` given and allowed. Initial prompt = `"Purpose: <purpose>\n\n<prompt>"` (prompt ID = the
+- Same VM, new sandbox, `depth = parent.depth + 1`, `parent_session_id` set, same task. Model access as for the main
+  session (§10.7: the owner's preference, `fallback`, the task's `model_consent`, the freest allowed access first),
+  model of the parent. A given `model_id` must be in the catalog of some access kind (`model_not_allowed`) and is then
+  required: the child takes only an access whose catalog allows it (a DeepSeek model: `platform`), under the same
+  class rules; when no allowed access serves it, the operation fails before the start with `model_not_allowed` (or
+  `budget_exceeded`) and a sentence naming the reason. A resumed child keeps its requested model (HOT-31). Initial prompt = `"Purpose: <purpose>\n\n<prompt>"` (prompt ID = the
   operation ID: the child's first instruction); harness adds "You are a subagent session of session <parent> for task
   <task>; answer each instruction of your main agent with your last message of that turn; you keep running and
   receive further instructions until your main agent stops you; you may request further subagents only via
