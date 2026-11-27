@@ -123,7 +123,7 @@ device: logs | id:uuid@ids kind:code kem_pub:bytes sig_pub:bytes owner_org:uuid 
 device_enrollment: logs | invite_id:code device_id:uuid request:json created_at:time certified_at:time
 device_presence: metrics | device_id:uuid hub_instance:code connected_at:time last_heartbeat_at:time
 device_request: operations | id:uuid user_id:uuid device_id:uuid kind:code state:code envelope:json@ciphertext
-  created_at:time expires_at:time org_id:uuid
+  created_at:time expires_at:time org_id:uuid slot:uuid
 device_response: operations | request_id:uuid seq:number envelope:json@ciphertext created_at:time
 device_stream: events | device_id:uuid last_origin_seq:number
 event: events | scope_id:uuid scope_seq:number id:uuid scope:code org_id:uuid wg_id:uuid task_id:uuid
@@ -181,6 +181,7 @@ quota_snapshot: metrics | owner_id:uuid window:code used_percent:number resets_a
 subscription_quota: metrics | credential_id:uuid owner_id:uuid windows:json unreadable:flag fetched_at:time
   device_id:uuid
 subscription_use: credentials | credential_id:uuid owner_id:uuid pool:flag orgs:json set_at:time
+mailbox_use: credentials | credential_id:uuid owner_id:uuid wgs:json set_at:time
 quota_unreadable: metrics | owner_id:uuid since:time device_id:uuid
 quota_limit: metrics | owner_id:uuid at:time until:time readable:flag device_id:uuid fetched_at:time
 operator_quota: metrics | device_id:uuid at:time snapshot:json received_at:time

@@ -34,6 +34,7 @@
     "github.update_issue": "write",
     "human.approval": "ask",
     "human.question": "ask",
+    "mail.find": "read",
     "review.verdict": "review",
     "security.report": "scan",
     "subagent.instruct": "delegate",

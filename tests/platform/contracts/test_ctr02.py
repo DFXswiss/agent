@@ -785,6 +785,13 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
         None,
     ),
     "github.merge": ("repo number head_sha method github_identity", "merged sha number", "repo number head_sha", 86400),
+    # ADR-099 section 4 (contracts/changes/KOR-74.md)
+    "mail.find": (
+        "mailbox from subject since until folder limit body id wait_seconds",
+        "mailbox messages waited_seconds timed_out",
+        "",
+        None,
+    ),
 }
 SPEC_REPO = "^[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}$"
 # 03-api.md section 9: (type, field, longest valid value length).
@@ -799,6 +806,8 @@ SPEC_TEXT_LIMITS = [
     ("task.set_title", "title", 120),
     ("human.question", "question", 4000),
     ("human.approval", "question", 4000),
+    ("mail.find", "from", 200),
+    ("mail.find", "subject", 200),
 ]
 SPEC_PROTECTED_DEFAULT: list[str] = []
 

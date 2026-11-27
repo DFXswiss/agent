@@ -1,0 +1,51 @@
+{
+  "name": "e2e-74-mailbox",
+  "description": "E2E-74 (KOR-74, ADR-099): the session reads the sign-in mail of a double through the operation mail.find - the mailbox named by its name, released to the workgroup by its owner, read by the device without a VM, waiting on the device until the mail arrives - and answers with the link; the password never reaches the session.",
+  "variables": {},
+  "steps": [
+    {
+      "id": "find",
+      "expect": {
+        "user_text_contains": "E2E74-MAIL",
+        "has_tool_result": false
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Waiting for the sign-in mail."
+          },
+          {
+            "type": "tool_use",
+            "name": "mcp__platform__request_operation",
+            "input": {
+              "type": "mail.find",
+              "params": {
+                "mailbox": "signup-kz74",
+                "from": "no-reply@mail.example.com",
+                "subject": "Sign in",
+                "wait_seconds": 240,
+                "limit": 1,
+                "body": true
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "answer",
+      "expect": {
+        "tool_result_contains": "https://example.com/magic-link#kz74-link-q8w3"
+      },
+      "reply": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Sign-in link found: https://example.com/magic-link#kz74-link-q8w3 (kz74-answer-m2p6)."
+          }
+        ]
+      }
+    }
+  ]
+}

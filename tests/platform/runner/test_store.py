@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import shutil
+import sys
 import threading
 import uuid
 from pathlib import Path
@@ -18,11 +19,23 @@ import psycopg.conninfo
 import pytest
 from psycopg import sql
 
+from agent_cli import pg
 from agent_cli.pg import PgError
 from agent_runner.errors import RunnerError
+from agent_runner.host import Host
 from agent_runner.identity import Device, generate_keys, load_identity, write_device, write_keys
 from agent_runner.store import migrate as migrate_module
-from agent_runner.store.cluster import DATABASE, ClusterTools, start_store, stop_store, store_exists
+from agent_runner.store.cluster import (
+    DARWIN_WAL_SYNC_METHOD,
+    DATABASE,
+    ClusterTools,
+    device_tools,
+    durable_wal_sync_method,
+    ensure_durable,
+    start_store,
+    stop_store,
+    store_exists,
+)
 from agent_runner.store.migrate import (
     ADVISORY_LOCK,
     MIGRATIONS_DIR,
@@ -374,7 +387,9 @@ TABLES = {
     # 0035 (KOR-51, ADR-094 section 3): the rights profiles of the device's sessions
     "profile_state": ["id", "section", "received_at"],
     "session_profile": ["session_id", "profile", "created_at"],
-    # 0038 (KOR-75, ADR-098 sections 3 and 4): the modes of the device's tasks, their drivers and the rate budget
+    # 0038 (KOR-74, ADR-099 section 3): the newest verified version of each mailbox record (no rollback)
+    "mailbox_seen": ["id", "owner_id", "version"],
+    # 0040 (KOR-75, ADR-098 sections 3 and 4): the modes of the device's tasks, their drivers and the rate budget
     "task_mode": ["task_id", "mode", "version", "chosen_by", "way", "changed_at", "driver"],
     "mode_driver": ["task_id", "mode", "step", "counters", "next_at", "updated_at"],
     "mode_rate": ["identity", "window_start", "used"],
@@ -675,6 +690,11 @@ def test_cluster_lifecycle_real(tmp_path: Path) -> None:
     try:
         dsn = start_store(pg_dir)
         assert f"dbname={DATABASE}" in dsn
+        wanted = durable_wal_sync_method()
+        with psycopg.connect(dsn) as conn:
+            row = conn.execute("SHOW wal_sync_method").fetchone()
+        assert row is not None
+        assert wanted is None or row[0] == wanted
         assert (pg_dir / "port").is_file()
         conf = (pg_dir / "data" / "postgresql.conf").read_text(encoding="utf-8")
         assert "listen_addresses = '127.0.0.1'" in conf
@@ -762,3 +782,60 @@ def test_store_exists(tmp_path: Path) -> None:
     with pytest.raises(RunnerError) as caught:
         store_exists(tmp_path / "pg", ClusterTools(exists=broken))
     assert str(caught.value) == "store_unavailable"
+
+
+# --- durability (HOT-25) -------------------------------------------------------------------------------------------
+
+
+def test_the_durable_wal_sync_method_of_each_system() -> None:
+    """macOS needs `F_FULLFSYNC` (fsync_writethrough); elsewhere PostgreSQL's default reaches the medium."""
+    assert durable_wal_sync_method("darwin") == DARWIN_WAL_SYNC_METHOD == "fsync_writethrough"
+    assert durable_wal_sync_method("linux") is None
+    assert device_tools().wal_sync_method == durable_wal_sync_method(sys.platform)
+    assert ClusterTools().wal_sync_method is None  # a test's tools on a shared server change nothing
+    assert Host().cluster == device_tools()
+
+
+def _wal_sync_method(dsn: str) -> str:
+    with psycopg.connect(dsn) as conn:
+        row = conn.execute("SHOW wal_sync_method").fetchone()
+    assert row is not None
+    return str(row[0])
+
+
+def test_every_start_checks_and_sets_the_wal_sync_method(tmp_path: Path) -> None:
+    """A real cluster: the first start sets the value (ALTER SYSTEM and a reload, no restart: the port and every open
+    connection stay), later starts only check it - so an existing installation gets it at its next start. `fsync`
+    stands in for the macOS value: valid on every system and never PostgreSQL's default."""
+    pg_dir = tmp_path / "pg"
+    tools = ClusterTools(wal_sync_method="fsync")
+    try:
+        admin = pg.ensure_cluster(pg_dir)
+        with psycopg.connect(admin) as open_before:
+            dsn = start_store(pg_dir, tools)
+            assert open_before.execute("SELECT 1").fetchone() == (1,)  # not restarted
+        assert _wal_sync_method(dsn) == "fsync"
+        auto = (pg_dir / "data" / "postgresql.auto.conf").read_text(encoding="utf-8")
+        assert "wal_sync_method = 'fsync'" in auto
+        assert start_store(pg_dir, tools) == dsn
+        assert ensure_durable(admin, tools) == "ok"
+        assert ensure_durable(admin, ClusterTools(wal_sync_method=None)) == "default"
+        assert ensure_durable(admin, ClusterTools(wal_sync_method="open_sync")) == "set"
+    finally:
+        stop_store(pg_dir)
+
+
+def test_a_value_that_does_not_hold_is_store_not_durable(tmp_path: Path) -> None:
+    """When the reload does not happen (here: a reload that does nothing), new backends still see the old value: the
+    daemon refuses to start instead of running without durable commits."""
+    pg_dir = tmp_path / "pg"
+    admin = pg.ensure_cluster(pg_dir)
+    try:
+        tools = ClusterTools(
+            ensure=lambda _p: admin, reload=lambda _admin: None, wal_sync_method="fsync", durable_wait_s=0.2
+        )
+        with pytest.raises(RunnerError) as caught:
+            start_store(pg_dir, tools)
+        assert caught.value.code == "store_not_durable"
+    finally:
+        pg.stop_cluster(pg_dir)

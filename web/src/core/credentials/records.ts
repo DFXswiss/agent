@@ -53,6 +53,7 @@ function refuse(code: string): never {
 const PRINTABLE_RE = /^[!-~]{1,4096}$/;
 const HOST_RE = /^[A-Za-z0-9.-]{1,253}$/;
 const IMAP_USER_RE = /^[ -~]{1,256}$/;
+const MAILBOX_KEYS = ['imap_host', 'imap_port', 'imap_user', 'imap_password', 'email', 'name', 'purpose', 'use'];
 
 const keysAre = (value: Record<string, unknown>, keys: readonly string[]): boolean =>
   Object.keys(value).sort().join(',') === [...keys].sort().join(',');
@@ -70,6 +71,10 @@ export interface MailboxBody {
   readonly imap_user: string;
   readonly imap_password: string;
   readonly email: string;
+  /** KOR-74 (ADR-099 section 2): optional; checked by `core/credentials/mailboxes.ts`. */
+  readonly name?: string;
+  readonly purpose?: string;
+  readonly use?: { readonly wgs: readonly string[] };
 }
 
 /** `setup_token`: a long-lived token of `claude setup-token`; `login_token`: the access token of the local Claude Code
@@ -89,7 +94,8 @@ export const isApiKeyBody = (value: unknown): value is ApiKeyBody =>
 
 export const isMailboxBody = (value: unknown): value is MailboxBody =>
   isRecord(value) &&
-  keysAre(value, ['imap_host', 'imap_port', 'imap_user', 'imap_password', 'email']) &&
+  // name, purpose and release of KOR-74 are checked in full by `core/credentials/mailboxes.ts` (ADR-099 section 2)
+  Object.keys(value).every((key) => MAILBOX_KEYS.includes(key)) &&
   typeof value.imap_host === 'string' &&
   HOST_RE.test(value.imap_host) &&
   Number.isSafeInteger(value.imap_port) &&

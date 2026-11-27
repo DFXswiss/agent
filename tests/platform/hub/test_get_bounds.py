@@ -49,6 +49,7 @@ BOUNDS: dict[str, str] = {
     "/v1/device/github-identities/{id}": ONE,
     "/v1/device/subscriptions": "capped:40",
     "/v1/device/subscriptions/{id}": ONE,
+    "/v1/device/mailboxes": "capped:200",  # KOR-74, ADR-099 section 2
     "/v1/device/logs": "paged",
     "/v1/device/platform-log": "paged",
     "/v1/device/pull": "paged",
@@ -65,6 +66,7 @@ BOUNDS: dict[str, str] = {
     "/v1/device/wraps": KEYS,
     "/v1/github-identities/{id}": ONE,
     "/v1/subscriptions/{id}": ONE,
+    "/v1/mailboxes/{id}": ONE,
     "/v1/modes": "structural: the catalogue of working modes, fixed by the contract (at most 64 entries, ADR-098)",
     "/v1/workgroups/{wg}/agent-profiles": (
         "structural: the built-in roles and the own profiles of one organization and workgroup, each created by an"
@@ -85,6 +87,7 @@ BOUNDS: dict[str, str] = {
     "/v1/me/invitees": "capped:1000",
     "/v1/me/quotas": "structural: one row per quota window",
     "/v1/me/subscriptions": "capped:40",
+    "/v1/me/mailboxes": "capped:100",
     "/v1/monitoring/overview": "capped:2000",
     "/v1/tasks/{task}/logs/{object}": "structural: the metadata of one stored log object",
     "/v1/tasks/{task}/logs/{object}/chunks/{index}": "structural: one chunk of a log object (bounded size)",

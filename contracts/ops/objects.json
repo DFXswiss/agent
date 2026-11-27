@@ -1390,6 +1390,9 @@
         },
         {
           "$ref": "#/$defs/result_github_merge"
+        },
+        {
+          "$ref": "#/$defs/result_mail_find"
         }
       ],
       "description": "result of any operation type"
@@ -2955,6 +2958,189 @@
         "merged",
         "sha",
         "number"
+      ],
+      "additionalProperties": false
+    },
+    "params_mail_find": {
+      "type": "object",
+      "description": "mail.find (ADR-099 section 4): the newest mails of a mailbox released to the session's workgroup, or one mail with text and links; waits up to wait_seconds for a matching mail (section 5).",
+      "properties": {
+        "mailbox": {
+          "type": "string",
+          "description": "name or ID of a mailbox released to the session's workgroup",
+          "pattern": "^[A-Za-z0-9._-]{1,64}$"
+        },
+        "from": {
+          "type": "string",
+          "description": "substring of the sender, without case; printable ASCII without quote and backslash",
+          "pattern": "^[ -!#-\\[\\]-~]{1,200}$"
+        },
+        "subject": {
+          "type": "string",
+          "description": "substring of the subject, without case; printable ASCII without quote and backslash",
+          "pattern": "^[ -!#-\\[\\]-~]{1,200}$"
+        },
+        "since": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "until": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "folder": {
+          "type": "string",
+          "enum": [
+            "inbox",
+            "spam",
+            "all"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "body": {
+          "type": "boolean"
+        },
+        "id": {
+          "$ref": "#/$defs/mail_message_id"
+        },
+        "wait_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 300
+        }
+      },
+      "required": [
+        "mailbox"
+      ],
+      "additionalProperties": false
+    },
+    "mail_message_id": {
+      "type": "string",
+      "description": "a mail of a mail.find answer: <folder>:<uid>",
+      "pattern": "^(inbox|spam):[1-9][0-9]{0,9}$"
+    },
+    "mail_message": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/mail_message_id"
+        },
+        "folder": {
+          "type": "string",
+          "enum": [
+            "inbox",
+            "spam"
+          ]
+        },
+        "from": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "to": {
+          "type": "string",
+          "maxLength": 2048
+        },
+        "subject": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "date": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 12000
+        },
+        "links": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "pattern": "^https?://[!-~]{1,1992}$",
+            "maxLength": 2000
+          }
+        },
+        "text_truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "folder",
+        "from",
+        "to",
+        "subject",
+        "date",
+        "size"
+      ],
+      "additionalProperties": false
+    },
+    "result_mail_find": {
+      "type": "object",
+      "properties": {
+        "mailbox": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "name": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 64
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "email": {
+              "type": "string",
+              "maxLength": 254
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "email"
+          ],
+          "additionalProperties": false
+        },
+        "messages": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/mail_message"
+          }
+        },
+        "waited_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 330
+        },
+        "timed_out": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "mailbox",
+        "messages",
+        "waited_seconds",
+        "timed_out"
       ],
       "additionalProperties": false
     }

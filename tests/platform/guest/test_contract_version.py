@@ -26,7 +26,8 @@ from agent_runner.vm import golden
 DIGESTS = {
     "0.5.0": "65bdd75600df0600fde3252bfd8e0ad2ef1abe4d35defc0a8d36d67de11c0d3f",
     "0.6.0": "bec16234c889a7b4ebff0d81c67707186d46421cb99c719ff80924540d98a8ed",  # KOR-53: the analysis reads
-    "0.7.0": "7bbef03a8236f52a6b4f40131e54a51e0a4c78c0a8c2bf16db1cbe986fb998bf",  # KOR-75: the operation task.mode
+    "0.7.0": "5e4bd6d934bc0900b8e8f15b0aa97cedcc4f35716af57ec4dd88be887e127c25",  # KOR-74: the operation mail.find
+    "0.8.0": "a7256c64ebeee00da546384eff504a6b1c2839e0937990b55b76e09c7960f741",  # KOR-75: the operation task.mode
 }
 """Guest version -> SHA-256 over the sorted `<part> NUL <sha256 of its canonical JSON>` lines of `guest_contracts()`."""
 

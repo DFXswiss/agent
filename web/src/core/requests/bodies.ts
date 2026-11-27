@@ -49,7 +49,35 @@ export type FailureCode = (typeof FAILURE_CODES)[number];
 /** Client code of a request the hub failed (device no longer eligible, or replaced by a newer one of its kind). */
 export const REQUEST_FAILED = 'request_failed';
 
-export const PROGRESS_STAGES = ['browser_started', 'email_entered', 'magic_link_received', 'authorized'] as const;
+export const PROGRESS_STAGES = [
+  'browser_started',
+  'email_entered',
+  'magic_link_received',
+  'authorized',
+  'mail_code_received',
+  'registered',
+  'verified',
+] as const;
+/** Why the mailbox automation gave up (`reason` of `authorize`, KOR-73, ADR-100 section 4). */
+export const AUTOMATION_REASONS = [
+  'disabled',
+  'no_sandbox',
+  'human_check',
+  'consent_missing',
+  'account_missing',
+  'unknown_page',
+  'mail_timeout',
+  'browser_failed',
+] as const;
+export type AutomationReason = (typeof AUTOMATION_REASONS)[number];
+/** The consents an owner can give for a new account (ADR-100 section 5); only these boxes are ever ticked. */
+export const CONSENTS = ['terms', 'age', 'marketing'] as const;
+export type Consent = (typeof CONSENTS)[number];
+/** A date of birth `YYYY-MM-DD`. */
+export const BIRTH_DATE_RE = /^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/;
+/** A picture of a check for humans: JPEG in standard base64, at most 100 KiB. */
+const JPEG_B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
+const MAX_JPEG_B64 = 136536;
 
 /** https URLs, or http on the loopback host (hermetic doubles); at most 2048 characters. */
 export const URL_RE = /^(https:\/\/[!-~]{1,2040}|http:\/\/(127\.0\.0\.1|localhost)(:[0-9]{1,5})?(\/[!-~]{0,2000})?)$/;
@@ -96,6 +124,14 @@ export interface GithubBody {
   readonly signing_key?: SigningKey;
 }
 
+/** The sandbox's picture of a check for humans (`verify`, KOR-73). */
+export interface VerifyImage {
+  readonly width: number;
+  readonly height: number;
+  /** JPEG, standard base64. */
+  readonly data: string;
+}
+
 export type ResponseBody =
   | {
       readonly step: 'device_code';
@@ -103,8 +139,14 @@ export type ResponseBody =
       readonly verification_uri: string;
       readonly expires_in: number;
     }
-  | { readonly step: 'authorize'; readonly url: string; readonly automation?: 'failed' }
+  | {
+      readonly step: 'authorize';
+      readonly url: string;
+      readonly automation?: 'failed';
+      readonly reason?: AutomationReason;
+    }
   | { readonly step: 'progress'; readonly stage: (typeof PROGRESS_STAGES)[number] }
+  | { readonly step: 'verify'; readonly frame: number; readonly image: VerifyImage }
   | {
       readonly step: 'done';
       readonly login?: string;
@@ -196,7 +238,16 @@ export function validRequestBody(kind: RequestKind, body: unknown, followUp: boo
         (body.signing_key === undefined || typeof body.signing_key === 'boolean')
       );
     case 'mailbox.check':
-      return !followUp && keysAre(body, []);
+      // without a field: the primary mailbox; with `mailbox`: that mailbox, checked in full by its sender
+      // (`core/credentials/mailboxes.ts`, KOR-74, ADR-099 section 9); with `subscription_id`: the own mailbox of a
+      // further subscription (KOR-73, ADR-100 section 1)
+      return (
+        !followUp &&
+        keysAre(body, [], ['mailbox', 'subscription_id']) &&
+        Object.keys(body).length <= 1 &&
+        (body.mailbox === undefined || isRecord(body.mailbox)) &&
+        optionalUuid(body.subscription_id)
+      );
     case 'github.pull_status':
       return registered.get(kind)?.request(body, followUp) ?? false;
     case 'credential.check':
@@ -206,17 +257,51 @@ export function validRequestBody(kind: RequestKind, body: unknown, followUp: boo
         (body.kind === 'anthropic_api_key' || body.kind === 'claude_subscription')
       );
     case 'claude.login':
-      if (followUp) return keysAre(body, ['code']) && matches(body.code, CODE_RE, 512);
-      // KOR-69 (ADR-090 section 2): a further subscription, its label and note and, automatic only, the address
+      if (followUp) return isLoginFollowUp(body);
+      // KOR-69 (ADR-090 section 2): a further subscription, its label and note and, automatic only, the address;
+      // KOR-73 (ADR-100 section 5): automatic only, the data of a new account
       return (
-        keysAre(body, ['mode'], ['subscription_id', 'name', 'note', 'email']) &&
+        keysAre(body, ['mode'], ['subscription_id', 'name', 'note', 'email', 'account', 'extended']) &&
+        (body.extended === undefined || body.extended === true) &&
         (body.mode === 'manual' || body.mode === 'automatic') &&
         optionalUuid(body.subscription_id) &&
         (body.name === undefined || isLabel(body.name, 64)) &&
         (body.note === undefined || isLabel(body.note, 500)) &&
-        (body.email === undefined || (body.mode === 'automatic' && matches(body.email, EMAIL_RE, 254)))
+        (body.email === undefined || (body.mode === 'automatic' && matches(body.email, EMAIL_RE, 254))) &&
+        (body.account === undefined || (body.mode === 'automatic' && isAccount(body.account)))
       );
   }
+}
+
+/** A fraction of a picture's width or height. */
+const isFraction = (value: unknown): boolean => typeof value === 'number' && value >= 0 && value <= 1;
+
+/** A follow-up of `claude.login`: the code, a click into the picture of a check for humans, or giving up (KOR-73). */
+function isLoginFollowUp(body: Record<string, unknown>): boolean {
+  if ('click' in body)
+    return (
+      keysAre(body, ['click']) &&
+      isRecord(body.click) &&
+      keysAre(body.click, ['x', 'y']) &&
+      isFraction(body.click.x) &&
+      isFraction(body.click.y)
+    );
+  if ('relay' in body) return keysAre(body, ['relay']) && body.relay === true;
+  return keysAre(body, ['code']) && matches(body.code, CODE_RE, 512);
+}
+
+/** The data of a new account (`account` of `contracts/requests/claude.login.request.json`). */
+export function isAccount(value: unknown): boolean {
+  if (!isRecord(value) || !keysAre(value, ['name'], ['birth_date', 'consents'])) return false;
+  const consents = value.consents;
+  return (
+    isLabel(value.name, 100) &&
+    (value.birth_date === undefined || matches(value.birth_date, BIRTH_DATE_RE)) &&
+    (consents === undefined ||
+      (Array.isArray(consents) &&
+        consents.every((item) => (CONSENTS as readonly unknown[]).includes(item)) &&
+        new Set(consents).size === consents.length))
+  );
 }
 
 /** A subscription's name or note: 1 to `most` characters without a control character (ADR-090 section 1). */
@@ -227,6 +312,21 @@ export function isLabel(value: unknown, most: number): value is string {
 
 function failed(body: Record<string, unknown>): boolean {
   return keysAre(body, ['step', 'code']) && (FAILURE_CODES as readonly unknown[]).includes(body.code);
+}
+
+/** `verify {frame, image}` of `claude.login` (KOR-73). */
+function isVerify(body: Record<string, unknown>): boolean {
+  const image = body.image;
+  return (
+    keysAre(body, ['step', 'frame', 'image']) &&
+    isInt(body.frame, 1, 100) &&
+    isRecord(image) &&
+    keysAre(image, ['width', 'height', 'data']) &&
+    isInt(image.width, 1, 4096) &&
+    isInt(image.height, 1, 4096) &&
+    matches(image.data, JPEG_B64_RE, MAX_JPEG_B64) &&
+    (image.data as string).length >= 4
+  );
 }
 
 /** The response body of a device for `kind`, or null when it is not one the contracts allow. */
@@ -256,10 +356,12 @@ export function checkResponseBody(kind: RequestKind, body: unknown): ResponseBod
       case 'claude.login':
         if (body.step === 'authorize')
           return (
-            keysAre(body, ['step', 'url'], ['automation']) &&
+            keysAre(body, ['step', 'url'], ['automation', 'reason']) &&
             matches(body.url, URL_RE, 2048) &&
-            (body.automation === undefined || body.automation === 'failed')
+            (body.automation === undefined || body.automation === 'failed') &&
+            (body.reason === undefined || (AUTOMATION_REASONS as readonly unknown[]).includes(body.reason))
           );
+        if (body.step === 'verify') return isVerify(body);
         if (body.step === 'progress')
           return keysAre(body, ['step', 'stage']) && (PROGRESS_STAGES as readonly unknown[]).includes(body.stage);
         return (

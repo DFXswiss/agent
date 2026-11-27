@@ -19,10 +19,12 @@ const FRAMEWORK = /(?:^|\/)node_modules\/(?:react|react-dom|react-router|react-r
 const APP = /^src\//;
 /**
  * The lazily loaded parts that keep chunks of their own with their libraries (Markdown, chart, terminal) and the
- * platform browser's views (KOR-44), which the screens load lazily: in the screens chunk the bundler would turn their
+ * platform browser's views (KOR-44) and the view of the settings section "Mailboxes" (KOR-74), which the screens load
+ * lazily: in the screens chunk the bundler would turn their
  * lazy import into one of the chunk itself, which the integrity loader cannot place and refuses.
  */
-const LAZY_PARTS = /^src\/ui\/(?:task-tabs\/chat\/Markdown\.tsx$|charts\/UPlotChart\.tsx$|terminal\/|browser\/)/;
+const LAZY_PARTS =
+  /^src\/ui\/(?:task-tabs\/chat\/Markdown\.tsx$|charts\/UPlotChart\.tsx$|terminal\/|browser\/|settings\/sections\/mailboxes\/(?!index\.tsx$))/;
 
 /** Path of a module relative to `web` with `/` separators; '' for a virtual module or one outside `web`. */
 export function fromWebDir(web: string, id: string): string {

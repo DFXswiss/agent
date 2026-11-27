@@ -369,6 +369,12 @@ bearing on keys).
 | [E-34](KONZEPT.md#e-34) | Self-hosted CI runs through the platform (concept): CI VMs (concept) hold no scope key and no device key; placement of the CI app key is open (spec/16 D-4; recommendation: never in a VM or at the hub). | decision needed | KM-37 |
 | [E-35](KONZEPT.md#e-35) | One shared capacity: the rule itself names no key; with [E-36](KONZEPT.md#e-36) a pool device holds the keys of the workgroups it serves while CI VMs run on it (data access of the device, as for idea 35). | decision needed | [§6](#6-where-plaintext-lies) |
 | [E-36](KONZEPT.md#e-36) | CI jobs, also with foreign PR code, share the devices with the work VMs (no own CI device): a pool device holds the plaintext and keys of the workgroups it serves while CI VMs run on it; the separating measures (gate U, spec/16 D-7, D-20) stay a recommendation. | decision needed | [§6](#6-where-plaintext-lies) |
+| [E-37](KONZEPT.md#e-37) | Platform tools instead of VMs; a session names a credential (a mailbox) and the device uses its secret, the session never holds it (KOR-74 decides the keys). | none | – |
+| [E-38](KONZEPT.md#e-38) | Agent vault (concept only, ADR-101 Proposed): items sealed under the scope key of their collection, used on the execution device, never held by a session. | none | – |
+| [E-39](KONZEPT.md#e-39) | Remote control for checks for humans: pictures sealed to the owner, clicks accepted only from the user's own identity (KOR-73). | none | – |
+| [E-40](KONZEPT.md#e-40) | Stay signed in: the identity bundle is kept under the browser's non-extractable device key (ADR-006), so a reload unlocks without the passkey; how the session key renews itself is decided with the build. | none | – |
+| [E-41](KONZEPT.md#e-41) | Recorded tasks: their fields are task content and sealed like its title; which of them the hub may read as metadata for the filters is decided with the build. | none | – |
+| [E-42](KONZEPT.md#e-42) | Public landing page: no keys; nothing of a user is read before sign-in. | none | – |
 | [A1](KONZEPT.md#a-1) | Subagents have the parent's rights and no keys. | carried | [§1](#1-principals) |
 | [A2](KONZEPT.md#a-2) | Conflict fix by merge commit. | none | – |
 | [A3](KONZEPT.md#a-3) | The hardening is built: the agent has its own identity as a sub-principal and is rotated out on revocation (ADR-082); the rekey of the user's identity for copies made before is a decision of the owner. | decision needed | KM-28, KM-30, KM-39 |
@@ -388,7 +394,7 @@ bearing on keys).
 | [A17](KONZEPT.md#a-17) | Protected branches. | none | – |
 | [A18](KONZEPT.md#a-18) | Blocked attempts are logged. | none | – |
 | [A20](KONZEPT.md#a-20) | One throw-away VM per CI job; no bearing of its own on keys (the keys around CI VMs: row E-34). | none | – |
-| [A21](KONZEPT.md#a-21) | A runner is a VM from the same pool as the work VMs, decided by [E-36](KONZEPT.md#e-36): the pool device holds the keys of the workgroups it serves while CI VMs run on it. | decision needed | [§6](#6-where-plaintext-lies) |
+| [A21](KONZEPT.md#a-21) | That the runner runs on the same devices as the work VMs is decided by [E-36](KONZEPT.md#e-36); that it is a VM stays interpretation [A20](KONZEPT.md#a-20). The pool device holds the keys of the workgroups it serves while CI VMs run on it. | decision needed | [§6](#6-where-plaintext-lies) |
 
 ## 11. Gaps and the requirements on the follow-up packages
 

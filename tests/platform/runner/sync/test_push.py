@@ -606,14 +606,21 @@ def test_gap_with_an_impossible_expectation_is_fatal(harness: Harness, detail: d
 
 
 def test_conflict_stops_syncing_until_cleared(harness: Harness) -> None:
+    """A conflict after a push of this process was answered is real (two devices with one identity): fatal."""
+
     async def body() -> None:
         async with harness.env() as env:
             await adopt(env)
+            await env.enqueue("audit", fixture_body("audit"))
+            assert (await env.sync.pusher.push_once()).acked_through == 1
+            del env.hub.stored[1]
             env.hub.stored[1] = canonical({"origin_seq": 1, "item_kind": "metrics", "body": {"other": 1}})
+            env.hub.stored[2] = canonical({"origin_seq": 2, "item_kind": "metrics", "body": {"other": 2}})
             await env.enqueue("metrics", METRICS)
             with pytest.raises(SyncFatal, match="origin_seq_conflict"):
                 await env.sync.pusher.push_once()
             assert env.sync.pusher.fatal == "origin_seq_conflict"
+            assert "runner.sync conflict_fatal reason=after_answer\n" in env.log()
             assert "runner.alert origin_seq_conflict\n" in env.log()
             requests = len(env.hub.requests)
             await env.sync.pusher.run(env.context.stopping)  # returns at once, sends nothing
@@ -622,8 +629,8 @@ def test_conflict_stops_syncing_until_cleared(harness: Harness) -> None:
             async with env.pool.connection() as conn:
                 assert await outbox.sync_fatal(conn) == "origin_seq_conflict"
                 await outbox.clear_fatal(conn)
-            del env.hub.stored[1]
-            assert (await env.sync.pusher.push_once()).acked_through == 1
+            del env.hub.stored[2]
+            assert (await env.sync.pusher.push_once()).acked_through == 2
 
     run(body)
 

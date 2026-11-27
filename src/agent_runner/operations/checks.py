@@ -178,6 +178,16 @@ RUN_ID: Rule = lambda value: isinstance(value, str) and _RUN_ID_RE.fullmatch(val
 UUID: Rule = lambda value: isinstance(value, str) and _UUID_RE.fullmatch(value) is not None  # noqa: E731
 _CWD_RE = re.compile(r"/[^\x00]{0,4095}", re.DOTALL)
 _BROWSER_URL_RE = re.compile(r"https?://[^\x00-\x20\x7f]{1,4088}")
+_TIME_RE = re.compile(
+    r"[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\.[0-9]{3}Z"
+)
+_MAILBOX_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
+_MAIL_TEXT_RE = re.compile(r"[ !#-\[\]-~]{1,200}")
+_MAIL_ID_RE = re.compile(r"(inbox|spam):[1-9][0-9]{0,9}")
+
+
+def _matches(pattern: re.Pattern[str]) -> Rule:
+    return lambda value: isinstance(value, str) and pattern.fullmatch(value) is not None
 
 
 @dataclass(frozen=True)
@@ -387,6 +397,22 @@ TYPES: Mapping[str, TypeRules] = {
     "browser.close": TypeRules({}, ()),
     "human.question": TypeRules({"question": QUESTION}, ("question",)),
     "human.approval": TypeRules({"question": QUESTION}, ("question",)),
+    # ADR-099 section 4
+    "mail.find": TypeRules(
+        {
+            "mailbox": _matches(_MAILBOX_RE),
+            "from": _matches(_MAIL_TEXT_RE),
+            "subject": _matches(_MAIL_TEXT_RE),
+            "since": _matches(_TIME_RE),
+            "until": _matches(_TIME_RE),
+            "folder": _one_of("inbox", "spam", "all"),
+            "limit": _range(1, 20),
+            "body": BOOL,
+            "id": _matches(_MAIL_ID_RE),
+            "wait_seconds": _range(0, 300),
+        },
+        ("mailbox",),
+    ),
 }
 """Parameter rules per type (`contracts/ops/<type>.params.json`; a test compares the key sets with the contracts)."""
 

@@ -166,6 +166,10 @@ NEXT_FOR_REASON: dict[tuple[str, str], str] = {
         "The analysis has no output yet: wait for it with `agent-platform task wait --task <task_id>`, then run the "
         "command again."
     ),
+    ("invalid_argument", "human_only"): (
+        'A check for humans is done by a person: the user clicks into the picture in the web ("Meine Abos") or with '
+        "this tool signed in as the user; an agent may only give the automation up (`subscriptions check --relay`)."
+    ),
     ("hub_refused", "mode_needs_instruction"): (
         "An agent inside a platform session cannot switch on a mode; ask the person, or use the operation task.mode "
         "with a quote of the instruction."

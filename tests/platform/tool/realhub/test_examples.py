@@ -45,6 +45,7 @@ EXCEPTIONS = {
     "install-connector": "writes the connector into the chat program's configuration of this computer (test_mcp)",
     "passkey add": "opens the user's browser for the new passkey (test_security)",
     "github connect": "would take the token of the GitHub CLI logged in on the computer of the test (test_devicereq)",
+    "subscriptions add-many": "reads the user's file of subscriptions and mailboxes (test_subscriptions_parallel)",
 }
 # Commands that change the account for the ones after them: run in this order at the end.
 LAST = ("task close", "wg archive", "member remove", "org leave", "agents revoke", "recover")

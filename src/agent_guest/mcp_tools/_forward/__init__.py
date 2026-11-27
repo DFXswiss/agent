@@ -85,9 +85,13 @@ def forward(call: ToolCall, kind: str, body: dict[str, Any]) -> str:
 
 
 def ask(call: ToolCall, kind: str, body: dict[str, Any], wait: float) -> dict[str, Any] | None:
-    pending_id = forward(call, kind, body)
+    return wait_answer(call, forward(call, kind, body), wait)
+
+
+def wait_answer(call: ToolCall, pending_id: str, seconds: float) -> dict[str, Any] | None:
+    """The runner's answer to a pending call within `seconds` (at most the control socket's 33 s), else None."""
     try:
-        return call.control.pending_wait(pending_id, call.session_id, wait)
+        return call.control.pending_wait(pending_id, call.session_id, seconds)
     except ApiSockError:
         raise _unreachable() from None
 

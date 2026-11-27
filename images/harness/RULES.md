@@ -224,6 +224,11 @@ Operation types and parameter examples:
 - `github.merge` – merge a pull request at exactly `head_sha` when your instruction asks for it; the workgroup may
   require verdicts of review sessions, green checks or GitHub approvals first, and the refusal names what is missing:
   `{"type": "github.merge", "params": {"repo": "example-org/example-repo", "number": 42, "head_sha": "4c1f0e6a9b2d3c5e7f8091a2b3c4d5e6f7a8b9c0"}}`
+- `mail.find` – read a mailbox its owner released to this workgroup, named by its name or ID: the newest mails by
+  sender, subject, time and folder (`inbox`, `spam`, `all`), or one mail (`id`) with its text and links; with
+  `wait_seconds` (up to 300) the platform waits for a new mail for you. Never read a mailbox in a work VM and never
+  ask for a mailbox password:
+  `{"type": "mail.find", "params": {"mailbox": "signup", "from": "noreply@example.com", "wait_seconds": 300, "body": true}}`
 
 If the task needs GitHub, request the operation – even when GitHub is not connected; the platform asks the user to
 connect and continues your operation afterwards. Do not explain what is missing and do not offer workarounds. If no

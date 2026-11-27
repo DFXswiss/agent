@@ -125,7 +125,8 @@ One line per check, in fixed order, result `ok`, `warn` or `fail` with a closed 
 
 | Marker / symptom | Meaning | Action |
 |---|---|---|
-| `sync_fatal` (e.g. `origin_seq_conflict`) | the hub refused the outbox in a way the runner cannot repair | find the cause (store restored from an old backup? two devices with one identity?); then `agent-runner doctor --clear sync_fatal` and restart the daemon |
+| `sync_fatal` (e.g. `origin_seq_conflict`) | the hub refused the outbox in a way the runner cannot repair. A conflict left by a power cut repairs itself (below) and never sets the marker, so this is a real one: the daemon log names it, `runner.sync conflict_fatal reason=…` – `after_answer` (pushes of this daemon run were answered first, or it came again after a repair: two devices with one identity), `hub_behind` (the hub is behind the disputed item), `too_far` (the hub is more than 500 items ahead: a store restored from an old backup), `not_contiguous` (the store has a hole after its position) | find the cause (store restored from an old backup? two devices with one identity?); then `agent-runner doctor --clear sync_fatal` and restart the daemon |
+| log `runner.alert outbox_conflict_recovered pushed=P hub=L lost=N`, audit `runner.alert` `outbox_conflict_recovered` | self-repair after a power cut: the store had lost its last `N` commits (the hub has them), the first push after the start met `origin_seq_conflict`, the hub's position confirmed a short lost tail; the runner moved its unsent items behind the hub's position and pushes on | nothing to clear. Note the time; what the lost commits recorded locally (for example a session state) is corrected by the next reconcile with the hub. Repeated occurrences mean the store is not durable: check `doctor` and the `wal_sync_method` (below) |
 | `org_stopped` | the membership log of one org failed verification (`log_rollback`/`log_fork`); the runner stopped acting for that org, others continue | treat as hub incident (compare log heads with a browser of that org); `doctor --clear org_stopped_<org id as 32 hex digits without dashes>` after resolution |
 | `platform_stopped` | the platform log failed verification | as above, `doctor --clear platform_stopped` |
 | `device_revoked` | decertified or key revoked; sessions, VMs and keys are gone | not clearable; `agent-runner uninstall` |
@@ -133,6 +134,20 @@ One line per check, in fixed order, result `ok`, `warn` or `fail` with a closed 
 | `agent-runner status` shows a growing outbox backlog | hub unreachable or refusing | check `doctor hub`; the outbox resumes without loss when the hub is back |
 
 The `--clear` of a marker takes effect at the next daemon start (`sudo launchctl kickstart -k system/swiss.dfx.agent-runner`).
+
+### After a power cut (check list)
+
+1. `agent-runner doctor`: every check `ok` (or the known `warn`). `postgresql` fails: the store did not start – read
+   `pg/pg.log` under the runner home; `store_not_durable` in the daemon log means the cluster did not take
+   `wal_sync_method = fsync_writethrough` (each start sets it; check `pg/data/postgresql.auto.conf`).
+2. `sync`: `clear`. A `runner.alert outbox_conflict_recovered` in the log is the self-repair and needs nothing; a
+   `sync_fatal` is a real conflict (table above).
+3. `workvm_volume`: `mounted`. `not_mounted` or `fstab_missing`: run `workvm install` again as root
+   ([work-vms.md](work-vms.md) §3); it mounts the volume back and writes the `/etc/fstab` entry.
+4. Sessions that worked when the power went are `suspended` (reason `device_restart`, daemon log
+   `runner.session vm_stopped session_id=… state=suspended reason=device_restart`); their next prompt, or one that
+   already waits, resumes them. Nothing to do by hand.
+5. `agent-runner status`: the outbox backlog falls to 0 within a minute of the hub connection.
 
 ## 6. Uninstall
 

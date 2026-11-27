@@ -199,6 +199,12 @@
       "params": "ops/github.merge.params.json",
       "result": "ops/github.merge.result.json",
       "dedupe": true
+    },
+    {
+      "type": "mail.find",
+      "params": "ops/mail.find.params.json",
+      "result": "ops/mail.find.result.json",
+      "dedupe": false
     }
   ]
 }

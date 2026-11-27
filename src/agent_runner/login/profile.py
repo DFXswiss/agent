@@ -5,7 +5,7 @@
 - `platform` (DFX platform devices): installs the `login` extra when it is missing (`pip install playwright>=1.65`
   with this installation's interpreter) and Chromium into `<runner home>/ms-playwright` (`playwright install
   chromium`, idempotent), both as the runner account when the caller is root, and writes `LOGIN_AUTOMATION=on` into
-  the LaunchDaemon environment (the daemon finds that Chromium through `automation.use_browsers`);
+  the LaunchDaemon environment (the daemon finds that Chromium through `sandbox.use_browsers`);
 - `org` (devices of an organisation): writes `LOGIN_AUTOMATION=off`;
 - no profile: the default follows the device kind recorded at enrollment (`config.load_config`).
 

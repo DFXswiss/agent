@@ -20,7 +20,7 @@ Punkt), `#e-01` (Regel E-01), `#a-1` (Auslegung A1). Anker werden nie umbenannt 
 |---|---|
 | [A – Das Konzept](#teil-a--das-konzept) | Vollständige Konzeptfassung mit 47 Ideen, im Wortlaut |
 | [B – Regeln und Entscheide](#teil-b--regeln-und-entscheide-des-auftraggebers) | Regeln E-01 … mit Datum, Wortlaut, Bezug und Umsetzung |
-| [C – Auslegungen](#teil-c--auslegungen-bis-der-auftraggeber-anders-entscheidet) | A1–A21 |
+| [C – Auslegungen](#teil-c--auslegungen-bis-der-auftraggeber-anders-entscheidet) | A1–A23 |
 | [D – Pflege](#teil-d--pflege) | Wie eine neue Vorgabe eingetragen wird; offene Abweichungen |
 
 ## Teil A – Das Konzept
@@ -840,7 +840,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   (zur Anmeldung von fünf neuen Abos, die nur nacheinander ging, weil die Plattform nur ein Postfach je Konto hält)
 - **Bezug:** präzisiert [§16 Punkt 1](#k-16-b1) (Hunderte parallele Hauptagenten und temporäre Umgebungen) für die
   Vorgänge der Plattform; ergänzt [E-31](#e-31) (jedes Abo zentral angemeldet) und [E-32](#e-32).
-- **Umsetzung:** offen – Postfach je Abo und parallele Anmeldungen in KOR-73.
+- **Umsetzung:** gebaut für die Abo-Anmeldung – [ADR-100](adr/100-parallel-subscription-logins.md) (KOR-73): Postfach je
+  Abo, Anmeldungen nebeneinander, jede in einer eigenen Login-VM, Prüfung für Menschen durch den Inhaber, Registrierung.
 
 <a id="e-34"></a>
 
@@ -880,8 +881,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „heute haben wir server für agent und server für self hostet runner, das ist inneffizient, ich will
   alle meine server kapazitäten an agent geben und wenn ich einen self hostet runner brauche dann diesen via agent
   beziehen“
-- **Bezug:** dass der Runner eine VM aus demselben Pool wie die Arbeits-VMs ist, legte [A21](#a-21) aus; entschieden
-  durch [E-36](#e-36). Ergänzt [E-34](#e-34) und [§3 Punkt 3](#k-3-b3) (DFX stellt eigene Ausführungsserver);
+- **Bezug:** dass der Runner auf denselben Geräten wie die Arbeits-VMs läuft, ist durch [E-36](#e-36) entschieden;
+  dass er eine VM ist, bleibt Auslegung [A20](#a-20) (zusammengefasst in [A21](#a-21)). Ergänzt [E-34](#e-34) und [§3 Punkt 3](#k-3-b3) (DFX stellt eigene Ausführungsserver);
   ersetzt die Aufteilung der Ausführungsserver in [§3 Punkt 8](#k-3-b8) (initiale Serverzuordnung: ein Server für die
   DFX-Cloud-Sessions), soweit sie Kapazität ausserhalb der Plattform voraussetzt; der Hub-Teil bleibt. Betrifft
   [Idee 38](#k-idee-38) (Gerätewahl nach freier Kapazität), [§7 Punkt 6](#k-7-b6) (kapazitätsbasierte Verteilung)
@@ -901,12 +902,117 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** Frage: „Ich hatte deinen Entscheid ‚alle Kapazität an agent‘ so ausgelegt, dass CI-Jobs (auch fremder
   PR-Code) auf denselben Geräten laufen wie die Agent-Arbeitsbereiche. Ein eigenes CI-Gerät innerhalb von
   agent.dfx.swiss wäre aber auch ‚Kapazität von agent‘ und trennt fremden Code von Kundendaten. Was gilt?“ –
-  Antwort: „Alles teilen – Du entscheidest jetzt: CI-Jobs laufen auf denselben Geräten wie die
-  Agent-Arbeitsbereiche. Wird als dein Entscheid (neue Regel) eingetragen.“
-- **Bezug:** ergänzt [E-35](#e-35); macht [A21](#a-21) zum Entscheid. In Spannung mit der Sicherheitsempfehlung der
+  Antwort: gewählte Option „Alles teilen“ (Kontext, nicht Worte des Auftraggebers: der Text dieser Option in der
+  Frage sagte, dass er damit entscheidet, CI-Jobs laufen auf denselben Geräten wie die Agent-Arbeitsbereiche, und dass
+  das als sein Entscheid, als neue Regel, eingetragen wird)
+- **Bezug:** ergänzt [E-35](#e-35); macht den Geräte-Teil von [A21](#a-21) zum Entscheid (die VM bleibt Auslegung [A20](#a-20)). In Spannung mit der Sicherheitsempfehlung der
   Recherche (Trennung fremden Codes vom Klartext der Workgroups): das Gate U bleibt Empfehlung (D-7, D-20 in
   [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)); [E-25](#e-25) (Härtung nur auf Bestellung).
 - **Umsetzung:** offen – [spec/16-ci-runners.md](spec/16-ci-runners.md).
+
+<a id="e-37"></a>
+
+### E-37 – Was eine Plattform-Operation sein kann, braucht keine VM
+
+- **Datum:** 2026-11-26
+- **Regel:** Ein Vorgang, den die Plattform selbst ausführen kann, ist ein Werkzeug der Plattform und braucht keine
+  Arbeits- oder Browser-VM, zum Beispiel ein Postfach lesen. Eine Sitzung nennt nur den Zugang, etwa das Postfach mit
+  Namen oder ID. Den geheimen Teil wie das Passwort sieht sie nicht, die Plattform nutzt ihn auf dem Gerät. Eine VM bekommt
+  nur, was wirklich eine braucht, etwa eine Webseite im Browser bedienen oder Software bauen und testen.
+- **Wortlaut:** „wenn ein agent einen unbuntu braucht um ein e-mail postfach abzurufen dann haben wir was falsch gemacht“
+  (als fünf Agenten für neue Abos je eine Arbeits-VM starten mussten, nur um ihre Anmeldemail zu lesen)
+- **Bezug:** ergänzt [E-33](#e-33) (parallel, jeder Vorgang in seiner eigenen Sandbox) und [§10 Punkt 3](#k-10-b3)
+  (Sitzungen führen selbst nichts aus, alles über Plattform-Operationen).
+- **Umsetzung:** offen – Postfach als Werkzeug in KOR-74.
+
+<a id="e-38"></a>
+
+### E-38 – Ein eigener Tresor nur für Agenten: Konzept, noch nicht umsetzen
+
+- **Datum:** 2026-11-26
+- **Regel:** agent.dfx.swiss bekommt einen eigenen Tresor für die Zugänge der Agenten, getrennt vom internen Tresor des
+  Betreibers für seine Mitarbeiter: eigene Daten, eigene Schlüssel, kein Abgleich. Agenten benutzen die Geheimnisse
+  daraus, ohne sie zu sehen ([E-37](#e-37)). Bisher ist das **nur ein Konzept**
+  ([ADR-101](adr/101-agent-vault.md), Status „Proposed“). Gebaut wird erst, wenn der Auftraggeber es beauftragt.
+- **Wortlaut:** „wir sollten auch sowas anbiten wie dfxvault.com aber nur für agents, überlege dir dafür bitte ein
+  konzept. (nein wir nehmen das nicht auf die selbe plattofrm, dfxvault ist nur für dfx intern, agent braucht as
+  eigenes)“ und zum vorgelegten Konzept: „nur als Konzept anlegen, noch nicht umsetzen“
+- **Bezug:** baut auf [E-37](#e-37) (eine Sitzung hält nie das Geheimnis, das sie nennt) und [E-33](#e-33) auf. Als
+  Arbeitsweise nie Pflicht und nie von selbst an ([E-32](#e-32)).
+- **Umsetzung:** nicht beauftragt – Konzept [ADR-101](adr/101-agent-vault.md).
+
+<a id="e-39"></a>
+
+### E-39 – Prüfungen für Menschen löst der Mensch, die Plattform öffnet ihm dafür die Fernsteuerung
+
+- **Datum:** 2026-11-26
+- **Regel:** Stößt ein Agent auf eine Prüfung, die einen Menschen verlangt, etwa ein Bilderrätsel, Cloudflare oder ein
+  Captcha, dann umgeht er sie nicht und bricht nicht einfach ab. Die Plattform hält den Vorgang an und öffnet dem Inhaber
+  die Fernsteuerung der betroffenen Sandbox: ein Live-Bild mit Klick- und Eingabeweitergabe, wie VNC, direkt auf
+  agent.dfx.swiss. Er löst die Prüfung selbst, danach läuft der Vorgang weiter. Klicken darf nur der Mensch mit seiner
+  eigenen Identität, nie ein Agent.
+- **Wortlaut:** „bei so einer situation bitte vnc öffnene, dann mach ich das kurz“ (als die Agenten bei der Registrierung
+  neuer Claude-Konten vor einem Bilderrätsel anhielten)
+- **Bezug:** ergänzt [E-33](#e-33) (jeder Vorgang in seiner eigenen Sandbox) und [E-05](#e-05) (Fehlendes wird angestoßen).
+  Die Plattform umgeht nie eine Prüfung.
+- **Umsetzung:** offen – für die Abo-Anmeldung in KOR-73 (Live-Bild mit Klickweitergabe); für alle Browser-Sandboxen der
+  Sitzungen folgt sie.
+
+<a id="e-40"></a>
+
+### E-40 – Angemeldet bleiben: Neuladen und neue Tabs verlangen keine neue Anmeldung
+
+- **Datum:** 2026-11-26
+- **Regel:** Wer sich auf agent.dfx.swiss angemeldet hat, bleibt in diesem Browser angemeldet und entsperrt – nach dem
+  Neuladen, nach dem Schliessen und erneuten Öffnen des Tabs und nach einem Neustart des Browsers –, bis er sich
+  abmeldet. Die Anmeldung erneuert sich selbst, solange der Browser genutzt wird. „Angemeldet bleiben“ ist wählbar und
+  voreingestellt an; ausgeschaltet gilt das bisherige Verhalten. Abmelden entfernt alles, was der Browser dafür hält.
+- **Wortlaut:** „ich will auf agent eingeloggt bleiben, auch wenn ich reload mache oder tab schliesse und komplett neu
+  öffne“
+- **Bezug:** ändert die bisherige Festlegung, dass Identitäts- und Bereichsschlüssel nur im Speicher liegen und ein
+  Neuladen den Passkey verlangt ([spec/06-web.md](spec/06-web.md) §2.3); setzt [Idee 30](#k-idee-30) (Verschlüsselung
+  ohne Nachteile für die Bedienung) für die Anmeldung um.
+- **Umsetzung:** in Arbeit – Aufgabe auf agent; baut auf dem Gerätschlüssel des Browsers auf
+  ([ADR-006](adr/006-passkey-prf-key-management.md)).
+
+<a id="e-41"></a>
+
+### E-41 – Tasks erfassen wie Tickets in Jira
+
+- **Datum:** 2026-11-26
+- **Regel:** Ein Task lässt sich erfassen wie ein Ticket in Jira, ohne dass dabei ein Agent zu arbeiten beginnt. Ein
+  erfasster Task hat einen Titel und eine Beschreibung („Thema xy muss man anschauen“). Er lässt sich einer Person,
+  einem Thema, einer GitHub-Organisation und einem Repository zuordnen und mit einer Dringlichkeit versehen; sein
+  Status ist todo, inProgress oder completed. Erfassen, Zuordnen und Ändern gehen in der Weboberfläche und mit dem
+  Agentenwerkzeug ([E-04](#e-04)); die Aufgabenübersicht ([E-21](#e-21)) filtert nach diesen Feldern. Ein Agent
+  arbeitet an einem erfassten Task erst, wenn ihn jemand startet oder einem Agenten zuordnet; dann ist der Status
+  inProgress, mit dem Abschluss completed. Eine Anfrage an einen Agenten erzeugt weiterhin sofort einen Task mit
+  Agent; er trägt dieselben Felder.
+- **Wortlaut:** „das entspricht nicht meinen anforderungen, ich will einen erfassten task, analog einem jira ticket“
+  (zu einem Task, der nur aus dem Chat mit einem Agenten bestand) und „ok, das bitte hinzufügen, ich will tasks
+  erfassen können, analog jira, also thema xy muss man anschauen, task soll man einer person zuordnen können, einem
+  thema zuordnen können, einer github orga zuordnen können, einem repo zuordnen können, mit dringlichkeit versehen
+  können, und status, todo, inProgress, completed.“
+- **Bezug:** erweitert [§2 Punkt 5](#k-2-b5) (Task mit ID, Kurzbeschreibung und Workgroup) um diese Felder und um das
+  Erfassen ohne Agent; ändert [Idee 43](#k-idee-43) (jeder Task erhält seinen Hauptagenten) dahin, dass ein erfasster
+  Task seinen Agenten erst beim Start bekommt; ergänzt [E-21](#e-21). Einzelheiten: Auslegung [A22](#a-22).
+- **Umsetzung:** offen – Bau als Aufgabe auf agent.
+
+<a id="e-42"></a>
+
+### E-42 – Eine Landing-Page wie dfx.swiss, gebaut von einem Agenten mit Fable 5.2
+
+- **Datum:** 2026-11-26
+- **Regel:** agent.dfx.swiss hat eine öffentliche Landing-Page, die das Projekt vorstellt und in etwa aussieht wie
+  dfx.swiss: oben rechts der Login-Button, unten der Footer. Bauen muss sie ein Agent mit dem Modell Fable 5.2. Er sieht
+  sich an, was agent kann, und entscheidet selbst, wie man es am besten vermarktet und präsentiert.
+- **Wortlaut:** „auf agent.dfx.swiss soll es in etwa gleich aussehen wie auf dfx.swiss, also eine landing-page welche
+  das projekt vorstellt, oben rechts Login Button, unten den Footer und co“ und „die Landing page für agent soll
+  zwingend ein Fable 5.2 agent bauen, er soll sich dabei ansehen was agent kann und selber entscheiden wir man das am
+  besten vermakrtet und präsentiert“
+- **Bezug:** stellt der Anmeldung ([§1](#k-1)) eine öffentliche Seite voran. Einzelheiten: Auslegung [A23](#a-23).
+- **Umsetzung:** in Arbeit – Aufgabe auf agent mit Fable 5.2. Die Plattform kennt noch keine Modellwahl je Task; das
+  Modell kam über die Modellvorgabe des Auftraggebers, die Sitzung hat es bestätigt.
 
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
@@ -1008,6 +1114,19 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
   VM je Job); dass sie auf denselben Geräten läuft, ist entschieden durch [E-36](#e-36) (2026-11-26) und gilt
   seither als Regel, nicht mehr als Auslegung ([Teil D](#teil-d--pflege) Punkt 4); der Anker bleibt für Verweise
   ([spec/16-ci-runners.md §6.6](spec/16-ci-runners.md#66-shared-capacity)).
+<a id="a-22"></a>
+- **A22 – Einzelheiten der erfassten Tasks:** Zu [E-41](#e-41), nicht Wortlaut des Auftraggebers. Zuständig sein kann
+  jedes Mitglied der Organization, auch ein Agenten-Konto ([E-26](#e-26)). Themen sind eine einfache Liste je
+  Organization, beim Erfassen anlegbar. GitHub-Organisation und Repository kommen aus den verbundenen GitHub-Zugängen
+  ([E-29](#e-29)) und sind optional. Die Dringlichkeit hat vier Stufen: niedrig, normal (voreingestellt), hoch,
+  dringend. Ein laufender Agenten-Task steht auf inProgress, ein geschlossener auf completed.
+<a id="a-23"></a>
+- **A23 – Was „in etwa gleich wie dfx.swiss“ heisst:** Zu [E-42](#e-42), nicht Wortlaut des Auftraggebers. Aufbau und
+  Erscheinungsbild wie dfx.swiss: Kopfzeile mit Logo und Login oben rechts, Abschnitte, Footer mit den Einträgen von
+  dfx.swiss (etwa Impressum, Datenschutz, Haftungsausschluss, Bedingungen, Support, Status, GitHub, Brand Kit), die auf
+  die bestehenden DFX-Seiten verweisen. Der Inhalt handelt von agent.dfx.swiss, in Deutsch und Englisch, mit nur wahren
+  Aussagen über Vorhandenes. Ist der Browser angemeldet, führt der Button statt zum Login in die App; bestehende Wege
+  wie Einladungen und Links in eine Organization bleiben.
 
 ## Teil D – Pflege
 
