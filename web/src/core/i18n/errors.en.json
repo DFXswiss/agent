@@ -589,6 +589,11 @@
     "body": "This workgroup is limited to specific repositories, and this one is not among them.",
     "action": "Add it in the workgroup settings, or clear the list to allow every repository of the GitHub connection."
   },
+  "repo_read_only": {
+    "title": "Repository is read-only for this account",
+    "body": "The GitHub account may read this repository but not write to it, and no fork of it can be used: the organization does not allow forks, or GitHub refused one.",
+    "action": "Ask an owner of the repository to give the account write access or to allow forks, then let the agent try again."
+  },
   "request_invalid": {
     "title": "Invalid request",
     "body": "The server refused a request that does not match the expected format.",

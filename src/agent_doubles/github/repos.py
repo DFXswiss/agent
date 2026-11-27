@@ -7,13 +7,13 @@ reset (``POST /_double/reset``) empties everything. Format (every key optional):
     {"users": [{"login": "octo-user", "id": 101, "name": "Octo User", "email": null,
                 "tokens": ["<token>", {"token": "<token>", "kind": "classic", "scopes": ["repo", "read:org"],
                                        "repositories": ["octo-org/hello"], "revoked": false, "sso": ["octo-org"]}],
-                "personal_tokens": ["<token>"], "collaborator": ["octo-org/hello"],
+                "personal_tokens": ["<token>"], "collaborator": ["octo-org/hello"], "readonly": ["octo-org/other"],
                 "ssh_signing_keys": ["ssh-ed25519 AAAA…", {"key": "ssh-ed25519 AAAA…", "title": "laptop"}]}],
      "installations": [{"id": 31, "account": "octo-org", "account_type": "Organization",
                         "repository_selection": "selected", "repositories": ["octo-org/hello"],
                         "users": ["octo-user"], "permissions": {"contents": "write", ...}}],
      "repositories": [{"full_name": "octo-org/hello", "private": true, "default_branch": "main",
-                       "description": null, "has_issues": true,
+                       "description": null, "has_issues": true, "allow_forking": true, "fork_of": "octo-org/base",
                        "branches": [{"name": "main", "commits": [{"message": "Initial commit.",
                                      "files": {"README.md": "hello\\n", "run.sh": {"content": "...", "mode": "100755"},
                                                "logo.bin": {"base64": "..."}, "link": {"target": "README.md"}}}]},
@@ -54,6 +54,17 @@ refuses classic tokens there with ``403`` (the organisation's personal access to
 restricts nothing.
 ``personal_tokens`` (KOR-27) are short for classic tokens with the scope ``repo`` that reach the repositories the
 user owns and those named in ``collaborator`` (a name that is not seeded is simply not reachable).
+``readonly`` (HOT-33) names repositories the user reaches with the role read or triage only: they are reached like
+those of ``collaborator``, but ``permissions.push`` is false and every write of contents is refused (``404`` for a
+personal access or OAuth token, ``403`` for an App token, as GitHub hides what a role may not change).
+A repository with ``fork_of`` (a repository seeded before it) is a fork: it shares the parent's objects (GitHub's
+network), starts with every branch of the parent (``branches`` add more) and answers ``fork: true`` with ``parent``
+and ``source``. ``allow_forking: false`` refuses new forks of a repository (``POST …/forks`` answers ``403``), as an
+organisation or repository setting does. ``GET …/forks`` lists the forks the token reaches, ``POST …/forks`` creates
+the token user's fork (or answers the existing one, whatever its name; a taken name gets ``-1``, ``-2``, …), and
+``POST …/merge-upstream {branch}`` fast-forwards the fork's branch to the parent's (``merge_type`` ``none`` when it is
+not behind; ``409`` when the two diverged, ``422`` when either side lacks the branch or the repository is no fork). A
+pull request whose ``head`` is ``<owner>:<branch>`` of another account comes from that account's fork.
 ``ssh_signing_keys`` registers SSH signing keys of the user (a key line or ``{"key", "title"}``), as
 ``POST /user/ssh_signing_keys`` would (`agent_doubles.github.sshsig`: Ed25519 only; a key belongs to one account).
 Which token may manage keys follows its ``kind`` and ``scopes`` (`agent_doubles.github.server`).
@@ -215,6 +226,8 @@ class User:
     email: str | None
     type: str = "User"
     collaborator: list[str] = field(default_factory=list)
+    readonly: list[str] = field(default_factory=list)
+    """Repositories (lower case) the user reaches with the role read or triage only: never a push (HOT-33)."""
 
 
 @dataclass
@@ -325,6 +338,8 @@ class Pull:
     merged_sha: str | None = None
     """The merge commit once the pull request was merged (``PUT …/merge``, KOR-51)."""
     merged_at: int | None = None
+    source: Repo | None = None
+    """The fork the head branch is in (``head: "<owner>:<branch>"``, HOT-33); None for a branch of the repository."""
 
 
 @dataclass
@@ -418,6 +433,9 @@ class Repo:
     next_number: int = 1
     verifications: dict[str, Verification] = field(default_factory=dict)
     """The verification decided when a signed commit was created, by commit id (unsigned commits have none)."""
+    parent: Repo | None = None
+    """The repository this one is a fork of (HOT-33); a fork shares its parent's object store, like GitHub's network."""
+    allow_forking: bool = True
 
     def verification(self, sha: str) -> Verification:
         return self.verifications.get(sha, UNSIGNED)
@@ -448,6 +466,15 @@ class Repo:
     def branch(self, name: str) -> str | None:
         """The head commit of branch `name`, None when it does not exist."""
         return self.refs.get(f"refs/heads/{name}")
+
+    @property
+    def root(self) -> Repo:
+        """The repository at the root of this one's fork network (itself when it is no fork)."""
+        return self if self.parent is None else self.parent.root
+
+    def head_of(self, pull: Pull) -> str | None:
+        """The head commit of a pull request of this repository: its head branch here or in its fork."""
+        return (pull.source or self).branch(pull.head)
 
     def resolve(self, ref: str) -> str | None:
         """The commit `ref` names: a branch, a tag, ``heads/…``/``tags/…``/``refs/…``, a full or abbreviated SHA."""
@@ -521,7 +548,7 @@ class Repo:
     def read_mergeability(self, pull: Pull) -> bool:
         """One read of `pull`'s mergeability: True when it is computed for the current head and base, else False and
         the computation starts (the next read knows it)."""
-        current = (self.branch(pull.head) or "", self.branch(pull.base) or "")
+        current = (self.head_of(pull) or "", self.branch(pull.base) or "")
         known = pull.mergeable_for == current
         pull.mergeable_for = current
         return known
@@ -768,6 +795,41 @@ class World:
     def repo(self, owner: str, name: str) -> Repo | None:
         return self.repos.get(f"{owner}/{name}".lower())
 
+    def forks(self, repo: Repo) -> list[Repo]:
+        """The forks of `repo`, by full name."""
+        return sorted((found for found in self.repos.values() if found.parent is repo), key=lambda found: found.key)
+
+    def fork_of(self, repo: Repo, owner: str) -> Repo | None:
+        """The fork of `repo` that account `owner` owns (whatever its name)."""
+        return next((found for found in self.forks(repo) if found.owner.lower() == owner.lower()), None)
+
+    def add_fork(self, repo: Repo, user: User) -> Repo:
+        """`user`'s fork of `repo` (``POST …/forks``): the existing one, else a new repository in the user's account
+        with every branch of `repo` and its objects; a taken name gets ``-1``, ``-2``, … (as GitHub does)."""
+        found = self.fork_of(repo, user.login)
+        if found is not None:
+            return found
+        name, number = repo.name, 0
+        while self.repo(user.login, name) is not None:
+            number += 1
+            name = f"{repo.name}-{number}"
+        made = Repo(
+            user.login,
+            name,
+            self.new_id(),
+            user.id,
+            "User",
+            repo.private,
+            repo.default_branch,
+            repo.description,
+            self.stamp(),
+            objects=repo.objects,
+            refs={ref: sha for ref, sha in repo.refs.items() if ref.startswith("refs/heads/")},
+            parent=repo,
+        )
+        self.repos[made.key] = made
+        return made
+
     def user_for_email(self, email: str) -> User | None:
         """The user a commit email belongs to: its ``email`` or its noreply address (case-insensitive)."""
         for user in self.users.values():
@@ -855,7 +917,17 @@ class World:
     def _seed_user(self, data: dict[str, Any]) -> None:
         _check_keys(
             data,
-            {"login", "id", "name", "email", "tokens", "personal_tokens", "collaborator", "ssh_signing_keys"},
+            {
+                "login",
+                "id",
+                "name",
+                "email",
+                "tokens",
+                "personal_tokens",
+                "collaborator",
+                "readonly",
+                "ssh_signing_keys",
+            },
             "user",
         )
         login = _text(data, "login", "user")
@@ -873,6 +945,11 @@ class World:
             if not isinstance(name, str) or "/" not in name:
                 raise SeedError("user.collaborator must name repositories as owner/name")
             user.collaborator.append(name)
+        for name in _names(data, "readonly", "user"):
+            if "/" not in name:
+                raise SeedError("user.readonly must name repositories as owner/name")
+            user.collaborator.append(name)  # reached like a collaborator's, but never written
+            user.readonly.append(name.lower())
         self.users[login.lower()] = user
         for raw in _list(data.get("personal_tokens", []), "user.personal_tokens"):
             if not isinstance(raw, str) or not raw:
@@ -985,6 +1062,8 @@ class World:
                 "pulls",
                 "issues",
                 "comments",
+                "fork_of",
+                "allow_forking",
             },
             "repository",
         )
@@ -1006,7 +1085,14 @@ class World:
             _optional_text(data, "description", "repository"),
             self.stamp(),
             _bool(data, "has_issues", "repository", True),
+            allow_forking=_bool(data, "allow_forking", "repository", True),
         )
+        if "fork_of" in data:
+            parent = self.repos.get(_text(data, "fork_of", "repository").lower())
+            if parent is None:
+                raise SeedError(f"repository {full_name}: fork_of names a repository that is not seeded before it")
+            repo.parent, repo.objects = parent, parent.objects
+            repo.refs = {ref: sha for ref, sha in parent.refs.items() if ref.startswith("refs/heads/")}
         for raw in _list(data.get("branches", []), "repository.branches"):
             self._seed_branch(repo, _object(raw, "branch"))
         for tag, target in _object(data.get("tags", {}), "repository.tags").items():

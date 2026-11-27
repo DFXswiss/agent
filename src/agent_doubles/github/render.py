@@ -147,9 +147,11 @@ def ssh_signing_key(key: SigningKey) -> dict[str, Any]:
 # --- repositories ------------------------------------------------------------------------------------
 
 
-def repository(urls: Urls, repo: Repo, *, form: str = "full", push: bool = True) -> dict[str, Any]:
+def repository(
+    urls: Urls, repo: Repo, *, form: str = "full", push: bool = True, triage: bool | None = None
+) -> dict[str, Any]:
     """A repository; `form` ``full`` (``GET /repos/…``), ``installation`` (installation listing) or ``pull`` (inside
-    ``head``/``base`` of a pull request)."""
+    ``head``/``base`` of a pull request); `triage` defaults to `push` (the role triage: push false, triage true)."""
     api = f"{urls.api}/repos/{repo.full_name}"
     web = f"{urls.web}/{repo.full_name}"
     stamp = iso(repo.created)
@@ -162,7 +164,7 @@ def repository(urls: Urls, repo: Repo, *, form: str = "full", push: bool = True)
         "owner": simple_user(urls, repo.owner, repo.owner_id, repo.owner_type),
         "html_url": web,
         "description": repo.description,
-        "fork": False,
+        "fork": repo.parent is not None,
         "url": api,
         "forks_url": f"{api}/forks",
         "keys_url": f"{api}/keys{{/key_id}}",
@@ -224,7 +226,7 @@ def repository(urls: Urls, repo: Repo, *, form: str = "full", push: bool = True)
         "disabled": False,
         "open_issues_count": repo.open_items,
         "license": None,
-        "allow_forking": True,
+        "allow_forking": repo.allow_forking,
         "is_template": False,
         "web_commit_signoff_required": False,
         "has_pull_requests": True,
@@ -235,12 +237,21 @@ def repository(urls: Urls, repo: Repo, *, form: str = "full", push: bool = True)
         "open_issues": repo.open_items,
         "watchers": 0,
         "default_branch": repo.default_branch,
-        "permissions": {"admin": False, "maintain": False, "push": push, "triage": push, "pull": True},
+        "permissions": {
+            "admin": False,
+            "maintain": False,
+            "push": push,
+            "triage": push if triage is None else triage,
+            "pull": True,
+        },
         "temp_clone_token": "",
         "network_count": 0,
         "subscribers_count": 0,
     }
     if form == "full":
+        if repo.parent is not None:  # a fork names its parent and the root of its network (HOT-33)
+            data["parent"] = repository(urls, repo.parent, form="pull")
+            data["source"] = repository(urls, repo.parent.root, form="pull")
         return data
     omitted = PULL_REPO_OMITS if form == "pull" else PULL_REPO_OMITS - {"permissions"}
     return {key: value for key, value in data.items() if key not in omitted}
@@ -470,7 +481,7 @@ def compare(urls: Urls, world: World, repo: Repo, *, base: str, head: str, baseh
 
 def pull_changes(repo: Repo, pull: Pull) -> tuple[str, str, list[FileChange], int]:
     """Head sha, base sha, changed files (merge base → head) and commit count of a pull request."""
-    head = repo.branch(pull.head) or ""
+    head = repo.head_of(pull) or ""
     base = repo.branch(pull.base) or ""
     merge_base = repo.merge_base(base, head) if head and base else None
     changes = _changes(repo, merge_base, head) if head else []
@@ -484,7 +495,7 @@ def mergeability(repo: Repo, item: Pull, known: bool) -> tuple[bool | None, str]
     (whatever ``mergeable`` is), ``dirty`` for a conflict and ``clean`` otherwise (`agent_doubles.github.repos`)."""
     if item.state == "closed" or not known:
         return None, "unknown"
-    clean = repo.merges_cleanly(repo.branch(item.base) or "", repo.branch(item.head) or "")
+    clean = repo.merges_cleanly(repo.branch(item.base) or "", repo.head_of(item) or "")
     return clean, "draft" if item.draft else "clean" if clean else "dirty"
 
 
@@ -499,6 +510,7 @@ def pull(
     head, base, changes, commits = pull_changes(repo, item)
     stamp = iso(item.created)
     owner = simple_user(urls, repo.owner, repo.owner_id, repo.owner_type)
+    source = item.source or repo
     data: dict[str, Any] = {
         "url": f"{api}/pulls/{number}",
         "id": item.id,
@@ -531,11 +543,11 @@ def pull(
         "requested_reviewers": [],
         "requested_teams": [],
         "head": {
-            "label": f"{repo.owner}:{item.head}",
+            "label": f"{source.owner}:{item.head}",
             "ref": item.head,
             "sha": head,
-            "user": owner,
-            "repo": repository(urls, repo, form="pull"),
+            "user": simple_user(urls, source.owner, source.owner_id, source.owner_type),
+            "repo": repository(urls, source, form="pull"),
         },
         "base": {
             "label": f"{repo.owner}:{item.base}",

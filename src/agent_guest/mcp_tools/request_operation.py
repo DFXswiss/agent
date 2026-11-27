@@ -113,6 +113,8 @@ TOOL = Tool(
     name="request_operation",
     description="Request a platform operation (for example github.checkout, github.commit, github.create_pull_request, "
     "subagent.request, human.question, mail.find) with its parameters; returns the result, or status pending after "
-    "20 s (then use get_operation); mail.find waits for its wait_seconds on the platform.",
+    "20 s (then use get_operation); mail.find waits for its wait_seconds on the platform. GitHub writes to a "
+    "repository the account may only read go through the account's fork by themselves (the result names it as fork); "
+    "always name the original repository.",
     handler=request_operation,
 )

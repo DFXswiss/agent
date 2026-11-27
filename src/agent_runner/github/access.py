@@ -7,7 +7,8 @@ any other GitHub failure `upstream_error` (a pre-check is not retried; the sessi
 an organisation that requires SSO authorisation of the token is named, `ops.SSO_REQUIRED`). `repository(client,
 repo)` is `GET /repos/{repo}` with an access refusal -> `repo_not_accessible` with the one next step
 (`reach.refusal`, KOR-65) and returns the answer (default branch, `html_url`), so the pre-checks need no second
-request for it.
+request for it. `writable(client, repo)` adds where a write goes: the repository itself, or the fork of an identity
+that may only read it (`fork.route`, HOT-33).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from agent_runner.github import identity, ops, reach
+from agent_runner.github import fork, identity, ops, reach
 from agent_runner.github.client import GitHubClient, GitHubError
 from agent_runner.github.precheck import ACCESS_FAILED
 from agent_runner.operations.extensions import CheckFailed, PrecheckRequest
@@ -36,6 +37,8 @@ async def client(request: PrecheckRequest) -> AsyncIterator[GitHubClient]:
 
 
 async def repository(github: GitHubClient, repo: str, *, write: bool = False) -> dict[str, Any]:
+    """The repository answer; with `write` the write must be possible, directly or through the identity's fork
+    (`fork.route`: `repo_read_only` when neither is)."""
     try:
         answer = await github.request("GET", f"/repos/{repo}")
     except GitHubError as error:
@@ -45,5 +48,12 @@ async def repository(github: GitHubClient, repo: str, *, write: bool = False) ->
         raise
     found = ops.obj(answer.data)
     if write:
-        await reach.check_write(github, repo, found)
+        await fork.route(github, repo, found)
     return found
+
+
+async def writable(github: GitHubClient, repo: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """The repository answer and where a write goes: None for the repository itself, else the fork's data
+    (`fork.route`, HOT-33)."""
+    found = await repository(github, repo)
+    return found, await fork.route(github, repo, found)
