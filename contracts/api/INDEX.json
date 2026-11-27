@@ -176,6 +176,23 @@
       "owner": "CTR-01"
     },
     {
+      "method": "POST",
+      "path": "/v1/session/renew",
+      "name": "session-renew",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/session-renew.request.json",
+      "response": "api/session-renew.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-76"
+    },
+    {
       "method": "GET",
       "path": "/v1/me",
       "name": "me",
@@ -3113,6 +3130,97 @@
       "read_resource": null,
       "streaming": false,
       "owner": "KOR-69"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/mailboxes",
+      "name": "mailboxes-list",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/mailboxes-list.request.json",
+      "response": "api/mailboxes-list.response.json",
+      "read_resource": "me.mailboxes",
+      "streaming": false,
+      "owner": "KOR-74"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/mailboxes/{id}",
+      "name": "mailbox-get",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/mailbox-get.request.json",
+      "response": "api/mailbox-get.response.json",
+      "read_resource": "mailbox",
+      "streaming": false,
+      "owner": "KOR-74"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/mailboxes/{id}",
+      "name": "mailbox-put",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/mailbox-put.request.json",
+      "response": "api/mailbox-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-74"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/mailboxes/{id}",
+      "name": "mailbox-delete",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {
+        "id": "uuid"
+      },
+      "request_kind": "query",
+      "request": "api/mailbox-delete.request.json",
+      "response": "api/mailbox-delete.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-74"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/mailboxes",
+      "name": "device-mailboxes-list",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device_eligible"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/device-mailboxes-list.request.json",
+      "response": "api/device-mailboxes-list.response.json",
+      "read_resource": "device.mailboxes",
+      "streaming": false,
+      "owner": "KOR-74"
     },
     {
       "method": "GET",

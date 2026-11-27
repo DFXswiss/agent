@@ -322,3 +322,33 @@ def test_an_unhealthy_guest_fails_the_resume_after_the_attempt_limit(rig: Rig) -
         assert resumer.attempts == {}
 
     run(rig, body)
+
+
+def test_after_a_device_restart_the_waiting_prompt_of_a_working_session_is_delivered(rig: Rig) -> None:
+    """HOT-25: the device restarted (power cut) while a main session worked. Its VM is `stopped`, the store still says
+    `working`, and a follow-up prompt waits for it. The session area suspends it (`device_restart`); the next round of
+    the deliverer resumes it on its VM with `--resume` and types the waiting prompt."""
+    from agent_runner.sessions.service import SessionService  # noqa: PLC0415
+
+    async def body(env: Any) -> None:
+        pk = await setup(env)
+        sid = await pk.add_session(state="working")
+        event_id = add_prompt(env, 1, "follow", text="Weiter nach dem Stromausfall")
+        await pull(env)
+        await pk.route(sid, 1, event_id)
+        await pk.deliverer.advance(sid)
+        assert pk.guest.texts() == []  # working: the prompt waits
+        row = await pk.vm()
+        async with env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.vm SET state = 'stopped' WHERE id = %s", (row.id,))  # the restart
+        assert await SessionService(pk.kit.session_env).vms_stopped() == 1
+        assert ("suspended", "device_restart") in await pk.kit.transitions(sid)
+        await pk.deliverer.run_once()
+        request = next(value for name, value in pk.guest.calls if name == "create_session")
+        assert (request["session_id"], request["resume_claude_session_id"]) == (sid, CLAUDE_ID)
+        assert pk.kit.vms.calls[-1]["prefer"] == [row.id]  # its own VM, started again
+        assert pk.guest.texts() == ["Weiter nach dem Stromausfall"]
+        await pk.journal(sid, state="prompt_accepted", prompt_id=event_id, at=AT)
+        assert (await pk.row(event_id)).state == "accepted"
+
+    run(rig, body)

@@ -25,9 +25,12 @@ A request is announced by the hint `request {request_id}` or listed in `requests
    refused: audited as above. While a refresh is not due yet or failed, the request is neither handled nor audited
    but offered again later (`defer`); after `REFRESH_TRIES` failed refreshes it is judged against the copy alone;
 3. **dispatches** a root request (`follows` empty) to the handler of its kind (`<area>/requests.py:HANDLERS`,
-   `registry.request_handlers`) in its own asyncio task (`Flow`). At most one flow per user and kind is active: a
-   newer root (header time, then ID) replaces the running flow (the hub has already failed the older chain), an
-   older one is answered `{step:"failed", code:"busy"}`. A kind without handler is answered `failed`
+   `registry.request_handlers`) in its own asyncio task (`Flow`). At most one flow per user, kind and slot is active
+   (the slot of a kind is a field of the **decrypted** body, `SLOTS`: `claude.login` - its `subscription_id`, so the
+   logins of different subscriptions run side by side, KOR-73, ADR-100 section 2; a body without it is a slot of its
+   own): a newer root (header time, then ID) replaces the running flow of its slot (the hub has already failed the
+   older chain), an older one is answered `{step:"failed", code:"busy"}`; so is a root of a new slot while `MAX_SLOTS`
+   flows of the owner and kind run. A kind without handler is answered `failed`
    `upstream_error`. A follow-up request (`follows` = root ID) goes to the running flow of its root when owner and
    kind match (`Flow.follow_ups`, `Flow.wait_follow_up`), else it is refused like a forged request (`forbidden`);
 4. **answers** with encrypted, signed responses (`Flow.respond`): HPKE to the requester's X25519 key, signed by
@@ -44,8 +47,8 @@ Agents (ADR-082 sections 1 and 9.12): `header.user` may be the active agent of a
 the agent's own key from the verified log, the response is sealed to the agent's X25519 key, and the **owner** - whose
 `CK` and connections a handler uses (`Flow.user`) - is the agent's user (`OrgState.acting`). An agent that is no agent
 of its user any more (`revoked_agents`: superseded or removed in any verified log) is refused like an unknown user
-(`key_unknown`). "At most one flow per user and kind" and the follow-up match compare owners, so a user and the user's
-agent continue each other's flows.
+(`key_unknown`). "At most one flow per user, kind and slot" and the follow-up match compare owners, so a user and the
+user's agent continue each other's flows.
 
 Local states (`runner.device_request.state`): `active`, `answered` (final response sent), `failed` (closed by the
 hub or unanswerable), `abandoned` (no longer listed, replaced or cancelled), `rejected` (failed verification).
@@ -92,6 +95,10 @@ REFRESH_TRIES = 3
 """Failed log refreshes after which such a request is judged against the device's copy alone."""
 MAX_WAITING = 10_000
 """Bound of the memory of requests waiting for a log refresh (the oldest entry is dropped when reached)."""
+MAX_SLOTS = 40
+"""Flows of one owner and kind at the same time (the number of subscriptions a user may hold, ADR-100 section 2)."""
+SLOTS = {"claude.login": "subscription_id"}
+"""The body field that names the slot of a root of the kind (module docstring point 3)."""
 ACTIVE, ANSWERED, FAILED, ABANDONED, REJECTED = "active", "answered", "failed", "abandoned", "rejected"
 CLOSED = frozenset({ANSWERED, FAILED, ABANDONED, REJECTED})
 ATTRIBUTE = "request_service"
@@ -148,6 +155,12 @@ class Incoming:
     """The requester's X25519 key (the responses are sealed to it)."""
     owner: str
     """The user the request acts for (`acting(user)`): whose `CK` and connections a handler uses."""
+
+    @property
+    def slot(self) -> object:
+        """The subject of a root of its kind (`SLOTS`), None when the kind has none or the body does not name it."""
+        name = SLOTS.get(self.kind)
+        return None if name is None else self.body.get(name)
 
 
 @dataclass
@@ -528,12 +541,9 @@ class RequestService:
         root.follow_ups.put_nowait(FollowUp(request))
 
     async def start(self, request: Incoming) -> None:
+        wanted = (request.owner, request.kind, request.slot)
         running = next(
-            (
-                f
-                for f in self.flows.values()
-                if not f.finished and (f.user, f.request.kind) == (request.owner, request.kind)
-            ),
+            (f for f in self.flows.values() if not f.finished and (f.user, f.request.kind, f.request.slot) == wanted),
             None,
         )
         if running is not None:
@@ -543,6 +553,10 @@ class RequestService:
                 return
             self.line(f"abandoned request_id={running.id} reason=replaced")
             self.cancel(running)
+        elif sum(not f.finished and (f.user, f.request.kind) == wanted[:2] for f in self.flows.values()) >= MAX_SLOTS:
+            self.line(f"busy request_id={request.id} reason=slots")
+            await self.close_unanswerable(request, "busy")
+            return
         handler = self.handlers.get(request.kind)
         if handler is None:
             self.line(f"no_handler request_id={request.id} kind={request.kind}")

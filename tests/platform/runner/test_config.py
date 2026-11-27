@@ -85,7 +85,7 @@ def test_default_home_expands_user(base: dict[str, str]) -> None:
 
 
 def test_every_name_is_listed_once() -> None:
-    assert len(NAMES) == len(set(NAMES)) == 60
+    assert len(NAMES) == len(set(NAMES)) == 61
     assert "VM_PREFIX" in NAMES
     assert "TEST_MODE" in NAMES
     assert frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"}) == HUB_NAMES
@@ -534,6 +534,17 @@ def test_login_automation(kind: str | None, value: str, expected: bool, base: di
 def test_login_automation_invalid(value: str, base: dict[str, str]) -> None:
     base["AGENT_RUNNER_LOGIN_AUTOMATION"] = value
     refused(base, "LOGIN_AUTOMATION")
+
+
+def test_login_sandbox(base: dict[str, str]) -> None:
+    """KOR-73, ADR-100 section 3: a login VM per login unless `process` is set; the environment keeps only `process`."""
+    assert load(base).login_sandbox == "vm"
+    assert "AGENT_RUNNER_LOGIN_SANDBOX" not in environment(load(base))
+    base["AGENT_RUNNER_LOGIN_SANDBOX"] = "process"
+    assert load(base).login_sandbox == "process"
+    assert environment(load(base))["AGENT_RUNNER_LOGIN_SANDBOX"] == "process"
+    base["AGENT_RUNNER_LOGIN_SANDBOX"] = "auto"
+    refused(base, "LOGIN_SANDBOX")
 
 
 @pytest.mark.parametrize("value", ["", "wp-run01-", "arp", "a" * 32])

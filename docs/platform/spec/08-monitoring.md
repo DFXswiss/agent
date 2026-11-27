@@ -117,7 +117,8 @@ Alert rules (all `severity` + `component="agent-platform"`):
 Runner alerts outside the textfile: `runner.alert <name>` log lines, some also outbox audit rows
 `runner.alert {alert,value}` at the hub: `origin_seq_conflict` (also `agent_runner_device_sync_fatal`),
 `outbox_items_lost` (audit; items lost after a hub restore below the runner's 1 h outbox retention, `05-runner.md`
-§2.3, KOR-10) and `outbox_discarded` (audit; ADR-047). No alert rule watches them yet; they are read in the audit log
+§2.3, KOR-10), `outbox_conflict_recovered` (audit; items the store lost in a power cut while the hub had them, the
+runner took the hub's position, `05-runner.md` §2.3, HOT-25) and `outbox_discarded` (audit; ADR-047). No alert rule watches them yet; they are read in the audit log
 and the runner log.
 
 ## 6. Display in agent.dfx.swiss

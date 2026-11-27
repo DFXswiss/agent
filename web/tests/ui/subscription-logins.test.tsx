@@ -329,7 +329,9 @@ describe('the login dialog', () => {
     const { t, d } = await page();
     const gate: { open?: (() => void) | undefined; fail?: (() => void) | undefined } = {};
     const devices = t.client.request.bind(t.client);
-    let mode: 'hold' | 'fail' | 'post' | 'pass' = 'hold';
+    // the form asks for the devices itself first (whether they run logins side by side, KOR-73): that is let through
+    let mode: 'hold' | 'fail' | 'post' | 'pass' = 'pass';
+    const settled = () => act(() => new Promise<void>((resolve) => setTimeout(resolve, 20)));
     t.client.request = async (method: string, target: string, options?: { body?: unknown }) => {
       const held = mode === 'post' ? target === '/v1/device-requests' : target === '/v1/me/devices';
       if (held && mode !== 'pass' && gate.open === undefined) {
@@ -341,6 +343,8 @@ describe('the login dialog', () => {
       return devices(method, target, options);
     };
     fireEvent.click(await screen.findByTestId('submanage.add'));
+    await settled();
+    mode = 'hold';
     fireEvent.change(screen.getByTestId('subadd.name'), { target: { value: 'X' } });
     fireEvent.click(screen.getByTestId('subadd.start'));
     await waitFor(() => expect(gate.open).toBeDefined());
@@ -348,7 +352,10 @@ describe('the login dialog', () => {
     await act(async () => gate.open!());
     gate.open = undefined;
     gate.fail = undefined;
+    mode = 'pass';
     fireEvent.click(screen.getByTestId('submanage.add'));
+    await settled();
+    mode = 'hold';
     fireEvent.change(screen.getByTestId('subadd.name'), { target: { value: 'Y' } });
     fireEvent.click(screen.getByTestId('subadd.start'));
     await waitFor(() => expect(gate.fail).toBeDefined());

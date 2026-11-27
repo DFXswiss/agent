@@ -4,8 +4,8 @@
 // confirmed with their certificates (ADR-082: the job `agents` adds an agent from the hub's list only then), and the
 // credential-key losses this browser already rotated for (a rotation is owed once, not at every sign-in). Only IDs, public keys and the public community
 // name – no secret keys, no other names, no content (those stay in memory or in the IndexedDB entries of `persist/`).
-// The bandwidth choice of the live browser picture (06-web.md section 5.4b) is kept here as well (one value for every
-// user of this browser).
+// The bandwidth choice of the live browser picture (06-web.md section 5.4b) and the choice "Stay signed in" of the
+// sign-in page (rule E-40, on unless switched off) are kept here as well (one value for every user of this browser).
 // A storage that refuses access (private mode, quota) behaves as empty.
 export interface PrefStorage {
   getItem(key: string): string | null;
@@ -105,6 +105,15 @@ export class Prefs {
     } catch {
       return {};
     }
+  }
+
+  /** "Stay signed in" (rule E-40) for the next sign-in on this browser: on unless the user switched it off. */
+  staySignedIn(): boolean {
+    return this.#get('stay-signed-in') !== 'off';
+  }
+
+  setStaySignedIn(on: boolean): void {
+    this.#set('stay-signed-in', on ? null : 'off');
   }
 
   /** The bandwidth choice of the live browser picture (`core/browser/bandwidth.ts`), the same for every user. */

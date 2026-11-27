@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TextIO
 
 from agent_runner.registry import ROOT_PACKAGE
-from agent_runner.store.cluster import ClusterTools
+from agent_runner.store.cluster import ClusterTools, device_tools
 
 CommandRunner = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
 COMMAND_TIMEOUT_S = 120.0
@@ -88,7 +88,7 @@ class Host:
     limactl: CommandRunner = field(default_factory=lambda: tool("limactl"))
     tmux: CommandRunner = field(default_factory=lambda: tool("tmux"))
     ssh: CommandRunner = field(default_factory=lambda: tool("ssh"))
-    cluster: ClusterTools = field(default_factory=ClusterTools)
+    cluster: ClusterTools = field(default_factory=device_tools)
     package: str = ROOT_PACKAGE
     launch_daemons_dir: Path = LAUNCH_DAEMONS_DIR
     clock: Callable[[], float] = time.monotonic

@@ -2758,6 +2758,100 @@
             "detail"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "mail.read"
+            },
+            "result": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "denied",
+                "rejected",
+                "duplicate",
+                "failed"
+              ]
+            },
+            "task_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "session_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "target_kind": {
+              "type": "string",
+              "pattern": "^[a-z_]{1,32}$"
+            },
+            "target_id": {
+              "type": "string",
+              "description": "an ID (UUID, vm-..., key or code), never content",
+              "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+            },
+            "detail": {
+              "description": "detail of audit rows with action mail.read: a session read a mailbox with the operation mail.find (ADR-099 section 7); the mailbox is target_id (target_kind credential). The operation, the mailbox's owner, the folder looked at, the number of mails answered, the seconds waited, whether the wait ran out and the outcome - never an address, subject, text or link. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+              "type": "object",
+              "properties": {
+                "operation_id": {
+                  "$ref": "../common.json#/$defs/uuid"
+                },
+                "owner_id": {
+                  "$ref": "../common.json#/$defs/uuid"
+                },
+                "folder": {
+                  "type": "string",
+                  "enum": [
+                    "inbox",
+                    "spam",
+                    "all"
+                  ]
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 20
+                },
+                "waited_seconds": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 330
+                },
+                "timed_out": {
+                  "type": "boolean"
+                },
+                "result": {
+                  "type": "string",
+                  "enum": [
+                    "ok",
+                    "not_found",
+                    "upstream_error",
+                    "timeout"
+                  ]
+                }
+              },
+              "required": [
+                "operation_id",
+                "owner_id",
+                "folder",
+                "count",
+                "waited_seconds",
+                "timed_out",
+                "result"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "action",
+            "result",
+            "target_kind",
+            "target_id",
+            "detail"
+          ],
+          "additionalProperties": false
         }
       ]
     },

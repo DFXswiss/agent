@@ -115,6 +115,16 @@ def test_a_login_of_the_primary_record_through_its_id_is_refused(
         {"mode": "manual", "email": "x@example.com"},
         {"mode": "automatic", "email": "no-at-sign"},
         {"mode": "automatic", "email": 5},
+        {"mode": "manual", "account": {"name": "Ada"}},
+        {"mode": "automatic", "account": "Ada"},
+        {"mode": "automatic", "account": {"name": ""}},
+        {"mode": "automatic", "account": {"name": "Ada", "phone": "1"}},
+        {"mode": "automatic", "account": {"name": "Ada", "consents": ["payment"]}},
+        {"mode": "automatic", "account": {"name": "Ada", "consents": ["age", "age"]}},
+        {"mode": "automatic", "account": {"name": "Ada", "consents": "age"}},
+        {"mode": "automatic", "account": {"name": "Ada", "birth_date": "1990-13-01"}},
+        {"mode": "automatic", "account": {"name": "Ada", "birth_date": 1990}},
+        {"mode": "automatic", "extended": False},
     ],
 )
 def test_malformed_subscription_fields_end_upstream_error(
@@ -135,7 +145,7 @@ def test_an_automatic_login_signs_in_with_the_given_address(
 
     async def check(run: Run) -> None:
         hub = SubscriptionHub(run.env.hub).install()
-        bodies = await run.wait_bodies(2, seconds=60)
+        bodies = await run.wait_bodies(3, seconds=60)
         assert bodies[-1]["automation"] == "failed"
         login.auth.set_scenario(Scenario())
         follow = await run.follow({"code": await asyncio.to_thread(code_for, login, bodies[-1]["url"])})

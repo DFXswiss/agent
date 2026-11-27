@@ -77,6 +77,16 @@ class LoginOptions:
     imap_factory: Callable[..., Any] = imaplib.IMAP4_SSL
     playwright: Callable[[], Callable[[], Any]] | None = None
     """Returns `playwright.async_api.async_playwright` (None: import it from the `login` extra)."""
+    page_poll: float = 0.5
+    """Seconds between two looks at a page that is still loading (ADR-100 section 4)."""
+    verify_wait: float = 180.0
+    """Seconds a check for humans waits for the owner's click before the relay takes over (`VERIFY_WAIT`)."""
+    verify_tick: float = 2.0
+    """Seconds between two looks at the check for humans (a changed picture is sent, `VERIFY_TICK`)."""
+    verify_settle: float = 1.5
+    """Seconds after the owner's click before the page is looked at again."""
+    sandbox: Callable[..., Any] | None = None
+    """Builds the login's sandbox `(flow, url, workdir)` instead of the setting `LOGIN_SANDBOX` (tests)."""
 
 
 def options(context: Any) -> LoginOptions:

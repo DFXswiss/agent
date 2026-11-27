@@ -1,0 +1,19 @@
+{
+  "description": "Endpoints added by KOR-76 (ADR-102, rule E-40): a browser that stays signed in renews its session with the still valid session key (03-api.md section 4.1).",
+  "rights": [
+    "user"
+  ],
+  "auth": [
+    "browser"
+  ],
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/v1/session/renew",
+      "rights": [
+        "user"
+      ],
+      "section": "4.1"
+    }
+  ]
+}

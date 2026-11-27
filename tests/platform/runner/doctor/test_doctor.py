@@ -175,7 +175,7 @@ def test_a_healthy_device_only_warns_about_the_test_mode(case: Case) -> None:
     found = check_map(out)
     assert list(found) == [
         "os", "lima", "vz", "postgresql", "golden", "landlock", "login_cli", "hub", "clock", "textfile",
-        "operator_subscriptions", "operator_github", "test_mode", "sync",
+        "operator_subscriptions", "operator_github", "test_mode", "workvm_volume", "sync",
     ]  # fmt: skip
     assert found["os"] == [("ok", "supported", "darwin")]
     assert found["lima"] == [("ok", "version", "2.3.1")]
@@ -190,6 +190,7 @@ def test_a_healthy_device_only_warns_about_the_test_mode(case: Case) -> None:
     assert found["operator_subscriptions"] == [("ok", "off", None)]
     assert found["test_mode"] == [("warn", "test_mode_on", None)]
     assert found["operator_github"] == [("ok", "off", None)]
+    assert found["workvm_volume"] == [("ok", "off", None)]
     assert found["sync"] == [("ok", "clear", None)]
     assert out.splitlines()[-1] == "runner.doctor result=warn"
     assert case.stops == [case.home / "pg"]
@@ -753,3 +754,66 @@ def test_the_operator_subscriptions_are_counted_without_names(tmp_path: Path) ->
     bad.unlink()
     assert found() == checks.Check("operator_subscriptions", "ok", "usable", 2)
     assert org not in repr(found())
+
+
+def test_the_volume_of_the_work_vm_slots_must_hang_at_its_mount_point() -> None:
+    """HOT-25: after a restart without the fstab entry the volume hangs under /Volumes; doctor names it, and warns while
+    the entry for this volume's UUID is missing."""
+    from types import SimpleNamespace  # noqa: PLC0415
+    from typing import cast  # noqa: PLC0415
+
+    from agent_runner.config import Config  # noqa: PLC0415
+    from agent_runner.errors import RunnerError  # noqa: PLC0415
+    from agent_runner.workvm.volume import Volume  # noqa: PLC0415
+
+    uuid = "0A1B2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D"
+    entry = f"UUID={uuid} /var/agent-workvm apfs rw\n"
+
+    def config(slots: int, self_mode: bool = False) -> Config:
+        return cast(Config, SimpleNamespace(workvm_slots=slots, workvm_slots_self=self_mode))
+
+    def check(found: Volume | Exception | None, fstab: str | None = entry, slots: int = 2) -> checks.Check:
+        def find() -> Volume | None:
+            if isinstance(found, Exception):
+                raise found
+            return found
+
+        return checks.check_workvm_volume(config(slots), find, lambda: fstab)
+
+    here = Volume("disk3s7", uuid, "/private/var/agent-workvm")
+
+    def result(found: Volume | Exception | None, fstab: str | None = entry) -> tuple[str, str, object]:
+        done = check(found, fstab)
+        return done.result, done.detail, done.value
+
+    assert check(None, slots=0) == checks.Check("workvm_volume", "ok", "off")
+    assert checks.check_workvm_volume(config(2, True), lambda: None, lambda: "") == checks.Check(
+        "workvm_volume", "ok", "self"
+    )
+    assert result(here) == ("ok", "mounted", "/var/agent-workvm")
+    assert result(RunnerError("workvm_volume", "diskutil")) == ("fail", "unreadable", None)
+    assert result(None) == ("fail", "missing", "AgentWorkVM")
+    assert result(Volume("disk3s7", uuid, "/Volumes/AgentWorkVM")) == ("fail", "not_mounted", "/Volumes/AgentWorkVM")
+    assert result(Volume("disk3s7", uuid, "")) == ("fail", "not_mounted", "-")
+    assert result(here, "") == ("warn", "fstab_missing", "/var/agent-workvm")
+    assert result(here, "UUID=OTHER /var/agent-workvm apfs rw\n") == ("warn", "fstab_missing", "/var/agent-workvm")
+    assert result(here, None) == ("warn", "fstab_unreadable", "/etc/fstab")
+    options = checks.DoctorOptions()
+    found = options.volume()
+    assert found is None or isinstance(found, Volume)
+    assert isinstance(options.fstab(), str | None)
+
+
+def test_the_fstab_reads_as_empty_when_missing_and_as_none_when_unreadable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from agent_runner.workvm import volume  # noqa: PLC0415
+
+    monkeypatch.setattr(volume, "FSTAB", str(tmp_path / "fstab"))
+    assert checks.read_fstab() == ""
+    (tmp_path / "fstab").write_text("x\n")
+    assert checks.read_fstab() == "x\n"
+    (tmp_path / "fstab").write_bytes(b"\xff\xfe")
+    assert checks.read_fstab() is None
+    monkeypatch.setattr(volume, "FSTAB", str(tmp_path))
+    assert checks.read_fstab() is None

@@ -14,7 +14,8 @@ without `epoch`, `author`, `lh`, `salt`, `nonce`, plus the plaintext body. It is
 
 `sync_state` keys: `pushed_origin_seq` (advanced only by the hub's `acked_through`, set by `adopt_hub_position`, moved
 back by `rewind` and `realign` for an `origin_seq_gap`),
-`hub_ws_last_connect`, `sync_fatal` (an `origin_seq_conflict` stops pushing until an operator clears it).
+`hub_ws_last_connect`, `sync_fatal` (an `origin_seq_conflict` that is not a lost tail, `adopt_after_loss`, stops
+pushing until an operator clears it).
 
 After a store wipe the numbering must continue at the hub's `last_origin_seq + 1`. Until `pushed_origin_seq` is known
 the push loop sends nothing; `adopt_hub_position(conn, last_origin_seq)` (called with the value of
@@ -408,6 +409,49 @@ async def realign(conn: AsyncConnection[Any], storage_key: bytes, expected: int)
     }
     await enqueue(conn, storage_key, "audit", alert)
     return lost
+
+
+CONFLICT_ALERT = "outbox_conflict_recovered"
+
+
+async def adopt_after_loss(conn: AsyncConnection[Any], storage_key: bytes, hub_last: int) -> int | None:
+    """`origin_seq_conflict` after the store lost its newest commits in a power cut (HOT-25): the hub holds items up
+    to `hub_last` that the store no longer has, and the store gave their numbers to new items. Every item after
+    `pushed_origin_seq` moves by `hub_last - pushed_origin_seq` (highest first, bodies re-sealed for the new context;
+    the sealed events are kept, the seal does not bind `origin_seq`), `pushed_origin_seq` becomes `hub_last` and one
+    audit `runner.alert` `{alert: "outbox_conflict_recovered", value: <the hub's items the store lost>}` is appended
+    behind them. Caller's transaction, under the outbox lock. Returns that number, or None when the store does not
+    look like a lost tail (position unknown, `hub_last` not ahead of it, or the first item after it is not
+    `pushed_origin_seq + 1`): then the conflict is real. `CryptoError` for a stored item that does not open."""
+    await _lock(conn)
+    pushed = await pushed_origin_seq(conn)
+    if pushed is None or hub_last <= pushed:
+        return None
+    cur = await conn.execute(
+        "SELECT origin_seq, item_kind, body_ct FROM runner.outbox WHERE origin_seq > %s ORDER BY origin_seq DESC",
+        (pushed,),
+    )
+    rows = await cur.fetchall()
+    if not rows or int(rows[-1][0]) != pushed + 1:
+        return None
+    shift = hub_last - pushed
+    for seq, kind, blob in rows:
+        new_seq = int(seq) + shift
+        raw = _json(open_item(storage_key, seq, kind, bytes(blob)))
+        await conn.execute(
+            "UPDATE runner.outbox SET origin_seq = %s, body_ct = %s WHERE origin_seq = %s",
+            (new_seq, seal_local(storage_key, "outbox", outbox_context(new_seq, kind), raw), seq),
+        )
+    await set_state(conn, PUSHED, str(hub_last))
+    alert = {
+        "action": "runner.alert",
+        "result": "failed",
+        "target_kind": "outbox",
+        "target_id": "origin_seq_conflict",
+        "detail": {"alert": CONFLICT_ALERT, "value": shift},
+    }
+    await enqueue(conn, storage_key, "audit", alert)
+    return shift
 
 
 async def stored(conn: AsyncConnection[Any], origin_seq: int) -> bool:

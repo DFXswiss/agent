@@ -48,6 +48,11 @@ async def session_end(_body: Empty, context: Context, principal: CurrentPrincipa
     return await asyncio.to_thread(sessions.end_session, context, principal)
 
 
+@router.post("/v1/session/renew", auth="browser", right="user")
+async def session_renew(_body: Empty, context: Context, principal: CurrentPrincipal) -> dict[str, Any]:
+    return await asyncio.to_thread(sessions.renew_session, context, principal)
+
+
 def recovery_limit(request: Request) -> recovery.SourceLimit:
     """The per-source limit of `recovery/begin` of this hub process (kept in the app state)."""
     state = request.app.state
