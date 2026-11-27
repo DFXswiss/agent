@@ -1,0 +1,21 @@
+# Keep one copy per instance in its own directory with a distinct basename:
+# Compose's default project name is the directory's basename. The bind folders
+# must exist and be owned by uid 1000 before the first start.
+# Build agent-cli-runner beforehand from the repository root:
+# docker build -f deploy/runner/Dockerfile -t agent-cli-runner .
+services:
+  runner:
+    image: agent-cli-runner
+    # Reap the tmux server and processes jobs leave behind.
+    init: true
+    restart: unless-stopped
+    # Stop lets the running step finish; Docker kills it after this period.
+    stop_grace_period: 2m
+    command: ["runner", "loop", "--session", "${AGENT_RUNNER_SESSION:?set AGENT_RUNNER_SESSION}", "--interval", "${AGENT_RUNNER_INTERVAL:?set AGENT_RUNNER_INTERVAL}"]
+    environment:
+      # gh auth setup-git writes global git config; persist it across recreation.
+      GIT_CONFIG_GLOBAL: /home/agent/.config/gh/gitconfig
+    volumes:
+      - ./agent-home:/agent-home
+      - ./gh-config:/home/agent/.config/gh
+      # Mount driver config_dir directories from ai-accounts.json the same way.
