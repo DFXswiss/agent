@@ -45,11 +45,20 @@ def test_create_list_prompt_show(tool: Tool, hub: HubFake, account: User) -> Non
     assert listed["tasks"] == [
         {
             "task_id": task,
+            # the place of the row, as in the dashboard of `task overview` (ADR-103)
+            "org_id": listed["org_id"],
+            "wg_id": wg,
             "state": "scheduling",
             "title": "Fix the login bug",
             "number": 1,
             "agent": "Fix the login bug #1",
             "name_source": "automatic",
+            # the ticket fields of ADR-102: an agent task is inProgress with the default urgency
+            "status": "inProgress",
+            "urgency": "normal",
+            "assignee_id": None,
+            "topic_id": None,
+            "topic": None,
             "created_at": listed["tasks"][0]["created_at"],
             "last_activity_at": listed["tasks"][0]["last_activity_at"],
         }
@@ -111,7 +120,7 @@ def test_no_device_and_bad_input(tool: Tool, hub: HubFake, account: User) -> Non
         assert tool.run(*argv)[1]["error"] == "invalid_argument", argv
     assert tool.run("task", "create", "--wg", uuid7(), "--text", "Hello")[1]["error"] == "no_org"
     with pytest.raises(PlatformError):
-        tasks.task_list(None, wg, "bogus")  # type: ignore[arg-type]
+        tasks.task_list(None, wg, tasks.ListQuery(state="bogus"))  # type: ignore[arg-type]
 
 
 def test_refusals_and_malformed_answers(tool: Tool, hub: HubFake, account: User) -> None:

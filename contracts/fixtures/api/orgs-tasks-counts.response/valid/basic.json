@@ -1,0 +1,19 @@
+{
+  "by_status": {
+    "todo": 3,
+    "inProgress": 2,
+    "completed": 7
+  },
+  "by_urgency": {
+    "low": 1,
+    "normal": 8,
+    "high": 2,
+    "urgent": 1
+  },
+  "by_overview": {
+    "working": 1,
+    "waiting": 1,
+    "no_agent": 3
+  },
+  "total": 12
+}

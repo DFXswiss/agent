@@ -51,6 +51,7 @@ GRACE = timedelta(seconds=600)
 """E6: the previous epoch is accepted this long after the rotation (not for removed authors)."""
 
 ORG_ADMIN = "org_admin"
+ORG_MEMBER = "org_member"
 ORG_MEMBER_SELF = "org_member_self"
 WG_WRITE = "wg_write"
 DEVICE_ASSIGNED_WG = "device_assigned_wg"
@@ -58,6 +59,7 @@ DEVICE_ASSIGNED_WG_SESSION = "device_assigned_wg_session"
 WG_RELEASE = "wg_release"
 RIGHTS = {
     ORG_ADMIN: "author is an admin of the org",
+    ORG_MEMBER: "author is a member of the org",
     ORG_MEMBER_SELF: "author is an org member and ref == author",
     WG_WRITE: "author has write access to the workgroup",
     DEVICE_ASSIGNED_WG: "author device is assigned to the workgroup",
@@ -101,6 +103,8 @@ KIND_RULES: tuple[KindRule, ...] = (
     KindRule("device.profile", "org", (USER,), ORG_ADMIN, {"wg": "empty", "ref": "device"}),
     # an admin-given name of a member or of an invitation's person (ADR-073)
     KindRule("member.name", "org", (USER,), ORG_ADMIN, {"wg": "empty", "ref": "subject"}),
+    # a topic of captured tasks, created by whoever captures (ADR-102 section 3)
+    KindRule("topic.profile", "org", (USER,), ORG_MEMBER, {"wg": "empty", "task": "empty", "ref": "set"}),
     *(
         rule
         for kind in ("whiteboard.entry", "whiteboard.edit", "whiteboard.delete")
@@ -206,6 +210,8 @@ def has_right(rule: KindRule, state: OrgState, header: Mapping[str, object], sup
     author, scope_id = cast(str, header["author"]), cast(str, header["scope_id"])
     if rule.right == ORG_ADMIN:
         return state.is_admin(author)
+    if rule.right == ORG_MEMBER:
+        return state.member(author) is not None
     if rule.right == ORG_MEMBER_SELF:
         return state.member(author) is not None and header["ref"] == state.acting(author)
     if rule.right == WG_WRITE:

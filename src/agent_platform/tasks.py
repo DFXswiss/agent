@@ -45,15 +45,22 @@ decides; a device that cannot decide yet is `peer_outdated`.
 
 KOR-52 (ADR-095): the task rows of `task list` and `task show` carry the main agent as people see it (`agent`:
 `<name> #<number>`, with `number` and `name_source`; `agentnames`).
+
+KOR-75 (ADR-102, E-41): the rows carry the ticket fields (`status`, `urgency`, `assignee_id`, `topic_id` and the
+topic's name; `task show` also the sealed `description`, `github_org`, `github_repo`), and `task list` filters by them
+(`agent_platform.tickets`: capture, edit, start and topics live there).
 """
 
 from __future__ import annotations
 
 import re
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, cast
 from urllib.parse import urlencode
 
+from agent_platform import tickets
 from agent_platform.account import Account, KeyRing
 from agent_platform.agentnames import agent_fields, read_names, task_names
 from agent_platform.diagnose import WAITING, task_next
@@ -362,8 +369,14 @@ def task_show(account: Account, task: str) -> dict[str, Any]:
     chat = latest_runs([e for e in events if e["kind"] != "task.meta"])
     keys = ("task_id", "org_id", "wg_id", "owner_id", "state", "state_reason", "created_at", "closed_at")
     agents = task_names(account, org, wg, task)
+    sealed = tickets.newest_meta(metas).get(task, {})
+    names = tickets.topics(account, org) if row.get("topic_id") else {}
+    ticket = {
+        **tickets.row_fields(row, names),
+        **{name: sealed.get(name) or None for name in ("description", "github_org", "github_repo")},
+    }
     return {
-        "task": {**{key: row.get(key) for key in keys}, **agent_fields(agents, row)},
+        "task": {**{key: row.get(key) for key in keys}, **agent_fields(agents, row), **ticket},
         "runtime_s": runtime_seconds(row.get("created_at"), row.get("closed_at"), True, time.time()),
         "placement": row.get("placement"),
         "main_session": main_session(answer),
@@ -382,54 +395,99 @@ def titles(account: Account, org: str, wg: str) -> dict[str, str]:
     return read_names(account, org, wg).titles
 
 
-def _rows(account: Account, wg: str, query: dict[str, Any]) -> tuple[list[Any], Any]:
-    """One page of the workgroup's tasks (newest first) and the hub's `next_before`."""
-    answer = account.call("GET", f"/v1/workgroups/{segment(wg)}/tasks?{urlencode({'limit': LIST_LIMIT, **query})}")
+def _rows(account: Account, wg: str, query: dict[str, Any], extra: str = "") -> tuple[list[Any], Any]:
+    """One page of the workgroup's tasks (newest first) and the hub's `next_before`; `extra` the ticket filters."""
+    path = f"/v1/workgroups/{segment(wg)}/tasks?{urlencode({'limit': LIST_LIMIT, **query})}{extra}"
+    answer = account.call("GET", path)
     rows = answer.get("tasks")
     if not isinstance(rows, list):
         raise PlatformError("hub_refused", reason="response_invalid")
     return rows, answer.get("next_before")
 
 
-def _open_rows(account: Account, wg: str) -> tuple[list[Any], bool]:
-    """The newest tasks that are not closed: the hub filters by one task state only, `open` is every state but
-    `closed` (KOR-67), so the tool pages and filters (at most `LIST_LIMIT` tasks from at most `OPEN_PAGES` pages).
-    The flag is true when tasks were cut off or pages were left unread."""
+def _scanned_rows(
+    account: Account, wg: str, keep: Callable[[dict[str, Any]], bool], extra: str
+) -> tuple[list[Any], bool]:
+    """The newest tasks `keep` accepts, paged here (at most `LIST_LIMIT` tasks from at most `OPEN_PAGES` pages). The
+    flag is true when tasks were cut off or pages were left unread."""
     found: list[Any] = []
     query: dict[str, Any] = {}
     before: Any = None
     for _page in range(OPEN_PAGES):
-        rows, before = _rows(account, wg, query)
-        found += [row for row in rows if isinstance(row, dict) and row.get("state") != "closed"]
+        rows, before = _rows(account, wg, query, extra)
+        found += [row for row in rows if isinstance(row, dict) and keep(row)]
         if len(found) >= LIST_LIMIT or not isinstance(before, str):
             break
         query = {"before": before}
     return found[:LIST_LIMIT], len(found) > LIST_LIMIT or isinstance(before, str)
 
 
-def task_list(account: Account, wg: str, state: str | None) -> dict[str, Any]:
-    """The tasks of a workgroup with their verified titles and their main agents (`<name> #<number>`, ADR-095)."""
-    if state is not None and state not in STATES:
-        raise PlatformError("invalid_argument")
-    org = find_org(account, _id(wg))
-    if state == "open":
-        rows, truncated = _open_rows(account, wg)
-    else:
-        rows, before = _rows(account, wg, {"state": state} if state else {})
-        truncated = isinstance(before, str)
+ORDERS = tickets.ORDERS
+
+
+@dataclass(frozen=True)
+class ListQuery:
+    """What a task list asks for: the task state (`open`/`closed`), the ticket filters, the order and a title search
+    (case-insensitive part of the verified title, applied here because titles are sealed)."""
+
+    state: str | None = None
+    filters: tickets.Filters | None = None
+    order: str = "activity"
+    search: str = ""
+
+    def checked(self) -> ListQuery:
+        if self.state not in (None, *STATES) or self.order not in ORDERS:
+            raise PlatformError("invalid_argument")
+        return self
+
+
+def _listed(account: Account, org: str, wg: str, query: ListQuery) -> tuple[list[dict[str, Any]], bool]:
+    """The task rows of one workgroup for `query` (at most `LIST_LIMIT`, in its order) with their titles, main agents
+    and ticket fields, and whether rows were cut off or pages left unread."""
+    wanted = query.filters or tickets.Filters()
+    extra = tickets.list_query(account, org, query.filters) + f"&order={query.order}"
+    meta = tickets.ticket_meta(account, org, wg) if wanted.sealed() else None
     named = read_names(account, org, wg)
+    needle = query.search.strip().casefold()
+
+    def keep(row: dict[str, Any]) -> bool:
+        task = str(row.get("task_id"))
+        is_open = query.state != "open" or row.get("state") != "closed"
+        sealed = meta is None or wanted.matches(meta.get(task, {}))
+        return is_open and sealed and needle in named.titles.get(task, "").casefold()
+
+    if query.state == "open" or meta is not None or needle:
+        scan = extra + ("&state=closed" if query.state == "closed" else "")
+        rows, truncated = _scanned_rows(account, wg, keep, scan)
+    else:
+        rows, before = _rows(account, wg, {"state": query.state} if query.state else {}, extra)
+        truncated = isinstance(before, str)
+    topic_names = tickets.topics(account, org) if any(isinstance(r, dict) and r.get("topic_id") for r in rows) else {}
     tasks = [
         {
             "task_id": row.get("task_id"),
+            "org_id": org,
+            "wg_id": wg,
             "state": row.get("state"),
             "title": named.titles.get(str(row.get("task_id"))),
             **agent_fields(named.agents, row),
+            **tickets.row_fields(row, topic_names),
             "created_at": row.get("created_at"),
             "last_activity_at": row.get("last_activity_at"),
         }
         for row in rows
         if isinstance(row, dict)
     ]
+    return tasks, truncated
+
+
+def task_list(account: Account, wg: str, query: ListQuery | None = None) -> dict[str, Any]:
+    """The tasks of a workgroup with their verified titles, their main agents (`<name> #<number>`, ADR-095) and their
+    ticket fields (ADR-102), filtered by the query (status, urgency, person and topic at the hub, GitHub organisation,
+    repository and the title search here on the opened events), in its order."""
+    wanted = (query or ListQuery()).checked()
+    org = find_org(account, _id(wg))
+    tasks, truncated = _listed(account, org, wg, wanted)
     return {"org_id": org, "wg_id": wg, "tasks": tasks, "truncated": truncated}
 
 

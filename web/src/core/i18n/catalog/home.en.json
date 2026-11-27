@@ -9,6 +9,7 @@
   "read-only": "You can read this organization's tasks but not create any here.",
   "recent": "Recent tasks in {wg}",
   "all-tasks": "All tasks",
+  "dashboard": "Dashboard of all tasks – filter by person, priority, status and more",
   "chips.label": "Suggestions",
   "chip.research": "Research",
   "chip.research.text": "Summarize the current state of ",

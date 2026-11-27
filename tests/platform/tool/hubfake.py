@@ -536,6 +536,7 @@ class HubFake:
             ("GET", r"/v1/workgroups/(?P<wg>[0-9a-f-]+)/tasks", self.r_wg_tasks),
             ("GET", r"/v1/orgs/(?P<org>[0-9a-f-]+)/attention", self.r_attention),
             ("GET", r"/v1/orgs/(?P<org>[0-9a-f-]+)/attention/summary", self.r_attention_summary),
+            ("GET", r"/v1/orgs/(?P<org>[0-9a-f-]+)/tasks/counts", self.r_task_counts),
             *self.routes,
         ]
         for route_method, pattern, handler in table:
@@ -917,6 +918,19 @@ class HubFake:
         start = int(request.query.get("before", "0"))
         end = start + int(request.query.get("limit", "50"))
         return 200, {"tasks": rows[start:end], "next_before": str(end) if end < len(rows) else None}
+
+    def r_task_counts(self, request: Request, body: Any, org: str) -> tuple[int, Any]:
+        """The dashboard counters (ADR-103 section 1) of the org's tasks the fake holds (rows of an older hub without
+        ticket fields count as inProgress/completed and normal)."""
+        if self._member(request, org) is None:
+            return 404, {"error": "not_found"}
+        rows = [t["task"] for t in self.tasks.values() if self.org_of_wg(t["task"]["wg_id"]) == org]
+        by_status = {"todo": 0, "inProgress": 0, "completed": 0}
+        by_urgency = {"low": 0, "normal": 0, "high": 0, "urgent": 0}
+        for row in rows:
+            by_status[row.get("status", "completed" if row["state"] == "closed" else "inProgress")] += 1
+            by_urgency[row.get("urgency", "normal")] += 1
+        return 200, {"by_status": by_status, "by_urgency": by_urgency, "total": len(rows)}
 
     # --- the situation view (the shapes of 03-api.md section 4.6 and agent_hub's attention endpoints) ---
 

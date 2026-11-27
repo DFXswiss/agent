@@ -19,6 +19,13 @@
         "wg"
       ],
       "description": "the scope of an analysis task (ADR-097 section 1); absent for every other task"
+    },
+    "captured": {
+      "type": "boolean",
+      "enum": [
+        true
+      ],
+      "description": "a task captured without an agent (ADR-102 section 5); absent for every other task"
     }
   },
   "required": [

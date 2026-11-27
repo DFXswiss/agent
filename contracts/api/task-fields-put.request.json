@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-fields-put.request.json",
+  "title": "PUT /v1/tasks/{task}/fields request",
+  "description": "Body of PUT /v1/tasks/{task}/fields: the ticket fields to change, at least one (03-api.md section 4.6, ADR-102 section 5). status completed closes the task, todo or inProgress reopens a closed task without an agent; null clears the person or the topic.",
+  "type": "object",
+  "properties": {
+    "status": {
+      "$ref": "../common.json#/$defs/task_status"
+    },
+    "urgency": {
+      "$ref": "../common.json#/$defs/task_urgency"
+    },
+    "assignee_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "topic_id": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "minProperties": 1,
+  "additionalProperties": false
+}

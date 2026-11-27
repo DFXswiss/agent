@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/orgs-tasks-counts.response.json",
+  "title": "GET /v1/orgs/{org}/tasks/counts response",
+  "description": "The counters of the task dashboard (ADR-103 section 1) over the readable workgroups: per status the tasks matching every filter but the status, per urgency those matching every filter but the urgency, per overview of the open tasks those matching every filter but the overview, total those matching all.",
+  "type": "object",
+  "properties": {
+    "by_status": {
+      "type": "object",
+      "properties": {
+        "todo": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "inProgress": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "completed": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "todo",
+        "inProgress",
+        "completed"
+      ],
+      "additionalProperties": false
+    },
+    "by_urgency": {
+      "type": "object",
+      "properties": {
+        "low": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "normal": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "high": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "urgent": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "low",
+        "normal",
+        "high",
+        "urgent"
+      ],
+      "additionalProperties": false
+    },
+    "by_overview": {
+      "type": "object",
+      "description": "the open tasks per overview of the start page (working, waiting, no_agent; a closed task in none of them), matching every filter but the overview",
+      "properties": {
+        "working": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "waiting": {
+          "$ref": "../common.json#/$defs/count"
+        },
+        "no_agent": {
+          "$ref": "../common.json#/$defs/count"
+        }
+      },
+      "required": [
+        "working",
+        "waiting",
+        "no_agent"
+      ],
+      "additionalProperties": false
+    },
+    "total": {
+      "$ref": "../common.json#/$defs/count"
+    }
+  },
+  "required": [
+    "by_status",
+    "by_urgency",
+    "by_overview",
+    "total"
+  ],
+  "additionalProperties": false
+}

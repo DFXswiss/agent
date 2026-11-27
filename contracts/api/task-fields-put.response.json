@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/task-fields-put.response.json",
+  "title": "PUT /v1/tasks/{task}/fields response",
+  "description": "Body of a successful response to PUT /v1/tasks/{task}/fields: the task row after the change (ADR-102 section 5).",
+  "type": "object",
+  "properties": {
+    "task": {
+      "$ref": "objects.json#/$defs/task_row"
+    }
+  },
+  "required": [
+    "task"
+  ],
+  "additionalProperties": false
+}

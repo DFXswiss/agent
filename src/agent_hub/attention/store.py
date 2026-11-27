@@ -204,13 +204,14 @@ def read_inputs(connection: Connection, task_id: UUID | str, now: datetime) -> R
 
 
 def _lock(connection: Connection, task_id: UUID | str, now: datetime) -> tuple[Stored, bool] | None:
-    """The task's attention row held `FOR UPDATE` and whether this call inserted it; None for an unknown task."""
+    """The task's attention row held `FOR UPDATE` and whether this call inserted it; None for an unknown task. A
+    captured task without a session gets its record too (`done/idle`: no agent works on it, ADR-102 section 6)."""
     connection.execute("SELECT pg_advisory_xact_lock(%s)", (AUDIT_LOCK,))
     inserted = connection.execute(
         "INSERT INTO hub.task_attention (task_id, org_id, wg_id, owner_id, category, reason, since, seq,"
         " subagents_total, subagents_active, updated_at)"
-        " SELECT id, org_id, wg_id, owner_id, 'working', 'queued', state_at, 1, 0, 0, %s FROM hub.task WHERE id = %s"
-        " ON CONFLICT (task_id) DO NOTHING RETURNING task_id",
+        " SELECT t.id, t.org_id, t.wg_id, t.owner_id, 'working', 'queued', t.state_at, 1, 0, 0, %s FROM hub.task t"
+        " WHERE t.id = %s ON CONFLICT (task_id) DO NOTHING RETURNING task_id",
         (now, task_id),
     ).fetchone()
     row = connection.execute(

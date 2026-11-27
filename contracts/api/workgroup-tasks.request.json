@@ -18,9 +18,51 @@
       "type": "string",
       "enum": [
         "created",
-        "activity"
+        "activity",
+        "urgency"
       ],
-      "description": "list order (KOR-32): created = created_at DESC (default), activity = last_activity_at DESC; the cursor of next_before follows the order"
+      "description": "list order (KOR-32): created = created_at DESC (default), activity = last_activity_at DESC, urgency = the most urgent first, then last_activity_at DESC (ADR-103 section 2); the cursor of next_before follows the order"
+    },
+    "status": {
+      "$ref": "../common.json#/$defs/task_status",
+      "description": "only tasks with this status (ADR-102 section 5)"
+    },
+    "urgency": {
+      "$ref": "../common.json#/$defs/task_urgency",
+      "description": "only tasks with this urgency (ADR-102 section 5)"
+    },
+    "assignee": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "string",
+          "const": "none"
+        }
+      ],
+      "description": "only tasks of this person, or none: only tasks without a person (ADR-102 section 5)"
+    },
+    "topic": {
+      "anyOf": [
+        {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        {
+          "type": "string",
+          "const": "none"
+        }
+      ],
+      "description": "only tasks of this topic, or none: only tasks without a topic (ADR-102 section 5)"
+    },
+    "overview": {
+      "type": "string",
+      "enum": [
+        "working",
+        "waiting",
+        "no_agent"
+      ],
+      "description": "only the open tasks of one overview of the start page, read from their attention record (agent_hub.attention.derive.OVERVIEW: working = category working, waiting = needs_decision, no_agent = blocked and done without done/closed; ADR-103 section 1)"
     }
   },
   "additionalProperties": false

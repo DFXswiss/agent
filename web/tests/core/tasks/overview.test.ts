@@ -8,6 +8,7 @@ import { setLog } from '../../../src/core/store/slices/orgs';
 import { listLoading, listPage, putTasks, type TaskRow } from '../../../src/core/store/slices/tasks';
 import { PAGE_SIZE } from '../../../src/core/tasks/list';
 import {
+  clientFiltered,
   loadOverview,
   loadOverviewMore,
   overview,
@@ -176,6 +177,38 @@ describe('merge', () => {
     // a task without a decrypted title does not match a search
     expect(view({ search: 't3' })).toEqual([]);
     expect(overview(t.store.getState(), query(t, [t.wg], { search: 'x' })).merged).toHaveLength(3);
+  });
+
+  it('filters by the sealed GitHub organisation and repository in the browser (ADR-102)', async () => {
+    const t = await taskWorld();
+    listPage(t.store, {
+      wg: t.wg,
+      state: null,
+      rows: [row(t, 't1', t.wg, 3), row(t, 't2', t.wg, 2), row(t, 't3', t.wg, 1)],
+      nextBefore: null,
+      first: true,
+    });
+    const sealed = (seq: number, task: string, body: Record<string, unknown>): EventEntry => ({
+      ...meta(t, seq, t.wg, task, t.me.id, 'x'),
+      body: { title: 'x', ...body },
+    });
+    putEvents(t.store, t.wg, [
+      sealed(1, 't1', { github_org: 'DFXswiss', github_repo: 'DFXswiss/agent' }),
+      sealed(2, 't2', { github_org: 'acme' }),
+    ]);
+    const view = (overrides: Partial<OverviewQuery>) =>
+      ids(overview(t.store.getState(), query(t, [t.wg], overrides)).rows);
+    expect(view({ githubOrg: ' dfxswiss ' })).toEqual(['t1']);
+    expect(view({ githubRepo: 'dfxswiss/AGENT' })).toEqual(['t1']);
+    expect(view({ githubOrg: 'acme', githubRepo: 'dfxswiss/agent' })).toEqual([]);
+    expect(view({ githubOrg: 'acme' })).toEqual(['t2']);
+    expect(view({ githubOrg: '', githubRepo: '' })).toEqual(['t1', 't2', 't3']);
+    expect(clientFiltered(query(t, []))).toBe(false);
+    expect(clientFiltered(query(t, [], { githubOrg: ' ' }))).toBe(false);
+    expect(clientFiltered(query(t, [], { githubOrg: 'a' }))).toBe(true);
+    expect(clientFiltered(query(t, [], { githubRepo: 'a/b' }))).toBe(true);
+    expect(clientFiltered(query(t, [], { search: 'a' }))).toBe(true);
+    expect(clientFiltered(query(t, [], { mine: 'u' }))).toBe(true);
   });
 
   it('selects the same object while nothing shown changed', async () => {

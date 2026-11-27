@@ -995,7 +995,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Bezug:** erweitert [§2 Punkt 5](#k-2-b5) (Task mit ID, Kurzbeschreibung und Workgroup) um diese Felder und um das
   Erfassen ohne Agent; ändert [Idee 43](#k-idee-43) (jeder Task erhält seinen Hauptagenten) dahin, dass ein erfasster
   Task seinen Agenten erst beim Start bekommt; ergänzt [E-21](#e-21). Einzelheiten: Auslegung [A22](#a-22).
-- **Umsetzung:** offen – Bau als Aufgabe auf agent.
+- **Umsetzung:** gebaut – [ADR-102](adr/102-captured-tasks.md) (KOR-75); die Aufgabenübersicht als Dashboard über
+  alle Organisationen mit diesen Filtern und Zählern [ADR-103](adr/103-task-dashboard.md).
 
 <a id="e-42"></a>
 

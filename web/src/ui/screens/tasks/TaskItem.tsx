@@ -3,7 +3,8 @@
 // several workgroups (KOR-32), the state badge, the owner's display name (the signed author of the task's first
 // user-written `task.meta`; the hub's `owner_id` is ignored, KOR-04) and the last activity as absolute local time with a
 // relative label as secondary text. An analysis task carries the badge
-// "Analysis" (ADR-097 section 6).
+// "Analysis" (ADR-097 section 6). Below the title the ticket fields of ADR-102: status, urgency, the person and the
+// topic when set (their names come in the item).
 //
 // The row is the content of a `WindowedList` row (ADR-086 section 1): everything it shows comes in its item (the list
 // reads titles and owners with one selector), it is memoized with `sameTaskItem`, and the time formats are created
@@ -23,6 +24,7 @@ import { AnalysisBadge } from '../../analysis/AnalysisBadge';
 import type { RowAttributes, RowProps } from '../../lists/WindowedList';
 import { knownPersonName } from '../../names/names';
 import { sameTitle, useOwner, useTitle } from './hooks';
+import { StatusBadge, UrgencyBadge } from './tickets';
 
 const BADGE: Readonly<Record<string, string>> = {
   scheduling: 'bg-amber-100 text-amber-900',
@@ -78,6 +80,10 @@ export interface TaskItemData {
   /** The name of the row's workgroup, shown in lists of several workgroups. */
   readonly workgroup: string | null;
   readonly now: number;
+  /** The shown name of the task's person (ADR-102), null or absent: nobody. */
+  readonly assignee?: string | null;
+  /** The name of the task's topic (ADR-102), null or absent: none. */
+  readonly topic?: string | null;
 }
 
 export const taskKey = (item: TaskItemData): string => item.row.task_id;
@@ -89,6 +95,8 @@ export const sameTaskItem = (a: TaskItemData, b: TaskItemData): boolean =>
   a.owner === b.owner &&
   a.workgroup === b.workgroup &&
   a.now === b.now &&
+  a.assignee === b.assignee &&
+  a.topic === b.topic &&
   sameTitle(a.title, b.title);
 
 export const taskRowAttributes = (item: TaskItemData): RowAttributes => ({
@@ -107,7 +115,7 @@ export const ROW_AGENT: AgentNameIds = {
 /** The columns of a row (`agentIds`: the test IDs of the agent label). */
 function Columns({ item, agentIds = ROW_AGENT }: { readonly item: TaskItemData; readonly agentIds?: AgentNameIds }) {
   const { t, locale } = useI18n();
-  const { row, title, owner, workgroup, now } = item;
+  const { row, title, owner, workgroup, now, assignee = null, topic = null } = item;
   const activity = parseTime(row.last_activity_at);
   return (
     <>
@@ -120,6 +128,20 @@ function Columns({ item, agentIds = ROW_AGENT }: { readonly item: TaskItemData; 
           )}
         </span>
         <AgentName row={row} ids={agentIds} className="text-sm text-gray-700" />
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1" data-testid="tasks.row.ticket">
+          <StatusBadge row={row} testId="tasks.row.status" />
+          <UrgencyBadge row={row} testId="tasks.row.urgency" />
+          {assignee !== null && (
+            <span className="text-xs text-gray-700" data-testid="tasks.row.person" data-person={row.assignee_id}>
+              {t('tickets.row.person', { name: assignee })}
+            </span>
+          )}
+          {topic !== null && (
+            <span className="text-xs text-gray-700" data-testid="tasks.row.topic" data-topic={row.topic_id}>
+              {t('tickets.row.topic', { name: topic })}
+            </span>
+          )}
+        </span>
       </span>
       <AnalysisBadge row={row} testId="tasks.row.analysis" />
       {workgroup !== null && (

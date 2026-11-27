@@ -145,6 +145,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | devices-own-mac-remove | screens/devices (unpair; the Mac then removes its installation by itself, ADR-074) | `device remove --this-computer` | done |
 | tasks-list | screens/tasks | `task list` | done |
 | tasks-overview | screens/tasks (overview of an org) | `task overview --org --state --mine --search` | done |
+| tasks-dashboard | screens/tasks (the task dashboard over every organization and workgroup: counters of the start page's three groups of the open tasks, per status and urgency, filters by organization, workgroup, state, the three groups, status, urgency, person, topic, GitHub organisation, repository, "only mine" and title, order; ADR-103) | `task overview [--org\|--wg] --state --mine --search --overview --status --urgency --assignee --topic --github-org --repo --order`, `task list --org\|--wg` with the same filters | done |
 | task-create | screens/home, screens/tasks | `task create --device --vm --github-identity` | done |
 | task-github-identity | screens/home, screens/tasks, screens/task (the task's GitHub identity at creation and changed later, ADR-078 section 3) | `task create --github-identity`, `task github-identity --task --identity --none` | done |
 | task-view | screens/task (chat) | `task show` | done |
@@ -202,6 +203,11 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | session-role | screens/home, task-tabs/sessions (the role of every session in the session tree) | `task show --task` (the session rows carry their rights profile) | done |
 | process-analysis | screens/home, screens/tasks (button "Prozesse optimieren" and its dialog: workgroup, period, the sentence on who reads the report; an analysis task, ADR-097) | `optimize --org\|--wg --in --days --since --until --language` | done |
 | analysis-adopt | screens/task, chat-items/session.output (chat output of an analysis task: "Übernehmen" onto the whiteboard of the workgroup or the organization, ADR-097 §5) | `optimize adopt --task --level --notify` | done |
+| task-capture | screens/tasks (capture a task like a ticket without an agent: title, description, person, topic, GitHub organisation, repository, urgency; ADR-102) | `task capture --wg --title --description --assignee --topic\|--new-topic --github-org --repo --urgency` | done |
+| task-fields | screens/task (status, urgency, person, topic, title, description, GitHub organisation and repository of a task; completed closes, todo/inProgress reopen; ADR-102 §5) | `task edit --task --status --urgency --assignee --topic\|--new-topic --title --description --github-org --repo` | done |
+| task-start | screens/task ("Start agent" of a captured task: its first prompt, ADR-102 §5) | `task start --task --text` | done |
+| task-topics | screens/tasks (the topics of the organization, chosen or created while capturing; ADR-102 §3) | `topic list --org`, `topic create --org --name --topic` | done |
+| tasks-filters | screens/tasks (filters of the task lists by person, topic, GitHub organisation, repository, urgency and status; ADR-102 §5) | `task list --wg --status --urgency --assignee --topic --github-org --repo` | done |
 
 ## Routes
 
@@ -217,7 +223,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `PUT /v1/github-identities/{identity}` | github-company-accounts, github-rewrap |
 | `DELETE /v1/github-identities/{identity}` | github-accounts, github-company-accounts |
 | `PUT /v1/github-identities/{identity}/primary` | github-accounts |
-| `POST /v1/events` | wg-settings, workgroups-rename, whiteboard-write, devices-profile, org-join, agent-rename, analysis-adopt |
+| `POST /v1/events` | wg-settings, workgroups-rename, whiteboard-write, devices-profile, org-join, agent-rename, analysis-adopt, task-fields, task-topics |
 | `POST /v1/invites/lookup` | register, org-join |
 | `GET /v1/me` | me-view, passkey-list, notifications-list, credential-rotate |
 | `GET /v1/me/agents` | agents-list |
@@ -271,6 +277,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/orgs` | org-create |
 | `GET /v1/orgs/{org}/attention` | attention-view, attention-list |
 | `GET /v1/orgs/{org}/attention/summary` | attention-view |
+| `GET /v1/orgs/{org}/tasks/counts` | tasks-dashboard |
 | `GET /v1/orgs/{org}/people/agents` | agents-by-person |
 | `GET /v1/orgs/{org}/main-agents` | agents-by-person |
 | `GET /v1/orgs/{org}/audit` | audit, task-model-switch, audit-agent-actor |
@@ -297,14 +304,15 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/platform/log` | devices-assign, platform-invites |
 | `POST /v1/recovery/begin` | recover |
 | `POST /v1/recovery/finish` | recover |
-| `GET /v1/scopes/{scope}/events` | task-view, session-follow, session-terminal, operations, wg-settings, tasks-overview, session-workvm, task-workvm-items, task-waiting, task-guest-errors, platform-browser |
+| `GET /v1/scopes/{scope}/events` | task-view, session-follow, session-terminal, operations, wg-settings, tasks-overview, session-workvm, task-workvm-items, task-waiting, task-guest-errors, platform-browser, task-topics, tasks-filters |
 | `POST /v1/session/end` | sign-out |
 | `GET /v1/sessions/{session}` | session-view, monitoring, session-workvm, task-runtime, triggered-by |
 | `POST /v1/sessions/{session}/control` | session-control |
 | `GET /v1/sessions/{session}/orchestrator` | session-orchestrator |
 | `POST /v1/sessions/{session}/orchestrator` | session-orchestrator |
 | `GET /v1/stream` | session-follow, platform-browser |
-| `POST /v1/tasks` | task-create, task-github-identity, process-analysis |
+| `POST /v1/tasks` | task-create, task-github-identity, process-analysis, task-capture |
+| `PUT /v1/tasks/{task}/fields` | task-fields |
 | `GET /v1/tasks/{task}` | task-view, task-runtime |
 | `GET /v1/tasks/{task}/charges` | task-charges, consumption-per-person |
 | `POST /v1/tasks/{task}/close` | task-close |
@@ -313,7 +321,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `POST /v1/tasks/{task}/model-consent` | attention-model-consent |
 | `GET /v1/tasks/{task}/operations` | operations, session-workvm, task-waiting, triggered-by |
 | `PUT /v1/tasks/{task}/placement` | task-create, task-view |
-| `POST /v1/tasks/{task}/prompts` | task-prompt, pr-fix-conflicts |
+| `POST /v1/tasks/{task}/prompts` | task-prompt, pr-fix-conflicts, task-start |
 | `PUT /v1/tasks/{task}/github-identity` | task-github-identity |
 | `POST /v1/tasks/{task}/prompts/{event}/withdraw` | task-prompt-withdraw |
 | `GET /v1/tasks/{task}/queue` | task-queue, task-prompt-withdraw |
@@ -326,7 +334,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/workgroups/{wg}/device-candidates` | devices-assign, task-create |
 | `PUT /v1/workgroups/{wg}/placement` | wg-placement |
 | `POST /v1/workgroups/{wg}/vms/{vm}/switch` | wg-vm-switch |
-| `GET /v1/workgroups/{wg}/tasks` | tasks-list, tasks-overview |
+| `GET /v1/workgroups/{wg}/tasks` | tasks-list, tasks-overview, tasks-filters, tasks-dashboard |
 | `GET /v1/workgroups/{wg}/pr-links` | pr-view |
 | `POST /v1/workgroups/{wg}/pr-links` | pr-link-address |
 | `GET /v1/workgroups/{wg}/pr-links/{epoch}/{tag}` | pr-view, pr-link-address, pr-unlink, pr-fix-conflicts |

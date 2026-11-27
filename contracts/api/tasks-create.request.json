@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agent.dfx.swiss/contracts/api/tasks-create.request.json",
   "title": "POST /v1/tasks request",
-  "description": "events = [task.meta, prompt] (03-api.md section 4.6); placement: the chosen device and VM (ADR-075 section 6)",
+  "description": "events = [task.meta, prompt] (03-api.md section 4.6), or [task.meta] alone for a captured task without an agent (ADR-102 section 5); placement: the chosen device and VM (ADR-075 section 6); urgency, assignee_id, topic_id: the ticket fields (ADR-102 section 1)",
   "type": "object",
   "properties": {
     "task_id": {
@@ -16,7 +16,7 @@
       "items": {
         "$ref": "../common.json#/$defs/event"
       },
-      "minItems": 2,
+      "minItems": 1,
       "maxItems": 2
     },
     "placement": {
@@ -40,7 +40,7 @@
     },
     "analysis": {
       "type": "object",
-      "description": "a task of the kind analysis (ADR-097 section 1): its scope and period (default the last 7 days)",
+      "description": "a task of the kind analysis (ADR-097 section 1): its scope and period (default the last 7 days); needs the prompt",
       "properties": {
         "scope": {
           "type": "string",
@@ -60,6 +60,18 @@
         "scope"
       ],
       "additionalProperties": false
+    },
+    "urgency": {
+      "$ref": "../common.json#/$defs/task_urgency",
+      "description": "the urgency (ADR-102 section 1); default normal"
+    },
+    "assignee_id": {
+      "$ref": "../common.json#/$defs/uuid",
+      "description": "the responsible user: an active member of the organization, a person or an agent account (ADR-102 section 1)"
+    },
+    "topic_id": {
+      "$ref": "../common.json#/$defs/uuid",
+      "description": "the topic: the ref of a topic.profile event of the organization (ADR-102 section 3)"
     }
   },
   "required": [

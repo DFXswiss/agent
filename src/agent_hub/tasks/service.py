@@ -51,6 +51,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from agent_hub.analysis import request as analysis_request
+from agent_hub.attention import store as attention_store
 from agent_hub.audit.chain import ACTING_AGENT
 from agent_hub.audit.recorder import unchanged
 from agent_hub.crypto.errors import CryptoError
@@ -67,12 +68,13 @@ from agent_hub.placement import service as placement
 from agent_hub.scheduler import load
 from agent_hub.scheduler.core import CATEGORIES, WAITING_FOR_DEVICE, Decision, NoPlacement
 from agent_hub.sessions import prompts, rows
-from agent_hub.sessions.derive import ENDING, FINAL, STOPPED, STOPPING
+from agent_hub.sessions.derive import ENDING, FINAL, IDLE, SCHEDULING, STOPPED, STOPPING
 from agent_hub.sessions.effects import Effects
 from agent_hub.sessions.lifecycle import create_main_session
 from agent_hub.sessions.taskstate import Actor, TaskRow, audit, close_task, lock_task, refresh_task
 from agent_hub.sessions.transitions import SessionRow, hub_transition, lock_session
 from agent_hub.stream import presence
+from agent_hub.tasks import fields
 
 Connection = psycopg.Connection[Any]
 KINDS = ("task.meta", "prompt")
@@ -119,11 +121,24 @@ def _session_answer(connection: Connection, session_id: str) -> dict[str, Any]:
     return {key: session[key] for key in ("session_id", "state", "device_id", "estimate_ms")}
 
 
-def _first_main(connection: Connection, task_id: UUID) -> str:
+def _first_main(connection: Connection, task_id: UUID) -> str | None:
+    """The task's first main session; None for a captured task that has not started (ADR-102)."""
     row = connection.execute(
         "SELECT id FROM hub.session WHERE task_id = %s AND depth = 0 ORDER BY created_at, id LIMIT 1", (task_id,)
     ).fetchone()
-    return str(cast(tuple[Any, ...], row)[0])
+    return None if row is None else str(row[0])
+
+
+@dataclass(frozen=True)
+class Ticket:
+    """The ticket fields a `POST /v1/tasks` names (ADR-102 section 5): the stored defaults when omitted."""
+
+    urgency: str = "normal"
+    assignee_id: UUID | None = None
+    topic_id: UUID | None = None
+
+    def stored(self) -> tuple[str, UUID | None, UUID | None]:
+        return (self.urgency, self.assignee_id, self.topic_id)
 
 
 @dataclass(frozen=True)
@@ -135,6 +150,7 @@ class Given:
     analysis: dict[str, Any] | None = None
     """The analysis fields the request named (scope, and `since`/`until` when given; ADR-097 section 1): a repetition
     names the same values (an omitted time is not compared, its default moves with the hub's time)."""
+    ticket: Ticket = field(default_factory=Ticket)
 
 
 def _replayed_create(
@@ -149,11 +165,13 @@ def _replayed_create(
     """The answer to a repeated `POST /v1/tasks` (module docstring), `409 id_conflict` for other content."""
     unchanged()
     found = connection.execute(
-        "SELECT wg_id, owner_id, github_identity, placement_device_id, placement_vm_id, analysis"
-        " FROM hub.task WHERE id = %s",
+        "SELECT wg_id, owner_id, github_identity, placement_device_id, placement_vm_id, analysis, urgency,"
+        " assignee_id, topic_id FROM hub.task WHERE id = %s",
         (task_id,),
     ).fetchone()
     if found is None or (found[0], found[1], found[2]) != (wg_id, user, given.github_identity):
+        raise HubError("id_conflict")
+    if tuple(found[6:9]) != given.ticket.stored():
         raise HubError("id_conflict")
     if (found[5] is None) != (given.analysis is None) or any(
         found[5].get(name) != value for name, value in (given.analysis or {}).items()
@@ -171,9 +189,10 @@ def _replayed_create(
         except CryptoError as error:
             raise hub_error(error) from None
         results.append({"id": event["header"]["id"], "scope_id": stored[1], "scope_seq": stored[2], "replayed": True})
+    first = _first_main(connection, task_id)
     return {
         "task": rows.task_json(connection, task_id),
-        "session": _session_answer(connection, _first_main(connection, task_id)),
+        "session": None if first is None else _session_answer(connection, first),
         "events": results,
         "replayed": True,
     }
@@ -190,18 +209,27 @@ def create_task(
     github_identity: UUID | None = None,
     author: str | None = None,
     analysis: Mapping[str, Any] | None = None,
+    ticket: Ticket | None = None,
 ) -> Outcome:
     """`POST /v1/tasks` (module docstring); `requested` is the chosen device and VM of the request, `author` the
     author of the events (the user's own-identity agent, ADR-082; default the user), `analysis` the request's
-    analysis (ADR-097)."""
+    analysis (ADR-097), `ticket` its ticket fields (ADR-102). `events` holds the `task.meta` and the `prompt`, or
+    only the `task.meta` of a captured task: no session, no scheduler decision, state `idle`, status `todo`."""
     now = context.clock()
+    fields_given = ticket or Ticket()
     given = Given(
-        github_identity=github_identity, requested=requested, analysis=None if analysis is None else dict(analysis)
+        github_identity=github_identity,
+        requested=requested,
+        analysis=None if analysis is None else dict(analysis),
+        ticket=fields_given,
     )
     actor = Actor("user", user)
+    captured = len(events) == 1
+    if captured and analysis is not None:
+        raise HubError("request_invalid", detail={"pointers": ["/analysis"]})
     with context.pool.connection() as connection, connection.transaction():
         rights.require(connection, user, rights.WG_WRITE, wg_id=wg_id, write=True)
-        for position, (event, kind) in enumerate(zip(events, KINDS, strict=True)):
+        for position, (event, kind) in enumerate(zip(events, KINDS[: len(events)], strict=True)):
             check_event(event, f"/events/{position}", kind, task_id, wg_id)
         known = connection.execute("SELECT 1 FROM hub.task WHERE id = %s", (task_id,)).fetchone()
         if known is not None:
@@ -217,8 +245,15 @@ def create_task(
             analysis_request.require_features(
                 connection, cast(UUID, rights.wg_org(connection, wg_id)), context.config.platform_root_key
             )
+        org_id = cast(UUID, rights.wg_org(connection, wg_id))
+        fields.check_assignee(connection, org_id, fields_given.assignee_id, "/assignee_id")
+        fields.check_topic(connection, org_id, fields_given.topic_id, "/topic_id")
         pin = placement.for_new_task(connection, wg_id, requested)
-        decision = load.decide(connection, wg_id, now, context.config.device_online_seconds, pin=pin, owner=user)
+        decision = (
+            None
+            if captured
+            else load.decide(connection, wg_id, now, context.config.device_online_seconds, pin=pin, owner=user)
+        )
         stored = append_events(
             connection, list(events), author or str(user), now=now, root_key=context.config.platform_root_key
         )
@@ -226,38 +261,53 @@ def create_task(
             if not all(item.replayed for item in stored):
                 raise HubError("id_conflict")
             return Outcome(body=_replayed_create(connection, user, task_id, wg_id, events, given=given))
-        org_id = cast(UUID, rights.wg_org(connection, wg_id))
+        state = IDLE if captured else SCHEDULING
         inserted = connection.execute(
             "INSERT INTO hub.task (id, org_id, wg_id, owner_id, state, created_at, state_at, last_activity_at,"
-            " github_identity, analysis, agent_profile) VALUES (%s, %s, %s, %s, 'scheduling', %s, %s, %s, %s, %s, %s)"
+            " github_identity, analysis, agent_profile, status, urgency, assignee_id, topic_id)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
             " ON CONFLICT (id) DO NOTHING RETURNING id",
             (
                 task_id,
                 org_id,
                 wg_id,
                 user,
+                state,
                 now,
                 now,
                 now,
                 github_identity,
                 None if checked is None else Jsonb(checked.stored()),
                 None if checked is None else Jsonb(checked.profile().as_json()),
+                fields.TODO if captured else fields.IN_PROGRESS,
+                *fields_given.stored(),
             ),
         ).fetchone()
         if inserted is None:  # a concurrent create of the same task_id with other events committed first
             raise HubError("id_conflict")
         connection.execute(
-            "INSERT INTO hub.task_transition (task_id, seq, state, reason, at, by_id)"
-            " VALUES (%s, 1, 'scheduling', NULL, %s, %s)",
-            (task_id, now, user),
+            "INSERT INTO hub.task_transition (task_id, seq, state, reason, at, by_id) VALUES (%s, 1, %s, NULL, %s, %s)",
+            (task_id, state, now, user),
         )
         placement.store_for_new_task(connection, task_id, pin)
-        task = TaskRow(task_id, org_id, wg_id, user, "scheduling", None)
+        task = TaskRow(task_id, org_id, wg_id, user, state, None)
         detail: dict[str, Any] = {"origin": "browser"}
         if checked is not None:
             detail["analysis"] = checked.scope
+        if captured:
+            detail["captured"] = True
         audit(connection, actor, "task.create", task, now, detail=detail)
         outcome = Outcome(body={}, stored=stored)
+        if decision is None:
+            # a captured task's attention record: `done/idle`, no agent works on it (ADR-102 section 6, ADR-103)
+            attention_store.refresh(connection, task_id, now, outcome.effects)
+            outcome.effects.org_frame(org_id, "task", rows.task_json(connection, task_id) or {})
+            outcome.body = {
+                "task": rows.task_json(connection, task_id),
+                "session": None,
+                "events": [item.result() for item in stored],
+            }
+            return outcome
         session_id = new_session_id(now)
         create_main_session(
             connection, task, session_id, decision, now, actor=actor, effects=outcome.effects, triggered_by=user
@@ -315,12 +365,13 @@ def _prompt_time(connection: Connection, context: HubContext, task_id: UUID) -> 
     delivered once and in order (only a replay of the request answers the ended session's ID)."""
     connection.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (PROMPT_LOCK, str(task_id)))
     newest = cast(
-        tuple[datetime],
+        tuple[datetime | None],
         connection.execute(
             "SELECT max(created_at) FROM hub.session WHERE task_id = %s AND depth = 0", (task_id,)
         ).fetchone(),
     )[0]
-    return max(context.clock(), newest + TICK)
+    # a captured task has no main session before its first prompt (ADR-102)
+    return context.clock() if newest is None else max(context.clock(), newest + TICK)
 
 
 def add_prompt(
@@ -353,6 +404,8 @@ def add_prompt(
         main = _main(connection, task_id)
         window = context.config.device_online_seconds
         if main is None or main.state in ENDING or task.state == "closed":
+            # an agent starts (a captured task's first, or a new one after the last ended): todo becomes inProgress
+            fields.start_progress(connection, task.id)
             decision = load.decide(
                 connection,
                 task.wg_id,

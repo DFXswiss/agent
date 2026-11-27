@@ -283,6 +283,10 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("agent_profile", J),  # KOR-51, migration 0036 (ADR-094)
         ("number", BI),  # KOR-52, migration 0037 (ADR-095)
         ("analysis", J),  # KOR-53, migration 0039 (ADR-097)
+        ("status", T),  # KOR-75, migration 0042 (ADR-102)
+        ("urgency", T),
+        ("assignee_id", U),
+        ("topic_id", U),
     ],
     # 2.4.4 the numbering of an org's tasks (KOR-52, migration 0037)
     "task_counter": [("org_id", U), ("last", BI)],
@@ -909,8 +913,9 @@ def test_only_the_hub_schema_and_the_trigger_functions_exist(owner: psycopg.Conn
         "SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'hub'"
         " ORDER BY p.proname"
     ).fetchall()
-    # the append-only guard and the numbering triggers of the main agents (KOR-52, migration 0037)
-    assert functions == [("refuse_change",), ("session_agent_path",), ("task_number",)]
+    # the append-only guard, the numbering triggers of the main agents (KOR-52, migration 0037) and the status rule of
+    # the ticket fields (KOR-75, migration 0042)
+    assert functions == [("refuse_change",), ("session_agent_path",), ("task_number",), ("task_status",)]
 
 
 def test_only_the_live_state_of_the_browser_is_unlogged(owner: psycopg.Connection[Any]) -> None:
@@ -994,6 +999,9 @@ def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns:
         ("session", "(wg_id, created_at DESC, id DESC)"),  # KOR-53, migration 0039 (ADR-097)
         ("operation", "(wg_id, created_at DESC, id DESC)"),
         ("audit", "(wg_id, seq DESC) WHERE (wg_id IS NOT NULL)"),
+        ("task", "(wg_id, status, last_activity_at DESC, id DESC)"),  # KOR-75, migration 0042 (ADR-102)
+        ("task", "(wg_id, assignee_id, last_activity_at DESC, id DESC) WHERE (assignee_id IS NOT NULL)"),
+        ("task", "(wg_id, topic_id, last_activity_at DESC, id DESC) WHERE (topic_id IS NOT NULL)"),
     ],
 )
 def test_named_indexes(owner: psycopg.Connection[Any], table: str, definition: str) -> None:
@@ -1028,6 +1036,8 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
         ("wg_access", "access", ["read", "write"]),
         ("scope_epoch", "scope", ["org", "wg", "cred"]),
         ("task", "state", ["scheduling", "starting", "working", "idle", "failed", "closed"]),
+        ("task", "status", ["todo", "inProgress", "completed"]),  # KOR-75, migration 0042 (ADR-102)
+        ("task", "urgency", ["low", "normal", "high", "urgent"]),
         ("session", "model_access", ["subscription", "api_key", "platform"]),
         # the rule that ties the two columns names the reasons as well (test_context_reasons_equal_the_contract)
         (
@@ -1102,7 +1112,9 @@ def test_closed_value_lists(owner: psycopg.Connection[Any], table: str, column: 
     definition = _check_values(owner, table, column)
     listed = re.findall(r"'([^']*)'::text", definition)
     assert set(values) <= set(listed)
-    assert set(listed) - set(values) <= {"session.state"}  # no other value is allowed
+    # no other value is allowed; the task's closed ⇔ completed rule names one value of each column (ADR-102)
+    tied = {"closed", "completed"} if table == "task" else set()
+    assert set(listed) - set(values) <= {"session.state"} | tied
 
 
 def test_context_reasons_equal_the_contract(owner: psycopg.Connection[Any], repo_root: Any) -> None:
@@ -1129,6 +1141,8 @@ def test_session_states_equal_the_contract(owner: psycopg.Connection[Any], repo_
         ("user_settings", "model_access", "'auto'::text"),
         ("user_settings", "locale", "'en'::text"),
         ("session", "agent_kind", "'claude-code'::text"),
+        ("task", "status", "'inProgress'::text"),  # KOR-75: the previous hub code inserts agent tasks
+        ("task", "urgency", "'normal'::text"),
     ],
 )
 def test_defaults(owner: psycopg.Connection[Any], table: str, column: str, default: str) -> None:
@@ -1183,7 +1197,7 @@ def test_public_has_no_rights(migrated_db: HubDatabase, owner: psycopg.Connectio
     assert database_acl is not None
     assert not re.search(r"[{,]=", database_acl[0])
     assert f"{migrated_db.writer_role}=c/" in database_acl[0]
-    for function in ("refuse_change", "task_number", "session_agent_path"):
+    for function in ("refuse_change", "task_number", "session_agent_path", "task_status"):
         function_acl = owner.execute("SELECT proacl::text FROM pg_proc WHERE proname = %s", (function,)).fetchone()
         assert function_acl is not None
         assert function_acl[0] is not None

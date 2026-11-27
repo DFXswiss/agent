@@ -67,17 +67,15 @@ export const sameTitle = (a: Title, b: Title): boolean =>
  * One selector for the rows of a list: task ID → title and owner. It returns the same map while no row's title or
  * owner changed (a stable snapshot for `useStore`); create it once per row array.
  */
-export function selectRowInfo(
-  org: string,
-  rows: readonly TaskRow[],
-): (state: StoreState) => ReadonlyMap<string, RowInfo> {
+export function selectRowInfo(rows: readonly TaskRow[]): (state: StoreState) => ReadonlyMap<string, RowInfo> {
   let last: ReadonlyMap<string, RowInfo> | null = null;
   return (state) => {
     const next = new Map<string, RowInfo>();
     for (const row of rows) {
       next.set(row.task_id, {
         title: selectTitle(row.wg_id, row.task_id, row.title_event_id)(state),
-        owner: selectOwner(org, row.wg_id, row.task_id)(state),
+        // the owner in the row's own organization (the dashboard lists several, ADR-103)
+        owner: selectOwner(row.org_id, row.wg_id, row.task_id)(state),
       });
     }
     // the keys are the same in every call (the same rows): only the values can differ
@@ -92,9 +90,36 @@ export function selectRowInfo(
   };
 }
 
-export function useRowInfo(org: string, rows: readonly TaskRow[]): ReadonlyMap<string, RowInfo> {
+export function useRowInfo(rows: readonly TaskRow[]): ReadonlyMap<string, RowInfo> {
   const { app } = useAppEnv();
-  const select = useMemo(() => selectRowInfo(org, rows), [org, rows]);
+  const select = useMemo(() => selectRowInfo(rows), [rows]);
+  return useStore(select, app.store);
+}
+
+/**
+ * A selector of the directories of the organizations in `key` (IDs joined by commas, at least one): the same map
+ * while every organization's directory is the same object (a stable snapshot for `useStore`). Create it once per key.
+ */
+export function selectDirectories(key: string): (state: StoreState) => ReadonlyMap<string, Directory> {
+  let last: ReadonlyMap<string, Directory> | null = null;
+  return (state) => {
+    const next = new Map(key.split(',').map((org) => [org, selectDirectory(org)(state)]));
+    if (last === null || [...next].some(([org, found]) => last!.get(org) !== found)) last = next;
+    return last;
+  };
+}
+
+/**
+ * The names of several organizations (at least one; the task dashboard lists all of them, ADR-103); pulls their profiles
+ * once.
+ */
+export function useDirectories(orgs: readonly string[]): ReadonlyMap<string, Directory> {
+  const { app } = useAppEnv();
+  const key = orgs.join(',');
+  useEffect(() => {
+    for (const org of key.split(',')) pullOnce(app.tasks, org, org, { kinds: PROFILE_KINDS }).catch(() => 0);
+  }, [app, key]);
+  const select = useMemo(() => selectDirectories(key), [key]);
   return useStore(select, app.store);
 }
 
