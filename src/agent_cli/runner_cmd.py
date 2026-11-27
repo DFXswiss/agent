@@ -1206,7 +1206,7 @@ def _cmd_loop(
         values[name] = args[index + 1]
         if (
             name == "--session" and values[name]
-            and SESSION_RE.match(values[name]) is None
+            and SESSION_RE.fullmatch(values[name]) is None
         ):
             die("session id may contain only A-Za-z0-9_-")
 

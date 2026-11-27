@@ -4029,6 +4029,7 @@ def test_doctor_reports_a_login_that_does_not_match_the_policy(
     (["--session"], "--session needs a value"),
     (["--session", ""], "--session is required"),
     (["--session", "bad id"], "session id may contain only A-Za-z0-9_-"),
+    (["--session", "s\n", "--interval", "1"], "session id may contain only A-Za-z0-9_-"),
     (["--session", "s"], "--interval is required"),
     (["--interval", "1"], "--session is required"),
     (["--interval"], "--interval needs a value"),
