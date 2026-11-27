@@ -396,7 +396,7 @@ def cmd_task_queue(account: Account, args: argparse.Namespace, context: Context)
 
 
 def cmd_task_show(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
-    return tasks.task_show(account, args.task)
+    return tasks.task_show(account, args.task, args.limit, args.before)
 
 
 def cmd_task_follow(account: Account, args: argparse.Namespace, context: Context) -> dict[str, Any]:
@@ -625,9 +625,15 @@ def _task_commands(tree: Tree) -> None:
         "a task and its chat, opened and verified",
         example="agent-platform task show --task <task_id>",
         words="gespräch chat verlauf ergebnis antwort ansehen lesen conversation result answer output read view",
+        then="agent-platform task show --task <task_id> --before <next_before>",
         trim="last",
     )
     sub.add_argument("--task", required=True)
+    sub.add_argument(
+        "--before",
+        type=int,
+        help=f"next_before of the previous call: older chat events (default: the newest {tasks.SHOW_DEFAULT})",
+    )
     sub = tree.add(
         group,
         "follow",

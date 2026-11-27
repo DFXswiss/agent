@@ -79,11 +79,15 @@ def test_show_leaves_out_what_does_not_verify_and_marks_locked_events(tool: Tool
     forged: Any = json.loads(json.dumps(stored[1]))
     forged["event"]["ct"] = forged["event"]["ct"][:-4] + "AAAA"
     stored.append({**forged, "scope_seq": len(stored) + 1})
-    # a hub that answers events of another task for this one
+    # a hub that answers events of another task for this one (of the kinds asked for)
     foreign = [item for item in stored if item["event"]["header"]["task"] == other]
-    hub.hooks[("GET", f"/v1/scopes/{wg}/events")] = lambda body, request: (
-        (200, {"events": [*[i for i in stored if i["event"]["header"]["task"] == task], *foreign], "next_after": None}),
-    )[0]
+
+    def mixed(body: object, request: Any) -> tuple[int, Any]:
+        kinds = request.query["kinds"].split(",")
+        items = [*[i for i in stored if i["event"]["header"]["task"] == task], *foreign]
+        return 200, {"events": [i for i in items if i["event"]["header"]["kind"] in kinds], "next_after": None}
+
+    hub.hooks[("GET", f"/v1/scopes/{wg}/events")] = mixed
     shown = tool.run("task", "show", "--task", task)[1]
     assert [event["body"]["text"] for event in shown["events"]] == ["Hello"]
     assert shown["unverified"] == 3
@@ -132,10 +136,19 @@ def test_refusals_and_malformed_answers(tool: Tool, hub: HubFake, account: User)
     hub.hooks[("GET", f"/v1/workgroups/{wg}/tasks")] = lambda body, request: (200, {"tasks": ["x"]})
     assert tool.run("task", "list", "--wg", wg)[1]["tasks"] == []
     del hub.hooks[("GET", f"/v1/workgroups/{wg}/tasks")]
-    # paging: a second page after `next_after` (then the one page of the main agent's name, KOR-52)
-    pages = iter([(200, {"events": [], "next_after": 5}), *[(200, {"events": [], "next_after": None})] * 2])
+    # paging: the titles on a second page after `next_after`, then the chat's newest page (`next_before`), then the
+    # one page of the main agent's name (KOR-52)
+    pages = iter(
+        [
+            (200, {"events": [], "next_after": 5}),
+            (200, {"events": [], "next_after": None}),
+            (200, {"events": [], "next_after": None, "next_before": None}),
+            (200, {"events": [], "next_after": None}),
+        ]
+    )
     hub.hooks[("GET", f"/v1/scopes/{wg}/events")] = lambda body, request: next(pages)
-    assert tool.run("task", "show", "--task", task)[1]["events"] == []
+    shown = tool.run("task", "show", "--task", task)[1]
+    assert (shown["events"], shown["next_before"]) == ([], None)
 
 
 def test_follow_returns_new_events_and_the_next_position(

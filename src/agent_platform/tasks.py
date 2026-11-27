@@ -3,9 +3,14 @@
 (KOR-39, ADR-076 section 8) is a prompt whose first line is exactly `Approved.` or `Declined.`, followed by a blank
 line and the comment when one is given (`answer_text`, the same text the web client sends).
 
-`task wait` blocks on a loop of `task follow` steps until the task no longer works (`idle`, `closed`, `failed`,
-`waiting`) or its time is up, and answers once: state, reason, the last answer, the pull request addresses the task's
-sessions and operations named, `timed_out` and `next_after`.
+`task wait` blocks, reading the chat after a position as `task follow` does, until the task no longer works (`idle`,
+`closed`, `failed`, `waiting`) or its time is up, and answers once: state, reason, the last answer, the pull request
+addresses the task's sessions and operations named, `timed_out` and `next_after`.
+
+Length (HOT-29): no command holds a whole chat. `task show` reads the newest `--limit` chat events (default
+`SHOW_DEFAULT`) from the end and names `next_before`, the `--before` of the older ones; `task wait` reads the chat page
+by page for the pull requests and its answer from the end; the hub's pages are bounded in bytes as well as in count,
+and against an older hub the reader halves a page that is too large (`reader`).
 
 The tool seals what the web client seals: a new task is `POST /v1/tasks` with the events `task.meta` (`{"title"}`,
 derived from the prompt as `web/src/core/tasks/title.ts`, vectors `contracts/tasks/title.json`) and `prompt`
@@ -51,6 +56,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Iterator
 from typing import Any, cast
 from urllib.parse import urlencode
 
@@ -61,7 +67,7 @@ from agent_platform.errors import PlatformError
 from agent_platform.eventio import open_item, seal
 from agent_platform.hub import segment
 from agent_platform.orgs import VM_ID, device_assign, find_org
-from agent_platform.reader import scope_events
+from agent_platform.reader import newest_events, scope_events, scope_pages, scope_seq
 from agent_platform.sessions import runtime_seconds
 from agent_platform.waiting import annotate
 from agent_platform.workvm import latest_runs
@@ -79,6 +85,9 @@ WAIT_DEFAULT_S = 600
 WAIT_MAX_S = 3600
 SETTLED = ("idle", "closed", "failed", "waiting")
 ANSWER_MAX = 4000
+# HOT-29: the newest chat events `task show` reads without `--limit`; the outputs read per page for the answer
+SHOW_DEFAULT = 200
+OUTPUT_PAGE = 20
 PULL_URL = re.compile(r"https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/[0-9]+")
 STATES = ("open", "closed")
 # `task list`: at most this many tasks; `open` pages through at most OPEN_PAGES pages of the hub.
@@ -342,24 +351,38 @@ def open_verified(account: Account, org: str, wg: str, item: object) -> dict[str
     return _open(account, org, wg, item, account.keys(org))
 
 
-def task_show(account: Account, task: str) -> dict[str, Any]:
-    """The task row and its chat: every event of the task, opened and verified; where its main session runs."""
+def _opened(
+    account: Account, place: tuple[str, str, str], items: list[Any], ring: KeyRing
+) -> tuple[list[dict[str, Any]], int]:
+    """The items of the task `place` = (org, wg, task) opened and verified, and how many were left out."""
+    org, wg, task = place
+    events: list[dict[str, Any]] = []
+    for item in items:
+        opened = _open(account, org, wg, item, ring)
+        if opened is not None and opened["task"] == task:
+            events.append(opened)
+    return events, len(items) - len(events)
+
+
+def task_show(account: Account, task: str, limit: int | None = None, before: int | None = None) -> dict[str, Any]:
+    """The task row and its chat - the newest `limit` (default `SHOW_DEFAULT`) chat events below the position
+    `before` (default: the newest), opened and verified, with `next_before` for the older ones - and where its main
+    session runs. The chat is read from its end, so the length of a task does not matter (HOT-29)."""
+    count = SHOW_DEFAULT if limit is None else limit
+    if count < 1 or (before is not None and before < 0):
+        raise PlatformError("invalid_argument")
     answer = task_answer(account, task)
     row = cast(dict[str, Any], answer["task"])
     wg = str(row["wg_id"])
     org = find_org(account, wg)
-    events: list[dict[str, Any]] = []
-    skipped = 0
     ring = account.keys(org)
-    for item in scope_events(account, wg, {"kinds": ",".join(("task.meta", *CHAT_KINDS)), "task": task}):
-        opened = _open(account, org, wg, item, ring)
-        if opened is None or opened["task"] != task:
-            skipped += 1
-            continue
-        events.append(opened)
-    metas = [e for e in events if e["kind"] == "task.meta"]
+    metas, unread = _opened(
+        account, (org, wg, task), scope_events(account, wg, {"kinds": "task.meta", "task": task}), ring
+    )
+    tail = newest_events(account, wg, {"kinds": ",".join(CHAT_KINDS), "task": task}, count, before)
+    events, skipped = _opened(account, (org, wg, task), tail.items, ring)
     titles = [e["body"].get("title") for e in metas if isinstance(e.get("body"), dict)]
-    chat = latest_runs([e for e in events if e["kind"] != "task.meta"])
+    chat = latest_runs(events)
     keys = ("task_id", "org_id", "wg_id", "owner_id", "state", "state_reason", "created_at", "closed_at")
     agents = task_names(account, org, wg, task)
     return {
@@ -372,7 +395,8 @@ def task_show(account: Account, task: str) -> dict[str, Any]:
         "next": task_next(row),
         "title": titles[-1] if titles else None,
         "events": annotate(account, (org, wg, task), chat, metas),
-        "unverified": skipped,
+        "next_before": tail.next_before,
+        "unverified": unread + skipped,
     }
 
 
@@ -439,11 +463,6 @@ def task_follow(account: Account, task: str, after: int, wait: int) -> dict[str,
     The tool prints one JSON object per command, so following is a loop of calls: each returns the new events (opened
     and verified like `task show`) and `next_after`, the position to pass to the next call, and the task's state.
     """
-    return _follow(account, task, after, wait)[0]
-
-
-def _follow(account: Account, task: str, after: int, wait: int) -> tuple[dict[str, Any], dict[str, Any]]:
-    """`task_follow`'s answer and the task row it read last."""
     if after < 0 or not 0 <= wait <= FOLLOW_WAIT_MAX_S:
         raise PlatformError("invalid_argument")
     row = _task_row(account, task)
@@ -470,7 +489,7 @@ def _follow(account: Account, task: str, after: int, wait: int) -> tuple[dict[st
         events.append(opened)
     now = _task_row(account, task)
     chat = annotate(account, (org, wg, task), events, None)
-    answer = {
+    return {
         "task_id": task,
         "state": now.get("state"),
         "next": task_next(now),
@@ -478,7 +497,6 @@ def _follow(account: Account, task: str, after: int, wait: int) -> tuple[dict[st
         "next_after": last,
         "unverified": skipped,
     }
-    return answer, now
 
 
 def _strings(value: object) -> list[str]:
@@ -492,38 +510,64 @@ def _strings(value: object) -> list[str]:
     return []
 
 
+def task_outputs(account: Account, place: tuple[str, str, str]) -> Iterator[dict[str, Any]]:
+    """The opened and verified `session.output` events of the task `place` = (org, wg, task), newest first, read
+    from the end of the chat `OUTPUT_PAGE` at a time (HOT-29: the newest answer of a long task costs one request)."""
+    org, wg, task = place
+    ring = account.keys(org)
+    before: int | None = None
+    while True:
+        tail = newest_events(account, wg, {"kinds": "session.output", "task": task}, OUTPUT_PAGE, before)
+        yield from reversed(_opened(account, place, tail.items, ring)[0])
+        if tail.next_before is None:
+            return
+        before = tail.next_before
+
+
+def _pulls(account: Account, place: tuple[str, str, str], ring: KeyRing, items: list[Any], found: list[str]) -> int:
+    """Adds the pull request addresses of the opened events among `items` to `found` (prompts do not count); the
+    largest scope position among `items` (0 without one)."""
+    events, _skipped = _opened(account, place, items, ring)
+    for event in events:
+        body = event.get("body")
+        if event["kind"] != "prompt" and isinstance(body, dict):
+            for text in _strings(body):
+                found += [url for url in PULL_URL.findall(text) if url not in found]
+    return max((scope_seq(item) for item in items), default=0)
+
+
 def task_wait(account: Account, task: str, timeout: int) -> dict[str, Any]:
     """Waits up to `timeout` seconds until the task no longer works (`SETTLED`) and answers once.
 
-    A loop of `task_follow` calls from the start of the chat: the answer is the text of the newest `session.output`
-    (at most `ANSWER_MAX` characters), `pull_requests` the GitHub pull request addresses the task's sessions and
-    operations created or mentioned (in order, each once; the prompts do not count), `next_after` the position for a
-    later `task follow`. `timed_out` is true when the time ran out while the task still worked.
+    The chat is read page by page, from the start and then after the last position (one page held at a time, so the
+    length of a task does not matter, HOT-29): `pull_requests` are the GitHub pull request addresses the task's
+    sessions and operations created or mentioned (in order, each once; the prompts do not count), `next_after` the
+    position for a later `task follow`. The answer is the text of the newest `session.output` (at most `ANSWER_MAX`
+    characters), read from the end of the chat (`task_outputs`). `timed_out` is true when the time ran out while the
+    task still worked.
     """
     if not 0 <= timeout <= WAIT_MAX_S:
         raise PlatformError("invalid_argument")
+    row = _task_row(account, task)
+    wg = str(row["wg_id"])
+    org = find_org(account, wg)
+    place = (org, wg, task)
+    ring = account.keys(org)
     deadline = time.monotonic() + timeout
+    query = {"kinds": ",".join(CHAT_KINDS), "task": task}
     after = 0
-    answer: str | None = None
     pulls: list[str] = []
     while True:
-        page, row = _follow(account, task, after, 0)
-        after = page["next_after"]
-        for event in page["events"]:
-            body = event.get("body")
-            if event.get("kind") == "prompt" or not isinstance(body, dict):
-                continue
-            if event.get("kind") == "session.output" and isinstance(body.get("text"), str):
-                answer = body["text"]
-            for text in _strings(body):
-                pulls += [url for url in PULL_URL.findall(text) if url not in pulls]
-        state = page["state"]
-        settled = state in SETTLED
+        for items in scope_pages(account, wg, query, after):
+            after = max(after, _pulls(account, place, ring, items, pulls))
+        row = _task_row(account, task)
+        settled = row.get("state") in SETTLED
         remaining = deadline - time.monotonic()
         if settled or remaining <= 0:
             break
         time.sleep(min(FOLLOW_POLL_S, remaining))
-    result: dict[str, Any] = {"task_id": task, "state": state}
+    answer = next((text for event in task_outputs(account, place) if (text := _text(event)) is not None), None)
+    result: dict[str, Any] = {"task_id": task, "state": row.get("state")}
     reason = row.get("state_reason")
     if isinstance(reason, str) and reason:
         result["reason"] = reason
@@ -534,3 +578,10 @@ def task_wait(account: Account, task: str, timeout: int) -> dict[str, Any]:
         "timed_out": not settled,
         "next_after": after,
     }
+
+
+def _text(event: dict[str, Any]) -> str | None:
+    """The text of an opened `session.output` (None for a locked one or one without text)."""
+    body = event.get("body")
+    text = body.get("text") if isinstance(body, dict) else None
+    return text if isinstance(text, str) else None
