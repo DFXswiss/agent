@@ -68,7 +68,9 @@ test('every signed-in route passes the layout, touch-target and accessibility ch
   const routes: [string, string][] = [
     [`/o/${user.org}`, 'home.screen'],
     [`/o/${user.org}/w/${wg}`, 'tasks.screen'],
-    [`/o/${user.org}/t/${task}`, 'chat.item'],
+    // the default tab "Claude Code" (KONZEPT E-43), then the chat
+    [`/o/${user.org}/t/${task}`, 'terminal.viewport'],
+    [`/o/${user.org}/t/${task}?tab=chat`, 'chat.item'],
     [`/o/${user.org}/t/${task}?tab=sessions`, 'task.screen'],
     [`/o/${user.org}/t/${task}?tab=operations`, 'task.screen'],
     [`/o/${user.org}/t/${task}?tab=whiteboard`, 'task.screen'],

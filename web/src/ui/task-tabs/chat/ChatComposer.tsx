@@ -85,14 +85,15 @@ export function ChatComposer({
         {t('task.chat.prompt.label')}
       </label>
       {cli ? (
-        <div className="flex items-start gap-2 rounded border border-gray-600 bg-black px-3 py-2 font-mono text-sm text-gray-100 focus-within:border-gray-300">
-          <span aria-hidden="true" className="select-none leading-6 text-gray-400">
+        <div className="flex items-start gap-2 rounded border border-gray-600 bg-black px-3 font-mono text-sm text-gray-100 focus-within:border-gray-300">
+          <span aria-hidden="true" className="select-none py-2.5 leading-6 text-gray-400">
             &gt;
           </span>
+          {/* one line is 44 px high: a touch target (06-web.md section 12.1) */}
           <textarea
             id={label}
             rows={Math.min(8, Math.max(1, text.split('\n').length))}
-            className="min-h-6 w-full resize-none bg-transparent leading-6 text-gray-100 placeholder:text-gray-400 focus:outline-none"
+            className="min-h-11 w-full resize-none bg-transparent py-2.5 leading-6 text-gray-100 placeholder:text-gray-400 focus:outline-none"
             placeholder={t('task.terminal.prompt.placeholder')}
             value={text}
             onChange={(event) => setText(event.target.value)}

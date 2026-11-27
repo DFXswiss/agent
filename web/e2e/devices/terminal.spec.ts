@@ -7,9 +7,12 @@ import { mainSession, walk } from '../helpers/director.ts';
 import { sessionEvents, terminalChunk } from '../helpers/sessions.ts';
 import { freshUser, sendPrompt, START_STEPS } from '../helpers/tasks.ts';
 
+// Counts <style> elements that are in the document. A MutationObserver also reports additions inside a subtree that
+// was just removed (transient observers): disposing a terminal after its view left the page (a tab switch) makes xterm
+// install its DOM renderer in the detached element; those styles are never applied, so they are not counted.
 const STYLE_OBSERVER = `new MutationObserver((records) => {
   for (const record of records) for (const node of record.addedNodes) {
-    if (node.nodeName === 'STYLE') document.documentElement.dataset.styleInjections =
+    if (node.nodeName === 'STYLE' && node.isConnected) document.documentElement.dataset.styleInjections =
       String(Number(document.documentElement.dataset.styleInjections ?? 0) + 1);
   }
 }).observe(document, { childList: true, subtree: true });`;
@@ -80,15 +83,20 @@ test('the task opens on "Claude Code": the live terminal with the Claude Code in
   baseURL,
 }) => {
   await page.addInitScript({ content: STYLE_OBSERVER });
-  await freshUser(page, baseURL!, { poolReady: 2 });
+  const user = await freshUser(page, baseURL!, { poolReady: 2 });
   const task = await sendPrompt(page, 'Show me Claude Code', 'terminal');
   const session = (await mainSession(task)).session_id;
   // the start above the terminal until the session works
   await expect(page.getByTestId('countdown.panel')).toBeVisible();
   await walk(session, [...START_STEPS, 'working'], { intervalMs: 20 });
   await expect(page.getByTestId('countdown.panel')).toHaveCount(0);
+  await expect(page.getByTestId('terminal')).toHaveAttribute('data-variant', 'task');
   const banner = '\x1b[1m* Welcome to Claude Code\x1b[0m\r\n\r\n> Show me Claude Code';
   await sessionEvents(session, [terminalChunk([[0, banner]])]);
+  // opened afresh, the task page shows "Claude Code" first; the observer counts the style elements of this page only
+  await page.goto(`/o/${user.org}/t/${task}`);
+  await page.getByTestId('login.submit').click();
+  await expect(page.getByTestId('task.tabs.terminal')).toHaveAttribute('aria-current', 'page');
   const terminal = page.getByTestId('terminal');
   await expect(terminal).toHaveAttribute('data-variant', 'task');
   await expect(terminal).toHaveAttribute('data-chunks', '1');
