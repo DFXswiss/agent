@@ -41,6 +41,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from agent_runner.dfxdebug import dto
 from agent_runner.model.selection import Catalog
 from agent_runner.operations import rules
 from agent_runner.operations.extensions import CheckFailed
@@ -401,6 +402,19 @@ TYPES: Mapping[str, TypeRules] = {
             "wait_seconds": _range(0, 300),
         },
         ("mailbox",),
+    ),
+    # ADR-102 section 4 (the WHERE tree's bounds and the value of a leaf by its operator: `dfxdebug.dto`)
+    "dfx.debug": TypeRules(
+        {
+            "table": dto.table,
+            "select": dto.select,
+            "where": dto.where,
+            "groupBy": dto.group_by,
+            "orderBy": dto.order_by,
+            "limit": _range(1, 10000),
+            "offset": _range(0, 1000000),
+        },
+        ("table", "select", "limit"),
     ),
 }
 """Parameter rules per type (`contracts/ops/<type>.params.json`; a test compares the key sets with the contracts)."""

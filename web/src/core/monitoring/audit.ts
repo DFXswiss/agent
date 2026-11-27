@@ -59,6 +59,7 @@ export const AUDIT_ACTIONS: readonly string[] = [
   'device_request.expired',
   'device_request.failed',
   'device_request.pending',
+  'dfx.read',
   'event.append',
   'event.append_batch',
   'github.default',

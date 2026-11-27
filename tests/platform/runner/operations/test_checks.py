@@ -81,6 +81,26 @@ VALID: dict[str, dict[str, Any]] = {
     "github.merge_base": {"repo": REPO, "number": 7, "discard": True},
     "browser.open": {"url": "https://example.com/" + "a" * 4076, "idle_seconds": 3600},
     "browser.close": {},
+    "dfx.debug": {
+        "table": "buy_crypto",
+        "select": [
+            {"kind": "column", "column": "amlReason", "as": "reason"},
+            {"kind": "aggregate", "column": "id", "aggregate": "count", "as": "n"},
+            {"kind": "jsonb", "column": "message", "jsonbPath": "a.b_c.d"},
+        ],
+        "where": {
+            "kind": "and",
+            "children": [
+                {"kind": "leaf", "column": "amlCheck", "op": "IN", "value": ["Pending", 1, True, 2.5]},
+                {"kind": "not", "child": {"kind": "leaf", "column": "status", "op": "IS NULL"}},
+                {"kind": "or", "children": [{"kind": "leaf", "column": "comment", "op": "LIKE", "value": "%x%"}]},
+            ],
+        },
+        "groupBy": ["amlReason"],
+        "orderBy": [{"column": "n", "direction": "DESC"}, {"column": "amlReason"}],
+        "limit": 10000,
+        "offset": 1000000,
+    },
 }
 
 

@@ -29,6 +29,7 @@ CLASSES: Mapping[str, str] = MappingProxyType(
     {
         "browser.close": RUN,
         "browser.open": RUN,
+        "dfx.debug": READ,
         "github.checkout": READ,
         "github.comment": WRITE,
         "github.commit": WRITE,

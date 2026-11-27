@@ -336,6 +336,14 @@
       "output": "mcp/tools/browser_screenshot.output.json",
       "read_audit": null,
       "via": "workvm.call"
+    },
+    {
+      "tool": "dfx_debug",
+      "name": "mcp__platform__dfx_debug",
+      "input": "mcp/tools/dfx_debug.input.json",
+      "output": "mcp/tools/dfx_debug.output.json",
+      "read_audit": null,
+      "via": "operation.request"
     }
   ],
   "hooks": [

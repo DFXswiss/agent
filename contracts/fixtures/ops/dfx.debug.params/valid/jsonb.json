@@ -1,0 +1,26 @@
+{
+  "table": "log",
+  "select": [
+    {
+      "kind": "jsonb",
+      "column": "message",
+      "jsonbPath": "assets.btc"
+    }
+  ],
+  "where": {
+    "kind": "leaf",
+    "column": "subsystem",
+    "op": "IN",
+    "value": [
+      "a",
+      "b"
+    ]
+  },
+  "orderBy": [
+    {
+      "column": "id"
+    }
+  ],
+  "limit": 10,
+  "offset": 20
+}

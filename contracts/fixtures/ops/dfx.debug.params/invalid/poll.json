@@ -1,0 +1,14 @@
+{
+  "table": "asset",
+  "select": [
+    {
+      "kind": "column",
+      "column": "id"
+    }
+  ],
+  "limit": 5,
+  "poll": {
+    "address": "x",
+    "blockchain": "Ethereum"
+  }
+}

@@ -620,6 +620,41 @@ for a sign-in mail and read its link:
 The answer is `{mailbox, messages: [{id, folder, from, to, subject, date, size, text, links}], waited_seconds,
 timed_out}`; the sign-in link is in `messages[0].links`.
 
+**DFX debug endpoint**
+
+```sh
+printf '%s' "$SIGNATURE" | agent-platform credentials set-dfx-debug --address <wallet address> --api-url https://api.example.com/v1 --release <wg_id>
+agent-platform credentials release-dfx-debug --wg <wg_id>        # only the release changes; --none: no workgroup
+```
+
+The debug sign-in of the DFX API (ADR-102, rule E-31): `--address` is the address of a wallet with the Debug role,
+the signature of the API's sign-in message comes from stdin only, never from the command line; `--api-url` is the
+API's base URL with its version (`https` only). The record is sealed under your user's credential key like every credential: the hub, the
+sessions and the VMs never see address, signature or token. `--release` (repeatable, workgroup IDs) releases it; a new
+signature without `--release` keeps the release. Only sessions of your user's own tasks in a released workgroup use it,
+and only for a turn your user instructed; `credentials list` shows the API URL and the released workgroups.
+
+**Query the DFX production database** (sessions): the operation `dfx.debug` (or the tool `dfx_debug` with the same
+arguments), never a sign-in of your own and never a work VM. The parameters are the DTO of the dfx-debug CLI: `table`,
+`select`, `where`, `groupBy`, `orderBy`, `limit` (required, 1-10000), `offset`; the endpoint's allowlist decides tables
+and columns (personal data are masked or left out). The device signs in, keeps the token only for the query and answers
+`{table, keys, rows, rows_total, truncated}`. It only reads: there is no `poll` or any other write. A column outside
+the allowlist is `params_invalid` with the endpoint's message; reading sensitive data of more persons per day than the
+endpoint allows is `limit_exceeded` until 00:00 UTC; a switched-off endpoint (process `SupportDebug`) is
+`upstream_error`. Every query is audited as `dfx.read` (table, filter columns and operators, row count; no value).
+
+```json
+{
+  "type": "dfx.debug",
+  "params": {
+    "table": "buy_crypto",
+    "select": [{ "kind": "aggregate", "column": "id", "aggregate": "count", "as": "n" }],
+    "where": { "kind": "leaf", "column": "amlCheck", "op": "=", "value": "Pass" },
+    "limit": 1
+  }
+}
+```
+
 **Account**
 
 ```sh

@@ -1,0 +1,21 @@
+{
+  "table": "log",
+  "keys": [
+    "id",
+    "message"
+  ],
+  "rows": [
+    [
+      1,
+      {
+        "a": [
+          1,
+          "b",
+          null
+        ]
+      }
+    ]
+  ],
+  "rows_total": 900,
+  "truncated": true
+}

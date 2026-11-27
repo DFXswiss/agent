@@ -1,0 +1,51 @@
+{
+  "table": "asset",
+  "select": [
+    {
+      "kind": "column",
+      "column": "id"
+    }
+  ],
+  "limit": 5,
+  "where": {
+    "kind": "or",
+    "children": [
+      {
+        "kind": "leaf",
+        "column": "id",
+        "op": "=",
+        "value": 1
+      },
+      {
+        "kind": "leaf",
+        "column": "id",
+        "op": "=",
+        "value": 1
+      },
+      {
+        "kind": "leaf",
+        "column": "id",
+        "op": "=",
+        "value": 1
+      },
+      {
+        "kind": "leaf",
+        "column": "id",
+        "op": "=",
+        "value": 1
+      },
+      {
+        "kind": "leaf",
+        "column": "id",
+        "op": "=",
+        "value": 1
+      },
+      {
+        "kind": "leaf",
+        "column": "id",
+        "op": "=",
+        "value": 1
+      }
+    ]
+  }
+}

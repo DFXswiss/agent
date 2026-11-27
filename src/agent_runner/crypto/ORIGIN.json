@@ -52,7 +52,7 @@
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/credential.py",
-      "sha256": "2039942d4402228d250e748d84937b102dfa0bf034f5308bacda2a5a50cae0a5",
+      "sha256": "b4a35005b8d986cca5b838c7143ad1af362a32a6d63ad5fa1805e5e93a4f6256",
       "source": "src/agent_hub/crypto/credential.py"
     },
     {

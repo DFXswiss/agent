@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/mcp/tools/dfx_debug.input.json",
+  "title": "platform tool dfx_debug input",
+  "description": "Arguments of the platform tool dfx_debug (03-api.md section 8.1, ADR-102 section 5).",
+  "$ref": "../objects.json#/$defs/input_dfx_debug"
+}

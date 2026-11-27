@@ -1406,6 +1406,31 @@ A new need of sessions is checked against this rule before a VM tool is offered 
 - Many `mail.find` run at once, each in its own thread and connection (bounded by the runner's worker threads); no
   VM, slot or queue.
 
+### 12.3 `dfx.debug`: the DFX debug endpoint (DBG-01, ADR-102)
+
+`dfx.debug` (`agent_runner.dfxdebug`), read only:
+- **Whose sign-in** (`dfxdebug.access`, pre-check and again at the execution): the task owner's `dfx_debug` record
+  (the device route `/v1/device/credentials/{owner}/dfx_debug`, cached like every record), only when the person whose
+  instruction started the turn is the task owner (`rights_denied` otherwise, also without an acting user), the record
+  verifies and opens (`not_found` naming `agent-platform credentials set-dfx-debug`), its **sealed** `use.wgs` names
+  the session's workgroup and the owner has explicit `read`/`write` access there now (`rights_denied` naming the
+  release); `hub_unreachable` when the record cannot be read.
+- **Checks** (`dfxdebug.dto`, formal step 1): the DTO's form and the bounds of the WHERE tree (depth ≤ 5, ≤ 200
+  nodes, ≤ 50 leaves, ≤ 5 children, `IN`/`NOT IN` ≤ 100 values, `IS NULL`/`IS NOT NULL` without a value, strings
+  ≤ 1024 characters), iteratively. Tables and columns are the endpoint's allowlist.
+- **Query** (`dfxdebug.client`): `POST {api_url}/auth/signIn {address, signature}` → `accessToken`, then
+  `POST {api_url}/support/debug` with the DTO and the bearer token; 30 s per request, no redirects; the token exists
+  only in the call's frame. There is no other request (no `poll`).
+- **Answer** `{table, keys, rows, rows_total, truncated}` at most 200 KiB (the last rows are left out first).
+- **Failures**: `400` → `params_invalid` with the endpoint's message; `403 PII_READ_LIMIT` → `limit_exceeded` with the
+  endpoint's message and when its daily count of persons starts again; `403 Endpoint disabled` (process
+  `SupportDebug`) → `upstream_error`, never retried; other `401`/`403` → `upstream_error` (Debug role); a refused
+  sign-in → `upstream_error` (renew the signature); `429`/`5xx` → `upstream_error`, retryable; no answer →
+  `timeout`, retryable. Messages pass as printable ASCII with address and signature replaced by `[hidden]`.
+- **Audit**: the outbox item `audit` `dfx.read` (target `credential`/the sign-in record) with `{operation_id,
+  owner_id, table, filter, rows, result}` after every attempt that reached the API; `filter` names the WHERE tree's
+  columns and operators, never a value.
+
 ## 13. Subagents (ADR-088, ADR-038)
 
 - Created only after hub acceptance of `subagent.request` (the limits depth, running and total are settings of the

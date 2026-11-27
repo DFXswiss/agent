@@ -76,7 +76,7 @@ class RotateBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     epoch: Annotated[int, Field(strict=True, ge=1, le=2**31 - 1)]
     wraps: list[dict[str, Any]] = Field(min_length=1, max_length=1000)
-    records: list[dict[str, Any]] = Field(max_length=4)
+    records: list[dict[str, Any]] = Field(max_length=5)
 
 
 async def _in_transaction[T](context: HubContext, work: Callable[[Any], T]) -> T:

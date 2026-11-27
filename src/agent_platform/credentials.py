@@ -24,7 +24,7 @@ from agent_runner.crypto.encoding import body_json, format_time, parse_json, par
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.ids import is_uuid7, uuid7
 
-KINDS = ("github", "anthropic_api_key", "claude_subscription", "mailbox")
+KINDS = ("github", "anthropic_api_key", "claude_subscription", "mailbox", "dfx_debug")
 LOGIN_RE = re.compile(r"[A-Za-z0-9-]{1,39}")
 EMAIL_RE = re.compile(r"[!-?A-~]{1,64}@[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63}){0,8}")
 PRINTABLE_RE = re.compile(r"[!-~]{1,4096}")
@@ -148,6 +148,22 @@ def valid_mailbox(body: dict[str, Any]) -> bool:
     )
 
 
+DFX_DEBUG_FIELDS = frozenset({"address", "signature", "api_url"})
+API_URL_RE = re.compile(r"https://[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(/[A-Za-z0-9._~-]{1,64}){0,8}")
+WALLET_RE = re.compile(r"[!-~]{1,256}")
+
+
+def valid_dfx_debug(body: dict[str, Any]) -> bool:
+    """A body of `contracts/credentials/dfx_debug.json` (ADR-102 section 2): the debug sign-in and its release."""
+    return (
+        DFX_DEBUG_FIELDS <= set(body) <= DFX_DEBUG_FIELDS | {"use"}
+        and _text(body["address"], WALLET_RE)
+        and _text(body["signature"], PRINTABLE_RE)
+        and _text(body["api_url"], API_URL_RE)
+        and ("use" not in body or valid_release(body["use"]))
+    )
+
+
 def _subscription(body: dict[str, Any]) -> bool:
     keys = {"token", "email", "kind", *(("expires_at",) if "expires_at" in body else ())}
     return (
@@ -169,6 +185,8 @@ def valid_body(kind: str, body: object) -> bool:
         return valid_github(body)
     if kind == "mailbox":
         return valid_mailbox(body)
+    if kind == "dfx_debug":
+        return valid_dfx_debug(body)
     return _subscription(body)
 
 

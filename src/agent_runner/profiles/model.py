@@ -6,8 +6,8 @@ the effective profile of every session; the runner only reads them (`state.py`) 
 
 - `allows(profile, op_type)`: may the session request the type;
 - `within(child, parent)`: a child's profile allows nothing its parent does not;
-- `tool_type(tool)`: the operation type a platform MCP tool that is no operation stands for (`workvm_*` ->
-  `workvm.request`, `browser_*` -> `browser.open`, `contracts/ops/classes.json` `tools`), None for a read tool;
+- `tool_type(tool)`: the operation type a platform MCP tool stands for (`workvm_*` -> `workvm.request`, `browser_*` ->
+  `browser.open`, `dfx_debug` -> `dfx.debug`, `contracts/ops/classes.json` `tools`), None for a read tool;
 - `parse(value)`: a profile of the wire form (`ValueError` for anything else), None for null.
 """
 
@@ -21,7 +21,7 @@ from typing import Any
 REACHES = ("task", "workgroup", "all")
 NAME_RE = re.compile(r"[a-z][a-z0-9_-]{0,39}")
 TYPE_RE = re.compile(r"[a-z][a-z_]*(\.[a-z][a-z_]*)+")
-TOOL_PREFIXES: Mapping[str, str] = {"workvm_": "workvm.request", "browser_": "browser.open"}
+TOOL_PREFIXES: Mapping[str, str] = {"workvm_": "workvm.request", "browser_": "browser.open", "dfx_debug": "dfx.debug"}
 
 
 @dataclass(frozen=True)

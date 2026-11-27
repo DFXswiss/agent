@@ -61,6 +61,8 @@ SPEC_OPERATIONS: dict[str, tuple[set[str], set[str]]] = {
         {"mailbox"},
         {"from", "subject", "since", "until", "folder", "limit", "body", "id", "wait_seconds"},
     ),
+    # ADR-102 (DBG-01)
+    "dfx.debug": ({"table", "select", "limit"}, {"where", "groupBy", "orderBy", "offset"}),
 }
 MANDATORY = [
     "agent.dfx.swiss",
@@ -175,6 +177,8 @@ MANDATORY = [
     "For this task's own workgroup you may name tasks, sessions and operations by their IDs.",
     "For every other workgroup name only the workgroup and its totals (counts, sums, shares): no task, session,"
     " operation or person IDs, no audit rows, no titles and no content.",
+    # ADR-102 section 5 (DBG-01): the debug endpoint only through the platform, read only
+    "There is no write. Never sign in to the DFX API yourself and never ask for its signature",
 ]
 FORBIDDEN = [
     "say so in your answer",
@@ -278,6 +282,7 @@ def test_names_every_tool_of_the_platform_api(text: str) -> None:
         "browser_tabs",
         "browser_download",
         "browser_screenshot",
+        "dfx_debug",
     ):
         assert f"`{tool}`" in text or f"`mcp__platform__{tool}`" in text, tool
 

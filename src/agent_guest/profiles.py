@@ -21,7 +21,8 @@ from typing import Any
 
 from agent_guest.policy import PLATFORM_PREFIX, PLATFORM_TOOLS, WEB_SEARCH_TOOL
 
-TOOL_TYPES: Mapping[str, str] = {"workvm_": "workvm.request", "browser_": "browser.open"}
+TOOL_TYPES: Mapping[str, str] = {"workvm_": "workvm.request", "browser_": "browser.open", "dfx_debug": "dfx.debug"}
+"""Name prefixes of the platform tools that stand for an operation type (`contracts/ops/classes.json` `tools`)."""
 NO_WEB_SEARCH = frozenset({"analysis"})
 """Profiles whose sessions are not offered the model's own web search (ADR-097 section 2)."""
 

@@ -72,6 +72,7 @@ OUTBOX_AUDIT_ACTIONS = (
     "runner.operator_github_users",
     "session.model_switched",
     "mail.read",
+    "dfx.read",
 )
 """A copy of `contracts/enums/outbox-audit-actions.json` (a test compares them)."""
 OPERATION_ERROR_CODES = (
@@ -647,6 +648,18 @@ class MailRead(Strict):
     result: Literal["ok", "not_found", "upstream_error", "timeout"]
 
 
+class DfxRead(Strict):
+    """`dfx.read` (ADR-102 section 6): a session queried the DFX debug endpoint - table, a filter summary of columns
+    and operators, the number of rows and the outcome, never a value."""
+
+    operation_id: Uuid7
+    owner_id: Uuid7
+    table: Annotated[str, StringConstraints(pattern=r"^[a-z_][a-z0-9_]{0,63}$")]
+    filter: Annotated[str, StringConstraints(pattern=r"^[ -~]{0,256}$")]
+    rows: Annotated[int, Field(ge=0, le=10000)]
+    result: Literal["ok", "params_invalid", "limit_exceeded", "switched_off", "upstream_error", "timeout"]
+
+
 AUDIT_DETAILS: dict[str, type[Strict]] = {
     "hook.denied": HookDenied,
     **{action: ReadCount for action in OUTBOX_AUDIT_ACTIONS if action.startswith("read.session.")},
@@ -663,6 +676,7 @@ AUDIT_DETAILS: dict[str, type[Strict]] = {
     "session.model_switched": ModelSwitched,
     "session.prompt_withdrawn": NoDetail,
     "mail.read": MailRead,
+    "dfx.read": DfxRead,
 }
 
 
@@ -698,6 +712,7 @@ class AuditBody(Strict):
         "session.context_fallback",
         "session.model_switched",
         "mail.read",
+        "dfx.read",
     ]
     result: Literal["ok", "denied", "rejected", "duplicate", "failed"]
     task_id: Uuid7 | None = None

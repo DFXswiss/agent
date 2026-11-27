@@ -78,7 +78,9 @@ def wait_for(kind: str, params: dict[str, Any]) -> float:
     return min(WAIT_SECONDS + float(params.get("wait_seconds", 0)), MAIL_WAIT_SECONDS)
 
 
-def _ask(call: ToolCall, body: dict[str, Any]) -> dict[str, Any] | None:
+def ask(call: ToolCall, body: dict[str, Any]) -> dict[str, Any] | None:
+    """Forward a checked request and wait for the runner's answer (module docstring); None when it is not final in
+    time. ``dfx_debug`` asks the same way."""
     deadline = time.monotonic() + wait_for(body["type"], body["params"])
     pending_id = _forward.forward(call, "operation", {**body, "local_check": "passed"})
     while True:
@@ -103,7 +105,7 @@ def request_operation(call: ToolCall) -> Any:
     if error is not None:
         _forward.forward(call, "operation", {**body, "local_check": "rejected", "local_error": error})
         return {"operation_id": operation_id, "status": "rejected", "error": error}
-    answer = _ask(call, body)
+    answer = ask(call, body)
     if answer is None:
         return {"operation_id": operation_id, "status": "pending"}
     return _forward.outcome(call, answer, operation_id=operation_id)

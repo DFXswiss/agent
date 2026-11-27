@@ -42,7 +42,7 @@ SPEC_PLATFORM_TYPES = (
     " user_certify user_decertify platform_policy org_operator_subscriptions"  # ADR-079
 )
 # 04-crypto.md section 4.4 and 02-data-model.md section 2.7 (device_request.kind).
-SPEC_CREDENTIAL_KINDS = "github anthropic_api_key claude_subscription mailbox"
+SPEC_CREDENTIAL_KINDS = "github anthropic_api_key claude_subscription mailbox dfx_debug"
 SPEC_REQUEST_KINDS = "github.connect claude.login credential.check mailbox.check github.pull_status"
 # 03-api.md section 6.1: the device endpoints (CTR-03 rows of INDEX.json) and the two live channels.
 SPEC_CHANNELS = {

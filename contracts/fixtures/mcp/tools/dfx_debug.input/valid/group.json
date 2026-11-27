@@ -1,0 +1,44 @@
+{
+  "table": "buy_crypto",
+  "select": [
+    {
+      "kind": "column",
+      "column": "amlReason"
+    },
+    {
+      "kind": "aggregate",
+      "column": "id",
+      "aggregate": "count",
+      "as": "n"
+    }
+  ],
+  "where": {
+    "kind": "and",
+    "children": [
+      {
+        "kind": "leaf",
+        "column": "amlCheck",
+        "op": "=",
+        "value": "Pending"
+      },
+      {
+        "kind": "not",
+        "child": {
+          "kind": "leaf",
+          "column": "comment",
+          "op": "IS NULL"
+        }
+      }
+    ]
+  },
+  "groupBy": [
+    "amlReason"
+  ],
+  "orderBy": [
+    {
+      "column": "n",
+      "direction": "DESC"
+    }
+  ],
+  "limit": 100
+}

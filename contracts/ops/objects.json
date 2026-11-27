@@ -1390,6 +1390,9 @@
         },
         {
           "$ref": "#/$defs/result_mail_find"
+        },
+        {
+          "$ref": "#/$defs/result_dfx_debug"
         }
       ],
       "description": "result of any operation type"
@@ -3098,6 +3101,302 @@
         "messages",
         "waited_seconds",
         "timed_out"
+      ],
+      "additionalProperties": false
+    },
+    "dfx_debug_identifier": {
+      "type": "string",
+      "description": "a column name or alias of the debug query (the server's DebugIdentifierRegex)",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+    },
+    "dfx_debug_scalar": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 1024
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    },
+    "dfx_debug_select_item": {
+      "type": "object",
+      "description": "one select item: a column, a jsonb path of a jsonb-enabled column, or an aggregate of a column",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "column",
+            "jsonb",
+            "aggregate"
+          ]
+        },
+        "column": {
+          "$ref": "#/$defs/dfx_debug_identifier"
+        },
+        "as": {
+          "$ref": "#/$defs/dfx_debug_identifier"
+        },
+        "aggregate": {
+          "type": "string",
+          "enum": [
+            "count",
+            "sum",
+            "min",
+            "max",
+            "avg"
+          ]
+        },
+        "jsonbPath": {
+          "type": "string",
+          "description": "dot-separated segments of the jsonb path (kind jsonb)",
+          "maxLength": 256,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}([.][A-Za-z_][A-Za-z0-9_]{0,63}){0,7}$"
+        }
+      },
+      "required": [
+        "kind",
+        "column"
+      ],
+      "additionalProperties": false
+    },
+    "dfx_debug_where": {
+      "description": "a node of the WHERE tree: a leaf predicate, and/or with 1-5 children, or not with one child; the runner and the server bound the tree to depth 5, 200 nodes and 50 leaves",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "leaf"
+            },
+            "column": {
+              "$ref": "#/$defs/dfx_debug_identifier"
+            },
+            "op": {
+              "type": "string",
+              "enum": [
+                "=",
+                "!=",
+                "<",
+                "<=",
+                ">",
+                ">=",
+                "IN",
+                "NOT IN",
+                "LIKE",
+                "ILIKE",
+                "IS NULL",
+                "IS NOT NULL"
+              ]
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/dfx_debug_scalar"
+                },
+                {
+                  "type": "array",
+                  "maxItems": 100,
+                  "items": {
+                    "$ref": "#/$defs/dfx_debug_scalar"
+                  }
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "column",
+            "op"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "and",
+                "or"
+              ]
+            },
+            "children": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 5,
+              "items": {
+                "$ref": "#/$defs/dfx_debug_where"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "children"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "not"
+            },
+            "child": {
+              "$ref": "#/$defs/dfx_debug_where"
+            }
+          },
+          "required": [
+            "kind",
+            "child"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "params_dfx_debug": {
+      "type": "object",
+      "description": "dfx.debug (ADR-102 section 4): one read-only, allowlisted query of the DFX API debug endpoint (POST /support/debug) with the debug sign-in its owner released to the session's workgroup - the DTO of the dfx-debug CLI; there is no write (no poll)",
+      "properties": {
+        "table": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_]{0,63}$"
+        },
+        "select": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/dfx_debug_select_item"
+          }
+        },
+        "where": {
+          "$ref": "#/$defs/dfx_debug_where"
+        },
+        "groupBy": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/dfx_debug_identifier"
+          }
+        },
+        "orderBy": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "properties": {
+              "column": {
+                "$ref": "#/$defs/dfx_debug_identifier"
+              },
+              "direction": {
+                "type": "string",
+                "enum": [
+                  "ASC",
+                  "DESC"
+                ]
+              }
+            },
+            "required": [
+              "column"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        }
+      },
+      "required": [
+        "table",
+        "select",
+        "limit"
+      ],
+      "additionalProperties": false
+    },
+    "dfx_debug_cell": {
+      "description": "one value of a result row as the endpoint answered it",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dfx_debug_cell"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/dfx_debug_cell"
+          }
+        }
+      ]
+    },
+    "result_dfx_debug": {
+      "type": "object",
+      "description": "the answer of the debug endpoint: the column names and the rows (each parallel to keys); rows_total is the number of rows the endpoint answered, truncated true when the last rows were left out to keep the answer within 200 KiB",
+      "properties": {
+        "table": {
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_]{0,63}$"
+        },
+        "keys": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        "rows": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/dfx_debug_cell"
+            }
+          }
+        },
+        "rows_total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "table",
+        "keys",
+        "rows",
+        "rows_total",
+        "truncated"
       ],
       "additionalProperties": false
     }

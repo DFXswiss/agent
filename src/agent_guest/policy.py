@@ -93,6 +93,7 @@ PLATFORM_TOOLS = frozenset(
         "browser_tabs",
         "browser_download",
         "browser_screenshot",
+        "dfx_debug",
     }
 )
 ORCHESTRATOR_TOOLS = frozenset({"mcp__orchestrator__search", "mcp__orchestrator__run"})

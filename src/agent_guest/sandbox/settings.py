@@ -70,6 +70,7 @@ MCP_TOOLS: tuple[str, ...] = (
     "browser_tabs",
     "browser_download",
     "browser_screenshot",
+    "dfx_debug",
 )
 FILE_TOOLS: tuple[str, ...] = ("Read", "Glob", "Grep", "Edit", "Write")
 # Claude Code's own web search runs at the model provider (13-work-vm.md section 13.7). These settings are shared by

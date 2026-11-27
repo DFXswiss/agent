@@ -538,7 +538,8 @@
         "github",
         "anthropic_api_key",
         "claude_subscription",
-        "mailbox"
+        "mailbox",
+        "dfx_debug"
       ]
     },
     "request_kind": {

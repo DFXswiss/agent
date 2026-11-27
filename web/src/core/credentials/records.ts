@@ -38,7 +38,7 @@ import { EMAIL_RE } from '../requests/bodies';
 import { type RequestsContext, RequestError } from '../requests/client';
 import { type CredentialEntry, setCredentials } from '../store/slices/credentials';
 
-export type CredentialKind = 'github' | 'anthropic_api_key' | 'claude_subscription' | 'mailbox';
+export type CredentialKind = 'github' | 'anthropic_api_key' | 'claude_subscription' | 'mailbox' | 'dfx_debug';
 export const CREDENTIAL_KINDS = KINDS as readonly CredentialKind[];
 
 export const isCredentialKind = (value: unknown): value is CredentialKind =>
@@ -127,6 +127,38 @@ export const isSubscriptionBody = (value: unknown): value is SubscriptionBody =>
   (value.email === null || isEmail(value.email)) &&
   (SUBSCRIPTION_ORIGINS as readonly unknown[]).includes(value.kind);
 
+/** The DFX debug sign-in (ADR-102 section 2): wallet address, signature, API URL and the release to workgroups. */
+export interface DfxDebugBody {
+  readonly address: string;
+  readonly signature: string;
+  readonly api_url: string;
+  readonly use?: { readonly wgs: readonly string[] };
+}
+
+const WALLET_RE = /^[!-~]{1,256}$/;
+const API_URL_RE = /^https:\/\/[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?(\/[A-Za-z0-9._~-]{1,64}){0,8}$/;
+const UUID7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+const isRelease = (value: unknown): boolean =>
+  isRecord(value) &&
+  keysAre(value, ['wgs']) &&
+  Array.isArray(value.wgs) &&
+  value.wgs.length <= 50 &&
+  value.wgs.every((wg) => typeof wg === 'string' && UUID7_RE.test(wg)) &&
+  new Set(value.wgs).size === value.wgs.length;
+
+export const isDfxDebugBody = (value: unknown): value is DfxDebugBody =>
+  isRecord(value) &&
+  (Object.hasOwn(value, 'use')
+    ? keysAre(value, ['address', 'signature', 'api_url', 'use']) && isRelease(value.use)
+    : keysAre(value, ['address', 'signature', 'api_url'])) &&
+  typeof value.address === 'string' &&
+  WALLET_RE.test(value.address) &&
+  typeof value.signature === 'string' &&
+  PRINTABLE_RE.test(value.signature) &&
+  typeof value.api_url === 'string' &&
+  API_URL_RE.test(value.api_url);
+
 export const MAILBOX_FIELDS = ['imap_host', 'imap_port', 'imap_user', 'imap_password', 'email'] as const;
 export type MailboxForm = Readonly<Record<(typeof MAILBOX_FIELDS)[number], string>>;
 
@@ -148,6 +180,7 @@ const BODY_CHECKS: Readonly<Record<CredentialKind, (value: unknown) => boolean>>
   anthropic_api_key: isApiKeyBody,
   claude_subscription: isSubscriptionBody,
   mailbox: isMailboxBody,
+  dfx_debug: isDfxDebugBody,
 };
 
 /** Whether `body` is exactly what `contracts/credentials/<kind>.json` allows. */
@@ -166,7 +199,8 @@ export type Summary =
       /** Header time of the token's expiry, null when the record states none. */
       readonly expiresAt: string | null;
     }
-  | { readonly kind: 'mailbox'; readonly email: string; readonly host: string };
+  | { readonly kind: 'mailbox'; readonly email: string; readonly host: string }
+  | { readonly kind: 'dfx_debug'; readonly apiUrl: string; readonly wgs: readonly string[] };
 
 /** The non-secret part of a checked body (`validBody`). */
 export function summarize(kind: CredentialKind, body: unknown): Summary {
@@ -185,6 +219,8 @@ export function summarize(kind: CredentialKind, body: unknown): Summary {
       };
     case 'mailbox':
       return { kind, email: value.email as string, host: value.imap_host as string };
+    case 'dfx_debug':
+      return { kind, apiUrl: value.api_url as string, wgs: (value as unknown as DfxDebugBody).use?.wgs ?? [] };
   }
 }
 

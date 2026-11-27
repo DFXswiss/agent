@@ -1,0 +1,19 @@
+{
+  "table": "buy_crypto",
+  "keys": [
+    "amlReason",
+    "n"
+  ],
+  "rows": [
+    [
+      "ManualCheck",
+      12
+    ],
+    [
+      null,
+      3
+    ]
+  ],
+  "rows_total": 2,
+  "truncated": false
+}

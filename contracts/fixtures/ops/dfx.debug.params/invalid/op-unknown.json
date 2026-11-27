@@ -1,0 +1,15 @@
+{
+  "table": "asset",
+  "select": [
+    {
+      "kind": "column",
+      "column": "id"
+    }
+  ],
+  "limit": 5,
+  "where": {
+    "kind": "leaf",
+    "column": "id",
+    "op": "~"
+  }
+}

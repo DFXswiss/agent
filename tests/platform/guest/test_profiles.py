@@ -32,7 +32,9 @@ def test_without_a_profile_nothing_is_refused_or_hidden() -> None:
 def test_the_tools_a_profile_does_not_offer() -> None:
     hidden = profiles.disallowed_tools(READ_ONLY)
     assert hidden
-    assert all(name.startswith("mcp__platform__browser_") for name in hidden)
+    assert all(name.startswith("mcp__platform__browser_") or name == "mcp__platform__dfx_debug" for name in hidden)
+    assert "mcp__platform__dfx_debug" in hidden  # the tool stands for dfx.debug (ADR-102 section 5)
+    assert "mcp__platform__dfx_debug" not in profiles.disallowed_tools({**READ_ONLY, "operations": ["dfx.debug"]})
     everything = profiles.disallowed_tools({"name": "none", "operations": [], "reads": "task"})
     assert "mcp__platform__workvm_exec" in everything
     assert "mcp__platform__request_operation" not in everything
