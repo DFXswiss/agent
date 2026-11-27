@@ -16,7 +16,9 @@ authorization code typed during `claude.login`). Rules:
   (its key, certificate checked; ADR-082 section 1) - the request belongs to the user either way;
 - the device must be eligible for the user (`agent_hub.credentials.eligibility`, the set of `GET /v1/me/devices`),
   else `403 device_not_assigned`;
-- at most one active root per user, device and kind: a new root replaces an active one, whose chain becomes `failed`;
+- at most one active root per user, device, kind and `slot` (the plaintext subject of the root, e.g. the subscription a
+  `claude.login` fills; KOR-73, ADR-100 section 2 - NULL is a slot of its own): a new root replaces an active one of
+  the same slot, whose chain becomes `failed`; roots of different slots run side by side;
 - a `github.connect` for a company identity names the organization (`org_id`, ADR-078 section 1): only an active
   admin of it may send one, and only of kind `github.connect` (`403 forbidden` otherwise); it is stored as
   `device_request.org_id`, and the device stores no record while answering it (`agent_hub.github.routes`);
@@ -283,9 +285,11 @@ def create_request(
     *,
     org_id: UUID | None = None,
     sender: UUID | None = None,
+    slot: UUID | None = None,
 ) -> Created:
     """Store a new request of the user (module docstring); an identical repeat is answered as `replayed`. `sender` is
-    the user's own-identity agent that signs the envelope (default: the user)."""
+    the user's own-identity agent that signs the envelope (default: the user); `slot` the root's subject (only kept for
+    a root)."""
     header = _checked_header(connection, user_id, envelope, org_id, sender or user_id)
     text = canonical(envelope).decode("ascii")
     _lock_user(connection, user_id)
@@ -304,12 +308,15 @@ def create_request(
     if header["follows"]:
         expires_at = min(expires_at, _check_follows(connection, header, user_id, now).expires_at)
     replaced = False
-    if not header["follows"]:
+    if header["follows"]:
+        slot = None
+    else:
         for record in connection.execute(
             f"SELECT {_COLUMNS} FROM hub.device_request WHERE user_id = %s AND device_id = %s AND kind = %s"
+            " AND slot IS NOT DISTINCT FROM %s"
             " AND state IN ('pending', 'delivered') AND envelope::jsonb #>> '{header,follows}' = ''"
             " ORDER BY created_at, id",
-            (user_id, device_id, header["kind"]),
+            (user_id, device_id, header["kind"], slot),
         ).fetchall():
             end_chain(connection, _row(record).id, FAILED, now=now, actor=Actor("user", user_id))
             replaced = True
@@ -317,7 +324,8 @@ def create_request(
     try:
         with connection.transaction():
             connection.execute(
-                f"INSERT INTO hub.device_request ({_COLUMNS}, org_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                f"INSERT INTO hub.device_request ({_COLUMNS}, org_id, slot)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     row.id,
                     row.user_id,
@@ -328,6 +336,7 @@ def create_request(
                     row.created_at,
                     row.expires_at,
                     org_id,
+                    slot,
                 ),
             )
     except psycopg.errors.UniqueViolation:

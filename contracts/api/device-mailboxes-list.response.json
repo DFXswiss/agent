@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/device-mailboxes-list.response.json",
+  "title": "GET /v1/device/mailboxes response",
+  "description": "The mailbox records whose release mirror names the workgroup and whose owner this device is an eligible CK reader of, newest change first (03-api.md section 6.1).",
+  "type": "object",
+  "properties": {
+    "mailboxes": {
+      "type": "array",
+      "items": {
+        "$ref": "objects.json#/$defs/mailbox_record"
+      },
+      "minItems": 0,
+      "maxItems": 200
+    }
+  },
+  "required": [
+    "mailboxes"
+  ],
+  "additionalProperties": false
+}

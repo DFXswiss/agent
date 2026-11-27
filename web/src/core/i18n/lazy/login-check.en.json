@@ -1,0 +1,15 @@
+{
+  "verify.title": "Please confirm that you are human",
+  "verify.intro": "The provider shows a check for humans in the login sandbox. You do this check yourself: click in the picture where you would click on the page (usually the box). The platform only passes your click on; it solves nothing itself.",
+  "verify.picture": "Picture {frame} of the login sandbox – click to click there",
+  "verify.clicked": "Click sent – the next picture follows shortly.",
+  "verify.relay": "Sign in myself in my own browser",
+  "reason.disabled": "The automation is switched off on the device.",
+  "reason.no_sandbox": "The device has no browser sandbox free right now.",
+  "reason.human_check": "The check for humans was not passed, or you chose your own browser.",
+  "reason.consent_missing": "The registration asks for a consent that was not given.",
+  "reason.account_missing": "This address has no account yet, and the data to create one is missing.",
+  "reason.unknown_page": "The provider showed an unknown page.",
+  "reason.mail_timeout": "The login e-mail did not arrive in time.",
+  "reason.browser_failed": "The sandbox's browser failed."
+}

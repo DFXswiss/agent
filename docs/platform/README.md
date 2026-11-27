@@ -25,6 +25,7 @@ must not contradict it, and every new rule of the client is entered there first.
 | [acceptance/](acceptance/) | Acceptance evidence per package and milestone |
 | [runbooks/](runbooks/README.md) | Operator runbooks: root key, device certification, golden image, Claude Code upgrade gate, runner, hub, monitoring patch, export/restore, local development and tests |
 | [manual-checks/](manual-checks/README.md) | PRF device matrix and manual browser checks per release |
+| [status/konzept-stand.md](status/konzept-stand.md) | Abgleich von agent.dfx.swiss mit KONZEPT.md (German): per element of parts A and B what is done, partly done, in progress, open, concept only or blocked by a decision, with evidence, the owner's open decisions and the critical chain of the remaining work |
 | [CUTOVER.md](CUTOVER.md) | Cutover plan to production (plan only, not executed): roles, owner prerequisites, RP ID, steps with checks and rollback, retirement of the legacy hub |
 
 ## Quick start for developers

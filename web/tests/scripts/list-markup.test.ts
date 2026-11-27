@@ -26,6 +26,14 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     reason: 'subscriptions of the user (at most 40, ADR-090)',
   },
   'src/ui/subscriptions/UseEditor.tsx': { count: 1, reason: 'organisations the user belongs to (a handful)' },
+  'src/ui/subscriptions/AddSeveral.tsx': {
+    count: 2,
+    reason: 'the rows and the progress of one batch of subscriptions (at most 40, ADR-090, ADR-100)',
+  },
+  'src/ui/subscriptions/fields.tsx': {
+    count: 2,
+    reason: 'the three consents of a new account and the organisations the user belongs to (a handful)',
+  },
   'src/ui/settings/SettingsScreen.tsx': { count: 1, reason: 'settings sections of the registry (a handful)' },
   'src/ui/screens/task/Tabs.tsx': { count: 1, reason: 'task tabs of the registry (a handful)' },
   'src/ui/screens/workgroups/WorkgroupsScreen.tsx': {
@@ -58,6 +66,19 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     reason: 'one credential per supported kind (closed list)',
   },
   'src/ui/settings/sections/credentials/Mailbox.tsx': { count: 1, reason: 'the fixed fields of the mailbox form' },
+  'src/ui/settings/sections/mailboxes/MailboxesView.tsx': {
+    count: 1,
+    reason: 'mailboxes of the user (at most 100, ADR-099 section 2)',
+  },
+  'src/ui/settings/sections/mailboxes/MailboxForm.tsx': { count: 1, reason: 'the fixed fields of the mailbox form' },
+  'src/ui/settings/sections/mailboxes/MailboxCard.tsx': {
+    count: 1,
+    reason: 'workgroups of one release (at most 50, ADR-099 section 3)',
+  },
+  'src/ui/settings/sections/mailboxes/Release.tsx': {
+    count: 1,
+    reason: "workgroups of the user's organizations with explicit access and the released ones (at most 50)",
+  },
   'src/ui/settings/sections/credentials/DevicePicker.tsx': {
     count: 1,
     reason: 'native <option>s of the devices of the account (one element each, no layout per row)',
@@ -83,7 +104,7 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     count: 1,
     reason: 'native <option>s of the company GitHub accounts of the org (each connected by an admin)',
   },
-  // captured tasks (E-41, ADR-100)
+  // captured tasks (E-41, ADR-102)
   'src/ui/screens/tasks/TicketForm.tsx': {
     count: 5,
     reason:

@@ -25,7 +25,7 @@
       "enum": [
         true
       ],
-      "description": "a task captured without an agent (ADR-100 section 5); absent for every other task"
+      "description": "a task captured without an agent (ADR-102 section 5); absent for every other task"
     }
   },
   "required": [

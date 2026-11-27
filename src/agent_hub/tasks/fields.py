@@ -1,9 +1,9 @@
-"""The ticket fields of a task (E-41, ADR-100 sections 1, 2 and 5): status, urgency, person and topic.
+"""The ticket fields of a task (E-41, ADR-102 sections 1, 2 and 5): status, urgency, person and topic.
 
 The hub holds IDs and codes only; title, description, GitHub organisation, repository and topic names stay sealed
 (`task.meta`, `topic.profile`).
 
-- `status` is `todo`, `inProgress` or `completed`; closed ⇔ completed (the trigger of migration 0040 keeps it on
+- `status` is `todo`, `inProgress` or `completed`; closed ⇔ completed (the trigger of migration 0042 keeps it on
   every write). `urgency` is `low`, `normal` (the default), `high` or `urgent`.
 - `assignee_id` names an active user member of the task's organization (a person or an agent account; ADR-071),
   `topic_id` a topic of the organization: the `ref` of a `topic.profile` event in its org scope. Anything else is
@@ -124,7 +124,7 @@ def update(
     elif status is not None:
         if task.state == CLOSED:
             task = write_state(connection, task, IDLE, None, now, actor=actor, effects=effects)
-            # reopened without an agent: the record leaves `done/closed` (no agent works on it, ADR-101)
+            # reopened without an agent: the record leaves `done/closed` (no agent works on it, ADR-103)
             attention_store.refresh(connection, task.id, now, effects)
         connection.execute("UPDATE hub.task SET status = %s WHERE id = %s", (status, task.id))
     connection.execute(

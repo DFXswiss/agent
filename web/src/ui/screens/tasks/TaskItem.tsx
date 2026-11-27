@@ -3,7 +3,7 @@
 // several workgroups (KOR-32), the state badge, the owner's display name (the signed author of the task's first
 // user-written `task.meta`; the hub's `owner_id` is ignored, KOR-04) and the last activity as absolute local time with a
 // relative label as secondary text. An analysis task carries the badge
-// "Analysis" (ADR-097 section 6). Below the title the ticket fields of ADR-100: status, urgency, the person and the
+// "Analysis" (ADR-097 section 6). Below the title the ticket fields of ADR-102: status, urgency, the person and the
 // topic when set (their names come in the item).
 //
 // The row is the content of a `WindowedList` row (ADR-086 section 1): everything it shows comes in its item (the list
@@ -80,9 +80,9 @@ export interface TaskItemData {
   /** The name of the row's workgroup, shown in lists of several workgroups. */
   readonly workgroup: string | null;
   readonly now: number;
-  /** The shown name of the task's person (ADR-100), null or absent: nobody. */
+  /** The shown name of the task's person (ADR-102), null or absent: nobody. */
   readonly assignee?: string | null;
-  /** The name of the task's topic (ADR-100), null or absent: none. */
+  /** The name of the task's topic (ADR-102), null or absent: none. */
   readonly topic?: string | null;
 }
 

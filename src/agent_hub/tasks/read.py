@@ -5,12 +5,12 @@
   task list (`agent_hub.device.tasks.encode_cursor`: b64u of canonical `{"at": <microseconds>, "id"}`). With
   `order="activity"` (KOR-32) the order is the latest activity (`last_activity_at DESC, id DESC`) and the cursor holds
   the last activity of the page's last row instead of its creation time (the task overview of the web client merges
-  the lists of several workgroups by activity and pages each with its own cursor). The ticket filters of ADR-100
+  the lists of several workgroups by activity and pages each with its own cursor). The ticket filters of ADR-102
   (`status`, `urgency`, `assignee`, `topic`; `none` for tasks without a person or topic) combine with the state.
-  `order="urgency"` (ADR-101) puts the most urgent first, then the latest activity; its cursor adds the rank.
+  `order="urgency"` (ADR-103) puts the most urgent first, then the latest activity; its cursor adds the rank.
   `overview` (`working`, `waiting`, `no_agent`) keeps the open tasks of one overview of the start page: their
   attention record (`agent_hub.attention.derive.OVERVIEW`, the one rule of the three numbers) belongs to it.
-- `count_tasks(wgs)`: the counters of the task dashboard per status, per urgency and per overview (ADR-101 section 1).
+- `count_tasks(wgs)`: the counters of the task dashboard per status, per urgency and per overview (ADR-103 section 1).
 - `get_task(task)`: the task row, its sessions as a tree order (depth, creation), each with its usage and its newest
   100 transitions, and the newest 100 task transitions.
 - `get_session(session)`: the session row, its newest 1000 transitions, usage, VM and the IDs of its first 1000
@@ -61,8 +61,8 @@ its attention record has a category of the overview and is not `done/closed`."""
 
 @dataclass(frozen=True)
 class TicketFilter:
-    """The ticket filters of a list (ADR-100 section 5): a status, an urgency, a person and a topic (an ID, or `none`
-    for tasks without one), and the overview of the open tasks (`working`, `waiting`, `no_agent`; ADR-101); None
+    """The ticket filters of a list (ADR-102 section 5): a status, an urgency, a person and a topic (an ID, or `none`
+    for tasks without one), and the overview of the open tasks (`working`, `waiting`, `no_agent`; ADR-103); None
     filters nothing."""
 
     status: str | None = None
@@ -96,7 +96,7 @@ class TicketFilter:
 URGENCY = "urgency"
 URGENCY_RANKS = {"low": 0, "normal": 1, "high": 2, "urgent": 3}
 RANK_SQL = "(CASE t.urgency WHEN 'urgent' THEN 3 WHEN 'high' THEN 2 WHEN 'normal' THEN 1 ELSE 0 END)"
-"""The rank of a task's urgency for `order=urgency` (ADR-101 section 2): the most urgent first."""
+"""The rank of a task's urgency for `order=urgency` (ADR-103 section 2): the most urgent first."""
 _URGENCY_INDEX = rows.TASK_FIELDS.index("urgency")
 _ACTIVITY_INDEX = ORDERS["activity"][1]
 
@@ -179,7 +179,7 @@ URGENCY_KEYS = tuple(URGENCY_RANKS)
 
 
 def count_tasks(connection: Connection, wgs: list[UUID], *, state: str | None, ticket: TicketFilter) -> dict[str, Any]:
-    """The counters of the task dashboard (ADR-101 section 1) over the workgroups `wgs` (the caller checked that
+    """The counters of the task dashboard (ADR-103 section 1) over the workgroups `wgs` (the caller checked that
     it reads each): per status the tasks that match every filter but the status, per urgency those that match every
     filter but the urgency, per overview of the open tasks (`overview_of` of the attention record) those that match
     every filter but the overview, and `total` the tasks that match all of them - so a click on a counter gives that

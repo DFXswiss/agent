@@ -28,6 +28,7 @@ DEFAULT_HOME_RELATIVE = ".local/share/agent-runner"
 DEFAULT_HOME = "~/" + DEFAULT_HOME_RELATIVE
 DEFAULT_LOGIN_ARGV = ("claude", "setup-token")
 DEFAULT_SUBSCRIPTION_LOGIN_ARGV = ("claude", "auth", "login", "--claudeai")
+LOGIN_SANDBOXES = ("vm", "process")
 """The full login of a further subscription (ADR-092 section 1); `--email <address>` is appended when known."""
 DEFAULT_CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
 DEFAULT_CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
@@ -67,6 +68,7 @@ NAMES = (
     "CLAUDE_TOKEN_URL",
     "CLAUDE_OAUTH_CLIENT_ID",
     "LOGIN_AUTOMATION",
+    "LOGIN_SANDBOX",
     "GOLDEN_TEMPLATE",
     "TEST_MODE",
     "VM_PREFIX",
@@ -273,6 +275,10 @@ class Config:
     """The token endpoint the measuring device renews further subscriptions at (ADR-092 section 2)."""
     claude_oauth_client_id: str = DEFAULT_CLAUDE_OAUTH_CLIENT_ID
     """The client ID of that renewal (the pinned Claude Code's)."""
+    login_sandbox: str = "vm"
+    """`LOGIN_SANDBOX`: where the mailbox automation drives its browser (ADR-100 section 3): `vm` - a login VM per
+    login (the work VMs), `process` - a Chromium process of the device per login (devices without work VMs, the
+    hermetic end-to-end topology)."""
 
     @property
     def contexts_dir(self) -> Path:
@@ -329,6 +335,9 @@ def load_config(
     automation_raw = raw("LOGIN_AUTOMATION") or ("on" if device_kind == "platform" else "off")
     if automation_raw not in ("on", "off"):
         raise RunnerError("config_invalid", "LOGIN_AUTOMATION")
+    sandbox = raw("LOGIN_SANDBOX") or "vm"
+    if sandbox not in LOGIN_SANDBOXES:
+        raise RunnerError("config_invalid", "LOGIN_SANDBOX")
     return Config(
         home=_home(raw("HOME") or DEFAULT_HOME, expand_user),
         hub_url=hub_url,
@@ -368,6 +377,7 @@ def load_config(
         ),
         login_automation=automation_raw == "on",
         login_automation_set=raw("LOGIN_AUTOMATION") != "",
+        login_sandbox=sandbox,
         golden_template=_optional(
             raw("GOLDEN_TEMPLATE"), "GOLDEN_TEMPLATE", require, lambda v: _file(v, "GOLDEN_TEMPLATE")
         ),
@@ -471,6 +481,7 @@ def environment(config: Config) -> dict[str, str]:
         "WORKVM_MAX_SIZE": None if config.workvm_max_size == "large" else config.workvm_max_size,
         "WORKVM_TEMPLATE": config.workvm_template,
         "BROWSER_SEARCH_URL": config.browser_search_url or None,
+        "LOGIN_SANDBOX": None if config.login_sandbox == "vm" else config.login_sandbox,
     }
     for name, value in optional_text.items():
         if value is not None:

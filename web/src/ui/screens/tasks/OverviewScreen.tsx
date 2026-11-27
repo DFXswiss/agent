@@ -1,4 +1,4 @@
-// The task dashboard (ADR-101; built on the task overview of KOR-32, route `/o/:org/tasks`, right `org:member`):
+// The task dashboard (ADR-103; built on the task overview of KOR-32, route `/o/:org/tasks`, right `org:member`):
 // every task the user can read, in every organization of `GET /v1/me` whose log is verified and every workgroup there
 // the user can read (from the verified membership logs; the others are never requested) – captured tasks without an
 // agent and agent tasks in one list. Filters: organization, workgroup (only those lists are loaded), state, the

@@ -464,7 +464,7 @@ list says "Searched the N most recent tasks." ("Searched X of N tasks." once the
 further" button that starts the next request of at most 10 pages. While a search is active, "Search further" replaces
 "Load more".
 
-**Captured tasks (KOR-75, [ADR-100](../adr/100-captured-tasks.md), E-41).** Beside the composer of §5.1 and in §5.1a,
+**Captured tasks (KOR-75, [ADR-102](../adr/102-captured-tasks.md), E-41).** Beside the composer of §5.1 and in §5.1a,
 "Capture task" opens a form: title (required), description, person (members of the organization, agent accounts
 included), topic (choose, or create a sealed `topic.profile`), GitHub organisation and repository (suggestions, free
 input allowed), urgency (preset normal); it sends `POST /v1/tasks` with the sealed `task.meta` alone, so no agent
@@ -474,7 +474,7 @@ search above. The task page shows the fields with "Edit" (`PUT /v1/tasks/{task}/
 organisation and repository as a new sealed `task.meta`), the status as a choice (completed closes the task), and for a
 task without a main session "Start agent" (its first prompt: title, blank line, description; editable).
 
-**Task dashboard (KOR-75, [ADR-101](../adr/101-task-dashboard.md)).** §5.1a is the dashboard of every task the
+**Task dashboard (KOR-75, [ADR-103](../adr/103-task-dashboard.md)).** §5.1a is the dashboard of every task the
 user reads: every organization of `GET /v1/me` with a verified log and every readable workgroup there, captured tasks
 and agent tasks in one list; with several organizations each row names "organization · workgroup", and the filters
 offer the organization and the workgroups of all of them. On top the counters of the start page's three groups of
@@ -982,6 +982,38 @@ not open). The page "My subscriptions" (KOR-68) opens the same dialogs at "Add s
 further subscription that is not logged in. A login is started once per attempt; closing the dialog while it starts
 sends nothing more.
 
+**Mailboxes (KOR-74, [ADR-099](../adr/099-mailboxes-read-by-the-platform.md)).** Settings section "Mailboxes"
+(`settings/mailboxes`, core `core/credentials/mailboxes.ts`): every own mailbox (`GET /v1/me/mailboxes`, each record
+opened in the browser) as a card with name, address, purpose, the workgroups it is released to and "for the automatic
+login" on the primary one; "Add a mailbox" (name, purpose, address, IMAP host, port 993, user, password), "Change"
+(the password field stays empty to keep the stored one), "Release" (checkboxes of the workgroups the user has access
+to; the sealed `use {wgs}` and its plaintext mirror), "Check" (device request `mailbox.check` with the mailbox body,
+sealed to the device) and "Remove" (one confirmation). Sessions of a released workgroup read the mailbox with
+`mail.find`; the password never leaves the record and the device. The view and its texts (area `mailbox`) are a chunk
+of their own loaded when the settings show the section, so the first load keeps its budget.
+
+**Subscriptions side by side (KOR-73, [ADR-100](../adr/100-parallel-subscription-logins.md)).** When the preselected
+device announced `subscriptions.parallel` (`subscriptionDevices().parallel`; otherwise everything above stays):
+- "Add a subscription" also takes the subscription's **own mailbox** (IMAP host, port 993, user, password, address –
+  `MailboxFields`), the address to sign in with, the **organizations** that may use it (`use.orgs`, E-31) and, with a
+  mailbox, the data of a **new account** (full name, date of birth, and three consents – terms, minimum age, product
+  e-mails – each unticked and worded as given by the account holder, the person whose address it is). The record is
+  written first (`PUT /v1/subscriptions/{id}`, `expected_version` 0, no token, `kind` `oauth_login`, with the mirror of
+  the use), then `claude.login` goes out with `extended: true` and the subscription as plaintext `slot`; with a mailbox
+  it is automatic and may carry `account`.
+- "Add several subscriptions" (`AddSeveral`, shown only with such a device): rows (label, address, own mailbox, new
+  account) and one choice of organizations for all; "Log them all in" starts every login at once
+  (`addSubscriptions`, one record, request and slot each) and shows the progress of each subscription in its row
+  (stages, the check for humans, link and code, done or failed; "again" restarts that row's login).
+- **Check for humans** (`HumanCheck`): a `verify` response shows the newest picture of the login sandbox; the owner's
+  click into it goes out as the follow-up `{click: {x, y}}` (fractions of the picture), "Sign in myself in my own
+  browser" sends `{relay: true}`. The text says the owner does the check and the platform only carries the click. A
+  fallback names its `reason`.
+- The subscription card shows the address of the own mailbox (never its password) and offers "Mailbox": set or
+  replace it (the password is entered anew), remove it, and "Check mailbox" (`mailbox.check {subscription_id}`). "Log
+  in now/again" of a subscription with its own mailbox is automatic and goes only to such a device
+  (`no_device_available` otherwise).
+
 ### 8.3 Connected agents (KOR-24, `11-agent-access.md`)
 
 - `/settings` → "Connected agents": `GET /v1/me/agents`, each with name and computer (opened from the sealed label),
@@ -1137,7 +1169,9 @@ dialog of KOR-57 stage b adds its texts in both languages (the catalogs stay in 
 code loads lazily. Raised to 224 KiB by KOR-56 (ADR-096): every client verifies support releases, support authors
 and wraps to support persons in the membership and platform logs at sign-in, and the background jobs offer the support
 slots in catch-up and rotate released workgroups after a person left support – about 2.6 KiB gzip in the first load
-together with the packages merged at the same time; the support area, the release dialog and their texts load lazily. The guard runs in every package's gates (`npm run
+together with the packages merged at the same time; the support area, the release dialog and their texts load lazily.
+Raised to 225 KiB by KOR-74 (ADR-099): the settings entry "Mailboxes" and the mailbox fields of the credential
+reader (about 0.2 KiB gzip); the section's view, its core module and its texts (area `mailbox`) load lazily. The guard runs in every package's gates (`npm run
 build:check`, the build tests and the E2E budget test), so growth of the first load is seen deterministically where it
 is caused, not later as a narrow timing failure. It is raised only together with a reason in this section. The first
 load is three scripts: the framework, the app modules imported statically from the entry (chunk group `$initial`) and

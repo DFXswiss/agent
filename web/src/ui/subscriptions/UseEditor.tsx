@@ -12,10 +12,11 @@ import { useDirectory } from '../screens/tasks/hooks';
 import { PRIMARY } from '../settings/sections/credentials/DevicePicker';
 import { useReason } from '../settings/sections/github/reason';
 import { useAppEnv } from '../shell/context';
+import '../../core/i18n/lazy/subscription-login';
 
 export const OPERATOR_ROLE = 'operator';
 
-function OrgName({ org }: { readonly org: string }) {
+export function OrgName({ org }: { readonly org: string }) {
   const { app } = useAppEnv();
   const verified = useStore((state) => orgEntry(state.orgs, org).log !== null, app.store);
   const directory = useDirectory(org, verified);

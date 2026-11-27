@@ -386,7 +386,7 @@ def cmd_task_list(account: Account, args: argparse.Namespace, context: Context) 
     if args.mine or (args.org is not None and args.by_person):
         raise PlatformError("invalid_argument")
     if args.org is not None:
-        # every readable workgroup of the org with the filters: the task dashboard of one org (ADR-101)
+        # every readable workgroup of the org with the filters: the task dashboard of one org (ADR-103)
         dashboard = sessions.Dashboard(
             org=args.org,
             state=query.state,
@@ -723,7 +723,7 @@ def _task_commands(tree: Tree) -> None:
 
 
 def _filter_arguments(sub: Parser) -> None:
-    """The filters, order and search of `task list` and `task overview` (ADR-100, ADR-101)."""
+    """The filters, order and search of `task list` and `task overview` (ADR-102, ADR-103)."""
     sub.add_argument("--status", choices=tickets.STATUSES, help="only tasks with this status")
     sub.add_argument("--urgency", choices=tickets.URGENCIES, help="only tasks with this urgency (prio)")
     sub.add_argument("--assignee", help="only tasks of this person (a user ID, me, or none)")
@@ -736,7 +736,7 @@ def _filter_arguments(sub: Parser) -> None:
 
 
 def _ticket_arguments(sub: Parser, *, edit: bool) -> None:
-    """The ticket fields of `task capture` and `task edit` (ADR-100)."""
+    """The ticket fields of `task capture` and `task edit` (ADR-102)."""
     sub.add_argument("--title", required=not edit, help="one line, at most 120 characters")
     sub.add_argument("--description", help="free text, or - to read it from stdin" + (" ('' clears)" if edit else ""))
     sub.add_argument(
@@ -755,7 +755,7 @@ def _ticket_arguments(sub: Parser, *, edit: bool) -> None:
 
 
 def _ticket_commands(tree: Tree, group: Any) -> None:
-    """`task capture`, `task edit`, `task start`, `topic list` and `topic create` (E-41, ADR-100)."""
+    """`task capture`, `task edit`, `task start`, `topic list` and `topic create` (E-41, ADR-102)."""
     sub = tree.add(
         group,
         "capture",

@@ -1,4 +1,4 @@
-// U-WEB-ui-tasks (captured tasks, E-41, ADR-100): the hub fields of a row (also from an older hub), the sealed fields
+// U-WEB-ui-tasks (captured tasks, E-41, ADR-102): the hub fields of a row (also from an older hub), the sealed fields
 // from the newest `task.meta` carrying each, the form checks, capture (`POST /v1/tasks` with `task.meta` only) and its
 // answer checks, the field changes (`PUT …/fields`), a new `task.meta` with the full set, "Start agent", the people of
 // the org and the topics (`topic.profile`: read, pulled, created).

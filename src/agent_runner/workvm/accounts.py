@@ -22,8 +22,9 @@ macOS facts (verified = read in the man pages of macOS 27 on the build device; a
   `limactl start` writes `$LIMA_HOME/_config/networks.yaml` (0644) - with a read-only `_config` it fails with `open
   .../_config/networks.yaml: permission denied`. Besides `_config` it writes only the instance directory. `_config`
   therefore belongs to the slot account like in any Lima home (decision HOT-18); the key is generated at installation.
-- assumed: a custom mount point of `addVolume` does not persist across reboots; an `/etc/fstab` entry by volume UUID
-  is still needed (open point).
+- observed (a power cut on a runner device, HOT-25): the custom mount point of `addVolume` does not persist across a
+  restart (the volume came back under `/Volumes/<name>`); `workvm install` writes an `/etc/fstab` entry by volume
+  UUID and mounts it back (`agent_runner.workvm.volume`).
 """
 
 from __future__ import annotations

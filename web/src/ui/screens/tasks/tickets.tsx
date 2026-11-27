@@ -1,4 +1,4 @@
-// Shared parts of the captured tasks (E-41, ADR-100 section 7): the topics of the org (pulled once), the people a task
+// Shared parts of the captured tasks (E-41, ADR-102 section 7): the topics of the org (pulled once), the people a task
 // may name (members and agent accounts of the verified log, named by the directory), the suggestions for GitHub
 // organisation and repository (the logins of the user's GitHub identities, the workgroups' repository lists; free input
 // stays allowed), and the badges of status and urgency shown by rows and the task page.
@@ -47,7 +47,7 @@ export function selectTopicsOf(key: string): (state: StoreState) => ReadonlyMap<
   };
 }
 
-/** The topics of several organizations (the task dashboard, ADR-101); pulls them once. */
+/** The topics of several organizations (the task dashboard, ADR-103); pulls them once. */
 export function useTopicsOf(orgs: readonly string[]): ReadonlyMap<string, readonly Topic[]> {
   const { app } = useAppEnv();
   const key = orgs.join(',');

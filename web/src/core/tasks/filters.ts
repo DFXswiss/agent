@@ -1,4 +1,4 @@
-// The hub-side filters of a task list (03-api.md section 4.6, ADR-100 section 5): the state (06-web.md section 5.1)
+// The hub-side filters of a task list (03-api.md section 4.6, ADR-102 section 5): the state (06-web.md section 5.1)
 // and the ticket fields status, urgency, person (`assignee`: a user ID or `none`) and topic (a topic ID or `none`) of
 // `GET /v1/workgroups/{wg}/tasks`. A list of the `tasks` slice is keyed by one text (`filterKey`): null for every task,
 // the state alone for a state filter (the key of before), else the query of the set filters in a fixed order. Changed
@@ -6,7 +6,7 @@
 // slice uses it.
 import type { TaskRow } from '../store/slices/tasks';
 
-/** The filters the hub applies; null or absent: not filtered. `order` is the list's order (ADR-101 section 2;
+/** The filters the hub applies; null or absent: not filtered. `order` is the list's order (ADR-103 section 2;
  * absent: latest activity). */
 export interface HubFilter {
   readonly state?: string | null;
@@ -15,7 +15,7 @@ export interface HubFilter {
   readonly assignee?: string | null;
   readonly topic?: string | null;
   /** The overview of the open tasks (`working`, `waiting`, `no_agent`): the start page's three groups, read by the
-   * hub from the tasks' attention records (ADR-101). */
+   * hub from the tasks' attention records (ADR-103). */
   readonly overview?: string | null;
   readonly order?: string | null;
 }

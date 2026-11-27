@@ -165,7 +165,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `POST /v1/tasks/{task}/close` | task:write | `{}` → task (`closed`; all sessions `stopping`) |
 | `POST /v1/tasks/{task}/model-consent` | task:write | `{}` → `{task_id,model_consent:true}`: the task may use DFX access while its owner's own access is used up (card `quota_choice`); delivered as `model_consent` with the task's sessions in the device state; audit `task.model_consent` (KOR-50, ADR-081 §5) |
 | `PUT /v1/tasks/{task}/placement` | task:write | `{device_id:uuid|null,vm_id:string|null}` → task: changes the chosen device/VM (`null` = automatic) for the waiting and later main sessions; same checks as `POST /v1/tasks`; audit `task.placement` (ADR-075 §6) |
-| `PUT /v1/tasks/{task}/fields` **(new, KOR-75)** | task:write | `{status?,urgency?,assignee_id?:uuid\|null,topic_id?:uuid\|null}` (at least one) → `{task}`: the ticket fields of ADR-100 §5; `completed` closes the task as `POST /v1/tasks/{task}/close` (audit `task.close`), `todo`/`inProgress` on a closed task reopen it without an agent (state `idle`); a value outside its list, a user that is no active member of the organization or a topic without a `topic.profile` in its org scope is `400 request_invalid` with the pointer; audit `task.fields` with the changed values |
+| `PUT /v1/tasks/{task}/fields` **(new, KOR-75)** | task:write | `{status?,urgency?,assignee_id?:uuid\|null,topic_id?:uuid\|null}` (at least one) → `{task}`: the ticket fields of ADR-102 §5; `completed` closes the task as `POST /v1/tasks/{task}/close` (audit `task.close`), `todo`/`inProgress` on a closed task reopen it without an agent (state `idle`); a value outside its list, a user that is no active member of the organization or a topic without a `topic.profile` in its org scope is `400 request_invalid` with the pointer; audit `task.fields` with the changed values |
 | `POST /v1/sessions/{session}/control` | task:write | `{action:"interrupt"|"stop"}` → `{}` |
 | `POST /v1/sessions/{session}/orchestrator`, `GET` the same | owner (browser session of the task owner only) | the session as the user's main orchestrator on DFX hardware (KOR-57, ADR-082 §6): request → `{session_id,device_id,available,reason,requested_at,pairing}`, `409 orchestrator_unavailable`; `11-agent-access.md` §4 and §11 |
 | `GET /v1/sessions/{session}` | task:read | → session incl. transitions, usage, device, vm, parent, children |
@@ -178,7 +178,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 
 Task rows carry `analysis` (`{scope,since,until}` of an analysis task, null otherwise; ADR-097 §1).
 
-**Captured tasks (KOR-75, ADR-100, E-41).** `POST /v1/tasks` with `events:[task.meta]` alone captures a task without
+**Captured tasks (KOR-75, ADR-102, E-41).** `POST /v1/tasks` with `events:[task.meta]` alone captures a task without
 an agent: no session and no scheduler decision, state `idle`, answer `session: null`, audit `task.create` with
 `captured: true`; `analysis` needs the prompt (`400`). Both forms take `urgency` (`low`, `normal` default, `high`,
 `urgent`), `assignee_id` (an active user member of the organization, a person or an agent account) and `topic_id` (the
@@ -189,7 +189,7 @@ session, and every prompt that starts a new main session moves `todo` to `inProg
 filters by `status`, `urgency`, `assignee` and `topic` (an ID or `none`). Title, description, GitHub organisation and
 repository are sealed in `task.meta` (§10), topic names in `topic.profile`.
 
-**Task dashboard (KOR-75, ADR-101).** `GET /v1/orgs/{org}/tasks/counts` (org:member, audit read
+**Task dashboard (KOR-75, ADR-103).** `GET /v1/orgs/{org}/tasks/counts` (org:member, audit read
 `read.org.tasks.counts`) `?state=&status=&urgency=&assignee=&topic=&wg=` → `{by_status:{todo,inProgress,completed},
 by_urgency:{low,normal,high,urgent},total}` over the tasks of the workgroups of the organization the user can read
 (`wg`: one of them; an unreadable one `404`), with the filters of `GET /v1/workgroups/{wg}/tasks`; the counters per
@@ -377,6 +377,10 @@ For the kinds `github` and `claude_subscription` (KOR-69, ADR-090: further Claud
 | `GET /v1/subscriptions/{id}` | user | → `{owner_id,primary,record}` for an own subscription record; otherwise `404` |
 | `PUT /v1/subscriptions/{id}` | user | `{record,expected_version,use?:{pool,orgs}}` (0 = create) → `{version}` (`use`: the plaintext mirror of the sealed use, ADR-090 §3; absent: the mirror stays): an own further subscription sealed under the caller's `CK`, author the caller or its own-identity agent; a new record is never primary; the primary record is `403 forbidden` (it is written through `PUT /v1/me/credentials/claude_subscription`); at most 40 records per user (`size_exceeded`) |
 | `DELETE /v1/subscriptions/{id}` | user | → `{}`: hard delete of an own subscription record (also the primary one) and its reading |
+| `GET /v1/me/mailboxes` | user | → `{mailboxes:[{id,owner_id,primary,version,epoch,created_at,updated_at,use}]}`: every `mailbox` record of the caller (newest change first) with the mirror of its release `use {wgs}` or `null` (KOR-74, ADR-099 §2) |
+| `GET /v1/mailboxes/{id}` | user | → `{owner_id,primary,record}` for an own mailbox record; otherwise `404` |
+| `PUT /v1/mailboxes/{id}` | user | `{record,expected_version,use?:{wgs}}` (0 = create) → `{version}`: an own mailbox sealed under the caller's `CK`, author the caller or its own-identity agent; a user's first mailbox becomes primary (the mailbox of the automatic login, `/v1/me/credentials/mailbox`), further ones never; also the primary record may be written here; `use`: the plaintext mirror of the sealed release (at most 50 workgroups the caller has access to, else `403 forbidden`; `wgs:[]` removes it; absent: the mirror stays); at most 100 records per user (`size_exceeded`) |
+| `DELETE /v1/mailboxes/{id}` | user | → `{}`: hard delete of an own mailbox record (also the primary one) and its mirror |
 | `PUT /v1/github-defaults/{scope}/{scope_id}` | user | `{identity_id\|null}` → `{}`: default of an organization (`scope` `org`: admins) or workgroup (`wg`: admins of its organization and writers of the workgroup); only company records of that organization (`403 identity_forbidden`); `409 peer_outdated` as for tasks; audit `github.default` |
 
 ### 4.9 Whiteboards and notifications
@@ -408,7 +412,7 @@ Other notification rules: `task.idle` to the task owner when the main session go
 
 | Endpoint | Right | Request → Response |
 |---|---|---|
-| `POST /v1/device-requests` | user (device must be in `GET /v1/me/devices`) | `{envelope,org_id?}` (`04-crypto.md` §4.5) → `{request_id,state}`; `header.user` = the user or the user's own-identity agent (signed with its key; the request belongs to the user; follow-ups compare through the user; the device's response names the requester, ADR-082); `org_id` (KOR-47): a `github.connect` for a company account of that organization, only by its active admins (`403 forbidden` otherwise, or for another kind) |
+| `POST /v1/device-requests` | user (device must be in `GET /v1/me/devices`) | `{envelope,org_id?,slot?}` (`04-crypto.md` §4.5) → `{request_id,state}`; `header.user` = the user or the user's own-identity agent (signed with its key; the request belongs to the user; follow-ups compare through the user; the device's response names the requester, ADR-082); `org_id` (KOR-47): a `github.connect` for a company account of that organization, only by its active admins (`403 forbidden` otherwise, or for another kind); `slot` (KOR-73, ADR-100 §2): the root's subject (for `claude.login` the subscription record it fills) – an active root is replaced only by a new root of the same user, device, kind and slot (no slot is a slot of its own), so logins of different subscriptions run side by side |
 | `GET /v1/device-requests/{id}` | user (owner) | → state + responses |
 
 If `GET /v1/me/devices` is empty (fresh private org), the web client first runs the device auto-assign batch of
@@ -530,6 +534,7 @@ receive → browser frame: p95 < 300 ms on LAN.
 | `PUT /v1/device/github-identities/{id}` | eligible for the user's `CK`, only while answering a `github.connect` of that user | `{owner_id,record,expected_version,request_id}` → `{version}`; user records only (a company record is written by an admin, `403 forbidden`) |
 | `GET /v1/device/subscriptions` | eligible for the user's `CK` | `?owner_id=` → `{subscriptions:[{id,owner_id,primary,version,epoch,created_at,updated_at}]}`: every `claude_subscription` record of the owner; clears the device's notice of `(owner, claude_subscription)`; `404` otherwise (KOR-69) |
 | `GET /v1/device/subscriptions/{id}` | as above | → `{owner_id,primary,record}` (ADR-090) |
+| `GET /v1/device/mailboxes` | eligible for the owners' `CK` | `?wg_id=` → `{mailboxes:[{id,owner_id,primary,record}]}`: the `mailbox` records whose release mirror names the workgroup and whose owner the device is eligible for, newest change first, at most 200 (KOR-74, ADR-099 §2); the runner uses a record only when its sealed release names the workgroup and its owner has explicit access there |
 | `PUT /v1/device/subscriptions/{id}` | as above, while answering a `claude.login` of that user (`request_id`), or without `request_id` to re-seal a further subscription whose stored epoch is older than the owner's current one, or to renew one (ADR-092 §2: the device measures the owner now – `quota_poll_owners` – or wrote the stored version itself) | `{owner_id,record,expected_version,request_id?}` → `{version}`; never the primary record (`403 forbidden`) |
 | `GET /v1/device/requests/{id}` / `POST /v1/device/requests/{id}/responses` | device addressed | → envelope / `{envelope}` → `{}` |
 | `PUT /v1/device/contexts/{object}/chunks/{index}` | device:session | `{session_id,ct,kind?}` (`ct` = one sealed chunk, 29 B – 2 MiB + 28 B, `04-crypto.md` §4.11; `kind` `context` (default) or `log` (KOR-43: a log, chunks up to 256 KiB + 28 B, `04-crypto.md` §4.12; it may belong to a subagent session; a chunk of another kind than its object's is `409 id_conflict`; quota `AGENT_HUB_LOG_ORG_BYTES` apart from the checkpoints; the commit checks it as a log and prunes the task's logs beyond `AGENT_HUB_LOG_KEEP`; checkpoint listing, pruning, the device state's `context` and the device downloads see only `context`); the body may use the 4 MiB batch limit) → `{replayed}`. A context's session must be a main session (`400 request_invalid` at `/session_id`) that runs or ran on the calling device in a workgroup it is assigned to (`403 forbidden`); the first chunk creates the object (`uploading`) for that session and device, another session or device under the same ID is `409 id_conflict`; identical bytes again `replayed: true`, other bytes at a stored index or a new chunk after the commit `409 id_conflict`. Quotas (`413 quota_exceeded`, `detail.quota {scope:"object"|"org",limit,used}`): `AGENT_HUB_CONTEXT_MAX_OBJECT_BYTES` per object, `AGENT_HUB_CONTEXT_ORG_BYTES` for every object of the organisation (serialised per organisation); each refusal is audited as `session.context_refused` |
@@ -569,7 +574,9 @@ be `last+1` (`409 origin_seq_gap` with `detail.expected`; a runner that no longe
 prunes acknowledged items after 1 h, the hub was restored from an older export – confirms the hub's position with
 `GET /v1/device/state`, renumbers its remaining items to follow it and reports the lost ones as `runner.alert`
 `outbox_items_lost`, `05-runner.md` §2.3, KOR-10); an already stored `origin_seq` with identical body →
-`replayed`; different body → `409 origin_seq_conflict` (fatal for the runner: stops syncing, raises an alert),
+`replayed`; different body → `409 origin_seq_conflict` (fatal for the runner: stops syncing, raises an alert;
+except a short lost tail after a power cut, which the runner repairs by taking the hub's position and reporting
+`runner.alert` `outbox_conflict_recovered`, `05-runner.md` §2.3, HOT-25),
 except that an item never stored before may be resent with new bytes after `reseal`. An `event` item whose only
 failure is E6 (`epoch_stale`) gets `status:"reseal"`; processing of the batch stops there (`acked_through` =
 previous item) and the runner re-seals it with the current epoch.
@@ -837,6 +844,7 @@ original released its slot (`failed`, `expired`), or with other content (e.g. an
 | `task.set_title` | `{title}` | 1–120 chars, single line | – | – | `{}` (runner writes a device-authored `task.meta` event) |
 | `human.question` | `{question}` | 1–4000 chars; main sessions only (a subagent ⇒ `denied`, `rights_denied`) (KOR-39, ADR-076 §3) | – | – | `{}` – succeeds at once; the task waits for a person (`needs_decision/question`) until the next prompt answers it |
 | `human.approval` | `{question}` | as `human.question` | – | – | `{}` – as `human.question`, the view offers approve / decline (`needs_decision/approval`); the answer prompt starts with `Approved.` or `Declined.` |
+| `mail.find` (KOR-74, ADR-099 §4) | `{mailbox, from?, subject?, since?, until?, folder?, limit?, body?, id?, wait_seconds?}` | `mailbox` the name or ID of a mailbox released to the session's workgroup; `from`/`subject` 1–200 printable ASCII without `"` and `\`; `folder` `inbox`/`spam`/`all` (default); `limit` 1–20 (5); `id` `<folder>:<uid>`; `wait_seconds` 0–300 (0) | – | – | `{mailbox:{id,name,email}, messages:[{id,folder,from,to,subject,date,size,text?,links?,text_truncated?}], waited_seconds, timed_out}` – executed by the device over IMAP without a VM; waits for a matching mail that arrived at or after `since` (default two minutes before the request); `not_found` names the released mailboxes; read only |
 
 GitHub answers of the issue and list types (KOR-25): `401` → `github_not_connected`; `404` → `not_found`; `410`
 (issues are disabled in the repository) → `not_found` with the message "Issues are disabled in this repository.";
@@ -887,8 +895,8 @@ operation's result (decrypted from its `operation.result` event) with `status:"d
 | `member.profile` | `{display_name}` |
 | `device.profile` | `{label}` |
 | `member.name` | `{display_name}`; header `ref` = the user or the invitation the name is for (ADR-073) |
-| `topic.profile` | `{name}` (1–100 characters on one line); org scope, header `wg=""`, `task=""`, `ref` = the topic ID; written by every member (right `org_member`); the newest event of a `ref` wins; not delivered to devices (KOR-75, ADR-100 §3) |
-| `task.meta` | `{title,description?,github_org?,github_repo?}` (`github_*`: the task's GitHub organisation and repository `owner/name`, `""` clears; readers take each field from the newest `task.meta` that carries it; KOR-75, ADR-100 §4); header `session=""`, `ref=""` |
+| `topic.profile` | `{name}` (1–100 characters on one line); org scope, header `wg=""`, `task=""`, `ref` = the topic ID; written by every member (right `org_member`); the newest event of a `ref` wins; not delivered to devices (KOR-75, ADR-102 §3) |
+| `task.meta` | `{title,description?,github_org?,github_repo?}` (`github_*`: the task's GitHub organisation and repository `owner/name`, `""` clears; readers take each field from the newest `task.meta` that carries it; KOR-75, ADR-102 §4); header `session=""`, `ref=""` |
 | `task.agent_name` | `{name}` (1–80 characters on one line, or null = automatic name); header `session=""`, `ref=""` (KOR-52, ADR-095 §2) |
 | `prompt` | `{text,attachments:[]}` (attachments reserved, empty in v1); header `session=""`, `ref=""` (prompts address the task) |
 | `whiteboard.entry` | `{level,text}` (Markdown, ≤ 64 KiB) |

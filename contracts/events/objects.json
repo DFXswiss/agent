@@ -490,12 +490,12 @@
         },
         "github_org": {
           "type": "string",
-          "description": "the GitHub organisation or account of the task (ADR-100 section 4); empty clears it",
+          "description": "the GitHub organisation or account of the task (ADR-102 section 4); empty clears it",
           "pattern": "^([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))?$"
         },
         "github_repo": {
           "type": "string",
-          "description": "the repository owner/name of the task (ADR-100 section 4); empty clears it",
+          "description": "the repository owner/name of the task (ADR-102 section 4); empty clears it",
           "pattern": "^([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9_.-]{1,100})?$"
         }
       },
@@ -506,7 +506,7 @@
     },
     "body_topic_profile": {
       "type": "object",
-      "description": "A topic of the organization's captured tasks (ADR-100 section 3); header ref = the topic ID, the newest event of a ref wins.",
+      "description": "A topic of the organization's captured tasks (ADR-102 section 3); header ref = the topic ID, the newest event of a ref wins.",
       "properties": {
         "name": {
           "type": "string",
@@ -1576,6 +1576,30 @@
             },
             "params": {
               "$ref": "../ops/objects.json#/$defs/params_github_merge"
+            },
+            "idempotency_key": {
+              "$ref": "#/$defs/idempotency_key"
+            }
+          },
+          "required": [
+            "operation_id",
+            "type",
+            "params"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "operation_id": {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            "type": {
+              "type": "string",
+              "const": "mail.find"
+            },
+            "params": {
+              "$ref": "../ops/objects.json#/$defs/params_mail_find"
             },
             "idempotency_key": {
               "$ref": "#/$defs/idempotency_key"

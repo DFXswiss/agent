@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/mailbox-put.request.json",
+  "title": "PUT /v1/mailboxes/{id} request",
+  "description": "Store a version of an own mailbox record (expected_version 0 creates it; a user's first mailbox becomes primary), sealed under the caller's CK, author the caller or the caller's own-identity agent (03-api.md section 4.8, ADR-099 section 2). use: the plaintext mirror of the sealed release; absent, the mirror stays.",
+  "type": "object",
+  "properties": {
+    "record": {
+      "$ref": "../common.json#/$defs/credential_record"
+    },
+    "expected_version": {
+      "$ref": "../common.json#/$defs/count"
+    },
+    "use": {
+      "$ref": "objects.json#/$defs/mailbox_use"
+    }
+  },
+  "required": [
+    "record",
+    "expected_version"
+  ],
+  "additionalProperties": false
+}

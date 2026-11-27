@@ -17,7 +17,7 @@ ADR-094 section 1): a child without one works with what its parent has. The hand
 task row names the task's `number` in its organization and `name_event_id`, the newest `task.agent_name` event of the
 task (the main agent's name, null without one); a session row its `agent_path` (null for a main session).
 `analysis` marks an analysis task with its scope and period (`{scope, since, until}`, null for every other task;
-ADR-097 section 1). The ticket fields of ADR-100 (E-41): `status` (`todo`, `inProgress`, `completed`), `urgency`
+ADR-097 section 1). The ticket fields of ADR-102 (E-41): `status` (`todo`, `inProgress`, `completed`), `urgency`
 (`low`, `normal`, `high`, `urgent`), `assignee_id` (the responsible user, null without one) and `topic_id` (the topic,
 null without one); a captured task has no session, so its `main_session_id` is null.
 """

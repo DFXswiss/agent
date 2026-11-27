@@ -15,11 +15,11 @@
 - `session terminal`: the `session.terminal` chunks of the session (`kinds=session.terminal&session=<id>`), checked
   with the session's device as author (E7), as text: the output frames (`o`) in order, raw and without terminal
   control sequences; `next_after` continues after the last chunk read.
-- `task overview`, the task dashboard (ADR-101 section 4): every task of the workgroups the user can read in
+- `task overview`, the task dashboard (ADR-103 section 4): every task of the workgroups the user can read in
   every organization of the user (or of `--org`, or of the workgroup `--wg`; from the verified log, others are never
   asked), captured tasks and agent tasks in one list, merged in the chosen order (latest activity, creation or
   urgency), with verified title, owner (the signed author of the task's first `task.meta` of a person or an agent
-  account; the hub's `owner_id` is ignored) and the ticket fields of ADR-100. Status, urgency, person and topic filter
+  account; the hub's `owner_id` is ignored) and the ticket fields of ADR-102. Status, urgency, person and topic filter
   at the hub; `--mine` (the owner or the person of the owning agent account), `--search`, GitHub organisation and
   repository here because they are sealed. `counts` are the hub's counters per status and urgency
   (`GET /v1/orgs/{org}/tasks/counts`) summed over the organizations.
@@ -290,8 +290,8 @@ def metas(account: Account, org: str, wg: str) -> dict[str, tuple[str | None, st
 
 @dataclass(frozen=True)
 class Dashboard:
-    """What `task overview` asks for (ADR-101 section 4): the place (every organization of the user, one org or
-    one workgroup), the task state, "only mine" (the signed owner), the title search, the ticket filters of ADR-100
+    """What `task overview` asks for (ADR-103 section 4): the place (every organization of the user, one org or
+    one workgroup), the task state, "only mine" (the signed owner), the title search, the ticket filters of ADR-102
     and the order."""
 
     org: str | None = None

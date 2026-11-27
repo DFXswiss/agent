@@ -1,4 +1,4 @@
-"""U-HUB-attention (the overview of the open tasks, ADR-101): every attention record falls into exactly one of the three
+"""U-HUB-attention (the overview of the open tasks, ADR-103): every attention record falls into exactly one of the three
 groups of the start page and the task dashboard, except a closed task."""
 
 from __future__ import annotations

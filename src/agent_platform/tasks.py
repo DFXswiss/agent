@@ -46,7 +46,7 @@ decides; a device that cannot decide yet is `peer_outdated`.
 KOR-52 (ADR-095): the task rows of `task list` and `task show` carry the main agent as people see it (`agent`:
 `<name> #<number>`, with `number` and `name_source`; `agentnames`).
 
-KOR-75 (ADR-100, E-41): the rows carry the ticket fields (`status`, `urgency`, `assignee_id`, `topic_id` and the
+KOR-75 (ADR-102, E-41): the rows carry the ticket fields (`status`, `urgency`, `assignee_id`, `topic_id` and the
 topic's name; `task show` also the sealed `description`, `github_org`, `github_repo`), and `task list` filters by them
 (`agent_platform.tickets`: capture, edit, start and topics live there).
 """
@@ -483,7 +483,7 @@ def _listed(account: Account, org: str, wg: str, query: ListQuery) -> tuple[list
 
 def task_list(account: Account, wg: str, query: ListQuery | None = None) -> dict[str, Any]:
     """The tasks of a workgroup with their verified titles, their main agents (`<name> #<number>`, ADR-095) and their
-    ticket fields (ADR-100), filtered by the query (status, urgency, person and topic at the hub, GitHub organisation,
+    ticket fields (ADR-102), filtered by the query (status, urgency, person and topic at the hub, GitHub organisation,
     repository and the title search here on the opened events), in its order."""
     wanted = (query or ListQuery()).checked()
     org = find_org(account, _id(wg))

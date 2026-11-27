@@ -95,7 +95,7 @@ describe('reader checks', () => {
     ).toBe('author_not_writer');
   });
 
-  it('lets any member write a topic with a UUID ref and empty wg and task (ADR-100 section 3)', async () => {
+  it('lets any member write a topic with a UUID ref and empty wg and task (ADR-102 section 3)', async () => {
     const ref = await idOf('topic');
     const topic = await sealed(bob, { kind: 'topic.profile', scope: 'org', scope_id: world.org, ref });
     expect((await checkEvent(topic, world.log!)).rule.right).toBe('org_member');

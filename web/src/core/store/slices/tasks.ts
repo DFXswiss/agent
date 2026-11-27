@@ -36,13 +36,13 @@ export interface TaskRow {
   readonly name_event_id?: string | null;
   /** Scope and period of an analysis task (ADR-097 section 1; `core/analysis/`); null or absent for any other. */
   readonly analysis?: unknown;
-  /** `todo`, `inProgress` or `completed` (ADR-100 section 1); absent from an older hub (`tickets.taskStatus`). */
+  /** `todo`, `inProgress` or `completed` (ADR-102 section 1); absent from an older hub (`tickets.taskStatus`). */
   readonly status?: string;
-  /** `low`, `normal`, `high` or `urgent` (ADR-100); absent from an older hub (normal). */
+  /** `low`, `normal`, `high` or `urgent` (ADR-102); absent from an older hub (normal). */
   readonly urgency?: string;
-  /** The person of the task, a user or agent of the org (ADR-100); null or absent: nobody. */
+  /** The person of the task, a user or agent of the org (ADR-102); null or absent: nobody. */
   readonly assignee_id?: string | null;
-  /** The topic of the task (ADR-100 section 3); null or absent: none. */
+  /** The topic of the task (ADR-102 section 3); null or absent: none. */
   readonly topic_id?: string | null;
 }
 
@@ -231,7 +231,7 @@ export function newestFirst(tasks: Readonly<Record<string, TaskRow>>, ids: Itera
   return [...new Set(ids)].sort((a, b) => time(b) - time(a) || Number(b > a) - Number(b < a));
 }
 
-/** The IDs in the order of the list key `filter` (`newestFirst` for the latest activity; ADR-101 section 2). */
+/** The IDs in the order of the list key `filter` (`newestFirst` for the latest activity; ADR-103 section 2). */
 export function inListOrder(
   tasks: Readonly<Record<string, TaskRow>>,
   ids: Iterable<string>,
@@ -261,7 +261,7 @@ function placeInLists(lists: TasksState['lists'], tasks: TasksState['tasks'], ro
   for (const [key, list] of Object.entries(lists)) {
     if (list.wg !== row.wg_id) continue;
     const present = list.ids.includes(row.task_id);
-    // a list by overview keeps the rows it holds and takes no new one: the row does not say its overview (ADR-101)
+    // a list by overview keeps the rows it holds and takes no new one: the row does not say its overview (ADR-103)
     const matches = matchesFilter(list.state, row) && (present || !byOverview(list.state));
     if (matches === present && !matches) continue;
     const ids = matches

@@ -1,9 +1,9 @@
-# KOR-75 – captured tasks (E-41, ADR-100)
+# KOR-75 – captured tasks (E-41, ADR-102)
 
 Additive changes; an older client never sends the new fields, an older hub never sends them in task rows.
 
 - `api/tasks-create.request.json`: `events` holds one item (`task.meta` alone: a captured task without an agent) or
-  two as before; optional `urgency`, `assignee_id`, `topic_id` (ADR-100 sections 1 and 5).
+  two as before; optional `urgency`, `assignee_id`, `topic_id` (ADR-102 sections 1 and 5).
 - `api/tasks-create.response.json`: `session` is null for a captured task; `events` one or two results.
 - `api/task-fields-put.{request,response}.json`, `api/INDEX.json`: `PUT /v1/tasks/{task}/fields` (`task:write`) with
   at least one of `status`, `urgency`, `assignee_id`, `topic_id`; answer `{task}`.
@@ -19,7 +19,7 @@ Additive changes; an older client never sends the new fields, an older hub never
 - `audit/task.fields.json` (new action `task.fields`, `enums/audit-actions.json`); `audit/task.create.json`: optional
   `captured: true`.
 
-Task dashboard (ADR-101, delivered with E-41), additive as well:
+Task dashboard (ADR-103, delivered with E-41), additive as well:
 
 - `api/orgs-tasks-counts.{request,response}.json`, `api/INDEX.json`: `GET /v1/orgs/{org}/tasks/counts` (`org:member`)
   with the list filters and `wg`; answer `{by_status, by_urgency, total}`.

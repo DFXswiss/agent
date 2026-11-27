@@ -169,11 +169,11 @@
         },
         "status": {
           "$ref": "../common.json#/$defs/task_status",
-          "description": "the ticket status (ADR-100 section 1); absent from an older hub"
+          "description": "the ticket status (ADR-102 section 1); absent from an older hub"
         },
         "urgency": {
           "$ref": "../common.json#/$defs/task_urgency",
-          "description": "the urgency (ADR-100 section 1); absent from an older hub"
+          "description": "the urgency (ADR-102 section 1); absent from an older hub"
         },
         "assignee_id": {
           "anyOf": [
@@ -184,7 +184,7 @@
               "type": "null"
             }
           ],
-          "description": "the responsible user of the organization (ADR-100 section 1), null without one; absent from an older hub"
+          "description": "the responsible user of the organization (ADR-102 section 1), null without one; absent from an older hub"
         },
         "topic_id": {
           "anyOf": [
@@ -195,7 +195,7 @@
               "type": "null"
             }
           ],
-          "description": "the topic, the ref of a topic.profile event (ADR-100 section 3), null without one; absent from an older hub"
+          "description": "the topic, the ref of a topic.profile event (ADR-102 section 3), null without one; absent from an older hub"
         }
       },
       "required": [
@@ -2432,6 +2432,97 @@
         "until"
       ],
       "additionalProperties": false
+    },
+    "mailbox_use": {
+      "type": "object",
+      "description": "the plaintext mirror of a mailbox's sealed release (ADR-099 section 3): the workgroups whose sessions may read it; the runner acts on the sealed release only",
+      "properties": {
+        "wgs": {
+          "type": "array",
+          "items": {
+            "$ref": "../common.json#/$defs/uuid"
+          },
+          "minItems": 0,
+          "maxItems": 50
+        }
+      },
+      "required": [
+        "wgs"
+      ],
+      "additionalProperties": false
+    },
+    "mailbox_meta": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "owner_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "primary": {
+          "type": "boolean"
+        },
+        "version": {
+          "$ref": "../common.json#/$defs/positive"
+        },
+        "epoch": {
+          "$ref": "../common.json#/$defs/epoch"
+        },
+        "created_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "updated_at": {
+          "$ref": "../common.json#/$defs/time"
+        },
+        "use": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/mailbox_use"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "owner_id",
+        "primary",
+        "version",
+        "epoch",
+        "created_at",
+        "updated_at",
+        "use"
+      ],
+      "additionalProperties": false,
+      "description": "metadata of a mailbox (a mailbox credential record, ADR-099); never the address, host, user, password, name or purpose"
+    },
+    "mailbox_record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "owner_id": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "primary": {
+          "type": "boolean"
+        },
+        "record": {
+          "$ref": "../common.json#/$defs/credential_record"
+        }
+      },
+      "required": [
+        "id",
+        "owner_id",
+        "primary",
+        "record"
+      ],
+      "additionalProperties": false,
+      "description": "a mailbox record released to a workgroup, for the device (ADR-099 section 2)"
     }
   }
 }

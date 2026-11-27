@@ -184,7 +184,7 @@ def test_every_append_only_table_has_both_triggers_enabled_always(owner: psycopg
     # the only other triggers number tasks and subagents before an insert (KOR-52, migration 0037; 4 = insert)
     expected.append(("session", "session_agent_path", "O", 1 | 2 | 4, "session_agent_path"))
     expected.append(("task", "task_number", "O", 1 | 2 | 4, "task_number"))
-    # and closed ⇔ completed of the ticket status before every insert and update (KOR-75, migration 0040)
+    # and closed ⇔ completed of the ticket status before every insert and update (KOR-75, migration 0042)
     expected.append(("task", "task_status", "O", 1 | 2 | 4 | 16, "task_status"))
     assert sorted(rows) == sorted(expected)
 

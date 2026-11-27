@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_runner.vm.lima import EXIT_NOT_FOUND, EXIT_TIMEOUT
+from agent_runner.vm.lima import EXIT_NOT_FOUND, EXIT_TIMEOUT, Lima, LimaError
 from agent_runner.workvm import shell
 from agent_runner.workvm.jobs import ShellResult
 from agent_runner.workvm.shell import SlotCommand, VmShell
@@ -165,3 +165,24 @@ def test_disk_path_of_an_instance_without_disk(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError) as caught:
         shell.disk_path(str(tmp_path))
     assert caught.value.filename == str(tmp_path / "disk")
+
+
+def test_a_slot_without_its_home_has_no_instances(tmp_path: Path) -> None:
+    """HOT-25: after a restart the volume of the slot homes may hang elsewhere. No Lima home, no instance: listing
+    finds none, a deletion counts as done (the work VM task never fails on it again), anything else fails."""
+    lima = Lima(SlotCommand(("agentwvm00",), home_root=str(tmp_path)).sync_runner(0), prefix="agent")
+    assert lima.list() == []
+    assert lima.delete("agentwvm-0a1b2c3d") is False
+    with pytest.raises(LimaError) as caught:
+        lima.rename("agentwvm-0a1b2c3d", "agentwvm-1a1b2c3d")
+    assert shell.NO_HOME in caught.value.detail
+    seen: list[str] = []
+
+    def absent(path: str) -> bool:
+        seen.append(path)
+        return False
+
+    command = SlotCommand(("a", "b"), home_root="/r", has_home=absent)
+    answer = command.sync_runner(1)(["list", "--json"], 1.0)
+    assert answer.args == ["sudo", "-n", "-u", "b", shell.WRAPPER, "list", "--json"]  # nothing ran
+    assert seen == ["/r/b"]

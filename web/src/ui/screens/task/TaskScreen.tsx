@@ -10,7 +10,7 @@
 // name and handle of the task's main agent, with "Rename" for writers (`TaskAgent.tsx`, ADR-095).
 // An analysis task carries the badge "Analysis" next to its state (ADR-097 section 6).
 // Below the header the ticket fields with "Edit", the status as a choice and, for a task without an agent, "Start
-// agent" (`TaskFields.tsx`, E-41, ADR-100 section 7).
+// agent" (`TaskFields.tsx`, E-41, ADR-102 section 7).
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { closeTask, loadChat } from '../../../core/chat/actions';

@@ -1,4 +1,4 @@
-// "Capture task" (E-41, ADR-100 section 7) beside the composer of a workgroup's task list and on the task overview of
+// "Capture task" (E-41, ADR-102 section 7) beside the composer of a workgroup's task list and on the task overview of
 // the organization: a button that opens the ticket form (`TicketForm.tsx`) – on the overview with the workgroup to
 // capture in (the writable ones, the default first) – and sends it with `POST /v1/tasks` without a prompt: no agent
 // starts. The sealed request is kept while the input is unchanged, so "Capture task" after a lost answer repeats the

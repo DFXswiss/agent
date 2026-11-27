@@ -1,5 +1,5 @@
 // Task list of a workgroup (06-web.md section 5.1, route `/o/:org/w/:wg`, right `wg:read`): newest activity first
-// with the decrypted title, state, owner and last activity, and the ticket fields of ADR-100 (status, urgency, person,
+// with the decrypted title, state, owner and last activity, and the ticket fields of ADR-102 (status, urgency, person,
 // topic); a state filter and the ticket filters (`TicketFilters.tsx`); a windowed list with "Load more"; the composer at
 // the top for users with `wg:write`, with "Capture task" beside it (a task without an agent, E-41), who also get
 // "Optimize processes" (an analysis of this workgroup, ADR-097 section 6); a

@@ -1,4 +1,4 @@
-// U-WEB-ui-tasks (captured tasks, E-41, ADR-100 section 7) in jsdom against the core test world: "Capture task" (the
+// U-WEB-ui-tasks (captured tasks, E-41, ADR-102 section 7) in jsdom against the core test world: "Capture task" (the
 // fields, a topic created inline, the workgroup choice, the retry with the same request, refusals), the ticket filters
 // (hub query and browser filters), the row badges, and the task page's fields panel (edit, status, "Start agent").
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';

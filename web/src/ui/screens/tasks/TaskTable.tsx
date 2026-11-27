@@ -33,7 +33,7 @@ export const MAX_ROWS = 200;
 
 export interface TaskTableProps {
   readonly org: string;
-  /** The organizations of the rows (the task dashboard lists several, ADR-101; default `org` alone). */
+  /** The organizations of the rows (the task dashboard lists several, ADR-103; default `org` alone). */
   readonly orgs?: readonly string[];
   /** The windowed list this table is (`tasks.list` for a workgroup and home, `tasks.overview` for the overview). */
   readonly listId?: ListId;
@@ -45,7 +45,7 @@ export interface TaskTableProps {
   readonly mine?: string | null;
   /** Title search (empty: none). */
   readonly search?: string;
-  /** GitHub organisation and repository of the sealed `task.meta` (empty: any; ADR-100). */
+  /** GitHub organisation and repository of the sealed `task.meta` (empty: any; ADR-102). */
   readonly githubOrg?: string;
   readonly githubRepo?: string;
   /** Show the workgroup of each row (lists of several workgroups). */
@@ -91,7 +91,7 @@ export function TaskTable({
     void loadOverview(app.tasks, lists, state);
   }, [app, lists, state]);
   // a list by overview of the open tasks loads again when a row of its workgroups appears or changes its state (a row
-  // does not carry its attention record, so the store cannot move it between such lists itself; ADR-101)
+  // does not carry its attention record, so the store cannot move it between such lists itself; ADR-103)
   const selectSignature = useMemo(
     () => selectCountsSignature(byOverview(state) ? lists.join(',') : ''),
     [state, lists],

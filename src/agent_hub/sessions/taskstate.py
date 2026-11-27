@@ -129,7 +129,7 @@ def _write_state(
 
 
 write_state = _write_state
-"""Write a task state with its transition (a captured task reopened by its status, ADR-100 section 5)."""
+"""Write a task state with its transition (a captured task reopened by its status, ADR-102 section 5)."""
 
 
 def _main_session(connection: Connection, task_id: UUID) -> MainSession | None:

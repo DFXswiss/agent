@@ -1,6 +1,6 @@
 // The task list of a workgroup (06-web.md section 5.1, 03-api.md section 4.6): `GET /v1/workgroups/{wg}/tasks`
 // newest first by latest activity (`order=activity`, KOR-32) with optional hub filters (state and the ticket fields of
-// ADR-100, `filters.ts`; `filter` is the list's key), page by page (`before` = the previous page's `next_before`, infinite
+// ADR-102, `filters.ts`; `filter` is the list's key), page by page (`before` = the previous page's `next_before`, infinite
 // scroll). Rows enter the `tasks` slice; later changes arrive as `task` frames and move rows between the loaded lists.
 // Titles are encrypted: `titles` pulls the `task.meta` events of tasks whose title is not in the store yet (newest
 // pages per workgroup, bounded per call).
@@ -50,7 +50,7 @@ export function listTarget(wg: string, filter: string | null, before: string | n
   filterParams(filter, params);
   if (before !== null) params.set('before', before);
   params.set('limit', String(PAGE_SIZE));
-  // the order of the key (ADR-101 section 2), else the latest activity (KOR-32)
+  // the order of the key (ADR-103 section 2), else the latest activity (KOR-32)
   if (!params.has('order')) params.set('order', 'activity');
   return `/v1/workgroups/${encodeURIComponent(wg)}/tasks?${params.toString()}`;
 }

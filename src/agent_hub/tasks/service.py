@@ -122,7 +122,7 @@ def _session_answer(connection: Connection, session_id: str) -> dict[str, Any]:
 
 
 def _first_main(connection: Connection, task_id: UUID) -> str | None:
-    """The task's first main session; None for a captured task that has not started (ADR-100)."""
+    """The task's first main session; None for a captured task that has not started (ADR-102)."""
     row = connection.execute(
         "SELECT id FROM hub.session WHERE task_id = %s AND depth = 0 ORDER BY created_at, id LIMIT 1", (task_id,)
     ).fetchone()
@@ -131,7 +131,7 @@ def _first_main(connection: Connection, task_id: UUID) -> str | None:
 
 @dataclass(frozen=True)
 class Ticket:
-    """The ticket fields a `POST /v1/tasks` names (ADR-100 section 5): the stored defaults when omitted."""
+    """The ticket fields a `POST /v1/tasks` names (ADR-102 section 5): the stored defaults when omitted."""
 
     urgency: str = "normal"
     assignee_id: UUID | None = None
@@ -213,7 +213,7 @@ def create_task(
 ) -> Outcome:
     """`POST /v1/tasks` (module docstring); `requested` is the chosen device and VM of the request, `author` the
     author of the events (the user's own-identity agent, ADR-082; default the user), `analysis` the request's
-    analysis (ADR-097), `ticket` its ticket fields (ADR-100). `events` holds the `task.meta` and the `prompt`, or
+    analysis (ADR-097), `ticket` its ticket fields (ADR-102). `events` holds the `task.meta` and the `prompt`, or
     only the `task.meta` of a captured task: no session, no scheduler decision, state `idle`, status `todo`."""
     now = context.clock()
     fields_given = ticket or Ticket()
@@ -299,7 +299,7 @@ def create_task(
         audit(connection, actor, "task.create", task, now, detail=detail)
         outcome = Outcome(body={}, stored=stored)
         if decision is None:
-            # a captured task's attention record: `done/idle`, no agent works on it (ADR-100 section 6, ADR-101)
+            # a captured task's attention record: `done/idle`, no agent works on it (ADR-102 section 6, ADR-103)
             attention_store.refresh(connection, task_id, now, outcome.effects)
             outcome.effects.org_frame(org_id, "task", rows.task_json(connection, task_id) or {})
             outcome.body = {
@@ -370,7 +370,7 @@ def _prompt_time(connection: Connection, context: HubContext, task_id: UUID) -> 
             "SELECT max(created_at) FROM hub.session WHERE task_id = %s AND depth = 0", (task_id,)
         ).fetchone(),
     )[0]
-    # a captured task has no main session before its first prompt (ADR-100)
+    # a captured task has no main session before its first prompt (ADR-102)
     return context.clock() if newest is None else max(context.clock(), newest + TICK)
 
 

@@ -64,7 +64,7 @@ describe('lists', () => {
     expect(newestFirst({ ...tasks, d: active }, ['a', 'b', 'c', 'd'])).toEqual(['d', 'b', 'c', 'a']);
   });
 
-  it('keeps a list in the order of its key (ADR-101 section 2)', () => {
+  it('keeps a list in the order of its key (ADR-103 section 2)', () => {
     const tasks = {
       a: row('a', '2026-11-21T12:00:00.000Z', { urgency: 'low' }),
       b: row('b', '2026-11-21T12:00:01.000Z'),
@@ -140,7 +140,7 @@ describe('lists', () => {
     expect(taskList(store.getState().tasks, 'other', null).ids).toEqual([]);
   });
 
-  it('keeps the rows of a list by overview and takes no new one (the row does not say its overview, ADR-101)', () => {
+  it('keeps the rows of a list by overview and takes no new one (the row does not say its overview, ADR-103)', () => {
     const store = createStore();
     const key = 'overview=no_agent';
     listPage(store, {

@@ -1,4 +1,4 @@
-"""The ticket fields of the agent tool without a hub (E-41, ADR-100, KOR-75): the checks of the sealed and plaintext
+"""The ticket fields of the agent tool without a hub (E-41, ADR-102, KOR-75): the checks of the sealed and plaintext
 fields, the newest field of each kind from opened events, the first prompt of a captured task and the filters."""
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def test_checked_code_and_status() -> None:
         tickets.checked_code("critical", tickets.URGENCIES, "urgency_invalid")
     assert _reason(error) == "urgency_invalid"
     assert tickets.status_of({"status": "todo", "state": "idle"}) == "todo"
-    # a hub before ADR-100 sends no status: derived from the state
+    # a hub before ADR-102 sends no status: derived from the state
     assert tickets.status_of({"state": "closed"}) == "completed"
     assert tickets.status_of({"state": "working", "status": "done"}) == "inProgress"
 

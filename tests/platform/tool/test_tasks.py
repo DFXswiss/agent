@@ -45,7 +45,7 @@ def test_create_list_prompt_show(tool: Tool, hub: HubFake, account: User) -> Non
     assert listed["tasks"] == [
         {
             "task_id": task,
-            # the place of the row, as in the dashboard of `task overview` (ADR-101)
+            # the place of the row, as in the dashboard of `task overview` (ADR-103)
             "org_id": listed["org_id"],
             "wg_id": wg,
             "state": "scheduling",
@@ -53,7 +53,7 @@ def test_create_list_prompt_show(tool: Tool, hub: HubFake, account: User) -> Non
             "number": 1,
             "agent": "Fix the login bug #1",
             "name_source": "automatic",
-            # the ticket fields of ADR-100: an agent task is inProgress with the default urgency
+            # the ticket fields of ADR-102: an agent task is inProgress with the default urgency
             "status": "inProgress",
             "urgency": "normal",
             "assignee_id": None,

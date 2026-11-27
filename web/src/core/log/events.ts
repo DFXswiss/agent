@@ -104,7 +104,7 @@ export const KIND_RULES: readonly KindRule[] = [
   rule('device.profile', 'org', [USER], ORG_ADMIN, { wg: 'empty', ref: 'device' }),
   // an admin-given name of a member or of an invitation's person (ADR-073)
   rule('member.name', 'org', [USER], ORG_ADMIN, { wg: 'empty', ref: 'subject' }),
-  // a topic of captured tasks (ADR-100 section 3): any member writes it, `ref` = the topic ID
+  // a topic of captured tasks (ADR-102 section 3): any member writes it, `ref` = the topic ID
   rule('topic.profile', 'org', [USER], ORG_MEMBER, { wg: 'empty', task: 'empty', ref: 'set' }),
   ...['whiteboard.entry', 'whiteboard.edit', 'whiteboard.delete'].flatMap((kind) => [
     rule(kind, 'org', [USER], ORG_ADMIN, ORG_ENTRY, ORG_LEVEL),

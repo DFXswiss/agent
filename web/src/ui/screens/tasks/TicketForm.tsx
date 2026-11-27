@@ -1,4 +1,4 @@
-// The fields of a captured task as a form (E-41, ADR-100 section 7), shared by "Capture task" and the task page's
+// The fields of a captured task as a form (E-41, ADR-102 section 7), shared by "Capture task" and the task page's
 // "Edit": title (required), description, person (members and agent accounts), topic (choose one, or create one inline:
 // a `topic.profile` of the org), GitHub organisation and repository (suggestions, free input allowed; a repository
 // `owner/name` fills an empty organisation with its owner) and urgency (preset normal).

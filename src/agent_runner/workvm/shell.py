@@ -7,8 +7,12 @@ reaches the slot account. In `TEST_MODE` with `WORKVM_SLOTS_SELF` every slot is 
 `limactl` (no host filter: refused by the configuration outside `TEST_MODE`).
 
 `SlotCommand.prefix(slot)` is the argv before `limactl`'s own arguments; `sync_runner(slot)` is the `LimactlRun` of
-`agent_runner.vm.lima.Lima` for that slot; `VmShell` runs a command inside a work VM (`limactl shell`) with bounded
-output, optional stdin (bytes or a file) and optional output into a file.
+`agent_runner.vm.lima.Lima` for that slot. A slot whose home is missing (its volume hangs elsewhere after a restart,
+HOT-25) has no Lima home, so no instance can exist there: `sync_runner` answers without running anything - `list`
+with no instance, `delete` like `limactl` for a missing instance (so a deletion counts as done and the work VM task
+never fails on it again and again), everything else as a failure (`slot home missing`). `VmShell` runs a command
+inside a work VM (`limactl shell`) with bounded output, optional stdin (bytes or a file) and optional output into a
+file.
 """
 
 from __future__ import annotations
@@ -19,11 +23,12 @@ import errno
 import os
 import shutil
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from agent_runner.vm.lima import EXIT_NOT_FOUND, EXIT_TIMEOUT, LimactlRun
+from agent_runner.workvm.accounts import HOME_ROOT
 from agent_runner.workvm.jobs import ShellResult
 
 WRAPPER = "/usr/local/libexec/agent-runner-workvm-limactl"
@@ -38,6 +43,8 @@ class SlotCommand:
     accounts: tuple[str, ...]
     limactl: str = "limactl"
     wrapper: str = WRAPPER
+    home_root: str = HOME_ROOT
+    has_home: Callable[[str], bool] = os.path.isdir
 
     def prefix(self, slot: int) -> list[str]:
         if not self.accounts:
@@ -49,6 +56,8 @@ class SlotCommand:
 
         def run(argv: Sequence[str], timeout: float) -> subprocess.CompletedProcess[str]:
             command = [*prefix, *argv]
+            if self.accounts and not self.has_home(f"{self.home_root}/{self.accounts[slot]}"):
+                return _without_home(command, argv)
             try:
                 return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
             except FileNotFoundError:
@@ -57,6 +66,20 @@ class SlotCommand:
                 return subprocess.CompletedProcess(command, EXIT_TIMEOUT, "", "limactl: timed out")
 
         return run
+
+
+NO_HOME = "slot home missing"
+IGNORED_MISSING = "Ignoring non-existent instance"
+"""What `limactl delete -f` prints for a missing instance (`Lima.delete` then reports it as not there)."""
+
+
+def _without_home(command: list[str], argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
+    """The answer for a slot without a home (module docstring)."""
+    if argv[:1] == ["list"]:
+        return subprocess.CompletedProcess(command, 0, "", "")
+    if argv[:1] == ["delete"]:
+        return subprocess.CompletedProcess(command, 0, "", f"{IGNORED_MISSING} {argv[-1]}: {NO_HOME}")
+    return subprocess.CompletedProcess(command, 1, "", f"limactl: {NO_HOME}")
 
 
 @dataclass(frozen=True)

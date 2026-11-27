@@ -1,7 +1,7 @@
-"""U-HUB-tasks (captured tasks, E-41, ADR-100): `POST /v1/tasks` with only the `task.meta`, the ticket fields of
+"""U-HUB-tasks (captured tasks, E-41, ADR-102): `POST /v1/tasks` with only the `task.meta`, the ticket fields of
 `PUT /v1/tasks/{task}/fields`, the filters of `GET /v1/workgroups/{wg}/tasks`, the status on start, close and reopen,
 the `topic.profile` kind, the main agents that skip a task without an agent, its attention record (`done/idle`: "No
-agent" of the overview of the open tasks) and the overview filter and counters of the task dashboard (ADR-101)."""
+agent" of the overview of the open tasks) and the overview filter and counters of the task dashboard (ADR-103)."""
 
 from __future__ import annotations
 
@@ -67,12 +67,12 @@ def test_capturing_starts_no_agent(desk: Desk, published: MemoryPublisher) -> No
     assert hints(published) == []
     assert frames(published, "task")[-1]["status"] == "todo"
     assert audit_rows(desk, "task.create")[-1][3] == {"origin": "browser", "captured": True}
-    # its attention record says that no agent works on it ("No agent" of the start page, ADR-101); the main agents
+    # its attention record says that no agent works on it ("No agent" of the start page, ADR-103); the main agents
     # know no agent of it
     record = "SELECT category, reason FROM hub.task_attention WHERE task_id = %s"
     assert desk.rows(record, task["task_id"]) == [("done", "idle")]
     assert attention_jobs.backfill(desk.hub) == 0
-    # a captured task of before ADR-101 (no record) gets it from the backfill
+    # a captured task of before ADR-103 (no record) gets it from the backfill
     desk.execute("DELETE FROM hub.task_attention WHERE task_id = %s", task["task_id"])
     assert attention_jobs.backfill(desk.hub) == 1
     assert desk.rows(record, task["task_id"]) == [("done", "idle")]
@@ -228,7 +228,7 @@ def test_a_captured_task_completes_without_an_agent(desk: Desk) -> None:
 
 
 def test_close_and_reopen_keep_the_status(desk: Desk) -> None:
-    """The trigger of migration 0040: every path that closes or reopens keeps closed ⇔ completed."""
+    """The trigger of migration 0042: every path that closes or reopens keeps closed ⇔ completed."""
     task, main = desk.started()
     closed = desk.scene.writer.browser.post(f"/v1/tasks/{task}/close", json={})
     assert closed.json()["task"]["status"] == "completed"
@@ -282,7 +282,7 @@ def test_the_list_filters_by_the_fields(desk: Desk) -> None:
     assert listed(f"topic={topic}") == [first]
     assert listed("topic=none&status=todo") == [second]
     assert listed("state=idle&urgency=normal") == [second]
-    # the overview of the open tasks (the start page's three groups, ADR-101): captured tasks have no agent
+    # the overview of the open tasks (the start page's three groups, ADR-103): captured tasks have no agent
     assert listed("overview=no_agent") == [second, first]
     assert listed("overview=working") == [third]
     assert listed("overview=waiting") == []
@@ -320,7 +320,7 @@ def _dashboard(desk: Desk) -> dict[str, str]:
 
 
 def test_the_dashboard_counters(desk: Desk) -> None:
-    """ADR-101 section 1: per status the tasks matching every filter but the status, per urgency every filter
+    """ADR-103 section 1: per status the tasks matching every filter but the status, per urgency every filter
     but the urgency, per overview of the open tasks every filter but the overview, total all of them."""
     found = _dashboard(desk)
     base = f"/v1/orgs/{desk.org}/tasks/counts"
@@ -382,7 +382,7 @@ def test_the_dashboard_counters(desk: Desk) -> None:
 
 
 def test_the_list_by_urgency(desk: Desk) -> None:
-    """ADR-101 section 2: `order=urgency`, the most urgent first, then the latest activity, paged."""
+    """ADR-103 section 2: `order=urgency`, the most urgent first, then the latest activity, paged."""
     found = _dashboard(desk)
     base = f"/v1/workgroups/{desk.wg}/tasks?order=urgency&limit=1"
     seen: list[str] = []

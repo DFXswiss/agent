@@ -51,7 +51,7 @@ export const OTHER_KINDS: readonly string[] = [
   // the names a support person needs (ADR-096): one per release or change, never in masses
   'support.info',
   'task.meta',
-  // a topic of captured tasks (ADR-100 section 3): one per creation or renaming, never in masses
+  // a topic of captured tasks (ADR-102 section 3): one per creation or renaming, never in masses
   'topic.profile',
   'wg.profile',
   'whiteboard.delete',

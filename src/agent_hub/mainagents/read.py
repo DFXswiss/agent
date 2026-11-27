@@ -1,7 +1,7 @@
 """Reading the open main agents of an org by person (03-api.md section 4.6, ADR-095 section 5).
 
 A main agent is open while its task is not `closed` and has a main session (a captured task that was never started
-has no agent, ADR-100 section 6); its responsible person is the task's owner. Only tasks of the
+has no agent, ADR-102 section 6); its responsible person is the task's owner. Only tasks of the
 workgroups the caller reads count (the rule of the situation view, `agent_hub.attention.read.readable_workgroups`) - in
 the rows and in every counter. Both reads use the partial index `task_open_owner` (`org_id`, `owner_id`,
 `last_activity_at DESC`, `id DESC`) of the open tasks.
@@ -45,7 +45,7 @@ OTHERS = "t.owner_id <> %(user)s"
 OTHERS_AFTER = "t.owner_id <> %(user)s AND t.owner_id > %(after)s"
 """The others after the owner of a cursor."""
 HAS_AGENT = "EXISTS (SELECT 1 FROM hub.session s WHERE s.task_id = t.id AND s.depth = 0)"
-"""The task has a main agent: a captured task that was never started has none (ADR-100 section 6)."""
+"""The task has a main agent: a captured task that was never started has none (ADR-102 section 6)."""
 _PEOPLE = (
     "SELECT t.owner_id, count(*), count(*) FILTER (WHERE a.category = %(nd)s),"
     " count(*) FILTER (WHERE a.category = %(blocked)s), count(*) FILTER (WHERE a.category = %(working)s),"

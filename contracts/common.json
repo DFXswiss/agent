@@ -449,7 +449,7 @@
     },
     "task_status": {
       "type": "string",
-      "description": "the ticket status of a task (ADR-100 section 1): todo before an agent started, inProgress, completed exactly when closed",
+      "description": "the ticket status of a task (ADR-102 section 1): todo before an agent started, inProgress, completed exactly when closed",
       "enum": [
         "todo",
         "inProgress",
@@ -458,7 +458,7 @@
     },
     "task_urgency": {
       "type": "string",
-      "description": "the urgency of a task (ADR-100 section 1); default normal",
+      "description": "the urgency of a task (ADR-102 section 1); default normal",
       "enum": [
         "low",
         "normal",

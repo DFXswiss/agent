@@ -920,7 +920,7 @@ class HubFake:
         return 200, {"tasks": rows[start:end], "next_before": str(end) if end < len(rows) else None}
 
     def r_task_counts(self, request: Request, body: Any, org: str) -> tuple[int, Any]:
-        """The dashboard counters (ADR-101 section 1) of the org's tasks the fake holds (rows of an older hub without
+        """The dashboard counters (ADR-103 section 1) of the org's tasks the fake holds (rows of an older hub without
         ticket fields count as inProgress/completed and normal)."""
         if self._member(request, org) is None:
             return 404, {"error": "not_found"}

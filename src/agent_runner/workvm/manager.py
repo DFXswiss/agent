@@ -20,6 +20,10 @@
   call of the resumed session starts it again (`_resume`), or deletes it and gets a new one when its RAM does not fit.
 - **run VMs** (scope `run`, `obtain_run_vm`): one fresh VM per `test.run` of `agent_runner.workvm.testrun`.
 - **browser VMs** (scope `browser`): the VM of a session's platform browser (`agent_runner.workvm.browser`).
+- **login VMs** (scope `login`, `obtain_login`; KOR-73, ADR-100 section 3): the browser sandbox of one Claude login
+  (`agent_runner.login.sandbox`): no session, task or organization (`NO_ID`, `session_id` = the login request), no
+  credit check, no per-organization or per-owner limit (the capacity queue applies), not billed; deleted by the login
+  (`login_ended`) or a restart.
 - **logs**: a job whose output is longer than its event keeps (`RUN_OUTPUT_LIMIT`) is captured as an encrypted log
   object in the background (`capture`, injected); its final `workvm.run` event names the log, and the teardown of its
   VM waits for the capture (at most `CAPTURE_TIMEOUT`).
@@ -53,7 +57,7 @@ from agent_runner.credentials import acting
 from agent_runner.errors import RunnerError
 from agent_runner.operations.extensions import OperationFailed
 from agent_runner.sessions.records import LocalSession
-from agent_runner.vm.lima import Lima, LimaError
+from agent_runner.vm.lima import Instance, Lima, LimaError
 from agent_runner.workvm import firewall, jobs, records, sync
 from agent_runner.workvm.jobs import JobView, Shell, WorkVmError
 from agent_runner.workvm.records import Pooled, WorkVm
@@ -111,9 +115,11 @@ NO_CREDIT = (
 )
 RUN_SCOPE = "run"
 BROWSER_SCOPE = "browser"
-OWNED_SCOPES = frozenset({RUN_SCOPE, BROWSER_SCOPE})
-"""VMs owned by one test run or one browser session (ADR-080, ADR-085): no `workvm.state` events, no per-task limit,
-not torn down by the idle pass or stopped by the credit stop of this manager (their owner ends them)."""
+LOGIN_SCOPE = "login"
+OWNED_SCOPES = frozenset({RUN_SCOPE, BROWSER_SCOPE, LOGIN_SCOPE})
+"""VMs owned by one test run, one browser session or one login (ADR-080, ADR-085, ADR-100): no `workvm.state` events,
+no per-task limit, not torn down by the idle pass or stopped by the credit stop of this manager (their owner ends
+them)."""
 
 
 def lima_reason(detail: str) -> str:
@@ -175,6 +181,8 @@ class Deps:
     """Stores the output of a final job (`vm, identity, job_id, output_bytes`) as a log; returns its `log_ref`."""
     hub_lease: Callable[[], bool] = field(default_factory=lambda: _always)
     """The runner's lease of the tools with internet egress (`sync.lease.held`, ADR-087 section 4)."""
+    volume_ok: Callable[[], Awaitable[bool]] = field(default_factory=lambda: _in_place)
+    """The volume of the slot homes hangs at its mount point (HOT-25; always in self mode)."""
 
 
 def _tail(text: str, limit: int) -> str:
@@ -231,6 +239,10 @@ def _never(_org_id: str) -> bool:
     return False
 
 
+async def _in_place() -> bool:
+    return True
+
+
 def _always() -> bool:
     return True
 
@@ -256,9 +268,17 @@ class WorkVms:
         if self.deps.settings.slots == 0:
             return None
         image = await records.ready_image(self.deps.db)
-        if image is None or not await self.deps.boundary_ok():
+        if image is None or not await self.deps.volume_ok() or not await self.deps.boundary_ok():
             return None
         return image
+
+    async def check_volume(self) -> bool:
+        """Log once at the start of the task when the volume of the slot homes does not hang at its mount point
+        (HOT-25): no work VM is offered until it does; `doctor` names it (`workvm_volume`)."""
+        if self.deps.settings.slots == 0 or await self.deps.volume_ok():
+            return True
+        self.deps.log("runner.workvm volume_missing")
+        return False
 
     # -- request / release -------------------------------------------------------------------------------------
 
@@ -306,6 +326,31 @@ class WorkVms:
             raise OperationFailed("limit_exceeded", message="The limit of work VMs is reached.")
         return image
 
+    async def obtain_login(self, request_id: str) -> WorkVm:
+        """A new running login VM for the login request (module docstring): only the device's availability is checked
+        (`workvm_unavailable`), then the warm pool or the capacity queue."""
+        image = await self.available()
+        if image is None:
+            raise OperationFailed("workvm_unavailable", message=NOT_READY)
+        holder = LocalSession(
+            id=request_id,
+            task_id=NO_ID,
+            org_id=NO_ID,
+            wg_id=NO_ID,
+            vm_id=None,
+            parent_id=None,
+            depth=0,
+            state="running",
+            claude_session_id=None,
+            model_access=None,
+            model_id=None,
+            owner_id=None,
+            created_at=self.deps.now(),
+            ready_at=None,
+            ended_at=None,
+        )
+        return await self._obtain(holder, image, scope=LOGIN_SCOPE, size=POOL_SIZE)
+
     async def obtain(
         self,
         session: LocalSession,
@@ -318,7 +363,21 @@ class WorkVms:
     ) -> WorkVm:
         """A new running VM of the scope (formal checks, warm pool, else the FIFO queue and a cold clone)."""
         image = await self.check_new(session, scope=scope, size=size)
+        return await self._obtain(
+            session, image, scope=scope, size=size, implicit=implicit, workvm_id=workvm_id, triggered_by=triggered_by
+        )
 
+    async def _obtain(
+        self,
+        session: LocalSession,
+        image: str,
+        *,
+        scope: str,
+        size: str,
+        implicit: bool = False,
+        workvm_id: str | None = None,
+        triggered_by: str | None = None,
+    ) -> WorkVm:
         async def from_pool() -> WorkVm | None:
             return await self._from_pool(
                 session, scope, size, image, implicit=implicit, workvm_id=workvm_id, triggered_by=triggered_by
@@ -940,7 +999,7 @@ class WorkVms:
             for slot in range(self.deps.settings.slots):
                 lima = self.deps.lima_for(slot)
                 marker = lima.prefix + "wvm-"
-                for instance in await asyncio.to_thread(lima.list):
+                for instance in await self._instances(slot, lima):
                     if instance.name.startswith(marker) and instance.name not in known:
                         try:
                             await asyncio.to_thread(lima.delete, instance.name)
@@ -1024,10 +1083,23 @@ class WorkVms:
         for slot in range(self.deps.settings.slots):
             lima = self.deps.lima_for(slot)
             marker = lima.prefix + "wvm-"
-            for instance in await asyncio.to_thread(lima.list):
+            for instance in await self._instances(slot, lima):
                 if instance.name.startswith(marker) and instance.name not in known.get(slot, set()):
-                    await asyncio.to_thread(lima.delete, instance.name)
+                    try:
+                        await asyncio.to_thread(lima.delete, instance.name)
+                    except LimaError as error:
+                        self.deps.log(f"runner.workvm orphan_delete_failed slot={slot} {failure(error)}")
+                        continue
                     self.deps.log(f"runner.workvm orphan_deleted slot={slot}")
+
+    async def _instances(self, slot: int, lima: Lima) -> list[Instance]:
+        """The slot's instances; none (logged) when Lima cannot list them, so one broken slot never stops the
+        reconciliation or the sweep (and with it the daemon task, HOT-25)."""
+        try:
+            return await asyncio.to_thread(lima.list)
+        except LimaError as error:
+            self.deps.log(f"runner.workvm list_failed slot={slot} {failure(error)}")
+            return []
 
     # -- tool calls --------------------------------------------------------------------------------------------
 

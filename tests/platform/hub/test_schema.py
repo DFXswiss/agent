@@ -283,7 +283,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("agent_profile", J),  # KOR-51, migration 0036 (ADR-094)
         ("number", BI),  # KOR-52, migration 0037 (ADR-095)
         ("analysis", J),  # KOR-53, migration 0039 (ADR-097)
-        ("status", T),  # KOR-75, migration 0040 (ADR-100)
+        ("status", T),  # KOR-75, migration 0042 (ADR-102)
         ("urgency", T),
         ("assignee_id", U),
         ("topic_id", U),
@@ -512,6 +512,7 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("created_at", TS),
         ("expires_at", TS),
         ("org_id", U),  # KOR-47, migration 0022
+        ("slot", U),  # KOR-73, migration 0041 (ADR-100)
     ],
     # credential-change notices for devices (HUB-13, ADR-035, migration 0003)
     "credential_notice": [("device_id", U), ("owner_id", U), ("kind", T), ("changed_at", TS)],
@@ -547,6 +548,8 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
     "quota_unreadable": [("owner_id", U), ("since", TS), ("device_id", U)],
     # the use of a further subscription as its owner's client tells it (KOR-69, migration 0034, ADR-090 section 3)
     "subscription_use": [("credential_id", U), ("owner_id", U), ("pool", BOOL), ("orgs", J), ("set_at", TS)],
+    # the release of a mailbox as its owner's client tells it (KOR-74, migration 0040, ADR-099 section 3)
+    "mailbox_use": [("credential_id", U), ("owner_id", U), ("wgs", J), ("set_at", TS)],
     # the newest reading of every non-primary subscription (KOR-69, migration 0033, ADR-090)
     "subscription_quota": [
         ("credential_id", U),
@@ -911,7 +914,7 @@ def test_only_the_hub_schema_and_the_trigger_functions_exist(owner: psycopg.Conn
         " ORDER BY p.proname"
     ).fetchall()
     # the append-only guard, the numbering triggers of the main agents (KOR-52, migration 0037) and the status rule of
-    # the ticket fields (KOR-75, migration 0040)
+    # the ticket fields (KOR-75, migration 0042)
     assert functions == [("refuse_change",), ("session_agent_path",), ("task_number",), ("task_status",)]
 
 
@@ -987,6 +990,8 @@ def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns:
         ("credential", "(owner_id, kind) WHERE is_primary"),
         ("credential", "(owner_id, updated_at DESC, id DESC) WHERE (kind = 'claude_subscription'::text)"),
         ("subscription_quota", "(owner_id)"),
+        ("credential", "(owner_id, updated_at DESC, id DESC) WHERE (kind = 'mailbox'::text)"),  # KOR-74, migration 0040
+        ("mailbox_use", "USING gin (wgs)"),
         ("pr_link", '(wg_id, created_at DESC, epoch DESC, tag COLLATE "C" DESC)'),
         ("task", "(org_id, owner_id, last_activity_at DESC, id DESC) WHERE (state <> 'closed'::text)"),  # KOR-52
         ("audit", "(on_behalf_of, seq DESC) WHERE (on_behalf_of IS NOT NULL)"),
@@ -994,7 +999,7 @@ def test_unique_constraints(owner: psycopg.Connection[Any], table: str, columns:
         ("session", "(wg_id, created_at DESC, id DESC)"),  # KOR-53, migration 0039 (ADR-097)
         ("operation", "(wg_id, created_at DESC, id DESC)"),
         ("audit", "(wg_id, seq DESC) WHERE (wg_id IS NOT NULL)"),
-        ("task", "(wg_id, status, last_activity_at DESC, id DESC)"),  # KOR-75, migration 0040 (ADR-100)
+        ("task", "(wg_id, status, last_activity_at DESC, id DESC)"),  # KOR-75, migration 0042 (ADR-102)
         ("task", "(wg_id, assignee_id, last_activity_at DESC, id DESC) WHERE (assignee_id IS NOT NULL)"),
         ("task", "(wg_id, topic_id, last_activity_at DESC, id DESC) WHERE (topic_id IS NOT NULL)"),
     ],
@@ -1031,7 +1036,7 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
         ("wg_access", "access", ["read", "write"]),
         ("scope_epoch", "scope", ["org", "wg", "cred"]),
         ("task", "state", ["scheduling", "starting", "working", "idle", "failed", "closed"]),
-        ("task", "status", ["todo", "inProgress", "completed"]),  # KOR-75, migration 0040 (ADR-100)
+        ("task", "status", ["todo", "inProgress", "completed"]),  # KOR-75, migration 0042 (ADR-102)
         ("task", "urgency", ["low", "normal", "high", "urgent"]),
         ("session", "model_access", ["subscription", "api_key", "platform"]),
         # the rule that ties the two columns names the reasons as well (test_context_reasons_equal_the_contract)
@@ -1107,7 +1112,7 @@ def test_closed_value_lists(owner: psycopg.Connection[Any], table: str, column: 
     definition = _check_values(owner, table, column)
     listed = re.findall(r"'([^']*)'::text", definition)
     assert set(values) <= set(listed)
-    # no other value is allowed; the task's closed ⇔ completed rule names one value of each column (ADR-100)
+    # no other value is allowed; the task's closed ⇔ completed rule names one value of each column (ADR-102)
     tied = {"closed", "completed"} if table == "task" else set()
     assert set(listed) - set(values) <= {"session.state"} | tied
 

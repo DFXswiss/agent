@@ -7,7 +7,7 @@ commit), the reads in `agent_hub.tasks.read` and `agent_hub.tasks.queue`. Reads 
 malformed and forbidden IDs alike; writes `403 forbidden` on a known task without `task:write` (03-api.md section 1).
 There is no project level anywhere (R-2.10): organization → workgroup → task. The task's GitHub identity
 (`github_identity` of `POST /v1/tasks`, ADR-078) is checked by the service; `PUT /v1/tasks/{task}/github-identity`
-lives in `agent_hub.github.routes`. The ticket fields (ADR-100, E-41): `POST /v1/tasks` with only the `task.meta`
+lives in `agent_hub.github.routes`. The ticket fields (ADR-102, E-41): `POST /v1/tasks` with only the `task.meta`
 captures a task without an agent, `PUT /v1/tasks/{task}/fields` changes status, urgency, person and topic
 (`agent_hub.tasks.fields`), and the task list filters by them.
 """
@@ -64,7 +64,7 @@ class CreateTaskRequest(BaseModel):
 
 
 class FieldsRequest(BaseModel):
-    """Body of `PUT /v1/tasks/{task}/fields` (ADR-100 section 5): at least one field; null clears person or topic."""
+    """Body of `PUT /v1/tasks/{task}/fields` (ADR-102 section 5): at least one field; null clears person or topic."""
 
     model_config = ConfigDict(extra="forbid")
     status: str | None = None
@@ -170,7 +170,7 @@ def _list(context: HubContext, user: UUID, wg: UUID, **options: Any) -> dict[str
 
 
 def _filter_id(value: str | None, pointer: str) -> UUID | str | None:
-    """A list filter naming an ID or `none` (ADR-100 section 5)."""
+    """A list filter naming an ID or `none` (ADR-102 section 5)."""
     if value is None or value == fields.NONE:
         return value
     return body_id(value, pointer)
@@ -253,7 +253,7 @@ async def task_counts(
     topic: str | None = None,
     overview: str | None = None,
 ) -> dict[str, Any]:
-    """The counters of the task dashboard (ADR-101 section 1) over the readable workgroups of the org."""
+    """The counters of the task dashboard (ADR-103 section 1) over the readable workgroups of the org."""
     if state is not None and state not in TASK_STATES:
         raise HubError("request_invalid", detail={"pointers": ["/state"]})
     ticket = _ticket_filter(status, urgency, assignee, topic, overview=overview)

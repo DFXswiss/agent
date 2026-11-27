@@ -1,4 +1,4 @@
-// The counters of the task dashboard (ADR-101 section 1): per status, per urgency and per overview of the open tasks
+// The counters of the task dashboard (ADR-103 section 1): per status, per urgency and per overview of the open tasks
 // (the start page's three groups: in progress, waiting for a question, no agent) the number of tasks of the readable
 // workgroups, from `GET /v1/orgs/{org}/tasks/counts` of every organization shown, summed. The hub filters of the list
 // apply (state, person, topic; one workgroup); each group of counters ignores its own filter, so a click on a counter

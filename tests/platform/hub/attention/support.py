@@ -133,7 +133,7 @@ class Situation:
 
     def insert_task(self, wg: str, owner: str, *, state: str = "working", at: datetime | None = None) -> str:
         """A task with its main session in the state that gives the task `state` (every task that is not captured
-        has one, ADR-100)."""
+        has one, ADR-102)."""
         task = new_id()
         now = at or self.hub.clock()
         self.desk.execute(

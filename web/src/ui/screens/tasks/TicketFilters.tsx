@@ -1,5 +1,5 @@
-// The ticket filters of both task lists (E-41, ADR-100 sections 2 and 7): the overview of the open tasks (the start
-// page's three groups, ADR-101), status, urgency, person and topic go to the hub (the list key,
+// The ticket filters of both task lists (E-41, ADR-102 sections 2 and 7): the overview of the open tasks (the start
+// page's three groups, ADR-103), status, urgency, person and topic go to the hub (the list key,
 // `core/tasks/filters.ts`); GitHub organisation and repository are sealed and filtered in the browser over the loaded
 // rows with the bounded scan of the title search (`scan.ts`).
 import { useId, useMemo } from 'react';
@@ -61,7 +61,7 @@ export function TicketFilters({
   onChange,
 }: {
   readonly org: string;
-  /** The organizations whose people and topics are offered (the task dashboard, ADR-101; default `org` alone). */
+  /** The organizations whose people and topics are offered (the task dashboard, ADR-103; default `org` alone). */
   readonly orgs?: readonly string[];
   readonly values: TicketFilterValues;
   readonly onChange: (values: TicketFilterValues) => void;

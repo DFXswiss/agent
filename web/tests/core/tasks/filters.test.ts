@@ -1,4 +1,4 @@
-// U-WEB-ui-tasks (list filters, ADR-100 section 5): the list key of the hub filters (the state alone keeps the key of
+// U-WEB-ui-tasks (list filters, ADR-102 section 5): the list key of the hub filters (the state alone keeps the key of
 // before), its inverse, the query parameters, and which rows a filtered list holds.
 import { describe, expect, it } from 'vitest';
 import type { TaskRow } from '../../../src/core/store/slices/tasks';
@@ -53,7 +53,7 @@ describe('filter keys', () => {
   });
 });
 
-describe('the order of a list (ADR-101 section 2)', () => {
+describe('the order of a list (ADR-103 section 2)', () => {
   it('keys the order last and sends it only when asked', () => {
     const key = filterKey({ status: 'todo', order: 'urgency' });
     expect(key).toBe('status=todo&order=urgency');
@@ -95,7 +95,7 @@ describe('the order of a list (ADR-101 section 2)', () => {
   });
 });
 
-describe('the overview of the open tasks (ADR-101)', () => {
+describe('the overview of the open tasks (ADR-103)', () => {
   it('keys the overview before the order and says which lists are filtered by it', () => {
     const key = filterKey({ overview: 'no_agent', order: 'urgency', status: 'todo' });
     expect(key).toBe('status=todo&overview=no_agent&order=urgency');

@@ -103,7 +103,7 @@ KIND_RULES: tuple[KindRule, ...] = (
     KindRule("device.profile", "org", (USER,), ORG_ADMIN, {"wg": "empty", "ref": "device"}),
     # an admin-given name of a member or of an invitation's person (ADR-073)
     KindRule("member.name", "org", (USER,), ORG_ADMIN, {"wg": "empty", "ref": "subject"}),
-    # a topic of captured tasks, created by whoever captures (ADR-100 section 3)
+    # a topic of captured tasks, created by whoever captures (ADR-102 section 3)
     KindRule("topic.profile", "org", (USER,), ORG_MEMBER, {"wg": "empty", "task": "empty", "ref": "set"}),
     *(
         rule

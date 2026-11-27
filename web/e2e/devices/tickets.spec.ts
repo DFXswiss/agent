@@ -1,4 +1,4 @@
-// Captured tasks (E-41, ADR-100) against the real hub, on the desktop and on the phones: "Capture task" on the task
+// Captured tasks (E-41, ADR-102) against the real hub, on the desktop and on the phones: "Capture task" on the task
 // overview and on a workgroup's task list (title, description, person, a topic created inline, GitHub organisation
 // and repository, urgency) creates a task without an agent; the rows show status, urgency, person and topic; the
 // filters (status, urgency, person and topic at the hub, GitHub organisation and repository in the browser); the task

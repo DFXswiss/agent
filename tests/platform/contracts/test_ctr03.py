@@ -92,8 +92,9 @@ def test_device_rows_are_complete(index: dict[str, Any], contracts: Contracts) -
     assert "CTR-03" not in index["pending_owners"]
     rows = [e for e in index["endpoints"] if e["owner"] == "CTR-03"]
     # later packages add device rows of their own (KOR-33: context checkpoints; KOR-44: the browser; KOR-57: the
-    # orchestrator session; KOR-69: subscriptions; KOR-53: the analysis reads of a workgroup)
-    later = {e["path"] for e in index["endpoints"] if e["owner"] in ("KOR-33", "KOR-44", "KOR-57", "KOR-69", "KOR-53")}
+    # orchestrator session; KOR-69: subscriptions; KOR-53: the analysis reads of a workgroup; KOR-74: mailboxes)
+    owners = ("KOR-33", "KOR-44", "KOR-57", "KOR-69", "KOR-53", "KOR-74")
+    later = {e["path"] for e in index["endpoints"] if e["owner"] in owners}
     assert {e["path"] for e in rows} | later >= {
         e["path"] for e in index["endpoints"] if e["path"].startswith("/v1/device/")
     }
@@ -175,7 +176,7 @@ def test_event_kinds_table(contracts: Contracts) -> None:
         assert row["max_ct_bytes"] == limits.get(row["kind"], limits["default_ct_bytes"]), row
         # devices pull every kind but the watched kinds and the admin-given names (ADR-073: the sessions name members
         # from their own profiles; 13-work-vm.md section 13.6: the watched kinds)
-        # support.info: ADR-096; topic.profile: ADR-100 (sessions need no topic names)
+        # support.info: ADR-096; topic.profile: ADR-102 (sessions need no topic names)
         not_pulled = {"session.terminal", "browser.action", "member.name", "support.info", "topic.profile"}
         assert row["device_pull"] is (row["kind"] not in not_pulled), row
         assert row["body"] == f"events/{row['kind']}.json"

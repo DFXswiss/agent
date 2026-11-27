@@ -1,0 +1,24 @@
+{
+  "mailbox": {
+    "id": "0193002d-0000-7000-8000-0000000000c1",
+    "name": "signup-1",
+    "email": "signup-1@example.org"
+  },
+  "messages": [
+    {
+      "id": "inbox:7",
+      "folder": "inbox",
+      "from": "Anthropic <noreply@example.com>",
+      "to": "signup-1@example.org",
+      "subject": "Your sign-in link",
+      "date": "2026-11-26T10:00:03.000Z",
+      "size": 2048,
+      "text": "Sign in: https://example.com/magic-link#abc",
+      "links": [
+        "https://example.com/magic-link#abc"
+      ]
+    }
+  ],
+  "waited_seconds": 12,
+  "timed_out": false
+}

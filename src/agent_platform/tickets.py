@@ -1,4 +1,4 @@
-"""Captured tasks in the agent tool (E-41, ADR-100; twin of the web client's ticket fields): `task capture`, `task
+"""Captured tasks in the agent tool (E-41, ADR-102; twin of the web client's ticket fields): `task capture`, `task
 edit`, `task start`, `topic list`, `topic create` and the ticket fields and filters of `task list` and `task show`.
 
 - **Capture** is `POST /v1/tasks` with the sealed `task.meta` alone (`{title, description?, github_org?,
@@ -45,7 +45,7 @@ GITHUB_REPO_RE = re.compile("([A-Za-z0-9][A-Za-z0-9-]{0,38})/[A-Za-z0-9_.-]{1,10
 NONE = "none"
 ME = "me"
 ORDERS = ("activity", "created", "urgency")
-"""The orders of `task list` and `task overview` (ADR-101 section 2): latest activity (default), newest
+"""The orders of `task list` and `task overview` (ADR-103 section 2): latest activity (default), newest
 creation, most urgent first."""
 OVERVIEWS = ("working", "waiting", "no-agent")
 """The overview of the open tasks (the start page's three groups: in progress, waiting for a question, no agent; the
@@ -195,7 +195,7 @@ def _meta_view(meta: Mapping[str, str]) -> dict[str, str | None]:
 
 
 def status_of(row: Mapping[str, Any]) -> str:
-    """The row's status; derived from the state for a hub before ADR-100."""
+    """The row's status; derived from the state for a hub before ADR-102."""
     status = row.get("status")
     if isinstance(status, str) and status in STATUSES:
         return status

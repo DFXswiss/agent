@@ -1,4 +1,4 @@
-// The counters of the task dashboard (ADR-101 section 1): the open tasks in the start page's three groups (in
+// The counters of the task dashboard (ADR-103 section 1): the open tasks in the start page's three groups (in
 // progress, waiting for a question, no agent), and per status and per urgency the number of tasks of the shown
 // organizations under the hub filters of the list (`core/tasks/counts.ts`). A click on a counter sets that filter, a
 // click on the chosen one clears it. They load again when a filter changes, when a row of the shown workgroups appears

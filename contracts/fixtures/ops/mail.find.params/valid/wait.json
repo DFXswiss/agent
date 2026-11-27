@@ -1,0 +1,10 @@
+{
+  "mailbox": "signup-1",
+  "from": "anthropic.com",
+  "subject": "Sign in",
+  "folder": "all",
+  "since": "2026-11-26T10:00:00.000Z",
+  "limit": 1,
+  "body": true,
+  "wait_seconds": 300
+}

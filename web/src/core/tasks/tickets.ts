@@ -1,4 +1,4 @@
-// Captured tasks (E-41, ADR-100): a task is captured like a ticket – title, description, person, topic, GitHub
+// Captured tasks (E-41, ADR-102): a task is captured like a ticket – title, description, person, topic, GitHub
 // organisation and repository, urgency – and an agent starts only when someone starts it.
 //
 // - The fields the hub sees (section 2): `status`, `urgency`, `assignee_id`, `topic_id` of the task row (absent from an

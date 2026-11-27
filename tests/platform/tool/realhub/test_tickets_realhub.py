@@ -1,4 +1,4 @@
-"""Captured tasks with the agent tool on the real hub (E-41, ADR-100, KOR-75): `task capture` starts no agent, `topic
+"""Captured tasks with the agent tool on the real hub (E-41, ADR-102, KOR-75): `task capture` starts no agent, `topic
 create`/`topic list`, the filters of `task list` (status, urgency, person and topic at the hub, GitHub organisation and
 repository on the opened `task.meta`), `task edit` of sealed and plaintext fields, `completed` and reopening, `task
 start`, and the same through the tool's MCP server (`search` and `run`)."""
@@ -138,7 +138,7 @@ def test_refusals(real: RealHub) -> None:
 
 
 def test_the_dashboard_over_organizations(real: RealHub) -> None:
-    """ADR-101 section 4: `task overview` lists the tasks of every readable workgroup of every organization,
+    """ADR-103 section 4: `task overview` lists the tasks of every readable workgroup of every organization,
     filtered, searched and sorted, with the counters; `task list --org` is the same for one organization."""
     ada, org, wg = _setup(real)
     other_org = str(run_ok(ada.tool, "org", "create", "--name", "Beta", "--display-name", "Ada")["org_id"])

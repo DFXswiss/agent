@@ -1,4 +1,4 @@
-// The ticket fields of a task on the task page (E-41, ADR-100 section 7): status (a choice for writers: todo,
+// The ticket fields of a task on the task page (E-41, ADR-102 section 7): status (a choice for writers: todo,
 // inProgress, completed – completed closes the task, todo/inProgress reopen a closed one; `PUT /v1/tasks/{task}/fields`),
 // urgency, person, topic, GitHub organisation and repository and the description (sealed in `task.meta`). "Edit" opens
 // the ticket form (`TicketForm.tsx`): the hub fields that changed go to `PUT …/fields`, changed sealed fields as a new

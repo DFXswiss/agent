@@ -179,7 +179,7 @@ describe('merge', () => {
     expect(overview(t.store.getState(), query(t, [t.wg], { search: 'x' })).merged).toHaveLength(3);
   });
 
-  it('filters by the sealed GitHub organisation and repository in the browser (ADR-100)', async () => {
+  it('filters by the sealed GitHub organisation and repository in the browser (ADR-102)', async () => {
     const t = await taskWorld();
     listPage(t.store, {
       wg: t.wg,
