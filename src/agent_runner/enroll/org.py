@@ -78,7 +78,7 @@ from agent_runner.identity import (
 from agent_runner.sync.codes import HUB_ERROR_CODES
 from agent_runner.sync.http import HubClient, HubRefusal, HubTransportError, hub_origin
 from agent_runner.vm import cli as store_cli
-from agent_runner.vm.capacity import compute, physical_memory_mib
+from agent_runner.vm.capacity import compute, new_vm_memory_mib, physical_memory_mib
 
 LOOKUP_TARGET = "/v1/invites/lookup"
 ENROLL_TARGET = "/v1/device/enroll"
@@ -323,10 +323,11 @@ def enrollment_body(
     options: EnrollOptions,
 ) -> dict[str, object]:
     arch = options.arch if _PLATFORM_TEXT_RE.fullmatch(options.arch) else "unknown"
+    physical = options.physical_mib()
     capacity = compute(
-        physical_mib=options.physical_mib(),
+        physical_mib=physical,
         reserve_mib=config.memory_reserve_mib,
-        vm_memory_mib=config.vm_memory_mib,
+        vm_memory_mib=new_vm_memory_mib(config, physical),
         vms=[],
     )
     return {

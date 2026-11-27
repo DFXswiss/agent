@@ -46,6 +46,20 @@ agent_runner_device_metrics_dropped_total 0
 # HELP agent_runner_vm_start_failures_total Failed attempts to clone or start a Lima VM.
 # TYPE agent_runner_vm_start_failures_total counter
 agent_runner_vm_start_failures_total 1
+# HELP agent_runner_vm_placements_total Session placements on workgroup VMs by reason (room measured on a running VM, new VM, refused, ...).
+# TYPE agent_runner_vm_placements_total counter
+agent_runner_vm_placements_total{reason="preferred"} 0
+agent_runner_vm_placements_total{reason="room"} 7
+agent_runner_vm_placements_total{reason="restart"} 0
+agent_runner_vm_placements_total{reason="replaced"} 0
+agent_runner_vm_placements_total{reason="new_vm"} 2
+agent_runner_vm_placements_total{reason="refused"} 0
+# HELP agent_runner_vm_room_checks_total Room checks of running or stopped workgroup VMs before a placement by result (room, full, ...).
+# TYPE agent_runner_vm_room_checks_total counter
+agent_runner_vm_room_checks_total{result="room"} 7
+agent_runner_vm_room_checks_total{result="full"} 1
+agent_runner_vm_room_checks_total{result="unmeasured"} 0
+agent_runner_vm_room_checks_total{result="size"} 0
 # HELP agent_runner_operator_github_connects_total GitHub connections made with the operator's GitHub token (approved users).
 # TYPE agent_runner_operator_github_connects_total counter
 agent_runner_operator_github_connects_total 0

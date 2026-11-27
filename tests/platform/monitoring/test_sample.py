@@ -25,7 +25,10 @@ def test_writes_every_metric_like_the_runner(tmp_path: Path) -> None:
     names = stack.textfile_metrics(text)
     assert names == {metric.name for metric in textfile.metrics_of(sample.snapshot(0.0), spend=sample.SPEND)}
     # 43 + the work VM slots and their capacity (ADR-059 addendum 4) + the admission per kind (05 section 3.8)
-    assert len(names) == 51
+    # + the session placements and room checks (HOT-32, 05 section 3.3)
+    assert len(names) == 53
+    assert 'agent_runner_vm_placements_total{reason="new_vm"} 2' in text
+    assert 'agent_runner_vm_room_checks_total{result="full"} 1' in text
     assert values(text, "agent_runner_textfile_timestamp_seconds") == [1795600000.0]
     assert values(text, "agent_runner_device_capacity_low") == [0]
     assert values(text, "agent_runner_vm_probe_ok") == [1, 0]

@@ -19,6 +19,7 @@ from agent_runner.vm import records
 from agent_runner.vm.capacity import Usage
 from agent_runner.vm.lifecycle import VmManager
 from agent_runner.vm.pool import VmSettings
+from agent_runner.vm.room import Room
 
 from .guests import GOLDEN, NOW, ORG, SETTINGS, WG_A, WG_B, Harness
 
@@ -74,11 +75,17 @@ def rows_only(body: Any) -> Any:
     return run
 
 
-def measured(manager: VmManager, full: set[str]) -> None:
-    """The VMs' measured room (`vm.room`, ADR-075 addendum 2): no room on the VMs of `full`."""
+def judged(fits: bool) -> Room:
+    """A measured room: 1 GiB free of what one more session needs, at a load of 50 % or 95 % per vCPU."""
+    return Room(fits, 4096, 512, 0.5 if fits else 0.95)
 
-    async def session_room(row: Any) -> bool:
-        return row.id not in full
+
+def measured(manager: VmManager, full: set[str], unmeasured: frozenset[str] = frozenset()) -> None:
+    """The VMs' measured room (`vm.room`, ADR-075 addendum 2): no room on the VMs of `full`, no measurement on those
+    of `unmeasured`."""
+
+    async def session_room(row: Any) -> Room:
+        return Room(False) if row.id in unmeasured else judged(row.id not in full)
 
     manager.env.session_room = session_room
 
@@ -86,9 +93,9 @@ def measured(manager: VmManager, full: set[str]) -> None:
 def holds_one(harness: Harness, manager: VmManager) -> None:
     """The measured room of a VM that takes exactly one session (a session booked on it uses it up)."""
 
-    async def session_room(row: Any) -> bool:
+    async def session_room(row: Any) -> Room:
         booked = harness.sql("SELECT count(*) AS n FROM runner.session WHERE vm_id = %s", (row.id,))
-        return int(booked[0]["n"]) == 0
+        return judged(int(booked[0]["n"]) == 0)
 
     manager.env.session_room = session_room
 

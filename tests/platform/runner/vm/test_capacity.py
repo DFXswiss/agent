@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import Any
 
 from agent_runner.vm import capacity, pool
 from agent_runner.vm.capacity import Candidate, compute, lru_victim
@@ -149,6 +150,28 @@ def test_the_host_reserve_is_a_base_need_plus_a_share_per_vm() -> None:
         other=capacity.Usage(vms=2, memory_mib=8192),
     )
     assert shared.used_mib == 8192 + 2 * capacity.VM_HOST_MIB  # VMs of other areas count their host share too
+
+
+def test_the_size_of_a_new_vm_follows_the_device() -> None:
+    """HOT-32: empty `VM_CPUS` / `VM_MEMORY_MIB` - a quarter of the VM budget in whole GiB (8-32 GiB), one vCPU per
+    2 GiB, at most 16 and at most half the cores; a set value wins."""
+
+    def size(cores: int | None, physical_gib: int, **set_values: int | None) -> tuple[int, int]:
+        config: Any = SimpleNamespace(**{"vm_cpus": None, "vm_memory_mib": None, "memory_reserve_mib": None,
+                                         **set_values})  # fmt: skip
+        return capacity.vm_size(config, cores=cores, physical_mib=physical_gib * 1024)
+
+    assert size(36, 512) == (16, 32768)  # the platform device: 508 GiB budget
+    assert size(10, 32) == (4, 8192)  # a Mac mini of 32 GB: 28 GiB budget, as before
+    assert size(8, 16) == (4, 8192)  # the smallest VM that ever ran
+    assert size(12, 64) == (6, 15360)  # 60 GiB budget: 15 GiB, half of 12 cores
+    assert size(2, 512) == (1, 32768)
+    assert size(None, 512) == (16, 32768)  # cores unknown: the memory alone
+    assert size(36, 512, vm_cpus=4, vm_memory_mib=8192) == (4, 8192)  # set values win
+    assert size(36, 512, vm_memory_mib=8192) == (4, 8192)  # the vCPUs follow a set memory
+    assert size(36, 512, memory_reserve_mib=500 * 1024) == (4, 8192)  # a large reserve: at least 8 GiB
+    config: Any = SimpleNamespace(vm_cpus=None, vm_memory_mib=None, memory_reserve_mib=None)
+    assert capacity.new_vm_memory_mib(config, 512 * 1024) == 32768
 
 
 def test_about_one_or_two_cores_stay_free() -> None:

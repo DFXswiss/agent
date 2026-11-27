@@ -6,7 +6,8 @@ section 3, ADR-018).
 writes it like the infrastructure's textfile scripts: a temp file `.agent_runner.prom.XXXXXX` (not ending in `.prom`, so
 the collector never reads half a file) in the same directory, the complete body in one write, mode 0644, `rename`.
 
-Labels are IDs only (`vm`, `wg`, `session`, `state`, `direction`): no names, e-mails or other personal data. A VM
+Labels are IDs or fixed values only (`vm`, `wg`, `session`, `state`, `direction`, the placement counters' `reason` and
+`result`, HOT-32): no names, e-mails or other personal data. A VM
 without a workgroup (pool) has an empty `wg`. Series of a session exist while it has not ended and for 15 min after
 (`session.RETENTION_S`); a value that was not measured is left out rather than reported as 0.
 
@@ -152,7 +153,7 @@ def _device(snapshot: Snapshot, spend: Mapping[str, float] | None) -> list[Metri
     single("agent_runner_device_capacity_low", "1 when less than 10 % of the VM slots are free.", capacity.capacity_low)
     for counter in DEVICE_COUNTERS:
         metric = Metric(counter.name, "counter", counter.help)
-        metric.add((), device.counters[counter.name])
+        metric.add(counter.labels, device.counters[counter.key])
         out.append(metric)
     if spend is not None:
         metric = _gauge("agent_runner_device_model_spend_usd", "Model spend of the platform key in USD.")

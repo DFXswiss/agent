@@ -23,6 +23,7 @@ from agent_runner.prompts.resume import RETRY
 from agent_runner.subagents import instructions, limits, session_state, store, target_checks, turns
 from agent_runner.subagents.controller import GRACE_S, SETTLE_S, Subagents, ping_id
 from agent_runner.subagents.instructions import Instruction
+from agent_runner.vm.room import Room
 
 from ..operations.kit import OpGuest
 from ..reconcile.rig import Rig
@@ -158,8 +159,8 @@ def limited(found: SKit, running: int) -> None:
 def vm_room(found: SKit, room: bool) -> None:
     """The measured room of the task's VM (`vm.room`, through the daemon's VM manager; ADR-075 addendum 2)."""
 
-    async def session_room(_row: Any) -> bool:
-        return room
+    async def session_room(_row: Any) -> Room:
+        return Room(room, 1024, 512, 0.5)
 
     vars(found.env.context)[limits.VM_MANAGER_KEY] = SimpleNamespace(
         env=SimpleNamespace(db=found.env.pool, session_room=session_room)

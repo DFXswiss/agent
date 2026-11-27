@@ -11,6 +11,7 @@ from agent_guest.schema import SchemaSet
 from agent_runner.crypto.ids import uuid7
 from agent_runner.sessions import records
 from agent_runner.subagents import limits
+from agent_runner.vm.room import Room
 
 from ..reconcile.rig import Rig
 from ..sessions.kit import OWNER
@@ -263,8 +264,8 @@ def test_a_vm_without_free_resources_refuses_a_child(rig: Rig) -> None:
         parent = await found.parent()
         room = [True]
 
-        async def session_room(row: Any) -> bool:
-            return room[0]
+        async def session_room(row: Any) -> Room:
+            return Room(room[0], 1024, 512, 0.5)
 
         vars(env.context)[limits.VM_MANAGER_KEY] = SimpleNamespace(
             env=SimpleNamespace(db=found.env.pool, session_room=session_room)

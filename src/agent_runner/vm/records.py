@@ -188,14 +188,19 @@ async def transition(db: Any, vm_id: str, expect: Sequence[str], **fields: Any) 
     return VmRow(**rows[0]) if rows else None
 
 
-async def take_pool(db: Any, golden_version: str, org_id: str, wg_id: str, at: datetime) -> VmRow | None:
-    """Atomically move the oldest pool VM of the golden to `assigning` for the workgroup (None: pool empty)."""
+async def take_pool(
+    db: Any, golden_version: str, org_id: str, wg_id: str, at: datetime, *, size: tuple[int, int]
+) -> VmRow | None:
+    """Atomically move the oldest pool VM of the golden and of `size` (`(cpus, memory_mib)`, the size of a new VM) to
+    `assigning` for the workgroup (None: no such pool VM)."""
+    cpus, memory_mib = size
     rows = await _rows(
         db,
         "UPDATE runner.vm SET state = 'assigning', org_id = %s, wg_id = %s, assigned_at = %s"
         " WHERE id = (SELECT id FROM runner.vm WHERE state = 'pool' AND golden_version = %s"
+        " AND cpus = %s AND memory_mib = %s"
         " ORDER BY created_at, id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING " + COLUMNS,
-        (org_id, wg_id, at, golden_version),
+        (org_id, wg_id, at, golden_version, cpus, memory_mib),
     )
     return VmRow(**rows[0]) if rows else None
 

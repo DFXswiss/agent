@@ -18,7 +18,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from agent_runner.metrics import textfile
+from agent_runner.metrics import counters, textfile
 from agent_runner.metrics.device import DeviceValues
 from agent_runner.metrics.session import SessionEntry
 from agent_runner.metrics.snapshot import DeviceEntry, Snapshot, VmEntry
@@ -50,6 +50,15 @@ def snapshot(wall: float, step: int = 0, capacity_low: bool = False) -> Snapshot
             "agent_runner_vm_start_failures_total": 1,
             "agent_runner_operator_github_connects_total": 0,
             "agent_runner_operator_github_connect_failures_total": 0,
+            # every placement reason and room check result (HOT-32): sessions in a VM with room, one full VM
+            **{
+                f'agent_runner_vm_placements_total{{reason="{reason}"}}': {"room": 7 + step, "new_vm": 2}.get(reason, 0)
+                for reason in counters.PLACEMENT_REASONS
+            },
+            **{
+                f'agent_runner_vm_room_checks_total{{result="{result}"}}': {"room": 7 + step, "full": 1}.get(result, 0)
+                for result in counters.ROOM_RESULTS
+            },
         },
     )
     running = VmEntry(

@@ -40,7 +40,8 @@ counts as "no limit" (the behaviour before this ADR).
 > its own free resources last, measured on the VM (`agent_runner.vm.room`: the guest's `GET /v1/metrics` - RAM
 > available less the mean `memory.current` of its sessions, at least 512 MiB (since addendum 3: the largest measured
 > session, no floor), must leave 10 % of the VM's RAM; the load
-> per vCPU at most `VM_LOAD_MAX_PERCENT`, default 85). A VM that does not answer is judged by the bound alone. The same
+> per vCPU at most `VM_LOAD_MAX_PERCENT`, default 85). A VM that does not answer is judged by the bound alone (since
+> addendum 5: it has no room for a new session). The same
 > measurement decides whether a subagent fits on its parent's VM. When no running VM has room, the existing order of
 > section 4 and of the scheduler applies unchanged - a stopped VM, then a new VM on a free slot of the device, else
 > `capacity_exhausted` and the hub places the next attempt (section 7, ADR-013, ADR-049); no new rule. The device
@@ -113,6 +114,31 @@ counts as "no limit" (the behaviour before this ADR).
 > fixed reserve either: the admission starts new VMs while about 1-2 cores stay free for macOS, the runner and the
 > VMs' input and output (an eighth of the cores, at least 1, at most 2, `vm.capacity.host_cpu_ratio`);
 > `CPU_LOAD_MAX_PERCENT`, empty by default, replaces that rule when set. 05-runner.md §1.3, §1.3.1, §3.4, §3.8.
+
+> **Addendum 5 (2026-11-27, HOT-32): look first, then place; a larger VM only for new VMs.** Finding on the platform
+> device at about 10:00: every session of a workgroup ran in one VM of 4 vCPU and 8 GiB - the device ran without the
+> measured room of the addenda above, and `SESSIONS_PER_VM=0` meant unlimited room, so no second VM ever started -,
+> 11 sessions at a load of 4.3 on 4 cores, tool calls timing out, while the device (36 cores, 512 GB) was 70 % free.
+> Client: "die verteilung muss dynamisch sein nach bedarf, nicht auf eine spezifische zahl"; "du kanst doch nicht
+> einfach laufende sessions beenden"; "du musst schon erst kucken hats noch platz und wenn nicht dann eine neue vm
+> nehmen".
+>
+> - **Room check before every placement** (05-runner.md §3.3.1): the runner measures a running VM before it places a
+>   session there - RAM left after the largest session ≥ 10 % of the VM, load per vCPU of the VM's own vCPUs ≤
+>   `VM_LOAD_MAX_PERCENT` (85). A VM whose guest does not answer in 2 s is **not** a VM with room any more (it was in
+>   addendum 1): that is the overloaded VM of the finding. No room: another VM with room, a stopped VM, else a new VM
+>   from the pool or a clone through the device admission; else `capacity_exhausted`.
+> - **Size** (05-runner.md §3.3.2): `VM_CPUS` / `VM_MEMORY_MIB` apply to every new VM and are empty by default: the
+>   device's rule gives 16 vCPUs and 32 GiB on the platform device and keeps 4 vCPUs and 8 GiB on a Mac mini of 32 GB.
+>   One fixed default of 16 / 32 GiB was checked and not chosen: such a VM cannot start on a device with fewer cores
+>   or a smaller budget.
+> - **Never end a running session**: a size change applies to new VMs only. A VM of an older size keeps its sessions,
+>   takes no new one and stops when its last session ended; a stopped one is replaced when its sessions may move
+>   (ADR-093 rule), pool VMs of an older size are replaced as soon as the refill runs. A restart of the runner ends no
+>   VM and no session (05-runner.md §1.1). Not chosen: growing a VM (addendum 3) and moving running sessions.
+> - **Visible**: every placement is logged with the chosen VM, the measured room and the reason
+>   (`runner.vm.placement`) and counted (`agent_runner_vm_placements_total{reason}`,
+>   `agent_runner_vm_room_checks_total{result}`, 08-monitoring.md).
 
 ### 2. Capacity report (runner → hub, additive)
 The `capacity` object of the heartbeat gains optional counters: `cpus`, `memory_total_mib`, `disk_free_mib`,

@@ -39,7 +39,7 @@ from agent_runner.errors import RunnerError
 from agent_runner.identity import ensure_private_dir
 from agent_runner.store.cluster import start_store, stop_store, store_exists
 from agent_runner.store.migrate import migrate
-from agent_runner.vm import cli_pool, golden, lima
+from agent_runner.vm import capacity, cli_pool, golden, lima
 
 EXIT_OK = 0
 IMAGE_LOG = "image.log"
@@ -138,11 +138,12 @@ def cmd_build(args: argparse.Namespace, ctx: Any) -> int:
     _prepare(config)
     with store(config, ctx) as dsn, tempfile.TemporaryDirectory(dir=config.tmp_dir, prefix="image-") as scratch:
         builder = _builder(config, ctx, dsn, Path(scratch))
+        cpus, memory_mib = capacity.vm_size(config, cores=os.cpu_count(), physical_mib=capacity.physical_memory_mib())
         result = builder.build(
             source,
             golden.BuildOptions(
-                cpus=config.vm_cpus,
-                memory_mib=config.vm_memory_mib,
+                cpus=cpus,
+                memory_mib=memory_mib,
                 disk_gib=config.vm_disk_gib,
                 claude_version=args.claude_version,
                 tag=args.tag,

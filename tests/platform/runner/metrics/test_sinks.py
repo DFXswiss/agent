@@ -70,7 +70,11 @@ def snapshot(**overrides: Any) -> Snapshot:
         backlog=3,
         counters={"agent_runner_device_verify_failures_total": 2, "agent_runner_device_metrics_dropped_total": 0,
                   "agent_runner_vm_start_failures_total": 1, "agent_runner_operator_github_connects_total": 0,
-                  "agent_runner_operator_github_connect_failures_total": 0},
+                  "agent_runner_operator_github_connect_failures_total": 0,
+                  **{f'agent_runner_vm_placements_total{{reason="{reason}"}}': {"room": 7, "new_vm": 2}.get(reason, 0)
+                     for reason in counters.PLACEMENT_REASONS},
+                  **{f'agent_runner_vm_room_checks_total{{result="{result}"}}': {"room": 7, "full": 1}.get(result, 0)
+                     for result in counters.ROOM_RESULTS}},
     )  # fmt: skip
     running = VmEntry(
         vm_id="vm-0a1b2c3d",
@@ -122,6 +126,7 @@ def test_every_metric_has_help_and_type_and_labels_are_ids() -> None:
         "agent_runner_device_vm_memory_used_bytes", "agent_runner_device_pool_ready",
         "agent_runner_device_capacity_low", "agent_runner_device_verify_failures_total",
         "agent_runner_device_metrics_dropped_total", "agent_runner_vm_start_failures_total",
+        "agent_runner_vm_placements_total", "agent_runner_vm_room_checks_total",
         "agent_runner_operator_github_connects_total", "agent_runner_operator_github_connect_failures_total",
         "agent_runner_device_model_spend_usd", "agent_runner_vm_probe_ok", "agent_runner_vm_state",
         "agent_runner_vm_cpu_ratio", "agent_runner_vm_memory_bytes", "agent_runner_vm_memory_limit_bytes",
@@ -138,7 +143,7 @@ def test_every_metric_has_help_and_type_and_labels_are_ids() -> None:
     assert names == expected
     labelled = [line[line.index("{") + 1 : line.index("}")] for line in text.splitlines() if "{" in line]
     labels = {pair.split("=")[0] for inner in labelled for pair in inner.split(",")}
-    assert labels == {"vm", "wg", "state", "session", "direction", "window"}
+    assert labels == {"vm", "wg", "state", "session", "direction", "window", "reason", "result"}
     for line in text.splitlines():
         if line.startswith("#"):
             continue
@@ -338,23 +343,39 @@ def test_sink_without_enrollment_stores_nothing_and_keeps_rows_when_the_outbox_f
 # -- counter registry ---------------------------------------------------------------------------------------------
 
 
+def placement_values(placed: dict[str, int], checks: dict[str, int]) -> dict[str, int]:
+    """The labelled placement counters of HOT-32 (every reason and result, 0 when not counted)."""
+    return {
+        **{f'agent_runner_vm_placements_total{{reason="{key}"}}': placed.get(key, 0) for key in PLACEMENTS},
+        **{f'agent_runner_vm_room_checks_total{{result="{key}"}}': checks.get(key, 0) for key in ROOM_RESULTS},
+    }
+
+
+PLACEMENTS = ("preferred", "room", "restart", "replaced", "new_vm", "refused")
+ROOM_RESULTS = ("room", "full", "unmeasured", "size")
+
+
 def test_device_counters_read_their_sources() -> None:
+    assert (counters.PLACEMENT_REASONS, counters.ROOM_RESULTS) == (PLACEMENTS, ROOM_RESULTS)
     context = SimpleNamespace()
     assert counters.device_values(context, 4) == {
         "agent_runner_device_verify_failures_total": 0,
         "agent_runner_device_metrics_dropped_total": 4,
         "agent_runner_vm_start_failures_total": 0,
+        **placement_values({}, {}),
         "agent_runner_operator_github_connects_total": 0,
         "agent_runner_operator_github_connect_failures_total": 0,
     }
     audit.counters(context)[audit.VERIFY_FAILURES] += 3
-    vars(context)[vm_tasks.MANAGER_KEY] = SimpleNamespace(env=SimpleNamespace(start_failures=2))
+    env = SimpleNamespace(start_failures=2, placements={"room": 4, "new_vm": 1}, room_checks={"full": 1, "room": 4})
+    vars(context)[vm_tasks.MANAGER_KEY] = SimpleNamespace(env=env)
     operator_github.state_for(context).connects += 5
     operator_github.state_for(context).failures += 1
     assert counters.device_values(context, 0) == {
         "agent_runner_device_verify_failures_total": 3,
         "agent_runner_device_metrics_dropped_total": 0,
         "agent_runner_vm_start_failures_total": 2,
+        **placement_values({"room": 4, "new_vm": 1}, {"full": 1, "room": 4}),
         "agent_runner_operator_github_connects_total": 5,
         "agent_runner_operator_github_connect_failures_total": 1,
     }

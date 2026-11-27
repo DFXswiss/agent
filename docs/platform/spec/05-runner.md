@@ -27,7 +27,8 @@ document differ, this document wins; §4.6 lists the spike defects that MUST NOT
   §2.3). A task that raises is restarted with backoff
   1 s → 30 s; more than 10 restarts in 60 s of the same task terminates the daemon with exit 1 (launchd restarts
   it). SIGTERM: stop accepting work, mark running sessions as they are (VMs keep running), flush outbox, exit 0
-  within 10 s.
+  within 10 s. The start after it ends no VM and no session, also when `VM_CPUS` / `VM_MEMORY_MIB` changed in between
+  (§3.3.2; test `tests/platform/runner/vm/test_placement.py::test_a_restart_of_the_runner_ends_no_session`).
 
 ### 1.2 CLI
 
@@ -59,10 +60,10 @@ CPU and disk.
 | `HOME` | `~/.local/share/agent-runner` | 0700 |
 | `HUB_URL` | required | `https://` (tests: `http://127.0.0.1…` allowed only with `AGENT_RUNNER_TEST_MODE=1`) |
 | `PLATFORM_ROOT_KEY` | required | b64u Ed25519 public key |
-| `VM_CPUS` / `VM_MEMORY_MIB` / `VM_DISK_GIB` | 4 / 8192 / 20 | per workgroup VM |
+| `VM_CPUS` / `VM_MEMORY_MIB` / `VM_DISK_GIB` | empty / empty / 20 | the size of every new workgroup VM; empty = the device's rule (§3.3.2: a quarter of the VM budget, 8–32 GiB, one vCPU per 2 GiB, at most 16 and half the cores - 16 vCPUs / 32 GiB on the platform device, 4 / 8 GiB on a Mac mini of 32 GB); a number (1–256 vCPUs, 1024–4194304 MiB) replaces the rule; a change applies to new VMs only, a running VM keeps its size and its sessions (HOT-32) |
 | `POOL_SIZE` | 2 | 0 disables the pool (clone path only) |
 | `MEMORY_RESERVE_MIB` | empty = the host's base need, 4 GiB | the host's own need excluded from the VM budget; the same on every device, platform and own; each VM adds its host share when it is admitted (§1.3.1); a number replaces the base need |
-| `VM_LOAD_MAX_PERCENT` | 85 | a running workgroup VM takes one more session only while its own free resources last: its 1-minute load per vCPU is at most this (10–100) and its free RAM is enough (§3.3 step 2, `vm.room`) |
+| `VM_LOAD_MAX_PERCENT` | 85 | a running workgroup VM takes one more session only while its own free resources last, measured before every placement: its 1-minute load per vCPU is at most this (10–100) and its free RAM is enough (§3.3.1, `vm.room`) |
 | `CPU_LOAD_MAX_PERCENT` | empty = about 1–2 cores stay free | the device admission (§3.8) starts a new VM of any kind only while the host's 1-minute load per core is at most this; no fixed CPU reserve: empty leaves an eighth of the cores, at least 1, at most 2, for macOS, the runner and the VMs' input and output (`vm.capacity.host_cpu_ratio`, at least half the cores admitted); a number (10–100) replaces the rule |
 | `SESSION_IDLE_SECONDS` / `VM_IDLE_SECONDS` | 1800 / 1800 | |
 | `TEXTFILE_DIR` | empty = textfile sink off | node_exporter textfile directory (08 §3) |
@@ -287,7 +288,9 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
 - Assignment (hot path): pick a pool VM → `POST /v1/assign {vm_id, org_id, wg_id}` → `runner.vm` row
   `assigning` → `running`; outbox `vm_state`. Measured target 0.1 s (Spike A: 0.09–0.13 s).
 - Refill: asynchronous after every assignment and every 60 s, up to `POOL_SIZE`, at most 2 clones in parallel,
-  only while capacity allows (§3.4). A refill clone never delays a hot-path request.
+  only while capacity allows (§3.4). A refill clone never delays a hot-path request. The pool follows the current
+  size (§3.3.2): a pool VM of another size than `VM_CPUS` / `VM_MEMORY_MIB` is never assigned and is deleted at the
+  next refill (it is free by definition), then replaced at the current size.
 - Fallback when the pool is empty: clone + start on the hot path (Spike A: 4.3–6.0 s incl. load with 100 VMs).
   Restart of a stopped workgroup VM: `limactl start` (Spike A: 4.1–5.9 s). Cold boot from the cloud image is
   never in the hot path.
@@ -305,22 +308,77 @@ gets `model_access_unavailable` on the next request and is stopped with that rea
   VM of a session is chosen under the in-process lock of its workgroup, and the session row names its VM before the
   lock is released, so two starts never both take the last place of a VM. Order (deterministic): (1) the VM the hub
   names (`vm_id_pref`, a user's choice) when it is a live VM of the workgroup; (2) for a subagent the VM of its parent,
-  for a main session with `resume_from` the VM of that session – both regardless of their room; (3) a running VM of
-  the workgroup with free resources of its own for one more session - no fixed number of sessions per VM (ADR-075
-  addendum 2) -, measured on the VM (`vm.room`: the guest's `GET /v1/metrics`, 2 s; `MemAvailable` less what one more
-  session needs - measured, no fixed number: the largest `memory.current` among its sessions that have not ended - leaves
-  10 % of the VM's RAM, and the load per vCPU is at most `VM_LOAD_MAX_PERCENT`; a VM that does not answer counts as
-  having room, since its own sandbox limits still hold; log `runner.vm.session_room`), smallest VM ID first.
-  The same measurement decides whether a subagent fits on its parent's VM (`subagents.limits.vm_room_refusal`). A VM
-  keeps the size it started with (it does not grow, ADR-075 addendum 3), so its fixed RAM and its sessions' measured
-  use decide how many sessions it takes (DFX workgroup VM, 8 GiB, sessions of 350-510 MB: about 13-15). No VM with
-  room: the order goes on unchanged - a stopped VM, then a further VM of the workgroup on a free slot of the device
-  (§3.4, §3.8), else `capacity_exhausted` and the hub places the next attempt, ADR-013, ADR-049;
-  (4) a stopped VM of the workgroup with room (restart; replaced by a VM of the newest golden instead when it may
-  move, §3.6 – the new VM first, then the old one is deleted), smallest VM ID; (5) a new VM
+  for a main session with `resume_from` the VM of that session – both regardless of their room and size (the
+  choice, or the work, lives there); (3) a running VM of the workgroup of the current size whose room was measured
+  **before** the placement and that has free resources of its own for one more session (§3.3.1) - no fixed number of
+  sessions per VM (ADR-075 addendum 2, HOT-32) -, smallest VM ID first. The same measurement decides whether a
+  subagent fits on its parent's VM (`subagents.limits.vm_room_refusal`; there only a measured full VM refuses). A VM
+  keeps the size it started with (it does not grow, ADR-075 addendum 3), so its fixed RAM and CPUs and its sessions'
+  measured use decide how many sessions it takes (DFX workgroup VM, 8 GiB, sessions of 350-510 MB: about 13-15 by
+  RAM). No VM with room: the order goes on - a stopped VM, then a further VM of the workgroup on a free slot of the
+  device (§3.4, §3.8), else `capacity_exhausted` and the hub places the next attempt, ADR-013, ADR-049;
+  (4) a stopped VM of the workgroup of the current size (restart; replaced by a VM of the newest golden instead when
+  it may move, §3.6 – the new VM first, then the old one is deleted), in store order; then a stopped VM of an older
+  size whose sessions may move by the rule of §3.6: a new VM of the current size replaces it (`vm.size_replaced`);
+  one whose sessions may not move is left for them (their preference restarts it); (5) a new VM of the current size
   from the pool, else a clone, when a slot is free (§3.4) – without a ready golden yet (a device just added still
   builds it) `capacity_exhausted` (`golden`), not `vm_start_failed` (KOR-67); (6) else the session fails
   `capacity_exhausted`.
+- Every placement is logged and counted (HOT-32): `runner.vm.placement wg_id= vm_id= reason= cpus= memory_mib=
+  fits= available_mib= need_mib= load_pct= passed_over= [session_id=] [code=]` - the chosen VM, its size, the room
+  measured there, the VMs passed over with their result (`<vm_id>:full|unmeasured|size`) and the reason `preferred`,
+  `room` (room measured on a running VM), `restart`, `replaced`, `new_vm` (pool or clone; the start's `start_step
+  path=` names which) or `refused`; each measurement also as `runner.vm.session_room vm_id= fits=yes|no|unknown …`.
+  Metrics `agent_runner_vm_placements_total{reason}` and `agent_runner_vm_room_checks_total{result}` (`room`, `full`,
+  `unmeasured`, `size`; 08-monitoring.md §3).
+
+#### 3.3.1 Room of a running VM (HOT-32)
+
+Before a session is placed on a running VM, the runner measures that VM through its guest (`GET /v1/metrics`, the
+answer the monitoring samples, 08-monitoring.md §2; at most 2 s, `vm.room`). One more session fits while **both**
+hold:
+
+| Resource | Rule | Threshold and why |
+|---|---|---|
+| RAM | `MemAvailable` of the VM − what one more session needs ≥ 10 % of the VM's RAM | What one more session needs is measured, no fixed number: the largest `memory.current` among the VM's sessions that have not ended (a new session grows to what the others use; DFX workgroup VM 2026-11-26: 350-510 MB each). The 10 % stay for the guest itself (guest API, journald, page cache) and short peaks of the sessions already there; below it the guest's OOM killer would end a running session, which must never happen. |
+| CPU | 1-minute load of the VM / its **own** vCPUs (`runner.vm.cpus`) ≤ `VM_LOAD_MAX_PERCENT` (default 85 %) | At a load per vCPU of 1.0 processes wait for a CPU and every tool call of every session of the VM gets slower; 85 % keeps about one vCPU in seven free for the bursts of the sessions already there (a build, a test run) and for the start of the new one. The finding of 2026-11-27 - 11 sessions, load 4.3 on 4 vCPUs = 108 %, tool calls timing out - is full by this rule; the 1-minute load is the value the guest reports and smooths single spikes. |
+
+A VM whose guest does not answer within 2 s is **not measured** and counts as having no room for a new session: a
+guest that cannot answer its own metrics in 2 s is the overloaded VM of the finding, not a VM with room ("first look
+whether there is room, and if not take a new VM"). A missing measurement never refuses a subagent on its parent's VM.
+The device itself is not measured here: whether a further VM may start is the device admission's (§3.8: free RAM
+above the reserve, the host's CPU load, disk). The numbers are no count of sessions; a VM takes as many as its
+measured resources allow.
+
+#### 3.3.2 Size of a workgroup VM and its change (HOT-32)
+
+`VM_CPUS` / `VM_MEMORY_MIB` (§1.3) apply to every **new** VM - pool fill, clone, replacement. Empty, they follow the
+device: a quarter of the VM budget (§1.3.1) in whole GiB, at least 8 GiB, at most 32 GiB, and one vCPU per 2 GiB,
+at most 16 and at most half the host's cores (`vm.capacity.vm_size`). The platform device (36 cores, 512 GB) gets
+16 vCPUs and 32 GiB, a Mac mini of 32 GB (10 cores) 4 vCPUs and 8 GiB as before. Why not one fixed default of
+16 vCPUs and 32 GiB: Apple's Virtualization framework refuses more vCPUs than the host has, and a 32 GiB VM never
+fits the 28 GiB budget of a Mac mini of 32 GB - such a device could start no VM at all. Why at most 16 vCPUs and
+32 GiB on a large device: with the room check a further VM starts whenever one is full, so a larger VM only saves
+VM starts; a VM is one failure domain (a guest crash or an unhealthy restart ends all its sessions, §3.3), and a
+workgroup with few sessions still reserves the whole VM memory in the device budget (§3.4) - 32 GiB of 508 GiB per
+VM still leaves room for 15 such VMs. On the platform device 16 vCPUs at 85 % carry a load of about 13.6, about
+35 sessions at the 0.39 cores per session of the finding (4.3 / 11), and 32 GiB about 50 sessions of 0.5 GB - the
+CPU binds first, at about three times the 11 sessions that overloaded the 4-vCPU VM; more sessions go to a further
+VM.
+
+A running VM never changes its size and no running session is ended for a new size (Lima fixes CPUs and RAM at the
+start, ADR-075 addendum 3). After a change - the settings are read at the start of the runner, so a change takes
+effect with its restart, which itself ends no VM and no session (§1.1) -:
+
+- a running VM of an older size keeps its sessions and their preferences, takes no new session (`passed_over=…:size`)
+  and is stopped as soon as it has no session left that has not ended - neither active nor suspended -
+  (`runner.vm.resized_stopped`, the `vm-idle` pass, at most a minute later);
+- a stopped VM of an older size is replaced by a new VM of the current size when its sessions may move (§3.6 rule),
+  else kept for them;
+- pool VMs of an older size take no session and are deleted at the next refill (`vm.pool_resized`), then refilled at
+  the current size (§3.2).
+
+This follows the golden switch (ADR-093, §3.6): the old VM keeps what runs on it, new work goes to the new VM.
 
 ### 3.4 Capacity
 

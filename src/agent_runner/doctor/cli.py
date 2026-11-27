@@ -208,7 +208,7 @@ def cmd_status(_args: argparse.Namespace, ctx: Any) -> int:
     capacity = capacity_module.compute(
         physical_mib=physical,
         reserve_mib=config.memory_reserve_mib,
-        vm_memory_mib=config.vm_memory_mib,
+        vm_memory_mib=capacity_module.new_vm_memory_mib(config, physical),
         vms=slots,
     )
     out.fact("status.pool", {"size": config.pool_size, "ready": capacity.pool_ready})

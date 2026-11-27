@@ -33,8 +33,9 @@ deletion took it; neither has a row, and the startup reconciliation deletes it b
 (`VmManager.reconcile`).
 
 `Pool` keeps up to `POOL_SIZE` neutral running clones: `refill()` (asynchronous, at most 2 clones in parallel, only
-while a slot is free, never on the hot path), `take(...)` (hot path: the oldest pool VM of the ready golden, `POST
-/v1/assign`, row `assigning` -> `running`) and `purge(...)` (pool VMs of a retired golden are deleted).
+while a slot is free, never on the hot path), `take(...)` (hot path: the oldest pool VM of the ready golden and of the
+current size, `POST /v1/assign`, row `assigning` -> `running`) and `purge(...)` (pool VMs of a retired golden or of
+another size than `VM_CPUS` / `VM_MEMORY_MIB` are deleted, so the pool follows the current size, HOT-32).
 
 `VmEnv` bundles every collaborator (Lima, store, settings, token files, guest client factory, clocks, random
 sources, the `vm_state` sink, the log, the usage of other runner areas and the host facts of the capacity report), so
@@ -64,9 +65,10 @@ from agent_runner.guestlink import cursor
 from agent_runner.guestlink.client import GuestClient, Health
 from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.vm import records
-from agent_runner.vm.capacity import NO_USAGE, Capacity, Usage, compute, vm_footprint_mib
+from agent_runner.vm.capacity import NO_USAGE, Capacity, Usage, compute, physical_memory_mib, vm_footprint_mib, vm_size
 from agent_runner.vm.lima import Instance, Lima, LimaError, memory_gib
 from agent_runner.vm.records import GoldenRef, TokenStore, VmRow
+from agent_runner.vm.room import Room
 
 TOKEN_PARAM = "AGENT_GUEST_CONTROL_TOKEN"
 HEALTH_TIMEOUT_S = 30.0
@@ -134,9 +136,9 @@ async def _no_reclaim(_need_mib: int) -> int:
     return 0
 
 
-async def _room_unmeasured(_row: VmRow) -> bool:
-    """Without a measurement (`vm.room.checker`, set by `vm.tasks`) a running VM has room: no fixed number."""
-    return True
+async def _room_unmeasured(_row: VmRow) -> Room:
+    """Without a measuring collaborator (`vm.room.checker`, set by `vm.tasks`) a running VM has room."""
+    return Room(True)
 
 
 async def _idle_cpu() -> float:
@@ -167,15 +169,29 @@ class VmSettings:
     vm_idle_seconds: int
 
     @classmethod
-    def from_config(cls, config: Config) -> VmSettings:
+    def from_config(
+        cls,
+        config: Config,
+        *,
+        cores: Callable[[], int | None] = os.cpu_count,
+        physical_mib: Callable[[], int] = physical_memory_mib,
+    ) -> VmSettings:
+        """The settings of this daemon; the size of a new VM is `VM_CPUS` / `VM_MEMORY_MIB`, or the rule of the
+        device when they are empty (`capacity.vm_size`, HOT-32)."""
+        cpus, memory_mib = vm_size(config, cores=cores(), physical_mib=physical_mib())
         return cls(
-            cpus=config.vm_cpus,
-            memory_mib=config.vm_memory_mib,
+            cpus=cpus,
+            memory_mib=memory_mib,
             disk_gib=config.vm_disk_gib,
             pool_size=config.pool_size,
             memory_reserve_mib=config.memory_reserve_mib,
             vm_idle_seconds=config.vm_idle_seconds,
         )
+
+    def current_size(self, row: VmRow) -> bool:
+        """True when the VM has the size of a new VM (HOT-32: a VM of an older size keeps its sessions, takes no new
+        one and stops when its last session ended; a pool VM of an older size is replaced)."""
+        return (row.cpus, row.memory_mib) == (self.cpus, self.memory_mib)
 
 
 @dataclass
@@ -207,8 +223,12 @@ class VmEnv:
     other_usage: Callable[[], Awaitable[Usage]] = _no_usage
     reclaim: Callable[[int], Awaitable[int]] = _no_reclaim
     """Ask the other areas to give back the MiB a workgroup VM needs (their `RECLAIM`, ADR-059 addendum 4)."""
-    session_room: Callable[[VmRow], Awaitable[bool]] = _room_unmeasured
-    """Whether a running VM's own free resources take one more session (`vm.room.checker`; default: yes)."""
+    session_room: Callable[[VmRow], Awaitable[Room]] = _room_unmeasured
+    """The measured room of a running VM for one more session (`vm.room.checker`; default: room)."""
+    placements: dict[str, int] = field(default_factory=dict)
+    """Placements of sessions by reason (`agent_runner_vm_placements_total{reason}`, HOT-32)."""
+    room_checks: dict[str, int] = field(default_factory=dict)
+    """Room checks of running VMs by result (`agent_runner_vm_room_checks_total{result}`, HOT-32)."""
     admission: Admission = field(default_factory=_admission)
     """The device's one admission (`agent_runner.admission`, shared with the work VMs): its transaction (`lock`, the
     pool's slot lock), the order of the kinds (fewest active first), CPU; default: idle CPU."""
@@ -507,11 +527,16 @@ class Pool:
         return max(min(wanted, MAX_PARALLEL_FILLS - self.filling, room), 0)
 
     async def purge(self, golden: GoldenRef | None) -> int:
-        """Delete pool VMs of another golden (all when there is none or the pool is disabled)."""
+        """Delete pool VMs of another golden or of another size than a new VM (all when there is no golden or the pool
+        is disabled); a pool VM is free by definition, the claim (`expect`) never takes one a session just took."""
         removed = 0
+        settings = self.env.settings
         for row in await records.live(self.env.db, "pool"):
-            outdated = golden is None or row.golden_version != golden.version or self.env.settings.pool_size == 0
-            if outdated and await self.env.delete(row, expect=("pool",)) is not None:
+            outdated = golden is None or row.golden_version != golden.version or settings.pool_size == 0
+            resized = not settings.current_size(row)
+            if (outdated or resized) and await self.env.delete(row, expect=("pool",)) is not None:
+                if resized:
+                    self.env.log("vm.pool_resized", {"vm_id": row.id, "cpus": row.cpus, "memory_mib": row.memory_mib})
                 removed += 1
         return removed
 
@@ -573,13 +598,15 @@ class Pool:
         return row
 
     async def take(self, golden: GoldenRef, org_id: str, wg_id: str) -> VmRow | None:
-        """Hot path: assign the oldest pool VM of `golden` to the workgroup; None when the pool is empty.
+        """Hot path: assign the oldest pool VM of `golden` and of the current size to the workgroup; None when the pool
+        has none.
 
         A pool VM that refuses the assignment or does not answer is deleted and the next one is tried.
         """
         env = self.env
         while True:
-            row = await records.take_pool(env.db, golden.version, org_id, wg_id, env.now())
+            size = (env.settings.cpus, env.settings.memory_mib)
+            row = await records.take_pool(env.db, golden.version, org_id, wg_id, env.now(), size=size)
             if row is None:
                 return None
             try:

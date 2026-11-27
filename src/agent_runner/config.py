@@ -110,8 +110,6 @@ HUB_NAMES = frozenset({"HUB_URL", "PLATFORM_ROOT_KEY"})
 
 # name: (default, minimum, maximum)
 _INTEGERS: dict[str, tuple[int, int, int]] = {
-    "VM_CPUS": (4, 1, 256),
-    "VM_MEMORY_MIB": (8192, 1024, 4_194_304),
     "VM_DISK_GIB": (20, 5, 65_536),
     "POOL_SIZE": (2, 0, 64),
     # a running workgroup VM takes one more session while its load per vCPU is at most this (`vm.room`)
@@ -141,6 +139,10 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
 }
 # name: (minimum, maximum) of a setting that is empty by default; empty = the rule of every device (05-runner.md 1.3)
 _OPTIONAL_INTEGERS: dict[str, tuple[int, int]] = {
+    # the size of a new workgroup VM (HOT-32): empty = the device's rule (`vm.capacity.vm_size`: a quarter of the VM
+    # budget, 8-32 GiB, one vCPU per 2 GiB, at most 16 and half the cores); a change applies to new VMs only
+    "VM_CPUS": (1, 256),
+    "VM_MEMORY_MIB": (1024, 4_194_304),
     # the host reserve: empty = the host's measured base need, 4 GiB; each VM adds its host share (`vm.capacity`)
     "MEMORY_RESERVE_MIB": (0, 4_194_304),
     # the device's one admission (`agent_runner.admission`): a new VM of any kind only while the host's CPU load (1 min,
@@ -178,8 +180,10 @@ class Config:
     home: Path
     hub_url: str | None
     platform_root_key: str | None
-    vm_cpus: int
-    vm_memory_mib: int
+    vm_cpus: int | None
+    """vCPUs of a new workgroup VM when set; None: the device's rule (`vm.capacity.vm_size`)."""
+    vm_memory_mib: int | None
+    """Memory of a new workgroup VM when set; None: the device's rule (`vm.capacity.vm_size`)."""
     vm_disk_gib: int
     pool_size: int
     memory_reserve_mib: int | None
@@ -345,8 +349,8 @@ def load_config(
         home=_home(raw("HOME") or DEFAULT_HOME, expand_user),
         hub_url=hub_url,
         platform_root_key=root_key,
-        vm_cpus=integers["VM_CPUS"],
-        vm_memory_mib=integers["VM_MEMORY_MIB"],
+        vm_cpus=chosen["VM_CPUS"],
+        vm_memory_mib=chosen["VM_MEMORY_MIB"],
         vm_disk_gib=integers["VM_DISK_GIB"],
         pool_size=integers["POOL_SIZE"],
         memory_reserve_mib=chosen["MEMORY_RESERVE_MIB"],

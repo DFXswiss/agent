@@ -7,13 +7,18 @@ workgroup for a session, in the deterministic order of ADR-075 section 4 (05-run
 1. the VMs of `prefer` in their order - the hub's `vm_id_pref` (a user's choice), then the VM of the parent session
    (subagent) or of the `resume_from` session - when it is a live VM of **this** workgroup, regardless of the limit:
    running -> use it, stopped -> restart it (no golden replacement: the choice, or the work, lives there);
-2. a running VM of the workgroup with free resources of its own for one more session (`env.session_room`, measured
-   on the VM: `vm.room`; no fixed number of sessions per VM, ADR-075 addendum 2), smallest VM ID first;
-3. a stopped VM of the workgroup, smallest VM ID -> restart it (`limactl start`, health `assigned` to this
-   workgroup), unless its golden is not the newest ready one, no retire hook keeps it (`vm.extensions`: e.g. context
-   checkpoints still due, KOR-33) and it may move (`golden_switch.judge`: every session on it is a paused main session
-   with a complete checkpoint, ADR-093): then a new VM (pool or clone, as in 4.) replaces it and only then it is
-   deleted (a failed clone leaves it as it is);
+2. a running VM of the workgroup of the current size (`VM_CPUS` / `VM_MEMORY_MIB`) whose room is measured before the
+   placement and has free resources of its own for one more session (`env.session_room`, measured on the VM:
+   `vm.room`; no fixed number of sessions per VM, ADR-075 addendum 2; a VM that cannot be measured has no room),
+   smallest VM ID first. A VM of an older size takes no new session: it keeps its sessions and stops when its last one
+   ended (`idle_pass`; HOT-32, after the model of the golden switch, ADR-093);
+3. a stopped VM of the workgroup of the current size, in store order -> restart it (`limactl start`, health
+   `assigned` to this workgroup), unless its golden is not the newest ready one, no retire hook keeps it
+   (`vm.extensions`: e.g. context checkpoints still due, KOR-33) and it may move (`golden_switch.judge`: every session
+   on it is a paused main session with a complete checkpoint, ADR-093): then a new VM (pool or clone, as in 4.)
+   replaces it and only then it is deleted (a failed clone leaves it as it is). Then a stopped VM of an older size
+   whose sessions may move by the same rule: a new VM of the current size replaces it (`vm.size_replaced`); one whose
+   sessions may not move stays for them;
 4. a new VM (no fixed number of VMs per workgroup; an older hub's `vm_new_allowed` is read past, ADR-075 addendum 2):
    warm pool (`Pool.take`), else clone
    + start on the hot path (`Provisioner.create`); while the device has no ready golden yet (a device just added
@@ -21,6 +26,12 @@ workgroup for a session, in the deterministic order of ADR-075 section 4 (05-run
    instead of failing. Such a device reports no free slot in its heartbeat (`report`), so the hub places nothing on
    it until the golden is ready; the refusal only covers the time before that heartbeat;
 5. else `capacity_exhausted` (the hub places the next attempt).
+
+Every placement is logged with the chosen VM, its size, the room measured there, the VMs passed over with the
+reason (`full`, `unmeasured`, `size`) and the reason of the choice: `runner.vm.placement wg_id= vm_id= reason=
+preferred|room|restart|replaced|new_vm|refused cpus= memory_mib= fits= available_mib= need_mib= load_pct= passed_over=
+[code=]`, and counted for the metrics (`VmEnv.placements` by reason, `VmEnv.room_checks` by result;
+`agent_runner_vm_placements_total{reason}`, `agent_runner_vm_room_checks_total{result}`, 08-monitoring.md).
 
 The choice runs under an
 asyncio lock per `wg_id`, and the session row names its VM (`records.assign_session`) before the lock is released, so
@@ -35,7 +46,10 @@ Further rules:
   fails its sessions with `guest_unreachable`) and restarted once; when it fails again after that restart it is
   stopped and reported (`vm.unhealthy_stopped`).
 - `idle_pass()` (task `vm-idle`, every 60 s): a running VM without an active session whose last use is
-  `VM_IDLE_SECONDS` ago is stopped. "Last use" is the newest of creation, assignment, `last_session_at` (set by
+  `VM_IDLE_SECONDS` ago is stopped; a running VM of an older size is stopped as soon as it has no session left that
+  has not ended (neither active nor suspended; `vm.resized_stopped`), it takes no new ones. A restart of the runner
+  ends no VM and no session (05-runner.md section 1.1): `reconcile()` only aligns the rows with Lima.
+  "Last use" is the newest of creation, assignment, `last_session_at` (set by
   `touch(vm_id)`, which the session start calls on every session transition) and the session timestamps.
 - `delete_workgroup(wg_id)`: every VM of an unassigned or archived workgroup (trigger: RUN-06) is deleted
   (`limactl delete -f`, row `deleted`, token file and journal cursor removed).
@@ -49,7 +63,8 @@ Further rules:
   are deleted; states follow the instance (`running` <-> `stopped`); unknown `<prefix>arp-<8 hex>` instances are
   deleted (one that Lima cannot delete is logged, `vm.unknown_delete_failed`, and does not stop the
   reconciliation); token files without a live row are removed.
-- `refill()` (task `vm-pool`, after every assignment and every 60 s): pool VMs of a retired golden are deleted, then
+- `refill()` (task `vm-pool`, after every assignment and every 60 s): pool VMs of a retired golden or of an older
+  size are deleted (a pool VM is free), then
   the pool is filled (`Pool.refill`); then `golden_switch.run_pass()` moves outdated workgroup VMs whose sessions are
   all paused with complete checkpoints to the newest golden (`vm.golden_switch`, ADR-093; it uses
   `restart_for_switch`, `stop_for_switch` and `replacement`, which never stop another workgroup's VM for a slot).
@@ -61,6 +76,7 @@ import asyncio
 import contextlib
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from dataclasses import dataclass, field
 from datetime import timedelta
 
 from agent_runner.admission import SESSION, Demand
@@ -69,12 +85,13 @@ from agent_runner.guestlink import cursor
 from agent_runner.guestlink.client import GuestClient, Health
 from agent_runner.guestlink.errors import GuestError
 from agent_runner.vm import records
-from agent_runner.vm.capacity import Capacity, lru_victim, vm_footprint_mib
+from agent_runner.vm.capacity import Candidate, Capacity, lru_victim, vm_footprint_mib
 from agent_runner.vm.extensions import Retire
 from agent_runner.vm.golden_switch import GoldenSwitch, judge
 from agent_runner.vm.lima import LimaError, LimaNotFound
 from agent_runner.vm.pool import HEALTH_CALL_S, Pool, Provisioner, VmEnv, failure_fields
 from agent_runner.vm.records import GoldenRef, VmRow
+from agent_runner.vm.room import Room
 
 UNHEALTHY_LIMIT = 3
 STOPPED_STATES = ("stopped", "stopping")
@@ -82,6 +99,22 @@ STOPPED_STATES = ("stopped", "stopping")
 RECONCILE_WAIT_S = 60.0
 
 Unreachable = Callable[[VmRow], Awaitable[None]]
+
+
+@dataclass
+class Placement:
+    """What one placement found: the running or stopped VMs passed over (`<vm_id>:<result>`), the reason of the choice
+    and the room measured on the chosen VM."""
+
+    checked: list[str] = field(default_factory=list)
+    reason: str = "refused"
+    room: Room | None = None
+
+    def check(self, env: VmEnv, vm_id: str, result: str) -> None:
+        """Count one room check (`room`, `full`, `unmeasured`, `size`) and keep a VM passed over."""
+        env.room_checks[result] = env.room_checks.get(result, 0) + 1
+        if result != "room":
+            self.checked.append(f"{vm_id}:{result}")
 
 
 async def _ignore(_row: VmRow) -> None:
@@ -180,21 +213,30 @@ class VmManager:
         session_id: str | None = None,
         prefer: Sequence[str] = (),
     ) -> VmRow:
-        """A running VM of the workgroup, booked for `session_id` (see the module docstring for the order)."""
+        """A running VM of the workgroup, booked for `session_id` (see the module docstring for the order); every
+        placement, also a refused one, is logged (`vm.placement`) and counted (`placements`)."""
         try:
             await asyncio.wait_for(self._reconciled.wait(), RECONCILE_WAIT_S)
         except TimeoutError:
             raise RunnerError("vm_start_failed", "reconcile") from None
+        placement = Placement()
         async with self.lock(wg_id):
-            row = await self._choose(org_id, wg_id, prefer)
+            try:
+                row = await self._choose(org_id, wg_id, prefer, placement)
+            except RunnerError as exc:
+                self._placed(wg_id, session_id, None, placement, code=exc.code)
+                raise
             if session_id is not None:
                 await records.assign_session(self.env.db, session_id, row.id)
+            self._placed(wg_id, session_id, row, placement)
             return row
 
-    async def _choose(self, org_id: str, wg_id: str, prefer: Sequence[str]) -> VmRow:
+    async def _choose(self, org_id: str, wg_id: str, prefer: Sequence[str], placement: Placement) -> VmRow:
         env = self.env
+        settings = env.settings
         live = await records.of_workgroup(env.db, wg_id)
         by_id = {row.id: row for row in live}
+        placement.reason = "preferred"
         for vm_id in prefer:
             found = by_id.get(vm_id)
             if found is not None and found.state == "running":
@@ -203,28 +245,70 @@ class VmManager:
             if found is not None and found.state in STOPPED_STATES:
                 return await self._restart(found)
             env.log("vm.preference_skipped", {"vm_id": vm_id, "wg_id": wg_id})
-        # no fixed number of sessions per VM: a running VM's own free resources decide (`vm.room`, ADR-075 addendum 2)
+        # Room check before every placement (HOT-32): no fixed number of sessions per VM, the running VM's own measured
+        # resources decide (`vm.room`); a VM of an older size takes no new session, it keeps the ones it has.
         for row in sorted((row for row in live if row.state == "running"), key=lambda row: row.id):
-            if await env.session_room(row):
+            if not settings.current_size(row):
+                placement.check(env, row.id, "size")
+                continue
+            room = await env.session_room(row)
+            if room.fits:
+                placement.check(env, row.id, "room")
+                placement.reason, placement.room = "room", room
                 await self.touch(row.id)
                 return row
+            placement.check(env, row.id, "full" if room.measured else "unmeasured")
         golden = await records.ready_golden(env.db)
         stopped = [row for row in live if row.state in STOPPED_STATES]
-        if stopped:
-            return await self._from_stopped(stopped[0], golden)
+        for row in stopped:
+            if settings.current_size(row):
+                chosen = await self._from_stopped(row, golden)
+                placement.reason = "restart" if chosen.id == row.id else "replaced"
+                return chosen
+        for row in stopped:
+            # a stopped VM of an older size: replaced by a new VM of the current size when its sessions may move
+            # (the golden switch's rule, ADR-093), else it stays for its own sessions (their preference restarts it)
+            if golden is not None and await self._movable(row):
+                env.log("vm.size_replaced", {"vm_id": row.id, "cpus": row.cpus, "memory_mib": row.memory_mib})
+                placement.reason = "replaced"
+                return await self.replacement(golden, row, replaced_by=self.golden_switch.hub_reads_status, evict=True)
+            placement.check(env, row.id, "size")
         if golden is None:
             raise RunnerError("capacity_exhausted", "golden")
+        placement.reason = "new_vm"
         return await self._new_vm(golden, org_id, wg_id)
+
+    def _placed(
+        self, wg_id: str, session_id: str | None, row: VmRow | None, placement: Placement, *, code: str | None = None
+    ) -> None:
+        """Log and count one placement: the chosen VM, the room measured there, the VMs passed over and the reason
+        (`preferred`, `room`, `restart`, `replaced`, `new_vm`; `refused` with the code of the refusal)."""
+        reason = placement.reason if row is not None else "refused"
+        env = self.env
+        env.placements[reason] = env.placements.get(reason, 0) + 1
+        fields: dict[str, str | int] = {"wg_id": wg_id, "vm_id": "none" if row is None else row.id, "reason": reason}
+        if session_id is not None:
+            fields["session_id"] = session_id
+        if row is not None:
+            fields |= {"cpus": row.cpus, "memory_mib": row.memory_mib}
+        if placement.room is not None:
+            fields |= placement.room.fields()
+        fields["passed_over"] = ",".join(placement.checked) or "none"
+        if code is not None:
+            fields["code"] = code
+        env.log("vm.placement", fields)
+
+    async def _movable(self, row: VmRow) -> bool:
+        """Whether every session of the stopped VM may move to another VM (no retire hook keeps it and
+        `golden_switch.judge` finds nothing blocking: the rule of the golden switch, ADR-093)."""
+        if await self.retire.pending(row):
+            return False
+        return not (await judge(self.env, self.retire, row)).blocking(await self.golden_switch.forced(row))
 
     async def _from_stopped(self, row: VmRow, golden: GoldenRef | None) -> VmRow:
         """Step 4: restart the stopped VM, or replace it by a VM of the newest golden when it may move."""
         env = self.env
-        if (
-            golden is None
-            or row.golden_version == golden.version
-            or await self.retire.pending(row)
-            or (await judge(env, self.retire, row)).blocking(await self.golden_switch.forced(row))
-        ):
+        if golden is None or row.golden_version == golden.version or not await self._movable(row):
             return await self._restart(row)
         env.log("vm.golden_replaced", {"vm_id": row.id, "golden_version": golden.version})
         try:
@@ -516,15 +600,26 @@ class VmManager:
         return await self.pool.refill(golden)
 
     async def idle_pass(self) -> list[str]:
-        """Stop running VMs that were idle for VM_IDLE_SECONDS (section 3.5); returns their IDs."""
+        """Stop running VMs that were idle for VM_IDLE_SECONDS (section 3.5), and VMs of an older size whose last
+        session ended (HOT-32); returns their IDs."""
         env = self.env
         limit = env.now() - timedelta(seconds=env.settings.vm_idle_seconds)
+        resized = {row.id for row in await records.live(env.db, "running") if not env.settings.current_size(row)}
+
+        def due(item: Candidate) -> str | None:
+            if item.active_sessions:
+                return None
+            if item.vm_id in resized and item.newest_suspended is None:
+                return "vm.resized_stopped"  # its last session ended: it takes no new one
+            return "vm.idle_stopped" if item.last_used <= limit else None
+
         stopped = []
         for item in await records.usage(env.db):
-            if item.active_sessions == 0 and item.last_used <= limit and item.wg_id is not None:
+            if due(item) is not None and item.wg_id is not None:
                 async with self.lock(item.wg_id):
                     again = {c.vm_id: c for c in await records.usage(env.db)}.get(item.vm_id)
-                    if again is None or again.active_sessions or again.last_used > limit:
+                    event = None if again is None else due(again)
+                    if event is None:
                         continue
                     current = await records.get(env.db, item.vm_id)
                     assert current is not None
@@ -533,7 +628,7 @@ class VmManager:
                     except LimaError as exc:
                         env.log("vm.idle_stop_failed", {"vm_id": item.vm_id, "code": exc.code})
                         continue
-                    env.log("vm.idle_stopped", {"vm_id": item.vm_id})
+                    env.log(event, {"vm_id": item.vm_id})
                     stopped.append(item.vm_id)
         return stopped
 

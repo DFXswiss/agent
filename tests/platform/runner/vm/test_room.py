@@ -16,7 +16,7 @@ from agent_runner.vm import room
 
 MIB = 1024 * 1024
 GIB = 1024 * MIB
-ROW: Any = SimpleNamespace(id="vm-0000000a")
+ROW: Any = SimpleNamespace(id="vm-0000000a", cpus=4)
 
 
 MB = 1000 * 1000
@@ -54,7 +54,7 @@ def test_the_measurement_of_the_dfx_workgroup_vm() -> None:
     workgroup (the existing order), the VM does not grow."""
     used = 8 * GIB - 4300 * MB  # 4.3 GB available
     now = room.judge(measured(used / GIB, 1.4, SESSIONS), cpus=4, load_max=0.85)
-    assert (now.fits, now.need_mib, round(now.load, 2)) == (True, 486, 0.35)  # 510 MB, the largest session
+    assert (now.fits, now.need_mib, now.fields()["load_pct"]) == (True, 486, 35)  # 510 MB, the largest session
     per_session = sum(SESSIONS) // len(SESSIONS)
     fitting = [
         n
@@ -118,19 +118,34 @@ def test_measure_without_a_client() -> None:
     assert asyncio.run(room.measure(client_for, ROW)) is None
 
 
-def test_the_checker_logs_its_judgement_and_an_unknown_vm_keeps_its_room() -> None:
+def test_the_checker_logs_its_judgement_and_an_unmeasured_vm_has_no_room() -> None:
+    """HOT-32: first look whether there is room. A guest that does not answer its metrics within 2 s (the overloaded VM
+    of 2026-11-27) is not measured, and an unmeasured VM is no VM with room."""
     logs: list[tuple[str, dict[str, Any]]] = []
     answers = [GUEST_ANSWER, GuestError("guest_unreachable", "metrics")]
 
     async def client(_row: Any) -> Client:
         return Client(answers.pop(0))
 
-    env = SimpleNamespace(client=client, settings=SimpleNamespace(cpus=4), log=lambda n, f: logs.append((n, f)))
+    env = SimpleNamespace(client=client, settings=SimpleNamespace(cpus=16), log=lambda n, f: logs.append((n, f)))
     check = room.checker(env, load_max=0.85)
-    assert asyncio.run(check(ROW)) is True
-    assert asyncio.run(check(ROW)) is True  # not measured: the VM keeps its room
+    found = asyncio.run(check(ROW))
+    assert (found.fits, found.measured) == (True, True)
+    assert asyncio.run(check(ROW)) == room.Room(False)  # not measured: no room
+    assert not room.Room(False).measured
     assert logs == [
+        # the VM's own 4 vCPUs, not the 16 of a new VM: 0.5 / 4
         ("vm.session_room", {"vm_id": "vm-0000000a", "fits": "yes", "available_mib": 6144, "need_mib": 0,
                              "load_pct": 12}),
         ("vm.session_room", {"vm_id": "vm-0000000a", "fits": "unknown"}),
     ]  # fmt: skip
+
+
+def test_the_finding_of_2026_11_27_is_full() -> None:
+    """11 sessions in one VM of 4 vCPU and 8 GiB, load 4.3: 108 % per vCPU is above `VM_LOAD_MAX_PERCENT` 85, so the
+    next session goes to another VM - even with RAM left."""
+    found = room.judge(measured(5, 4.3, [450 * MB] * 11), cpus=4, load_max=0.85)
+    assert found.fits is False
+    assert found.fields() == {"fits": "no", "available_mib": 3072, "need_mib": 429, "load_pct": 108}
+    # the same use in a VM of 16 vCPUs: 27 % per vCPU, and that VM's RAM decides
+    assert room.judge(measured(5, 4.3, [450 * MB] * 11), cpus=16, load_max=0.85).fits is True

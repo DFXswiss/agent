@@ -1011,6 +1011,10 @@
    "MAX_FRAME_BYTES": "size",
    "MAX_LIST_ITEMS": "page"
   },
+  "src/agent_runner/vm/capacity.py": {
+   "VM_CPUS_MAX": "setting",
+   "VM_MEMORY_MAX_MIB": "setting"
+  },
   "src/agent_runner/vm/cli.py": {
    "MAX_PORT": "integer"
   },

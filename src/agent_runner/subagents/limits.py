@@ -12,7 +12,8 @@ no copy: it reads the section of the desired state of the last reconcile (`Sessi
 - `depth_refusal`, `total_refusal`: the sentence of a refusal (`limit_exceeded`) that names the limit, its value and
   the setting; None within the limit, without limits or for a limit of 0.
 - `vm_room_refusal(context, conn, vm_id)`: a child (or a resumed child) fits on its VM while the VM's own free
-  resources take one more session (`vm.room`, measured through the daemon's VM manager; no fixed number).
+  resources take one more session (`vm.room`, measured through the daemon's VM manager; no fixed number); a VM that
+  could not be measured refuses nothing.
 - `denied_message(found)`: the sentence of a hub `denied` `limit_exceeded` of `subagent.request` with the current
   limits (the hub's answer does not name the limit).
 - `values(found)`: `(depth, running, total, runtime)` for the harness line, None each when unknown; `running` is 0
@@ -121,7 +122,10 @@ async def vm_room_refusal(context: Any, conn: AsyncConnection[Any], vm_id: str |
     if vm_id is None or manager is None:
         return None
     row = await vm_records.get(manager.env.db, vm_id)
-    if row is None or row.state != "running" or await manager.env.session_room(row):
+    if row is None or row.state != "running":
+        return None
+    room = await manager.env.session_room(row)
+    if room.fits or not room.measured:  # only a measured full VM refuses; an unmeasured one is no reason to refuse
         return None
     return (
         "The computer of this task has no free resources for one more session right now (its RAM or CPU is used up)."
