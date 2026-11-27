@@ -1,0 +1,16 @@
+{
+  "button": "Datei anhängen",
+  "input.label": "Dateien oder Bilder anhängen",
+  "list.label": "Angehängte Dateien",
+  "remove": "{name} entfernen",
+  "error.too_many": "Höchstens 10 Dateien je Nachricht.",
+  "error.empty": "Leere Dateien lassen sich nicht anhängen.",
+  "error.too_large": "Eine Datei darf höchstens 32 MB groß sein.",
+  "error.read": "Die Datei ließ sich nicht lesen.",
+  "chat.label": "Anhänge",
+  "chat.image": "Bild {name}",
+  "chat.download": "{name} herunterladen",
+  "chat.loading": "Wird geladen …",
+  "chat.failed": "Anhang ließ sich nicht öffnen",
+  "chat.open": "{name} in voller Größe öffnen"
+}

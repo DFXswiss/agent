@@ -13,6 +13,8 @@
 // /v1/tasks/{task}/placement`, best effort), since a request without `placement` takes the default.
 // When the user may choose a GitHub identity (ADR-078 section 3: own accounts, company accounts of the
 // organization), a choice "GitHub account" goes with the task (`github_identity`; default automatic).
+// Files and images (ADR-102, `Attachments.tsx`): attached by the button, by dropping them onto the composer or by
+// pasting into the prompt field; uploaded and committed before the prompt is sealed, named in its `attachments`.
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { loadGithub } from '../../core/github/connection';
@@ -28,6 +30,13 @@ import { useAboveKeyboard } from '../responsive/keyboard';
 import { GithubConnect } from '../settings/sections/github/Connect';
 import { useDirectory } from '../screens/tasks/hooks';
 import { AUTOMATIC, IdentityChoice } from './IdentityChoice';
+import { AttachButton, attachHandlers, AttachmentList, useAttachments } from './Attachments';
+import type { AttachmentRef } from '../../core/attachments/transfer';
+
+/** Whether two lists of attachment references name the same objects in the same order. */
+export function sameObjects(a: readonly AttachmentRef[], b: readonly AttachmentRef[]): boolean {
+  return a.map((ref) => ref.object).join() === b.map((ref) => ref.object).join();
+}
 
 /** Failures after which the same request (same IDs) is sent again: the hub may not have seen it or may succeed later. */
 export const RETRYABLE: ReadonlySet<string> = new Set(['unavailable', 'rate_limited', 'seq_conflict']);
@@ -68,6 +77,8 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
   const label = useId();
   const sending = status.kind === 'sending';
   const disabled = sending || !online || !sendable(text);
+  const attachments = useAttachments();
+  const handlers = attachHandlers(attachments, sending);
   const mention = mentionsGithub(text);
   const offerGithub = githubStatus !== 'connected' && (github || (mention && githubStatus !== 'unknown'));
   const githubLoad = useRef(false);
@@ -83,12 +94,15 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
     const startedAt = Date.now();
     setStatus({ kind: 'sending', startedAt, assigning: false });
     try {
+      // the files first: the prompt names only objects the hub holds complete (ADR-102)
+      const refs = await attachments.upload(app.tasks, org, wg);
       const known = prepared.current;
       const task =
         known !== null &&
         known.org === org &&
         known.wg === wg &&
         known.prompt === text &&
+        sameObjects(known.attachments, refs) &&
         samePlacement(known.placement, choice) &&
         (known.body.github_identity ?? AUTOMATIC) === identity
           ? known
@@ -96,6 +110,7 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
               org,
               wg,
               prompt: text,
+              attachments: refs,
               placement: choice,
               ...(identity !== AUTOMATIC && { githubIdentity: identity }),
             });
@@ -104,6 +119,7 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
         onAssigning: () => setStatus({ kind: 'sending', startedAt, assigning: true }),
       });
       prepared.current = null;
+      attachments.clear();
       await applyAutomatic(app.tasks, sent.task.task_id, choice, hasDefault);
       navigate(`/o/${encodeURIComponent(org)}/t/${encodeURIComponent(sent.task.task_id)}`);
     } catch (failure) {
@@ -137,6 +153,8 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
           event.preventDefault();
           void send();
         }}
+        onDrop={handlers.onDrop}
+        onDragOver={handlers.onDragOver}
         data-testid="composer"
       >
         {suggestions && (
@@ -166,9 +184,11 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={handlers.onPaste}
           disabled={sending}
           data-testid="composer.prompt"
         />
+        <AttachmentList attachments={attachments} disabled={sending} testId="composer.attachments" />
         {devices !== null && devices.devices.length > 0 && (
           <PlacementSelect
             org={org}
@@ -196,6 +216,7 @@ export function Composer({ org, wg, suggestions = false }: ComposerProps) {
           >
             {online ? t('home.send') : t('home.offline')}
           </button>
+          <AttachButton attachments={attachments} disabled={sending} testId="composer.attach" />
           <span className="hidden text-xs text-gray-600 md:inline">{t('home.send.shortcut')}</span>
         </div>
         {status.kind === 'error' && (

@@ -1,0 +1,46 @@
+{
+  "description": "Endpoints of the attachments of prompts (ADR-102, ATT-01): upload, commit and read of a sealed attachment of a workgroup, and the device's read of its chunks.",
+  "rights": [
+    "task:write",
+    "wg:read",
+    "device:wg"
+  ],
+  "auth": [
+    "browser",
+    "device"
+  ],
+  "endpoints": [
+    {
+      "method": "PUT",
+      "path": "/v1/workgroups/{wg}/attachments/{object}/chunks/{index}",
+      "rights": [
+        "task:write"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/workgroups/{wg}/attachments/{object}/commit",
+      "rights": [
+        "task:write"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/attachments/{object}/chunks/{index}",
+      "rights": [
+        "wg:read"
+      ],
+      "section": "4.6"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/attachments/{object}/chunks/{index}",
+      "rights": [
+        "device:wg"
+      ],
+      "section": "6.1"
+    }
+  ]
+}

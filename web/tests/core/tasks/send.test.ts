@@ -11,15 +11,17 @@ import { verifyPlatformLog } from '../../../src/core/log/platform';
 import { epochKey, WG } from '../../../src/core/log/state';
 import { HubError } from '../../../src/core/net/signedFetch';
 import { putEvents } from '../../../src/core/store/slices/events';
-import { blockOrg, setPlatform } from '../../../src/core/store/slices/orgs';
+import { blockOrg, orgEntry, setPlatform } from '../../../src/core/store/slices/orgs';
 import { putTasks, type TaskRow } from '../../../src/core/store/slices/tasks';
 import {
   assignFirstCandidate,
   certified,
   ensureDevice,
   latestPrompt,
+  latestPromptBody,
   loadTask,
   prepareTask,
+  promptAttachments,
   PROMPT_MAX,
   retryPrompt,
   sendable,
@@ -689,5 +691,65 @@ describe('follow-ups and Retry', () => {
     putEvents(t.store, t.wg, [{ ...entry(6, 'Other'), header: { kind: 'prompt', task: 'other', id: 'e6' } }]);
     putEvents(t.store, 'another-scope', [{ ...entry(7, 'Elsewhere'), scopeId: 'another-scope' }]);
     expect(latestPrompt(t.store, task)).toBe('New');
+  });
+});
+
+describe('attachments of prompts (ADR-102)', () => {
+  const ref = {
+    object: '0190f000-0000-7000-8000-00000000f001',
+    name: 'shot.png',
+    type: 'image/png',
+    bytes: 3,
+    epoch: 1,
+    salt: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
+    digest: 'ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8',
+  };
+
+  async function opened(t: TaskWorld, sealed: unknown): Promise<unknown> {
+    const event = sealed as { header: { epoch: number } };
+    const key = orgEntry(t.store.getState().orgs, t.org).keys.get(epochKey(WG, t.wg, event.header.epoch))!;
+    const author = t.me.identity.sigPublic();
+    return JSON.parse(fromUtf8(await openEvent(key, sealed, author)));
+  }
+
+  it('seals the references into the first prompt and into a follow-up', async () => {
+    const t = await taskWorld();
+    const prepared = await prepareTask(t.context, { org: t.org, wg: t.wg, prompt: 'Look', attachments: [ref] });
+    expect(prepared.attachments).toEqual([ref]);
+    expect(await opened(t, prepared.body.events[1])).toEqual({ text: 'Look', attachments: [ref] });
+    const plain = await prepareTask(t.context, { org: t.org, wg: t.wg, prompt: 'Text only' });
+    expect(plain.attachments).toEqual([]);
+    const task = taskRow(t) as TaskRow;
+    expect(await opened(t, await prepareFollowUp(t.context, task, 'And this', [ref]))).toEqual({
+      text: 'And this',
+      attachments: [ref],
+    });
+  });
+
+  it('reads the references of a prompt body and carries them into a Retry', async () => {
+    expect(promptAttachments({ text: 'x', attachments: [ref] })).toEqual([ref]);
+    expect(promptAttachments({ text: 'x', attachments: [{ ...ref, name: '..' }] })).toEqual([]);
+    expect(promptAttachments({ text: 'x' })).toEqual([]);
+    expect(promptAttachments(null)).toEqual([]);
+    const t = await taskWorld();
+    const task = taskRow(t) as TaskRow;
+    putEvents(t.store, t.wg, [
+      {
+        org: t.org,
+        scopeId: t.wg,
+        scopeSeq: 1,
+        receivedAt: null,
+        event: {},
+        status: 'verified',
+        code: null,
+        header: { kind: 'prompt', task: task.task_id, id: 'e1' },
+        body: { text: 'Known', attachments: [ref] },
+      },
+    ]);
+    expect(latestPromptBody(t.store, task)).toEqual({ text: 'Known', attachments: [ref] });
+    t.client.on(`POST /v1/tasks/${task.task_id}/prompts`, () => ({ scope_seq: 2, session_id: 's2' }));
+    expect(await retryPrompt(t.context, task)).toBe('s2');
+    const sent = t.client.of(`POST /v1/tasks/${task.task_id}/prompts`)[0]!.body as { event: unknown };
+    expect(await opened(t, sent.event)).toEqual({ text: 'Known', attachments: [ref] });
   });
 });

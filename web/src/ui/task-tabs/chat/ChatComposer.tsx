@@ -1,7 +1,8 @@
 // Input of the chat (06-web.md section 5.2), only for users with `task:write`: a follow-up prompt (`Ctrl/⌘+Enter` or
 // the button; it stays enabled while the main session works – the session queues the prompt), **Stop** (`interrupt`)
 // while the main session is `working`, and in the session menu **End session** (`stop`) while it is alive. A failed
-// send keeps the sealed prompt for an identical retry (`core/chat/actions.ts`). Offline, the button says so.
+// send keeps the sealed prompt for an identical retry (`core/chat/actions.ts`). Offline, the button says so. Files and
+// images go with the prompt (ADR-102, `composer/Attachments.tsx`): button, drop or paste; uploaded before it is sealed.
 import { type KeyboardEvent, useId, useRef, useState } from 'react';
 import { controlSession, type ControlAction, sendPrompt } from '../../../core/chat/actions';
 import type { SessionEntry, TaskRow } from '../../../core/store/slices/tasks';
@@ -10,6 +11,7 @@ import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
 import { useAboveKeyboard } from '../../responsive/keyboard';
 import { useAppEnv } from '../../shell/context';
+import { AttachButton, attachHandlers, AttachmentList, useAttachments } from '../../composer/Attachments';
 
 /** Session states in which a session can still be stopped. */
 const ENDED = new Set(['stopping', 'stopped', 'failed']);
@@ -23,14 +25,19 @@ export function ChatComposer({ task, main }: { readonly task: TaskRow; readonly 
   const [failure, setFailure] = useState<{ readonly key: string; readonly code: string } | null>(null);
   const label = useId();
   const disabled = sending || !online || !sendable(text);
+  const attachments = useAttachments();
+  const handlers = attachHandlers(attachments, sending);
 
   const send = async () => {
     if (disabled) return;
     setSending(true);
     setFailure(null);
     try {
-      await sendPrompt(app.tasks, task, text);
+      // the files first: the prompt names only objects the hub holds complete (ADR-102)
+      const refs = await attachments.upload(app.tasks, task.org_id, task.wg_id);
+      await sendPrompt(app.tasks, task, text, refs);
       setText('');
+      attachments.clear();
     } catch (thrown) {
       setFailure({ key: 'task.chat.send.failed', code: sendErrorCode(thrown) });
     }
@@ -66,6 +73,8 @@ export function ChatComposer({ task, main }: { readonly task: TaskRow; readonly 
         event.preventDefault();
         void send();
       }}
+      onDrop={handlers.onDrop}
+      onDragOver={handlers.onDragOver}
       data-testid="chat.composer"
     >
       <label htmlFor={label} className="sr-only">
@@ -78,8 +87,10 @@ export function ChatComposer({ task, main }: { readonly task: TaskRow; readonly 
         value={text}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={onKeyDown}
+        onPaste={handlers.onPaste}
         data-testid="chat.composer.prompt"
       />
+      <AttachmentList attachments={attachments} disabled={sending} testId="chat.composer.attachments" />
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="submit"
@@ -89,6 +100,7 @@ export function ChatComposer({ task, main }: { readonly task: TaskRow; readonly 
         >
           {online ? t('task.chat.send') : t('task.chat.offline')}
         </button>
+        <AttachButton attachments={attachments} disabled={sending} testId="chat.composer.attach" />
         {working && (
           <button
             type="button"

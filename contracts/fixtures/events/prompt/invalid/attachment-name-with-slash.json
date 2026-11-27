@@ -1,0 +1,14 @@
+{
+  "text": "x",
+  "attachments": [
+    {
+      "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+      "name": "../etc/passwd",
+      "type": "text/plain",
+      "bytes": 52,
+      "epoch": 3,
+      "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+      "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-attachment-chunk-put.response.json",
+  "title": "PUT /v1/workgroups/{wg}/attachments/{object}/chunks/{index} response",
+  "description": "Body of a successful response to PUT /v1/workgroups/{wg}/attachments/{object}/chunks/{index} (03-api.md section 4.6); replayed: the identical chunk was stored before.",
+  "type": "object",
+  "properties": {
+    "replayed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "replayed"
+  ],
+  "additionalProperties": false
+}

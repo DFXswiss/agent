@@ -61,6 +61,8 @@ CATEGORIES: dict[str, str] = {
     "contexts": "Context checkpoints (ADR-072): IDs, epoch, chunk counts, sizes, digest and chunk hashes, the signed "
     "manifest, times; pull-request links: opaque tag, epoch, task and session or the user who linked it, the sealed "
     "body of fixed length (ADR-084); restore outcomes",
+    "attachments": "Attachments of prompts (ADR-102): object, workgroup, organization and uploading user IDs, chunk "
+    "count, sizes, chunk hashes and the digest, upload and commit times",
     "profiles": "Rights profiles (ADR-094): names of own profiles, the operation types they allow, their read reach, "
     "who changed them and when; the profile snapshot of a task or a child session",
 }
@@ -106,6 +108,9 @@ community_reject: community | wrapper_id:uuid user_id:uuid rejected_at:time
 community_request: community | user_id:uuid id:uuid kem_pub:bytes sig:bytes created_at:time offered_at:time
   epoch:number wrap:bytes@ciphertext wrapped_by:uuid wrap_sig:bytes wrapped_at:time
 community_wrap: community | epoch:number user_id:uuid wrap:bytes@ciphertext sig:bytes created_at:time
+attachment_chunk: attachments | object_id:uuid chunk_index:number ct:bytes@ciphertext sha256:bytes
+attachment_object: attachments | id:uuid@ids org_id:uuid@ids wg_id:uuid@ids author_id:uuid@ids state:code
+  chunks:number size:number digest:code created_at:time updated_at:time completed_at:time
 context_chunk: contexts | object_id:uuid chunk_index:number ct:bytes@ciphertext sha256:bytes
 context_object: contexts | id:uuid@ids org_id:uuid@ids wg_id:uuid@ids task_id:uuid@ids session_id:uuid@ids
   author_id:uuid@ids state:code chunks:number size:number epoch:number digest:code manifest_text:json sig:bytes

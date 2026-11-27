@@ -76,6 +76,7 @@ their vectors: [key model](../key-model.md)** (§11).
 | `k_frame` **(new, KOR-44)** | `HKDF(ikm=WK_e, salt=frame.salt (32 B random per frame), info=P‖"browser-frame\0"‖browser_id)`: the key of one live frame of a browser session (§4.13) |
 | `k_log` **(new, KOR-43)** | `HKDF(ikm=WK_e, salt=manifest.salt (32 B random per object), info=P‖"run-log\0"‖object_id)`: the key of one log of a test run or work VM job (§4.12) |
 | `k_body` **(new, KOR-48)** | `HKDF(ikm=WK_e, info=P‖"pr-link-body")`: the AES-256-GCM key of sealed pull-request link bodies (§4.11a) |
+| `k_att` **(new, ATT-01)** | `HKDF(ikm=WK_e, salt=salt (32 B random per object), info=P‖"attachment\0"‖object_id)`: the key of one attachment of a prompt (§4.14) |
 | storage key **(new)** | `HKDF(ikm=device_sig_seed, info=P‖"runner-storage")` |
 | Code text | 16 B → base32 (RFC 4648, no padding, uppercase) 26 chars, shown as `XXXXX-XXXXX-XXXXX-XXXXX-XXXXXX`; parser strips `-` and spaces, uppercases; wrong length → `invite_code_length`, bad alphabet → `invite_code_invalid`. Same text form for recovery codes. |
 
@@ -421,6 +422,31 @@ event, a log chunk or a checkpoint chunk. Implementations: `agent_hub.crypto.bro
 `agent_runner.crypto.browserframe`, the web's `src/core/crypto/browserframe.ts`; vectors
 `contracts/vectors/browserframe.json`.
 
+### 4.14 Attachment of a prompt **(new, ATT-01)**
+
+An attachment (ADR-102) is one file of 1 byte to 32 MiB that a member attaches to a prompt, sealed by the browser and
+stored at the hub as an object of its own:
+
+- `k_att = HKDF(ikm=WK_e, salt=salt (32 B random per object), info=P‖"attachment\0"‖object_id)`, `WK_e` the current
+  workgroup key when the file is sealed;
+- the file split into pieces of at most 1 MiB; chunk `i` = `nonce12‖AES-256-GCM(k_att, piece,
+  AAD = P‖"attachment-chunk\0"‖canonical({"index":i,"object":object_id}))` (29 B to 1 MiB + 28 B, at most 32 chunks);
+- no manifest and no signature of its own: the prompt body names the attachment with exactly
+  `{"object","name","type","bytes","epoch","salt","digest"}` inside the prompt's ciphertext and under the author's
+  event signature; `name` is the file name (1–255 characters, no control character, no `/` or `\`, not `.` or `..`),
+  `type` the media type in lower case without parameters, `bytes` the file length, `epoch` that of `WK_e`, `digest` =
+  b64u SHA-256 over the concatenation of the SHA-256 of every sealed chunk in index order (as in §4.11). The number of
+  chunks is `ceil(bytes / 1 MiB)`, their sealed length `bytes + 28 · chunks`. At most 10 attachments per prompt, each
+  object once.
+
+The hub checks at the commit that the stored chunks are `0..chunks-1` with the named size and digest; it holds no key
+and never sees name, type or content. A reader (the runner before it types the prompt, a browser that shows it) checks
+the reference (`header_invalid`), then each chunk at most 1 MiB + 28 B (`size_exceeded`), then count, size and digest
+against the reference (`header_invalid`), and opens each chunk with `k_att` of the reference's epoch
+(`decrypt_failed`). The labels are their own, so an attachment chunk never passes for a log or checkpoint chunk.
+Implementations: `agent_hub.crypto.attachment`, the runner's copy `agent_runner.crypto.attachment`, the web's
+`src/core/crypto/attachment.ts`; vectors `contracts/vectors/attachment.json`.
+
 ## 5. Flows
 
 Each flow lists who does what; every step that sends something to the hub names the endpoint of `03-api.md`.
@@ -677,6 +703,7 @@ needs a `write` release at `lh` (hub: also at receipt); a member that is also su
 | User settings (model access preference, model choice, locale) | session start |
 | Admission (ADR-060): `user_certify` entries, the identity proof of a platform registration, the capabilities a device announced (`device.features`), which account looked up which identity or account code (read log) | direct admission without consent steps |
 | Context checkpoints (ADR-072): object, task, session, author device and workgroup IDs, epoch, chunk count, sizes, digest and chunk hashes, the manifest (salt, times), upload and commit times; pull-request links: opaque tag, epoch, task and session or the user who linked it (KOR-48), when, and the sealed body of fixed length (§4.11a); restore outcomes (`context_restore`, `context_reason`: restored, workspace partial/omitted, fallback reason) | storage, quotas, pruning, the newest checkpoint for a restore, PR → task lookup, the notice on the task |
+| Attachments of prompts (ADR-102): object, workgroup, organization and uploading user IDs, chunk count, sizes, chunk hashes and the digest, upload and commit times; never the file name, the media type, the content or which prompt names the object | storage, quotas, removal of abandoned uploads |
 | Agents of a user (`11-agent-access.md` §2): agent ID, public keys, state, times, claim hash, the source address of an open pairing (≤ 70 min), which login confirmed which pairing, which actions were taken by an agent (`agent_id` of audit rows), whether a pairing is a remote one and its nonce; the sealed identity, the sealed label and the sealed handover of a remote pairing are ciphertexts the hub cannot open | delegated agent access (ADR-056, ADR-067) |
 | Shared sessions (ADR-083): which person triggered an operation, a session and a consumption item (`triggered_by`, IDs only), the daily consumption sum per person, which prompt came through the author's agent, withdrawal requests of prompts (event ID, author, times, outcome) | audit ("triggered by"), consumption per person, the visible queue |
 | Session reads (ADR-089 §4): which session read which workgroup, task or level, when, with which result, on the instruction of which person (`read.session.<tool>` audit with `read_wg_id`, `triggered_by`; IDs only); the subagent limits of the hub (operator settings, ADR-088) | audit of reads ([§8 point 6](../KONZEPT.md#k-8-b6)), check H4 |

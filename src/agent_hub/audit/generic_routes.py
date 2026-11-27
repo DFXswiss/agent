@@ -8,7 +8,9 @@ A route belongs here only when a success may leave nothing worth a row of its ow
   quotas, VM states - stored with the outbox receipt; events, transitions and audit items write their own rows) and
   `POST /v1/device/requests/{id}/responses` (encrypted response parts; the state changes write `device_request.*`), and
   `PUT /v1/device/contexts/{object}/chunks/{index}` (sealed chunks of a context checkpoint, possibly thousands per
-  checkpoint; the commit writes `session.context_saved`, a quota refusal `session.context_refused`, ADR-072), and
+  checkpoint; the commit writes `session.context_saved`, a quota refusal `session.context_refused`, ADR-072),
+  `PUT /v1/workgroups/{wg}/attachments/{object}/chunks/{index}` (sealed chunks of a file attached to a prompt, up to
+  32 per file; the commit writes `attachment.stored`, ADR-102), and
   `POST /v1/device/sessions/{session}/browser/live` (the latest live frame of a watched platform browser, up to five
   per second and replaced by the next; who watches is audited as `read.stream.browser`, KOR-44);
 * it only marks the caller: joining the community and its read position (`POST /v1/community/join`,
@@ -33,6 +35,7 @@ GENERIC: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/v1/community/join"),
         ("PUT", "/v1/community/read"),
         ("PUT", "/v1/device/contexts/{object}/chunks/{index}"),
+        ("PUT", "/v1/workgroups/{wg}/attachments/{object}/chunks/{index}"),
         ("POST", "/v1/device/sessions/{session}/browser/live"),
         ("POST", "/v1/telemetry/ui"),
     }

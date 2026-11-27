@@ -27,6 +27,12 @@
     },
     {
       "adaptations": [],
+      "copy": "src/agent_runner/crypto/attachment.py",
+      "sha256": "b60134bbbb5bedc44cb694692d3c577f469948c24ef52099320920c0dc82414b",
+      "source": "src/agent_hub/crypto/attachment.py"
+    },
+    {
+      "adaptations": [],
       "copy": "src/agent_runner/crypto/browserframe.py",
       "sha256": "3b755e0bc3bbfc41f771d35cb2d43f5fa1438428bbab8e3c6d46db637bccd2f2",
       "source": "src/agent_hub/crypto/browserframe.py"
@@ -46,7 +52,7 @@
     {
       "adaptations": [],
       "copy": "src/agent_runner/crypto/contexts/vectors.py",
-      "sha256": "ba73a9b58298da305a2b7ee6d0f6e70a956fdbae6027b972c2eca9ca2c2dd17d",
+      "sha256": "b0daccafae86a31a39486afdb86a212a580058bb278ed0635635e82e6cc96c65",
       "source": "src/agent_hub/contexts/vectors.py"
     },
     {
@@ -328,6 +334,12 @@
       "copy_sha256": "00d89e50c83c4beab911580f09128630c065e3ab62d79b86144eadc71c94dea9",
       "sha256": "db668727802670028f0c39315b846b3878b21b247cddcbadff56fe88babae59f",
       "source": "tests/platform/hub/crypto/test_agent.py"
+    },
+    {
+      "copy": "tests/platform/runner/crypto/test_attachment.py",
+      "copy_sha256": "076ecdd7d5211e7ab26cdd25242aac25186bd95a9cb93ba615b00256c3d771e4",
+      "sha256": "b1693750ae705206b8e1a1d0c8e9617032303695ce24bf911779635bd540a31a",
+      "source": "tests/platform/hub/crypto/test_attachment.py"
     },
     {
       "copy": "tests/platform/runner/crypto/test_browserframe.py",
