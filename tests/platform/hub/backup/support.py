@@ -159,6 +159,7 @@ class Estate:
         scene, now = self.scene, self.hub.clock()
         writer, device, wg, org = scene.writer, scene.device, scene.wg, scene.org
         operation, request, context_object, company = new_id(), new_id(), new_id(), new_id()
+        attachment_object = new_id()
         credential_key = secrets.token_bytes(32)
         statements: list[tuple[str, tuple[object, ...]]] = [
             (
@@ -498,6 +499,17 @@ class Estate:
                 "INSERT INTO hub.pr_link (wg_id, epoch, tag, task_id, session_id, created_at)"
                 " VALUES (%s, 1, 'tag', %s, %s, %s)",
                 (wg, self.task, self.session, now),
+            ),
+            # an attachment of a prompt (ATT-01, ADR-102)
+            (
+                "INSERT INTO hub.attachment_object (id, org_id, wg_id, author_id, state, chunks, size, digest,"
+                " created_at, updated_at, completed_at)"
+                " VALUES (%s, %s, %s, %s, 'complete', 1, 40, 'digest', %s, %s, %s)",
+                (attachment_object, org, wg, writer.id, now, now, now),
+            ),
+            (
+                "INSERT INTO hub.attachment_chunk (object_id, chunk_index, ct, sha256) VALUES (%s, 0, %s, %s)",
+                (attachment_object, bytes(40), hashlib.sha256(bytes(40)).digest()),
             ),
             (
                 "INSERT INTO hub.wg_placement (wg_id, device_id, vm_id, set_by, set_at)"

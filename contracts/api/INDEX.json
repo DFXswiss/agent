@@ -946,6 +946,68 @@
       "owner": "KOR-43"
     },
     {
+      "method": "PUT",
+      "path": "/v1/workgroups/{wg}/attachments/{object}/chunks/{index}",
+      "name": "workgroup-attachment-chunk-put",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "task:write"
+      ],
+      "path_params": {
+        "wg": "uuid",
+        "object": "uuid",
+        "index": "q_index"
+      },
+      "request_kind": "body",
+      "request": "api/workgroup-attachment-chunk-put.request.json",
+      "response": "api/workgroup-attachment-chunk-put.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "ATT-01"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/workgroups/{wg}/attachments/{object}/commit",
+      "name": "workgroup-attachment-commit",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "task:write"
+      ],
+      "path_params": {
+        "wg": "uuid",
+        "object": "uuid"
+      },
+      "request_kind": "body",
+      "request": "api/workgroup-attachment-commit.request.json",
+      "response": "api/workgroup-attachment-commit.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "ATT-01"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/workgroups/{wg}/attachments/{object}/chunks/{index}",
+      "name": "workgroup-attachment-chunk",
+      "section": "4.6",
+      "auth": "browser",
+      "rights": [
+        "wg:read"
+      ],
+      "path_params": {
+        "wg": "uuid",
+        "object": "uuid",
+        "index": "q_index"
+      },
+      "request_kind": "query",
+      "request": "api/workgroup-attachment-chunk.request.json",
+      "response": "api/workgroup-attachment-chunk.response.json",
+      "read_resource": "workgroup.attachment.chunk",
+      "streaming": false,
+      "owner": "ATT-01"
+    },
+    {
       "method": "GET",
       "path": "/v1/workgroups/{wg}/pr-links/{epoch}/{tag}",
       "name": "workgroup-pr-link",
@@ -1776,6 +1838,26 @@
       "read_resource": "device.context.chunk",
       "streaming": false,
       "owner": "KOR-33"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/device/attachments/{object}/chunks/{index}",
+      "name": "device-attachment-chunk",
+      "section": "6.1",
+      "auth": "device",
+      "rights": [
+        "device:wg"
+      ],
+      "path_params": {
+        "object": "uuid",
+        "index": "q_index"
+      },
+      "request_kind": "query",
+      "request": "api/device-attachment-chunk.request.json",
+      "response": "api/device-attachment-chunk.response.json",
+      "read_resource": "device.attachment.chunk",
+      "streaming": false,
+      "owner": "ATT-01"
     },
     {
       "method": "POST",

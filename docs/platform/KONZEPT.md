@@ -1013,6 +1013,23 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Umsetzung:** in Arbeit – Aufgabe auf agent mit Fable 5.2. Die Plattform kennt noch keine Modellwahl je Task; das
   Modell kam über die Modellvorgabe des Auftraggebers, die Sitzung hat es bestätigt.
 
+<a id="e-43"></a>
+
+### E-43 – Prompts tragen Dateien und Bilder
+
+- **Datum:** 2026-11-27
+- **Regel:** Wer einem Agenten schreibt, kann dem Prompt – dem ersten eines Tasks wie jedem weiteren – Dateien und
+  Bilder anhängen, nicht nur Text. Die Anhänge sind Ende-zu-Ende verschlüsselt wie der Prompt selbst und werden als
+  eigene Objekte beim Hub abgelegt, damit sie in voller Größe und Qualität ankommen (Variante B, keine verkleinerten
+  Bilder im Prompt). Der Agent findet sie als Dateien in seinem Arbeitsbereich, der Prompt nennt ihre Pfade; im
+  Chatverlauf sieht jeder Leser des Tasks die Anhänge, Bilder als Bild.
+- **Wortlaut:** „ich hätte auf […] gern die option nicht nur mit text zu arbeiten sondern auch bilder hochzuladen“ und
+  auf die Frage nach der Variante „B, soll für Dateien und Bilder funktionieren“
+- **Bezug:** ergänzt [§6 Punkt 2](#k-6-b2) (Prompts als verschlüsselte Inhalte) um Anhänge; hebt die frühere
+  Festlegung „attachments reserved, empty in v1“ des Prompt-Inhalts ([spec/03-api.md](spec/03-api.md) §10) auf.
+- **Umsetzung:** gebaut – [ADR-102](adr/102-prompt-attachments.md) (ATT-01); Anhänge mit dem Agentenwerkzeug
+  ([E-04](#e-04)) folgen in einem eigenen Paket.
+
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
 **Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und

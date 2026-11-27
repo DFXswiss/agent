@@ -44,6 +44,11 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
   },
   'src/ui/screens/whiteboard/WhiteboardScreen.tsx': { count: 1, reason: 'the fixed whiteboard levels (org, group…)' },
   'src/ui/composer/Composer.tsx': { count: 1, reason: 'chips of the composer (fixed suggestions)' },
+  'src/ui/composer/Attachments.tsx': { count: 1, reason: 'files attached to one prompt (at most 10, ADR-102)' },
+  'src/ui/attachments/PromptAttachments.tsx': {
+    count: 1,
+    reason: 'attachments of one prompt (at most 10, ADR-102)',
+  },
   'src/ui/screens/security/SecurityScreen.tsx': { count: 1, reason: 'static points of the security page' },
   'src/ui/screens/errors/Unsupported.tsx': { count: 1, reason: 'the list of supported browsers (static)' },
   'src/ui/screens/wg-settings/WgSettingsScreen.tsx': {

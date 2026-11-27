@@ -34,7 +34,12 @@
   * `stopping`, `stopped`, `failed`: nothing; the rows move with the hub's next routing to a new session.
 
   The initial prompt of a start goes on the agent's command line (`first.py`, channel `start`); it is never sent
-  again while the start runs.
+  again while the start runs. A prompt with attachments (ADR-102) never goes on the command line: the session starts
+  without it and the delivery hands it over like a follow-up.
+- **Attachments** (`attachments.py`): before a prompt that names files is registered, its files are downloaded from
+  the hub, checked against the verified references, decrypted and imported into `attachments/<event id>/` of the
+  workspace; the typed text names their paths. A hub that cannot be reached backs off like a guest; a file that is
+  missing or does not verify refuses the prompt (`prompt_unreadable`).
 - **Results** (`session_state.py`): `prompt_accepted` -> `accepted`; `prompt_refused` `delivery_failed` -> `failed`
   plus a `session.status` event with the event ID (a session that never accepted its first prompt fails
   `delivery_failed`).
@@ -55,6 +60,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -69,9 +75,11 @@ from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.inbox.pull import load_cursors
 from agent_runner.orchestrator import store as orchestrator_store
 from agent_runner.orgs import audit
-from agent_runner.prompts import hub_queue, queue, speaker
+from agent_runner.orgs.keys import load_scope_key
+from agent_runner.prompts import attachments, hub_queue, queue, speaker
+from agent_runner.prompts.attachments import AttachmentFetcher
 from agent_runner.prompts.resume import RESUMED, Resumer, vm_running
-from agent_runner.prompts.verify import STALE, PromptRefused, check_route, open_text
+from agent_runner.prompts.verify import STALE, Opened, PromptRefused, check_route, open_prompt
 from agent_runner.reconcile import wire
 from agent_runner.sessions import records
 from agent_runner.sessions.env import SessionEnv
@@ -140,11 +148,20 @@ def parse_delivered(desired: Mapping[str, Any]) -> dict[str, list[str]]:
 
 
 class Deliverer:
-    def __init__(self, env: SessionEnv, *, idle_seconds: float, stop: Callable[[str], object] | None = None) -> None:
+    def __init__(
+        self,
+        env: SessionEnv,
+        *,
+        idle_seconds: float,
+        stop: Callable[[str], object] | None = None,
+        attachments: AttachmentFetcher | None = None,
+    ) -> None:
         self.env = env
         self.idle_seconds = idle_seconds
         self.stop = stop
         """Schedules the stop of a session (the session area's `schedule_stop`) for the control hint `stop`."""
+        self.attachments = attachments
+        """Fetches the files a prompt names (ADR-102); None (a test without a hub): such a prompt waits (backoff)."""
         self.resumer = Resumer(env)
         self.trigger = asyncio.Event()
         self.locks: dict[str, asyncio.Lock] = {}
@@ -340,9 +357,15 @@ class Deliverer:
                     if head is None or head.state != "pending":
                         return None
                     try:
-                        text = await self._checked_text(conn, session, head)
+                        opened = await self._checked_prompt(conn, session, head)
                     except PromptRefused:
                         continue
+                    if opened.attachments:
+                        # the files must be in the workspace before the agent reads the prompt: the session starts
+                        # without it and the delivery imports them and types it (ADR-102 section 5)
+                        self.line(f"first_prompt_deferred session_id={session.id} event_id={head.event_id}")
+                        return None
+                    text = opened.text
                     if not await queue.set_state(
                         conn, head.event_id, "registered", expected=("pending",), channel="start", attempt=True
                     ):
@@ -354,8 +377,8 @@ class Deliverer:
                 self.line(f"first_prompt session_id={session.id} event_id={head.event_id}")
                 return InitialPrompt(prompt_id=head.event_id, text=text, speaker=line)
 
-    async def _checked_text(self, conn: AsyncConnection[Any], session: LocalSession, head: queue.Delivery) -> str:
-        """Stale check and the opened text of a pending head; a refusal is recorded (`refused`, audit)."""
+    async def _checked_prompt(self, conn: AsyncConnection[Any], session: LocalSession, head: queue.Delivery) -> Opened:
+        """Stale check and the opened prompt of a pending head; a refusal is recorded (`refused`, audit)."""
         try:
             if head.task_id is None or head.scope_seq is None:
                 raise PromptRefused(STALE)
@@ -363,7 +386,7 @@ class Deliverer:
                 raise PromptRefused(STALE)
             prompt = await queue.event(conn, head.event_id)
             assert prompt is not None
-            return await open_text(conn, self.env.storage_key, prompt)
+            return await open_prompt(conn, self.env.storage_key, prompt)
         except PromptRefused as refused:
             await queue.set_state(conn, head.event_id, "refused", expected=queue.OPEN)
             await self.reject(conn, refused.code, head.event_id, session.id)
@@ -411,16 +434,18 @@ class Deliverer:
                 return False
             async with self.env.transaction() as conn:
                 try:
-                    text = await self._checked_text(conn, session, head)
+                    opened = await self._checked_prompt(conn, session, head)
                 except PromptRefused:
                     return True
             if state in SENDABLE:
-                await self._send(session, head, text)
+                await self._send(session, head, opened)
             else:
-                await self._resume_then_send(session, head, text)
+                await self._resume_then_send(session, head, opened)
         return False
 
-    async def _resume_then_send(self, session: LocalSession, head: queue.Delivery, text: str | None = None) -> None:
+    async def _resume_then_send(
+        self, session: LocalSession, head: queue.Delivery, opened: Opened | None = None
+    ) -> None:
         if pause.deferred(self.env, session):
             # the organization's credit is used up: the prompt waits until it is back (KOR-31, ADR-062 section 6)
             return
@@ -433,21 +458,22 @@ class Deliverer:
         async with self.env.transaction() as conn:
             resumed = await records.get(conn, session.id)
         assert resumed is not None
-        await self._send(resumed, head, text)
+        await self._send(resumed, head, opened)
 
-    async def _send(self, session: LocalSession, head: queue.Delivery, text: str | None = None) -> None:
-        """Write-ahead `registered`, `POST /v1/sessions/{id}/prompts`, then `typed` (see the module docstring)."""
+    async def _send(self, session: LocalSession, head: queue.Delivery, opened: Opened | None = None) -> None:
+        """Write-ahead `registered`, the prompt's files into the workspace, `POST /v1/sessions/{id}/prompts`, then
+        `typed` (see the module docstring)."""
         env = self.env
         if pause.deferred(env, session):
             # the organization's credit is used up: the prompt waits until it is back (KOR-31, ADR-062 section 6)
             return
         async with env.transaction() as conn:
-            if text is None:
+            if opened is None:
                 prompt = await queue.event(conn, head.event_id)
                 try:
                     if prompt is None:
                         raise PromptRefused(UNVERIFIED)
-                    text = await open_text(conn, env.storage_key, prompt)
+                    opened = await open_prompt(conn, env.storage_key, prompt)
                 except PromptRefused as refused:
                     await queue.set_state(conn, head.event_id, "refused", expected=queue.OPEN)
                     await self.reject(conn, refused.code, head.event_id, session.id)
@@ -456,7 +482,7 @@ class Deliverer:
             handed = await queue.set_state(
                 conn, head.event_id, "registered", expected=queue.OPEN, channel="prompt", attempt=True
             )
-            line = await speaker.for_prompt(conn, env.storage_key, head.event_id, text, via_agent=head.via_agent)
+            line = await speaker.for_prompt(conn, env.storage_key, head.event_id, opened.text, via_agent=head.via_agent)
         if not handed:
             return
         row = await vm_running(env, session)
@@ -464,23 +490,69 @@ class Deliverer:
             self.line(f"vm_not_running session_id={session.id}")
             self._backoff(session.id)
             return
-        try:
-            async with await env.client(row) as guest:
-                await speaker.register(
-                    env, guest, vm_id=row.id, session_id=session.id, prompt_id=head.event_id, text=text, line=line
-                )
-        except GuestRefused as exc:
-            await self._guest_refused(session, head, exc.error)
-            return
-        except (GuestError, RunnerError) as exc:
-            self.line(f"send_retry session_id={session.id} event_id={head.event_id} code={exc.code}")
-            self._backoff(session.id)
+        if not await self._hand_over(session, head, row, opened, line):
             return
         async with env.transaction() as conn:
             await queue.set_state(conn, head.event_id, "typed", expected=("registered",))
             await records.update(conn, session.id, last_prompt_at=datetime.fromtimestamp(env.wall(), UTC))
         self._settled(session.id)
         self.line(f"sent session_id={session.id} event_id={head.event_id}")
+
+    async def _hand_over(
+        self, session: LocalSession, head: queue.Delivery, row: Any, opened: Opened, line: str | None
+    ) -> bool:
+        """The prompt's files into the workspace, then `POST /v1/sessions/{id}/prompts`; True when the guest took it.
+        A file that is missing or does not verify refuses the prompt, the guest's refusal is `_guest_refused`, an
+        unreachable hub or guest backs off."""
+        env = self.env
+        text = attachments.with_note(opened.text, head.event_id, opened.attachments)
+        try:
+            files = await self._files(session, opened)
+            async with await env.client(row) as guest:
+                if files:
+                    await self._import(guest, session, head, files)
+                await speaker.register(
+                    env, guest, vm_id=row.id, session_id=session.id, prompt_id=head.event_id, text=text, line=line
+                )
+        except PromptRefused as refused:
+            # an attachment the hub does not hold complete or that does not verify or open (ADR-102 section 5)
+            async with env.transaction() as conn:
+                await queue.set_state(conn, head.event_id, "refused", expected=("registered",))
+                await self.reject(conn, refused.code, head.event_id, session.id)
+            self.line(f"refused session_id={session.id} event_id={head.event_id} code={refused.code}")
+            return False
+        except GuestRefused as exc:
+            await self._guest_refused(session, head, exc.error)
+            return False
+        except (GuestError, RunnerError) as exc:
+            self.line(f"send_retry session_id={session.id} event_id={head.event_id} code={exc.code}")
+            self._backoff(session.id)
+            return False
+        return True
+
+    async def _files(self, session: LocalSession, opened: Opened) -> list[tuple[Mapping[str, Any], bytes]]:
+        """The checked and opened files of a prompt (none for a prompt of text only; `attachments.py`)."""
+        if not opened.attachments:
+            return []
+        if self.attachments is None:
+            raise RunnerError(attachments.UNAVAILABLE)
+        epochs = sorted({cast(int, ref["epoch"]) for ref in opened.attachments})
+        async with self.env.transaction() as conn:
+            keys = {
+                epoch: await load_scope_key(conn, self.env.storage_key, "wg", session.wg_id, epoch) for epoch in epochs
+            }
+        return await self.attachments.files(opened.attachments, keys)
+
+    async def _import(
+        self, guest: Any, session: LocalSession, head: queue.Delivery, files: list[tuple[Mapping[str, Any], bytes]]
+    ) -> None:
+        """The files into `attachments/<event id>/` of the session's workspace (the guest's import, `replace`)."""
+        with attachments.archive(files) as tar:
+            size = os.fstat(tar.fileno()).st_size
+            await guest.import_files(
+                session.id, attachments.directory(head.event_id), attachments.stream(tar), replace=True, size=size
+            )
+        self.line(f"attachments_imported session_id={session.id} event_id={head.event_id} files={len(files)}")
 
     async def _guest_refused(self, session: LocalSession, head: queue.Delivery, error: str | None) -> None:
         """The guest refused the registration: `state_conflict` (accepted before, or its session ended - the journal
@@ -630,5 +702,10 @@ def deliverer_for(context: Any) -> Deliverer | None:
     service = service_for(context)
     if service is None:
         return None
-    built = Deliverer(service.env, idle_seconds=context.config.session_idle_seconds, stop=service.schedule_stop)
+    built = Deliverer(
+        service.env,
+        idle_seconds=context.config.session_idle_seconds,
+        stop=service.schedule_stop,
+        attachments=AttachmentFetcher(attachments.hub_of(context)),
+    )
     return install(context, built)

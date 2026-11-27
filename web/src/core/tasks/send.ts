@@ -19,11 +19,14 @@
 //    (title and prompt are readable at once), and the launch is recorded for the countdown.
 //
 // `sendFollowUp` seals another `prompt` of a task (`POST /v1/tasks/{task}/prompts`, section 4.6.3); `retryPrompt` is
-// the countdown's "Retry" after `failed`: the task's newest prompt again as a follow-up.
+// the countdown's "Retry" after `failed`: the task's newest prompt again as a follow-up. A prompt names the files
+// attached to it (ADR-102, `core/attachments/transfer.ts`) in its `attachments`; they are committed at the hub before
+// the prompt is sealed, and a retry names the same objects again.
 import { b64uDecode } from '../encoding/b64u';
 import { bodyJson } from '../encoding/json';
 import { uuid7 } from '../encoding/ids';
 import { formatTime } from '../encoding/time';
+import { type AttachmentRef, checkRefs } from '../crypto/attachment';
 import { CryptoError } from '../crypto/errors';
 import { newHeader, sealEvent } from '../crypto/event';
 import type { Identity } from '../crypto/keys';
@@ -106,7 +109,7 @@ export function sendable(prompt: string): boolean {
 }
 
 /** The current key of a workgroup; asks the log and wrap jobs once if it is not in memory yet. */
-async function workgroupKey(context: TasksContext, org: string, wg: string): Promise<[number, Secret]> {
+export async function workgroupKey(context: TasksContext, org: string, wg: string): Promise<[number, Secret]> {
   const lookup = (): [number, Secret] | null => {
     const entry = orgEntry(context.store.getState().orgs, org);
     const epoch = entry.log!.state.epoch(WG, wg);
@@ -164,6 +167,8 @@ export interface PreparedTask {
   readonly wg: string;
   readonly taskId: string;
   readonly prompt: string;
+  /** The files the prompt names (ADR-102; committed at the hub before the prompt was sealed). */
+  readonly attachments: readonly AttachmentRef[];
   readonly title: string;
   /** The chosen device and VM (null: the workgroup default, else automatic). */
   readonly placement: Placement | null;
@@ -190,6 +195,7 @@ export async function prepareTask(
     readonly org: string;
     readonly wg: string;
     readonly prompt: string;
+    readonly attachments?: readonly AttachmentRef[];
     readonly placement?: Placement | null;
     readonly githubIdentity?: string;
     readonly title?: string;
@@ -199,15 +205,17 @@ export async function prepareTask(
   const { userId, log } = writer(context.store, input.org);
   if (!log.state.canWriteWg(userId, input.wg)) fail('forbidden');
   if (!sendable(input.prompt)) fail(input.prompt.length > PROMPT_MAX ? 'size_exceeded' : 'request_invalid');
+  const attachments = input.attachments ?? [];
   const title = input.title ?? deriveTitle(input.prompt);
   const taskId = uuid7(context.now());
   const meta = await sealWg(context, input.org, input.wg, taskId, 'task.meta', { title });
-  const prompt = await sealWg(context, input.org, input.wg, taskId, 'prompt', { text: input.prompt, attachments: [] });
+  const prompt = await sealWg(context, input.org, input.wg, taskId, 'prompt', { text: input.prompt, attachments });
   return {
     org: input.org,
     wg: input.wg,
     taskId,
     prompt: input.prompt,
+    attachments,
     title,
     placement: input.placement ?? null,
     body: {
@@ -495,10 +503,15 @@ export async function loadTask(context: TasksContext, task: string): Promise<Tas
 
 // --- follow-ups ---
 
-/** Seals `text` as a further `prompt` of `task`. */
-export async function prepareFollowUp(context: TasksContext, task: TaskRow, text: string): Promise<unknown> {
+/** Seals `text` with the files it names (ADR-102) as a further `prompt` of `task`. */
+export async function prepareFollowUp(
+  context: TasksContext,
+  task: TaskRow,
+  text: string,
+  attachments: readonly AttachmentRef[] = [],
+): Promise<unknown> {
   if (!sendable(text)) fail(text.length > PROMPT_MAX ? 'size_exceeded' : 'request_invalid');
-  return sealWg(context, task.org_id, task.wg_id, task.task_id, 'prompt', { text, attachments: [] });
+  return sealWg(context, task.org_id, task.wg_id, task.task_id, 'prompt', { text, attachments });
 }
 
 /**
@@ -522,8 +535,12 @@ export async function sendFollowUp(context: TasksContext, task: TaskRow, event: 
   return answer.session_id;
 }
 
-/** The text of the newest verified prompt of a task in the store (bodies without text are skipped), or null. */
-export function latestPrompt(store: Store, task: TaskRow): string | null {
+/** The newest verified prompt of a task in the store (bodies without text are skipped), or null: its text and the
+ *  files it names (none when its `attachments` are not valid references, ADR-102). */
+export function latestPromptBody(
+  store: Store,
+  task: TaskRow,
+): { readonly text: string; readonly attachments: readonly AttachmentRef[] } | null {
   const texts = findEvents(
     store.getState().events,
     (entry) =>
@@ -534,7 +551,24 @@ export function latestPrompt(store: Store, task: TaskRow): string | null {
       isRecord(entry.body) &&
       typeof entry.body.text === 'string',
   ).sort((a, b) => b.scopeSeq - a.scopeSeq);
-  return texts.length === 0 ? null : (texts[0]!.body as { text: string }).text;
+  if (texts.length === 0) return null;
+  const body = texts[0]!.body as { text: string; attachments?: unknown };
+  return { text: body.text, attachments: promptAttachments(body) };
+}
+
+/** The text of the newest verified prompt of a task in the store, or null (`latestPromptBody`). */
+export function latestPrompt(store: Store, task: TaskRow): string | null {
+  return latestPromptBody(store, task)?.text ?? null;
+}
+
+/** The checked attachment references of a prompt body; none when they are missing or not valid. */
+export function promptAttachments(body: unknown): readonly AttachmentRef[] {
+  if (!isRecord(body)) return [];
+  try {
+    return checkRefs(body.attachments);
+  } catch {
+    return [];
+  }
 }
 
 const retries = new WeakMap<Store, Map<string, { readonly generation: number; readonly event: unknown }>>();
@@ -550,12 +584,15 @@ export async function retryPrompt(context: TasksContext, task: TaskRow): Promise
   retries.set(store, pending);
   let kept = pending.get(task.task_id);
   if (kept === undefined || kept.generation !== store.generation) {
-    let text = latestPrompt(store, task);
-    if (text === null) {
+    let latest = latestPromptBody(store, task);
+    if (latest === null) {
       await pullEvents(context, task.org_id, task.wg_id, { kinds: ['prompt'], task: task.task_id });
-      text = latestPrompt(store, task) ?? fail('decrypt_failed');
+      latest = latestPromptBody(store, task) ?? fail('decrypt_failed');
     }
-    kept = { generation: store.generation, event: await prepareFollowUp(context, task, text) };
+    kept = {
+      generation: store.generation,
+      event: await prepareFollowUp(context, task, latest.text, latest.attachments),
+    };
     pending.set(task.task_id, kept);
   }
   const session = await sendFollowUp(context, task, kept.event);

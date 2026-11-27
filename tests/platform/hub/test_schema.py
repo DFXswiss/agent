@@ -364,6 +364,21 @@ EXPECTED: dict[str, list[tuple[str, str]]] = {
         ("kind", T),  # KOR-43, migration 0024
     ],
     "context_chunk": [("object_id", U), ("chunk_index", INT), ("ct", B), ("sha256", B)],
+    # 2.4.5 attachments of prompts (ATT-01, ADR-102, migration 0042)
+    "attachment_object": [
+        ("id", U),
+        ("org_id", U),
+        ("wg_id", U),
+        ("author_id", U),
+        ("state", T),
+        ("chunks", INT),
+        ("size", BI),
+        ("digest", T),
+        ("created_at", TS),
+        ("updated_at", TS),
+        ("completed_at", TS),
+    ],
+    "attachment_chunk": [("object_id", U), ("chunk_index", INT), ("ct", B), ("sha256", B)],
     "pr_link": [
         ("wg_id", U),
         ("epoch", INT),
@@ -835,6 +850,7 @@ PRIMARY_KEYS: dict[str, tuple[str, ...]] = {
     "dfx_key_cost": ("device_id", "session_id"),
     "charge_person_daily": ("org_id", "day", "user_id", "kind"),
     "context_chunk": ("object_id", "chunk_index"),
+    "attachment_chunk": ("object_id", "chunk_index"),
     "pr_link": ("wg_id", "epoch", "tag"),
     "ui_health_daily": ("day", "version", "view"),
     "outbox_receipt": ("device_id", "origin_seq"),
@@ -1048,6 +1064,7 @@ def _check_values(connection: psycopg.Connection[Any], table: str, column: str) 
         ),
         ("context_object", "state", ["uploading", "complete"]),
         ("context_object", "kind", ["context", "log"]),
+        ("attachment_object", "state", ["uploading", "complete"]),
         ("vm", "state", ["pool", "assigning", "running", "stopping", "stopped", "deleted"]),
         (
             "operation",

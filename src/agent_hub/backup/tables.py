@@ -179,6 +179,9 @@ RULES: tuple[TableRule, ...] = (
     TableRule("context_object", ORG_ROWS),
     TableRule("context_chunk", "object_id IN (SELECT id FROM hub.context_object WHERE org_id = %(org)s)"),
     TableRule("pr_link", WG_ROWS),
+    # attachments of prompts (ADR-102): the chunks reference their object
+    TableRule("attachment_object", ORG_ROWS),
+    TableRule("attachment_chunk", "object_id IN (SELECT id FROM hub.attachment_object WHERE org_id = %(org)s)"),
     # withdrawals of waiting prompts reference their task (KOR-46, ADR-083 section 3)
     TableRule("prompt_withdrawal", TASK_ROWS),
     TableRule("audit", ALL_ROWS, append_only=True),

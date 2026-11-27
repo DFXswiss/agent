@@ -66,9 +66,11 @@ test('Chromium reproduces every shared crypto vector with its own WebCrypto', as
     (total, name) => total + invalidCount(name === 'title' ? 'tasks' : 'vectors', name),
     0,
   );
-  expect(consumed.length).toBe(18);
+  expect(consumed.length).toBe(19);
   // the live frames of the platform browser (KOR-44): HKDF, seal and open with Chromium's AES-GCM
   expect(consumed).toContain('browserframe');
+  // the attachments of prompts (ADR-102): sealed and opened with Chromium's AES-GCM
+  expect(consumed).toContain('attachment');
   expect(outcomes.length).toBe(consumed.length + negatives);
 });
 

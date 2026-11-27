@@ -11,6 +11,7 @@
 //
 // The rights (`task:write` = `wg:write` on the task's workgroup) are checked by the UI before it offers a control
 // (section 1: not rendered without the right) and again by the hub.
+import type { AttachmentRef } from '../crypto/attachment';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
 import { show } from '../store/focus';
@@ -71,11 +72,19 @@ export async function loadChat(context: TasksContext, task: string): Promise<Tas
   }
 }
 
-/** Sends `text` as a further prompt of `task`; returns the session the hub routed it to. */
-export async function sendPrompt(context: TasksContext, task: TaskRow, text: string): Promise<string> {
+/** Sends `text` with the files it names (ADR-102) as a further prompt of `task`; returns the session the hub routed it
+ *  to. */
+export async function sendPrompt(
+  context: TasksContext,
+  task: TaskRow,
+  text: string,
+  attachments: readonly AttachmentRef[] = [],
+): Promise<string> {
   const kept = context.store.getState().chat.kept[task.task_id];
-  const event = kept !== undefined && kept.text === text ? kept.event : await prepareFollowUp(context, task, text);
-  keepPrompt(context.store, task.task_id, { text, event });
+  const objects = attachments.map((ref) => ref.object);
+  const same = kept !== undefined && kept.text === text && kept.attachments.join() === objects.join();
+  const event = same ? kept.event : await prepareFollowUp(context, task, text, attachments);
+  keepPrompt(context.store, task.task_id, { text, attachments: objects, event });
   try {
     const session = await sendFollowUp(context, task, event);
     keepPrompt(context.store, task.task_id, null);

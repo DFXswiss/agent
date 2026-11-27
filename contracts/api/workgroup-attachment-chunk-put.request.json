@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-attachment-chunk-put.request.json",
+  "title": "PUT /v1/workgroups/{wg}/attachments/{object}/chunks/{index} request",
+  "description": "Body of PUT /v1/workgroups/{wg}/attachments/{object}/chunks/{index} (03-api.md section 4.6, ADR-102 section 3): one sealed chunk of a file attached to a prompt (nonce || AES-GCM, at most 1 MiB + 28 bytes, 04-crypto.md section 4.14).",
+  "type": "object",
+  "properties": {
+    "ct": {
+      "type": "string",
+      "$ref": "../common.json#/$defs/b64u",
+      "minLength": 39,
+      "maxLength": 1398139
+    }
+  },
+  "required": [
+    "ct"
+  ],
+  "additionalProperties": false
+}

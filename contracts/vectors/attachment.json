@@ -1,0 +1,382 @@
+{
+  "about": "Attachments of prompts of 04-crypto.md section 4.14 (ADR-102): k_att from WK and the salt of the reference, sealed chunks of at most 1 MiB, the reference with the digest a prompt body carries.",
+  "chunks": [
+    "IT-f_kU6ztx6SBykLy8FGkgBmbGcwgHhBz3e9l5_GXQvBL8ZXa87DJO-PQtB_H4pbW5j9-w3vtW6DgvvP5WVQkq_S1gN0tWV4lUIPKEgHvE"
+  ],
+  "file": "iVBORw0KGgpCaWxkc2NoaXJtZm90bzogRmVobGVybWVsZHVuZyBiZWltIFNwZWljaGVybg",
+  "invalid": [
+    {
+      "args": {
+        "ref": {
+          "bytes": 52,
+          "epoch": 3,
+          "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+          "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+          "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+          "type": "image/png"
+        }
+      },
+      "error": "header_invalid",
+      "name": "ref_without_digest",
+      "op": "check_attachment_ref"
+    },
+    {
+      "args": {
+        "ref": {
+          "bytes": 52,
+          "chunks": 1,
+          "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+          "epoch": 3,
+          "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+          "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+          "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+          "type": "image/png"
+        }
+      },
+      "error": "header_invalid",
+      "name": "ref_extra_key",
+      "op": "check_attachment_ref"
+    },
+    {
+      "args": {
+        "ref": {
+          "bytes": 52,
+          "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+          "epoch": 3,
+          "name": "a/b.png",
+          "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+          "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+          "type": "image/png"
+        }
+      },
+      "error": "header_invalid",
+      "name": "ref_name_with_slash",
+      "op": "check_attachment_ref"
+    },
+    {
+      "args": {
+        "ref": {
+          "bytes": 52,
+          "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+          "epoch": 3,
+          "name": "..",
+          "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+          "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+          "type": "image/png"
+        }
+      },
+      "error": "header_invalid",
+      "name": "ref_name_dot_dot",
+      "op": "check_attachment_ref"
+    },
+    {
+      "args": {
+        "ref": {
+          "bytes": 52,
+          "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+          "epoch": 3,
+          "name": "a\nb.png",
+          "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+          "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+          "type": "image/png"
+        }
+      },
+      "error": "header_invalid",
+      "name": "ref_name_control",
+      "op": "check_attachment_ref"
+    },
+    {
+      "args": {
+        "ref": {
+          "bytes": 52,
+          "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+          "epoch": 3,
+          "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+          "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+          "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+          "type": "Image/PNG"
+        }
+      },
+      "error": "header_invalid",
+      "name": "ref_type_upper_case",
+      "op": "check_attachment_ref"
+    },
+    {
+      "args": {
+        "ref": {
+          "bytes": 0,
+          "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+          "epoch": 3,
+          "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+          "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+          "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+          "type": "image/png"
+        }
+      },
+      "error": "header_invalid",
+      "name": "ref_empty_file",
+      "op": "check_attachment_ref"
+    },
+    {
+      "args": {
+        "ref": {
+          "bytes": 33554433,
+          "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+          "epoch": 3,
+          "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+          "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+          "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+          "type": "image/png"
+        }
+      },
+      "error": "header_invalid",
+      "name": "ref_too_large",
+      "op": "check_attachment_ref"
+    },
+    {
+      "args": {
+        "refs": [
+          {
+            "bytes": 52,
+            "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+            "epoch": 3,
+            "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+            "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+            "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+            "type": "image/png"
+          },
+          {
+            "bytes": 52,
+            "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+            "epoch": 3,
+            "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+            "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+            "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+            "type": "image/png"
+          }
+        ]
+      },
+      "error": "header_invalid",
+      "name": "refs_twice_the_same_object",
+      "op": "check_attachment_refs"
+    },
+    {
+      "args": {
+        "refs": [
+          {
+            "bytes": 52,
+            "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+            "epoch": 3,
+            "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+            "object": "01a1ee56-5e00-7c21-91d5-66330b4d5ceb",
+            "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+            "type": "image/png"
+          },
+          {
+            "bytes": 52,
+            "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+            "epoch": 3,
+            "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+            "object": "01a1ee56-5e00-7f84-8ca6-e4aa85121938",
+            "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+            "type": "image/png"
+          },
+          {
+            "bytes": 52,
+            "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+            "epoch": 3,
+            "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+            "object": "01a1ee56-5e00-7b68-b392-be0ad73643b3",
+            "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+            "type": "image/png"
+          },
+          {
+            "bytes": 52,
+            "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+            "epoch": 3,
+            "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+            "object": "01a1ee56-5e00-758d-a2e0-d47eb3a50252",
+            "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+            "type": "image/png"
+          },
+          {
+            "bytes": 52,
+            "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+            "epoch": 3,
+            "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+            "object": "01a1ee56-5e00-7125-870d-69ba95621ff8",
+            "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+            "type": "image/png"
+          },
+          {
+            "bytes": 52,
+            "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+            "epoch": 3,
+            "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+            "object": "01a1ee56-5e00-7e62-b40d-e1b86bfc8b3d",
+            "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+            "type": "image/png"
+          },
+          {
+            "bytes": 52,
+            "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+            "epoch": 3,
+            "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+            "object": "01a1ee56-5e00-770a-aabd-3f3b62c42117",
+            "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+            "type": "image/png"
+          },
+          {
+            "bytes": 52,
+            "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+            "epoch": 3,
+            "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+            "object": "01a1ee56-5e00-7017-a0fb-1a6fcaaf753e",
+            "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+            "type": "image/png"
+          },
+          {
+            "bytes": 52,
+            "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+            "epoch": 3,
+            "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+            "object": "01a1ee56-5e00-7bdc-9145-6a42d3892029",
+            "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+            "type": "image/png"
+          },
+          {
+            "bytes": 52,
+            "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+            "epoch": 3,
+            "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+            "object": "01a1ee56-5e00-7389-b3bb-2699d519ebf2",
+            "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+            "type": "image/png"
+          },
+          {
+            "bytes": 52,
+            "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+            "epoch": 3,
+            "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+            "object": "01a1ee56-5e00-78fd-a47d-a5671ac4e072",
+            "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+            "type": "image/png"
+          }
+        ]
+      },
+      "error": "header_invalid",
+      "name": "refs_too_many",
+      "op": "check_attachment_refs"
+    },
+    {
+      "args": {
+        "chunks": [
+          "IT-f_kU6ztx6SBykLy8FGkgBmbGcwgHhBz3e9l5_GXQvBL8ZXa87DJO-PQtB_H4pbW5j9-w3vtW6DgvvP5WVQkq_S1gN0tWV4lUIPKEgHvE"
+        ],
+        "ref": {
+          "bytes": 52,
+          "digest": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "epoch": 3,
+          "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+          "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+          "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+          "type": "image/png"
+        },
+        "workgroup_key": "UKnfLv1iQwWPVaZ7SkN7pPdtJQKUs1_OKPXR55y-4-o"
+      },
+      "error": "header_invalid",
+      "name": "other_digest",
+      "op": "open_attachment"
+    },
+    {
+      "args": {
+        "chunks": [
+          "IT-f_kU6ztx6SBykLy8FGkgBmbGcwgHhBz3e9l5_GXQvBL8ZXa87DJO-PQtB_H4pbW5j9-w3vtW6DgvvP5WVQkq_S1gN0tWV4lUIPKEgHvE"
+        ],
+        "ref": {
+          "bytes": 53,
+          "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+          "epoch": 3,
+          "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+          "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+          "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+          "type": "image/png"
+        },
+        "workgroup_key": "UKnfLv1iQwWPVaZ7SkN7pPdtJQKUs1_OKPXR55y-4-o"
+      },
+      "error": "header_invalid",
+      "name": "other_size",
+      "op": "open_attachment"
+    },
+    {
+      "args": {
+        "chunks": [
+          "IT-f_kU6ztx6SBykLy8FGkgBmbGcwgHhBz3e9l5_GXQvBL8ZXa87DJO-PQtB_H4pbW5j9-w3vtW6DgvvP5WVQkq_S1gN0tWV4lUIPKEgHvE"
+        ],
+        "ref": {
+          "bytes": 52,
+          "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+          "epoch": 3,
+          "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+          "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+          "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+          "type": "image/png"
+        },
+        "workgroup_key": "SfVULZMAtM03RqfPip6k_b2nBikr17z3De1TmEZdLX0"
+      },
+      "error": "decrypt_failed",
+      "name": "other_workgroup_key",
+      "op": "open_attachment"
+    },
+    {
+      "args": {
+        "index": 2,
+        "key": "En1mw4P0FmcyE9P1ULRyEvxWhi7UB1KnARcFh3CCur4",
+        "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+        "sealed": "JEGhfr2bU6xlErZRFoHS12VLzDgUmV6TFEoybeDrmBHdmsVNe36g_B_h59_ePhFG5qoPmCJxvnlajl-bzJE"
+      },
+      "error": "decrypt_failed",
+      "name": "chunk_other_index",
+      "op": "open_attachment_chunk"
+    },
+    {
+      "args": {
+        "index": 3,
+        "key": "En1mw4P0FmcyE9P1ULRyEvxWhi7UB1KnARcFh3CCur4",
+        "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+        "sealed": "JEGhfr2bU6xlErZRRlscUyVzmeXLC_RJm6rssPw5vZaxUwxa7VZ7Osh-eVsNkTO2ehzgFH0XU3-ihxpNbMA"
+      },
+      "error": "decrypt_failed",
+      "name": "log_chunk_as_attachment_chunk",
+      "op": "open_attachment_chunk"
+    }
+  ],
+  "k_att": "En1mw4P0FmcyE9P1ULRyEvxWhi7UB1KnARcFh3CCur4",
+  "limits": {
+    "chunk_bytes": 1048576,
+    "chunk_ct_bytes": 1048604,
+    "max_attachments": 10,
+    "max_bytes": 33554432
+  },
+  "nonces": [
+    "IT-f_kU6ztx6SByk"
+  ],
+  "part": {
+    "aad": "agent.dfx.swiss/v1/attachment-chunk\u0000{\"index\":3,\"object\":\"01a1ee56-5e00-77de-99ef-6bbbf66c7d71\"}",
+    "index": 3,
+    "nonce": "JEGhfr2bU6xlErZR",
+    "plaintext": "WmVpbGUgMzogU3BlaWNoZXJuIGZlaGxnZXNjaGxhZ2VuCg",
+    "sealed": "JEGhfr2bU6xlErZRFoHS12VLzDgUmV6TFEoybeDrmBHdmsVNe36g_B_h59_ePhFG5qoPmCJxvnlajl-bzJE"
+  },
+  "ref": {
+    "bytes": 52,
+    "digest": "O1ASMpxFhI6dxFpUdh1Tfs-nq0oTrksolonmb13Sefw",
+    "epoch": 3,
+    "name": "Bildschirmfoto 2026-11-27 um 10.15.png",
+    "object": "01a1ee56-5e00-77de-99ef-6bbbf66c7d71",
+    "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+    "type": "image/png"
+  },
+  "salt": "1qeuwFKpZqQHwXyAzc7TlleeBnfFXFARKq0VmDSPDz0",
+  "workgroup_key": "UKnfLv1iQwWPVaZ7SkN7pPdtJQKUs1_OKPXR55y-4-o"
+}

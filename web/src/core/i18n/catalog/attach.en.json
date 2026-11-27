@@ -1,0 +1,16 @@
+{
+  "button": "Attach file",
+  "input.label": "Attach files or images",
+  "list.label": "Attached files",
+  "remove": "Remove {name}",
+  "error.too_many": "At most 10 files per message.",
+  "error.empty": "Empty files cannot be attached.",
+  "error.too_large": "A file may be at most 32 MB.",
+  "error.read": "The file could not be read.",
+  "chat.label": "Attachments",
+  "chat.image": "Image {name}",
+  "chat.download": "Download {name}",
+  "chat.loading": "Loading …",
+  "chat.failed": "The attachment could not be opened",
+  "chat.open": "Open {name} in full size"
+}

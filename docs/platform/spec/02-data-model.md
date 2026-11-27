@@ -145,6 +145,13 @@ children numbered by `created_at`, `id`); the partial index `task_open_owner` (`
 `last_activity_at` DESC,`id` DESC) WHERE `state` <> `closed`; `audit.on_behalf_of` uuid NULL and the actor kinds
 `main_agent`, `subagent`.
 
+#### 2.4.5 Attachments of prompts (ATT-01, ADR-102)
+
+| Table | Columns | Notes |
+|---|---|---|
+| `attachment_object` | `id` uuid PK (UUIDv7 chosen by the uploading browser), `org_id`, `wg_id` (no foreign key: `wg` is a projection of the log), `author_id` (the uploading user), `state` CHECK in (`uploading`,`complete`), `chunks`, `size` (sealed bytes stored so far), `digest` NULL, `created_at`, `updated_at` (last chunk), `completed_at` NULL; indexes on `org_id` and on `updated_at` of uploads | `complete` ⇔ `completed_at` and `digest` set. Only complete objects are read. Migration `0042_attachments`; uploads without a chunk for 6 h are deleted by the job `attachments.expire`; the quota `AGENT_HUB_ATTACHMENT_ORG_BYTES` sums every object of the org. File name, media type and the prompt that names the object are never stored here (they are inside the prompt's ciphertext) |
+| `attachment_chunk` | (`object_id` → `attachment_object` on delete cascade, `chunk_index`) PK, `ct` bytea (sealed chunk, `04-crypto.md` §4.14), `sha256` bytea | ciphertext only; inside the transactional backup |
+
 ### 2.5 Operations
 
 | Table | Columns | Notes |

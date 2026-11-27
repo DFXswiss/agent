@@ -1386,6 +1386,15 @@ DETAIL_SCHEMAS: dict[str, dict[str, Any]] = {
     "read.community.mutes": {"properties": {}, "required": []},
     "read.community.requests": {"properties": {}, "required": []},
     "read.device.context.chunk": {"properties": {}, "required": []},
+    "read.device.attachment.chunk": {"properties": {}, "required": []},
+    "read.workgroup.attachment.chunk": {"properties": {}, "required": []},
+    "attachment.stored": {
+        "properties": {
+            "chunks": [{"type": "integer", "minimum": 1, "maximum": 32}],
+            "size": [{"type": "integer", "minimum": 29, "maximum": 33555328}],
+        },
+        "required": ["chunks", "size"],
+    },
     "read.device.context": {"properties": {}, "required": []},
     "read.device.credential": {"properties": {}, "required": []},
     "read.device.github_identities": {"properties": {}, "required": []},

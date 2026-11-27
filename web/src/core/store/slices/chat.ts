@@ -13,6 +13,8 @@ export interface ChatLoad {
 
 export interface KeptPrompt {
   readonly text: string;
+  /** The objects of the files the sealed prompt names (ADR-102), in order. */
+  readonly attachments: readonly string[];
   readonly event: unknown;
 }
 

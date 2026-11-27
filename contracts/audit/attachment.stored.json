@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/audit/attachment.stored.json",
+  "title": "audit detail attachment.stored",
+  "description": "detail of audit rows with action attachment.stored: a member committed a file attached to a prompt (target_kind attachment, ADR-102 section 3): chunk count and sealed size in bytes; name, type and content stay encrypted. Metadata only (02-data-model.md section 2.9); every value is flat (string of printable ASCII up to 256 characters, integer, boolean or null) like the generic detail of api/org-audit.response.json.",
+  "type": "object",
+  "properties": {
+    "chunks": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32
+    },
+    "size": {
+      "type": "integer",
+      "minimum": 29,
+      "maximum": 33555328
+    }
+  },
+  "required": [
+    "chunks",
+    "size"
+  ],
+  "additionalProperties": false
+}

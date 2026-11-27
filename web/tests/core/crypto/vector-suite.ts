@@ -12,6 +12,7 @@ import { bodyJson, canonical, canonicalText, parseJson } from '../../../src/core
 import { formatTime, parseTime } from '../../../src/core/encoding/time';
 import { aesKey, seal as aeadSeal } from '../../../src/core/crypto/aead';
 import * as agent from '../../../src/core/crypto/agent';
+import * as attachment from '../../../src/core/crypto/attachment';
 import * as browserframe from '../../../src/core/crypto/browserframe';
 import * as bundle from '../../../src/core/crypto/bundle';
 import * as context from '../../../src/core/crypto/context';
@@ -68,6 +69,7 @@ export const TITLE_CASES: Any = parseJson(
 /** The vector files this package consumes (04-crypto.md sections 1-4); the title cases come on top. */
 export const CONSUMED = [
   'agent',
+  'attachment',
   'browserframe',
   'bundle',
   'context',
@@ -235,6 +237,10 @@ export const OPS: Record<string, (a: Any) => Promise<unknown>> = {
   open_log: async (a) =>
     runlog.openLog(Secret.of(b(a.workgroup_key)), a.manifest, a.sig, b(a.author_sig_pk), a.chunks.map(b)),
   open_log_chunk: async (a) => runlog.openChunk(await aesKey(b(a.key)), a.object, a.index, b(a.sealed)),
+  check_attachment_ref: async (a) => attachment.checkRef(a.ref),
+  check_attachment_refs: async (a) => attachment.checkRefs(a.refs),
+  open_attachment: async (a) => attachment.openAttachment(Secret.of(b(a.workgroup_key)), a.ref, a.chunks.map(b)),
+  open_attachment_chunk: async (a) => attachment.openChunk(await aesKey(b(a.key)), a.object, a.index, b(a.sealed)),
   open_pr_link: async (a) =>
     context.openPrLink(
       await context.prLinkBodyKey(Secret.of(b(a.workgroup_key))),
@@ -724,6 +730,34 @@ const POSITIVE: Record<string, (data: Any) => Promise<void>> = {
     const sealed = await runlog.sealChunk(key, manifest.object, part.index, b(part.plaintext), b(part.nonce));
     same(sealed, part.sealed, 'sealed part');
     same(await runlog.openChunk(key, manifest.object, part.index, sealed), part.plaintext, 'opened part');
+  },
+  attachment: async (data) => {
+    const wk = Secret.of(b(data.workgroup_key));
+    const ref = data.ref;
+    const key = await attachment.attachmentKey(wk, b(data.salt), ref.object);
+    await sameAesKey(key, data.k_att, 'k_att');
+    same(
+      [data.limits.chunk_bytes, data.limits.chunk_ct_bytes, data.limits.max_bytes, data.limits.max_attachments],
+      [attachment.CHUNK_BYTES, attachment.CHUNK_CT_BYTES, attachment.MAX_BYTES, attachment.MAX_ATTACHMENTS],
+      'limits',
+    );
+    const sealed = await attachment.sealAttachment(wk, {
+      objectId: ref.object,
+      name: ref.name,
+      type: ref.type,
+      epoch: ref.epoch,
+      data: b(data.file),
+      salt: b(data.salt),
+      nonces: data.nonces.map(b),
+    });
+    same(sealed.ref, ref, 'reference');
+    same(sealed.chunks, data.chunks.map(b), 'chunks');
+    same(await attachment.openAttachment(wk, ref, data.chunks.map(b)), data.file, 'opened file');
+    const part = data.part;
+    same(fromUtf8(attachment.chunkAad(ref.object, part.index)), part.aad, 'chunk AAD');
+    const one = await attachment.sealChunk(key, ref.object, part.index, b(part.plaintext), b(part.nonce));
+    same(one, part.sealed, 'sealed part');
+    same(await attachment.openChunk(key, ref.object, part.index, one), part.plaintext, 'opened part');
   },
   browserframe: async (data) => {
     const wk = Secret.of(b(data.workgroup_key));

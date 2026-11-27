@@ -50,6 +50,7 @@ CONTEXT_KEEP = "AGENT_HUB_CONTEXT_KEEP"
 CONTEXT_ORG_BYTES = "AGENT_HUB_CONTEXT_ORG_BYTES"
 LOG_KEEP = "AGENT_HUB_LOG_KEEP"
 LOG_ORG_BYTES = "AGENT_HUB_LOG_ORG_BYTES"
+ATTACHMENT_ORG_BYTES = "AGENT_HUB_ATTACHMENT_ORG_BYTES"
 VMS_PER_WG = "AGENT_HUB_VMS_PER_WG"
 CAPACITY_REFUSALS = "AGENT_HUB_CAPACITY_REFUSALS"
 REFUSAL_HOLD_SECONDS = "AGENT_HUB_REFUSAL_HOLD_SECONDS"
@@ -83,6 +84,7 @@ KNOWN_VARIABLES = frozenset(
         CONTEXT_ORG_BYTES,
         LOG_KEEP,
         LOG_ORG_BYTES,
+        ATTACHMENT_ORG_BYTES,
         VMS_PER_WG,
         CAPACITY_REFUSALS,
         REFUSAL_HOLD_SECONDS,
@@ -120,6 +122,8 @@ DEFAULT_LOG_KEEP = 500
 """Complete logs kept per task (ADR-080 section 3)."""
 MAX_LOG_KEEP = 999_999
 DEFAULT_LOG_ORG_BYTES = 100 * GIB
+DEFAULT_ATTACHMENT_ORG_BYTES = 50 * GIB
+"""The sealed bytes of every attachment of prompts of one organisation (ADR-102 section 3)."""
 MAX_CONTEXT_BYTES = 2**53 - 1
 DEFAULT_SUBAGENT_MAX_DEPTH = 5
 """Nesting depth of subagents (ADR-088 section 2; main session 0; 0 = no limit)."""
@@ -255,6 +259,9 @@ class HubConfig:
     """`AGENT_HUB_LOG_KEEP`: complete logs kept per task; older ones are deleted on a commit (ADR-080 section 3)."""
     log_org_bytes: int = DEFAULT_LOG_ORG_BYTES
     """`AGENT_HUB_LOG_ORG_BYTES`: the sealed log bytes of all tasks of one organisation (apart from the checkpoints)."""
+    attachment_org_bytes: int = DEFAULT_ATTACHMENT_ORG_BYTES
+    """`AGENT_HUB_ATTACHMENT_ORG_BYTES`: the sealed bytes of every attachment of prompts of one organisation (ADR-102
+    section 3)."""
     downloads_dir: Path | None = None
     """`AGENT_HUB_DOWNLOADS_DIR`: the download area of an own device (ADR-074 section 7); None = no downloads."""
     vms_per_wg: int = DEFAULT_VMS_PER_WG
@@ -598,6 +605,9 @@ def load_config(environ: Mapping[str, str]) -> HubConfig:
         ),
         log_keep=_bounded_int(environ, LOG_KEEP, DEFAULT_LOG_KEEP, _SECONDS_RE, MAX_LOG_KEEP),
         log_org_bytes=_bounded_int(environ, LOG_ORG_BYTES, DEFAULT_LOG_ORG_BYTES, _BYTES_RE, MAX_CONTEXT_BYTES),
+        attachment_org_bytes=_bounded_int(
+            environ, ATTACHMENT_ORG_BYTES, DEFAULT_ATTACHMENT_ORG_BYTES, _BYTES_RE, MAX_CONTEXT_BYTES
+        ),
         downloads_dir=_downloads_dir(environ),
         vms_per_wg=_setting(environ, VMS_PER_WG, DEFAULT_VMS_PER_WG, MAX_VMS_PER_WG),
         capacity_refusals=_bounded_int(

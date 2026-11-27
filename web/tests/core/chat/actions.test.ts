@@ -133,6 +133,32 @@ describe('sendPrompt', () => {
     await sendPrompt(t.context, row, 'Changed');
     expect(events[3]).not.toBe(events[2]);
   });
+
+  it('re-sends the identical event only for the same text and the same files (ADR-102)', async () => {
+    const t = await taskWorld();
+    const events: unknown[] = [];
+    t.client.on(`POST /v1/tasks/${TASK}/prompts`, (body) => {
+      events.push((body as { event: unknown }).event);
+      throw new HubError('unavailable', 503);
+    });
+    const row = taskRow(t);
+    const ref = {
+      object: '0190f000-0000-7000-8000-00000000f001',
+      name: 'a.png',
+      type: 'image/png',
+      bytes: 1,
+      epoch: 1,
+      salt: 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8',
+      digest: 'ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8',
+    };
+    await expect(sendPrompt(t.context, row, 'Look', [ref])).rejects.toMatchObject({ code: 'unavailable' });
+    expect(t.store.getState().chat.kept[TASK]!.attachments).toEqual([ref.object]);
+    await expect(sendPrompt(t.context, row, 'Look', [ref])).rejects.toMatchObject({ code: 'unavailable' });
+    expect(events[1]).toBe(events[0]);
+    await expect(sendPrompt(t.context, row, 'Look')).rejects.toMatchObject({ code: 'unavailable' });
+    expect(events[2]).not.toBe(events[1]);
+    expect(t.store.getState().chat.kept[TASK]!.attachments).toEqual([]);
+  });
 });
 
 describe('controls', () => {

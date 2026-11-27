@@ -14,8 +14,9 @@ A prompt is delivered only when **all** of these hold:
    or workgroup read a prompt.
 3. Not stale (`deliver.Deliverer`): no later prompt of the task was handed to a guest yet (strict event order), and
    the event was not delivered before (final delivery rows, the hub's delivered list after a wipe).
-4. `open_text`: the stored event is opened again with the author's verified key and the scope key (signature and
-   decryption into memory only); the body is `{text, attachments: []}` with a non-empty text.
+4. `open_prompt`: the stored event is opened again with the author's verified key and the scope key (signature and
+   decryption into memory only); the body is `{text, attachments}` with a non-empty text and at most ten checked
+   attachment references (ADR-102; the files themselves are fetched and checked by `prompts.attachments`).
 
 A failed check means: not delivered, audited `runner.inbound_rejected` (source `event`, metadata only) and counted.
 """
@@ -23,10 +24,12 @@ A failed check means: not delivered, audited `runner.inbound_rejected` (source `
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, cast
 
 from psycopg import AsyncConnection
 
+from agent_runner.crypto.attachment import check_refs
 from agent_runner.crypto.encoding import b64u_decode, parse_json
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.event import open_event
@@ -69,9 +72,24 @@ def check_route(
         raise PromptRefused(MISROUTED)
 
 
+@dataclass(frozen=True)
+class Opened:
+    """A verified prompt: its text and its checked attachment references (ADR-102; empty for text only)."""
+
+    text: str
+    attachments: tuple[dict[str, object], ...] = ()
+
+
 async def open_text(conn: AsyncConnection[Any], storage_key: bytes, prompt: StoredPrompt) -> str:
-    """The prompt's text, opened into memory (signature with the stored verified author key, scope key of the
-    header's epoch); `PromptRefused(prompt_unreadable)` when that fails or the body is not a prompt body."""
+    """The prompt's text (`open_prompt`)."""
+    return (await open_prompt(conn, storage_key, prompt)).text
+
+
+async def open_prompt(conn: AsyncConnection[Any], storage_key: bytes, prompt: StoredPrompt) -> Opened:
+    """The prompt's text and attachment references, opened into memory (signature with the stored verified author
+    key, scope key of the header's epoch); `PromptRefused(prompt_unreadable)` when that fails or the body is not a
+    prompt body (a text that is empty or only whitespace, attachments that are not a list of at most ten distinct
+    references of `agent_runner.crypto.attachment.check_refs`)."""
     header = prompt.sealed.get("header") if isinstance(prompt.sealed, Mapping) else None
     if not isinstance(header, Mapping) or header.get("id") != prompt.event_id or not addresses_task(header):
         raise PromptRefused(UNREADABLE)
@@ -89,4 +107,8 @@ async def open_text(conn: AsyncConnection[Any], storage_key: bytes, prompt: Stor
     # the length is bounded by E8 (ciphertext at most 256 KiB), below the guest's 262144 characters
     if not isinstance(text, str) or not text.strip():
         raise PromptRefused(UNREADABLE)
-    return text
+    try:
+        refs = check_refs(cast(dict[str, object], body).get("attachments", []))
+    except CryptoError:
+        raise PromptRefused(UNREADABLE) from None
+    return Opened(text=text, attachments=tuple(refs))

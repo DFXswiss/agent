@@ -398,6 +398,10 @@
       "group": "pr"
     },
     {
+      "action": "attachment.stored",
+      "group": "attachment"
+    },
+    {
       "action": "pr.unlinked",
       "group": "pr"
     },
@@ -751,6 +755,14 @@
     },
     {
       "action": "read.device.context.chunk",
+      "group": "read"
+    },
+    {
+      "action": "read.device.attachment.chunk",
+      "group": "read"
+    },
+    {
+      "action": "read.workgroup.attachment.chunk",
       "group": "read"
     },
     {

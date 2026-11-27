@@ -398,6 +398,14 @@ with `task.set_title` (shown as "renamed by session").
 2. Encrypt `task.meta` and `prompt` (scope wg, `lh` = verified head), `POST /v1/tasks`.
 3. Navigate to `/o/:org/t/:task` immediately; the chat shows the prompt and the countdown panel.
 
+Files and images (ATT-01, ADR-102): the composer of the home screen, of the task list and of the chat takes files
+by the button "Attach file" (several at once), by dropping them onto the composer and by pasting an image into the
+prompt field. They are listed with name and size, can be removed and are checked at once (at most 10 per prompt,
+1 byte to 32 MB each; a file that cannot be read says so). Sending first seals and uploads each file
+(`04-crypto.md` §4.14: `PUT …/attachments/{object}/chunks/{index}`, then `POST …/commit`) and then seals the
+prompt with their references in `attachments`; a failed send keeps the uploaded references, so a retry to the same
+workgroup uploads nothing again and re-sends the identical prompt.
+
 ### 4.4 Countdown panel
 
 - Starts at `min(estimate_ms, 10000)` from the `POST /v1/tasks` response, counting down in whole seconds (tenths
@@ -508,7 +516,10 @@ after a reconnect; without a switch, or when the audit cannot be read, nothing i
 
 - Timeline from events of the wg scope filtered by `task` (`GET /v1/scopes/{wg}/events?task=…` + SSE), ordered by
   `(ts, scope_seq)`:
-  - `prompt` – right-aligned bubble with author name.
+  - `prompt` – right-aligned bubble with author name; below it the prompt's attachments (ATT-01, ADR-102): an image
+    (PNG, JPEG, GIF, WebP) fetched, checked against the reference and opened at once and shown as a picture
+    (`data:` URL, the CSP stays `img-src 'self' data:`), a click toggles full size; every other file as a named entry
+    with its size that fetches, opens and saves the file when clicked; a file that cannot be opened says so.
   - `session.output` – Markdown (§2.1 rules), per session; subagent outputs are indented with the subagent label.
   - `session.tool` – collapsed row "Read src/app.py", "Edit …" (expand: input/result summaries, error flag).
   - `operation.params` / `operation.result` + `operation` rows – inline card with type, state badge (live), and

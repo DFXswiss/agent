@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent.dfx.swiss/contracts/api/workgroup-attachment-commit.request.json",
+  "title": "POST /v1/workgroups/{wg}/attachments/{object}/commit request",
+  "description": "Body of POST /v1/workgroups/{wg}/attachments/{object}/commit (03-api.md section 4.6, ADR-102 section 3): the number of chunks, their sealed bytes and the digest over their SHA-256 in index order, which the hub checks against what it stored.",
+  "type": "object",
+  "properties": {
+    "chunks": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32
+    },
+    "size": {
+      "type": "integer",
+      "minimum": 29,
+      "maximum": 33555328
+    },
+    "digest": {
+      "$ref": "../common.json#/$defs/b64u_32"
+    }
+  },
+  "required": [
+    "chunks",
+    "size",
+    "digest"
+  ],
+  "additionalProperties": false
+}

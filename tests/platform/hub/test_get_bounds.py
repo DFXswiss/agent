@@ -41,6 +41,11 @@ BOUNDS: dict[str, str] = {
     "/v1/device-requests/{id}": "structural: one request and its responses until it ends (15 min)",
     "/v1/device/contexts/{object}": "structural: one manifest",
     "/v1/device/contexts/{object}/chunks/{index}": "structural: one chunk (at most CHUNK_CT_BYTES)",
+    # ATT-01, ADR-102 section 3
+    "/v1/device/attachments/{object}/chunks/{index}": "structural: one chunk of an attachment (at most 1 MiB + 28 B)",
+    "/v1/workgroups/{wg}/attachments/{object}/chunks/{index}": (
+        "structural: one chunk of an attachment (at most 1 MiB + 28 B)"
+    ),
     "/v1/device/credentials/{owner}/{kind}": ONE,
     "/v1/device/github-identities": (
         "structural: the GitHub accounts of one owner, each one connected by an explicit sign-in at GitHub"

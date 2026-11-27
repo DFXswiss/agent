@@ -1,8 +1,9 @@
 """Copied from src/agent_hub/contexts/vectors.py.
 
 Vectors of the context checkpoints and pull-request links (`contracts/vectors/context.json`, 04-crypto.md
-sections 3 and 4.11, ADR-072) and of the logs (`contracts/vectors/runlog.json`, section 4.12, ADR-080, below),
-discovered by the generator of `agent_hub.crypto.vectors` through `SECTIONS`.
+sections 3 and 4.11, ADR-072), of the logs (`contracts/vectors/runlog.json`, section 4.12, ADR-080, below) and of the
+attachments of prompts (`contracts/vectors/attachment.json`, section 4.14, ADR-102, below), discovered by the generator
+of `agent_hub.crypto.vectors` through `SECTIONS`.
 
 Positive part: one checkpoint of one chunk (workgroup key, salt, `k_ctx`, the compressed archive, the sealed chunk,
 manifest and signature), three standalone chunks of one object at the indexes 0-2 with their AAD and the digest over
@@ -17,7 +18,7 @@ import gzip
 from collections.abc import Callable
 from typing import Any
 
-from agent_runner.crypto import aead, context, runlog
+from agent_runner.crypto import aead, attachment, context, runlog
 from agent_runner.crypto.encoding import b64u_decode, b64u_encode
 from agent_runner.crypto.errors import CryptoError
 from agent_runner.crypto.keys import Identity
@@ -476,4 +477,163 @@ def build_runlog() -> Json:
     }
 
 
-SECTIONS = (Section("context", build), Section("runlog", build_runlog))
+# -- attachments of prompts (`contracts/vectors/attachment.json`, 04-crypto.md section 4.14, ADR-102) -----------------
+#
+# Positive part: one attachment of one chunk (a small PNG-like file) with workgroup key, salt, `k_att`, the file, the
+# sealed chunk and the reference a prompt body carries; one standalone chunk at index 3 with its AAD. A file of more
+# than one chunk is not written out (each chunk holds 1 MiB); the unit tests of all three implementations seal and open
+# one. Negative vectors include a log chunk opened as an attachment chunk (the labels never pass for each other).
+
+ATTACHMENT_OBJECT = fixed_id("attachment/object")
+ATTACHMENT_FILE = b"\x89PNG\r\n\x1a\nBildschirmfoto: Fehlermeldung beim Speichern"
+
+
+ATTACHMENT_OPS: dict[str, Callable[[Json], object]] = {
+    "check_attachment_ref": lambda a: attachment.check_ref(a["ref"]),
+    "check_attachment_refs": lambda a: attachment.check_refs(a["refs"]),
+    "open_attachment": lambda a: attachment.open_attachment(
+        _b(a["workgroup_key"]), a["ref"], [_b(c) for c in a["chunks"]]
+    ),
+    "open_attachment_chunk": lambda a: attachment.open_chunk(_b(a["key"]), a["object"], a["index"], _b(a["sealed"])),
+}
+
+
+def attachment_negative(name: str, op: str, args: Json, error: str) -> Json:
+    """A negative vector; `op(args)` must fail with exactly `error`."""
+    try:
+        ATTACHMENT_OPS[op](args)
+    except CryptoError as refused:
+        if refused.code == error:
+            return {"name": name, "op": op, "args": args, "error": error}
+        raise RuntimeError(f"vector {name}: {refused.code} instead of {error}") from None
+    raise RuntimeError(f"vector {name}: no error instead of {error}")
+
+
+def build_attachment() -> Json:
+    """The section `attachment` (comment above)."""
+    wk, salt = fixed("attachment/wg-key"), fixed("attachment/salt")
+    nonce = fixed("attachment/nonce/0", 12)
+    ref, sealed = attachment.seal_attachment(
+        wk,
+        object_id=ATTACHMENT_OBJECT,
+        name="Bildschirmfoto 2026-11-27 um 10.15.png",
+        media_type="image/png",
+        epoch=3,
+        data=ATTACHMENT_FILE,
+        salt=salt,
+        nonces=[nonce],
+    )
+    key = attachment.attachment_key(wk, salt, ATTACHMENT_OBJECT)
+    part = b"Zeile 3: Speichern fehlgeschlagen\n"
+    part_nonce = fixed("attachment/nonce/part", 12)
+    one = attachment.seal_chunk(key, ATTACHMENT_OBJECT, 3, part, part_nonce)
+    log_key = runlog.log_key(wk, salt, ATTACHMENT_OBJECT)
+    chunks = [b64u_encode(chunk) for chunk in sealed]
+    base = {"workgroup_key": b64u_encode(wk), "ref": ref, "chunks": chunks}
+    return {
+        "about": "Attachments of prompts of 04-crypto.md section 4.14 (ADR-102): k_att from WK and the salt of the "
+        "reference, sealed chunks of at most 1 MiB, the reference with the digest a prompt body carries.",
+        "workgroup_key": b64u_encode(wk),
+        "salt": b64u_encode(salt),
+        "k_att": b64u_encode(key),
+        "file": b64u_encode(ATTACHMENT_FILE),
+        "nonces": [b64u_encode(nonce)],
+        "ref": ref,
+        "chunks": chunks,
+        "part": {
+            "index": 3,
+            "plaintext": b64u_encode(part),
+            "nonce": b64u_encode(part_nonce),
+            "aad": attachment.chunk_aad(ATTACHMENT_OBJECT, 3).decode("ascii"),
+            "sealed": b64u_encode(one),
+        },
+        "limits": {
+            "chunk_bytes": attachment.CHUNK_BYTES,
+            "chunk_ct_bytes": attachment.CHUNK_CT_BYTES,
+            "max_bytes": attachment.MAX_BYTES,
+            "max_attachments": attachment.MAX_ATTACHMENTS,
+        },
+        "invalid": [
+            attachment_negative(
+                "ref_without_digest",
+                "check_attachment_ref",
+                {"ref": {k: v for k, v in ref.items() if k != "digest"}},
+                "header_invalid",
+            ),
+            attachment_negative(
+                "ref_extra_key", "check_attachment_ref", {"ref": {**ref, "chunks": 1}}, "header_invalid"
+            ),
+            attachment_negative(
+                "ref_name_with_slash", "check_attachment_ref", {"ref": {**ref, "name": "a/b.png"}}, "header_invalid"
+            ),
+            attachment_negative(
+                "ref_name_dot_dot", "check_attachment_ref", {"ref": {**ref, "name": ".."}}, "header_invalid"
+            ),
+            attachment_negative(
+                "ref_name_control", "check_attachment_ref", {"ref": {**ref, "name": "a\nb.png"}}, "header_invalid"
+            ),
+            attachment_negative(
+                "ref_type_upper_case", "check_attachment_ref", {"ref": {**ref, "type": "Image/PNG"}}, "header_invalid"
+            ),
+            attachment_negative(
+                "ref_empty_file", "check_attachment_ref", {"ref": {**ref, "bytes": 0}}, "header_invalid"
+            ),
+            attachment_negative(
+                "ref_too_large",
+                "check_attachment_ref",
+                {"ref": {**ref, "bytes": attachment.MAX_BYTES + 1}},
+                "header_invalid",
+            ),
+            attachment_negative(
+                "refs_twice_the_same_object", "check_attachment_refs", {"refs": [ref, ref]}, "header_invalid"
+            ),
+            attachment_negative(
+                "refs_too_many",
+                "check_attachment_refs",
+                {"refs": [{**ref, "object": fixed_id(f"attachment/many/{n}")} for n in range(11)]},
+                "header_invalid",
+            ),
+            attachment_negative(
+                "other_digest",
+                "open_attachment",
+                {**base, "ref": {**ref, "digest": b64u_encode(bytes(32))}},
+                "header_invalid",
+            ),
+            attachment_negative(
+                "other_size",
+                "open_attachment",
+                {**base, "ref": {**ref, "bytes": len(ATTACHMENT_FILE) + 1}},
+                "header_invalid",
+            ),
+            attachment_negative(
+                "other_workgroup_key",
+                "open_attachment",
+                {**base, "workgroup_key": b64u_encode(fixed("attachment/wg-key-2"))},
+                "decrypt_failed",
+            ),
+            attachment_negative(
+                "chunk_other_index",
+                "open_attachment_chunk",
+                {"key": b64u_encode(key), "object": ATTACHMENT_OBJECT, "index": 2, "sealed": b64u_encode(one)},
+                "decrypt_failed",
+            ),
+            attachment_negative(
+                "log_chunk_as_attachment_chunk",
+                "open_attachment_chunk",
+                {
+                    "key": b64u_encode(key),
+                    "object": ATTACHMENT_OBJECT,
+                    "index": 3,
+                    "sealed": b64u_encode(runlog.seal_chunk(log_key, ATTACHMENT_OBJECT, 3, part, part_nonce)),
+                },
+                "decrypt_failed",
+            ),
+        ],
+    }
+
+
+SECTIONS = (
+    Section("context", build),
+    Section("runlog", build_runlog),
+    Section("attachment", build_attachment),
+)

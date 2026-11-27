@@ -662,6 +662,18 @@ session and the person it works for, never a person as sender. The runner checks
 before sending; an older guest's `400 request_invalid` to a request with `speaker` makes it send the request again
 without (log `speaker_unsupported`).
 
+**Attachments (ATT-01, ADR-102 §5).** A prompt whose body names attachments (`04-crypto.md` §4.14) is handed over
+only after its files are in the workspace: before step 1 the runner fetches every chunk
+(`GET /v1/device/attachments/{object}/chunks/{index}`), checks count, size and digest against the verified reference,
+decrypts with `WK` of the reference's epoch and imports the files with the guest's file import (`replace`) into
+`attachments/<event id>/<n>-<name>` (the name reduced to `[A-Za-z0-9._-]`, numbered from 1). The text typed is the
+prompt's text followed by one line per file with its path, media type and size; the sender line is made from the
+prompt's own text. Such a prompt never goes on the command line of a start (`initial_prompt`): the session starts
+without it and the delivery hands it over. A hub that cannot be reached (transport, `unavailable`, `rate_limited`)
+backs off like an unreachable guest; an object the hub does not hold complete, a damaged or undecryptable file or a
+key the device does not hold refuses the prompt (`prompt_unreadable`); the guest's refusal of the import refuses it
+like a refused registration. Nothing of a file (name, type, content) is logged.
+
 **Withdrawal (ADR-083 §3).** The runner announces `prompt.withdraw` (`Agent-Features`). For every event in
 `prompt_queue.withdrawn` of the device state a delivery still `pending` (or not routed yet) becomes `withdrawn`
 (final; never handed to a guest, never holds back or makes stale a later prompt) and is reported once as outbox audit

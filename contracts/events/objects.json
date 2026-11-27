@@ -18,6 +18,52 @@
       "minLength": 22,
       "maxLength": 87382
     },
+    "attachment_ref": {
+      "type": "object",
+      "description": "one file attached to a prompt (ADR-102, 04-crypto.md section 4.14): the sealed object at the hub, its file name and media type (only here, inside the prompt's ciphertext), its length in bytes, the workgroup epoch of its key, the salt of its key and the digest over the SHA-256 of its sealed chunks in index order",
+      "properties": {
+        "object": {
+          "$ref": "../common.json#/$defs/uuid"
+        },
+        "name": {
+          "type": "string",
+          "description": "file name: no control character, no / or \\, not . or ..",
+          "pattern": "^(?:[^\u0000-\u001f\u007f/\\\\.][^\u0000-\u001f\u007f/\\\\]*|\\.[^\u0000-\u001f\u007f/\\\\.][^\u0000-\u001f\u007f/\\\\]*|\\.\\.[^\u0000-\u001f\u007f/\\\\]+)$",
+          "minLength": 1,
+          "maxLength": 255
+        },
+        "type": {
+          "type": "string",
+          "description": "media type in lower case without parameters",
+          "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$",
+          "maxLength": 127
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 33554432
+        },
+        "epoch": {
+          "$ref": "../common.json#/$defs/epoch"
+        },
+        "salt": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        },
+        "digest": {
+          "$ref": "../common.json#/$defs/b64u_32"
+        }
+      },
+      "required": [
+        "object",
+        "name",
+        "type",
+        "bytes",
+        "epoch",
+        "salt",
+        "digest"
+      ],
+      "additionalProperties": false
+    },
     "header_device": {
       "type": "object",
       "description": "event header, exact key set (04-crypto.md section 4.3); the device-authored kinds except session.terminal, all workgroup-scoped (scope wg, wg set)",
@@ -505,12 +551,12 @@
         },
         "attachments": {
           "type": "array",
-          "description": "reserved, empty in v1",
+          "description": "files and images attached to the prompt (ADR-102, 04-crypto.md section 4.14): each a sealed object at the hub, named and bound by this reference; empty for a prompt of text only",
           "items": {
-            "type": "null"
+            "$ref": "#/$defs/attachment_ref"
           },
           "minItems": 0,
-          "maxItems": 0
+          "maxItems": 10
         }
       },
       "required": [
