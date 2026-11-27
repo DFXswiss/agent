@@ -10,11 +10,16 @@ guest version from the VM's golden record (`runner.vm.golden_version` -> `runner
 - `current_guest(db_or_conn, vm_id, version=CURRENT)`: True when the VM's guest is at least `version` - also for no VM
   yet (`vm_id` None: a new VM is cloned from the current golden). A VM or golden the store does not know, or a version
   that does not read as `major.minor.patch`, counts as an older guest (its answers stay valid for both).
+- A guest before `FORKS` knows neither the operation error code `repo_read_only` nor `fork` in the results of the
+  GitHub write types (HOT-33): `older_answer(answer)` leaves `fork` out of an operation answer and names the code
+  `repo_read_only` as `repo_not_accessible` (`older_code`; its message, the exact sentence, stays), so the operation
+  answer (`operations.pipeline`), `get_operation`, `list_operations` and `list_workgroup_operations` stay valid for it.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -23,6 +28,28 @@ CURRENT = (0, 3, 0)
 """The first guest version that knows ADR-088."""
 NAMES = (0, 5, 0)
 """The first guest version that knows `agent` and `children` in `get_context` (KOR-52, ADR-095 section 3)."""
+FORKS = (0, 8, 0)
+"""The first guest version that knows `repo_read_only` and the results' `fork` (HOT-33)."""
+OLDER_CODES = {"repo_read_only": "repo_not_accessible"}
+"""Operation error codes of a newer contract -> the code an older guest knows."""
+
+
+def older_code(code: Any) -> Any:
+    """The code an older guest knows (module docstring); any other value as it is."""
+    return OLDER_CODES.get(code, code) if isinstance(code, str) else code
+
+
+def older_answer(answer: Mapping[str, Any]) -> dict[str, Any]:
+    """An operation answer in the form a guest before `FORKS` accepts (module docstring)."""
+    out = dict(answer)
+    result, error = out.get("result"), out.get("error")
+    if isinstance(result, dict):
+        out["result"] = {key: value for key, value in result.items() if key != "fork"}
+    if isinstance(error, dict):
+        out["error"] = {**error, "code": older_code(error.get("code"))}
+    return out
+
+
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)")
 _QUERY = "SELECT g.guest_version FROM runner.vm v JOIN runner.golden g ON g.version = v.golden_version WHERE v.id = %s"
 

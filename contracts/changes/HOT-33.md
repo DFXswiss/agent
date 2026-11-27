@@ -9,3 +9,5 @@ ADR-027 section 3. Additive only. Decisions: `docs/platform/decisions/HOT-33.md`
 - `ops/objects.json`: the results of `github.create_branch`, `github.commit`, `github.push` and
   `github.create_pull_request` take an optional `fork` (`repo`): the fork of the acting identity the write went to
   (for a pull request: the fork its head branch is in). Absent when the repository itself was written.
+- The guest contracts change with both, so the guest version is 0.8.0; the runner answers a guest before 0.8.0
+  without `fork` and with `repo_not_accessible` instead of `repo_read_only` (same message).

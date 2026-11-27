@@ -40,3 +40,7 @@ had a fork of each repository, and earlier pull requests came from those forks.
    "check_write" sentence of `reach` is gone with it.
 9. **Guide.** The session rules (`images/harness/RULES.md`) and the description of `request_operation` name the fork
    way and `repo_read_only`.
+10. **Older guests.** The guest validates answers against its bundled contracts (HOT-23), so the guest version is
+    0.8.0 and a guest before it (`guest_features.FORKS`) gets the answer of an operation, `get_operation`,
+    `list_operations` and `list_workgroup_operations` without `fork` and with `repo_read_only` named
+    `repo_not_accessible`; the message keeps the exact sentence. The hub and the events carry the real code.
