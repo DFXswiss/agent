@@ -20,7 +20,8 @@
   `queue_position`, a sentence) instead of running into the guest's time limit; `workvm_status` reports the start. The
   marker goes when the start ends (success, failure or cancellation); a restart forgets it and deletes what it left.
   A failed or cancelled start is logged (`implicit_start_failed`), its row and instance are torn down (one `deleted`
-  event), and a failure no waiting call saw is answered once to the next call of the scope before a new start.
+  event), and a failure no waiting call saw is answered once to the next call of the scope before a new start; it is
+  forgotten when the scope gets a VM through `request`, its session ends or its task closes.
 - **start phases**: every start of a VM is measured (queue wait, clone, boot, ready check): log line
   `runner.workvm start_phases` and the counters of `start_times` (`agent_runner.metrics.workvm`).
 - **idle pass**: a VM without a running job and without a call for `WORKVM_IDLE_SECONDS` is deleted, a stopped VM
@@ -360,8 +361,10 @@ class WorkVms:
             existing = await self._resume(existing)
         if existing is not None:
             vm = await self.ensure_running(existing)
+            self.start_failed.pop(_start_key(session), None)  # the scope has a VM: a kept failure is stale
             return self._result(vm, created=False, started=started)
         vm = await self.obtain(session, scope=scope, size=size, implicit=implicit, triggered_by=triggered_by)
+        self.start_failed.pop(_start_key(session), None)
         return self._result(vm, created=True, started=started)
 
     def _check_credit(self, session: LocalSession) -> None:
@@ -1052,7 +1055,10 @@ class WorkVms:
         return None
 
     async def close_task(self, task_id: str) -> list[str]:
-        """Every VM of a closed task goes at once (`task_closed`, ADR-080 section 5); returns their IDs."""
+        """Every VM of a closed task goes at once (`task_closed`, ADR-080 section 5), and every kept start failure of
+        the task (`start_failed`, task and subagent scopes) is forgotten; returns the IDs of the VMs."""
+        for key in [key for key, failed in self.start_failed.items() if failed.vm.task_id == task_id]:
+            del self.start_failed[key]
         removed: list[str] = []
         for vm in await records.live(self.deps.db):
             if vm.task_id == task_id and vm.state != "deleting":
@@ -1137,16 +1143,17 @@ class WorkVms:
     async def session_ended(self, session: LocalSession, *, reason: str = "session_ended") -> None:
         """Its session VM goes; the task VM goes when no other session of the task is active (decision 8); `reason`
         is `task_closed` when the session ended because its task was closed. Its test runs are cancelled by the
-        observer (`testrun.TestRuns.cancel`)."""
+        observer (`testrun.TestRuns.cancel`). A kept start failure of its session scope is forgotten, and that of the
+        task scope when no other session of the task is active."""
+        self.start_failed.pop(("session", session.id), None)
         own = await records.for_scope(self.deps.db, task_id=session.task_id, session_id=session.id)
         if own is not None:
             await self.delete(own, reason=reason)
         task_vm = await records.for_scope(self.deps.db, task_id=session.task_id, session_id=None)
-        if (
-            task_vm is not None
-            and await records.active_sessions(self.deps.db, session.task_id, except_id=session.id) == 0
-        ):
-            await self.delete(task_vm, reason=reason)
+        if await records.active_sessions(self.deps.db, session.task_id, except_id=session.id) == 0:
+            self.start_failed.pop(("task", session.task_id), None)
+            if task_vm is not None:
+                await self.delete(task_vm, reason=reason)
 
     async def left_over(self) -> list[WorkVm]:
         """The live VMs at the start of the daemon (taken before the test-run reconciliation, `tasks.py`)."""

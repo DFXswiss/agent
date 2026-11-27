@@ -29,7 +29,7 @@ from agent_runner.workvm.manager import (
     WorkVms,
 )
 
-from .kit import CHILD, SESSION, START, TASK, VM_ID, World, session
+from .kit import CHILD, ORG, SESSION, START, TASK, TASK_B, VM_ID, WG, World, session
 
 THIRD = "0193000a-0000-7000-8000-0000000000a7"
 """A second main session of the task (no parent)."""
@@ -358,6 +358,111 @@ def test_a_start_that_fails_unobserved_is_answered_once_to_the_next_call(
     assert failures(world) == ["upstream_error"]
     assert states(world) == [("starting", None), ("deleted", "failed"), ("starting", None), ("created", None)]
     assert gate.waiting == 2
+
+
+async def fail_unobserved(world: World, vms: WorkVms, local: Any) -> None:
+    """An implicit start of `local`'s scope that fails after its call already answered `starting` (with
+    `START_JOIN_SECONDS` 0)."""
+    world.fail.add("clone")
+    assert (await vms.call(None, local, "workvm_exec", EXEC))["state"] == "starting"
+    await settle(vms)
+    world.fail.discard("clone")
+
+
+async def active_session(vms: WorkVms, session_id: str, state: str = "working") -> None:
+    """The local row of a session of `TASK` in `state` (`records.active_sessions` counts the non-final ones)."""
+    async with vms.deps.db.connection() as conn:
+        await conn.execute(
+            "INSERT INTO runner.session (id, task_id, org_id, wg_id, state) VALUES (%s, %s, %s, %s, %s)"
+            " ON CONFLICT (id) DO UPDATE SET state = excluded.state",
+            (session_id, TASK, ORG, WG, state),
+        )
+
+
+def test_a_vm_obtained_by_request_clears_a_kept_failure(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unseen failure, then the scope gets a VM through `workvm.request` and releases it: the next call starts a
+    new VM instead of answering the old failure."""
+    monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 0.0)
+
+    async def body(vms: WorkVms) -> tuple[bool, bool, dict[str, Any]]:
+        await current_guest_vm(vms)
+        await fail_unobserved(world, vms, session())
+        kept = ("task", TASK) in vms.start_failed
+        await vms.request(session(), {})
+        cleared = ("task", TASK) not in vms.start_failed
+        await vms.release(session(), {})
+        monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 10.0)
+        return kept, cleared, await vms.call(None, session(), "workvm_exec", EXEC)
+
+    kept, cleared, ran = world.run(body)
+    assert (kept, cleared) == (True, True)
+    assert ran["state"] == "running"
+    assert [state for state, _ in states(world)].count("created") == 2  # the requested VM and the new implicit one
+
+
+def test_a_request_for_an_existing_vm_clears_a_kept_failure(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A main session with its own VM requests it again after an unseen failure of the task scope: the request
+    returns the existing VM and the kept failure of the session's scope (`_start_key`: the task) goes."""
+    monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 0.0)
+
+    async def body(vms: WorkVms) -> tuple[bool, bool, bool]:
+        await current_guest_vm(vms)
+        await vms.request(session(THIRD), {"scope": "session"})
+        await fail_unobserved(world, vms, session())
+        before = ("task", TASK) in vms.start_failed
+        result = await vms.request(session(THIRD), {"scope": "session"})
+        return before, result["created"], ("task", TASK) in vms.start_failed
+
+    assert world.run(body) == (True, False, False)
+
+
+def test_session_end_and_task_close_forget_kept_failures(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A kept failure of a subagent's scope goes with its session, that of the task scope with the last session of
+    the task, and every one of a task when the task closes."""
+    monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 0.0)
+    child = session(CHILD, parent_id=SESSION)
+
+    async def body(vms: WorkVms) -> list[set[tuple[str, str]]]:
+        await current_guest_vm(vms)
+        seen: list[set[tuple[str, str]]] = []
+        await fail_unobserved(world, vms, session())
+        await fail_unobserved(world, vms, child)
+        seen.append(set(vms.start_failed))
+        await active_session(vms, SESSION)  # the main session still works while the subagent ends
+        await vms.session_ended(child)
+        seen.append(set(vms.start_failed))
+        await active_session(vms, SESSION, state="stopped")
+        await vms.session_ended(session())
+        seen.append(set(vms.start_failed))
+        await fail_unobserved(world, vms, session())
+        await fail_unobserved(world, vms, child)
+        await fail_unobserved(world, vms, session(THIRD, task_id=TASK_B))
+        await vms.close_task(TASK)
+        seen.append(set(vms.start_failed))
+        return seen
+
+    seen = world.run(body)
+    assert seen == [
+        {("task", TASK), ("session", CHILD)},
+        {("task", TASK)},
+        set(),
+        {("task", TASK_B)},
+    ]
+
+
+def test_a_session_end_keeps_the_task_failure_while_another_session_is_active(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 0.0)
+
+    async def body(vms: WorkVms) -> bool:
+        await current_guest_vm(vms)
+        await fail_unobserved(world, vms, session())
+        await active_session(vms, THIRD)
+        await vms.session_ended(session())
+        return ("task", TASK) in vms.start_failed
+
+    assert world.run(body) is True
 
 
 def test_an_unexpected_error_of_the_start_is_logged_and_leaves_no_row(world: World) -> None:
