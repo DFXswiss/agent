@@ -11,5 +11,7 @@ ADR-027 section 3 (additive). A continuation the platform writes itself keeps th
   (null when that turn had none). Target: the session.
 - An older hub refuses the unknown action as a content refusal of that one item (`request_invalid`); the outbox
   sequence continues.
-- Fixtures: `outbox/audit/valid/session-continued.json`, `outbox/audit/valid/session-continued-nobody.json`,
+- Fixtures: `audit/session.continued/valid/{basic,nobody}.json`,
+  `audit/session.continued/invalid/{cause-unknown,missing-triggered-by,extra-field,person-not-a-user-id}.json`,
+  `outbox/audit/valid/session-continued.json`, `outbox/audit/valid/session-continued-nobody.json`,
   `outbox/audit/invalid/session-continued-cause.json` and `outbox/audit/invalid/session-continued-without-person.json`.
