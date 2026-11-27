@@ -339,7 +339,14 @@ def test_control_routes(login: Login) -> None:
     login.browser().open(login.auth.page_url + "/nowhere")
     assert len(login.control.journal()) == 1
     state = login.control.scenario({"junk": True, "fault": "no_mail", "expect": ["token"], "seed": "x"}).json()
-    assert state["scenario"] == {"junk": True, "fault": "no_mail", "expect": ["token"], "seed": "x"}
+    assert state["scenario"] == {
+        "junk": True,
+        "fault": "no_mail",
+        "expect": ["token"],
+        "seed": "x",
+        "link": True,
+        "new_accounts": [],
+    }
     assert (state["failures"], state["requests"], state["done"], state["ok"]) == ([], 0, False, False)
     assert login.control.journal() == []
     login.browser().open(login.auth.page_url + "/nowhere")
@@ -352,6 +359,8 @@ def test_control_routes(login: Login) -> None:
         ({"expect": ["nothing"]}, "expect must list"),
         ({"expect": "token"}, "expect must list"),
         ({"seed": ""}, "seed must be"),
+        ({"link": "no"}, "link must be a boolean"),
+        ({"new_accounts": ["nobody"]}, "new_accounts must list"),
     ):
         response = login.control.scenario(bad)
         assert response.status == 400
@@ -434,3 +443,89 @@ def test_invalid_verifier_is_a_failure(login: Login) -> None:
         400,
         {"error": "invalid_request", "error_description": "invalid code_verifier"},
     )
+
+
+# --- KOR-73: the code of the mail, registration, the check for humans (ADR-100 section 8) ---------------------------
+
+
+def _to_check_email(login: Login) -> tuple[Any, str]:
+    browser = login.browser()
+    page = browser.open(authorize_url(login.auth.page_url, "s"))
+    page = browser.open(login.auth.page_url + "/login", {"email": USER, **page.forms.fields})
+    assert page.kind == "check-email"
+    assert 'autocomplete="one-time-code"' in page.text
+    return browser, page.forms.fields.get("next", "")
+
+
+def _mail_text(login: Login) -> str:
+    account = login.mail.store.account(USER)
+    assert account is not None
+    (message,) = [m for folder in account.folders.values() for m in folder.messages]
+    return message.raw.decode()
+
+
+def test_the_code_of_the_mail_signs_in_once(start_login: Callable[..., Login]) -> None:
+    login = start_login(scenario=Scenario(link=False))
+    browser, _next = _to_check_email(login)
+    text = _mail_text(login)
+    assert "magic-link" not in text
+    code = text.split("Your login code is ", 1)[1][:6]
+    assert browser.open(login.auth.page_url + "/login/code", {"code": "000000"}).forms.error == "invalid_code"
+    page = browser.open(login.auth.page_url + "/login/code", {"code": code})
+    assert page.kind == "authorize"
+    assert browser.open(login.auth.page_url + "/login/code", {"code": code}).forms.error == "invalid_code"
+    assert "code_entered" in login.auth.state()["milestones"]
+
+
+def test_a_new_account_is_registered_with_its_consents(start_login: Callable[..., Login]) -> None:
+    login = start_login(scenario=Scenario(new_accounts=(USER,)))
+    browser = login.browser()
+    url = authorize_url(login.auth.page_url, "s")
+    page = browser.open(url)
+    page = browser.open(login.auth.page_url + "/login", {"email": USER, **page.forms.fields})
+    link = login.stored_link()
+    assert link is not None
+    page = browser.open(login.auth.page_url + "/magic-link/verify", {"token": link.split("#", 1)[1]})
+    assert page.kind == "register"
+    target = urlsplit(page.url).path + "?" + urlsplit(page.url).query
+    next_url = parse_qs(urlsplit(page.url).query)["next"][0]
+    form = {"next": next_url, "full_name": "Ada", "birth_date": "1990-04-01", "terms": "on"}
+    assert browser.open(login.auth.page_url + "/onboarding", {**form, "full_name": ""}).forms.error == "incomplete"
+    assert browser.open(login.auth.page_url + "/onboarding", form).forms.error == "consent_missing"
+    assert login.auth.state()["registered"] == {}
+    page = browser.open(login.auth.page_url + "/onboarding", {**form, "age": "on", "marketing": "on"})
+    assert page.kind == "authorize"
+    assert login.auth.state()["registered"] == {USER: True}
+    assert "registered" in login.auth.state()["milestones"]
+    assert browser.open(login.auth.page_url + target).kind == "register"  # the page itself stays reachable
+    stranger = login.browser()
+    assert stranger.open(login.auth.page_url + target).forms.error == "invalid_request"
+    assert stranger.open(login.auth.page_url + "/onboarding", form).forms.error == "invalid_request"
+    assert len(login.auth.state()["failures"]) == 2
+
+
+def test_the_check_for_humans_passes_only_with_its_box(start_login: Callable[..., Login]) -> None:
+    login = start_login(scenario=Scenario(fault="challenge"))
+    browser = login.browser()
+    url = authorize_url(login.auth.page_url, "s")
+    page = browser.open(url)
+    assert page.kind == "challenge"
+    assert 'class="cf-turnstile"' in page.text
+    assert "Just a moment" in page.text
+    assert browser.open(login.auth.page_url + "/challenge", {"next": "/elsewhere"}).forms.error == "invalid_request"
+    page = browser.open(login.auth.page_url + "/challenge", page.forms.fields)
+    assert page.kind == "email"
+    assert "challenge_passed" in login.auth.state()["milestones"]
+    assert login.browser().open(url).kind == "challenge"  # another browser has no clearance
+
+
+def test_the_code_of_a_mail_whose_link_was_used_is_refused(start_login: Callable[..., Login]) -> None:
+    login = start_login()
+    browser, _next = _to_check_email(login)
+    code = _mail_text(login).split("Your login code is ", 1)[1][:6]
+    link = login.stored_link()
+    assert link is not None
+    assert (
+        browser.open(login.auth.page_url + "/magic-link/verify", {"token": link.split("#", 1)[1]}).kind == "authorize"
+    )
+    assert browser.open(login.auth.page_url + "/login/code", {"code": code}).forms.error == "invalid_code"

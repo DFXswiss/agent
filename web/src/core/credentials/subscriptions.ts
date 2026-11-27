@@ -17,16 +17,26 @@
 //   `setSubscriptionUse` (`null` = measure only) build on it. The primary record is never changed here
 //   (`invalid_argument`).
 // - `removeSubscription`: `DELETE /v1/subscriptions/{id}` (`404` counts as done).
+// - KOR-73 (ADR-100): a further subscription may hold its own `mailbox` (the body of `credentials/mailbox.json`,
+//   sealed like the rest; only its address leaves this module). A device that announced `subscriptions.parallel`
+//   (`subscriptionDevices().parallel`) gets the new path: `createSubscription` writes the record before its login
+//   (no token, kind `oauth_login`, label, note, mailbox and use with its mirror, `expected_version` 0), the login is
+//   automatic with the record's own mailbox, may carry the data of a new account (`account`) and is posted with the
+//   subscription as its `slot`, so several logins run side by side (`addSubscriptions`: one login per entry, all at
+//   once, each with its own outcome). Every login root to such a device says `extended: true` (this client reads
+//   `verify`, `reason` and the new stages). `setSubscriptionMailbox` sets or removes the mailbox of an existing one. A
+//   login that needs the new path (own mailbox, record first, registration) is refused for an older device
+//   (`no_device_available`); otherwise the single login of KOR-69 stays (no record first, no slot).
 import { uuid7 } from '../encoding/ids';
 import { bodyJson, parseJson } from '../encoding/json';
 import { formatTime } from '../encoding/time';
 import { newHeader, openCredential, sealCredential, verifyCredential } from '../crypto/credential';
 import type { Fields } from '../crypto/fields';
-import { type OwnKey, ownKeys } from './records';
+import { currentKey, type OwnKey, ownKeys } from './records';
 import { authorKey, connectDevices, type DeviceChoice } from '../github/connection';
 import { HubError } from '../net/signedFetch';
 import { isRecord } from '../registry';
-import { EMAIL_RE, isLabel } from '../requests/bodies';
+import { type Consent, EMAIL_RE, isLabel } from '../requests/bodies';
 import {
   eligibleDevices,
   type PreparedRequest,
@@ -40,6 +50,8 @@ import type { LoginMode } from './login';
 
 export const KIND = 'claude_subscription';
 export const FEATURE = 'subscriptions';
+/** A device that runs logins side by side, each with the subscription's own mailbox (KOR-73, ADR-100). */
+export const PARALLEL_FEATURE = 'subscriptions.parallel';
 export const MAX_ORGS = 50;
 /** Where the user revokes a token at the provider (the platform cannot). */
 export const REVOKE_URL = 'https://claude.ai/settings';
@@ -48,7 +60,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const TOKEN_RE = /^[!-~]{1,4096}$/;
 // The full login of KOR-71 (ADR-092) adds the refresh token, its scopes and plan, and the mark of a refused renewal.
 const FULL_KEYS = ['refresh_token', 'scopes', 'subscription_type', 'rate_limit_tier', 'relogin'];
-const BODY_KEYS = ['token', 'email', 'kind', 'expires_at', 'name', 'note', 'use', ...FULL_KEYS];
+const BODY_KEYS = ['token', 'email', 'kind', 'expires_at', 'name', 'note', 'use', 'mailbox', ...FULL_KEYS];
+const HOST_RE = /^[A-Za-z0-9.-]{1,253}$/;
+const IMAP_USER_RE = /^[ -~]{1,256}$/;
 const KINDS = ['setup_token', 'login_token', 'oauth_login'];
 const PLAN_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 const SCOPE_RE = /^[a-z_:]{1,64}$/;
@@ -58,6 +72,32 @@ export interface SubscriptionUse {
   readonly pool: boolean;
   readonly orgs: readonly string[];
 }
+
+/** The subscription's own mailbox (`contracts/credentials/mailbox.json`, KOR-73). */
+export interface Mailbox {
+  readonly imap_host: string;
+  readonly imap_port: number;
+  readonly imap_user: string;
+  readonly imap_password: string;
+  readonly email: string;
+}
+
+export const isMailbox = (value: unknown): value is Mailbox =>
+  isRecord(value) &&
+  Object.keys(value).length === 5 &&
+  typeof value.imap_host === 'string' &&
+  HOST_RE.test(value.imap_host) &&
+  Number.isSafeInteger(value.imap_port) &&
+  (value.imap_port as number) >= 1 &&
+  (value.imap_port as number) <= 65535 &&
+  typeof value.imap_user === 'string' &&
+  IMAP_USER_RE.test(value.imap_user) &&
+  typeof value.imap_password === 'string' &&
+  value.imap_password.length >= 1 &&
+  value.imap_password.length <= 1024 &&
+  typeof value.email === 'string' &&
+  value.email.length <= 254 &&
+  EMAIL_RE.test(value.email);
 
 export type SubscriptionStatus = 'logged_in' | 'not_logged_in' | 'not_readable' | 'unverifiable';
 
@@ -83,6 +123,8 @@ export interface Subscription {
   /** `null` for the primary record (own sessions) and for an unverifiable one. */
   readonly use: SubscriptionUse | null;
   readonly reading: SubscriptionReading | null;
+  /** The address of the subscription's own mailbox (never its password), null without one. */
+  readonly mailbox: string | null;
 }
 
 function refuse(code: string): never {
@@ -129,7 +171,8 @@ export function isSubscriptionRecord(value: unknown): value is Record<string, un
     (value.expires_at === undefined || typeof value.expires_at === 'string') &&
     (value.name === undefined || isLabel(value.name, 64)) &&
     (value.note === undefined || isLabel(value.note, 500)) &&
-    (value.use === undefined || isUse(value.use))
+    (value.use === undefined || isUse(value.use)) &&
+    (value.mailbox === undefined || isMailbox(value.mailbox))
   );
 }
 
@@ -227,7 +270,7 @@ async function entryOf(context: RequestsContext, meta: Meta, keys: readonly OwnK
   try {
     opened = await openSubscription(context, meta.id, answer, keys);
   } catch (error) {
-    const blank = { name: null, note: null, email: null, use: null };
+    const blank = { name: null, note: null, email: null, use: null, mailbox: null };
     return { ...base, ...blank, status: 'unverifiable', code: errorCode(error) };
   }
   const { body } = opened;
@@ -243,6 +286,7 @@ async function entryOf(context: RequestsContext, meta: Meta, keys: readonly OwnK
     note: textOr(body.note),
     email: textOr(body.email),
     use: meta.primary ? null : use,
+    mailbox: isMailbox(body.mailbox) ? body.mailbox.email : null,
   };
 }
 
@@ -264,20 +308,51 @@ export async function loadSubscriptions(context: RequestsContext): Promise<Subsc
 // --- the login on a device ---
 
 /** The devices that may log a further subscription in (module comment) and the preselected one. */
-export async function subscriptionDevices(
-  context: TasksContext,
-): Promise<{ readonly devices: readonly DeviceChoice[]; readonly preselected: string | null }> {
+export async function subscriptionDevices(context: TasksContext): Promise<{
+  readonly devices: readonly DeviceChoice[];
+  readonly preselected: string | null;
+  /** The preselected device runs logins side by side with the subscription's own mailbox (KOR-73). */
+  readonly parallel: boolean;
+}> {
   const found = await connectDevices(context);
-  const able = new Set(
-    (await eligibleDevices(context))
-      .filter((item) => (item.features ?? []).includes(FEATURE))
-      .map((item) => item.device_id),
-  );
+  const eligible = await eligibleDevices(context);
+  const having = (feature: string) =>
+    new Set(eligible.filter((item) => (item.features ?? []).includes(feature)).map((item) => item.device_id));
+  const able = having(FEATURE);
+  const parallel = having(PARALLEL_FEATURE);
   const devices = found.devices.filter((item) => able.has(item.device));
-  return { devices, preselected: devices.find((item) => item.online)?.device ?? null };
+  const preselected = devices.find((item) => item.online)?.device ?? null;
+  return { devices, preselected, parallel: preselected !== null && parallel.has(preselected) };
+}
+
+/** Whether an online eligible device runs logins side by side (KOR-73), read without assigning a device: the forms of
+ * the settings and of "My subscriptions" ask it when they open, which must not place a device (`subscriptionDevices`
+ * may, at the start of a login). `null`: no device serves the user yet – the start places one and finds out. */
+export async function parallelAvailable(context: RequestsContext): Promise<boolean | null> {
+  const eligible = await eligibleDevices(context);
+  if (eligible.length === 0) return null;
+  return eligible.some(
+    (item) => item.online && [FEATURE, PARALLEL_FEATURE].every((name) => (item.features ?? []).includes(name)),
+  );
 }
 
 export const newSubscriptionId = (): string => uuid7();
+
+/** The data of a new account (registration, ADR-100 section 5); never stored. */
+export interface Account {
+  readonly name: string;
+  readonly birth_date?: string;
+  readonly consents?: readonly Consent[];
+}
+
+/** A further subscription written before its login (KOR-73): label, note, address, own mailbox and use. */
+export interface NewRecord {
+  readonly name: string;
+  readonly note?: string;
+  readonly email?: string;
+  readonly mailbox?: Mailbox;
+  readonly orgs?: readonly string[];
+}
 
 export interface LoginInput {
   readonly subscriptionId: string;
@@ -285,22 +360,125 @@ export interface LoginInput {
   readonly name?: string;
   readonly note?: string;
   readonly email?: string;
+  /** KOR-73, a parallel device only: the data of a new account (automatic). */
+  readonly account?: Account;
+  /** KOR-73, a parallel device only: the record to write before the login (a new subscription). */
+  readonly create?: NewRecord;
+  /** KOR-73: the subscription holds its own mailbox – automatic on a parallel device, the relay otherwise. */
+  readonly ownMailbox?: boolean;
 }
 
-/** Seals and posts `claude.login` for a further subscription to `device`. */
+const trimmed = (value: string | undefined): string | undefined => {
+  const text = value?.trim();
+  return text === undefined || text === '' ? undefined : text;
+};
+
+/** The sealed body of a new record (`createSubscription`); `invalid_argument` when it breaks the contract. */
+export function newRecordBody(input: NewRecord): Record<string, unknown> {
+  const orgs = [...new Set(input.orgs ?? [])].sort();
+  const body: Record<string, unknown> = {
+    email: trimmed(input.email) ?? null,
+    kind: 'oauth_login',
+    name: input.name.trim(),
+  };
+  const note = trimmed(input.note);
+  if (note !== undefined) body.note = note;
+  if (input.mailbox !== undefined) body.mailbox = { ...input.mailbox };
+  if (orgs.length > 0) body.use = { pool: false, orgs };
+  if (!isSubscriptionRecord(body)) refuse('invalid_argument');
+  return body;
+}
+
+/** Writes a new further subscription without a token (module comment); `PUT` with `expected_version` 0. A record
+ * that exists already (a retry after the write went through) is left as it is. */
+export async function createSubscription(context: RequestsContext, id: string, input: NewRecord): Promise<void> {
+  const { userId, identity } = context.store.getState().me;
+  if (userId === null || identity === null) refuse('unauthorized');
+  if ((await fetchSubscription(context, id)) !== null) return;
+  const body = newRecordBody(input);
+  const latest = await currentKey(context, userId, identity);
+  const header = newHeader({
+    id,
+    owner: userId,
+    kind: KIND,
+    version: 1,
+    epoch: latest.epoch,
+    author: userId,
+    ts: formatTime(context.now()),
+  });
+  const record = await sealCredential(latest.key, header, bodyJson(body), identity.sig.privateKey);
+  const use = isUse(body.use) ? body.use : { pool: false, orgs: [] };
+  await context.client.request('PUT', `/v1/subscriptions/${encodeURIComponent(id)}`, {
+    body: { record, expected_version: 0, use },
+  });
+}
+
+/** Seals and posts `claude.login` for a further subscription to `device` (module comment). */
 export async function startSubscriptionLogin(
   context: RequestsContext,
   device: string,
   input: LoginInput,
+  parallel = false,
 ): Promise<PreparedRequest> {
-  const body: Record<string, unknown> = { mode: input.mode, subscription_id: input.subscriptionId };
+  // a subscription with its own mailbox, a record written first and a registration need a device that reads them
+  const extended = input.ownMailbox === true || input.create !== undefined || input.account !== undefined;
+  if (extended && !parallel) refuse('no_device_available');
+  const mode: LoginMode = input.ownMailbox === true ? 'automatic' : input.mode;
+  const body: Record<string, unknown> = { mode, subscription_id: input.subscriptionId };
+  if (parallel) body.extended = true;
   for (const field of ['name', 'note', 'email'] as const) {
-    const value = input[field]?.trim();
-    if (value !== undefined && value !== '') body[field] = value;
+    const value = trimmed(input[field]);
+    if (value !== undefined && (field !== 'email' || mode === 'automatic')) body[field] = value;
   }
-  const prepared = await prepareRequest(context, { device, kind: 'claude.login', body });
+  if (mode === 'automatic' && input.account !== undefined) body.account = accountBody(input.account);
+  const request = { device, kind: 'claude.login' as const, body };
+  // the body is checked and sealed before the record is written, so a refused body leaves no empty record
+  const prepared = await prepareRequest(context, parallel ? { ...request, slot: input.subscriptionId } : request);
+  if (input.create !== undefined) await createSubscription(context, input.subscriptionId, input.create);
   await submitRequest(context, prepared);
   return prepared;
+}
+
+function accountBody(account: Account): Record<string, unknown> {
+  const body: Record<string, unknown> = { name: account.name.trim() };
+  const birth = trimmed(account.birth_date);
+  if (birth !== undefined) body.birth_date = birth;
+  if (account.consents !== undefined && account.consents.length > 0) body.consents = [...new Set(account.consents)];
+  return body;
+}
+
+/** One entry of "add several subscriptions" (KOR-73). */
+export interface BatchEntry {
+  readonly record: NewRecord;
+  readonly account?: Account;
+}
+
+export type BatchStarted =
+  | { readonly subscriptionId: string; readonly prepared: PreparedRequest }
+  | { readonly subscriptionId: string; readonly error: string };
+
+/** Starts one login per entry at once on a parallel device (module comment); each entry has its own outcome. */
+export function addSubscriptions(
+  context: RequestsContext,
+  device: string,
+  entries: readonly BatchEntry[],
+): Promise<BatchStarted[]> {
+  return Promise.all(
+    entries.map(async (entry): Promise<BatchStarted> => {
+      const subscriptionId = newSubscriptionId();
+      const input: LoginInput = {
+        subscriptionId,
+        mode: entry.record.mailbox === undefined ? 'manual' : 'automatic',
+        create: entry.record,
+        ...(entry.account !== undefined && { account: entry.account }),
+      };
+      try {
+        return { subscriptionId, prepared: await startSubscriptionLogin(context, device, input, true) };
+      } catch (error) {
+        return { subscriptionId, error: errorCode(error) };
+      }
+    }),
+  );
 }
 
 // --- changes by the owner ---
@@ -376,6 +554,15 @@ export function logoutSubscription(context: RequestsContext, id: string): Promis
     delete body.token;
     delete body.refresh_token;
     delete body.relogin;
+  });
+}
+
+/** Sets the own mailbox of a further subscription, or removes it (`null`). */
+export function setSubscriptionMailbox(context: RequestsContext, id: string, mailbox: Mailbox | null): Promise<void> {
+  if (mailbox !== null && !isMailbox(mailbox)) refuse('invalid_argument');
+  return changeSubscription(context, id, (body) => {
+    delete body.mailbox;
+    if (mailbox !== null) body.mailbox = { ...mailbox };
   });
 }
 

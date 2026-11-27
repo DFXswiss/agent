@@ -11,7 +11,9 @@ The runner (RUN-09: request service, GitHub device flow, credential cache) is no
   (`PUT /v1/device/credentials/{owner}/github`, CK-encrypted with the user's `CK` the browser wrapped for the device,
   token not real) - what RUN-09 does before answering `done`; `"store": {"kind": "claude_subscription", "email"}`
   writes the subscription credential of a Claude login the same way (RUN-12/13, WEB-10). Answers
-  `{"request_id", "kind", "body"}` (the opened request body).
+  `{"request_id", "kind", "body"}` (the opened request body). With `"request_id"` that open request is answered
+  instead of the newest, with `"skip": [request_id, ...]` the newest open one not named there (logins side by side,
+  KOR-73).
 
 Frames reach the browsers as the hub publishes them (`device_response`). Only loopback, only for tests.
 """
@@ -46,13 +48,16 @@ def now() -> datetime:
     return datetime.now(UTC)
 
 
-def _open_request(pool: Pool, device_id: str) -> tuple[str, str, str]:
-    """`(request_id, user_id, kind)` of the device's newest open request."""
+def _open_request(
+    pool: Pool, device_id: str, request_id: str | None = None, skip: Sequence[str] = ()
+) -> tuple[str, str, str]:
+    """`(request_id, user_id, kind)` of the device's newest open request (not in `skip`), or of the named one."""
     with pool.connection() as connection:
         row = connection.execute(
             "SELECT id, user_id, kind FROM hub.device_request"
-            " WHERE device_id = %s AND state IN ('pending', 'delivered') ORDER BY created_at DESC, id DESC LIMIT 1",
-            (device_id,),
+            " WHERE device_id = %s AND state IN ('pending', 'delivered') AND (%s::uuid IS NULL OR id = %s::uuid)"
+            " AND NOT (id = ANY(%s::uuid[])) ORDER BY created_at DESC, id DESC LIMIT 1",
+            (device_id, request_id, request_id, list(skip)),
         ).fetchone()
     if row is None:
         raise RuntimeError("the device has no open request")
@@ -128,11 +133,18 @@ def _store_credential(
 
 
 def answer(
-    pool: Pool, signed: Signed, identity_of: Callable[[str], Identity], device: str, steps: Sequence[Json]
+    pool: Pool,
+    signed: Signed,
+    identity_of: Callable[[str], Identity],
+    device: str,
+    steps: Sequence[Json],
+    *,
+    request_id: str | None = None,
+    skip: Sequence[str] = (),
 ) -> Json:
-    """Answers the device's newest open request with `steps` (module docstring)."""
+    """Answers the device's newest open request (or `request_id`) with `steps` (module docstring)."""
     identity = identity_of(device)
-    request_id, user, kind = _open_request(pool, device)
+    request_id, user, kind = _open_request(pool, device, request_id, skip)
     fetched = signed(device, "GET", f"/v1/device/requests/{request_id}", None)
     if fetched.status_code != 200:
         raise RuntimeError(f"request fetch refused: {fetched.text}")

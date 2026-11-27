@@ -20,6 +20,10 @@
   call of the resumed session starts it again (`_resume`), or deletes it and gets a new one when its RAM does not fit.
 - **run VMs** (scope `run`, `obtain_run_vm`): one fresh VM per `test.run` of `agent_runner.workvm.testrun`.
 - **browser VMs** (scope `browser`): the VM of a session's platform browser (`agent_runner.workvm.browser`).
+- **login VMs** (scope `login`, `obtain_login`; KOR-73, ADR-100 section 3): the browser sandbox of one Claude login
+  (`agent_runner.login.sandbox`): no session, task or organization (`NO_ID`, `session_id` = the login request), no
+  credit check, no per-organization or per-owner limit (the capacity queue applies), not billed; deleted by the login
+  (`login_ended`) or a restart.
 - **logs**: a job whose output is longer than its event keeps (`RUN_OUTPUT_LIMIT`) is captured as an encrypted log
   object in the background (`capture`, injected); its final `workvm.run` event names the log, and the teardown of its
   VM waits for the capture (at most `CAPTURE_TIMEOUT`).
@@ -111,9 +115,11 @@ NO_CREDIT = (
 )
 RUN_SCOPE = "run"
 BROWSER_SCOPE = "browser"
-OWNED_SCOPES = frozenset({RUN_SCOPE, BROWSER_SCOPE})
-"""VMs owned by one test run or one browser session (ADR-080, ADR-085): no `workvm.state` events, no per-task limit,
-not torn down by the idle pass or stopped by the credit stop of this manager (their owner ends them)."""
+LOGIN_SCOPE = "login"
+OWNED_SCOPES = frozenset({RUN_SCOPE, BROWSER_SCOPE, LOGIN_SCOPE})
+"""VMs owned by one test run, one browser session or one login (ADR-080, ADR-085, ADR-100): no `workvm.state` events,
+no per-task limit, not torn down by the idle pass or stopped by the credit stop of this manager (their owner ends
+them)."""
 
 
 def lima_reason(detail: str) -> str:
@@ -320,6 +326,31 @@ class WorkVms:
             raise OperationFailed("limit_exceeded", message="The limit of work VMs is reached.")
         return image
 
+    async def obtain_login(self, request_id: str) -> WorkVm:
+        """A new running login VM for the login request (module docstring): only the device's availability is checked
+        (`workvm_unavailable`), then the warm pool or the capacity queue."""
+        image = await self.available()
+        if image is None:
+            raise OperationFailed("workvm_unavailable", message=NOT_READY)
+        holder = LocalSession(
+            id=request_id,
+            task_id=NO_ID,
+            org_id=NO_ID,
+            wg_id=NO_ID,
+            vm_id=None,
+            parent_id=None,
+            depth=0,
+            state="running",
+            claude_session_id=None,
+            model_access=None,
+            model_id=None,
+            owner_id=None,
+            created_at=self.deps.now(),
+            ready_at=None,
+            ended_at=None,
+        )
+        return await self._obtain(holder, image, scope=LOGIN_SCOPE, size=POOL_SIZE)
+
     async def obtain(
         self,
         session: LocalSession,
@@ -332,7 +363,21 @@ class WorkVms:
     ) -> WorkVm:
         """A new running VM of the scope (formal checks, warm pool, else the FIFO queue and a cold clone)."""
         image = await self.check_new(session, scope=scope, size=size)
+        return await self._obtain(
+            session, image, scope=scope, size=size, implicit=implicit, workvm_id=workvm_id, triggered_by=triggered_by
+        )
 
+    async def _obtain(
+        self,
+        session: LocalSession,
+        image: str,
+        *,
+        scope: str,
+        size: str,
+        implicit: bool = False,
+        workvm_id: str | None = None,
+        triggered_by: str | None = None,
+    ) -> WorkVm:
         async def from_pool() -> WorkVm | None:
             return await self._from_pool(
                 session, scope, size, image, implicit=implicit, workvm_id=workvm_id, triggered_by=triggered_by

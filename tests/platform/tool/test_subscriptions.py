@@ -155,6 +155,7 @@ def test_list_shows_status_use_and_reading_never_a_token(tool: Tool, hub: HubFak
         "login": "setup_token",
         "expires_at": None,
         "plan": None,
+        "mailbox": None,
     }
     assert (entries[primary["header"]["id"]]["name"], entries[primary["header"]["id"]]["use"]) == (
         "own sessions",

@@ -16,7 +16,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from agent_core.signing import b64url_decode
-from agent_hub.backup import tables
+from agent_hub.backup import export, tables
 from agent_hub.backup.export import HEADER_ORDER, OrgUnknown, line, signed_text, write_export
 from agent_hub.backup.tables import (
     EXCLUDED,
@@ -183,6 +183,20 @@ def test_rows_follow_their_primary_key_and_their_columns(estate: Estate) -> None
         )
     ]
     assert all(list(row) == columns for row in events)
+
+
+@pytest.mark.parametrize(
+    ("fetch_rows", "fetch_bytes", "size_rows"),
+    [(1, export.FETCH_BYTES, 1), (export.FETCH_ROWS, 1, 2), (3, 2048, 5), (10**6, 10**12, 10**6)],
+)
+def test_the_file_does_not_depend_on_the_blocks(
+    estate: Estate, monkeypatch: pytest.MonkeyPatch, fetch_rows: int, fetch_bytes: int, size_rows: int
+) -> None:
+    expected = estate.export()
+    monkeypatch.setattr(export, "FETCH_ROWS", fetch_rows)
+    monkeypatch.setattr(export, "FETCH_BYTES", fetch_bytes)
+    monkeypatch.setattr(export, "SIZE_ROWS", size_rows)
+    assert estate.export() == expected
 
 
 def test_the_export_holds_one_org_and_the_hub_wide_chains(estate: Estate) -> None:

@@ -389,7 +389,7 @@ Other notification rules: `task.idle` to the task owner when the main session go
 
 | Endpoint | Right | Request → Response |
 |---|---|---|
-| `POST /v1/device-requests` | user (device must be in `GET /v1/me/devices`) | `{envelope,org_id?}` (`04-crypto.md` §4.5) → `{request_id,state}`; `header.user` = the user or the user's own-identity agent (signed with its key; the request belongs to the user; follow-ups compare through the user; the device's response names the requester, ADR-082); `org_id` (KOR-47): a `github.connect` for a company account of that organization, only by its active admins (`403 forbidden` otherwise, or for another kind) |
+| `POST /v1/device-requests` | user (device must be in `GET /v1/me/devices`) | `{envelope,org_id?,slot?}` (`04-crypto.md` §4.5) → `{request_id,state}`; `header.user` = the user or the user's own-identity agent (signed with its key; the request belongs to the user; follow-ups compare through the user; the device's response names the requester, ADR-082); `org_id` (KOR-47): a `github.connect` for a company account of that organization, only by its active admins (`403 forbidden` otherwise, or for another kind); `slot` (KOR-73, ADR-100 §2): the root's subject (for `claude.login` the subscription record it fills) – an active root is replaced only by a new root of the same user, device, kind and slot (no slot is a slot of its own), so logins of different subscriptions run side by side |
 | `GET /v1/device-requests/{id}` | user (owner) | → state + responses |
 
 If `GET /v1/me/devices` is empty (fresh private org), the web client first runs the device auto-assign batch of
