@@ -316,13 +316,13 @@ The home of an organization shows where people are needed, across all workgroups
   fails is left out; a token file named like an own record, ignoring case, is not listed again – the record's row
   stays, with the file's reading when it has none); refreshed every minute. Every account names the source of its
   reading (device or token file); a closed provider line one of whose counted headline readings is older than 60
-  minutes is marked old. Without any subscription the card leads to "Add subscription". The card links the page `/subscriptions`: the same provider lines with
-  "detailed" (opens all; the user's own choices come back when it is switched off) and "least free first" (providers
-  by what is left of their headline), and a table with provider, account, name, status (logged in, not logged in with
-  "Log in now", not readable, cannot be opened), note, use, listed (record or token file), plan, free (share left) and
-  reset per window, measuring
-  device, checked (time of the reading) and changed (time of the record). The card, the page and their texts load
-  lazily. The settings link the page.
+  minutes is marked old. Without any subscription the card leads to "Add subscription". The card links the page
+  `/subscriptions`: the same provider lines with "detailed" (opens all; the user's own choices come back when it is
+  switched off) and "least free first" (providers by what is left of their headline), and a table with provider,
+  account, name, status (logged in, not logged in with "Log in now", not readable, cannot be opened), note, use,
+  listed (record or token file), plan, free (share left) and reset per window, measuring device, checked (time of the
+  reading) and changed (time of the record). The card, the page and their texts load lazily. The settings link the
+  page.
 - **Groups** in this order: "Needs your decision" (`needs_decision`, longest waiting first), "Stuck" (`blocked`),
   "Running" (`working`), "Recently finished" (`done`, last 7 days, with the link to the default workgroup's task
   list); the last three newest first. Each group is a windowed list paged by the hub (50 per page; at most 50 entries
