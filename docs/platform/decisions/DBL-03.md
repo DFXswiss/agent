@@ -67,12 +67,13 @@ ADR-011; conventions of `agent_doubles.common` from DBL-01).
     input ignored). A wrong code needs no variant. `--code-timeout` (default 600 s) bounds every wait.
 14a. The real CLI is an Ink terminal UI that hard-wraps long words at the terminal width and colours its output; the
     double prints plain lines by default and `--columns N` hard-wraps the URL and the token at N characters. RUN-13
-    takes the URL from the `BROWSER` capture helper, runs the PTY wide, strips ANSI sequences and joins wrapped token
-    lines (tests with `--columns`). The real `setup-token` prints no e-mail address, so the double prints none either;
-    the optional `email` of 05 §11.2 step 5 stays absent with both.
-15. `$BROWSER <url>` is started with a 10 s limit and any failure is ignored, as the URL is printed anyway. With
-    `CLAUDE_CONFIG_DIR` set the CLI writes `.claude.json` there, so RUN-13 can prove that its temporary configuration
-    directory is removed.
+    reads the code page link from the screen (the `BROWSER` argument is a localhost redirect, as with the real program),
+    runs the PTY wide, replays its output as a terminal screen and joins the wrapped token rows
+    (tests with `--columns`). The real `setup-token` prints no e-mail address, so the double prints none either; the
+    optional `email` of 05 §11.2 step 5 stays absent with both.
+15. `$BROWSER <url>` is started with a 10 s limit and any failure is ignored, as the code page link is drawn on the
+    screen anyway. With `CLAUDE_CONFIG_DIR` set the CLI writes `.claude.json` there, so RUN-13 can prove that its
+    temporary configuration directory is removed.
 16. Token shape `sk-ant-oat01-` + 93 base64url characters + `AA` (`codes.TOKEN_PATTERN`); every value derives from a
     seed by HMAC (`codes`), so tests predict the n-th code and token. The token prefix is assembled at run time so no
     source file holds a token-shaped literal (hygiene scan).

@@ -3,16 +3,20 @@
     python -m agent_doubles.login_cli setup-token --auth-url https://127.0.0.1:PORT --ca-file ca.pem [--seed S]
 
 Like the real command (Claude Code 2.1.330, recorded in KOR-21) it builds an OAuth authorize URL with PKCE (S256) and
-a state, starts ``$BROWSER <url>`` when ``BROWSER`` is set (the runner's capture helper) and then draws its terminal
-UI the way the real program does (`Painter`): words are placed with cursor positioning (``ESC[<n>G``) instead of
-spaces, a new frame moves the cursor up over the previous one and overwrites only the cells that changed (a space
-only where another character stood, ``ESC[K``/``ESC[2K`` for what is left), a spinner cell changes in place.
+a state. When ``BROWSER`` is set it starts ``$BROWSER`` with that URL and ``redirect_uri``
+``http://localhost:45454/callback`` (the real program's link redirects to ``http://localhost:<port>/callback``) and
+draws the code page's authorize URL on the screen (the default redirect, which is the one the code exchange uses).
+The terminal UI is drawn the way the real program does (`Painter`): words are placed with cursor positioning
+(``ESC[<n>G``) instead of spaces, a new frame moves the cursor up over the previous one and overwrites only the cells
+that changed (a space only where another character stood, ``ESC[K``/``ESC[2K`` for what is left), a spinner cell
+changes in place.
 
 1. "· Opening browser to sign in…" with a spinner for ``--prompt-delay`` seconds (the real program shows its input
    field about 4 s after the URL); whatever is typed until then is dropped, as the real program drops it.
-2. "Browser didn't open? Use the URL below to sign in (c to copy)", the URL, "Paste code here if prompted" and an
-   input box; it reads one line ``CODE#STATE`` from standard input (a PTY in the runner).
-3. "· Finishing sign-in…", the code exchange at the auth-page double's token endpoint, then either
+2. "Browser didn't open? Use the URL below to sign in (c to copy)", an empty row, the code page's URL, "Paste code
+   here if prompted" and an input box; it reads one line ``CODE#STATE`` from standard input (a PTY in the runner).
+3. "· Finishing sign-in…", the code exchange at the auth-page double's token endpoint (the code page's redirect, not
+   the localhost one handed to ``BROWSER``), then either
    - the token screen ("✓ Long-lived authentication token created", "Your OAuth token (valid for 1 year):", the
      token on its own rows, "Store this token securely. …", "Use this token by setting: export
      CLAUDE_CODE_OAUTH_TOKEN=<token>"), and exit 0 by itself after ``SUCCESS_EXIT`` seconds, or
@@ -137,7 +141,8 @@ def read_line(
 
 
 def open_browser(environ: Mapping[str, str], url: str, run: Callable[..., Any]) -> None:
-    """Start ``$BROWSER url`` like the real CLI; any failure is ignored (the URL is printed anyway)."""
+    """Start ``$BROWSER url`` like the real CLI; any failure is ignored (the program draws its code page link on the
+    screen anyway)."""
     browser = environ.get("BROWSER")
     if not browser:
         return
@@ -432,9 +437,10 @@ class Flow:
             self.spin("Opening browser to sign in…", 0)
             self.sleep(args.code_timeout)
             raise LoginError("timed out waiting for the browser")
+        local = authorize_url(self.auth_url, args.seed, redirect_uri="http://localhost:45454/callback")
         url = authorize_url(self.auth_url, args.seed)
         self.spin("Opening browser to sign in…", 0)
-        open_browser(self.env, url, self.run)
+        open_browser(self.env, local, self.run)
         self.spin("Opening browser to sign in…", args.prompt_delay)
         drop_input(args.stdin_fd, self.wait)
         width = max(self.painter.columns - 4, 1)

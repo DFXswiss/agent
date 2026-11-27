@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from agent_runner.login import capture, full_login
+from agent_runner.login import capture, full_login, setup_token
 from agent_runner.login.full_login import (
     FullLogin,
     LoginUnusable,
@@ -25,6 +25,7 @@ from agent_runner.login.full_login import (
 from agent_runner.login.relay import login_env
 
 URL = "https://claude.example/oauth/authorize?code=true&state=s"
+LOOPBACK = "http://127.0.0.1:8080/oauth/authorize?x=1"
 ACCESS = "access-token-of-a-test"
 REFRESH = "refresh-token-of-a-test"
 EXPIRES = 1_795_000_000_000
@@ -60,23 +61,54 @@ def test_the_refusing_security_comes_first_and_refuses(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("rows", "found"),
+    ("label", "rows", "found"),
     [
-        (["Opening browser to sign in…"], None),
-        ([full_login.VISIT_LABEL, ""], None),
-        ([full_login.VISIT_LABEL, "Paste code here if prompted >"], None),
-        (["  If the browser didn't open, visit:  ", URL[:30], URL[30:], "", "Paste code here if prompted >"], URL),
-        ([full_login.VISIT_LABEL, URL, "Paste code here if prompted >"], URL),
+        (full_login.VISIT_LABEL, ["Opening browser to sign in…"], None),
+        (full_login.VISIT_LABEL, [full_login.VISIT_LABEL, ""], None),
+        (full_login.VISIT_LABEL, [full_login.VISIT_LABEL, "Paste code here if prompted >"], None),
+        (
+            full_login.VISIT_LABEL,
+            ["  If the browser didn't open, visit:  ", URL[:30], URL[30:], "", "Paste code here if prompted >"],
+            URL,
+        ),
+        (full_login.VISIT_LABEL, [full_login.VISIT_LABEL, URL, "Paste code here if prompted >"], URL),
+        (full_login.VISIT_LABEL, [full_login.VISIT_LABEL, LOOPBACK, setup_token.PROMPT_LABEL], LOOPBACK),
+        (setup_token.URL_LABEL, [setup_token.URL_LABEL, "", URL, "", setup_token.PROMPT_LABEL], URL),
+        (
+            setup_token.URL_LABEL,
+            [setup_token.URL_LABEL, "", "", URL[:20], URL[20:], setup_token.PROMPT_LABEL],
+            URL,
+        ),
+        (full_login.VISIT_LABEL, [full_login.VISIT_LABEL, URL, "", "Paste code here if prompted >"], URL),
+        (setup_token.URL_LABEL, [setup_token.URL_LABEL, URL], None),
+        (setup_token.URL_LABEL, [setup_token.URL_LABEL, "", ""], None),
+        (setup_token.URL_LABEL, [setup_token.URL_LABEL, "", "ftp://x"], None),
+        (full_login.VISIT_LABEL, ["Opening browser to sign in…", URL, setup_token.PROMPT_LABEL], None),
+        (full_login.VISIT_LABEL, [setup_token.URL_LABEL, "", URL, "", setup_token.PROMPT_LABEL], None),
     ],
 )
-def test_the_link_is_read_from_the_rows_after_the_label(rows: list[str], found: str | None) -> None:
-    assert screen_url(rows) == found
+def test_the_link_is_read_from_the_rows_after_the_label(label: str, rows: list[str], found: str | None) -> None:
+    assert screen_url(rows, label) == found
 
 
-@pytest.mark.parametrize("url", ["ftp://x/y", "https://" + "a" * capture.MAX_URL, "https://exämple.test/x"])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ftp://x/y",
+        "http://example.test/x",
+        "https://" + "a" * capture.MAX_URL,
+        "https://exämple.test/x",
+        "https://a b",
+    ],
+)
 def test_a_link_out_of_form_is_refused(url: str) -> None:
     with pytest.raises(capture.UrlInvalid):
-        screen_url([full_login.VISIT_LABEL, url])
+        screen_url([full_login.VISIT_LABEL, url, setup_token.PROMPT_LABEL])
+
+
+def test_a_setup_token_link_out_of_form_is_refused() -> None:
+    with pytest.raises(capture.UrlInvalid):
+        screen_url([setup_token.URL_LABEL, "", "ftp://x", "", setup_token.PROMPT_LABEL], setup_token.URL_LABEL)
 
 
 def test_the_login_is_read_with_plan_and_address(tmp_path: Path) -> None:

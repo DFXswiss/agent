@@ -1078,11 +1078,17 @@ side by side; at most 40 slots per user and kind, a further root is `busy`).
 
 1. Create temp dir `$AGENT_RUNNER_HOME/tmp/login-<id>` (0700) with its own `CLAUDE_CONFIG_DIR`/`HOME`; existing
    profiles are never read or written.
-2. Start `LOGIN_ARGV` in a PTY with an allow-list env and `BROWSER` set to a capture helper (pattern of
-   `account_login._write_capture_helper`); wait ≤ 30 s for the authorize URL. The program runs on the host and is
-   looked up in the runner's `PATH`: Claude Code is a host prerequisite of every runner device
-   (`runbooks/runner-installation.md` §1), checked by `agent-runner doctor` (`login_cli`).
-3. Response 1: `{step:"authorize", url}`. The user opens it in their own browser, authorizes, copies the code.
+2. Start `LOGIN_ARGV` in a PTY with an allow-list env and `BROWSER` set to a helper that keeps the program from opening
+   a browser on the device (it writes the URL to `url.txt`, which the relay does not read) (pattern of
+   `account_login._write_capture_helper`). The URL handed to that helper redirects to `http://localhost:<port>/callback`
+   and is not relayed. Wait ≤ 30 s for the code page link on the screen: the non-empty rows after "Browser didn't open?
+   Use the URL below to sign in" (`login/setup_token.py`; empty rows directly under that label are skipped) up to the
+   next empty row or the input field "Paste code here if prompted", joined, and only once that input field is drawn
+   below the link (as in §11.6). The program runs on the host and is looked up in the runner's `PATH`: Claude Code is a
+   host prerequisite of every runner device (`runbooks/runner-installation.md` §1), checked by `agent-runner doctor`
+   (`login_cli`).
+3. Response 1: `{step:"authorize", url}` with that screen link. The user opens it in their own browser, authorizes,
+   copies the code.
 4. Follow-up request (new request ID, same kind `claude.login`, header `follows` = original request ID, `04-crypto.md` §4.5): `{code}` → typed
    into the PTY.
 5. Read the token from the program's **screen** (below), validate format, build the `claude_subscription`
@@ -1245,10 +1251,13 @@ With `subscription_id` the login runs `SUBSCRIPTION_LOGIN_ARGV` (default `claude
 record holds); the primary record keeps the setup-token relay of §11.2. Same temporary directory, allow-list
 environment, `BROWSER` capture helper (so the device never opens a browser), PTY and cleanup as §11.2, and:
 
-- **Link.** The URL handed to `BROWSER` redirects to `http://localhost:<port>/callback`; the response
-  `{step:"authorize", url}` carries the link of the code page from the **screen** (`login/full_login.py`): the
-  non-empty rows after "If the browser didn't open, visit:" up to the input field "Paste code here if prompted",
-  joined and checked like every authorize URL (else `login_cli_failed`). The automation of §11.3 opens the same link.
+- **Link.** The URL handed to `BROWSER` redirects to `http://localhost:<port>/callback` and is not relayed (the helper
+  keeps the device from opening a browser and writes the URL to `url.txt`, which the relay does not read, as in §11.2).
+  The response `{step:"authorize", url}` carries the link of the code page from the **screen** (`login/full_login.py`,
+  `screen_url`): the non-empty rows after "If the browser didn't open, visit:" (empty rows directly under that label are
+  skipped) up to the next empty row or the input field "Paste code here if prompted", joined, and only once that input
+  field is on the screen below the link; checked like every authorize URL (else `login_cli_failed`). The automation of
+  §11.3 opens the same link.
 - **No keychain.** `PATH` begins with a private directory of the login holding `security`, a script that always
   exits 1; the program reaches the keychain only through it and keeps the login in its plaintext store inside the
   temporary directory.

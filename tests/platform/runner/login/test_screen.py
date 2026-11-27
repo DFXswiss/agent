@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_runner.login import setup_token
+from agent_runner.login import full_login, setup_token
 from agent_runner.login.screen import MAX_PARAMS_TEXT, Screen, char_width
 
 RECORDING = json.loads((Path(__file__).parent / "fixtures" / "setup-token-2.1.330-wrong-code.json").read_text())
@@ -60,6 +60,13 @@ def test_the_input_field_of_the_real_program_is_on_the_reconstructed_screen() ->
     assert lines[0] == "Welcome to Claude Code v2.1.330"
     assert setup_token.shown(lines, setup_token.PROMPT_LABEL)
     assert not setup_token.shown(lines, setup_token.ERROR_LABEL)
+
+
+def test_the_code_page_link_of_the_real_program_is_on_the_screen() -> None:
+    lines = screen_of(STREAM[:FIRST_ERASE]).lines()
+    found = "https://claude.ai/oauth/authorize?REDACTEDSHORTCODE"
+    assert full_login.screen_url(lines, setup_token.URL_LABEL) == found
+    assert full_login.screen_url(screen_of(STREAM).lines(), setup_token.URL_LABEL) is None
 
 
 def test_the_error_of_the_real_program_is_on_the_screen_word_for_word() -> None:
