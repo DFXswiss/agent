@@ -65,7 +65,7 @@ from agent_runner.guestlink import cursor
 from agent_runner.guestlink.client import GuestClient, Health
 from agent_runner.guestlink.errors import GuestError, GuestRefused
 from agent_runner.vm import records
-from agent_runner.vm.capacity import NO_USAGE, Capacity, Usage, compute, physical_memory_mib, vm_footprint_mib, vm_size
+from agent_runner.vm.capacity import NO_USAGE, Capacity, Usage, compute, vm_footprint_mib
 from agent_runner.vm.lima import Instance, Lima, LimaError, memory_gib
 from agent_runner.vm.records import GoldenRef, TokenStore, VmRow
 from agent_runner.vm.room import Room
@@ -169,19 +169,10 @@ class VmSettings:
     vm_idle_seconds: int
 
     @classmethod
-    def from_config(
-        cls,
-        config: Config,
-        *,
-        cores: Callable[[], int | None] = os.cpu_count,
-        physical_mib: Callable[[], int] = physical_memory_mib,
-    ) -> VmSettings:
-        """The settings of this daemon; the size of a new VM is `VM_CPUS` / `VM_MEMORY_MIB`, or the rule of the
-        device when they are empty (`capacity.vm_size`, HOT-32)."""
-        cpus, memory_mib = vm_size(config, cores=cores(), physical_mib=physical_mib())
+    def from_config(cls, config: Config) -> VmSettings:
         return cls(
-            cpus=cpus,
-            memory_mib=memory_mib,
+            cpus=config.vm_cpus,
+            memory_mib=config.vm_memory_mib,
             disk_gib=config.vm_disk_gib,
             pool_size=config.pool_size,
             memory_reserve_mib=config.memory_reserve_mib,

@@ -43,16 +43,9 @@ def test_format_time_and_settings_from_config() -> None:
         cpus=2, memory_mib=4096, disk_gib=30, pool_size=3, memory_reserve_mib=1024, vm_idle_seconds=60,
     )  # fmt: skip
 
-    class Empty:
-        vm_cpus = vm_memory_mib = memory_reserve_mib = None
-        vm_disk_gib, pool_size, vm_idle_seconds = 30, 3, 60
-
-    # empty: the device's rule (HOT-32) - the platform device of 36 cores and 512 GB gets 16 vCPUs and 32 GiB
-    found = VmSettings.from_config(Empty(), cores=lambda: 36, physical_mib=lambda: 512 * 1024)  # type: ignore[arg-type]
-    assert (found.cpus, found.memory_mib) == (16, 32768)
-    row: Any = SimpleNamespace(cpus=16, memory_mib=32768)
-    assert found.current_size(row)
-    assert not SETTINGS.current_size(row)
+    # a VM of another size than a new one (HOT-32: it keeps its sessions and takes no new one)
+    assert SETTINGS.current_size(SimpleNamespace(cpus=4, memory_mib=8192))  # type: ignore[arg-type]
+    assert not SETTINGS.current_size(SimpleNamespace(cpus=8, memory_mib=16384))  # type: ignore[arg-type]
 
 
 def test_selftest_provisioning_is_a_valid_yq_append() -> None:

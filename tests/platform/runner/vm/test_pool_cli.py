@@ -41,7 +41,6 @@ def status(
         values = {
             "AGENT_RUNNER_HOME": str(runner_home),
             "AGENT_RUNNER_VM_PREFIX": PREFIX,
-            "AGENT_RUNNER_VM_MEMORY_MIB": "8192",  # set: empty follows the device (HOT-32, see below)
             "PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin",
             STATE_ENV: str(state),
             **env,
@@ -69,9 +68,6 @@ def test_status_without_store(status: Any) -> None:
         "runner.pool size=2 ready=0 golden=none refill=no_golden",
         "runner.capacity budget_mib=61440 used_mib=0 slots_total=7 slots_free=7 pool_ready=0 capacity_low=no",
     ]
-    # `VM_MEMORY_MIB` empty: a new VM gets a quarter of the 60 GiB budget, 15 GiB, so the budget holds 3 of them
-    code, out, _err = status(AGENT_RUNNER_VM_MEMORY_MIB="")
-    assert out.splitlines()[1].startswith("runner.capacity budget_mib=61440 used_mib=0 slots_total=3 slots_free=3 ")
 
 
 def test_status_with_pool_vms(status: Any) -> None:

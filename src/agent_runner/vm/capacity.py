@@ -28,8 +28,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from agent_runner.config import Config
-
 # VM states that occupy a slot (05 section 3.4).
 SLOT_STATES = frozenset({"pool", "assigning", "running", "stopping"})
 LOW_FRACTION = 0.1
@@ -173,48 +171,6 @@ def host_reserve_mib(setting: int | None = None) -> int:
 def vm_footprint_mib(memory_mib: int) -> int:
     """What one VM costs the host: its configured memory plus its host share (counted when the VM is admitted)."""
     return memory_mib + VM_HOST_MIB
-
-
-VM_MEMORY_MAX_MIB = 32768
-VM_MEMORY_MIN_MIB = 8192
-VM_BUDGET_SHARE = 4
-VM_MIB_PER_CPU = 2048
-VM_CPUS_MAX = 16
-
-
-def default_vm_memory_mib(physical_mib: int, reserve_mib: int | None) -> int:
-    """The memory of a new workgroup VM when `VM_MEMORY_MIB` is empty (05-runner.md section 1.3, HOT-32): a quarter
-    of the device's VM budget in whole GiB, at least 8 GiB, at most 32 GiB - 32 GiB on the platform device (512 GB),
-    8 GiB on a Mac mini of 32 GB (as before), so a VM always fits the budget of a small device and a device keeps room
-    for further VMs (an overflowing workgroup, other workgroups, work VMs)."""
-    budget = max(physical_mib - host_reserve_mib(reserve_mib), 0)
-    share = budget // VM_BUDGET_SHARE // 1024 * 1024
-    return min(VM_MEMORY_MAX_MIB, max(VM_MEMORY_MIN_MIB, share))
-
-
-def default_vm_cpus(memory_mib: int, cores: int | None) -> int:
-    """The vCPUs of a new workgroup VM when `VM_CPUS` is empty: one per 2 GiB of its memory (16 for 32 GiB, 4 for
-    8 GiB), at most 16 and at most half the device's cores (Apple's Virtualization framework refuses more vCPUs than
-    the host has; half leaves the cores for a second VM and the host)."""
-    wanted = min(VM_CPUS_MAX, max(1, memory_mib // VM_MIB_PER_CPU))
-    return max(1, min(wanted, (cores or 2 * wanted) // 2))
-
-
-def vm_size(config: Config, *, cores: int | None, physical_mib: int) -> tuple[int, int]:
-    """`(cpus, memory_mib)` of a new workgroup VM: `VM_CPUS` / `VM_MEMORY_MIB`, each by the device's rule when
-    empty. It applies to new VMs only: a running VM keeps its size and its sessions (HOT-32)."""
-    memory = config.vm_memory_mib
-    if memory is None:
-        memory = default_vm_memory_mib(physical_mib, config.memory_reserve_mib)
-    cpus = config.vm_cpus
-    if cpus is None:
-        cpus = default_vm_cpus(memory, cores)
-    return cpus, memory
-
-
-def new_vm_memory_mib(config: Config, physical_mib: int) -> int:
-    """The memory of a new workgroup VM (`vm_size`; the cores do not change it), for the slots of the capacity."""
-    return vm_size(config, cores=None, physical_mib=physical_mib)[1]
 
 
 CPU_RESERVE_DIVISOR = 8

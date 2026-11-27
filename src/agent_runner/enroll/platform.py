@@ -51,7 +51,7 @@ from agent_runner.identity import (
     write_keys,
 )
 from agent_runner.sync.http import HubClient, HubRefusal, HubTransportError, hub_origin
-from agent_runner.vm.capacity import compute, new_vm_memory_mib, physical_memory_mib
+from agent_runner.vm.capacity import compute, physical_memory_mib
 
 CONFIG_TARGET = "/v1/config"
 ENROLL_TARGET = "/v1/device/enroll"
@@ -146,11 +146,10 @@ def enrollment_body(
 ) -> dict[str, object]:
     """The unsigned body of `POST /v1/device/enroll` for a platform device."""
     arch = options.arch if _PLATFORM_TEXT_RE.fullmatch(options.arch) else "unknown"
-    physical = options.physical_mib()
     capacity = compute(
-        physical_mib=physical,
+        physical_mib=options.physical_mib(),
         reserve_mib=config.memory_reserve_mib,
-        vm_memory_mib=new_vm_memory_mib(config, physical),
+        vm_memory_mib=config.vm_memory_mib,
         vms=[],
     )
     return {

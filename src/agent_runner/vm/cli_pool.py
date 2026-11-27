@@ -74,11 +74,10 @@ def cmd_status(_args: argparse.Namespace, ctx: Any) -> int:
                 "instance": instances.get(row["lima_name"], "missing"),
             },
         )
-    physical = capacity_module.physical_memory_mib()
     capacity = capacity_module.compute(
-        physical_mib=physical,
+        physical_mib=capacity_module.physical_memory_mib(),
         reserve_mib=config.memory_reserve_mib,
-        vm_memory_mib=capacity_module.new_vm_memory_mib(config, physical),
+        vm_memory_mib=config.vm_memory_mib,
         vms=slots,
     )
     version = None if ready is None else ready.version

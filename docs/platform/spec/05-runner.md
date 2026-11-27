@@ -60,7 +60,7 @@ CPU and disk.
 | `HOME` | `~/.local/share/agent-runner` | 0700 |
 | `HUB_URL` | required | `https://` (tests: `http://127.0.0.1…` allowed only with `AGENT_RUNNER_TEST_MODE=1`) |
 | `PLATFORM_ROOT_KEY` | required | b64u Ed25519 public key |
-| `VM_CPUS` / `VM_MEMORY_MIB` / `VM_DISK_GIB` | empty / empty / 20 | the size of every new workgroup VM; empty = the device's rule (§3.3.2: a quarter of the VM budget, 8–32 GiB, one vCPU per 2 GiB, at most 16 and half the cores - 16 vCPUs / 32 GiB on the platform device, 4 / 8 GiB on a Mac mini of 32 GB); a number (1–256 vCPUs, 1024–4194304 MiB) replaces the rule; a change applies to new VMs only, a running VM keeps its size and its sessions (HOT-32) |
+| `VM_CPUS` / `VM_MEMORY_MIB` / `VM_DISK_GIB` | 4 / 8192 / 20 | the one size of every new workgroup VM: small and the same for all, more need means more VMs (§3.3.2, HOT-32); a change applies to new VMs only, a running VM keeps its size and its sessions |
 | `POOL_SIZE` | 2 | 0 disables the pool (clone path only) |
 | `MEMORY_RESERVE_MIB` | empty = the host's base need, 4 GiB | the host's own need excluded from the VM budget; the same on every device, platform and own; each VM adds its host share when it is admitted (§1.3.1); a number replaces the base need |
 | `VM_LOAD_MAX_PERCENT` | 85 | a running workgroup VM takes one more session only while its own free resources last, measured before every placement: its 1-minute load per vCPU is at most this (10–100) and its free RAM is enough (§3.3.1, `vm.room`) |
@@ -352,22 +352,17 @@ measured resources allow.
 
 #### 3.3.2 Size of a workgroup VM and its change (HOT-32)
 
-`VM_CPUS` / `VM_MEMORY_MIB` (§1.3) apply to every **new** VM - pool fill, clone, replacement. Empty, they follow the
-device: a quarter of the VM budget (§1.3.1) in whole GiB, at least 8 GiB, at most 32 GiB, and one vCPU per 2 GiB,
-at most 16 and at most half the host's cores (`vm.capacity.vm_size`). The platform device (36 cores, 512 GB) gets
-16 vCPUs and 32 GiB, a Mac mini of 32 GB (10 cores) 4 vCPUs and 8 GiB as before. Why not one fixed default of
-16 vCPUs and 32 GiB: Apple's Virtualization framework refuses more vCPUs than the host has, and a 32 GiB VM never
-fits the 28 GiB budget of a Mac mini of 32 GB - such a device could start no VM at all. Why at most 16 vCPUs and
-32 GiB on a large device: with the room check a further VM starts whenever one is full, so a larger VM only saves
-VM starts; a VM is one failure domain (a guest crash or an unhealthy restart ends all its sessions, §3.3), and a
-workgroup with few sessions still reserves the whole VM memory in the device budget (§3.4) - 32 GiB of 508 GiB per
-VM still leaves room for 15 such VMs. On the platform device 16 vCPUs at 85 % carry a load of about 13.6, about
-35 sessions at the 0.39 cores per session of the finding (4.3 / 11), and 32 GiB about 50 sessions of 0.5 GB - the
-CPU binds first, at about three times the 11 sessions that overloaded the 4-vCPU VM; more sessions go to a further
-VM.
+Every session VM has the same small size: `VM_CPUS` / `VM_MEMORY_MIB` (§1.3), 4 vCPUs and 8 GiB by default, for
+every **new** VM - pool fill, clone, replacement. Decision of the client (2026-11-27): "die grösse der vm sollten
+wir zum start immer gleich halten für claude sachen und eher klein, lieber mehrere vm". More need means more VMs,
+through the room check (§3.3.1) and the device admission (§3.8), not larger VMs. At the 0.39 cores per session of
+the finding (4.3 / 11) a VM of 4 vCPUs at 85 % takes about 8-9 sessions, then the next one goes to a further VM;
+small VMs fit every device (a Mac mini of 32 GB holds 3), keep a guest crash or an unhealthy restart (§3.3) to few
+sessions, and reserve little of the device budget for a workgroup with few sessions (§3.4). A size per workspace
+learned from experience is a separate concept, not part of this rule.
 
 A running VM never changes its size and no running session is ended for a new size (Lima fixes CPUs and RAM at the
-start, ADR-075 addendum 3). After a change - the settings are read at the start of the runner, so a change takes
+start, ADR-075 addendum 3). After a change of the setting by an operator - the settings are read at the start of the runner, so a change takes
 effect with its restart, which itself ends no VM and no session (§1.1) -:
 
 - a running VM of an older size keeps its sessions and their preferences, takes no new session (`passed_over=…:size`)

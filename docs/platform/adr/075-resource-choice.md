@@ -128,10 +128,10 @@ counts as "no limit" (the behaviour before this ADR).
 >   `VM_LOAD_MAX_PERCENT` (85). A VM whose guest does not answer in 2 s is **not** a VM with room any more (it was in
 >   addendum 1): that is the overloaded VM of the finding. No room: another VM with room, a stopped VM, else a new VM
 >   from the pool or a clone through the device admission; else `capacity_exhausted`.
-> - **Size** (05-runner.md §3.3.2): `VM_CPUS` / `VM_MEMORY_MIB` apply to every new VM and are empty by default: the
->   device's rule gives 16 vCPUs and 32 GiB on the platform device and keeps 4 vCPUs and 8 GiB on a Mac mini of 32 GB.
->   One fixed default of 16 / 32 GiB was checked and not chosen: such a VM cannot start on a device with fewer cores
->   or a smaller budget.
+> - **One small size, more VMs** (05-runner.md §3.3.2): client, 2026-11-27: "die grösse der vm sollten wir zum start
+>   immer gleich halten für claude sachen und eher klein, lieber mehrere vm". Every session VM keeps `VM_CPUS` /
+>   `VM_MEMORY_MIB` at 4 vCPUs and 8 GiB; more need means more VMs through the room check. Not chosen: larger VMs
+>   (16 vCPUs / 32 GiB) or a size per device. A size per workspace learned from experience is a separate concept.
 > - **Never end a running session**: a size change applies to new VMs only. A VM of an older size keeps its sessions,
 >   takes no new one and stops when its last session ended; a stopped one is replaced when its sessions may move
 >   (ADR-093 rule), pool VMs of an older size are replaced as soon as the refill runs. A restart of the runner ends no

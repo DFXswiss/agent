@@ -55,8 +55,8 @@ def test_defaults(base: dict[str, str], runner_home: Path, root_key: str) -> Non
     assert cfg.home == runner_home
     assert cfg.hub_url == "http://127.0.0.1:9"
     assert cfg.platform_root_key == root_key
-    # empty: the size of a new VM follows the device (`vm.capacity.vm_size`, HOT-32)
-    assert (cfg.vm_cpus, cfg.vm_memory_mib, cfg.vm_disk_gib) == (None, None, 20)
+    # one small size for every session VM; more need means more VMs (HOT-32)
+    assert (cfg.vm_cpus, cfg.vm_memory_mib, cfg.vm_disk_gib) == (4, 8192, 20)
     assert cfg.pool_size == 2
     assert cfg.memory_reserve_mib is None  # the host's base need on every device (plus a share per VM)
     # no fixed number of sessions or VMs: the free resources decide (`vm.room`, ADR-075 addendum 2)
