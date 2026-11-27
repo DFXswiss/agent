@@ -282,6 +282,15 @@ N_A_ALLOWED = frozenset(
 STATIC = Path(__file__).resolve().parent / "static" / "index.html"
 STATIC_NEW_ORDER = Path(__file__).resolve().parent / "static" / "orders_new.html"
 SECTION_STATIC = Path(__file__).resolve().parent / "static" / "section.html"
+DESIGN_DIR = Path(__file__).resolve().parent / "static" / "design"
+_DESIGN_TYPES = {
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".woff2": "font/woff2",
+    ".svg": "image/svg+xml",
+    ".txt": "text/plain; charset=utf-8",
+    ".md": "text/plain; charset=utf-8",
+}
 DASHBOARD_SECTIONS = (
     "usage",
     "sessions",
@@ -302,6 +311,35 @@ def _dashboard_page(path: str) -> Path | None:
     if path.startswith("/") and path[1:] in DASHBOARD_SECTIONS:
         return SECTION_STATIC
     return None
+
+
+def _design_asset(path: str) -> tuple[Path, str] | None:
+    """A file in static/design for /design/<name>, or None when the path is refused.
+
+    <name> is one path segment with no leading dot. The suffix picks the
+    content type. The resolved file has to stay inside the design folder.
+    """
+    prefix = "/design/"
+    if not path.startswith(prefix):
+        return None
+    name = path[len(prefix):]
+    if (
+        name == ""
+        or "/" in name
+        or "\\" in name
+        or "%" in name
+        or name.startswith(".")
+        or ".." in name
+    ):
+        return None
+    media = _DESIGN_TYPES.get(Path(name).suffix.lower())
+    if media is None:
+        return None
+    root = DESIGN_DIR.resolve()
+    candidate = (DESIGN_DIR / name).resolve()
+    if candidate.parent != root or not candidate.is_file():
+        return None
+    return candidate, media
 
 
 def die(msg: str) -> None:
@@ -3048,6 +3086,16 @@ def cmd_dashboard(args: list[str]) -> None:
                 body = page.read_bytes()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            asset = _design_asset(path)
+            if asset is not None:
+                file_path, media = asset
+                body = file_path.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", media)
+                self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
                 return

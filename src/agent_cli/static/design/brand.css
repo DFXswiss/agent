@@ -1,0 +1,185 @@
+/*
+ * DFX brand tokens
+ * Date: 2026-08-07
+ * Values are copied verbatim — do not invent colours here.
+ *
+ * Selector: :root for single-brand pages; .brand-dfx for multi-brand galleries.
+ */
+
+@font-face {
+  font-family: 'Inter';
+  src: url('Inter-Light.woff2') format('woff2');
+  font-weight: 300;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('Inter-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('inter-v19-latin-500.woff2') format('woff2');
+  font-weight: 500;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('Inter-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('Inter-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Inter';
+  src: url('Inter-Black.woff2') format('woff2');
+  font-weight: 900;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Source Code Pro';
+  src: url('SourceCodePro-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-display: block;
+}
+
+:root,
+.brand-dfx {
+  /* ---- primitives (theme-agnostic) ---- */
+  --navy-950: #051426;
+  --navy-900: #081e3a;
+  --navy-800: #0a3055;
+  --navy-700: #0b3560;
+  --navy-600: #0d4070;
+  --navy-550: #0a4080;
+  --navy-500: #1d3555;
+  --navy-400: #475776;
+
+  --red-500: #f5516c;
+  --red-600: #e73955;
+  --red-glow: rgba(245, 81, 108, 0.18);
+  --red-soft: rgba(245, 81, 108, 0.1);
+
+  --blue-500: #1e6ef7;
+  --blue-600: #0b57cf;
+  --blue-300: #5fa8ff;
+  --blue-50: #e6f0ff;
+
+  --neutral-0: #ffffff;
+  --neutral-25: #fbfcff;
+  --neutral-50: #f6f8fc;
+  --neutral-100: #eef3fa;
+  --neutral-150: #eef2f7;
+  --neutral-200: #dde5f0;
+  --neutral-500: #8d98aa;
+  --neutral-600: #566174;
+  --neutral-900: #0b1426;
+  --ink-tertiary: #5f6b7a;
+  /* Münzflächen der Tauschkarte, aus dfx-app-abstand.html. Keine Gestaltungsfarben. */
+  --asset-btc: #e8b014;
+  --asset-eth: #627eea;
+
+  --dark-text-high: #f9fafb;
+  --dark-text-muted: #a8b5c8;
+  --dark-text-dim: #8a99b7;
+  --dark-text-faint: #5a6d85;
+
+  --status-success: #16a34a;
+  --status-warning: #eab308;
+  --status-error: #dc2626;
+  --status-info: #2f7cf7;
+
+  /* ---- type ---- */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  --font-mono: 'Source Code Pro', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ---- shared brand roles ---- */
+  --brand-navy: var(--navy-800);
+  --brand-accent: var(--red-500);
+  --brand-accent-hover: var(--red-600);
+
+  /* default semantic roles = dark theme (web / letterhead / email hero) */
+  --bg: var(--navy-800);
+  --bg-deep: var(--navy-900);
+  --surface: var(--navy-600);
+  --surface-2: var(--navy-500);
+  --text: var(--dark-text-high);
+  --text-secondary: var(--dark-text-muted);
+  --text-tertiary: var(--dark-text-dim);
+  --text-faint: var(--dark-text-faint);
+  --primary: var(--red-500);
+  --primary-hover: var(--red-600);
+  --primary-text: var(--neutral-0);
+  --accent: var(--red-500);
+  --cta-glow: var(--red-glow);
+  --border: rgba(255, 255, 255, 0.08);
+
+  /* social-card roles (BRAND_VARS.dfx) */
+  --ink: #f9fafb;
+  --strong: #ffffff;
+  --muted: #a8b5c8;
+  --dim: #8a99b7;
+  --ok: #34d399;
+  --warn: #ffc15c;
+  --line: rgba(255, 255, 255, 0.1);
+  --chipbg: #0a3055;
+  --colbg: #0a3055;
+  --colbgHi: #0b3560;
+  --personbg: #0a3055;
+  --glow: radial-gradient(900px 520px at 78% -8%, rgba(245, 81, 108, 0.18), transparent 62%);
+  --glowHero: radial-gradient(1100px 700px at 50% -10%, rgba(245, 81, 108, 0.28), #081e3a 78%);
+  --glowVideo: radial-gradient(900px 520px at 22% -8%, rgba(245, 81, 108, 0.2), transparent 62%);
+
+  /* gallery swatches (role aliases) */
+  --swatch-1: var(--navy-900);
+  --swatch-2: var(--navy-800);
+  --swatch-3: var(--red-500);
+  --swatch-4: var(--blue-500);
+  --swatch-5: var(--neutral-50);
+}
+
+/* dark = website / letterhead / email hero; primary = red 500 */
+.theme-dark,
+.brand-dfx.theme-dark {
+  --bg: var(--navy-800);
+  --bg-deep: var(--navy-900);
+  --surface: var(--navy-600);
+  --surface-2: var(--navy-500);
+  --text: var(--dark-text-high);
+  --text-secondary: var(--dark-text-muted);
+  --text-tertiary: var(--dark-text-dim);
+  --text-faint: var(--dark-text-faint);
+  --primary: var(--red-500);
+  --primary-hover: var(--red-600);
+  --primary-text: var(--neutral-0);
+  --accent: var(--red-500);
+  --cta-glow: var(--red-glow);
+  --border: rgba(255, 255, 255, 0.08);
+  color-scheme: dark;
+}
+
+/* light = wallet / app surfaces; primary = blue 500 */
+.theme-light,
+.brand-dfx.theme-light {
+  --bg: var(--neutral-50);
+  --surface: var(--neutral-0);
+  --surface-2: var(--neutral-100);
+  --surface-raised: var(--neutral-25);
+  --text: var(--neutral-900);
+  --text-secondary: var(--neutral-600);
+  --text-tertiary: var(--neutral-500);
+  --primary: var(--blue-500);
+  --primary-hover: var(--blue-600);
+  --primary-text: var(--neutral-0);
+  --primary-soft: var(--blue-50);
+  --accent: var(--red-500);
+  --accent-hover: var(--red-600);
+  --border: var(--neutral-200);
+  color-scheme: light;
+}

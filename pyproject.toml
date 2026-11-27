@@ -75,7 +75,7 @@ agent-hub = "agent_hub.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-agent_cli = ["static/*", "skills/**"]
+agent_cli = ["static/*", "static/design/*", "skills/**"]
 agent_doubles = ["**/*.json"]
 agent_runner = ["store/migrations/*.sql", "model/model-catalog.json"]
 agent_platform = ["guide.md"]
@@ -100,7 +100,7 @@ patch = ["subprocess"]
 # Floor of the measured total line and branch coverage: the total minus 0.1,
 # rounded down to one decimal. It only moves up; see CONTRIBUTING.md,
 # "Complete test coverage is mandatory".
-fail_under = 87.1
+fail_under = 87.3
 precision = 2
 show_missing = true
 skip_covered = true

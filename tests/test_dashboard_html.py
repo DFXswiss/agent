@@ -618,10 +618,13 @@ def test_subscription_check_time_reports_a_malformed_value(tmp_path: Path) -> No
 
 def test_subscriptions_section_markup() -> None:
     html = SECTION_PAGE.read_text(encoding="utf-8")
-    assert "<h2>Subscriptions</h2>" in html
+    assert "<h1>Subscriptions</h1>" in html
+    assert "<h2>Subscriptions</h2>" not in html
     assert "<h2>Usage</h2>" not in html
-    assert '<a href="/usage">Subscriptions</a>' in html
-    assert '<a href="/usage">Subscriptions</a>' in PAGE.read_text(encoding="utf-8")
+    assert '<a href="/usage" title="Subscriptions">' in html
+    index = PAGE.read_text(encoding="utf-8")
+    usage = index.split('href="/usage"', 1)[1].split("</a>", 1)[0]
+    assert "Subscriptions" in usage
     header = html.split('<table id="usage"><thead><tr>', 1)[1].split("</tr>", 1)[0]
     assert header.count("<th>") == 12
     for column in ("Provider", "Account", "Label", "Status", "Note", "Listed", "Tier", "Used", "Reset"):
@@ -658,7 +661,7 @@ def test_subscription_rows_render_in_node() -> None:
     script = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[0]
     helpers = "\n".join(
         line for line in script.splitlines()
-        if line.startswith(("    function esc(", "    function empty(", "    const SUBSCRIPTION_COLUMNS", "    const NO_USAGE", "    const NO_INVENTORY"))
+        if line.startswith(("    function empty(", "    const SUBSCRIPTION_COLUMNS", "    const NO_USAGE", "    const NO_INVENTORY"))
     )
     functions = "\n".join(
         section_function(html, name)
@@ -672,8 +675,8 @@ def test_subscription_rows_render_in_node() -> None:
             "subscriptionsErrorText",
         )
     )
-    # The shared block brings idOrText, stateIcon and stateCellAttributes.
-    shared = "const document = { addEventListener() {} };\n" + common_block(html)
+    # work.js brings esc, RING and chip; the shared block brings idOrText and stateIcon.
+    shared = section_runtime(html)
     harness = helpers + "\n" + shared + "\n" + functions + """
 const now = Date.parse("2026-11-16T12:04:30Z");
 const windowed = {
@@ -732,6 +735,10 @@ console.log(JSON.stringify({
   invalid: subscriptionsEmptyHtml({ configured: false, error: "subscriptions must be a list", rows: [] }),
   invalidError: subscriptionsErrorText({ configured: false, error: "subscriptions must be a list", rows: [] }),
   configuredEmpty: subscriptionsEmptyHtml({ configured: true, error: null, rows: [] }),
+  iconActive: stateIcon("active"),
+  iconUnknown: stateIcon("on-hold"),
+  iconEmpty: stateIcon(""),
+  iconNull: stateIcon(null),
 }));
 """
     completed = subprocess.run(
@@ -743,15 +750,21 @@ console.log(JSON.stringify({
     assert "<td>Seat &lt;1&gt;</td>" in windowed
     assert "<td>a &amp; b</td>" in windowed
     assert "<td>listed</td>" in windowed
-    active = state_icons(html)["active"]
+    active = out["iconActive"]
+    assert "state-unknown" not in active
+    assert '<span class="label">' not in active
+    assert 'role="img"' in active and 'aria-label="active"' in active
     assert (
-        '<td title="active" aria-label="active"><span class="state-icon" role="img" '
-        f'aria-label="active">{active}&#xFE0E;</span></td>'
+        '<td title="active" aria-label="active">' + active + "</td>"
     ) in windowed
+    unknown = out["iconUnknown"]
+    assert "state-unknown" in unknown
+    assert '<span class="label">' not in unknown
+    assert 'aria-label="on-hold"' in unknown
     assert (
-        '<td title="on-hold" aria-label="on-hold"><span class="state-icon state-unknown" '
-        'role="img" aria-label="on-hold">◌&#xFE0E;</span></td>'
+        '<td title="on-hold" aria-label="on-hold">' + unknown + "</td>"
     ) in out["unknownStatus"]
+    assert out["iconEmpty"] == "—" and out["iconNull"] == "—"
     assert "<td>—</td>" in out["missing"]
     assert "<td>max_20x</td>" in windowed
     assert "<td>5h: —<br>Week: 14%<br>Week &lt;b&gt;Model B&lt;/b&gt;: 21.5%</td>" in windowed
@@ -1118,14 +1131,12 @@ def test_usage_overview_renders_in_node() -> None:
         pytest.skip("node is not installed; the static tests above cover the source")
     html = SECTION_PAGE.read_text(encoding="utf-8")
     script = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[0]
-    helpers = "\n".join(
-        line for line in script.splitlines() if line.startswith(("    function esc(", "    const NO_USAGE"))
+    helpers = section_runtime(html) + "\n" + "\n".join(
+        line for line in script.splitlines() if line.startswith("    const NO_USAGE")
     )
     functions = "\n".join(
         section_function(html, name) for name in ("usageMeter", "usageLineHtml", "usageOverviewHtml")
     )
-    # The shared block brings stateIcon and stateCellAttributes.
-    helpers += "\nconst document = { addEventListener() {} };\n" + common_block(html)
     overview = list(_overview(_overview_rows()).values())
     overview[-1]["accounts"][0]["label"] = "<b>seat</b>"
     harness = helpers + "\n" + functions + f"""
@@ -1137,6 +1148,8 @@ console.log(JSON.stringify({{
   detailed: usageOverviewHtml(overview, new Set(), true, false, NOW),
   sorted: usageOverviewHtml(overview, new Set(), false, true, NOW),
   none: usageOverviewHtml([], new Set(), false, false, NOW),
+  iconNotRead: stateIcon("not read"),
+  iconNoData: stateIcon("no data"),
 }}));
 """
     completed = subprocess.run(
@@ -1157,19 +1170,19 @@ console.log(JSON.stringify({{
         '<meter min="0" max="100" low="70" high="90" optimum="0" value="40" title="40%"></meter>'
         "<span>40%</span></span></summary>"
     ) in closed
-    not_read = state_icons(html)["not read"]
-    assert (
-        '<span title="not read" aria-label="not read"><span class="state-icon" role="img" '
-        f'aria-label="not read">{not_read}&#xFE0E;</span></span>'
-    ) in closed
+    not_read = out["iconNotRead"]
+    assert "state-unknown" not in not_read and '<span class="label">' not in not_read
+    assert 'role="img"' in not_read and 'aria-label="not read"' in not_read
+    assert ('<span title="not read" aria-label="not read">' + not_read + "</span>") in closed
     # A listed account without a snapshot carries the table's explanation on its
     # name; its icon keeps the state word as title.
-    no_data = state_icons(html)["no data"]
+    no_data = out["iconNoData"]
+    assert "state-unknown" not in no_data and '<span class="label">' not in no_data
+    assert 'aria-label="no data"' in no_data
     assert (
         '<span class="usage-line"><span title="No usage: no paired device polls this login">'
         "seat-2@example.com</span><span></span>"
-        '<span title="no data" aria-label="no data">'
-        f'<span class="state-icon" role="img" aria-label="no data">{no_data}&#xFE0E;</span></span>'
+        '<span title="no data" aria-label="no data">' + no_data + "</span>"
     ) in out["open"]
     assert out["open"].count("No usage: no paired device polls this login") == 1
     assert "0%" not in closed.split('data-provider="driver-b"', 1)[1].split("</summary>", 1)[0]
@@ -1194,13 +1207,12 @@ def test_usage_overview_shows_when_each_account_was_checked() -> None:
     if NODE is None:
         pytest.skip("node is not installed; the static checks above cover the source")
     script = re.findall(r"<script>(.*?)</script>", html, flags=re.S)[0]
-    helpers = "\n".join(
-        line for line in script.splitlines() if line.startswith(("    function esc(", "    const NO_USAGE"))
+    helpers = section_runtime(html) + "\n" + "\n".join(
+        line for line in script.splitlines() if line.startswith("    const NO_USAGE")
     )
     functions = "\n".join(
         section_function(html, name) for name in ("usageMeter", "usageLineHtml", "usageOverviewHtml")
     )
-    helpers += "\nconst document = { addEventListener() {} };\n" + common_block(html)
 
     def account(name: str, checked_at: str | None, recorded: str | None) -> dict:
         return {
@@ -1263,16 +1275,21 @@ console.log(JSON.stringify(usageOverviewHtml({json.dumps(overview)}, new Set(), 
     assert shown.count("checked ") == 2
 
 
+def design_esc() -> str:
+    """The one esc index.html uses. It lives in the design script, not on the page."""
+    text = (STATIC / "design" / "work.js").read_text(encoding="utf-8")
+    for line in text.splitlines():
+        if line.startswith("const esc = "):
+            return line
+    raise AssertionError("work.js does not define esc")
+
+
 def test_usage_summary_renders_in_node() -> None:
     if NODE is None:
         pytest.skip("node is not installed; the static tests above cover the source")
     index = static_page("index.html")
-    script = re.findall(r"<script>(.*?)</script>", index, flags=re.S)[0]
-    helpers = "\n".join(line for line in script.splitlines() if line.startswith("    function esc("))
     harness = (
-        helpers
-        + "\nconst document = { addEventListener() {} };\n"
-        + common_block(index)
+        section_runtime(index)
         + section_function(index, "usageSummaryHtml")
         + f"""
 console.log(JSON.stringify({{
@@ -1286,10 +1303,12 @@ console.log(JSON.stringify({{
     )
     assert completed.returncode == 0, completed.stderr
     out = json.loads(completed.stdout)
-    not_read = state_icons(index)["not read"]
     icon = (
-        '<span title="not read" aria-label="not read"><span class="state-icon" role="img" '
-        f'aria-label="not read">{not_read}&#xFE0E;</span></span>'
+        '<span title="not read" aria-label="not read">'
+        '<span class="ring" role="img" aria-label="not read">'
+        '<svg viewBox="0 0 16 16" aria-hidden="true">'
+        '<g class="dash-spin"><circle cx="8" cy="8" r="6" fill="none" stroke="var(--neutral-500)" '
+        'stroke-width="2" stroke-dasharray="2.4 2.3"/></g></svg></span></span>'
     )
     assert out["line"] == (
         f"Vendor A 0% 3 d 4 h · Vendor B {icon} · Vendor C {icon}"
@@ -1385,22 +1404,42 @@ def test_orders_view_markup() -> None:
     ):
         assert f'placeholder="{placeholder}"' not in html
 
-    device = html.index('<p>Device <code id="dev">')
+    device = html.index('Device <code id="dev"')
     orders = html.index("<h2>Orders</h2>")
     events = html.index("<h2>Order events</h2>")
     nav = html.index('id="section-nav"')
-    assert device < orders < events < nav
+    assert nav < device < orders < events
     for _, title, _ in MOVED_SECTIONS:
         assert f"<h2>{title}</h2>" not in html
     assert "session-row" not in html
     assert "tr.order-row" in html
-    assert "<script src" not in html
-    assert "<link" not in html
-    assert "<form" not in html
+    for asset in (
+        'href="/design/tokens.css"',
+        'href="/design/brand.css"',
+        'href="/design/motion-base.css"',
+        'href="/design/work.css"',
+        'href="/design/motion.css"',
+        'src="/design/work.js"',
+    ):
+        assert asset in html
+    assert 'id="composer"' in html
+    assert "<form" in html
     without_github = html.replace("https://github.com/", "")
     assert "http://" not in without_github
     assert "https://" not in without_github
     assert ".reverse(" not in html
+
+
+def test_top_message_reads_the_feed_messages_not_the_feed_children() -> None:
+    body = section_function(static_page("index.html"), "topMessage")
+    events = body.index('getElementById("feed-events").children')
+    card = body.index('getElementById("od-body")')
+    report = body.index('getElementById("order-report")')
+    park = body.index("nodes.push(park)")
+    assert events < card < report < park
+    assert "park.hidden" in body
+    assert "feed.children" not in body
+    assert ".getBoundingClientRect().bottom > limit + 8" in body
 
 
 def test_new_order_subpage_markup() -> None:
@@ -1426,7 +1465,7 @@ def test_new_order_subpage_markup() -> None:
     assert 'href="/"' in html
     assert html.count('id="orders-note"') == 1
     assert html.count("Orders are not enabled on this device.") == 1
-    for text in ("Submit order", "Add skipped check", "Remove", "Back to dashboard"):
+    for text in ("Submit order", "Skip a check", "Remove", "Back to dashboard"):
         assert text in html
     for placeholder in (
         "owner/name",
@@ -1443,8 +1482,14 @@ def test_new_order_subpage_markup() -> None:
     assert '"order " + idOrText(result.order_id)' in html
     assert "resultLine.textContent = e.message;" in html
     assert "<form" not in html
-    assert "<script src" not in html
-    assert "<link" not in html
+    assert re.findall(r'<script\b[^>]*\bsrc="([^"]+)"', html) == ["/design/work.js"]
+    assert re.findall(r'<link\b[^>]*\bhref="([^"]+)"', html) == [
+        "/design/tokens.css",
+        "/design/brand.css",
+        "/design/motion-base.css",
+        "/design/work.css",
+        "/design/motion.css",
+    ]
     assert "http://" not in html
     assert "https://" not in html
 
@@ -1462,17 +1507,19 @@ def test_main_page_omits_moved_sections_and_links_to_their_subpages() -> None:
 
     events = html.index("<h2>Order events</h2>")
     nav = html.index('id="section-nav"')
-    assert events < nav
+    assert nav < events
 
 
 def test_each_subpage_carries_its_section_and_a_way_back() -> None:
     html = SECTION_PAGE.read_text(encoding="utf-8")
     for name, title, table_id in MOVED_SECTIONS:
         assert f'data-section="{name}"' in html
-        assert f"<h2>{title}</h2>" in html
+        assert f"<h1>{title}</h1>" in html
         assert f'id="{table_id}"' in html
         assert f'href="/{name}"' in html
-    assert '<a href="/">Back to dashboard</a>' in html
+    assert 'href="/"' in html
+    assert 'title="Orders"' in html
+    assert ">Orders</span></a>" in html
     assert 'href="/usage"' in html
     assert "setInterval(tick, 2000);" in html
 
@@ -1559,6 +1606,22 @@ def common_block(html: str) -> str:
     return html.split(COMMON_BEGIN, 1)[1].split(COMMON_END, 1)[0]
 
 
+def design_script() -> str:
+    source = (STATIC / "design" / "work.js").read_text(encoding="utf-8")
+    # The harness uses `now` as a timestamp. The design script's clock has the same name.
+    return source.replace("const now = () =>", "const clockNow = () =>", 1)
+
+
+def section_runtime(html: str) -> str:
+    """Load the design script, then the shared block, so stateIcon can call chip."""
+    return (
+        "function matchMedia(){return {matches:false};}\n"
+        + design_script()
+        + "\nconst document = { addEventListener() {} };\n"
+        + common_block(html)
+    )
+
+
 def orders_script() -> str:
     return re.findall(r"<script>(.*?)</script>", static_page("index.html"), flags=re.S)[1]
 
@@ -1566,11 +1629,6 @@ def orders_script() -> str:
 def top_level_function(code: str, name: str) -> str:
     start = code.index(f"\nfunction {name}(") + 1
     return code[start : code.index("\n}\n", start) + 3]
-
-
-def state_icons(html: str) -> dict[str, str]:
-    literal = common_block(html).split("const STATE_ICONS = ", 1)[1].split(";", 1)[0]
-    return json.loads(literal)
 
 
 def test_every_page_carries_the_same_shared_block() -> None:
@@ -1585,9 +1643,11 @@ def test_every_page_carries_the_same_shared_block() -> None:
         assert "cursor: pointer;" in style.split("button.copy-id { ", 1)[1].split("}", 1)[0]
         assert "button.copy-id.copied {" in style
         assert "button.copy-id.copy-failed {" in style
-        assert "<script src" not in html
-        assert "<img" not in html
         assert "url(" not in style
+        assert html.count('<script src="/design/work.js"></script>') == 1
+        assert html.count("<script src") == 1
+        assert html.count("<img") == 1
+        assert '<img src="/design/logo-dark.svg"' in html
 
 
 def test_uuid_pattern_matches_only_whole_uuids() -> None:
@@ -1663,7 +1723,10 @@ def test_uuid_shows_its_first_8_characters_on_a_copy_button() -> None:
 
 def test_session_controls_start_the_interactive_driver_of_the_session() -> None:
     section = static_page("section.html")
-    assert '<button type="button" id="ctl-start-ai">Start AI session</button>' in section
+    assert (
+        '<button type="button" class="btn btn-ghost btn-sm jk-press" '
+        'id="ctl-start-ai">Start AI session</button>'
+    ) in section
     assert (
         'postControl(s.id, { action: "start", payload: { interactive: true } })'
         in section
@@ -1738,8 +1801,14 @@ def test_refresh_writes_only_changes_and_keeps_focus_without_scrolling() -> None
     assert "orderHtml" not in orders_script()
 
 
-def test_state_icon_mapping_covers_every_value_with_distinct_outcomes() -> None:
-    icons = state_icons(static_page("index.html"))
+def test_every_agent_state_word_resolves_to_a_ring_kind_and_unknown_words_get_state_unknown() -> None:
+    from test_dashboard_section_design import (
+        EXPECTED_STATE_RING,
+        ring_table,
+        state_ring_table,
+    )
+
+    ring = ring_table((STATIC / "design" / "work.js").read_text(encoding="utf-8"))
     produced = (
         set(TASK_STATES)
         | set(ORDER_STATES)
@@ -1750,44 +1819,34 @@ def test_state_icon_mapping_covers_every_value_with_distinct_outcomes() -> None:
         | set(INTENT_STATUSES)
         | set(CI_STATES)
     )
-    assert produced - set(icons) == set()
-    for word, icon in icons.items():
-        assert 1 <= len(icon) <= 2, word
-        assert not icon.isalnum(), word
-
-    families = (
-        ("running", "active", "working"),
-        ("waiting",),
-        ("gate-blocked",),
-        ("ready",),
-        ("merged", "done"),
-        ("failed",),
-        ("cancelled",),
-        ("ja",),
-        ("nein",),
-        ("pending",),
-        ("no data",),
-        ("not read",),
-    )
-    family_icons = []
-    for family in families:
-        assert len({icons[word] for word in family}) == 1, family
-        family_icons.append(icons[family[0]])
-    assert len(set(family_icons)) == len(families)
-
-    block = common_block(static_page("index.html"))
-    fallback = re.search(r'const STATE_FALLBACK_ICON = "(.+?)";', block).group(1)
-    assert fallback not in icons.values()
-    state = block.split("function stateIcon(value) {", 1)[1].split("\n    }\n", 1)[0]
-    assert "const known = Object.hasOwn(STATE_ICONS, word);" in state
-    assert "known ? STATE_ICONS[word] : STATE_FALLBACK_ICON" in state
-    assert 'role="img" aria-label="${esc(word)}"' in state
-    # The word is the title of the whole cell, not of the glyph.
-    assert "title=" not in state
-    assert 'return "—";' in state
-    attributes = block.split("function stateCellAttributes(value) {", 1)[1].split("\n    }\n", 1)[0]
-    assert 'if (value === null || value === undefined || value === "") return "";' in attributes
-    assert 'return ` title="${esc(value)}" aria-label="${esc(value)}"`;' in attributes
+    kinds = {item[0] for item in ring.values()}
+    for name in PAGES:
+        html = static_page(name)
+        extra = state_ring_table(html)
+        assert extra == EXPECTED_STATE_RING
+        assert set(extra) & set(ring) == set()
+        merged = {**ring, **extra}
+        assert produced <= set(merged)
+        for word in produced:
+            assert merged[word][0] in kinds
+        block = common_block(html)
+        assert block.index("Object.assign(RING, STATE_RING);") < block.index(
+            "function stateIcon(value)"
+        )
+        assert "STATE_ICONS" not in block and "STATE_FALLBACK_ICON" not in block
+        state = block.split("function stateIcon(value) {", 1)[1].split("\n    }\n", 1)[0]
+        assert 'const word = String(value).toLowerCase();' in state
+        assert "const known = Object.hasOwn(RING, word);" in state
+        assert "chip(word)" in state
+        assert 'class="ring state-unknown"' in state
+        # The word is the title of the whole cell, not of the glyph.
+        assert "title=" not in state
+        assert 'return "—";' in state
+        attributes = block.split("function stateCellAttributes(value) {", 1)[1].split(
+            "\n    }\n", 1
+        )[0]
+        assert 'if (value === null || value === undefined || value === "") return "";' in attributes
+        assert 'return ` title="${esc(value)}" aria-label="${esc(value)}"`;' in attributes
 
 
 def test_state_and_status_cells_show_icons_and_keep_their_classes() -> None:
@@ -1806,8 +1865,9 @@ def test_state_and_status_cells_show_icons_and_keep_their_classes() -> None:
         assert f"${{esc({expr})}}</td>" not in section
         assert f"${{idOrText({expr})}}</td>" not in section
         assert f'title="${{esc({expr})}}"' not in section
-    for rule in (".failed {", ".implementing, .working, .open {", ".done, .approved {", ".merged {"):
-        assert rule in section
+    assert ".failed {" in section
+    for rule in (".implementing, .working, .open {", ".done, .approved {", ".merged {"):
+        assert rule not in section
     code = orders_script()
     columns = top_level_function(code, "orderColumns")
     assert (
@@ -1863,10 +1923,9 @@ def test_pull_request_url_shows_as_its_number() -> None:
 
 def test_orders_list_has_no_head_column_and_the_detail_keeps_it() -> None:
     code = orders_script()
-    assert (
-        "renderOrderTable(table, listed.orders, "
-        'ORDER_VIEW.list.nested.orders.filter(field => field !== "head"));'
-    ) in code
+    builder = top_level_function(code, "listItemsHtml")
+    assert 'ORDER_VIEW.list.nested.orders.filter(field => field !== "head")' in builder
+    assert "renderOrderTable(" in code
     view = json.loads(
         code.split("const ORDER_VIEW = ", 1)[1].split("/* ORDER_VIEW_END */", 1)[0].strip()[:-1]
     )
@@ -1950,9 +2009,13 @@ def page_behaviour() -> dict:
         pytest.skip("node is not installed; the static tests above cover the source")
     index = static_page("index.html")
     first = re.findall(r"<script>(.*?)</script>", index, flags=re.S)[0]
-    helpers = "\n".join(
-        line for line in first.splitlines()
-        if line.startswith(("    function esc(", "    function empty("))
+    helpers = (
+        "function matchMedia(){return {matches:false};}\n"
+        + design_script()
+        + "\n"
+        + "\n".join(
+            line for line in first.splitlines() if line.startswith("    function empty(")
+        )
     )
     code = orders_script()
     constants = "\n".join(
@@ -2002,6 +2065,7 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
   out.number = idOrText(7);
   out.json = jsonHtml({ id: UUID, note: "see " + UUID });
   out.known = stateIcon("merged");
+  out.knownCase = stateIcon("Merged");
   out.unknown = stateIcon("mystery");
   out.none = stateIcon(null);
   out.cellAttributes = stateCellAttributes("merged");
@@ -2126,9 +2190,18 @@ def test_page_behaviour_in_node() -> None:
     assert out["number"] == "7"
     assert out["json"] == f"{{&quot;id&quot;:&quot;{chip}&quot;,&quot;note&quot;:&quot;see {UUID}&quot;}}"
     assert out["known"] == (
-        '<span class="state-icon" role="img" aria-label="merged">✔&#xFE0E;</span>'
+        '<span class="ring" role="img" aria-label="merged"><svg viewBox="0 0 16 16" aria-hidden="true">'
+        '<circle cx="8" cy="8" r="7" fill="var(--navy-800)"/>'
+        '<path d="M5 8.2l2 2 4-4.2" fill="none" stroke="#fff" stroke-width="1.8" '
+        'stroke-linecap="round" stroke-linejoin="round"/></svg></span>'
     )
-    unknown = '<span class="state-icon state-unknown" role="img" aria-label="mystery">◌&#xFE0E;</span>'
+    assert out["knownCase"] == out["known"]
+    unknown = (
+        '<span class="ring state-unknown" role="img" aria-label="mystery">'
+        '<svg viewBox="0 0 16 16" aria-hidden="true">'
+        '<g class="dash-spin"><circle cx="8" cy="8" r="6" fill="none" stroke="var(--neutral-500)" '
+        'stroke-width="2" stroke-dasharray="2.4 2.3"/></g></svg></span>'
+    )
     assert out["unknown"] == unknown
     assert out["none"] == "—"
     assert out["cellAttributes"] == ' title="merged" aria-label="merged"'
@@ -2201,8 +2274,10 @@ def test_page_behaviour_in_node() -> None:
     # The word is the title and accessible name of the whole cell; the exact
     # timestamp is the title of its cell and never its accessible name.
     assert (
-        '<td title="running" aria-label="running"><span class="state-icon" role="img" '
-        'aria-label="running">▶&#xFE0E;</span></td>'
+        '<td title="running" aria-label="running"><span class="ring" role="img" aria-label="running">'
+        '<svg viewBox="0 0 16 16" aria-hidden="true"><circle class="track" cx="8" cy="8" r="6"/>'
+        '<g class="spin"><circle class="arc jk-value-arc-c" cx="8" cy="8" r="6" stroke="var(--blue-500)" '
+        'data-to="18.85" style="stroke-dasharray:18.85 37.70"/></g></svg></span></td>'
     ) in table
     assert "<td>OWNER</td><td>NAME</td>" in table
     assert ">#3</a>" in table
