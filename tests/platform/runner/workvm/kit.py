@@ -102,6 +102,8 @@ class FakeLima:
 
     def list(self) -> list[Instance]:
         """The instances of this slot's Lima home (an instance a test added directly is in every slot)."""
+        if self.slot in self.world.fail_list:
+            raise LimaError("lima_failed", "list", returncode=1, detail=self.world.lima_stderr)
         return [
             instance
             for name in list(self.world.instances)
@@ -345,6 +347,8 @@ class World:
     """The slot whose Lima home holds a cloned instance."""
     calls: list[tuple[str, int]] = field(default_factory=list)
     fail: set[str] = field(default_factory=set)
+    fail_list: set[int] = field(default_factory=set)
+    """Slots whose `list` raises `LimaError`."""
     lima_stderr: str = ""
     """Lima's stderr tail of a failing operation (`LimaError.detail`)."""
     shell_calls: list[tuple[str, str]] = field(default_factory=list)

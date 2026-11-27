@@ -5,7 +5,8 @@
   as listed, author the user or a device the verified logs entitle to the user's `CK`, signature, `CK` of the record's
   epoch, body exactly as `contracts/credentials/<kind>.json` allows); only the non-secret summary is printed, never a
   token, key or password. A record that fails is `unverifiable` with its code.
-- `credentials set-mailbox`: the mailbox of the login automation; the password comes from stdin.
+- `credentials set-mailbox`: the mailbox of the login automation; the password comes from stdin; the name, purpose
+  and release of the stored primary mailbox stay (ADR-099).
 - `credentials delete --kind`: `DELETE /v1/me/credentials/{kind}` (`404` counts as done).
 - `credentials check --kind`: the device request `credential.check` (API key, subscription) or `mailbox.check`.
 - `github status|connect|disconnect`: the GitHub connection (the `github` record, written by the device that made the
@@ -40,7 +41,7 @@ import os
 import shutil
 import subprocess
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from agent_platform import devicereq, identities
 from agent_platform.account import Account
@@ -159,6 +160,16 @@ def credentials_delete(account: Account, kind: str) -> dict[str, Any]:
     return {"kind": kind, "deleted": True}
 
 
+KEPT_MAILBOX_FIELDS = ("name", "purpose", "use")
+
+
+def keep_release(body: Mapping[str, Any], _record: object, current: Mapping[str, Any] | None) -> None:
+    """Keep the name, purpose and release of the stored primary mailbox (ADR-099 section 2) in a new version."""
+    for key in KEPT_MAILBOX_FIELDS:
+        if current is not None and key in current:
+            cast(dict[str, Any], body).setdefault(key, current[key])
+
+
 def set_mailbox(account: Account, args: Any, password: str) -> dict[str, Any]:
     body = {
         "imap_host": args.imap_host.strip(),
@@ -169,7 +180,7 @@ def set_mailbox(account: Account, args: Any, password: str) -> dict[str, Any]:
     }
     if not valid_mailbox(body):
         raise PlatformError("invalid_argument")
-    return {**put_record(account, "mailbox", body), "kind": "mailbox"}
+    return {**put_record(account, "mailbox", body, keep_release), "kind": "mailbox"}
 
 
 # --- device flows ---

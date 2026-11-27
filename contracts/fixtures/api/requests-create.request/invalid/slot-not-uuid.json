@@ -1,0 +1,17 @@
+{
+  "envelope": {
+    "header": {
+      "v": 1,
+      "id": "0193003c-0000-7000-8000-00000000003c",
+      "user": "0193000a-0000-7000-8000-00000000000a",
+      "device": "01930014-0000-7000-8000-000000000014",
+      "kind": "claude.login",
+      "follows": "",
+      "ts": "2026-11-21T12:00:00.000Z",
+      "enc_alg": "HPKE-X25519-A256GCM"
+    },
+    "ct": "GRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZ",
+    "sig": "GhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGhoaGg"
+  },
+  "slot": "not-a-uuid"
+}

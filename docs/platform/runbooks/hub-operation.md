@@ -75,6 +75,12 @@ constants of `agent_hub/http/limits.py` in v1 (no setting); onboarding a team in
 
 - `agent-hub audit verify` checks the global audit chain and the newest checkpoint of the hub key (exit 0 ok, 1 broken,
   2 configuration error, 3 database unavailable). Run it daily and after every incident or restore.
+- **Operator commands run beside the hub, never in it.** `agent-hub audit verify` and `agent-hub export` read the
+  whole audit chain or a whole organization. Run them in a container of their own (a one-off container of the hub
+  image with the hub's environment and its own memory limit, at least 512 MiB), never with `exec` inside the hub's
+  container and never in the memory of the hub process: there they share the hub's memory limit, and an out-of-memory
+  kill ends the live hub. Both commands stream in blocks bounded by bytes, so their memory does not grow with the
+  database ([export-restore.md](export-restore.md) §2).
 - A broken chain is an incident: stop the hub, keep the database for analysis, restore from the last verified export
   ([export-restore.md](export-restore.md)).
 

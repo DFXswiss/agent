@@ -1,0 +1,9 @@
+{
+  "mailbox": {
+    "imap_host": "imap.example.com",
+    "imap_port": 993,
+    "imap_user": "alice@example.com",
+    "imap_password": "pässwört",
+    "email": "alice@example.com"
+  }
+}
