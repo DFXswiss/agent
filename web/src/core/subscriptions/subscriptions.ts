@@ -381,7 +381,9 @@ export function bindingFree(
   const left = (window: QuotaWindow) => freePercent(window.usedPercent, window.resetsAt, now);
   const found =
     named ??
-    [...whole].sort((a, b) => left(a) - left(b) || Number(b.window === 'seven_day') - Number(a.window === 'seven_day'))[0];
+    [...whole].sort(
+      (a, b) => left(a) - left(b) || Number(b.window === 'seven_day') - Number(a.window === 'seven_day'),
+    )[0];
   return found === undefined ? null : { freePercent: left(found), resetsAt: found.resetsAt };
 }
 
