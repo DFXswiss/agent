@@ -309,9 +309,7 @@ def test_a_joined_start_that_fails_fails_every_waiting_call(world: World, monkey
         first = await vms.call(None, session(), "workvm_exec", EXEC)
         monkeypatch.setattr(manager_module, "START_JOIN_SECONDS", 10.0)
         world.fail.add("clone")
-        joined = [
-            asyncio.ensure_future(vms.call(None, session(sid), "workvm_exec", EXEC)) for sid in (THIRD, FOURTH)
-        ]
+        joined = [asyncio.ensure_future(vms.call(None, session(sid), "workvm_exec", EXEC)) for sid in (THIRD, FOURTH)]
         await asyncio.sleep(0.2)  # both calls wait for the start held at the clone (it cannot end before the gate)
         gate.event.set()
         failed = []
