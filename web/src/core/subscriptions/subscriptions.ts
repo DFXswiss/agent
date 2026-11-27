@@ -20,7 +20,9 @@
 //   provider needs no change here) and shows the total of all its accounts, never the fullest account (`totalWindows`,
 //   ADR-091 section 3): each window (5 hours, week, week per model, fullest) counts the accounts that measured it – the
 //   share left is their mean, every account weighted equally (an account without that window does not count), the
-//   reset the next one of them. The headline is the total of the week (else the fullest total window), with "usable
+//   reset the next one of them. The headline is the mean of what each subscription has left in its binding window
+//   (`bindingFree`: a subscription whose 5 hours or week are used up counts 0 %; unreadable ones are left out and
+//   counted apart), with "usable
 //   now: X of N" and the next release over the hub's states of its rows (counted here, as the summary of ADR-081
 //   section 6 counts them: only the browser knows which rows are listed – names are sealed, a token file named like a
 //   record is that record); the details are the total windows, then every account with all its windows.
@@ -359,13 +361,55 @@ export async function loadSubscriptions(context: LoadContext): Promise<Subscript
 
 // --- providers ---
 
-/** The headline of a list of windows: the week, else the fullest window. */
-function headlineIn<T extends QuotaWindow>(windows: readonly T[]): T | null {
-  return (
-    windows.find((window) => window.window === 'seven_day') ??
-    [...windows].sort((a, b) => b.usedPercent - a.usedPercent)[0] ??
-    null
-  );
+/** The windows of the whole subscription: 5 hours, week, or the binding one of a token file; a window per model binds
+ *  only its model (ADR-081 section 2). */
+const WHOLE = new Set(['five_hour', 'seven_day', FULLEST]);
+
+/**
+ * What one subscription has left now (ADR-091 section 3): the share left (`freePercent`) of its binding window – the
+ * hub's (`Usage.binding`), else the same rule on its reading (of 5 hours and week the one with the least left, the week
+ * on a tie). A subscription whose 5 hours are used up has 0 % left, however much its week has. Null without a reading,
+ * for an unreadable one and without a window of the whole subscription.
+ */
+export function bindingFree(
+  row: SubscriptionRow,
+  now: number,
+): { readonly freePercent: number; readonly resetsAt: number | null } | null {
+  if (row.reading === null || row.reading.unreadable) return null;
+  const whole = row.reading.windows.filter((window) => WHOLE.has(window.window));
+  const named = whole.find((window) => window.window === row.usage?.binding);
+  const left = (window: QuotaWindow) => freePercent(window.usedPercent, window.resetsAt, now);
+  const found =
+    named ??
+    [...whole].sort((a, b) => left(a) - left(b) || Number(b.window === 'seven_day') - Number(a.window === 'seven_day'))[0];
+  return found === undefined ? null : { freePercent: left(found), resetsAt: found.resetsAt };
+}
+
+/** The headline of a provider: the mean of what its subscriptions have left in their binding windows. */
+export interface Headline {
+  /** The mean share left, every counted subscription weighted equally. */
+  readonly freePercent: number;
+  /** How many subscriptions it counts (at least 1). */
+  readonly accounts: number;
+  /** Unix ms of the next reset among their binding windows, null when none is known. */
+  readonly resetsAt: number | null;
+  /** Unix ms of the oldest reading it counts. */
+  readonly measuredAt: number;
+}
+
+function headlineOf(rows: readonly SubscriptionRow[], now: number): Headline | null {
+  const counted = rows.flatMap((row) => {
+    const found = bindingFree(row, now);
+    return found === null || row.reading === null ? [] : [{ ...found, fetchedAt: row.reading.fetchedAt }];
+  });
+  if (counted.length === 0) return null;
+  const resets = counted.flatMap((item) => (item.resetsAt === null ? [] : [item.resetsAt]));
+  return {
+    freePercent: counted.reduce((sum, item) => sum + item.freePercent, 0) / counted.length,
+    accounts: counted.length,
+    resetsAt: resets.length === 0 ? null : Math.min(...resets),
+    measuredAt: Math.min(...counted.map((item) => item.fetchedAt)),
+  };
 }
 
 /** One window as the total of the accounts that measured it. */
@@ -419,8 +463,10 @@ export function totalWindows(rows: readonly SubscriptionRow[], now: number): Tot
 export interface ProviderGroup {
   readonly provider: string;
   readonly name: string;
-  /** The total of the week of all accounts (else the fullest total window); null when nothing is measured. */
-  readonly headline: TotalWindow | null;
+  /** The mean of what its subscriptions have left in their binding windows (`bindingFree`); null when none counts. */
+  readonly headline: Headline | null;
+  /** How many of its subscriptions are not readable (they are left out of the headline). */
+  readonly unreadable: number;
   /** Unix ms of the oldest reading the headline counts, null without a headline. */
   readonly headlineAt: number | null;
   /** Each window as the total of the accounts that measured it, ordered. */
@@ -442,7 +488,7 @@ export function providerGroups(rows: readonly SubscriptionRow[], now: number, so
   for (const row of rows) groups.set(row.provider, [...(groups.get(row.provider) ?? []), row]);
   const made = [...groups.entries()].map(([provider, members]): ProviderGroup => {
     const windows = totalWindows(members, now);
-    const headline = headlineIn(windows);
+    const headline = headlineOf(members, now);
     const reads = members.flatMap((row) => (row.reading === null ? [] : [row.reading.fetchedAt]));
     const releases = members.flatMap((row) =>
       row.usage?.state === 'exhausted' && row.usage.release !== null && row.usage.release > now
@@ -454,6 +500,7 @@ export function providerGroups(rows: readonly SubscriptionRow[], now: number, so
       name: providerName(provider),
       headline,
       headlineAt: headline?.measuredAt ?? null,
+      unreadable: members.filter((row) => row.reading?.unreadable === true).length,
       windows,
       rows: members,
       usable: members.filter((row) => row.usage?.state === 'usable').length,

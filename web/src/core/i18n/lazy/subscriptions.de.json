@@ -14,6 +14,7 @@
   "total.one": "1 Konto",
   "total.many": "alle {n}",
   "usable": "jetzt nutzbar: {n} von {total}",
+  "unreadable": "{n} nicht lesbar",
   "free": "{p} frei",
   "binding": "bindet",
   "blocked": "gerade nicht nutzbar bis {at} (in {in})",

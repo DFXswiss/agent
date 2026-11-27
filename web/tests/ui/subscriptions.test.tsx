@@ -227,12 +227,14 @@ describe('the card of the home page', () => {
     expect(within(provider).getByTestId('subscriptions.provider.usable')).toHaveTextContent('usable now: 5 of 9');
     // no account waits for a release
     expect(within(provider).queryByTestId('subscriptions.provider.release')).toBeNull();
-    // what is left of the week of the three accounts that measured it: (5 + 50 + 90) / 3, the next reset of them
-    expect(within(provider).getByTestId('subscriptions.provider.free')).toHaveTextContent('48.3% free');
+    // what each measured subscription has left in its binding window: Team 5, own 50, Gamma 90, team-a 60; Beta is
+    // not readable and counted apart
+    expect(within(provider).getByTestId('subscriptions.provider.free')).toHaveTextContent('51.3% free');
+    expect(within(provider).getByTestId('subscriptions.provider.unreadable')).toHaveTextContent('1 not readable');
     expect(within(provider).getByTestId('subscriptions.provider.reset')).toHaveTextContent('<1 min');
     expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('data-level', 'ok');
-    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-valuenow', '48');
-    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-valuetext', '48.3% free');
+    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-valuenow', '51');
+    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-valuetext', '51.3% free');
     expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-label', 'Claude – all 9');
     expect(screen.queryByTestId('subscriptions.provider.details')).toBeNull();
     toggle(provider, true);
@@ -286,11 +288,11 @@ describe('the review of KOR-68', () => {
     await operator(t, [operatorSub('file', 10, FRESH)]);
     mount(t, [{ path: '/', element: <SubscriptionsCard /> }], '/');
     const provider = await screen.findByTestId('subscriptions.provider');
-    // the total counts an old reading: the line is marked old; 130 % used counts as 0 % left: (0 + 10) / 2
+    // the total counts an old reading: the line is marked old; 130 % used counts as 0 % left: (0 + 10 + 90) / 3
     expect(within(provider).getByTestId('subscriptions.provider.old')).toHaveTextContent('old (2 h ago)');
-    expect(within(provider).getByTestId('subscriptions.provider.free')).toHaveTextContent('5% free');
-    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-valuenow', '5');
-    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('data-level', 'low');
+    expect(within(provider).getByTestId('subscriptions.provider.free')).toHaveTextContent('33.3% free');
+    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('aria-valuenow', '33');
+    expect(within(provider).getByTestId('subscriptions.provider.bar')).toHaveAttribute('data-level', 'ok');
     toggle(provider, true);
     expect(within(account(id(1))).getByTestId('subscriptions.account.free')).toHaveTextContent('0% free');
     expect(within(account(id(1))).getByTestId('subscriptions.account.bar')).toHaveAttribute('aria-valuenow', '0');
@@ -356,7 +358,9 @@ describe('what is left of each subscription and the window that binds it', () =>
       `next release ${clock(FIVE_DONE, 'en')} (in 1 h 30 min)`,
     );
     // the provider line stays with the mean of the week, as what is left: (87 + 0 + 80) / 3
-    expect(within(provider).getByTestId('subscriptions.provider.free')).toHaveTextContent('55.7% free');
+    // what each has left in its binding window: Nora 0 (5 hours used up), Otto 0 (week), Pia 80
+    expect(within(provider).getByTestId('subscriptions.provider.free')).toHaveTextContent('26.7% free');
+    expect(within(provider).queryByTestId('subscriptions.provider.unreadable')).toBeNull();
     toggle(provider, true);
     await screen.findByTestId('subscriptions.provider.details');
     const windows = (key: string) =>
@@ -420,7 +424,7 @@ describe('what is left of each subscription and the window that binds it', () =>
     expect(within(provider).getByTestId('subscriptions.provider.release')).toHaveTextContent(
       `nächste Freigabe ${clock(FIVE_DONE, 'de')} (in 1 h 30 min)`,
     );
-    expect(within(provider).getByTestId('subscriptions.provider.free')).toHaveTextContent('55.7% frei');
+    expect(within(provider).getByTestId('subscriptions.provider.free')).toHaveTextContent('26.7% frei');
     toggle(provider, true);
     await screen.findByTestId('subscriptions.provider.details');
     const nora = account(id(1));

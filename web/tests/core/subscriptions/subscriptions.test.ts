@@ -13,6 +13,7 @@ import { setIdentity, setProfile } from '../../../src/core/store/slices/me';
 import { setPlatform } from '../../../src/core/store/slices/orgs';
 import {
   ageParts,
+  bindingFree,
   freeLevel,
   FULLEST,
   KIND,
@@ -637,6 +638,51 @@ describe('providers', () => {
     });
   });
 
+  it('totals the provider as the mean of what each subscription has left in its binding window', () => {
+    // the readings of 27.11. 09:24, under invented names: a subscription whose 5 hours or week are used up counts 0 %
+    const sub = (key: string, five: number, week: number, binding: 'five_hour' | 'seven_day', usable = true) =>
+      rowOf(key, 'claude', [w('five_hour', five), w('seven_day', week)], NOW, {
+        state: usable ? 'usable' : 'exhausted',
+        binding,
+        release: usable ? null : ms(LATER),
+      });
+    const unreadable: SubscriptionRow = {
+      ...rowOf('x', 'claude', null),
+      status: 'not_readable',
+      reading: { fetchedAt: NOW, deviceId: null, unreadable: true, windows: [] },
+    };
+    const group = providerGroups(
+      [
+        sub('a', 10, 17, 'seven_day'), // 83
+        sub('b', 10, 18, 'seven_day'), // 82
+        sub('c', 10, 21, 'seven_day'), // 79
+        sub('d', 10, 28, 'seven_day'), // 72
+        sub('e', 53, 20, 'five_hour'), // 47: the 5 hours bind
+        sub('f', 10, 67, 'seven_day'), // 33
+        sub('g', 10, 89, 'seven_day'), // 11
+        sub('h', 10, 99, 'seven_day'), // 1
+        sub('i', 100, 15, 'five_hour', false), // 0: 5 hours full, the week nearly free
+        sub('j', 100, 15, 'five_hour', false), // 0
+        sub('k', 0, 100, 'seven_day', false), // 0: week full
+        sub('l', 0, 100, 'seven_day', false), // 0
+        unreadable,
+      ],
+      NOW,
+    )[0]!;
+    expect(group.headline).toMatchObject({ accounts: 12 });
+    // 408 / 12 – not the week alone (48.3 % used on the old view)
+    expect(group.headline!.freePercent).toBeCloseTo(34.0, 10);
+    expect(group.unreadable).toBe(1);
+    expect(group.usable).toBe(8);
+    expect(group.nextRelease).toBe(ms(LATER));
+    // without the hub's state the same rule reads it from the windows (the week on a tie)
+    const plain = (five: number, week: number) =>
+      bindingFree(rowOf('p', 'claude', [w('five_hour', five), w('seven_day', week)]), NOW)?.freePercent;
+    expect([plain(100, 15), plain(0, 100), plain(53, 20), plain(40, 40)]).toEqual([0, 0, 47, 60]);
+    expect(bindingFree(rowOf('p', 'claude', [w('weekly:opus', 100)]), NOW)).toBeNull();
+    expect(bindingFree(unreadable, NOW)).toBeNull();
+  });
+
   it('counts a window whose reset has passed as free in the total', () => {
     const at = (name: string, used: number, resets: string): QuotaWindow => ({
       window: name,
@@ -748,25 +794,28 @@ describe('providers', () => {
     const claude = groups[1]!;
     expect(claude).toMatchObject({
       name: 'Claude',
-      headline: { window: 'seven_day', usedPercent: 65, freePercent: 35, accounts: 2 },
+      // what each subscription has left in its binding window: (50 + 20 + 1) / 3
+      headline: { accounts: 3, resetsAt: null, measuredAt: ms(EARLIER) },
       windows: [
         { window: 'five_hour', usedPercent: 20, freePercent: 80, accounts: 2 },
         { window: 'seven_day', usedPercent: 65, freePercent: 35, accounts: 2 },
         { window: FULLEST, usedPercent: 99, freePercent: 1, accounts: 1 },
       ],
       newest: ms(LATER),
-      // the oldest reading the headline counts (c3 has no week)
-      headlineAt: ms(AT),
+      // the oldest reading the headline counts
+      headlineAt: ms(EARLIER),
+      unreadable: 0,
     });
+    expect(claude.headline!.freePercent).toBeCloseTo(71 / 3);
     expect(claude.rows.map((found) => found.key)).toEqual(['c1', 'c2', 'c3']);
     expect(groups[2]).toMatchObject({ name: 'ChatGPT', headline: null, headlineAt: null, windows: [], newest: null });
-    // without a week the fullest total window is the headline
-    expect(groups[4]!.headline).toMatchObject({ window: FULLEST, usedPercent: 95 });
+    expect(groups[4]!.headline).toMatchObject({ freePercent: 5, accounts: 1 });
+    // a week per model never binds the subscription
     expect(
-      providerGroups([rowOf('q1', 'quux', [w('five_hour', 20), w(FULLEST, 70), w('weekly:opus', 40)])], NOW)[0]!
+      providerGroups([rowOf('q1', 'quux', [w('five_hour', 20), w(FULLEST, 70), w('weekly:opus', 95)])], NOW)[0]!
         .headline,
-    ).toMatchObject({ window: FULLEST, usedPercent: 70, freePercent: 30 });
-    // least left first: zeta (5 %), claude (35 %), yota (40 %, although one of its accounts is used up)
+    ).toMatchObject({ freePercent: 30, accounts: 1 });
+    // least left first: zeta (5 %), claude (23.7 %), yota (40 %)
     expect(providerGroups(rows, NOW, true).map((group) => group.provider)).toEqual([
       'zeta',
       'claude',

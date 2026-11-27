@@ -14,6 +14,7 @@
   "total.one": "1 account",
   "total.many": "all {n}",
   "usable": "usable now: {n} of {total}",
+  "unreadable": "{n} not readable",
   "free": "{p} free",
   "binding": "binding",
   "blocked": "not usable now until {at} (in {in})",

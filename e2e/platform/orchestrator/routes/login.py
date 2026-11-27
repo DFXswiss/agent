@@ -6,10 +6,10 @@
   an `anthropic.com` address, the sender the runner's IMAP search filters on) on the runner device, registered as
   doubles `mail` and `authpage` (the run's final check asserts their state), and points every runner at them:
   `AGENT_RUNNER_LOGIN_ARGV` = the login-CLI double (`setup-token` against the auth page, trusting the CA),
-  `AGENT_RUNNER_LOGIN_AUTOMATION=on` and `SSL_CERT_FILE` = the CA (IMAPS and the page pin of the automation); running
-  runners are restarted with the same home. Then it adds the mailbox account (if given) and loads the auth page's
-  scenario (`seed`: the tokens it issues; `junk`: the magic-link mail lands in `Junk`; `fault`: a page or mail
-  failure). Answers `{pages, imaps: {host, port}, restarted}`.
+  `AGENT_RUNNER_LOGIN_AUTOMATION=on`, `AGENT_RUNNER_LOGIN_SANDBOX=process` and `SSL_CERT_FILE` = the CA (IMAPS and
+  the page pin of the automation); running runners are restarted with the same home. Then it adds the mailbox account
+  (if given) and loads the auth page's scenario (`seed`: the tokens it issues; `junk`: the magic-link mail lands in
+  `Junk`; `fault`: a page or mail failure). Answers `{pages, imaps: {host, port}, restarted}`.
 - `POST /login/magic-link` (`{"user", "password", "folder": "INBOX" | "Junk"}`): the newest magic link in a folder of
   the mail double, read over IMAP like a person reading their mail (the password reaches the reader through its
   environment). Answers `{messages, link}` (`link` null when there is none). For the manual relay of a spec: the
@@ -131,6 +131,8 @@ def post_doubles(ctx: Context, _params: dict[str, str], body: Any) -> tuple[int,
     settings = {
         "AGENT_RUNNER_LOGIN_ARGV": json.dumps(login_argv(ctx)),
         "AGENT_RUNNER_LOGIN_AUTOMATION": "on",
+        # the doubles run on the test host, which a login VM's boundary does not reach (ADR-100 section 3)
+        "AGENT_RUNNER_LOGIN_SANDBOX": "process",
         "SSL_CERT_FILE": ca_file(ctx),
     }
     restarted = point_runners(ctx, settings)

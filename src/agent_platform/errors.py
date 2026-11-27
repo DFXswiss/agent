@@ -166,6 +166,10 @@ NEXT_FOR_REASON: dict[tuple[str, str], str] = {
         "The analysis has no output yet: wait for it with `agent-platform task wait --task <task_id>`, then run the "
         "command again."
     ),
+    ("invalid_argument", "human_only"): (
+        'A check for humans is done by a person: the user clicks into the picture in the web ("Meine Abos") or with '
+        "this tool signed in as the user; an agent may only give the automation up (`subscriptions check --relay`)."
+    ),
     ("device_request_failed", "github_not_connected"): (
         "No GitHub connection may read this pull request: connect one with `agent-platform github connect --from-gh` "
         "or `agent-platform github connect --token -`, then run the command again."

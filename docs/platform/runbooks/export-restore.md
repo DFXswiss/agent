@@ -30,6 +30,17 @@ Output `exported <rows>`. Exit codes: 0 ok, 1 refused, 2 configuration error, 3 
 Export every organization (one file each) and keep a database dump of the whole `agent_hub` database beside it
 (the dump is the primary backup; the export is the verified, per-org portable form).
 
+**Where it runs.** Run `agent-hub export` and `agent-hub audit verify` in a **container of their own** (a one-off
+container of the hub image with the hub's environment and its own memory limit), **never inside the container or the
+memory of the running hub process**: a long read there competes with the live hub for one memory limit, and the
+OOM killer then ends the hub, not only the export. The commands stream: the export reads each table in blocks of at
+most 500 rows and about 16 MiB of stored data (a single larger row alone), writes and hashes each line at once, and
+`audit verify` reads the chain in the same bounded batches. Their memory therefore does not grow with the size of the
+organization or of single rows (the suite measures a peak below 256 MiB for 2 GiB of large events and for a long audit
+chain; `tests/platform/hub/backup/test_memory.py`). Give the container a limit of **at least 512 MiB** (headroom for
+the interpreter and the largest single row); more is not needed when an org grows. Write the file to a volume of the
+backup host, not into the container's own file system.
+
 ## 3. Restore
 
 Only into an **empty, migrated** database:
@@ -41,7 +52,7 @@ Only into an **empty, migrated** database:
    the owner role only during the restore. Output `restored <rows>` or `failed <step>`; a non-empty target database
    is refused.
 4. `agent-hub rebuild-projections --check` – one JSON line; `differences` must be empty.
-5. `agent-hub audit verify` – exit 0.
+5. `agent-hub audit verify` – exit 0 (in its own container, §2).
 6. Start the hub. Browsers and runners reconnect with their stored cursors; a browser that saw a newer log than the
    restored one stops with `log_rollback` for that org – this is correct behaviour (data newer than the export are
    lost) and needs a decision of the org's admins, not a database edit.

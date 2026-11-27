@@ -71,8 +71,12 @@ e2e/                      Playwright specs for web-only flows against a hub test
 One store in `core/store` holds: config, me, orgs (verified log state, rights, keys in memory as non-extractable
 `CryptoKey` or raw bytes in closures), workgroups, tasks, sessions, operations, notifications, devices,
 decrypted event bodies, metrics, connection state, job state. Scope keys and the identity private keys live only in
-memory; a page reload requires the passkey (or recovery code / device key) again. The store is updated only by core
-modules; React reads via selectors.
+memory. A browser that **stays signed in** (rule E-40, [ADR-102](../adr/102-stay-signed-in.md); the default, §3.4)
+keeps the identity at rest under its non-extractable device key (`persist/device-key`, §3.3): at start-up `restore()`
+opens it and unlocks (`GET /v1/me`, logs and wraps verified) without a gesture, in every new tab, after closing and
+reopening the tab and after a browser restart. Without that entry ("Stay signed in" off, "Forget on this browser") a
+page reload is `locked` and requires the passkey (or recovery code) again. The store is updated only by core modules;
+React reads via selectors.
 
 Volume bounds (ADR-086 §1, `decisions/KOR-35.md` §4):
 - **Event store.** A bounded store per scope in two classes with a bound each: the bulk kinds of sessions (`session.output`,
@@ -156,10 +160,15 @@ history; it is never sent to the hub, logged or stored.
 
 ### 2.6 Signed requests and the session
 
-`core/net` signs every non-anonymous request with the session key (`03-api.md` §1). On `401 session_expired` or
-less than 5 minutes before `expires_at` the UI shows a non-blocking "Sign in again" prompt; the re-login (§3.4)
-replaces the session key without losing the screen. `POST /v1/session/end` on explicit sign-out, then IndexedDB
-session entries are deleted and memory is cleared.
+`core/net` signs every non-anonymous request with the session key (`03-api.md` §1). A browser that stays signed in
+renews its session by itself (rule E-40, [ADR-102](../adr/102-stay-signed-in.md)): every minute it looks at the stored
+session and takes over an end (or a new key of the same user) another tab wrote; when this browser's last renewal is an
+hour old, or less than 5 minutes are left, one tab – under the Web Lock `agent-platform.session-renew` – sends `POST
+/v1/session/renew`, signed by the still valid key, and stores the new end (30 days) with the time of the renewal; a
+sign-in renews at once. Otherwise (and if a renewal fails), on `401 session_expired` or less than 5 minutes before
+`expires_at` the UI shows a non-blocking "Sign in again" prompt; the re-login (§3.4) replaces the session key without
+losing the screen. `POST /v1/session/end` on explicit sign-out, then IndexedDB session entries and this browser's
+device-key entry of the user are deleted and memory is cleared.
 
 ## 3. Invitation, registration, login, recovery, passkeys
 
@@ -237,11 +246,13 @@ when the login ceremony returns no PRF result (detected **per login**, `04-crypt
 2. Options: (a) enter the recovery code (unlock only: bundle from the signed `GET /v1/me/bundles/recovery`, no rotation and
    no new passkey; the §3.5 recovery flow is only for users without any working passkey); (b) "Remember this browser":
    after unlocking, create a non-extractable AES-GCM key in IndexedDB that encrypts the identity bundle locally
-   (`persist/device-key`); next login on this browser unlocks with it; (c) add a PRF-capable passkey from another
-   signed-in device (§3.6).
-The device key is per browser profile, listed in `/settings` ("This browser is remembered and opens your data even
-without a suitable passkey") with
-"Forget" (deletes the IndexedDB entry).
+   (`persist/device-key`); the browser then stays signed in (rule E-40) and the next login on this browser unlocks
+   with it; (c) add a PRF-capable passkey from another signed-in device (§3.6).
+The device key is per browser profile and is also the key of "Stay signed in" (§3.4, rule E-40,
+[ADR-102](../adr/102-stay-signed-in.md)): written after every unlock while that choice is on, deleted when it is off
+and at sign-out. `/settings` lists it under "Stay signed in" ("This browser stays signed in and opens your data without
+a passkey (since …)") with "Forget on this browser" (deletes the IndexedDB entry and stops the renewal of §2.6; a reload
+then asks for the passkey), or, without an entry, "Stay signed in on this browser".
 
 ### 3.4 Login and unlock (`/login`)
 
@@ -249,6 +260,13 @@ One button "Sign in with passkey" → `POST /v1/passkeys/login/begin` → new se
 statement → `get()` with PRF → `POST /v1/passkeys/login/finish` → decrypt bundle with `KEK_i` (or device key / recovery
 code per §3.3) → load `GET /v1/me`, verify logs of all orgs (§11.3), fetch wraps (`GET /v1/wraps`) and open scope keys
 → route. Unlock failure after a valid login (`decrypt_failed`) shows §3.3 options.
+
+Below the button the checkbox **"Stay signed in"** (rule E-40, [ADR-102](../adr/102-stay-signed-in.md); `login.stay`),
+on by default, with one line on what it does and "not on shared devices". The choice is kept for this browser
+(`localStorage`, `Prefs.staySignedIn`) and applies to every unlock, also the sign-ins of invitations and recovery: on,
+the device key of §3.3 keeps the identity and the session renews itself (§2.6), so a reload, a new tab, a closed and
+reopened tab and a browser restart open unlocked without the passkey until the user signs out; off, this browser's
+entry is deleted and a reload is `locked` as before.
 
 ### 3.5 Recovery (`/recover`)
 
@@ -278,23 +296,25 @@ The home of an organization shows where people are needed, across all workgroups
   card with every subscription of the user, measured centrally, showing everywhere what is LEFT ("82% free": 100 %
   less the used share, at least 0 %, a window whose reset has passed free again – `freePercent` of
   `core/credentials/quotas.ts`, the same in the sections of §8.2 and "Model access and quotas") – per provider a
-  collapsible line with the time to the reset, a bar and what is left of the week as the total of all its accounts,
-  never its fullest account (named as such: "all 9", with one account "1 account"), "usable now: X of N" and, when an
-  account waits for a known one, the next release ("next release 14:05 (in 1 h 30 min)"); opened, the 5-hour window,
-  the week and the week per model as totals, every account with the source and age of its reading and ALL its
-  windows (5 hours, week, week per model; a token file its binding one), each with share left, bar and time to its
-  reset, and the age of the provider's newest read. A total counts the accounts that have a reading of that window:
+  collapsible line with the time to the reset, a bar and the share left of all its accounts together, never its
+  fullest account (named as such: "all 9", with one account "1 account"): the mean of what each subscription has left
+  in its binding window – the smaller rest of its 5-hour window and its week (a week per model does not count,
+  ADR-081 §2), so a subscription whose 5 hours or week are used up counts 0 % however much the other has; unreadable
+  subscriptions are left out and named with their number ("1 not readable"); next to it "usable now: X of N" and,
+  when an account waits for a known one, the next release ("next release 14:05 (in 1 h 30 min)"); opened, the
+  5-hour window, the week and the week per model as totals, every account with the source and age of its reading and
+  ALL its windows (5 hours, week, week per model; a token file its binding one), each with share left, bar and time to
+  its reset, and the age of the provider's newest read. A total counts the accounts that have a reading of that window:
   what is left is the mean of their shares left, every account weighted equally (an account without the window does
-  not count), the time the one to the next reset among them; without a week the headline is the fullest total
-  window. Whether an account is usable, the window that binds it ("binding") and the release of an exhausted one
-  ("not usable now until 14:05 (in 1 h 30 min)") are the hub's, by the rule of ADR-081 §6 (`state` of `GET
-  /v1/me/subscriptions`, the state and `until` of a token file); "usable now" and the next release count them as
-  that summary does (ADR-091 §3). Amber at 30 % left or less, red at 10 % or less, a reading older than 60 minutes
-  marked old. Data: `GET /v1/me/subscriptions` and every record opened in the browser (name, note,
-  address, logged in or not, use; ADR-090), for the platform role `operator` also the token-file subscriptions of `GET
-  /v1/orgs/{org}/quotas` of the granted organizations (an organization whose answer fails is left out; a token file
-  named like an own record, ignoring case, is not listed again – the record's row stays, with the file's reading when it
-  has none); refreshed every minute. Every account names the source of its reading (device or token file); a closed
+  not count), the time the one to the next reset among them. Whether an account is usable, the window that binds it
+  ("binding") and the release of an exhausted one ("not usable now until 14:05 (in 1 h 30 min)") are the hub's, by
+  the rule of ADR-081 §6 (`state` of `GET /v1/me/subscriptions`, the state and `until` of a token file); "usable
+  now" and the next release count them as that summary does (ADR-091 §3). Amber at 30 % left or less, red at 10 % or
+  less, a reading older than 60 minutes marked old. Data: `GET /v1/me/subscriptions` and every record opened in the
+  browser (name, note, address, logged in or not, use; ADR-090), for the platform role `operator` also the
+  token-file subscriptions of `GET /v1/orgs/{org}/quotas` of the granted organizations (an organization whose answer
+  fails is left out; a token file named like an own record, ignoring case, is not listed again – the record's row
+  stays, with the file's reading when it has none); refreshed every minute. Every account names the source of its reading (device or token file); a closed
   provider line one of whose counted headline readings is older than 60 minutes is marked old. Without any subscription
   the card leads to "Add subscription". The card links the page `/subscriptions`: the same provider lines with
   "detailed" (opens all; the user's own choices come back when it is switched off) and "least free first" (providers
@@ -978,6 +998,28 @@ to; the sealed `use {wgs}` and its plaintext mirror), "Check" (device request `m
 sealed to the device) and "Remove" (one confirmation). Sessions of a released workgroup read the mailbox with
 `mail.find`; the password never leaves the record and the device. The view and its texts (area `mailbox`) are a chunk
 of their own loaded when the settings show the section, so the first load keeps its budget.
+
+**Subscriptions side by side (KOR-73, [ADR-100](../adr/100-parallel-subscription-logins.md)).** When the preselected
+device announced `subscriptions.parallel` (`subscriptionDevices().parallel`; otherwise everything above stays):
+- "Add a subscription" also takes the subscription's **own mailbox** (IMAP host, port 993, user, password, address –
+  `MailboxFields`), the address to sign in with, the **organizations** that may use it (`use.orgs`, E-31) and, with a
+  mailbox, the data of a **new account** (full name, date of birth, and three consents – terms, minimum age, product
+  e-mails – each unticked and worded as given by the account holder, the person whose address it is). The record is
+  written first (`PUT /v1/subscriptions/{id}`, `expected_version` 0, no token, `kind` `oauth_login`, with the mirror of
+  the use), then `claude.login` goes out with `extended: true` and the subscription as plaintext `slot`; with a mailbox
+  it is automatic and may carry `account`.
+- "Add several subscriptions" (`AddSeveral`, shown only with such a device): rows (label, address, own mailbox, new
+  account) and one choice of organizations for all; "Log them all in" starts every login at once
+  (`addSubscriptions`, one record, request and slot each) and shows the progress of each subscription in its row
+  (stages, the check for humans, link and code, done or failed; "again" restarts that row's login).
+- **Check for humans** (`HumanCheck`): a `verify` response shows the newest picture of the login sandbox; the owner's
+  click into it goes out as the follow-up `{click: {x, y}}` (fractions of the picture), "Sign in myself in my own
+  browser" sends `{relay: true}`. The text says the owner does the check and the platform only carries the click. A
+  fallback names its `reason`.
+- The subscription card shows the address of the own mailbox (never its password) and offers "Mailbox": set or
+  replace it (the password is entered anew), remove it, and "Check mailbox" (`mailbox.check {subscription_id}`). "Log
+  in now/again" of a subscription with its own mailbox is automatic and goes only to such a device
+  (`no_device_available` otherwise).
 
 ### 8.3 Connected agents (KOR-24, `11-agent-access.md`)
 

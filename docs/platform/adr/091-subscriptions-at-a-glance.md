@@ -48,13 +48,16 @@ operator's token files are not records and appear only in `GET /v1/orgs/{org}/qu
    - **Provider line.** The total of all its accounts, never its fullest account: each window (5 hours, week, week per
      model, fullest window) counts the accounts that have a reading of it – what is left is the mean of their shares
      left, every account weighted equally (an account without that window does not count), its time the one to the
-     next reset among them. The headline is the total of the week (else the fullest total window), the detail windows
-     are the totals of each window. The line says that it stands for all accounts ("all 9", with one account "1
-     account"), so it is not taken for an account of the same name, how many accounts the hub counts as usable now
-     ("usable now: 3 of 9") and, when one waits for a known one, the next release ("next release 14:05 (in 1 h 30
-     min)", the time written as the counter writes it), counted over the hub's states of the listed rows as the summary
-     of ADR-081 §6 counts them – only the browser knows which rows are listed (names are sealed; a token file named
-     like a record is that record).
+     next reset among them; these are the detail windows. The headline ("free") is the mean of what each subscription
+     has left in its binding window – the smaller rest of its 5-hour window and its week (2026-11-27: "wenn ein abo im
+     5h limit aufgebraucht ist, dann musst du es in der gesamtberechnung mit 0% frei kalkulieren") –, every
+     subscription weighted equally; a subscription whose 5 hours or week are used up counts 0 %, unreadable ones are
+     left out and named with their number; its time is the next reset among those binding windows. The line says
+     that it stands for all accounts ("all 9", with one account "1 account"), so it is not taken for an account of the
+     same name, how many accounts the hub counts as usable now ("usable now: 3 of 9") and, when one waits for a known
+     one, the next release ("next release 14:05 (in 1 h 30 min)", the time written as the counter writes it), counted
+     over the hub's states of the listed rows as the summary of ADR-081 §6 counts them – only the browser knows which
+     rows are listed (names are sealed; a token file named like a record is that record).
    - **Every subscription** shows the source and time of its measurement and ALL its windows (5 hours, week, week per
      model; a token file only its binding one), each with share left, bar and time to its reset. The hub's binding
      window is marked ("binding"); an exhausted subscription is marked "not usable now until 14:05 (in 1 h 30 min)" –

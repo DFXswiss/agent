@@ -86,7 +86,8 @@ test('the readings show per provider, opened, detailed, sorted and in the table'
   await page.getByTestId('login.submit').click();
   await expect(page.getByTestId('subscriptions.provider.usable')).toHaveText('usable now: 0 of 1');
   await expect(page.getByTestId('subscriptions.provider.release')).toContainText('next release');
-  await expect(page.getByTestId('subscriptions.provider.free')).toHaveText('87% free');
+  // the total counts the subscription with what its binding window has left: the 5 hours are used up, so 0 %
+  await expect(page.getByTestId('subscriptions.provider.free')).toHaveText('0% free');
   await page.getByTestId('subscriptions.detailed').check();
   const used = page.getByTestId('subscriptions.account');
   await expect(used).toHaveAttribute('data-exhausted', 'yes');

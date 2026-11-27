@@ -282,6 +282,11 @@ function Provider({
           >
             {t('subscriptions.usable', { n: group.usable, total: group.rows.length })}
           </span>
+          {group.unreadable > 0 && (
+            <span className="shrink-0 text-xs text-gray-600" data-testid="subscriptions.provider.unreadable">
+              {t('subscriptions.unreadable', { n: group.unreadable })}
+            </span>
+          )}
           {group.nextRelease !== null && (
             <span className="shrink-0 text-xs text-gray-600" data-testid="subscriptions.provider.release">
               {release('subscriptions.next-release', group.nextRelease, now)}
