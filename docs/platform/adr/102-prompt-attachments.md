@@ -34,9 +34,10 @@ object of its own at the hub (B), or A first and B later (C). The owner chose B,
    organization stay within `AGENT_HUB_ATTACHMENT_ORG_BYTES`; an upload without a new chunk for 6 hours is removed by
    the job `attachments.expire`; complete objects stay with their workgroup.
 4. **Browser.** The composer takes files by a button, by drag and drop and by pasting an image; each is uploaded and
-   committed before the prompt is sealed, so a prompt never names an object the hub does not hold complete. The chat
-   shows the attachments of every prompt: images (PNG, JPEG, GIF, WebP) as a preview opened from the decrypted bytes,
-   every other file as a named entry that downloads the decrypted file.
+   committed when the prompt is sent, before the prompt is sealed, so a prompt never names an object the hub does not
+   hold complete (a prompt still needs a text). The chat shows the attachments of every prompt: images (PNG, JPEG,
+   GIF, WebP) as a preview opened from the decrypted bytes (a `data:` URL; the CSP stays as it is), every other file as
+   a named entry that downloads the decrypted file.
 5. **Runner and session.** Before a prompt with attachments is typed, the runner downloads every chunk, checks count,
    size and digest against the verified prompt, decrypts with `WK` of the named epoch and imports the files into the
    session's workspace under `attachments/<event id>/<n>-<name>` (the guest's file import, which refuses links,
