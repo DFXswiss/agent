@@ -30,6 +30,7 @@ from agent_guest.schema import SchemaSet
 from agent_runner.github import fork
 from agent_runner.github.client import GitHubClient, GitHubError, RateGate
 from agent_runner.operations.extensions import CheckFailed, OperationFailed
+from agent_runner.subagents import guest_features
 
 from ..sync.fakehub import CONTRACTS
 from .conftest import PUBLIC, REPO, GitHub
@@ -205,6 +206,15 @@ def test_forks_not_allowed_refuse_at_once_with_the_missing_right_and_the_next_st
         assert writes(github) == []
         waiting = [kind for kind, item in await r.ok.outbox() if kind == "event" and "waiting_for" in item["body"]]
         assert waiting == []
+        # a guest before HOT-33 gets the code its contracts know, with the same sentence
+        assert r.guest.answers()[-1][1]["result"]["error"]["code"] == "repo_read_only"
+        async with r.ok.env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.golden SET guest_version = '0.7.0'")
+        again = await r.run(sid, "github.create_branch", {"repo": REPO, "branch": "other", "from": "main"})
+        assert refused(again) == "repo_read_only"
+        assert again.answer is not None
+        delivered = r.guest.answers()[-1][1]["result"]
+        assert delivered["error"] == {**again.answer["error"], "code": "repo_not_accessible"}
 
     run10(store_dsn, github, tmp_path, body, token=READER)
 
@@ -412,6 +422,17 @@ def test_merge_upstream_keeps_a_diverged_or_missing_branch_and_passes_other_fail
                 await fork.sync(made, FORK, "main")
 
     run(body)
+
+
+def test_a_guest_before_hot_33_gets_answers_its_contracts_allow() -> None:
+    made = {"operation_id": "x", "status": "succeeded", "result": {"branch": "w", "sha": "a" * 40, "fork": FORK}}
+    assert guest_features.older_answer(made) == {**made, "result": {"branch": "w", "sha": "a" * 40}}
+    failed = {"operation_id": "x", "status": "failed", "error": {"code": "repo_read_only", "message": "m"}}
+    assert guest_features.older_answer(failed)["error"] == {"code": "repo_not_accessible", "message": "m"}
+    other = {"operation_id": "x", "status": "failed", "error": {"code": "timeout"}}
+    assert guest_features.older_answer(other) == other
+    assert guest_features.older_answer({"status": "pending"}) == {"status": "pending"}
+    assert guest_features.older_code(None) is None
 
 
 def test_the_pull_request_route_needs_a_fork_with_the_head() -> None:

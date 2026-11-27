@@ -70,8 +70,10 @@
    within the MCP wait (20 s from the request): `duplicate` with `duplicate_of` and the original's result; an original
    that failed gives `failed` with its error; nothing final in time gives `pending` with `duplicate_of`.
 7. **Answer** (`_deliver`): up to 3 attempts (1 s, 2 s); a refusal of the guest (the pending call is unknown or
-   answered) ends the attempts. If the MCP call had already returned `pending` (19 s or more since the request reached
-   the runner; the guest waits 20 s), the `operation.finished` notifier (RUN-14, `extensions.finished_notifier`) is
+   answered) ends the attempts. A guest before HOT-33 gets the answer in the form its contracts allow
+   (`guest_features.older_answer`: no `fork`, `repo_read_only` named `repo_not_accessible` with the same message).
+   If the MCP call had already returned `pending` (19 s or more since the request reached the runner; the guest waits
+   20 s), the `operation.finished` notifier (RUN-14, `extensions.finished_notifier`) is
    called for a final answer; without a notifier it is logged.
 
 `answer(operation_id)` and `wait_answer(operation_id, seconds)` give the current MCP outcome of an operation for
@@ -120,6 +122,7 @@ from agent_runner.sessions import records as session_records
 from agent_runner.sessions.env import SessionEnv
 from agent_runner.sessions.events import session_event
 from agent_runner.sessions.records import LocalSession
+from agent_runner.subagents import guest_features
 from agent_runner.subagents import limits as subagent_limits
 from agent_runner.subagents import store as subagent_store
 from agent_runner.sync.http import HubClient
@@ -912,11 +915,14 @@ class Pipeline:
         delivered = row is None
         if row is None:
             self.line(f"answer_unroutable operation_id={op.id} vm_id={op.vm_id}")
+        sent = op.answer
+        if row is not None and not await guest_features.current_guest(self.env.db, op.vm_id, guest_features.FORKS):
+            sent = guest_features.older_answer(sent)  # a guest before HOT-33 (`guest_features`)
         for attempt in range(0 if row is None else ANSWER_ATTEMPTS):
             assert row is not None
             try:
                 async with await self.env.client(row) as client:
-                    await client.answer_pending(op.pending_id, {"status": "ok", "result": op.answer})
+                    await client.answer_pending(op.pending_id, {"status": "ok", "result": sent})
                 delivered = True
             except GuestRefused as exc:
                 self.line(f"answer_refused operation_id={op.id} error={exc.error}")

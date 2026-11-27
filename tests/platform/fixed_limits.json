@@ -1188,6 +1188,9 @@
    "sealed[:20]": "size",
    "sealed[:32]": "size"
   },
+  "src/agent_runner/github/fork.py": {
+   "text[:1024]": "size"
+  },
   "src/agent_runner/github/reach.py": {
    "f'{TOKEN_NAME} {owner}'[:40]": "size",
    "text[:1024]": "size"

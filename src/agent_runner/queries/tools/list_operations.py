@@ -14,6 +14,7 @@ from typing import Any
 
 from agent_runner.queries import common, device_api
 from agent_runner.sessions.records import time_text
+from agent_runner.subagents import guest_features
 from agent_runner.subagents.extensions import QueryCall, QueryOutcome
 
 DEFAULT_LIMIT, MAX_LIMIT = 50, 100
@@ -69,12 +70,14 @@ async def list_operations(call: QueryCall) -> QueryOutcome:
                 (call.session.task_id, scope.wg_id, limit),
             )
             rows = await cur.fetchall()
+            current = await guest_features.current_guest(conn, call.session.vm_id, guest_features.FORKS)
+        # a guest before HOT-33 knows no `repo_read_only` (`guest_features.older_code`)
         found: list[dict[str, Any]] = [
             {
                 "operation_id": op_id,
                 "type": op_type,
                 "state": state,
-                "error_code": code if code in ERROR_CODES else None,
+                "error_code": (code if current else guest_features.older_code(code)) if code in ERROR_CODES else None,
                 "created_at": time_text(created.timestamp()),
             }
             for op_id, op_type, state, code, created in rows
