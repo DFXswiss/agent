@@ -43,6 +43,11 @@ runner log and the metrics.
   `exhausted`: no new binding, and a bound session is moved to another usable file by its renewal (in place, the
   model stays); without one the gateway keeps what it holds and the reconcile step `model_fallback` pauses the
   session.
+- **Models not in the plan** (HOT-26): an entry whose provider refused a model ("usage credits are required for this
+  model", `model.limits.Limits.refuses`, for the content that was refused) is not chosen for a session on that model
+  (`choose`/`pick`/`peek`/`used_up` with `model`); a session bound to it moves to another entry that is not known to
+  refuse the model, by its renewal (`model.gateways.operator_target`); without one it keeps what it holds and waits
+  (`model.fallback.renew`). It still serves other models.
 - **Shared subscriptions** (KOR-69, ADR-090 section 3): further Claude subscriptions of users that the desired state
   lists (`subscriptions.shared`) join the pool as entries named `sub-<record ID>` (`refresh_shared`): the record is
   fetched and verified like every record of its owner (`credentials.subscriptions`) and used only for a session of an
@@ -53,6 +58,11 @@ runner log and the metrics.
   pool exists without the directory once the desired state lists a shared subscription (`ensure`); metrics, `doctor`
   and `operator_quota` show the token files only; the quota of a shared entry is read like a file's (`quota.operator`)
   for the choice and the exhaustion. A token file named `sub-...` is no part of the pool (the prefix is reserved).
+  The device's copy of a record is not trusted beyond its token (HOT-26): when the token's `expires_at` passed or the
+  provider refused it, the record is fetched from the hub before the entry is used again (at most every
+  `FETCH_RETRY_S`) - a renewal of the measuring device whose `credentials` hint this device missed would else hand
+  every new or resumed session the expired token ("401 OAuth access token has expired"). While the hub has nothing
+  newer an expired entry is no entry (sessions move to another one or wait).
 - Tokens are kept in memory only (the cache of the current content of each file) and handed to the guest in the
   provisioning body; they never appear in a log line, a metric, an error or the store.
 """
@@ -67,6 +77,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -107,7 +118,9 @@ Identity = tuple[int, int, int, int]
 SHARED_PREFIX = "sub-"
 OPERATOR_ROLE = "operator"
 FETCH_RETRY_S = 60.0
-"""A shared subscription whose record could not be fetched is not asked for again within this time."""
+"""A shared subscription's record is fetched from the hub at most once in this time (a failed fetch, a stale token)."""
+EXPIRY_MARGIN_S = 60.0
+"""A shared token this close to its `expires_at` counts as expired (a request takes a while)."""
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
@@ -205,6 +218,8 @@ class Pool:
     """Session ID -> the file of that last block or deferral."""
     exhausted: Callable[[str], bool] = lambda _name: False
     """The file's access is marked used up (`model.limits`; wired by `pool_for`)."""
+    refuses: Callable[[str, str | None], bool] = lambda _name, _model: False
+    """The file's current content refused the model ("not in the plan", `model.limits.Limits.refuses`; HOT-26)."""
     quota: dict[str, float] = field(default_factory=dict)
     """File name -> `used_percent` of its fullest window of the last reading (`model.limits.fullest`)."""
     reported: dict[str, object] = field(default_factory=dict)
@@ -215,6 +230,10 @@ class Pool:
     uses: dict[str, Use] = field(default_factory=dict)
     failed: dict[str, float] = field(default_factory=dict)
     """Record ID -> time its last fetch failed."""
+    checked: dict[str, float] = field(default_factory=dict)
+    """Record ID -> time it was last fetched because the token the pool held was stale (HOT-26, `_fetch`)."""
+    expires: dict[str, float] = field(default_factory=dict)
+    """`sub-<record ID>` -> wall time its access token expires (`expires_at` of a full login, ADR-092)."""
 
     def __repr__(self) -> str:
         return f"Pool(files={sorted(self.files)!r}, shared={sorted(self.shared)!r}, problem={self.problem!r})"
@@ -350,9 +369,10 @@ class Pool:
         assert entry.identity is not None
         return entry.token, entry.identity
 
-    def choose(self, exclude: Iterable[str] = (), org_id: str | None = None) -> str | None:
+    def choose(self, exclude: Iterable[str] = (), org_id: str | None = None, model: str | None = None) -> str | None:
         """The usable entry for a new binding of a session of `org_id` (module docstring), or None; without an
-        organization the token files only (their organizations were checked by the caller)."""
+        organization the token files only (their organizations were checked by the caller). With `model` an entry
+        that refused that model is left out (HOT-26)."""
         skipped = set(exclude)
         usable = [
             name
@@ -360,6 +380,7 @@ class Pool:
             if name not in skipped
             and self.state(name) == USABLE
             and (name in self.files if org_id is None else self.allowed(name, org_id))
+            and not self.refuses(name, model)
         ]
         if not usable:
             return None
@@ -464,6 +485,13 @@ def attach(context: Any, pool: Pool) -> None:
     """Wire the pool to the daemon's limits (`model.limits`): a file marked used up is `exhausted`."""
     found = limits.limits_for(context)
     pool.exhausted = lambda name: found.active(limits.operator_key(name)) is not None
+
+    def refuses(name: str, model: str | None) -> bool:
+        entry = pool.entries().get(name)
+        identity = None if entry is None or entry.identity is None else identity_text(entry.identity)
+        return found.refuses(limits.operator_key(name), model, identity)
+
+    pool.refuses = refuses
 
 
 # -- bindings (`runner.operator_binding`) ------------------------------------------------------------------------------
@@ -585,13 +613,14 @@ async def observed(
     return name, counts
 
 
-async def pick(context: Any, org_id: str) -> tuple[str, str, Identity] | None:
-    """A usable entry for a new session of `org_id`: `(name, token, identity)`; None when the organization may use
-    neither the files nor a shared subscription, or none is usable."""
+async def pick(context: Any, org_id: str, model: str | None = None) -> tuple[str, str, Identity] | None:
+    """A usable entry for a new session of `org_id` on `model`: `(name, token, identity)`; None when the organization
+    may use neither the files nor a shared subscription, or none is usable (an entry that refused the model is
+    none)."""
     pool = await refreshed(context)
     if pool is None or not pool.serves(org_id):
         return None
-    name = pool.choose(org_id=org_id)
+    name = pool.choose(org_id=org_id, model=model)
     if name is None:
         pool.log(f"runner.model operator_pool_empty problem={pool.problem or 'none'}")
         return None
@@ -600,18 +629,19 @@ async def pick(context: Any, org_id: str) -> tuple[str, str, Identity] | None:
     return name, *current
 
 
-async def peek(context: Any, org_id: str) -> str | None:
-    """The entry `pick` would take for a session of `org_id` now, without binding or logging (ADR-081: what a resume
-    would get)."""
+async def peek(context: Any, org_id: str, model: str | None = None) -> str | None:
+    """The entry `pick` would take for a session of `org_id` on `model` now, without binding or logging (ADR-081: what
+    a resume would get)."""
     pool = await refreshed(context)
     if pool is None or not pool.serves(org_id):
         return None
-    return pool.choose(org_id=org_id)
+    return pool.choose(org_id=org_id, model=model)
 
 
-def used_up(context: Any, org_id: str) -> list[tuple[float, str]]:
-    """`(release time, name)` of the used-up entries of the pool for a session of `org_id`, earliest first; empty when
-    the organization may use none of them (ADR-081 section 3: the pool's step waits for the earliest release)."""
+def used_up(context: Any, org_id: str, model: str | None = None) -> list[tuple[float, str]]:
+    """`(release time, name)` of the used-up entries of the pool for a session of `org_id` on `model`, earliest first;
+    empty when the organization may use none of them (ADR-081 section 3: the pool's step waits for the earliest
+    release; an entry that refused the model is no release, HOT-26)."""
     pool = pool_for(context)
     if pool is None:
         return []
@@ -619,7 +649,7 @@ def used_up(context: Any, org_id: str) -> list[tuple[float, str]]:
     released: list[tuple[float, str]] = []
     for name in pool.entries():
         limit = found.active(limits.operator_key(name))
-        allowed = pool.allowed(name, org_id)
+        allowed = pool.allowed(name, org_id) and not pool.refuses(name, model)
         if allowed and pool.state(name) == EXHAUSTED and limit is not None and limit.until is not None:
             released.append((limit.until, name))
     return sorted(released)
@@ -692,25 +722,62 @@ def _use(owner: str, version: int, value: object) -> Use | None:
     return Use(owner=owner, pool=value["pool"], orgs=frozenset(orgs), version=version)
 
 
+def _stale(pool: Pool, name: str) -> bool:
+    """The entry's token cannot be good any more: its expiry passed (with `EXPIRY_MARGIN_S`) or the provider refused
+    the content the pool holds (`401`/`403` block). A renewal at the hub then has a newer record (HOT-26)."""
+    expiry = pool.expires.get(name)
+    expired = expiry is not None and pool.wall() >= expiry - EXPIRY_MARGIN_S
+    entry = pool.shared.get(name)
+    refused = entry is not None and pool.blocked.get(name) == entry.identity
+    return expired or refused
+
+
+async def _fetch(context: Any, pool: Pool, record_id: str, *, stale: bool) -> subscriptions.Subscription | None:
+    """The record from the hub; None when it cannot be had now. Not again within `FETCH_RETRY_S` after a failed
+    fetch, nor - for a stale token (`stale`) - after the last fetch for it."""
+    now = pool.clock()
+    if now - pool.failed.get(record_id, float("-inf")) < FETCH_RETRY_S:
+        return None
+    if stale:
+        if now - pool.checked.get(record_id, float("-inf")) < FETCH_RETRY_S:
+            return None
+        pool.checked[record_id] = now
+    try:
+        return await subscriptions.fetch(context, record_id)
+    except Exception as exc:
+        pool.failed[record_id] = now
+        pool.note(f"shared:{record_id}", type(exc).__name__, f"shared_unusable id={record_id} reason=fetch")
+        return None
+
+
+def _expiry(value: object) -> float | None:
+    try:
+        return None if not isinstance(value, str) else datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
 async def _shared_entry(context: Any, pool: Pool, record_id: str, owner: str) -> bool:
-    """Read one listed shared subscription into the pool; True when it is an entry now."""
+    """Read one listed shared subscription into the pool; True when it is an entry now. A token that expired or was
+    refused is never handed out again from the device's copy: the record is fetched from the hub first (a renewal on
+    another device whose hint this device missed, HOT-26); while the hub has nothing newer the entry stays out (an
+    expired token) or blocked (a refused one)."""
     name = SHARED_PREFIX + record_id
     async with store_session(context.pool) as conn:
         found = await subscriptions.cached(conn, record_id)
-    if found is None and pool.clock() - pool.failed.get(record_id, float("-inf")) >= FETCH_RETRY_S:
-        try:
-            found = await subscriptions.fetch(context, record_id)
-        except Exception as exc:
-            pool.failed[record_id] = pool.clock()
-            pool.note(f"shared:{record_id}", type(exc).__name__, f"shared_unusable id={record_id} reason=fetch")
+    if found is None:
+        found = await _fetch(context, pool, record_id, stale=False)
+    elif _stale(pool, name):
+        found = await _fetch(context, pool, record_id, stale=True) or found
     if found is None or found.owner != owner or found.primary:
         return False
     known = pool.uses.get(name)
     if known is not None and known.version == found.version and name in pool.shared:
-        return True
+        return not _expired(pool, name)
     try:
         async with subscriptions.opened(context, found) as body:
             token, use = parse_token(str(body.get("token", "")).encode()), _use(owner, found.version, body.get("use"))
+            expiry = _expiry(body.get("expires_at"))
     except CredentialUnavailable as exc:
         pool.note(f"shared:{record_id}", exc.reason, f"shared_unusable id={record_id} reason={exc.reason}")
         return False
@@ -719,7 +786,20 @@ async def _shared_entry(context: Any, pool: Pool, record_id: str, owner: str) ->
         return False
     pool.shared[name] = Entry((0, 0, found.version, 0), token, None)
     pool.uses[name] = use
+    if expiry is None:
+        pool.expires.pop(name, None)
+    else:
+        pool.expires[name] = expiry
     pool.reported.pop(f"shared:{record_id}", None)
+    return not _expired(pool, name)
+
+
+def _expired(pool: Pool, name: str) -> bool:
+    """The entry's token expired and the hub had nothing newer: no entry (logged once per expiry)."""
+    expiry = pool.expires.get(name)
+    if expiry is None or pool.wall() < expiry - EXPIRY_MARGIN_S:
+        return False
+    pool.note(f"expired:{name}", expiry, f"shared_unusable id={name[len(SHARED_PREFIX) :]} reason=expired")
     return True
 
 

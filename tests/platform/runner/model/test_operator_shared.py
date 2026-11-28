@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +20,7 @@ from agent_runner.metrics.sampler import Sampler
 from agent_runner.model import access, exhaustion, gateways, limits, operator, provision
 from agent_runner.model.operator import BLOCKED, USABLE, Entry, Pool, Use
 from agent_runner.quota import operator as quota_operator
+from agent_runner.sessions.records import time_text
 
 from ..credentials.kit import ALICE, BOB, Env, ck, kit_env, make_record
 from ..credentials.subscription_kit import KIND, SubscriptionHub, subscription_body
@@ -276,5 +278,78 @@ def test_a_full_login_serves_its_access_token_and_a_renewal_replaces_it(
         await subscriptions.sync_owner(context, ALICE)  # the `credentials` hint of the new version
         await operator.refresh_shared(context, pool)
         assert pool.current(name) == (renewed, (0, 0, 2, 0))
+
+    run(store_dsn, body)
+
+
+def test_an_expired_token_is_never_handed_out_from_the_device_copy(
+    store_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HOT-26: the measuring device renewed the login, this device missed the hint and still holds the expired
+    version. A new or restarted session must get the current token, not "401 OAuth access token has expired"."""
+
+    async def body(env: Env, hub: SubscriptionHub) -> None:
+        context = env.context
+        use = {"pool": False, "orgs": [ORG]}
+        now = time.time()
+        full = {
+            **subscription_body(token=VALID, use=use),
+            "kind": "oauth_login",
+            "refresh_token": "refresh-token-never-for-a-guest-0123456789",
+            "expires_at": time_text(now + 3600),
+        }
+        record = hub.add(full, owner=ALICE)
+        listing(monkeypatch, [(record, ALICE)])
+        pool = await operator.refreshed(context)
+        assert pool is not None
+        name = "sub-" + record
+        assert pool.current(name) == (VALID, (0, 0, 1, 0))
+        # renewed at the hub; no hint reaches this device
+        renewed = token(8)
+        hub.add({**full, "token": renewed, "expires_at": time_text(now + 7200)}, owner=ALICE, version=2,
+                record_id=record)  # fmt: skip
+        await operator.refresh_shared(context, pool)
+        assert pool.current(name) == (VALID, (0, 0, 1, 0))  # still valid: the copy is used, the hub not asked
+        # the copy's token expired: the hub is asked, the session gets the renewed token
+        pool.wall = lambda: now + 3600
+        picked = await operator.pick(context, ORG)
+        assert picked is not None
+        assert picked[:3] == (name, renewed, (0, 0, 2, 0))
+        # the hub has nothing newer and that token expired as well: no entry, asked again only after FETCH_RETRY_S
+        clock = Clock()
+        clock.now = pool.clock() + operator.FETCH_RETRY_S  # past the fetch for the first expiry, whatever the uptime
+        pool.clock = clock
+        pool.wall = lambda: now + 7200
+        asked = hub.asked.count(record)
+        assert await operator.pick(context, ORG) is None
+        assert f"shared_unusable id={record} reason=expired" in context.log.getvalue()
+        assert hub.asked.count(record) == asked + 1
+        assert await operator.pick(context, ORG) is None
+        assert hub.asked.count(record) == asked + 1
+        clock.now += operator.FETCH_RETRY_S
+        assert await operator.pick(context, ORG) is None
+        assert hub.asked.count(record) == asked + 2
+
+    run(store_dsn, body)
+
+
+def test_a_refused_shared_token_asks_the_hub_for_the_renewed_record(
+    store_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HOT-26: the provider revoked the token with a renewal elsewhere (`401` blocks the entry): the renewed record is
+    fetched, so the session's next provisioning carries it."""
+
+    async def body(env: Env, hub: SubscriptionHub) -> None:
+        context = env.context
+        use = {"pool": False, "orgs": [ORG]}
+        full = {**subscription_body(token=VALID, use=use), "kind": "oauth_login", "refresh_token": "r" * 32}
+        record = hub.add(full, owner=ALICE)
+        listing(monkeypatch, [(record, ALICE)])
+        pool = await operator.refreshed(context)
+        assert pool is not None
+        name = "sub-" + record
+        pool.blocked[name] = (0, 0, 1, 0)  # the provider refused the content the pool holds
+        hub.add({**full, "token": token(8)}, owner=ALICE, version=2, record_id=record)
+        assert await operator.pick(context, ORG) == (name, token(8), (0, 0, 2, 0))
 
     run(store_dsn, body)

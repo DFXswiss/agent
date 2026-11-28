@@ -177,6 +177,22 @@ def test_a_model_switch_is_audited_for_the_session(keys: Keys, published: Memory
     assert keys.status("audit", {**body, "detail": released}, keys.device) == ("ok", None)
     refs = keys.rows("SELECT ref FROM hub.notification WHERE kind = 'model.switched' ORDER BY created_at")
     assert refs[-1] == ("platform:subscription:",)
+    # a refused access continued on its renewal (HOT-26): audited, the task's quiet line, no notification
+    renewed = {
+        **detail,
+        "to_access": "subscription",
+        "to_model": "claude-sonnet-5-5",
+        "cause": "renewed",
+        "until": None,
+    }
+    assert keys.status("audit", {**body, "detail": renewed}, keys.device) == ("ok", None)
+    stored = "SELECT detail FROM hub.audit WHERE action = 'session.model_switched' AND detail->>'cause' = 'renewed'"
+    assert keys.rows(stored) == [(renewed,)]
+    assert keys.rows("SELECT count(*) FROM hub.notification WHERE kind = 'model.switched'") == [(2,)]
+    # a session that waits for a subscription with its model: audited and its owner is told
+    unavailable = {**renewed, "cause": "model_unavailable"}
+    assert keys.status("audit", {**body, "detail": unavailable}, keys.device) == ("ok", None)
+    assert keys.rows("SELECT count(*) FROM hub.notification WHERE kind = 'model.switched'") == [(3,)]
     # an owner who no longer reads the workgroup is not notified; a row without a session names no task
     keys.execute(
         "UPDATE hub.wg_access SET revoked_seq = granted_seq + 100 WHERE wg_id = %s AND user_id = %s", wg, writer.id
@@ -184,11 +200,11 @@ def test_a_model_switch_is_audited_for_the_session(keys: Keys, published: Memory
     assert keys.status("audit", body, keys.device) == ("ok", None)
     without = {key: value for key, value in body.items() if key != "session_id"}
     assert keys.status("audit", {**without, "task_id": task}, keys.device) == ("ok", None)
-    assert keys.rows("SELECT count(*) FROM hub.notification WHERE kind = 'model.switched'") == [(2,)]
+    assert keys.rows("SELECT count(*) FROM hub.notification WHERE kind = 'model.switched'") == [(3,)]
     # other runner audit rows notify nobody
     alert = {**body, "action": "runner.alert", "detail": {"alert": "disk_low", "value": None}}
     assert keys.status("audit", alert, keys.device) == ("ok", None)
-    assert keys.rows("SELECT count(*) FROM hub.notification WHERE kind = 'model.switched'") == [(2,)]
+    assert keys.rows("SELECT count(*) FROM hub.notification WHERE kind = 'model.switched'") == [(3,)]
 
 
 def test_a_switch_of_an_unknown_task_notifies_nobody(keys: Keys) -> None:

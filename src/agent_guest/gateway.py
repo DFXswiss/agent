@@ -35,7 +35,9 @@ gateway is the only way to a model provider (nftables lets only the ``platform``
 8. **Journal ``usage``** once per request after the response ended (also for refusals 4-6 and provider errors, and
    for a response that is dropped unread: ``Relay``), with
    request/response bytes and status; ``provider_outside_allowlist`` when OpenRouter named a provider outside the
-   provisioned list (never blocked, 05 §10.2). OpenRouter ``usage.cost`` is charged against the budget.
+   provisioned list (never blocked, 05 §10.2). OpenRouter ``usage.cost`` is charged against the budget. An error
+   answer of the provider whose message says the subscription does not cover the model ("Usage credits are required
+   for this model", ``refusal_of``) adds ``refusal: "model_not_in_plan"`` (HOT-26: no used-up quota).
 
 ``count_tokens`` goes the same way but writes no ``usage`` (it bills nothing and would distort the context figure of
 the latest request, 05 §10.4). ``HEAD|GET /model/api/hello`` answers 200 locally without a token. Every other path under
@@ -181,6 +183,28 @@ def _separator(buffer: bytearray, start: int) -> tuple[int, int]:
     return min(found) if found else (-1, 0)
 
 
+MODEL_NOT_IN_PLAN = "model_not_in_plan"
+MODEL_REFUSALS = (
+    "usage credits are required",
+    "not available on your plan",
+    "not included in your plan",
+    "does not have access to this model",
+    "do not have access to this model",
+)
+"""Parts of the provider's error message (lower case) that say the subscription does not cover the requested model."""
+
+
+def refusal_of(answer: object) -> str | None:
+    """`MODEL_NOT_IN_PLAN` for a provider error answer whose message names one of `MODEL_REFUSALS`, else None (HOT-26:
+    a `429` of this kind is no used-up quota)."""
+    error = answer.get("error") if isinstance(answer, dict) and answer.get("type") == "error" else None
+    message = error.get("message") if isinstance(error, dict) else None
+    if not isinstance(message, str):
+        return None
+    lowered = message.lower()
+    return MODEL_NOT_IN_PLAN if any(part in lowered for part in MODEL_REFUSALS) else None
+
+
 @dataclass
 class UsageMeter:
     """Reads the usage of a Messages response: server-sent events (``message_start``/``message_delta``) or JSON."""
@@ -190,6 +214,8 @@ class UsageMeter:
     thinking: int = 0
     cost: float | None = None
     provider: str | None = None
+    refusal: str | None = None
+    """`MODEL_NOT_IN_PLAN` when the provider's error answer says the subscription does not cover the model."""
     _buffer: bytearray = field(default_factory=bytearray)
     _skipping: bool = False
     _overflow: bool = False
@@ -219,7 +245,9 @@ class UsageMeter:
     def finish(self) -> None:
         if not self.streaming and not self._overflow:
             with contextlib.suppress(ValueError):
-                self._message(parse_json(bytes(self._buffer)))
+                found = parse_json(bytes(self._buffer))
+                self._message(found)
+                self.refusal = refusal_of(found)
         self._buffer.clear()
 
     def _event(self, raw: bytes) -> None:
@@ -559,6 +587,8 @@ class Gateway:
             body["provider_outside_allowlist"] = True
         if meter.cost is not None:
             body["cost_usd"] = meter.cost
+        if meter.refusal is not None and status >= 400:
+            body["refusal"] = meter.refusal
         return self._append("usage", body, call.session_id)
 
     def _append(self, kind: str, body: dict[str, Any], session_id: str) -> int | None:

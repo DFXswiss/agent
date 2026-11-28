@@ -1,0 +1,8 @@
+{
+  "from_access": "operator",
+  "to_access": "operator",
+  "from_model": "claude-opus-5-5",
+  "to_model": "claude-opus-5-5",
+  "cause": "renewed",
+  "until": null
+}

@@ -2,7 +2,7 @@
 // jsdom (06-web.md sections 5.2, 8.2, 11 job 5): every state of the forms, the device-request flows with sealed device
 // responses (Claude login relay and automation, credential and mailbox checks), the list with delete, and that no
 // token, key or password reaches the DOM.
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bodyJson } from '../../src/core/encoding/json';
 import { sealResponse } from '../../src/core/crypto/request';
@@ -627,6 +627,24 @@ describe('quotas', () => {
     act(() => setQuotas(t.store, [], Date.parse('2026-11-21T12:00:00.000Z')));
     expect(screen.getByTestId('quotas.unreadable')).toHaveTextContent('Quotas cannot be read');
     expect(screen.queryByTestId('quotas.unavailable')).toBeNull();
+  });
+
+  it('sets nothing when a read fails after the section was left', async () => {
+    const t = await credWorld();
+    let refuse: (error: Error) => void = () => undefined;
+    t.client.on(
+      'GET /v1/me/quotas',
+      () =>
+        new Promise((_resolve, reject) => {
+          refuse = reject;
+        }),
+    );
+    const { router } = mount(t, [{ path: '/settings', element: <QuotasSection /> }], '/settings');
+    await waitFor(() => expect(t.client.of('GET /v1/me/quotas')).toHaveLength(1));
+    await act(() => router.navigate('/elsewhere'));
+    expect(screen.queryByTestId('quotas.section')).toBeNull();
+    await act(async () => refuse(new HubError('unavailable', 503)));
+    expect(screen.queryByTestId('quotas.load-failed')).toBeNull();
   });
 });
 

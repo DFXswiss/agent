@@ -16,6 +16,11 @@ for such a record `RENEW_BEFORE_S` before `expires_at` and at once after the usa
    `relogin` dropped). It is sealed as the next record version (`subscriptions.seal`) and kept in
    `runner.subscription_renewal` together with the sealed record it replaces - before anything else happens. Only
    then is it written (`flush`).
+3a. **Hand-over** (HOT-26, ADR-092 section 5): the provider revoked the former access token with this answer. Before
+   the write the new token goes to the sessions of this device on the record (`model.gateways.hand_over`: the pool's
+   entry `sub-<id>` and the gateways of the sessions bound to it), so they lose as little as possible; sessions on
+   other devices get it with the record (hint, next refresh of the pool) and a request refused meanwhile is carried
+   on by `model.revocation`. A failure of the hand-over is logged and changes nothing else.
 4. **Write** (`flush`, also on every tick while a row exists - the token endpoint is not called again for the record
    meanwhile): the opened row is sealed anew under the newest epoch and written with `PUT
    /v1/device/subscriptions/{id}` without a request (`subscriptions._put`). Written → the row goes. `version_conflict`
@@ -47,6 +52,7 @@ from psycopg.types.json import Jsonb
 from agent_runner.credentials import subscriptions
 from agent_runner.credentials.cache import PUT_ATTEMPTS, CredentialUnavailable, RecordRefused
 from agent_runner.credentials.subscriptions import Subscription
+from agent_runner.model import gateways
 from agent_runner.orgs.db import session as store_session
 from agent_runner.quota.reader import ClientFactory, default_client
 from agent_runner.sessions.records import time_text
@@ -276,6 +282,7 @@ class Renewer:
                 self.retry_at[current.id] = now + RETRY_S
                 return False
             fields.setdefault("refresh_token", body["refresh_token"])
+            token = fields["token"]
             new_body = _merge(body, fields)
             fields.clear()
             try:  # the epoch the body was just opened with exists: sealing cannot miss a key
@@ -285,9 +292,18 @@ class Renewer:
             item = Pending(current.id, current.owner, current.version, current.record, sealed)
             await _keep(self.context, item)
             _line(self.context, f"renewal_stored id={current.id} base={current.version}")
+            await self._hand_over(current, token)
             return await self._flush(item, now)
         finally:
             answer.clear()
+
+    async def _hand_over(self, current: Subscription, token: str) -> None:
+        """The new token to this device's sessions on the record first (module docstring, step 3a); a failure only
+        logs: the pool takes the record once the hub has it."""
+        try:
+            await gateways.hand_over(self.context, current.id, current.version + 1, token)
+        except Exception as exc:
+            _line(self.context, f"hand_over_failed id={current.id} error={type(exc).__name__}")
 
     async def _refused(self, current: Subscription, refused: str, now: float) -> bool:
         """Mark the record "log in again" while it still holds the refused refresh token (module docstring, step 5)."""

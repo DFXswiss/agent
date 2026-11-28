@@ -24,7 +24,7 @@ from agent_guest import gateway as gateway_module
 from agent_guest import routing
 from agent_guest.apisock import ApiClient
 from agent_guest.control import ControlContext
-from agent_guest.gateway import gateway_for
+from agent_guest.gateway import gateway_for, refusal_of
 from agent_guest.state import Session
 from tests.platform.guest.conftest import SESSION_ID, SESSION_TOKEN, ControlClient, make_session
 from tests.platform.guest.gateway.conftest import (
@@ -432,6 +432,41 @@ def test_upstream_errors_pass_through(
     assert mid.status == 200
     assert [name for name, _ in sse_events(mid.body)] == ["message_start", "error"]
     assert [usage["status"] for usage in wait_for_usage(context, 2)] == [529, 200]
+
+
+def test_a_model_the_subscription_does_not_cover_is_journaled_as_such(
+    start_double: StartDouble, provision: Provision, api: Api, context: ControlContext
+) -> None:
+    """HOT-26: the provider's "usage credits are required" answer is passed through unchanged and its `usage` record
+    carries `refusal: model_not_in_plan`; a plain rate limit does not."""
+    credits = "Usage credits are required for this model."
+    started = start_double(
+        "subscription",
+        {"id": "credits", "error": {"status": 429, "type": "rate_limit_error", "message": credits}},
+        {"id": "limit", "error": {"status": 429, "type": "rate_limit_error", "message": "Rate limited"}},
+    )
+    provision("subscription", started.url)
+    refused = api.request("POST", MESSAGES, messages(OPUS))
+    assert (refused.status, refused.json()["error"]["message"]) == (429, credits)
+    assert api.request("POST", MESSAGES, messages(OPUS)).status == 429
+    first, second = wait_for_usage(context, 2)
+    assert (first["status"], first["refusal"]) == (429, "model_not_in_plan")
+    assert (second["status"], "refusal" in second) == (429, False)
+
+
+def test_only_an_error_answer_naming_the_plan_is_a_model_refusal() -> None:
+    assert refusal_of({"type": "error", "error": {"message": "Your plan: this is NOT INCLUDED IN YOUR PLAN"}}) == (
+        "model_not_in_plan"
+    )
+    answers: list[object] = [
+        {"type": "error", "error": {"message": "Overloaded"}},
+        {"type": "error", "error": "x"},
+        [],
+        None,
+    ]
+    for answer in answers:
+        assert refusal_of(answer) is None
+    assert refusal_of({"type": "message", "error": {"message": "usage credits are required"}}) is None
 
 
 def test_unreachable_upstream_is_502(provision: Provision, api: Api, context: ControlContext) -> None:

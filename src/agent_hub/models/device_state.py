@@ -1,9 +1,10 @@
 """The sections `model_fallback`, `dfx_keys` and `dfx_key_held` of `GET /v1/device/state` (ADR-081, KOR-50; ADR-027
 section 4 `<area>/device_state.py:SECTION`).
 
-- `model_fallback: {api: 1}` for every active device: this hub accepts the items `operator_quota`, `dfx_key_*`, the
-  field `limited` of `quota`, the wait of `session_transition` and the audit action `session.model_switched`; a runner
-  sends them only when it sees the field (the per-session `fallback` and `model_consent` come with `sessions`).
+- `model_fallback: {api: 2}` for every active device: this hub accepts the items `operator_quota`, `dfx_key_*`, the
+  field `limited` of `quota`, the wait of `session_transition` and the audit action `session.model_switched` (1), with
+  the causes `renewed` and `model_unavailable` (2, HOT-26); a runner sends them only when it sees the field and
+  version (the per-session `fallback` and `model_consent` come with `sessions`).
 - `dfx_keys` only for the elected issuer (`agent_hub.models.dfx.issuer_state`, headroom capped by
   `AGENT_HUB_DFX_KEY_HEADROOM_USD`).
 - `dfx_key_held` for every org device: the sealed key of each organization it holds one for.
@@ -17,7 +18,7 @@ from typing import Any
 from agent_hub.device.state import OMIT, Section, StateRequest
 from agent_hub.models import dfx
 
-API = 1
+API = 2
 
 
 def provide(request: StateRequest) -> Mapping[str, Any]:
