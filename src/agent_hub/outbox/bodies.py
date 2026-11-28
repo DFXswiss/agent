@@ -636,7 +636,7 @@ class ModelSwitched(Strict):
     to_access: ModelAccessKind
     from_model: ModelId | None
     to_model: ModelId | None
-    cause: Literal["exhausted", "unusable", "released"]
+    cause: Literal["exhausted", "unusable", "released", "renewed", "model_unavailable"]
     until: Time | None
 
 

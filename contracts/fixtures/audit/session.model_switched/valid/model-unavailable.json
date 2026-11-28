@@ -1,0 +1,8 @@
+{
+  "from_access": "operator",
+  "to_access": "operator",
+  "from_model": "claude-fable-5-2",
+  "to_model": "claude-fable-5-2",
+  "cause": "model_unavailable",
+  "until": null
+}

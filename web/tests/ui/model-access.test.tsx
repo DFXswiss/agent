@@ -221,12 +221,28 @@ describe('model switch line', () => {
     expect(await screen.findByTestId('task.model-switch')).toHaveTextContent(
       `Model switched: Claude subscription → DFX access over OpenRouter (deepseek/flash) · used up until ${clock(LATER)}`,
     );
-    const cases: [Record<string, unknown>, string][] = [
+    const cases: [Record<string, unknown>, string | RegExp][] = [
       [{ cause: 'exhausted', until: null, from_model: 'claude-opus' }, 'Claude subscription (claude-opus) → '],
       [{ cause: 'unusable', to_access: 'api_key', to_model: null }, '→ API key · former access could not be used'],
       [
         { cause: 'exhausted', until: null, from_access: 'operator', to_model: null },
         'operator subscription → DFX access',
+      ],
+      [
+        { cause: 'released', from_access: 'platform', to_access: 'subscription', to_model: null },
+        'subscription free again',
+      ],
+      [
+        { cause: 'renewed', from_access: 'operator', to_access: 'operator', to_model: null, until: null },
+        /^Access renewed – continuing \(operator subscription\)$/,
+      ],
+      [
+        { cause: 'model_unavailable', from_access: 'operator', to_access: 'operator', to_model: 'claude-fable' },
+        /^Waiting: no subscription with access to claude-fable free$/,
+      ],
+      [
+        { cause: 'model_unavailable', from_access: 'operator', to_access: 'operator', to_model: null },
+        /^Waiting: no subscription with access to operator subscription free$/,
       ],
       [
         { cause: 'released', from_access: 'platform', to_access: 'subscription', to_model: null },
@@ -244,7 +260,7 @@ describe('model switch line', () => {
       throw new HubError('unavailable', 503);
     });
     hello(t);
-    await waitFor(() => expect(t.client.of(`GET /v1/orgs/${t.org}/audit`)).toHaveLength(7));
+    await waitFor(() => expect(t.client.of(`GET /v1/orgs/${t.org}/audit`)).toHaveLength(11));
     expect(screen.getByTestId('task.model-switch')).toHaveAttribute('data-to', 'subscription');
     // a row outside the contract's lists is no switch
     t.client.on(`GET /v1/orgs/${t.org}/audit`, () => ({ rows: [switchRow(3, { cause: 'later' })], next_before: null }));

@@ -10,6 +10,9 @@
 * the session token: 32 random bytes b64u; only its SHA-256 goes into the journal database and the session cache
   (``State.save_session``); the token itself stays in memory until the unit gets it as environment (through the
   root-only launch file and ``systemd-run``'s environment, never on a command line)
+* no login of Claude Code's own: every create, resume and restore removes ``home/.claude/.credentials.json``
+  (``forget_logins``, HOT-26) - the model access is the gateway's (``ANTHROPIC_AUTH_TOKEN`` = session token), and an
+  old login file kept in a resumed or restored sandbox would win over it ("OAuth access token has expired")
 * the harness file ``/run/agent-guest/harness/<id>.md`` (``harness.py``; the name of the start's ``profile`` decides
   about its block ``## Process analysis``, ADR-097)
 * journal ``session.state sandbox_ready`` with ``harness_version``
@@ -101,6 +104,7 @@ import os
 import pwd
 import secrets
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -289,6 +293,34 @@ def claude_json(work: str) -> str:
     """The pre-seeded Claude Code state: onboarding done and the workspace trusted (no dialogs at start)."""
     value = {"hasCompletedOnboarding": True, "theme": "dark", "projects": {work: {"hasTrustDialogAccepted": True}}}
     return json.dumps(value, indent=1) + "\n"
+
+
+LOGIN_FILES = (".credentials.json",)
+"""Claude Code's own login store below ``CLAUDE_CONFIG_DIR`` (HOT-26): the session's model access is the gateway's
+alone (``ANTHROPIC_AUTH_TOKEN`` is the session token), so a login file is never kept - an old one would win over the
+current access and fail with "OAuth access token has expired"."""
+
+
+def forget_logins(base: str) -> None:
+    """Remove Claude Code's login files of the session at every start, resume and restore (HOT-26). The Claude
+    directory is opened without following a link (the session user owns ``home``); a missing one is nothing to do."""
+    try:
+        directory = os.open(f"{base}/home/.claude", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return
+    try:
+        for name in LOGIN_FILES:
+            try:
+                os.unlink(name, dir_fd=directory)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                # a directory of that name (Linux: EISDIR, macOS: EPERM); anything else is a failed sandbox
+                if not stat.S_ISDIR(os.stat(name, dir_fd=directory, follow_symlinks=False).st_mode):
+                    raise
+                shutil.rmtree(f"{base}/home/.claude/{name}")
+    finally:
+        os.close(directory)
 
 
 @dataclass
@@ -484,6 +516,7 @@ class SessionManager:
                 self.system.chown(path, uid)
             if staged is not None:
                 contexts.restore(staged, base, lambda path: self.system.chown(path, uid))
+            forget_logins(base)
             harness.write(self.paths.harness_file(session_id), text)
             undo.append(lambda: Path(self.paths.harness_file(session_id)).unlink(missing_ok=True))
             keys = notice_keys(
@@ -578,9 +611,10 @@ class SessionManager:
             start_kind, sentence = "kept", RESUMED_SENTENCE if existing.state == "suspended" else None
         keys = notice_keys(self._meta(existing.id), self._fact_lines(data), start=start_kind, sentence=sentence)
         try:
+            base = self.paths.session_dir(existing.id)
             if staged is not None:
-                base = self.paths.session_dir(existing.id)
                 contexts.restore(staged, base, lambda path: self.system.chown(path, existing.uid))
+            forget_logins(base)
             harness.write(self.paths.harness_file(existing.id), text)
             meta = {
                 "request_sha256": digest,

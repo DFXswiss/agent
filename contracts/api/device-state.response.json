@@ -505,7 +505,7 @@
             "api": {
               "type": "integer",
               "minimum": 1,
-              "description": "model fallback interface version; KOR-50 sends 1"
+              "description": "model fallback interface version; KOR-50 sends 1, HOT-26 sends 2 (the hub also accepts the cause renewed of session.model_switched)"
             }
           },
           "required": [

@@ -28,6 +28,7 @@ DIGESTS = {
     "0.6.0": "bec16234c889a7b4ebff0d81c67707186d46421cb99c719ff80924540d98a8ed",  # KOR-53: the analysis reads
     "0.7.0": "5e4bd6d934bc0900b8e8f15b0aa97cedcc4f35716af57ec4dd88be887e127c25",  # KOR-74: the operation mail.find
     "0.8.0": "42a9b683e8b84fe28145f2774e73ae4264bd91d3b41d0717eb882eb9c96d9ea0",  # HOT-33: repo_read_only, fork
+    "0.9.0": "0656557d7bf7c4ea88bcbeec698f8c7c9a16140dba99fbc08235ec81afc841b1",  # HOT-26: usage.refusal
 }
 """Guest version -> SHA-256 over the sorted `<part> NUL <sha256 of its canonical JSON>` lines of `guest_contracts()`."""
 
