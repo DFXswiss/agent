@@ -19,7 +19,7 @@
   --jk-hold-ease: linear;
 }
 
-/* Tastendruck. Die Filterkurve im Prototyp ist die Messwertkurve, nicht die Feder. */
+/* Press feedback. The prototype's filter curve is the value curve, not the spring. */
 .jk-press {
   transition:
     transform var(--jk-press-out) var(--jk-press-ease),
@@ -32,7 +32,7 @@
   transition-duration: var(--jk-press-in);
 }
 
-/* Zustandswechsel: wandernder Marker. */
+/* State change: moving marker. */
 .jk-state {
   transition:
     transform var(--jk-state-duration) var(--jk-state-ease),
@@ -40,7 +40,7 @@
     height var(--jk-state-duration) var(--jk-state-ease);
 }
 
-/* Wert füllt sich. Der Nullzustand braucht transition:none, sonst läuft er nicht von null. */
+/* Value fill. The zero state needs transition: none or it does not run from zero. */
 .jk-value {
   transition: width var(--jk-value-duration) var(--jk-value-ease);
 }
@@ -65,7 +65,7 @@
   transition: none;
 }
 
-/* Eintritt. --jk-i ist der Versatzindex. */
+/* Entry. --jk-i is the stagger index. */
 @keyframes jk-rise {
   from {
     opacity: 0;
@@ -82,7 +82,7 @@
   animation-delay: calc(var(--jk-i, 0) * var(--jk-enter-stagger));
 }
 
-/* Halten zum Bestätigen. Loslassen nimmt die Füllung zurück. */
+/* Hold to confirm. Releasing takes the fill back. */
 .jk-hold-fill {
   transform: scaleX(0);
   transform-origin: left;

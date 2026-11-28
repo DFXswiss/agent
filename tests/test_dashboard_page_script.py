@@ -5,6 +5,7 @@ for src/agent_cli/static/index.html, including the shared block:
 
 - stateIcon
 - replaceHtml
+- writeHtml
 - showView
 - section-nav click handler
 - placeKey
@@ -858,17 +859,36 @@ async function scenario() {
     roundZero: headOf({ title: "T", round: 0, phase: "ask", state: "running" }),
     waiting: headOf({ title: "Order o-open", repo: "OWNER/NAME", round: 2, phase: "ask", state: "waiting" }),
   };
+  setHtml(document.getElementById("conv-pr"), "#3");
+  showHead(null);
+  const clearedHead = {
+    title: document.getElementById("conv-title").textContent,
+    repo: document.getElementById("conv-repo").textContent,
+    round: document.getElementById("conv-round").textContent,
+    phase: document.getElementById("conv-phase").textContent,
+    state: document.getElementById("conv-state").innerHTML,
+    pr: document.getElementById("conv-pr").innerHTML,
+  };
 
   const askNode = document.getElementById("feed-ask");
   const parkNode = document.getElementById("feed-park");
   const host = document.getElementById("feed-events");
+  let parkAppends = 0;
+  const parkAppend = parkNode.appendChild;
+  parkNode.appendChild = function (child) {
+    parkAppends += 1;
+    return parkAppend.call(parkNode, child);
+  };
   host.appendChild(askNode);
   const moved = askNode.parentElement === host;
+  const appendsBefore = parkAppends;
   parkAsk();
   const parked = askNode.parentElement === parkNode;
+  const appendsAfterMove = parkAppends - appendsBefore;
   const parkKids = parkNode.children.length;
   parkAsk();
   const parkedAgain = askNode.parentElement === parkNode && parkNode.children.length === parkKids;
+  const appendsAgain = parkAppends - appendsBefore - appendsAfterMove;
 
   const scratch = document.getElementById("od-report-body");
   setHtml(scratch, "A");
@@ -895,6 +915,7 @@ async function scenario() {
   const items = [];
   for (let i = 0; i < 15; i += 1) items.push('<li class="order"></li>');
   document.getElementById("orders").innerHTML = items.join("");
+  shownHtml.delete(document.getElementById("orders"));
   [...document.getElementById("feed").children].forEach((el) => el.classList.remove("jk-enter"));
   flushRaf();
   const rafBefore = rafs.length;
@@ -1051,6 +1072,7 @@ async function scenario() {
   fireDoc("scroll");
   const list = document.getElementById("orders");
   list.innerHTML = '<li class="order sel"></li>';
+  shownHtml.delete(list);
   const item = list.querySelector(".order.sel");
   box(list, 50, 300, 200, 100);
   function placeItem(top, right, bottom, left) {
@@ -1124,9 +1146,21 @@ async function scenario() {
   const footHtml = document.getElementById("ask-foot").innerHTML;
   const footWrote = document.getElementById("ask-foot")._writes === footBefore + 1;
   const stillWrites = host._writes === firstWrites;
+  const e2article = [...host.children].find((el) => el.dataset.eventId === "e2");
+  e2article.appendChild(askNode);
+  const placedElsewhere = askNode.closest("article").dataset.eventId;
+  const movedFrom = host._writes;
+  renderFeed(feedEvents, checkpoint);
+  const movedQuestion = {
+    placed: placedElsewhere,
+    wrote: host._writes === movedFrom + 1,
+    eventId: askNode.closest("article").dataset.eventId,
+  };
+  const beforeExtra = host._writes;
+  const beforeArticle = askNode.closest("article");
   renderFeed(feedEvents.concat([{ id: "e9", seq: 5, kind: "note", digest: "new", phase: "", round: "", check: "" }]), checkpoint);
   const rewroteArticle = askNode.closest("article");
-  const rewrote = host._writes === firstWrites + 1 && firstParent.isConnected === false && rewroteArticle.dataset.eventId === "e1";
+  const rewrote = host._writes === beforeExtra + 1 && beforeArticle.isConnected === false && rewroteArticle.dataset.eventId === "e1";
   renderFeed([{ id: "e2", seq: 1, kind: "note", digest: "z", phase: "", round: "", check: "" }], { event_id: "missing\"id", seq: 3, check: "", answers: [] });
   const missingHtml = host.innerHTML;
   const missingArticle = askNode.closest("article");
@@ -1177,11 +1211,46 @@ async function scenario() {
   const scrollCount = scrolled.length;
   keepPlace();
   const keyGone = scrolled.length === scrollCount;
+
+  parkNode.hidden = false;
+  host.innerHTML = "";
+  feedHtml = "";
+  box(document.getElementById("feed"), 0, 0, 0, 0);
+  box(composer, 0, 0, 0, 0);
+  box(odBody, 0, 0, 0, 0);
+  box(orderReport, 0, 0, 0, 0);
+  box(parkNode, 0, 0, 80, 0);
+  nowMs += 1000;
+  fireDoc("scroll");
+  const parkAnchor = anchor;
+  computed.orders.display = "grid";
+  fireWindow("resize");
+  flushRaf();
+  const parkLanded = scrolled[scrolled.length - 1];
+  const idScrolls = scrolled.length;
+  parkNode.remove();
+  keepPlace();
+  const idGone = scrolled.length === idScrolls;
+  detail.appendChild(parkNode);
+  parkNode.hidden = true;
+  box(odBody, 0, 0, 0, 0);
+  box(orderReport, 0, 0, 0, 0);
+  box(parkNode, 0, 0, 0, 0);
+  host.innerHTML = "";
+  feedHtml = "";
+  nowMs += 1000;
+  fireDoc("scroll");
+  const noKey = anchor === null;
+  box(odBody, 0, 0, 80, 0);
+  const noneScrolls = scrolled.length;
+  keepPlace();
+  const noScroll = scrolled.length === noneScrolls;
   syncLayout();
 
   flushRaf();
   const foldList = document.getElementById("orders");
   foldList.innerHTML = '<li class="order sel"></li>';
+  shownHtml.delete(foldList);
   const foldItem = foldList.querySelector(".order.sel");
   box(foldList, 0, 100, 40, 0);
   box(foldItem, 0, 200, 20, 150);
@@ -1347,6 +1416,49 @@ async function scenario() {
     odId: document.getElementById("od-id").innerHTML,
     after: calls.filter((item) => item.path === "/api/orders/events" && item.query.after).slice(-1)[0],
   };
+  flushRaf();
+  flushRaf();
+  const listWrites = list._writes;
+  const stableArc = list.querySelector(".ring .arc");
+  await ordersTick();
+  const stableRow = [...list.children].find((row) => row.dataset.id === "o-open");
+  const stableArcNow = list.querySelector(".ring .arc");
+  const unchangedList = {
+    writes: list._writes - listWrites,
+    className: stableRow.className,
+    transition: stableArcNow.style.transition,
+    dash: stableArcNow.style.strokeDasharray,
+    sameArc: stableArcNow === stableArc,
+  };
+  flushRaf();
+  flushRaf();
+  const savedSelection = selectedOrderId;
+  selectedOrderId = null;
+  openMode = "running";
+  flushRaf();
+  flushRaf();
+  const changedWrites = list._writes;
+  const changedRafs = rafs.length;
+  await ordersTick();
+  const changedArc = list.querySelector(".ring .arc");
+  const changedFrames = rafs.length - changedRafs;
+  const changedTransition = changedArc.style.transition;
+  const changedDash = changedArc.style.strokeDasharray;
+  flushRaf();
+  const changedNested = rafs.length;
+  flushRaf();
+  const changedList = {
+    writes: list._writes - changedWrites,
+    frames: changedFrames,
+    nested: changedNested,
+    transition: changedTransition,
+    dash: changedDash,
+  };
+  openMode = "normal";
+  selectedOrderId = savedSelection;
+  await ordersTick();
+  flushRaf();
+  flushRaf();
   document.getElementById("od-reply-body").value = "kept";
   shownHtml.delete(document.getElementById("od-override-check"));
   document.getElementById("od-override-check").value = "lint";
@@ -1382,6 +1494,7 @@ async function scenario() {
     clearedMark: clearedDuring.mark,
   };
   list.innerHTML = '<table><tr class="order-row" data-id="o-row"><td>row</td></tr></table>';
+  shownHtml.delete(list);
   const row = list.querySelector("tr.order-row");
   fire(list, "click", { target: row });
   await drain();
@@ -1671,7 +1784,8 @@ async function scenario() {
     listEmpty: listEmpty,
     counts: { missing: missingCount, attn: attnCount, plain: plainCount, zero: zeroCount },
     heads: heads,
-    park: { moved: moved, parked: parked, again: parkedAgain },
+    clearedHead: clearedHead,
+    park: { moved: moved, parked: parked, again: parkedAgain, appends: appendsAfterMove, againAppends: appendsAgain },
     replace: { skipped: skippedWrite, forced: forcedWrite },
     eventsView: eventsView,
     ordersViewOn: ordersViewOn,
@@ -1695,6 +1809,7 @@ async function scenario() {
       footHtml: footHtml,
       footWrote: footWrote,
       stillWrites: stillWrites,
+      movedQuestion: movedQuestion,
       rewrote: rewrote,
       missingHtml: missingHtml,
       missingParent: missingParent,
@@ -1703,6 +1818,14 @@ async function scenario() {
       noCheckpointSkip: noCheckpointSkip,
     },
     regression: { stable: stable, oldGone: oldGone, queued: queued, landed: landed, keyGone: keyGone },
+    reading: {
+      parkAnchor: parkAnchor,
+      parkId: parkLanded.id,
+      parkConnected: parkLanded.connected,
+      idGone: idGone,
+      noKey: noKey,
+      noScroll: noScroll,
+    },
     seg: {
       knobCalls: knobCalls,
       blankCalls: blankCalls,
@@ -1733,6 +1856,7 @@ async function scenario() {
     schemaSkipped: schemaSkipped,
     ignoredClick: ignoredClick,
     picked: picked,
+    listPaint: { unchanged: unchangedList, changed: changedList },
     selected: selected,
     sameId: sameId,
     otherId: otherId,
@@ -1889,6 +2013,7 @@ def test_shared_and_feed_functions_cover_each_branch() -> None:
     assert "<span>" not in page["articles"]["noFact"].split("</b>", 1)[1]
     assert "5 min" in page["feet"]["full"] and "a&lt;b" in page["feet"]["full"] and "y&lt;z ok" in page["feet"]["full"]
     assert page["feet"]["noEv"].count("since") == 1 and "5 min" not in page["feet"]["noEv"]
+    assert '<span class="since"></span>' in page["feet"]["badTime"]
     assert "5 min" not in page["feet"]["badTime"]
     assert "check" not in page["feet"]["noCheck"] and "5 min" in page["feet"]["noCheck"]
     assert "check" not in page["feet"]["numberCheck"]
@@ -1905,6 +2030,8 @@ def test_shared_and_feed_functions_cover_each_branch() -> None:
     hidden = page["heads"]["hidden"]
     assert hidden["rafs"] == 0
     assert hidden["title"] == hidden["repo"] == hidden["round"] == hidden["phase"] == hidden["state"] == hidden["pr"] == ""
+    cleared = page["clearedHead"]
+    assert cleared["title"] == cleared["repo"] == cleared["round"] == cleared["phase"] == cleared["state"] == cleared["pr"] == ""
     assert page["heads"]["roundNull"]["round"] == "" and page["heads"]["roundNull"]["state"] == ""
     assert page["heads"]["roundUndef"]["round"] == "" and page["heads"]["roundUndef"]["phase"] == ""
     assert page["heads"]["roundEmpty"]["round"] == ""
@@ -1913,7 +2040,7 @@ def test_shared_and_feed_functions_cover_each_branch() -> None:
     assert page["heads"]["roundZero"]["rafs"] == 1
     assert page["heads"]["waiting"]["title"] == "Order o-open"
     assert page["heads"]["waiting"]["state"].find('aria-label="Waiting"') >= 0
-    assert page["park"] == {"moved": True, "parked": True, "again": True}
+    assert page["park"] == {"moved": True, "parked": True, "again": True, "appends": 1, "againAppends": 0}
     assert page["replace"] == {"skipped": True, "forced": True}
     feed = page["feed"]
     assert feed["html"].find('data-event-id="e1"') < feed["html"].find('data-event-id="e2"') < feed["html"].find('data-event-id="e0"')
@@ -1923,6 +2050,7 @@ def test_shared_and_feed_functions_cover_each_branch() -> None:
     assert "5 min" in feed["foot"] and "lint" in feed["foot"] and "a&lt;b" in feed["foot"]
     assert feed["skipWrites"] is True and feed["skipParent"] is True
     assert feed["footWrote"] is True and feed["stillWrites"] is True and "6 min" in feed["footHtml"]
+    assert feed["movedQuestion"] == {"placed": "e2", "wrote": True, "eventId": "e1"}
     assert feed["rewrote"] is True
     assert feed["missingHtml"].startswith('<article class="msg ask" data-event-id="missing&quot;id"')
     assert feed["missingParent"] == 'missing"id'
@@ -1982,6 +2110,11 @@ def test_reading_position_survives_refresh_and_layout() -> None:
     assert regression["landed"]["margin"] == "48px"
     assert regression["landed"]["block"] == "start"
     assert regression["keyGone"] is True
+    reading = page["reading"]
+    assert reading["parkAnchor"] == "id:feed-park"
+    assert reading["parkId"] == "feed-park" and reading["parkConnected"] is True
+    assert reading["idGone"] is True
+    assert reading["noKey"] is True and reading["noScroll"] is True
 
 
 def test_views_filters_failures_selection_and_hold() -> None:
@@ -2042,15 +2175,26 @@ def test_views_filters_failures_selection_and_hold() -> None:
         {"id": "o-open", "className": "order sel"},
         {"id": "o-run", "className": "order"},
     ]
-    assert picked["ringFrames"] == 2
+    assert picked["ringFrames"] == 1
     assert picked["arcsBefore"] == [
-        {"transition": "none", "dash": "0 37.70"},
-        {"transition": "none", "dash": "0 37.70"},
-    ]
-    assert picked["arcsAfter"] == [
         {"transition": "", "dash": "18.85 37.70"},
         {"transition": "", "dash": "18.85 37.70"},
     ]
+    assert picked["arcsAfter"] == picked["arcsBefore"]
+    assert page["listPaint"]["unchanged"] == {
+        "writes": 0,
+        "className": "order sel",
+        "transition": "",
+        "dash": "18.85 37.70",
+        "sameArc": True,
+    }
+    assert page["listPaint"]["changed"] == {
+        "writes": 1,
+        "frames": 1,
+        "nested": 1,
+        "transition": "none",
+        "dash": "0 37.70",
+    }
     assert selected["title"] == "Order o-open" and selected["repo"] == "OWNER/NAME"
     assert selected["round"] == "Round 2" and selected["phase"] == "Phase: ask"
     assert 'aria-label="Waiting"' in selected["state"]

@@ -1423,6 +1423,7 @@ def test_orders_view_markup() -> None:
     ):
         assert asset in html
     assert 'id="composer"' in html
+    assert '<div id="ask-foot" aria-live="off"></div>' in html
     assert "<form" in html
     without_github = html.replace("https://github.com/", "")
     assert "http://" not in without_github
@@ -1607,9 +1608,7 @@ def common_block(html: str) -> str:
 
 
 def design_script() -> str:
-    source = (STATIC / "design" / "work.js").read_text(encoding="utf-8")
-    # The harness uses `now` as a timestamp. The design script's clock has the same name.
-    return source.replace("const now = () =>", "const clockNow = () =>", 1)
+    return (STATIC / "design" / "work.js").read_text(encoding="utf-8")
 
 
 def section_runtime(html: str) -> str:
