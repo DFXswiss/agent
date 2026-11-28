@@ -1,5 +1,5 @@
 // Chat item `session.output` (06-web.md section 5.2): one assistant message as Markdown (section 2.1 rules; loaded
-// lazily, plain text until then and when the chunk cannot be loaded); a cut message says so. A very long message
+// lazily, plain text with its URLs as links until then and when the chunk cannot be loaded); a cut message says so. A very long message
 // shows `CLIP_CHARS` characters at a time, the rest behind "Show more" (HOT-05); the Markdown is built only once the
 // row comes near the viewport (ADR-086 section 1), before that the message's first line is shown. An output of an
 // analysis task offers "Adopt" (its whole text into a whiteboard, ADR-097 section 5).
@@ -11,6 +11,7 @@ import { AdoptAction } from '../analysis/Adopt';
 import { useI18n } from '../i18n';
 import { ChunkBoundary } from '../lazy/ChunkBoundary';
 import { EventTime } from '../task-tabs/chat/EventTime';
+import { LinkedText } from '../task-tabs/chat/LinkedText';
 import { useClipped } from '../lists/Clipped';
 import { Near } from '../lists/near';
 
@@ -21,12 +22,17 @@ function Output({ item }: ChatItemProps) {
   const { t } = useI18n();
   const full = isRecord(body) && typeof body.text === 'string' ? body.text : '';
   const { shown: text, more } = useClipped(full, { controls: 'chat' });
+  const plain = (
+    <p className="whitespace-pre-wrap break-words">
+      <LinkedText text={text} />
+    </p>
+  );
   return (
     <div className="flex max-w-full flex-col gap-1" data-testid="chat.output">
       <EventTime at={at} />
       <Near text={text}>
-        <ChunkBoundary fallback={<p className="whitespace-pre-wrap break-words">{text}</p>}>
-          <Suspense fallback={<p className="whitespace-pre-wrap break-words">{text}</p>}>
+        <ChunkBoundary fallback={plain}>
+          <Suspense fallback={plain}>
             <Markdown text={text} />
           </Suspense>
         </ChunkBoundary>

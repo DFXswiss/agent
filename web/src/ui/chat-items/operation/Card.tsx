@@ -5,7 +5,8 @@
 // login), "Renamed by session" for `task.set_title`, a test run's summary with "Open log" (`test.run`, ADR-080), the
 // error code, and "Duplicate of …" linking the original. Listed issues and pull requests show number (linked), title,
 // state and labels; a read issue shows its text and its page of comments. Text from GitHub is untrusted: it is only
-// rendered as React text (never as HTML or Markdown), links are https only (`httpsUrl`). Unverifiable parameters or
+// rendered as React text (never as HTML or Markdown), links are https only (`httpsUrl`, and bare URLs in an issue's
+// text and comments through `LinkedText` with `HTTPS_ONLY`). Bare URLs of the subject follow the chat's link rules. Unverifiable parameters or
 // results are shown as such with their code, never as content.
 import { useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
@@ -26,6 +27,7 @@ import { useStore } from '../../hooks/useStore';
 import { OpenLog } from '../../logs/LogView';
 import { useSummaryText } from '../test.run';
 import { TriggeredBy } from '../../task-tabs/people';
+import { HTTPS_ONLY, LinkedText } from '../../task-tabs/chat/LinkedText';
 import { useI18n } from '../../i18n';
 import { useAppEnv } from '../../shell/context';
 
@@ -218,7 +220,7 @@ function IssueView({ issue }: { readonly issue: IssueContent }) {
           className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded bg-gray-50 p-2"
           data-testid="operation.issue.body"
         >
-          {issue.body}
+          <LinkedText text={issue.body} schemes={HTTPS_ONLY} />
         </p>
       )}
       <p className="text-xs text-gray-600" data-testid="operation.issue.comments-count">
@@ -236,7 +238,9 @@ function IssueView({ issue }: { readonly issue: IssueContent }) {
                   </time>
                 )}
               </p>
-              <p className="whitespace-pre-wrap break-words">{comment.body}</p>
+              <p className="whitespace-pre-wrap break-words" data-testid="operation.issue.comment.body">
+                <LinkedText text={comment.body} schemes={HTTPS_ONLY} />
+              </p>
             </li>
           ))}
         </ol>
@@ -308,7 +312,7 @@ export function CardBody({
       </div>
       {view.subject !== null && (
         <p className="break-all text-sm" data-testid="operation.subject">
-          {view.subject}
+          <LinkedText text={view.subject} />
         </p>
       )}
       {view.facts.length > 0 && (

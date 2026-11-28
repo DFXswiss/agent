@@ -1,7 +1,8 @@
 // The next step of an entry of the situation view, without opening the task (06-web.md section 4.0, ADR-076 section 8;
 // E-05: the next step, never only an explanation). Only for users who may write in the task's workgroup:
 //
-// - `question`: the agent's question (opened and verified in the browser) and an answer field (a follow-up prompt);
+// - `question`: the agent's question (opened and verified in the browser; plain text, its URLs as links) and an
+//   answer field (a follow-up prompt);
 // - `approval`: the question, an optional comment and "Approve" / "Decline" (a prompt starting with `Approved.` /
 //   `Declined.`);
 // - `connection_missing`: "Connect GitHub" (the settings); `model_access_missing`: the model settings;
@@ -28,6 +29,7 @@ import { setTaskPlacement } from '../../../core/tasks/placement';
 import { retryPrompt, sendable, sendErrorCode } from '../../../core/tasks/send';
 import { useStore } from '../../hooks/useStore';
 import { useI18n } from '../../i18n';
+import { LinkedText } from '../../task-tabs/chat/LinkedText';
 import { useAppEnv } from '../../shell/context';
 import '../../../core/i18n/lazy/model';
 
@@ -52,7 +54,7 @@ function Question({ task, row }: { readonly task: TaskRow; readonly row: Attenti
       data-testid="attention.question"
       data-status={question.status}
     >
-      {question.status === 'verified' && question.text}
+      {question.status === 'verified' && <LinkedText text={question.text} />}
       {question.status === 'missing' && <span className="text-gray-600">{t('attention.question.loading')}</span>}
       {question.status === 'unverifiable' && (
         <span className="text-gray-600">{t('attention.question.unverifiable', { code: question.code })}</span>

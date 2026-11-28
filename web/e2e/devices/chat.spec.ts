@@ -89,6 +89,55 @@ test('shows every base item of the timeline in order', async ({ page, baseURL })
   );
 });
 
+const PR = 'https://github.com/example-org/example-repo/pull/6371';
+const LINKS_OUTPUT =
+  `SEC-020: ${PR}\n\nNot a link: javascript:alert(1)\n\n` +
+  '| ID | Pull request | Note |\n| --- | --- | --- |\n' +
+  `| SEC-020 | ${PR} | ${'a long cell without breaks '.repeat(4).trim()} |\n| SEC-021 | – | ok |`;
+
+test('links bare URLs of prompts and outputs and shows tables in a scroll box', async ({ page, baseURL }) => {
+  await freshUser(page, baseURL!, { poolReady: 2 });
+  const task = await sendPrompt(page, `Check ${PR} please`);
+  const session = await mainSession(task);
+  await walk(session.session_id, [...START_STEPS, 'working'], { intervalMs: 20 });
+  // the prompt stays plain text, its URL a link that opens in a new tab
+  const prompt = page.getByTestId('chat.prompt.text');
+  await expect(prompt).toHaveText(`Check ${PR} please`);
+  const promptLink = prompt.getByRole('link', { name: PR });
+  await expect(promptLink).toHaveAttribute('href', PR);
+  await expect(promptLink).toHaveAttribute('rel', 'noopener noreferrer nofollow');
+  await expect(promptLink).toHaveAttribute('target', '_blank');
+  await sessionEvents(session.session_id, [
+    { kind: 'session.output', body: { message_id: 'm1', role: 'assistant', turn: 1, text: LINKS_OUTPUT } },
+  ]);
+  const markdown = page.getByTestId('markdown');
+  const links = markdown.getByRole('link', { name: PR });
+  await expect(links).toHaveCount(2);
+  for (const link of await links.all()) {
+    await expect(link).toHaveAttribute('href', PR);
+    await expect(link).toHaveAttribute('rel', 'noopener noreferrer nofollow');
+    await expect(link).toHaveAttribute('target', '_blank');
+  }
+  await expect(markdown).toContainText('javascript:alert(1)');
+  await expect(markdown.locator('a[href^="javascript"]')).toHaveCount(0);
+  const table = markdown.locator('table');
+  await expect(table.locator('th')).toHaveText(['ID', 'Pull request', 'Note']);
+  await expect(table.locator('tbody tr')).toHaveCount(2);
+  // a click opens the link in a new tab
+  const popup = page.waitForEvent('popup');
+  await links.first().click({ modifiers: [] });
+  await (await popup).close();
+  // narrow screen: the table scrolls in its own box, the page does not; the box takes the keyboard focus
+  await page.setViewportSize({ width: 360, height: 640 });
+  const box = markdown.getByTestId('markdown.table');
+  await expect.poll(() => box.evaluate((node) => node.scrollWidth > node.clientWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await box.focus();
+  await expect(box).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(() => box.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0);
+});
+
 test('a writer sends follow-ups, stops and ends the session and closes the task', async ({ page, baseURL }) => {
   await freshUser(page, baseURL!, { poolReady: 2 });
   const task = await sendPrompt(page, 'Long running work');
