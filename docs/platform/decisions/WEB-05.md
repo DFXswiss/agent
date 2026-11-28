@@ -32,7 +32,8 @@ Chat, Sessions tab, session detail with the read-only terminal (06-web.md §2.1,
 8. **Markdown.** `react-markdown` with `skipHtml`, no rehype plugins; every link and image source passes
    `safeUrl` (absolute `http:`, `https:`, `mailto:` only; control characters refused); links get
    `rel="noopener noreferrer nofollow"` and `target="_blank"`. Images are rendered as links (the CSP allows no foreign
-   images and a remote image would reveal the reader). No GFM plugin (tables are plain text). Styles are Tailwind
+   images and a remote image would reveal the reader). No GFM plugin (tables are plain text; superseded by ADR-104:
+   `remark-gfm` for bare URLs and tables). Styles are Tailwind
    classes on the rendered elements (an imported CSS file would be counted as an app source by the coverage merge).
    The renderer and the terminal are loaded lazily (§12.2).
 9. **Watching terminals.** The live channel gets `LiveChannel.setTerminals` (newest three; a running connection is

@@ -246,6 +246,12 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     count: 1,
     reason: 'text and link pieces of one message (at most 2 000 characters, 14-community.md section 3)',
   },
+  'src/ui/task-tabs/chat/LinkedText.tsx': {
+    count: 1,
+    reason:
+      'text and link pieces of one text (a piece per URL; chat texts at most 20 000 characters at a time, HOT-05; a ' +
+      'whiteboard entry at most 64 KiB)',
+  },
   'src/ui/screens/community/MutedUsers.tsx': {
     count: 1,
     reason: 'users a moderator muted, each an explicit moderator action (shown to moderators only, on request)',

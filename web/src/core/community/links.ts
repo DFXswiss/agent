@@ -1,25 +1,12 @@
 // Links in community texts (14-community.md section 6): `http://` and `https://` URLs become links, everything else
 // stays text – never HTML. A URL ends at white space; trailing punctuation that usually closes a sentence (`.,;:!?`
 // and closing brackets or quotes without an opening one inside the URL) stays text.
+import { trimUrl } from '../chat/links';
+
 export type Segment =
   { readonly kind: 'text'; readonly text: string } | { readonly kind: 'link'; readonly href: string };
 
 const URL_RE = /https?:\/\/[^\s<>"]+/gi;
-const TRAILING = /[.,;:!?'"]$/;
-const PAIRS: Readonly<Record<string, string>> = { ')': '(', ']': '[', '}': '{' };
-
-const count = (text: string, char: string) => text.split(char).length - 1;
-
-function trimUrl(url: string): string {
-  let end = url;
-  for (;;) {
-    const last = end.slice(-1);
-    const open = PAIRS[last];
-    const unbalanced = open !== undefined && count(end, open) < count(end, last);
-    if (!TRAILING.test(last) && !unbalanced) return end;
-    end = end.slice(0, -1);
-  }
-}
 
 /** Whether the browser parses the (already `http(s)://`) URL; a link to something unparsable stays text. */
 function valid(href: string): boolean {

@@ -20,10 +20,20 @@ import { useI18n } from '../i18n';
 import { ChunkBoundary } from '../lazy/ChunkBoundary';
 import { Near } from '../lists/near';
 import type { RowAttributes } from '../lists/WindowedList';
+import { LinkedText } from '../task-tabs/chat/LinkedText';
 import { Editor } from './Editor';
 import { Time } from './Time';
 
 const Markdown = lazy(() => import('../task-tabs/chat/Markdown'));
+
+/** The entry until the Markdown chunk is loaded (or when it cannot be): plain text with its URLs as links. */
+function PlainText({ text }: { readonly text: string }) {
+  return (
+    <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+      <LinkedText text={text} />
+    </p>
+  );
+}
 
 export interface EntryActions {
   readonly writer: boolean;
@@ -145,8 +155,8 @@ function Entry({ entry, actions }: { readonly entry: BoardEntry; readonly action
       {!entry.deleted && !editing && (
         <div data-testid="whiteboard.item.text">
           <Near text={entry.text}>
-            <ChunkBoundary fallback={<p className="whitespace-pre-wrap">{entry.text}</p>}>
-              <Suspense fallback={<p className="whitespace-pre-wrap">{entry.text}</p>}>
+            <ChunkBoundary fallback={<PlainText text={entry.text} />}>
+              <Suspense fallback={<PlainText text={entry.text} />}>
                 <Markdown text={entry.text} />
               </Suspense>
             </ChunkBoundary>

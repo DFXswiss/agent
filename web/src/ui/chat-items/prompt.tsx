@@ -1,6 +1,6 @@
 // Chat item `prompt` (06-web.md section 5.2): a right-aligned bubble with the author's name (the verified author of the
 // event, named from the org's verified `member.profile`; a person of DFX support as "Support <Name>", ADR-096), plain
-// text, `CLIP_CHARS` characters at a time (HOT-05). A prompt the queue of the task names as withdrawn is marked
+// text with its bare URLs as links (`LinkedText`, never Markdown), `CLIP_CHARS` characters at a time (HOT-05). A prompt the queue of the task names as withdrawn is marked
 // "Withdrawn", "Being withdrawn" or "Could not be withdrawn" (it had already reached the AI; ADR-083 section 3).
 import { isRecord } from '../../core/registry';
 import type { TimelineItem } from '../../core/chat/timeline';
@@ -11,6 +11,7 @@ import { useStore } from '../hooks/useStore';
 import { useI18n } from '../i18n';
 import { useAppEnv } from '../shell/context';
 import { EventTime } from '../task-tabs/chat/EventTime';
+import { LinkedText } from '../task-tabs/chat/LinkedText';
 import { useClipped } from '../lists/Clipped';
 import { knownPersonName } from '../names/names';
 import { useAuthorOverride, useSupportLabel } from '../names/support';
@@ -43,7 +44,7 @@ function Prompt({ item }: ChatItemProps) {
         <span data-testid="chat.prompt.author">{name}</span> <EventTime at={at} />
       </span>
       <p className="whitespace-pre-wrap break-words rounded-lg bg-blue-50 px-3 py-2" data-testid="chat.prompt.text">
-        {shown}
+        <LinkedText text={shown} />
       </p>
       {more}
       {withdrawal !== null && (

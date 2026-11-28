@@ -31,7 +31,7 @@ plaintext of confidential content to the hub.
 | UI | React 18, React Router 6 (data router) | |
 | Styling | Tailwind 3 (compiled, no runtime CSS-in-JS) | |
 | Terminal | `@xterm/xterm` + `@xterm/addon-fit` + `@xterm/addon-webgl` (fallback `@xterm/addon-canvas`) | read-only, §5.5 |
-| Markdown | `react-markdown` (no `rehype-raw`, `skipHtml: true`, links `rel="noopener noreferrer nofollow"`, only `http(s):`/`mailto:` URLs) | chat outputs and whiteboards |
+| Markdown | `react-markdown` + `remark-gfm` (ADR-104: bare URLs and tables; no `rehype-raw`, `skipHtml: true`, links `rel="noopener noreferrer nofollow"` in a new tab, only `http(s):`/`mailto:` URLs; tables scroll in a focusable box of their own like code blocks) | chat outputs and whiteboards; plain texts (prompts, fallbacks, operation cards) link their bare URLs under the same rules |
 | Charts | `uplot` | monitoring, §9 |
 | Tests | Vitest, `@vitest/coverage-v8`, Playwright, `monocart-coverage-reports`, Testing Library | dev only |
 | Lint/format | ESLint (`--max-warnings 0`), Prettier (`singleQuote`, `printWidth 120`) as in the DFX `app` repo | dev only |
@@ -538,7 +538,8 @@ after a reconnect; without a switch, or when the audit cannot be read, nothing i
 
 - Timeline from events of the wg scope filtered by `task` (`GET /v1/scopes/{wg}/events?task=…` + SSE), ordered by
   `(ts, scope_seq)`:
-  - `prompt` – right-aligned bubble with author name.
+  - `prompt` – right-aligned bubble with author name; plain text (not Markdown) whose bare `http(s):`/`mailto:` URLs
+    are links (§2.1 rules).
   - `session.output` – Markdown (§2.1 rules), per session; subagent outputs are indented with the subagent label.
   - `session.tool` – collapsed row "Read src/app.py", "Edit …" (expand: input/result summaries, error flag).
   - `operation.params` / `operation.result` + `operation` rows – inline card with type, state badge (live), and

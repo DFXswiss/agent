@@ -48,8 +48,12 @@ export async function smallTargets(page: Page): Promise<string[]> {
       const problems: string[] = [];
       for (const element of document.querySelectorAll<HTMLElement>(selector)) {
         // xterm's hidden helper textarea and visually hidden (sr-only) elements are no touch targets; links inside the
-        // text of a Markdown block are inline targets (WCAG 2.5.8 exception, decision WEB-13)
-        if (element.closest('.xterm-helper-textarea, .xterm-accessibility, [data-testid="markdown"]')) continue;
+        // text of a Markdown block and bare URLs linked in plain text are inline targets (WCAG 2.5.8 exception, decision
+        // WEB-13)
+        if (
+          element.closest('.xterm-helper-textarea, .xterm-accessibility, [data-testid="markdown"], [data-inline-link]')
+        )
+          continue;
         if (!element.checkVisibility({ visibilityProperty: true, opacityProperty: true })) continue;
         const own = element.getBoundingClientRect();
         if (own.width <= 1 || own.height <= 1) continue;
