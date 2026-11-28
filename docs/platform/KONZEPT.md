@@ -1015,6 +1015,32 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Umsetzung:** in Arbeit – Aufgabe auf agent mit Fable 5.2. Die Plattform kennt noch keine Modellwahl je Task; das
   Modell kam über die Modellvorgabe des Auftraggebers, die Sitzung hat es bestätigt.
 
+<a id="e-43"></a>
+
+### E-43 – Ein Task sieht aus wie Claude Code, lokal gestartet
+
+- **Datum:** 2026-11-27 (Präzisierung am Abend desselben Tages)
+- **Regel:** Die erste Eingabe eines Tasks bleibt, wie sie ist. Sobald die Hauptsession in ihrer VM angelegt ist, ist
+  die Task-Seite im Browser vom lokal gestarteten Claude-Code-Terminal nicht zu unterscheiden: die echte Ausgabe der
+  TUI über die ganze Fläche, dunkel, in Terminalschrift, Farben und Symbolen von Claude Code, ohne Web-Rahmen, Karten
+  oder Chat-Blasen; die Navigation ist eine schlanke Leiste. Es gibt genau ein Eingabefeld: es sieht aus wie die
+  Eingabebox von Claude Code und steht an ihrer Stelle, darunter die Statuszeile der TUI. Enter sendet, Umschalt+Enter
+  macht einen Zeilenumbruch, Esc unterbricht den laufenden Turn. Auch auf dem Handy wie ein Terminal, lesbar, die
+  Eingabe unten. Eingaben bleiben signierte Prompts; das Terminal selbst nimmt keine Tastendrücke an. Der Chat bleibt
+  als zweite Ansicht.
+- **Wortlaut:** „ich will auf agent.dfx.swiss die selbe UI Ansicht haben wenn ich eine Claude Session starte wie wenn
+  ich claude local starten würde“ und, auf die Wahl zwischen Terminal-Ansicht mit Eingabefeld (A), Chat im
+  Claude-Code-Stil (B) und echt interaktivem Terminal (C): „A, das allererste Eingabefeld bleibt wie es heute ist, dann
+  wird eine neue Session in einer VM angelegt und von da an soll alles im Claude Code UI Style angezeigt werden“; am
+  Abend als Abnahme: „es soll wirklich gleich aussehen wie das claude terminal, im browser“
+- **Bezug:** ändert [§6 Punkt 6](#k-6-b6) (Standardansicht: Chat) – Standardansicht ist jetzt die Terminalansicht
+  von [§6 Punkt 7](#k-6-b7) mit dem Eingabefeld an der Stelle der Eingabebox; §6 Punkt 7 gilt weiter: die
+  Terminalansicht bleibt read-only, Prompts kommen nur über dieses Eingabefeld. Ein echt interaktives Terminal (C) hat
+  der Auftraggeber nicht gewählt; was deshalb anders bleibt als lokal (Scrollen in der TUI, Tasten wie Umschalt+Tab,
+  Pfeiltasten, Slash-Befehle), nennt [ADR-104](adr/104-claude-code-view-as-task-default.md) („What stays different“).
+- **Umsetzung:** gebaut – Task-Tab „Claude Code“ ([ADR-104](adr/104-claude-code-view-as-task-default.md),
+  [spec/06-web.md](spec/06-web.md) §5.2a, Nachweis [acceptance/E-43](acceptance/E-43/README.md)).
+
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
 **Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und

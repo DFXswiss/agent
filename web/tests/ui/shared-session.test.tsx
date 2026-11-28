@@ -49,7 +49,10 @@ const queued = (event: string, author: string, overrides: Record<string, unknown
   ...overrides,
 });
 
-async function page(path = '', answer: () => unknown = () => ({ task_id: TASK, prompts: [], withdrawals: [] })) {
+async function page(
+  path = '?tab=chat',
+  answer: () => unknown = () => ({ task_id: TASK, prompts: [], withdrawals: [] }),
+) {
   const t = await taskWorld();
   const task = taskRow(t) as TaskRow;
   t.client.on(`GET /v1/tasks/${TASK}`, () => ({
@@ -71,7 +74,7 @@ async function page(path = '', answer: () => unknown = () => ({ task_id: TASK, p
 describe('queue of the task', () => {
   it('lists the waiting instructions with sender and state and withdraws one of one’s own', async () => {
     let prompts: unknown[] = [];
-    const { t } = await page('', () => ({ task_id: TASK, prompts, withdrawals: [] }));
+    const { t } = await page('?tab=chat', () => ({ task_id: TASK, prompts, withdrawals: [] }));
     await waitFor(() => expect(t.client.of(QUEUE).length).toBeGreaterThan(0));
     // nothing while no instruction waits
     expect(screen.queryByTestId('chat.queue')).toBeNull();
@@ -148,7 +151,11 @@ describe('queue of the task', () => {
   });
 
   it('offers no withdrawal to readers', async () => {
-    const { t } = await page('', () => ({ task_id: TASK, prompts: [queued('e1', 'reader')], withdrawals: [] }));
+    const { t } = await page('?tab=chat', () => ({
+      task_id: TASK,
+      prompts: [queued('e1', 'reader')],
+      withdrawals: [],
+    }));
     act(() => t.store.update('me', (me) => ({ ...me, userId: 'reader' })));
     const queue = await screen.findByTestId('chat.queue');
     expect(screen.getByTestId('chat.read-only')).toBeInTheDocument();
@@ -159,7 +166,7 @@ describe('queue of the task', () => {
 
 describe('withdrawn prompts in the timeline', () => {
   it('marks a prompt as withdrawn, being withdrawn or too late', async () => {
-    const { t } = await page('', () => ({
+    const { t } = await page('?tab=chat', () => ({
       task_id: TASK,
       prompts: [],
       withdrawals: [

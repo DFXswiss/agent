@@ -29,6 +29,7 @@ import {
   invite,
   onboard,
   onboardWithCode,
+  openChat,
   platformDevice,
   poolReady,
   sendPrompt,
@@ -270,6 +271,7 @@ test('@E2E-33 @R-6.8 @R-P.5 @needs-vm a restored hub serves identical logs, even
 
   // A follow-up prompt in the first task works on the restored hub; the runner raised no log alarm.
   await navigateInApp(page, `/o/${ada.org}/t/${first}`);
+  await openChat(page); // the chat is the second tab (KONZEPT E-43)
   await expect(page.getByTestId('chat.output').filter({ hasText: 'kz33-answer-f4w8' })).toBeVisible({
     timeout: 30_000,
   });

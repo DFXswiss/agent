@@ -20,7 +20,7 @@ export interface CountdownPanelProps {
 }
 
 /** The session the countdown follows: the task's main session, else the one this browser just launched. */
-function useCountdown(task: TaskRow): { readonly view: CountdownView; readonly now: number } {
+export function useCountdown(task: TaskRow): { readonly view: CountdownView; readonly now: number } {
   const { app } = useAppEnv();
   const launch = useStore((state) => state.tasks.launches[task.task_id] ?? null, app.store);
   const sessionId = task.main_session_id ?? launch?.sessionId ?? null;

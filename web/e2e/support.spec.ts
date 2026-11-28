@@ -11,6 +11,7 @@ import { addAuthenticator } from './helpers/authenticator.ts';
 import { navigateInApp, onboard } from './helpers/onboard.ts';
 import { appendPlatform, rootRequest } from './helpers/platform.ts';
 import { PageUser } from './helpers/user.ts';
+import { openChat } from './helpers/tasks.ts';
 
 const SUPPORT_NAME = 'Sam Support';
 
@@ -110,6 +111,7 @@ test('a workgroup released to support: nothing before, read, write, the organiza
 
   // the organization sees support: in the chat, in the audit, in the notifications
   await navigateInApp(page, `/o/${ada.org}/t/${task}`);
+  await openChat(page); // the chat is the second tab (KONZEPT E-43)
   await expect(page.getByTestId('chat.prompt.author').last()).toHaveText(`Support ${SUPPORT_NAME}`, {
     timeout: 30_000,
   });

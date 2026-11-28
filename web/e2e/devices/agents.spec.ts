@@ -13,7 +13,7 @@ import { test } from '../fixtures/test.ts';
 import { mainSession, walk } from '../helpers/director.ts';
 import { layoutProblems, MIN_TARGET } from '../helpers/layout-checks.ts';
 import { operation } from '../helpers/operations.ts';
-import { freshUser, sendPrompt, START_STEPS } from '../helpers/tasks.ts';
+import { freshUser, openChat, sendPrompt, START_STEPS } from '../helpers/tasks.ts';
 import { PageUser } from '../helpers/user.ts';
 import { navigateInApp, visit } from '../helpers/whiteboard.ts';
 
@@ -130,6 +130,7 @@ test('renames an agent, keeps the name across a reload and names the agents as a
   await expect(page.getByTestId('task.agent.rename.input')).toHaveCount(0);
   // the hub stores the sealed event: the name comes back after a reload (the task row names the event)
   await visit(page, `/o/${user.org}/t/${task}`);
+  await openChat(page); // the task's header is on every tab but "Claude Code" (KONZEPT E-43)
   await expect(page.getByTestId('task.agent.name')).toHaveText('Report writer');
   // back to the automatic name and to a given one again
   await page.getByTestId('task.agent.rename').click();

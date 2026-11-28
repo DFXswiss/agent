@@ -124,7 +124,7 @@ Volume bounds (ADR-086 §1, `decisions/KOR-35.md` §4):
 | `/o/:org` | home: first-task composer (§4) and recent tasks of the default workgroup | org:member |
 | `/o/:org/tasks` | task overview: all tasks of the readable workgroups (§5.1a, KOR-32) | org:member |
 | `/o/:org/w/:wg` | task list + composer of a workgroup (§5.1) | wg:read |
-| `/o/:org/t/:task` | chat (§5.2), tabs: Chat, Sessions, Pull requests (§5.6), Operations, Whiteboard, Audit | task:read |
+| `/o/:org/t/:task` | Claude Code view (§5.2a, default), tabs: Claude Code, Chat (§5.2), Sessions, Pull requests (§5.6), Operations, Whiteboard, Audit | task:read |
 | `/o/:org/s/:session` | session detail: terminal (§5.5), chat of that session, children | task:read |
 | `/o/:org/whiteboard` and `/o/:org/w/:wg/whiteboard` | whiteboards (§6.1) | org:member / wg:read |
 | `/o/:org/members` | members and rights (§7.1) | org:member (edit: admin) |
@@ -530,7 +530,32 @@ Claude subscription → DFX access over OpenRouter (model) · used up until 14:0
 the time, `unusable`, `released`; an operator subscription is named "operator subscription"). It is read when the page opens, when the task or its main session changes state and
 after a reconnect; without a switch, or when the audit cannot be read, nothing is shown.
 
-### 5.2 Chat (`/o/:org/t/:task`, tab Chat)
+### 5.2a Claude Code (`/o/:org/t/:task`, default tab, [E-43](../KONZEPT.md#e-43), [ADR-104](../adr/104-claude-code-view-as-task-default.md))
+
+The page is indistinguishable from Claude Code started locally (acceptance of E-43):
+
+- **Whole window:** the page is fixed over the window (`data-layout="terminal"`): one slim dark bar ("← Tasks", the
+  title, the tabs), below it the terminal of the main session (§5.5, read-only, always Follow; no label, no mode
+  controls; history and replay stay in the session detail). It follows a new main session after a resume or failover.
+  Theme, terminal font and line height 1 as a local terminal (`core/terminal/screen.ts` `THEME`, `xterm.ts`
+  `FONT_FAMILY`); the font fits 160 × 48 into the window, on a phone (< 768 px) the rows into its height, at least 9 px,
+  the columns scrolling inside the terminal.
+- **One input:** the TUI's input box is found on the screen after every write (the guest's rule: last `❯` row below a
+  `─` rule, up to the next rule). The input (`terminal.input`, `data-placement="box"`, `data-box="<top>-<bottom>"`) lies
+  exactly over these rows – rules and marker in the colours copied from the screen, text in the cell grid, growing
+  upwards with the text – so the TUI's status line below it stays visible and the page never shows two inputs. While
+  the screen has no box the same input is docked below the screen (`data-placement="docked"`). The text area covers the
+  box and at least 44 px (touch target); on a phone its text stays in view while the columns scroll.
+- **Keys:** Enter sends the same signed `prompt` as the chat; Shift+Enter and Alt+Enter start a line; Enter while an IME
+  composes is the IME's; Esc anywhere interrupts the turn (`interrupt`). A refused send or control and "offline" are
+  lines above the box (`⎿ …`, failures as alert). What stays different from local: ADR-104.
+- **Start:** until the main session works, and after its start failed, the start as terminal lines above the screen
+  (`terminal.start`: ✻ countdown or current step with elapsed time, the waiting reason with its action, the steps;
+  the catalog error and "Retry" for writers); before the main session exists the input is docked below.
+- Model access card and queue as in §5.2; readers see the TUI with its own box, no input, and a quiet "You have read
+  access".
+
+### 5.2 Chat (`/o/:org/t/:task?tab=chat`, tab Chat)
 
 - When the main session failed with `model_access_unavailable`, the task's owner sees a card "Connect your Claude
   subscription – the task continues by itself once it is connected" that leads to the connection (§8.2); others see

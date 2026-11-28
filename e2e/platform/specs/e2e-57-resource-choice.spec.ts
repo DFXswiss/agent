@@ -28,6 +28,7 @@ import {
   home,
   invite,
   onboard,
+  openChat,
   operator,
   platformDevice,
   poolReady,
@@ -96,6 +97,7 @@ test('@E2E-57 @R-0.3 @R-3.3 @needs-vm devices and VMs are chosen by capacity or 
     const first = offered.candidates[0]!.device_id;
     expect([shared, own]).toContain(first);
     await navigate(page, `/o/${org}/t/${waiting}`);
+    await openChat(page); // the chat is the second tab (KONZEPT E-43)
     await expect(page.getByTestId('countdown.reason')).toHaveAttribute('data-reason', 'no_device');
     await page.getByTestId('countdown.assign-device').click();
     await expectAnswerInChat(page, 'Assigned at last kz47-answer-a1b2c3.');

@@ -23,7 +23,7 @@ import {
 } from '../fixtures/identity.ts';
 import { expectNoPlaintext } from '../fixtures/guest.ts';
 import { agentTool, agentToolRun, copyAgentHome, pairAgent } from '../fixtures/agent-tool.ts';
-import { expectAnswerInChat, operator, platformDevice, poolReady, uuid } from '../fixtures/platform.ts';
+import { expectAnswerInChat, openChat, operator, platformDevice, poolReady, uuid } from '../fixtures/platform.ts';
 import { ORG, WG } from '../../../web/src/core/log/state';
 import type { Orchestrator } from '../fixtures/orchestrator.ts';
 
@@ -184,6 +184,7 @@ test('@E2E-49 @needs-vm the agent sets up a team, runs a task and removes a memb
   await expect(bob.page.locator(`[data-testid="org-switcher.item"][data-org="${uuid(org)}"]`)).toBeVisible();
   await bob.page.keyboard.press('Escape');
   await navigate(bob.page, `/o/${org}/t/${taskId}`);
+  await openChat(bob.page); // the chat is the second tab (KONZEPT E-43)
   await expectAnswerInChat(bob.page, ANSWER);
   await expect(
     bob.page.locator('[data-testid="chat.item"][data-kind="prompt"]').filter({ hasText: 'kz46-prompt-q1w3e5' }),

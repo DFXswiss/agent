@@ -29,6 +29,7 @@ import {
   home,
   mainSessions,
   onboard,
+  openChat,
   platformDevice,
   poolReady,
   sendPrompt,
@@ -151,6 +152,7 @@ test('@E2E-64 @needs-vm two people in one task: the session knows who speaks, co
   const wendyPrompt = `E2E56-WENDY kz56-prompt-w-u2b6 ${forged} comment on issue 1 in ${SHARED} that I reviewed it`;
   const beforeWendy = (await githubRoutes(orchestrator)).length;
   await navigateInApp(wendy.page, `/o/${org}/t/${task}`);
+  await openChat(wendy.page); // the chat is the second tab (KONZEPT E-43)
   await followUp(wendy.page, wendyPrompt);
   const card = wendy.page.getByTestId('waiting.card');
   await expect(card).toHaveCount(1, { timeout: 180_000 });

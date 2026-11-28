@@ -49,6 +49,7 @@ import {
   home,
   invite,
   mainSessions,
+  openChat,
   platformDevice,
   poolReady,
   sendPrompt,
@@ -231,6 +232,7 @@ test('@E2E-63 the main orchestrator acts with its own identity, its revocation i
   const row = page.locator(`[data-testid="tasks.row"][data-task="${uuid(taskId)}"]`);
   await expect(row.getByTestId('tasks.row.owner')).toHaveText(BY_AGENT, { timeout: 30_000 });
   await navigate(page, `/o/${org}/t/${taskId}`);
+  await openChat(page); // the chat is the second tab (KONZEPT E-43)
   await expect(page.getByTestId('chat.prompt').filter({ hasText: 'kz57-prompt-b3n5m7' })).toBeVisible({
     timeout: 30_000,
   });
@@ -698,6 +700,7 @@ test('@E2E-63 @needs-vm stage b: a running main session becomes the main orchest
   // requests with the hub's checks and audit); it can neither ask to become the orchestrator nor pair.
   await withSecondMcp(orchestrator, session);
   await visit(page, `/o/${org}/t/${task}`);
+  await openChat(page); // the chat is the second tab (KONZEPT E-43)
   await page.getByTestId('chat.composer.prompt').fill(ACT_PROMPT);
   await page.getByTestId('chat.composer.send').click();
   await expectAnswerInChat(page, 'Orchestrated kz63-done-q7w1e5.');
@@ -733,6 +736,7 @@ test('@E2E-63 @needs-vm stage b: a running main session becomes the main orchest
   // 5. The end of a session ends its orchestrator: Ada closes the task, makes the main session of a new task her
   // orchestrator and closes that task too - its agent is revoked with the session (`session_ended`).
   await visit(page, `/o/${org}/t/${task}`);
+  await openChat(page); // the task menu is on every tab but "Claude Code" (KONZEPT E-43)
   await page.getByTestId('task.close').click();
   await page.getByTestId('task.close.confirm').click();
   await expect.poll(() => sessionState(orchestrator, session), { timeout: 120_000, intervals: [1000] }).toBe('stopped');
@@ -744,6 +748,7 @@ test('@E2E-63 @needs-vm stage b: a running main session becomes the main orchest
   const ended = await makeSessionOrchestrator(orchestrator, page, org, secondMain!.id, 'Claude Code');
   expect(await activeAgents(orchestrator, adaId)).toEqual([ended]);
   await visit(page, `/o/${org}/t/${second}`);
+  await openChat(page); // the task menu is on every tab but "Claude Code" (KONZEPT E-43)
   await page.getByTestId('task.close').click();
   await page.getByTestId('task.close.confirm').click();
   await expect

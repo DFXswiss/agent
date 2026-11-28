@@ -13,8 +13,13 @@ import { terminalFailed } from '../../src/core/store/slices/terminal';
 import { applyNewest, applyPage } from '../../src/core/terminal/entries';
 import { TerminalWatch } from '../../src/core/terminal/watch';
 import { SessionScreen } from '../../src/ui/screens/session/SessionScreen';
+import { TaskScreen } from '../../src/ui/screens/task/TaskScreen';
+import { resized } from './resize-observer';
+import { TerminalTab } from '../../src/ui/task-tabs/terminal/TerminalTab';
+import { THEME } from '../../src/core/terminal/screen';
 import TerminalView, { offsetLabel } from '../../src/ui/terminal/TerminalView';
 import {
+  cellColorAt,
   clearScreen,
   fitFont,
   hasWebgl2,
@@ -22,6 +27,7 @@ import {
   MIN_FONT,
   openScreen,
   SCROLLBACK,
+  visibleRows,
 } from '../../src/ui/terminal/xterm';
 import { sessionRow, taskRow, type TaskWorld, taskWorld } from '../core/tasks/world';
 import { MAIN, mount, TASK, verified } from './chat-world';
@@ -29,11 +35,39 @@ import { MAIN, mount, TASK, verified } from './chat-world';
 const xterm = vi.hoisted(() => {
   const terminals: FakeTerminal[] = [];
   const fit = { proposed: { cols: 80, rows: 48 } as { cols: number; rows: number } | undefined };
+  /** Colours of cells (`row:column`) the screen reports; every other cell has the default colour. */
+  const cells: Record<string, { mode: 'rgb' | 'palette'; value: number }> = {};
   class FakeTerminal {
     readonly options: Record<string, unknown>;
     readonly writes: string[] = [];
     readonly addons: string[] = [];
+    readonly scrolls: (() => void)[] = [];
     host: HTMLElement | null = null;
+    /** The screen: the written text without escape sequences, one row per line, from the top (no cursor model). */
+    readonly buffer = {
+      active: {
+        viewportY: 0,
+        getLine: (row: number) => {
+          const text = this.writes
+            .join('')
+            .replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[A-Za-z]`, 'g'), '')
+            .split(/\r?\n/)[row];
+          return text === undefined
+            ? undefined
+            : {
+                translateToString: () => text,
+                getCell: (column: number) => {
+                  const cell = cells[`${row}:${column}`];
+                  return {
+                    isFgRGB: () => cell?.mode === 'rgb',
+                    isFgPalette: () => cell?.mode === 'palette',
+                    getFgColor: () => cell?.value ?? 0,
+                  };
+                },
+              };
+        },
+      },
+    };
     cols: number;
     rows: number;
     disposed = false;
@@ -65,8 +99,12 @@ const xterm = vi.hoisted(() => {
     dispose() {
       this.disposed = true;
     }
+    onScroll(listener: () => void) {
+      this.scrolls.push(listener);
+      return { dispose: () => this.scrolls.splice(this.scrolls.indexOf(listener), 1) };
+    }
   }
-  return { terminals, fit, FakeTerminal };
+  return { terminals, fit, cells, FakeTerminal };
 });
 
 vi.mock('@xterm/xterm', () => ({ Terminal: xterm.FakeTerminal }));
@@ -216,6 +254,20 @@ describe('xterm screen', () => {
     delete (screen.terminal.options as Record<string, unknown>).fontSize;
     xterm.fit.proposed = { cols: 160, rows: 48 };
     expect(fitFont(screen)).toBe(13);
+  });
+
+  it('reads the visible rows and the colours of cells, the foreground for a row without output', () => {
+    const screen = openScreen(document.createElement('div'), 20, 3);
+    screen.terminal.write('ab\r\ncd');
+    xterm.cells['0:0'] = { mode: 'rgb', value: 0x112233 };
+    xterm.cells['0:1'] = { mode: 'palette', value: 1 };
+    expect(visibleRows(screen)).toEqual(['ab', 'cd', '']);
+    expect(cellColorAt(screen, 0, 0)).toBe('#112233');
+    expect(cellColorAt(screen, 0, 1)).toBe(THEME.red);
+    expect(cellColorAt(screen, 1, 0)).toBe(THEME.foreground);
+    expect(cellColorAt(screen, 2, 0)).toBe(THEME.foreground);
+    delete xterm.cells['0:0'];
+    delete xterm.cells['0:1'];
   });
 
   it('labels offsets as minutes and seconds', () => {
@@ -469,6 +521,188 @@ describe('terminal view', () => {
       })),
     );
     expect(text(1)).toBe('a');
+  });
+});
+
+describe('task tab "Claude Code" (KONZEPT E-43, ADR-104)', () => {
+  const RULE_ROW = '─'.repeat(160);
+  /** The screen of Claude Code 2.1.330 after a turn (rows 0–8); with `box` its input box (rows 5–7) and status line. */
+  const tui = (box: boolean) =>
+    [
+      ' ▐▛███▛█   Claude Code v2.1.330',
+      '',
+      '❯ Fix the expiry check',
+      '',
+      '● Fixed.',
+      ...(box ? [RULE_ROW, '❯ ', RULE_ROW, "  ⏵⏵ don't ask on (shift+tab to cycle)"] : []),
+    ].join('\r\n');
+
+  beforeEach(() => {
+    for (const key of Object.keys(xterm.cells)) delete xterm.cells[key];
+    xterm.cells['5:0'] = { mode: 'palette', value: 244 };
+    xterm.cells['6:0'] = { mode: 'rgb', value: 0xaabbcc };
+  });
+
+  /** The task page on "Claude Code" with the main session's terminal history `history` (answered like `view`). */
+  async function taskPage(
+    t: TaskWorld,
+    history: ReturnType<typeof chunk>[],
+    options: { session?: Record<string, unknown> | null; task?: Record<string, unknown> } = {},
+  ) {
+    t.client.on(`GET /v1/tasks/${TASK}`, () => ({
+      task: taskRow(t, options.task ?? {}),
+      sessions:
+        options.session === null
+          ? []
+          : [{ session: sessionRow(t, { state: 'working', ...options.session }), transitions: [] }],
+    }));
+    const stored = (item: ReturnType<typeof chunk>) => ({ scope_seq: item.seq, received_at: null, event: {} });
+    t.client.on(`GET /v1/scopes/${t.wg}/events`, (_body, target) => {
+      const params = new URL(target, 'https://hub.example').searchParams;
+      const head = history.at(-1)?.seq ?? 0;
+      if (params.get('session') !== MAIN) return { events: [], next_after: null, head: 0 };
+      if (params.has('before')) return { events: [...history].reverse().map(stored), next_before: null, head };
+      return {
+        events: history.filter((item) => item.seq > Number(params.get('after'))).map(stored),
+        next_after: null,
+        head,
+      };
+    });
+    const mounted = mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}`);
+    mounted.terminal.read.mockImplementation(async (_org, _scope, items) =>
+      items.map((item) => {
+        const found = history.find((entry) => entry.seq === item.scope_seq)!;
+        return verified(t, 'session.terminal', found.body, { session: MAIN, seq: found.seq });
+      }),
+    );
+    await screen.findByTestId('task.screen');
+    return mounted;
+  }
+
+  it("opens on the whole window: a slim bar, the real TUI and one input over the TUI's own box", async () => {
+    const t = await taskWorld();
+    const mounted = await taskPage(t, [chunk(1, [[0, tui(true)]])]);
+    expect(screen.getByTestId('task.screen')).toHaveAttribute('data-layout', 'terminal');
+    expect(screen.getByTestId('task.screen')).toHaveClass('fixed', 'inset-0');
+    expect(screen.getByTestId('task.tabs.terminal')).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByTestId('task.back')).toHaveAttribute('href', `/o/${t.org}/w/${t.wg}`);
+    // no header, task menu or notices of the other tabs
+    expect(screen.queryByTestId('task.menu')).toBeNull();
+    expect(screen.queryByTestId('task.state')).toBeNull();
+    // docked until the first measurement finds the TUI's box, then over it
+    await waitFor(() => expect(screen.getByTestId('terminal.input')).toHaveAttribute('data-placement', 'box'));
+    const input = screen.getByTestId('terminal.input');
+    expect(screen.getByTestId('task.terminal')).toHaveAttribute('data-boxed', 'true');
+    // the input lies inside the screen's coordinates and copies the colours the TUI drew
+    expect(screen.getByTestId('terminal.screen.a').parentElement).toContainElement(input);
+    expect(screen.getByTestId('terminal.input.rule')).toHaveStyle({ color: '#808080' });
+    expect(screen.getByTestId('terminal.input.marker')).toHaveStyle({ color: '#aabbcc' });
+    // one input only; the terminal stays read-only and has no label or mode controls
+    expect(document.querySelectorAll('textarea')).toHaveLength(1);
+    expect(screen.getByTestId('terminal')).toHaveAttribute('data-variant', 'task');
+    expect(screen.queryByTestId('terminal.label')).toBeNull();
+    expect(screen.queryByTestId('terminal.mode.history')).toBeNull();
+    expect(xterm.terminals.at(-1)!.options.disableStdin).toBe(true);
+    expect(mounted.terminal.watch).toHaveBeenCalledWith(t.org, MAIN);
+    expect(screen.queryByTestId('terminal.start')).toBeNull();
+    // a scroll of the screen measures again; an unchanged layout changes nothing
+    act(() => xterm.terminals.at(-2)!.scrolls.forEach((listener) => listener()));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 5)));
+    expect(screen.getByTestId('terminal.input')).toBe(input);
+  });
+
+  it('docks the input while the TUI shows no box and moves it into the box with the text kept', async () => {
+    const t = await taskWorld();
+    await taskPage(t, [chunk(1, [[0, tui(false)]])]);
+    const docked = await screen.findByTestId('terminal.input');
+    expect(docked).toHaveAttribute('data-placement', 'docked');
+    expect(screen.getByTestId('task.terminal')).toHaveAttribute('data-boxed', 'false');
+    fireEvent.change(screen.getByTestId('chat.composer.prompt'), { target: { value: 'kept' } });
+    act(() =>
+      putEvents(t.store, t.wg, [
+        verified(t, 'session.terminal', chunk(2, [[100, `\x1b[2J${tui(true)}`]]).body, { session: MAIN, seq: 2 }),
+      ]),
+    );
+    await waitFor(() => expect(screen.getByTestId('terminal.input')).toHaveAttribute('data-placement', 'box'));
+    expect(screen.getByTestId('chat.composer.prompt')).toHaveValue('kept');
+  });
+
+  it("sends with Enter as a signed prompt, reports a refusal in the TUI's style and interrupts with Esc", async () => {
+    const t = await taskWorld();
+    await taskPage(t, [chunk(1, [[0, tui(true)]])]);
+    await screen.findByTestId('terminal.input');
+    const controls: unknown[] = [];
+    t.client.on(`POST /v1/sessions/${MAIN}/control`, (body) => {
+      controls.push(body);
+      return {};
+    });
+    t.client.on(`POST /v1/tasks/${TASK}/prompts`, () => {
+      throw new HubError('rate_limited', 429);
+    });
+    const prompt = screen.getByTestId('chat.composer.prompt');
+    fireEvent.change(prompt, { target: { value: 'first\nsecond' } });
+    expect(screen.getByTestId('terminal.input')).toHaveAttribute('data-rows', '2');
+    fireEvent.keyDown(prompt, { key: 'Enter' });
+    expect(await screen.findByTestId('terminal.input.failure')).toHaveAttribute('data-code', 'rate_limited');
+    expect(prompt).toHaveValue('first\nsecond');
+    t.client.on(`POST /v1/tasks/${TASK}/prompts`, () => ({ scope_seq: 9, session_id: MAIN }));
+    fireEvent.keyDown(prompt, { key: 'Enter' });
+    await waitFor(() => expect(prompt).toHaveValue(''));
+    expect(screen.queryByTestId('terminal.input.failure')).toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => expect(controls).toEqual([{ action: 'interrupt' }]));
+  });
+
+  it('shows the start as terminal lines with Retry for writers; readers see the TUI as it is and no input', async () => {
+    const t = await taskWorld();
+    await taskPage(t, [], { session: { state: 'failed', state_reason: 'oom' } });
+    expect(await screen.findByTestId('terminal.start')).toHaveAttribute('data-phase', 'failed');
+    // Retry sends the task's prompt again; here the prompt cannot be read, which the line reports
+    fireEvent.click(screen.getByTestId('terminal.start.retry'));
+    expect(await screen.findByTestId('terminal.start.retry-error')).toBeInTheDocument();
+    // no box on the screen: the input is docked below it
+    expect(screen.getByTestId('terminal.input')).toHaveAttribute('data-placement', 'docked');
+    act(() => t.store.update('me', (me) => ({ ...me, userId: 'reader' })));
+    expect(screen.queryByTestId('terminal.start.retry')).toBeNull();
+    expect(screen.queryByTestId('terminal.input')).toBeNull();
+    expect(screen.getByTestId('chat.read-only')).toHaveTextContent('You have read access');
+  });
+
+  it('shows nothing for a task that is not loaded', async () => {
+    const t = await taskWorld();
+    mount(t, [{ path: '/', element: <TerminalTab orgId={t.org} taskId="not-loaded" /> }], '/');
+    expect(screen.queryByTestId('task.terminal')).toBeNull();
+  });
+
+  it('waits for the main session with the start lines and the docked input', async () => {
+    const t = await taskWorld();
+    await taskPage(t, [], { session: null, task: { main_session_id: null } });
+    expect(await screen.findByTestId('task.terminal.waiting')).toBeInTheDocument();
+    expect(screen.getByTestId('terminal.start')).toBeInTheDocument();
+    expect(screen.getByTestId('terminal.input')).toHaveAttribute('data-placement', 'docked');
+    expect(screen.queryByTestId('terminal')).toBeNull();
+  });
+
+  it('fits the screen into a desktop window and shows load failures and unverifiable chunks in light colours', async () => {
+    const width = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1280);
+    const t = await taskWorld();
+    await taskPage(t, [chunk(1, [[0, tui(true)]])]);
+    await screen.findByTestId('terminal.input');
+    act(() => window.dispatchEvent(new Event('resize')));
+    // the space of the screen changed (the start lines left): fitted again
+    act(() => resized());
+    width.mockRestore();
+    act(() => terminalFailed(t.store, MAIN, 'rate_limited'));
+    expect(screen.getByTestId('terminal.error')).toHaveClass('text-red-400');
+    act(() =>
+      t.store.update('terminal', (state) => ({
+        sessions: {
+          ...state.sessions,
+          [MAIN]: applyPage(state.sessions[MAIN]!, [{ seq: 9, status: 'unverifiable', code: 'signature_invalid' }], 9),
+        },
+      })),
+    );
+    expect(screen.getByTestId('terminal.unverifiable')).toHaveClass('text-gray-400');
   });
 });
 

@@ -27,6 +27,7 @@ import {
   home,
   mainSessions,
   onboard,
+  openChat,
   platformDevice,
   poolReady,
   sendPrompt,
@@ -201,6 +202,7 @@ test('@E2E-68 @R-8.7 @R-8.8 @R-8.9 @R-13.4 @R-13.8 @needs-vm a session reads wha
 
     // 2. Bob instructs the same session to read B (the session is idle, so the turn has his instruction only).
     await navigateInApp(bob.page, `/o/${org}/t/${taskA}`);
+    await openChat(bob.page); // the chat is the second tab (KONZEPT E-43)
     await followUp(bob.page, BOB);
     await expectAnswerInChat(bob.page, 'Workgroup B is not readable for this instruction kz67-answer-bob-r8w2.');
 

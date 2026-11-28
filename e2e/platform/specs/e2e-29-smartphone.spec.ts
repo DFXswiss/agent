@@ -99,6 +99,12 @@ test('@E2E-29 @R-6.6 @R-P.5 @needs-vm smartphone: login, first task, chat, termi
   await page.getByTestId('composer.send').tap();
   await expect(page).toHaveURL(TASK_PATH, { timeout: 30_000 });
   const task = TASK_PATH.exec(page.url())![1]!;
+  // the task opens on "Claude Code" (KONZEPT E-43): the start as terminal lines, the input below; the page fits
+  await expect(page.getByTestId('task.tabs.terminal')).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId('terminal.input')).toBeVisible({ timeout: 30_000 });
+  await expectFits(page, 'claude code');
+  // the countdown panel and the answer are read in the chat
+  await page.getByTestId('task.tabs.chat').tap();
   await expect(page.getByTestId('countdown.panel').first()).toBeVisible({ timeout: 30_000 });
   await expectFits(page, 'countdown');
   await expectAnswerInChat(page, ANSWER);

@@ -22,6 +22,7 @@ import {
   invite,
   onboard,
   onboardWithCode,
+  openChat,
   operator,
   platformDevice,
   poolReady,
@@ -124,6 +125,7 @@ test('@E2E-72 @R-8.5 @R-8.6 @R-8.9 @R-5.4 @needs-vm a workgroup released to supp
   await sam.getByTestId('support.composer.text').fill(SUPPORT_PROMPT);
   await sam.getByTestId('support.composer.send').click();
   await navigateInApp(page, `/o/${org}/t/${task}`);
+  await openChat(page); // the chat is the second tab (KONZEPT E-43)
   await expectAnswerInChat(page, "Support's hint is applied kz69-answer-s-q7d1.");
   await expect(page.getByTestId('chat.prompt.author').last()).toHaveText(`Support ${SUPPORT_NAME}`);
   const authored = await orchestrator.hubQuery<{ author_id: string }>(

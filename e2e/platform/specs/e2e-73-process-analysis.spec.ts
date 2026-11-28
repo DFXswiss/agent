@@ -30,6 +30,7 @@ import {
   invite,
   onboard,
   onboardWithCode,
+  openChat,
   platformDevice,
   poolReady,
   sendPrompt,
@@ -179,6 +180,8 @@ test('@E2E-73 @needs-vm process analysis reads only what its people may read, ch
   await dialog.getByTestId('analysis.start').click();
   await expect(page).toHaveURL(TASK_PATH, { timeout: 30_000 });
   const task = TASK_PATH.exec(page.url())![1]!;
+  // the badge and the profile are in the header of every tab but "Claude Code" (KONZEPT E-43)
+  await openChat(page);
   await expect(page.getByTestId('task.analysis')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('task.profile.name')).toHaveAttribute('data-profile', 'analysis');
   await expect(page.getByTestId('task.profile.analysis')).toBeVisible();
@@ -191,7 +194,7 @@ test('@E2E-73 @needs-vm process analysis reads only what its people may read, ch
   expect([row!.wg_id, row!.analysis.scope, row!.profile]).toEqual([wg, 'org', 'analysis']);
   expect(Date.parse(row!.analysis.until) - Date.parse(row!.analysis.since)).toBe(7 * DAY_MS);
 
-  // 3. and 4. The report in the chat, with its six sections in order.
+  // 3. and 4. The report in the chat (the second tab, KONZEPT E-43), with its six sections in order.
   const output = page.getByTestId('chat.output').filter({ hasText: REPORT });
   await expect(output).toBeVisible({ timeout: 600_000 });
   await expect.poll(async () => (await orchestrator.doubleState('model')).ok, { timeout: 60_000 }).toBe(true);

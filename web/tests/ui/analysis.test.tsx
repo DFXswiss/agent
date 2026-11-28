@@ -202,7 +202,11 @@ describe('analysis tasks', () => {
     document.body.innerHTML = '';
     t.client.on(`GET /v1/tasks/${TASK}`, () => ({ task: row, sessions: [] }));
     t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_after: null, head: 0 }));
-    const { router } = mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}`);
+    const { router } = mount(
+      t,
+      [{ path: '/o/:org/t/:task', element: <TaskScreen /> }],
+      `/o/${t.org}/t/${TASK}?tab=chat`,
+    );
     expect(await screen.findByTestId('task.analysis')).toHaveTextContent('Analysis');
     expect(screen.getByTestId('task.profile.name')).toHaveAttribute('data-profile', 'analysis');
     expect(screen.queryByTestId('task.profile.change')).toBeNull();
@@ -221,11 +225,11 @@ describe('analysis tasks', () => {
     ]);
     t.client.on(`GET /v1/scopes/${READ_ONLY}/events`, () => ({ events: [], next_after: null, head: 0 }));
     t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_after: null, head: 0 }));
-    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}`);
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}?tab=chat`);
     expect(await screen.findByTestId('task.profile.analysis')).toBeInTheDocument();
     expect(screen.queryByTestId('task.profile.new')).toBeNull();
     document.body.innerHTML = '';
-    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/plain`);
+    mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/plain?tab=chat`);
     expect(await screen.findByTestId('task.profile.change')).toBeInTheDocument();
     expect(screen.queryByTestId('task.profile.analysis')).toBeNull();
     expect(screen.queryByTestId('task.analysis')).toBeNull();
@@ -276,7 +280,7 @@ describe('adopt', () => {
     const mounted = mount(
       t,
       [{ path: '/o/:org/t/:task', element: <TaskScreen /> }],
-      `/o/${t.org}/t/${TASK}`,
+      `/o/${t.org}/t/${TASK}?tab=chat`,
       options.locale,
     );
     await screen.findByTestId('task.screen');

@@ -53,7 +53,8 @@ export const COVERS = [
 
 const chatView = (task: string, id: string, also: readonly string[] = []) => ({
   id,
-  path: task,
+  // the chat is the second tab of the task page; the first is "Claude Code" (KONZEPT E-43)
+  path: `${task}?tab=chat`,
   ready: (page: import('@playwright/test').Page) => page.getByTestId('chat.item').first(),
   primary: (page: import('@playwright/test').Page) => page.getByTestId('chat.composer.prompt'),
   also,

@@ -7,9 +7,12 @@ import { mainSession, walk } from '../helpers/director.ts';
 import { sessionEvents, terminalChunk } from '../helpers/sessions.ts';
 import { freshUser, sendPrompt, START_STEPS } from '../helpers/tasks.ts';
 
+// Counts <style> elements that are in the document. A MutationObserver also reports additions inside a subtree that
+// was just removed (transient observers): disposing a terminal after its view left the page (a tab switch) makes xterm
+// install its DOM renderer in the detached element; those styles are never applied, so they are not counted.
 const STYLE_OBSERVER = `new MutationObserver((records) => {
   for (const record of records) for (const node of record.addedNodes) {
-    if (node.nodeName === 'STYLE') document.documentElement.dataset.styleInjections =
+    if (node.nodeName === 'STYLE' && node.isConnected) document.documentElement.dataset.styleInjections =
       String(Number(document.documentElement.dataset.styleInjections ?? 0) + 1);
   }
 }).observe(document, { childList: true, subtree: true });`;
@@ -72,6 +75,47 @@ test('follows history and live chunks, replays up to an offset and plays back', 
   await expect(terminal).toHaveAttribute('data-mode', 'follow');
   await expect(chars(page, 'a')).toHaveAttribute('data-chars', String('hello world\r\nline more!\r\nlive!'.length));
   await expect(chars(page, 'a')).not.toHaveClass(/invisible/);
+  expect(await page.locator('html').getAttribute('data-style-injections')).toBeNull();
+});
+
+test('a task opened afresh shows "Claude Code" first and keeps its terminal across tab switches (KONZEPT E-43)', async ({
+  page,
+  baseURL,
+}) => {
+  await page.addInitScript({ content: STYLE_OBSERVER });
+  const user = await freshUser(page, baseURL!, { poolReady: 2 });
+  const task = await sendPrompt(page, 'Show me Claude Code', 'terminal');
+  const session = (await mainSession(task)).session_id;
+  // the start as terminal lines until the session works
+  await expect(page.getByTestId('terminal.start')).toBeVisible();
+  await walk(session, [...START_STEPS, 'working'], { intervalMs: 20 });
+  await expect(page.getByTestId('terminal.start')).toHaveCount(0);
+  await expect(page.getByTestId('terminal')).toHaveAttribute('data-variant', 'task');
+  const banner = '\x1b[1m* Welcome to Claude Code\x1b[0m\r\n\r\n> Show me Claude Code';
+  await sessionEvents(session, [terminalChunk([[0, banner]])]);
+  // opened afresh, the task page shows "Claude Code" first; the observer counts the style elements of this page only
+  await page.goto(`/o/${user.org}/t/${task}`);
+  await page.getByTestId('login.submit').click();
+  await expect(page.getByTestId('task.tabs.terminal')).toHaveAttribute('aria-current', 'page');
+  const terminal = page.getByTestId('terminal');
+  await expect(terminal).toHaveAttribute('data-variant', 'task');
+  await expect(terminal).toHaveAttribute('data-chunks', '1');
+  await expect(page.getByTestId('terminal.label')).toHaveCount(0);
+  await expect(page.getByTestId('terminal.viewport').locator('canvas').first()).toBeVisible();
+  // this screen has no input box of the TUI: the one input is docked below it
+  await expect(page.getByTestId('terminal.input')).toHaveAttribute('data-placement', 'docked');
+  const prompt = page.getByTestId('chat.composer.prompt');
+  await prompt.fill('First line');
+  await prompt.press('Shift+Enter');
+  await prompt.pressSequentially('second line');
+  await expect(prompt).toHaveValue('First line\nsecond line');
+  await prompt.press('Enter');
+  await expect(prompt).toHaveValue('');
+  await page.getByTestId('task.tabs.chat').click();
+  await expect(page.getByTestId('chat.prompt.text').last()).toContainText('second line');
+  // back on "Claude Code" the terminal is there again
+  await page.getByTestId('task.tabs.terminal').click();
+  await expect(page.getByTestId('terminal')).toHaveAttribute('data-chunks', '1');
   expect(await page.locator('html').getAttribute('data-style-injections')).toBeNull();
 });
 

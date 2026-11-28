@@ -23,6 +23,7 @@ import {
   home,
   mainSessions,
   onboard,
+  openChat,
   platformDevice,
   poolReady,
   sendPrompt,
@@ -282,6 +283,7 @@ test('@E2E-71 @needs-vm main agents have names and handles, people see their age
 
   // Wendy renames Ada's first agent; both see the new name with the handle.
   await navigateInApp(wendy.page, `/o/${org}/t/${a1}`);
+  await openChat(wendy.page); // the task's header is on every tab but "Claude Code" (KONZEPT E-43)
   await expect(wendy.page.getByTestId('task.agent.handle')).toHaveText('#1');
   await wendy.page.getByTestId('task.agent.rename').click();
   await wendy.page.getByTestId('task.agent.rename.input').fill(RENAMED);

@@ -24,7 +24,7 @@ async function page(
   }));
   t.client.on(`GET /v1/scopes/${t.wg}/events`, () => ({ events: [], next_after: null, head: 0 }));
   if (options.devices !== undefined) t.client.on(`GET /v1/orgs/${t.org}/devices`, () => options.devices);
-  mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}`);
+  mount(t, [{ path: '/o/:org/t/:task', element: <TaskScreen /> }], `/o/${t.org}/t/${TASK}?tab=chat`);
   await screen.findByTestId('task.screen');
   return t;
 }

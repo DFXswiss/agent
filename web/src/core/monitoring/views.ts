@@ -8,6 +8,7 @@ export const VIEW_PATTERNS = {
   home: ['/o/:org'],
   tasks: ['/o/:org/w/:wg'],
   'tasks.overview': ['/o/:org/tasks'],
+  'task.terminal': ['/o/:org/t/:task#terminal'],
   'task.chat': ['/o/:org/t/:task#chat'],
   'task.sessions': ['/o/:org/t/:task#sessions'],
   'task.pulls': ['/o/:org/t/:task#pulls'],

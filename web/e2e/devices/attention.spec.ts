@@ -14,7 +14,7 @@ import { joinWithCode } from '../helpers/members.ts';
 import { onboard } from '../helpers/onboard.ts';
 import { operation } from '../helpers/operations.ts';
 import { childSession } from '../helpers/sessions.ts';
-import { freshUser, sendPrompt, START_STEPS } from '../helpers/tasks.ts';
+import { freshUser, openChat, sendPrompt, START_STEPS } from '../helpers/tasks.ts';
 import { PageUser } from '../helpers/user.ts';
 
 /** Opens Home the way a user does: the bottom bar on a phone, else the main navigation. */
@@ -73,6 +73,7 @@ test('a question waits under "Needs your decision" and is answered from the view
     .or(entryIn(page, 'working', 'Prepare the release notes'))
     .getByTestId('attention.open')
     .click();
+  await openChat(page); // the chat is the second tab (KONZEPT E-43)
   await expect(page.getByTestId('chat.prompt.text').last()).toHaveText('Version 2.4');
 });
 
@@ -90,6 +91,7 @@ test('an approval is given with a comment and starts with exactly "Approved."', 
   await entry.getByTestId('attention.approve').click();
   await expect(page.getByTestId('attention.group.needs_decision').getByTestId('attention.item')).toHaveCount(0);
   await visit(page, `/o/${user.org}/t/${task}`);
+  await openChat(page); // the chat is the second tab (KONZEPT E-43)
   await expect(page.getByTestId('chat.prompt.text').last()).toHaveText(/^Approved\.\s+Only after 18:00$/);
 });
 

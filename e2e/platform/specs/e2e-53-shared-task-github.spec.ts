@@ -22,6 +22,7 @@ import {
   expectAnswerInChat,
   home,
   onboard,
+  openChat,
   platformDevice,
   poolReady,
   sendPrompt,
@@ -90,6 +91,7 @@ test("@E2E-53 @needs-vm in a shared task every GitHub operation runs with the ac
 
   // Wendy writes in Ada's task and asks for a comment: held for Wendy, not run with Ada's account.
   await navigateInApp(wendy.page, `/o/${org}/t/${task}`);
+  await openChat(wendy.page); // the chat is the second tab (KONZEPT E-43)
   await wendy.page.getByTestId('chat.composer.prompt').fill(WENDY_PROMPT);
   await wendy.page.getByTestId('chat.composer.send').click();
   const wendyCard = wendy.page.getByTestId('waiting.card');

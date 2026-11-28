@@ -12,6 +12,7 @@ import {
   home,
   mainSessions,
   onboard,
+  openChat,
   platformDevice,
   poolReady,
   sendPrompt,
@@ -65,6 +66,7 @@ test('@E2E-08 @R-0.2 @R-2.6 @R-2.7 @R-2.8 @R-2.9 @R-2.10 @R-P.5 @needs-vm two qu
   await page.getByTestId('home.all-tasks').click();
   await page.getByTestId('tasks.row').filter({ hasText: 'What is the capital of France?' }).click();
   await expect(page).toHaveURL(new RegExp(`/t/${first}$`));
+  await openChat(page); // the chat is the second tab (KONZEPT E-43)
   await page.getByTestId('chat.composer.prompt').fill('And of Italy?');
   await page.getByTestId('chat.composer.send').click();
   await expectAnswerInChat(page, 'Rome.');

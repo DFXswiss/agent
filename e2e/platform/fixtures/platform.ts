@@ -185,12 +185,25 @@ export async function home(page: Page): Promise<void> {
   await expect(page).toHaveURL(ORG_PATH);
 }
 
-/** Sends `prompt` from the composer of the current page; returns the task ID of the task page it lands on. */
-export async function sendPrompt(page: Page, prompt: string): Promise<string> {
+/**
+ * Sends `prompt` from the composer of the current page; returns the task ID of the task page it lands on. The page
+ * opens on the tab "Claude Code" (KONZEPT E-43); with `tab` `chat` (the default) the step then opens the Chat tab, where
+ * the specs read prompts, outputs and cards.
+ */
+export async function sendPrompt(page: Page, prompt: string, tab: 'chat' | 'terminal' = 'chat'): Promise<string> {
   await page.getByTestId('composer.prompt').fill(prompt);
   await page.getByTestId('composer.send').click();
   await expect(page).toHaveURL(TASK_PATH, { timeout: 30_000 });
-  return TASK_PATH.exec(page.url())![1]!;
+  const task = TASK_PATH.exec(page.url())![1]!;
+  await expect(page.getByTestId('task.tabs.terminal')).toHaveAttribute('aria-current', 'page');
+  if (tab === 'chat') await openChat(page);
+  return task;
+}
+
+/** Opens the Chat tab of the task page (the second tab since KONZEPT E-43). */
+export async function openChat(page: Page): Promise<void> {
+  await page.getByTestId('task.tabs.chat').click();
+  await expect(page.getByTestId('chat')).toBeVisible();
 }
 
 export interface SessionRow {
@@ -311,5 +324,8 @@ export async function hubTablesContaining(orchestrator: Orchestrator, needles: r
 
 /** The answer `text` shows in the task's chat (06-web.md section 5.2: a `session.output` item). */
 export async function expectAnswerInChat(page: Page, text: string): Promise<void> {
+  // on the task page the chat is the second tab (KONZEPT E-43): opened when another tab shows
+  const chatTab = page.getByTestId('task.tabs.chat');
+  if ((await chatTab.count()) > 0 && (await chatTab.getAttribute('aria-current')) !== 'page') await openChat(page);
   await expect(page.getByTestId('chat.output').filter({ hasText: text })).toBeVisible({ timeout: 60_000 });
 }

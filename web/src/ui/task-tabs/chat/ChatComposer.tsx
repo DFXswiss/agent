@@ -2,6 +2,8 @@
 // the button; it stays enabled while the main session works – the session queues the prompt), **Stop** (`interrupt`)
 // while the main session is `working`, and in the session menu **End session** (`stop`) while it is alive. A failed
 // send keeps the sealed prompt for an identical retry (`core/chat/actions.ts`). Offline, the button says so.
+// `useComposer` holds text, sending, controls and the failure; the input of the task tab "Claude Code"
+// (`task-tabs/terminal/ClaudeInput.tsx`, KONZEPT E-43) uses it as well, so both send the same signed prompt.
 import { type KeyboardEvent, useId, useRef, useState } from 'react';
 import { controlSession, type ControlAction, sendPrompt } from '../../../core/chat/actions';
 import type { SessionEntry, TaskRow } from '../../../core/store/slices/tasks';
@@ -14,14 +16,28 @@ import { useAppEnv } from '../../shell/context';
 /** Session states in which a session can still be stopped. */
 const ENDED = new Set(['stopping', 'stopped', 'failed']);
 
-export function ChatComposer({ task, main }: { readonly task: TaskRow; readonly main: SessionEntry | null }) {
+export interface Composer {
+  readonly text: string;
+  readonly setText: (text: string) => void;
+  readonly online: boolean;
+  /** Sending is not possible now (sending, offline or nothing to send). */
+  readonly disabled: boolean;
+  readonly failure: { readonly key: string; readonly code: string } | null;
+  /** The main session works (Stop / Esc interrupt it). */
+  readonly working: boolean;
+  /** The main session is alive (End session stops it). */
+  readonly alive: boolean;
+  readonly send: () => Promise<void>;
+  readonly control: (action: ControlAction) => Promise<void>;
+}
+
+/** The state and actions of a prompt input of `task` (its main session `main`). */
+export function useComposer(task: TaskRow, main: SessionEntry | null): Composer {
   const { app } = useAppEnv();
-  const { t, error } = useI18n();
   const online = useStore((state) => state.connection.online, app.store);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
-  const [failure, setFailure] = useState<{ readonly key: string; readonly code: string } | null>(null);
-  const label = useId();
+  const [failure, setFailure] = useState<Composer['failure']>(null);
   const disabled = sending || !online || !sendable(text);
 
   const send = async () => {
@@ -46,6 +62,25 @@ export function ChatComposer({ task, main }: { readonly task: TaskRow; readonly 
     }
   };
 
+  return {
+    text,
+    setText,
+    online,
+    disabled,
+    failure,
+    working: main?.row.state === 'working',
+    alive: main !== null && !ENDED.has(main.row.state),
+    send,
+    control,
+  };
+}
+
+export function ChatComposer({ task, main }: { readonly task: TaskRow; readonly main: SessionEntry | null }) {
+  const { t, error } = useI18n();
+  const composer = useComposer(task, main);
+  const { text, setText, online, disabled, failure, working, alive, send, control } = composer;
+  const label = useId();
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
@@ -53,8 +88,6 @@ export function ChatComposer({ task, main }: { readonly task: TaskRow; readonly 
     }
   };
 
-  const working = main?.row.state === 'working';
-  const alive = main !== null && !ENDED.has(main.row.state);
   // stays above the on-screen keyboard while typing (06-web.md section 12.1)
   const form = useRef<HTMLFormElement>(null);
   useAboveKeyboard(form);

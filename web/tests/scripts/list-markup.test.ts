@@ -165,6 +165,14 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     reason: 'the fixed chart ranges and the charts of one entity kind (closed lists)',
   },
   'src/ui/terminal/TerminalView.tsx': { count: 2, reason: 'the fixed modes and replay speeds of the terminal' },
+  'src/ui/task-tabs/terminal/ClaudeInput.tsx': {
+    count: 1,
+    reason: 'the notices above the Claude Code input: at most a failure and "offline" (KONZEPT E-43)',
+  },
+  'src/ui/task-tabs/terminal/TerminalStart.tsx': {
+    count: 1,
+    reason: 'the fixed start steps of a session (core/tasks/countdown STEPS, seven)',
+  },
   'src/ui/whiteboard/LineDiff.tsx': {
     count: 1,
     reason: 'lines of a clipped diff (useClipped: at most 20 000 characters at a time)',

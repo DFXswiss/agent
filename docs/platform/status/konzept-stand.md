@@ -105,7 +105,7 @@ dort genannten E2E-Szenarien liegen unter `e2e/platform/specs/`.
 | [§6 P3](../KONZEPT.md#k-6-b3) Smartphone, präzise Zeiten | erledigt | R-6.6; E2E-29, -58 | – | – | – | – |
 | [§6 P4](../KONZEPT.md#k-6-b4) vollständiges Audit | erledigt | R-6.7; ADR-063; E2E-15, -47 | – | – | – | – |
 | [§6 P5](../KONZEPT.md#k-6-b5) Append-only Log mit Wiederholung | erledigt | R-6.8, R-6.9; ADR-013; E2E-14, -33 | – | – | – | – |
-| [§6 P6](../KONZEPT.md#k-6-b6) Chat als Standardansicht | erledigt | R-6.10; E2E-13 | – | – | – | – |
+| [§6 P6](../KONZEPT.md#k-6-b6) Chat als Standardansicht (geändert durch [E-43](../KONZEPT.md#e-43): Standard ist die Claude-Code-Ansicht, der Chat der zweite Tab) | erledigt | R-6.10; E2E-13; E-43: [ADR-104](../adr/104-claude-code-view-as-task-default.md) | – | – | – | – |
 | [§6 P7](../KONZEPT.md#k-6-b7) Terminalansicht read-only | erledigt | R-6.11, R-6.12; ADR-016; E2E-12, -35 | – | – | – | – |
 | [§7 P1](../KONZEPT.md#k-7-b1) Gerät → VM → Session | erledigt | R-7.1; E2E-17 | – | – | – | – |
 | [§7 P2](../KONZEPT.md#k-7-b2) Metriken sichtbar und historisiert | erledigt | R-7.2, R-7.3; E2E-17, -47 | – | – | – | – |
