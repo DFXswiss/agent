@@ -16,6 +16,7 @@
   "type.github.get_issue": "Issue lesen",
   "type.github.create_issue": "Issue anlegen",
   "type.github.update_issue": "Issue ändern",
+  "type.github.update_pull_request": "Pull-Request ändern",
   "type.github.list_pull_requests": "Pull-Requests auflisten",
   "type.github.request_connection": "GitHub-Verbindung anfordern",
   "type.subagent.request": "Subagent starten",

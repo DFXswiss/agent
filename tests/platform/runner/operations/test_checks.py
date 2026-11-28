@@ -69,6 +69,7 @@ VALID: dict[str, dict[str, Any]] = {
     "github.get_issue": {"repo": REPO, "number": 7, "comments_page": 2, "comments_per_page": 100},
     "github.create_issue": {"repo": REPO, "title": "Login fails", "body": "", "labels": ["bug"]},
     "github.update_issue": {"repo": REPO, "number": 7, "state": "closed", "state_reason": "not_planned"},
+    "github.update_pull_request": {"repo": REPO, "number": 7, "title": "Fix", "body": "", "draft": False, "labels": []},
     "github.list_pull_requests": {"repo": REPO, "state": "closed", "base": "develop", "sort": "updated"},
     "github.request_connection": {},
     "github.list_identities": {},
@@ -418,6 +419,43 @@ def test_an_issue_update_changes_something_and_gives_a_reason_only_with_a_state(
 def test_an_issue_update_with_one_field_passes(params: dict[str, Any]) -> None:
     full = {"repo": REPO, "number": 7, **params}
     assert checks.check(request("github.update_issue", full)) == full
+
+
+@pytest.mark.parametrize(
+    ("params", "pointers"),
+    [
+        ({}, ["/params/body", "/params/draft", "/params/labels", "/params/title"]),
+        ({"github_identity": "0193000c-0000-7000-8000-00000000000c"}, ["/params/body", "/params/draft", "/params/labels", "/params/title"]),
+        ({"title": ""}, ["/params/title"]),
+        ({"title": "t" * 257}, ["/params/title"]),
+        ({"body": "b" * 65537}, ["/params/body"]),
+        ({"draft": "no"}, ["/params/draft"]),
+        ({"labels": ["a,b"]}, ["/params/labels"]),
+        ({"title": "x", "state": "closed"}, ["/params/state"]),
+        ({"title": "x", "merge": True}, ["/params/merge"]),
+        ({"title": "x", "merge_method": "squash"}, ["/params/merge_method"]),
+        ({"title": "x", "event": "APPROVE"}, ["/params/event"]),
+    ],
+)
+def test_a_pull_request_update_changes_something_and_cannot_merge_close_or_approve(
+    params: dict[str, Any], pointers: list[str]
+) -> None:
+    failed = refused("github.update_pull_request", {"repo": REPO, "number": 7, **params})
+    assert (failed.code, failed.pointers) == ("params_invalid", pointers)
+
+
+@pytest.mark.parametrize("params", [{"title": "New"}, {"body": ""}, {"draft": True}, {"draft": False}, {"labels": []}])
+def test_a_pull_request_update_with_one_field_passes(params: dict[str, Any]) -> None:
+    full = {"repo": REPO, "number": 7, **params}
+    assert checks.check(request("github.update_pull_request", full)) == full
+
+
+def test_a_pull_request_update_of_a_foreign_repository_is_refused() -> None:
+    failed = refused("github.update_pull_request", with_("github.update_pull_request", repo="foreign-org/secret"))
+    assert failed.code == "repo_not_allowed"
+    assert refused("github.update_pull_request", VALID["github.update_pull_request"], connected=False).code == (
+        "github_not_connected"
+    )
 
 
 def test_the_issue_and_list_types_keep_their_params_and_the_pull_list_base_loses_refs_heads() -> None:

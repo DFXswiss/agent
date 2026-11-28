@@ -1356,6 +1356,9 @@
           "$ref": "#/$defs/result_github_update_issue"
         },
         {
+          "$ref": "#/$defs/result_github_update_pull_request"
+        },
+        {
           "$ref": "#/$defs/result_github_list_pull_requests"
         },
         {
@@ -1572,6 +1575,51 @@
           "minItems": 0,
           "maxItems": 20,
           "description": "replaces every label of the issue"
+        },
+        "github_identity": {
+          "$ref": "../common.json#/$defs/uuid",
+          "description": "the GitHub identity to act with (ADR-078 section 3); must be usable by the human the session works for"
+        }
+      },
+      "required": [
+        "repo",
+        "number"
+      ],
+      "additionalProperties": false
+    },
+    "params_github_update_pull_request": {
+      "type": "object",
+      "description": "changes a pull request's title, text, draft state or labels; at least one of title, body, draft, labels: checked by the formal checks of the runner (params_invalid), not by this schema. There is no state, merge or review field: merging stays github.merge, approving is no operation",
+      "properties": {
+        "repo": {
+          "$ref": "#/$defs/repo"
+        },
+        "number": {
+          "$ref": "#/$defs/number"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "body": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "draft": {
+          "type": "boolean",
+          "description": "true turns the pull request into a draft, false marks it ready for review"
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "label name: no comma (GitHub joins the filter with commas), no control character",
+            "pattern": "^[^,\u0000-\u001f]{1,100}$"
+          },
+          "minItems": 0,
+          "maxItems": 20,
+          "description": "replaces every label of the pull request"
         },
         "github_identity": {
           "$ref": "../common.json#/$defs/uuid",
@@ -2010,6 +2058,52 @@
         "state",
         "state_reason",
         "title",
+        "labels"
+      ],
+      "additionalProperties": false
+    },
+    "result_github_update_pull_request": {
+      "type": "object",
+      "description": "the pull request after the change",
+      "properties": {
+        "number": {
+          "$ref": "#/$defs/number"
+        },
+        "url": {
+          "$ref": "#/$defs/url"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        "draft": {
+          "type": "boolean"
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "label name (GitHub allows at most 50 characters)",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "minItems": 0,
+          "maxItems": 100
+        }
+      },
+      "required": [
+        "number",
+        "url",
+        "title",
+        "state",
+        "draft",
         "labels"
       ],
       "additionalProperties": false

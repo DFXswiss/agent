@@ -151,6 +151,10 @@ Operation types and parameter examples:
 - `github.update_issue` – close or reopen an issue (`state_reason` only together with `state`), change its title or
   text or replace its labels; name at least one of `state`, `title`, `body` and `labels`:
   `{"type": "github.update_issue", "params": {"repo": "example-org/example-repo", "number": 17, "state": "closed", "state_reason": "completed"}}`
+- `github.update_pull_request` – change the title or text of a pull request, turn it into a draft (`draft` true) or
+  mark it ready for review (`draft` false), or replace its labels; name at least one of `title`, `body`, `draft` and
+  `labels` (it never merges, closes or approves):
+  `{"type": "github.update_pull_request", "params": {"repo": "example-org/example-repo", "number": 42, "title": "Fix a typo in the README", "body": "One word.", "draft": false}}`
 - `github.list_pull_requests` – list one page of the pull requests of a repository, newest first (`state`, `base`,
   `sort` `created`/`updated`, `direction`, `per_page` and `page` optional):
   `{"type": "github.list_pull_requests", "params": {"repo": "example-org/example-repo", "state": "open", "per_page": 10}}`

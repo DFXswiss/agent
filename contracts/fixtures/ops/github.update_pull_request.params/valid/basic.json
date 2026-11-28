@@ -1,0 +1,6 @@
+{
+  "repo": "example-org/example-repo",
+  "number": 42,
+  "title": "Fix the login on Safari",
+  "body": "Closes #17."
+}

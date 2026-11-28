@@ -48,6 +48,7 @@ CLASSES: Mapping[str, str] = MappingProxyType(
         "github.push": WRITE,
         "github.request_connection": READ,
         "github.update_issue": WRITE,
+        "github.update_pull_request": WRITE,
         "human.approval": ASK,
         "human.question": ASK,
         "mail.find": READ,

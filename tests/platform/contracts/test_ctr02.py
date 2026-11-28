@@ -720,6 +720,13 @@ SPEC_OPS: dict[str, tuple[str, str, str, int | None]] = {
         "",
         None,
     ),
+    # HOT-30: no state, merge or review field
+    "github.update_pull_request": (
+        "repo number title body draft labels github_identity",
+        "number url title state draft labels",
+        "",
+        None,
+    ),
     "github.list_pull_requests": (
         "repo state base sort direction per_page page github_identity",
         "pull_requests next_page truncated",

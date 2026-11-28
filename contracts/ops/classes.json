@@ -32,6 +32,7 @@
     "github.push": "write",
     "github.request_connection": "read",
     "github.update_issue": "write",
+    "github.update_pull_request": "write",
     "human.approval": "ask",
     "human.question": "ask",
     "mail.find": "read",

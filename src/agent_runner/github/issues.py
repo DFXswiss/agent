@@ -85,7 +85,7 @@ def _reason(value: object) -> tuple[str | None, bool]:
     return None, True
 
 
-def _labels(value: object) -> tuple[list[str], bool]:
+def label_names(value: object) -> tuple[list[str], bool]:
     """Label names of label objects (or plain names); names outside 1-100 characters are left out (cut)."""
     if not isinstance(value, list):
         raise ops.invalid()
@@ -123,7 +123,7 @@ def fields(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
     not fit the contract."""
     title, cut_title = cut(ops.text(data.get("title"), ANY_TEXT), MAX_TITLE)
     reason, cut_reason = _reason(data.get("state_reason"))
-    labels, cut_labels = _labels(data.get("labels"))
+    labels, cut_labels = label_names(data.get("labels"))
     assignees, cut_assignees = _assignees(data.get("assignees", []))
     found = {
         "number": ops.integer(data.get("number"), ops.MAX_NUMBER),

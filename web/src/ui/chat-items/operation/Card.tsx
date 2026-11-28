@@ -42,6 +42,7 @@ export const KNOWN_TYPES: ReadonlySet<string> = new Set([
   'github.get_issue',
   'github.create_issue',
   'github.update_issue',
+  'github.update_pull_request',
   'github.list_pull_requests',
   'github.request_connection',
   'subagent.request',

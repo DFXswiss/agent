@@ -24,6 +24,7 @@ PRECHECKS: dict[str, Callable[..., Any]] = {
     "github.get_issue": identity.resolved(precheck.repo_access),
     "github.create_issue": identity.resolved(precheck.repo_access),
     "github.update_issue": identity.resolved(precheck.repo_access),
+    "github.update_pull_request": identity.resolved(precheck.repo_access),
     "github.list_pull_requests": identity.resolved(precheck.repo_access),
     "github.request_connection": precheck.verified_connection,
     "github.list_identities": listing.check,
