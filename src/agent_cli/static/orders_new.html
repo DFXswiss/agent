@@ -1,53 +1,106 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="theme-light">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Agent — New order</title>
+  <link rel="stylesheet" href="/design/tokens.css">
+  <link rel="stylesheet" href="/design/brand.css">
+  <link rel="stylesheet" href="/design/motion-base.css">
+  <link rel="stylesheet" href="/design/work.css">
+  <link rel="stylesheet" href="/design/motion.css">
   <style>
-    :root { font-family: ui-sans-serif, system-ui, sans-serif; color: #1a1a1a; background: #f4f1ea; }
-    body { margin: 24px; max-width: 900px; }
-    h1 { font-size: 1.4rem; margin: 0 0 4px; }
-    .sub { color: #555; margin-bottom: 20px; }
-    .back { margin: 0 0 16px; }
-    .watch-note { color: #555; margin-top: 10px; }
-    .control-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
-    .control-form input[type="text"] { min-width: 180px; padding: 6px 8px; }
-    .control-form button { padding: 6px 12px; cursor: pointer; }
-    #os-body { display: block; width: 100%; min-height: 96px; margin-top: 10px; padding: 6px 8px; box-sizing: border-box; font: inherit; }
-    .failed { color: #c00; }
-    button.copy-id { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; }
-    button.copy-id.copied { color: #060; }
-    button.copy-id.copy-failed { color: #c00; }
+    [hidden] { display: none !important; }
+    button.copy-id { font: inherit; color: inherit; background: none; border: 0; border-radius: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; display: inline; }
+    button.copy-id.copied { color: var(--status-success); }
+    button.copy-id.copy-failed { color: var(--red-500); }
+    .failed { color: var(--red-500); }
+    .watch-note { color: var(--text-secondary); margin: 0 0 var(--sp-4); }
+    .composer .fields label { display: grid; gap: var(--sp-2); }
+    .composer .fields input { width: 100%; box-sizing: border-box; }
+    #os-skips { display: grid; gap: var(--sp-2); padding: 0 var(--sp-4); }
+    .os-skip select, .os-skip input { flex: 1; min-width: 0; }
+    #order-submit { overflow: hidden; }
+    #order-submit > .composer { border-bottom: 0; }
+    #os-result { margin: 0; padding: 0 var(--sp-6) var(--sp-4); }
+    #os-result:empty { display: none; }
   </style>
 </head>
 <body>
-  <p class="back"><a href="/">&larr; Back to dashboard</a></p>
-  <h1>New order</h1>
-  <p class="sub">Submit an order to a worker on this device.</p>
-  <p id="orders-note" class="watch-note" hidden></p>
-
-  <div id="order-submit">
-    <div class="control-form">
-      <input type="text" id="os-repo" placeholder="owner/name" />
-      <input type="text" id="os-title" placeholder="title" />
-      <input type="text" id="os-base" placeholder="base" />
-      <input type="text" id="os-worker" placeholder="worker" />
-      <input type="text" id="os-notify" placeholder="notify session" />
-      <input type="number" id="os-max-rounds" min="1" placeholder="max rounds" />
-    </div>
-    <textarea id="os-body" placeholder="order text"></textarea>
-    <div id="os-skips"></div>
-    <div class="control-form">
-      <button type="button" id="os-add-skip">Add skipped check</button>
-      <button type="button" id="os-send">Submit order</button>
-    </div>
-    <p id="os-result"></p>
-  </div>
-
-  <script>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><img src="/design/logo-dark.svg" alt="DFX" width="70" height="22"><b>Agent</b></div>
+    <nav id="section-nav" aria-label="Sections">
+      <div class="marker jk-state" id="marker" aria-hidden="true"></div>
+      <div class="group">Work</div>
+      <a href="/" title="Orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">Orders</span></a>
+      <a href="/#events" title="Order events"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg><span class="t">Order events</span></a>
+      <a href="/tasks" title="Tasks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span class="t">Tasks</span></a>
+      <a href="/work" title="Open work"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="t">Open work</span></a>
+      <a href="/pings" title="Pings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg><span class="t">Pings</span></a>
+      <div class="group">Runs</div>
+      <a href="/sessions" title="Sessions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 9l3 3-3 3M12 15h6"/></svg><span class="t">Sessions</span></a>
+      <a href="/rounds" title="Rounds"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg><span class="t">Rounds</span></a>
+      <a href="/agents" title="Agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01"/></svg><span class="t">Agents</span></a>
+      <a href="/checks" title="Local checks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span class="t">Local checks</span></a>
+      <a href="/gates" title="Review gates"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-8h6v8"/></svg><span class="t">Review gates</span></a>
+      <div class="group">Accounts</div>
+      <a href="/usage" title="Subscriptions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg><span class="t">Subscriptions</span></a>
+    </nav>
+  </aside>
+  <main>
+    <section class="view on">
+      <div class="page-head"><h1>New order</h1></div>
+      <div class="scroll">
+        <p class="watch-note">Submit an order to a worker on this device.</p>
+        <p id="orders-note" class="watch-note" hidden></p>
+        <div class="card" id="order-submit">
+          <div class="composer">
+            <div class="fields">
+              <label>Repository<input type="text" id="os-repo" placeholder="owner/name" /></label>
+              <label>Title<input type="text" id="os-title" placeholder="title" /></label>
+              <label>Base<input type="text" id="os-base" placeholder="base" /></label>
+            </div>
+            <div class="fields more-fields">
+              <label>Worker<input type="text" id="os-worker" placeholder="worker" /></label>
+              <label>Notify session<input type="text" id="os-notify" placeholder="notify session" /></label>
+              <label>Max rounds<input type="number" id="os-max-rounds" min="1" placeholder="max rounds" /></label>
+            </div>
+            <div class="box">
+              <textarea id="os-body" placeholder="order text" aria-label="Order text"></textarea>
+              <div id="os-skips"></div>
+              <div class="bar">
+                <button type="button" class="btn btn-ghost btn-sm jk-press" id="os-add-skip">Skip a check</button>
+                <span class="spacer"></span>
+                <button type="button" class="btn btn-primary jk-press" id="os-send">Submit order</button>
+              </div>
+            </div>
+          </div>
+          <p id="os-result"></p>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="/design/work.js"></script>
+<script>
     let skippable = [];
 
-    function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
+    const section = location.pathname.replace(/^\/+|\/+$/g, "");
+    const marker = document.getElementById("marker");
+    let currentLink = null;
+    document.querySelectorAll("#section-nav a").forEach(link => {
+      if (link.getAttribute("href") === "/" + section) currentLink = link;
+    });
+    if (currentLink) {
+      currentLink.setAttribute("aria-current", "page");
+      currentLink.classList.add("active");
+      const placeMarker = () => marker.style.setProperty("--y", currentLink.offsetTop + "px");
+      placeMarker();
+      addEventListener("resize", placeMarker);
+    } else {
+      marker.hidden = true;
+    }
 
     /* DASHBOARD_COMMON_BEGIN */
     // Shared by index.html, section.html and orders_new.html; a test keeps the copies identical.
@@ -56,25 +109,27 @@
     const COPY_FEEDBACK_MS = 1500;
     const copyFeedback = new Map();
     const shownHtml = new WeakMap();
-    // One icon for every state or status value the code produces, one family per line:
-    // running or active, task in progress, open or waiting, blocked, ready, merged or done,
-    // closed or superseded, failed, cancelled, check or CI (yes, no, pending, n/a,
-    // unavailable), usage without a figure (no data, not read) and unknown.
-    const STATE_ICONS = {
-      "running": "▶", "active": "▶", "working": "▶",
-      "implementing": "✎", "reviewing": "⌕", "local-check": "⚙", "pushing": "⇡", "pr-review": "⇄",
-      "open": "○", "queued": "⋯", "waiting": "⧖",
-      "gate-blocked": "⚠",
-      "ready": "⚑",
-      "merged": "✔", "done": "✔", "finished": "✔",
-      "closed": "■", "superseded": "↷",
-      "failed": "✖", "error": "✖",
-      "cancelled": "⊘",
-      "ja": "☑", "green": "☑", "nein": "☒", "pending": "☐", "n_a": "⊟", "unavailable": "⊡",
-      "no data": "∅", "not read": "⊗",
-      "unknown": "?"
+    // Words the shared ring list does not name, mapped onto its ring kinds.
+    const STATE_RING = {
+      "local-check": ["work", .5],
+      "pushing": ["work", .75],
+      "pr-review": ["work", .75],
+      "open": ["idle", 0],
+      "gate-blocked": ["wait", .5],
+      "finished": ["done", 1],
+      "closed": ["cancel", 0],
+      "superseded": ["cancel", 0],
+      "error": ["bad", 1],
+      "ja": ["ok", 1],
+      "green": ["ok", 1],
+      "nein": ["bad", 1],
+      "n_a": ["cancel", 0],
+      "unavailable": ["bad", 1],
+      "no data": ["idle", 0],
+      "not read": ["idle", 0],
+      "unknown": ["idle", 0]
     };
-    const STATE_FALLBACK_ICON = "◌";
+    Object.assign(RING, STATE_RING);
 
     // A UUID shows as its first 8 characters on a button that copies the full value.
     function idChip(value) {
@@ -93,18 +148,20 @@
       return esc(JSON.stringify(value, null, indent)).replace(QUOTED_UUID_PATTERN, (_, id) => `&quot;${idChip(id)}&quot;`);
     }
 
-    // The icon of a state or status word, labelled with the word; the cell that
-    // holds it carries stateCellAttributes of the same word.
+    // The ring of a state or status word; the cell that holds it carries
+    // stateCellAttributes of the same word. The word is the accessible name.
     function stateIcon(value) {
       if (value === null || value === undefined || value === "") return "—";
-      const word = String(value);
-      const known = Object.hasOwn(STATE_ICONS, word);
-      const icon = known ? STATE_ICONS[word] : STATE_FALLBACK_ICON;
-      return `<span class="${known ? "state-icon" : "state-icon state-unknown"}" role="img" aria-label="${esc(word)}">${icon}&#xFE0E;</span>`;
+      const word = String(value).toLowerCase();
+      const known = Object.hasOwn(RING, word);
+      const html = chip(word);
+      const svgEnd = html.indexOf("</svg>") + "</svg>".length;
+      const ring = html.slice(0, svgEnd) + "</span>";
+      return known ? ring : ring.replace('class="ring"', 'class="ring state-unknown"');
     }
 
-    // The word behind a state icon as the title and the accessible name of the
-    // cell that shows the icon; nothing for a missing word.
+    // The word behind a status ring as the title and the accessible name of the
+    // cell that shows the ring; nothing for a missing word.
     function stateCellAttributes(value) {
       if (value === null || value === undefined || value === "") return "";
       return ` title="${esc(value)}" aria-label="${esc(value)}"`;
@@ -235,9 +292,9 @@
 
     document.getElementById("os-add-skip").addEventListener("click", () => {
       const row = document.createElement("div");
-      row.className = "control-form os-skip";
+      row.className = "os-skip controls";
       const options = skippable.map(key => `<option value="${esc(key)}">${esc(key)}</option>`).join("");
-      row.innerHTML = `<select class="os-skip-key">${options}</select><input type="text" class="os-skip-reason" placeholder="reason" /><button type="button" class="os-skip-remove">Remove</button>`;
+      row.innerHTML = `<select class="os-skip-key">${options}</select><input type="text" class="os-skip-reason" placeholder="reason" /><button type="button" class="os-skip-remove btn btn-ghost btn-sm">Remove</button>`;
       document.getElementById("os-skips").appendChild(row);
     });
 

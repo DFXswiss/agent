@@ -70,7 +70,8 @@ def test_dashboard_serves_the_main_page_and_every_subpage(monkeypatch) -> None:
             body = raw.decode("utf-8")
             assert f'id="{table_id}"' in body
             assert f'data-section="{name}"' in body
-            assert '<a href="/">Back to dashboard</a>' in body
+            assert 'href="/"' in body
+            assert ">Orders</span></a>" in body
 
         status, _, raw = _get(port, "/unknown")
         assert status == 404

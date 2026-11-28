@@ -347,6 +347,161 @@ def test_dashboard_get_state_returns_503_on_a_store_error_reading_check_times(
         assert reconnect_calls == []
 
 
+def test_dashboard_get_state_returns_503_when_reconnect_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A StoreConnectionError from snapshot that reconnect cannot heal is the
+    reconnect's own message, as JSON 503, and the handler stops."""
+    _init_paired_store(tmp_path)
+    message = "cannot reconnect to postgres: down"
+
+    def broken_snapshot(self: object) -> None:
+        raise StoreConnectionError("server closed the connection unexpectedly")
+
+    def broken_reconnect(self: object) -> None:
+        raise StoreConnectionError(message)
+
+    monkeypatch.setattr(main_mod.Store, "snapshot", broken_snapshot)
+    monkeypatch.setattr(main_mod.Store, "reconnect", broken_reconnect)
+
+    with _running_dashboard(monkeypatch) as port:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("GET", "/api/state")
+        resp = conn.getresponse()
+        payload = json.loads(resp.read())
+        conn.close()
+
+        assert resp.status == 503
+        assert payload == {"ok": False, "error": message}
+
+
+def test_dashboard_get_state_serves_usage_when_drivers_cannot_be_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """load_driver_configuration raising AIAccountError leaves drivers unset.
+    The state is still served, and a listed provider is no data, not unread."""
+    _init_paired_store(tmp_path)
+    (tmp_path / "ai-subscriptions.json").write_text(
+        json.dumps(
+            {"subscriptions": [{"provider": "driver-a", "account": "seat-1@example.com"}]}
+        ),
+        encoding="utf-8",
+    )
+
+    def unreadable_drivers(_agent_home: Path) -> object:
+        raise main_mod.AIAccountError("Cannot read drivers.json")
+
+    monkeypatch.setattr(main_mod, "load_driver_configuration", unreadable_drivers)
+
+    with _running_dashboard(monkeypatch) as port:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("GET", "/api/state")
+        resp = conn.getresponse()
+        payload = json.loads(resp.read())
+        conn.close()
+
+        assert resp.status == 200
+        assert "sessions" in payload
+        overview = payload["usage_overview"]
+        assert [entry["provider"] for entry in overview] == ["driver-a"]
+        entry = overview[0]
+        assert entry["name"] == "driver-a"
+        assert entry["status"] == "no data"
+        assert entry["summary"] == "driver-a no data"
+        assert [(row["account"], row["status"]) for row in entry["accounts"]] == [
+            ("seat-1@example.com", "no data")
+        ]
+        assert "not read" not in json.dumps(overview)
+
+
+def test_dashboard_get_returns_500_when_the_page_file_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _init_paired_store(tmp_path)
+    monkeypatch.setattr(main_mod, "STATIC", tmp_path / "missing-dashboard.html")
+
+    with _running_dashboard(monkeypatch) as port:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("GET", "/")
+        resp = conn.getresponse()
+        raw = resp.read()
+        conn.close()
+
+        assert resp.status == 500
+        assert b"dashboard missing" in raw
+
+
+def test_dashboard_get_state_reads_the_agent_home_when_the_store_home_is_not_a_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """store.home is not a Path, so subscriptions and drivers are read from the
+    agent home. drivers.json there defines driver-a with a usage section and the
+    display name Driver A, so the listed provider is no data under that name.
+    A read from any other home, which has no drivers.json, would mark it not read."""
+    _init_paired_store(tmp_path)
+    (tmp_path / "drivers.json").write_text(
+        json.dumps(
+            {
+                "drivers": {
+                    "driver-a": {
+                        "display_name": "Driver A",
+                        "usage": {
+                            "snapshot": "spend",
+                            "credential": {"file": "tool-d-key", "format": "text"},
+                            "proxy_from_environment": False,
+                            "requests": [
+                                {"name": "key", "url": "https://gateway.example.test/api/v1/key"}
+                            ],
+                            "fields": {
+                                "usage_usd": "/key/data/usage",
+                                "usage_daily_usd": "/key/data/usage_daily",
+                                "usage_weekly_usd": "/key/data/usage_weekly",
+                                "usage_monthly_usd": "/key/data/usage_monthly",
+                                "limit_usd": "/key/data/limit",
+                                "limit_remaining_usd": "/key/data/limit_remaining",
+                                "limit_reset": "/key/data/limit_reset",
+                            },
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "ai-subscriptions.json").write_text(
+        json.dumps(
+            {"subscriptions": [{"provider": "driver-a", "account": "seat-1@example.com"}]}
+        ),
+        encoding="utf-8",
+    )
+    real_init = main_mod.Store.__init__
+
+    def init_without_a_path_home(self: main_mod.Store, home: Path, dsn: str | None = None) -> None:
+        real_init(self, home, dsn)
+        setattr(self, "home", None)
+
+    monkeypatch.setattr(main_mod.Store, "__init__", init_without_a_path_home)
+
+    with _running_dashboard(monkeypatch) as port:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+        conn.request("GET", "/api/state")
+        resp = conn.getresponse()
+        payload = json.loads(resp.read())
+        conn.close()
+
+        assert resp.status == 200
+        assert payload["subscriptions"]["configured"] is True
+        assert payload["subscriptions"]["error"] is None
+        overview = payload["usage_overview"]
+        assert [entry["provider"] for entry in overview] == ["driver-a"]
+        assert overview[0]["name"] == "Driver A"
+        assert overview[0]["status"] == "no data"
+        assert overview[0]["summary"] == "Driver A no data"
+        assert [(row["account"], row["status"]) for row in overview[0]["accounts"]] == [
+            ("seat-1@example.com", "no data")
+        ]
+
+
 def test_store_meta_prefix_reads_only_the_keys_with_that_prefix(tmp_path: Path) -> None:
     _init_paired_store(tmp_path)
     store = open_store()

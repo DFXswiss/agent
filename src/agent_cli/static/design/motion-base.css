@@ -1,0 +1,127 @@
+/*
+ * Five motion roles: press, the track indicator, the meter, rise, and hold.
+ * Entry uses the same curve as the value: cubic-bezier(.2, .72, .2, 1).
+ */
+
+:root {
+  --jk-press-in: 90ms;
+  --jk-press-out: 180ms;
+  --jk-press-ease: cubic-bezier(.16, 1, .3, 1);
+  --jk-state-duration: 240ms;
+  --jk-state-ease: cubic-bezier(.3, 1.35, .5, 1);
+  --jk-value-duration: 700ms;
+  --jk-value-ease: cubic-bezier(.2, .72, .2, 1);
+  --jk-enter-duration: 420ms;
+  --jk-enter-stagger: 60ms;
+  --jk-enter-rise: 12px;
+  --jk-enter-ease: cubic-bezier(.2, .72, .2, 1);
+  --jk-hold-duration: 1200ms;
+  --jk-hold-ease: linear;
+}
+
+/* Press feedback. The prototype's filter curve is the value curve, not the spring. */
+.jk-press {
+  transition:
+    transform var(--jk-press-out) var(--jk-press-ease),
+    filter var(--jk-press-out) var(--jk-value-ease);
+}
+
+.jk-press:active {
+  transform: translateY(var(--jk-press-distance, 2px)) scale(var(--jk-press-scale, 0.97));
+  filter: brightness(var(--jk-press-dim, 0.94));
+  transition-duration: var(--jk-press-in);
+}
+
+/* State change: moving marker. */
+.jk-state {
+  transition:
+    transform var(--jk-state-duration) var(--jk-state-ease),
+    width var(--jk-state-duration) var(--jk-state-ease),
+    height var(--jk-state-duration) var(--jk-state-ease);
+}
+
+/* Value fill. The zero state needs transition: none or it does not run from zero. */
+.jk-value {
+  transition: width var(--jk-value-duration) var(--jk-value-ease);
+}
+
+.jk-zero .jk-value {
+  width: 0;
+  transition: none;
+}
+
+.jk-value-arc,
+.jk-value-arc-c {
+  transition: stroke-dasharray var(--jk-value-duration) var(--jk-value-ease);
+}
+
+.jk-zero .jk-value-arc {
+  stroke-dasharray: 0 251.4 !important;
+  transition: none;
+}
+
+.jk-zero .jk-value-arc-c {
+  stroke-dasharray: 0 100 !important;
+  transition: none;
+}
+
+/* Entry. --jk-i is the stagger index. */
+@keyframes jk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(var(--jk-enter-rise));
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.jk-enter {
+  animation: jk-rise var(--jk-enter-duration) var(--jk-enter-ease) both;
+  animation-delay: calc(var(--jk-i, 0) * var(--jk-enter-stagger));
+}
+
+/* Hold to confirm. Releasing takes the fill back. */
+.jk-hold-fill {
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--jk-press-out) var(--jk-value-ease);
+}
+
+.jk-hold.is-holding .jk-hold-fill {
+  transform: scaleX(1);
+  transition: transform var(--jk-hold-duration) var(--jk-hold-ease);
+}
+
+.jk-hold.is-done .jk-hold-fill {
+  transform: scaleX(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jk-press,
+  .jk-press:active {
+    transform: none;
+    transition: filter var(--jk-press-out) var(--jk-value-ease);
+  }
+
+  .jk-state {
+    transition: none;
+  }
+
+  .jk-value,
+  .jk-value-arc,
+  .jk-value-arc-c {
+    transition: none;
+  }
+
+  .jk-enter {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .jk-hold.is-holding .jk-hold-fill {
+    transition: transform var(--jk-hold-duration) var(--jk-hold-ease);
+  }
+}

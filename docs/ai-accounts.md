@@ -1005,9 +1005,8 @@ Window rows (`windows` and `rpc` adapters) show the five-hour, weekly and
 per-model weekly percentages with their reset times, plus any window of another
 length as `<minutes> min`, `limit reached` when a limit is reached and
 `free resets: <N>` when free limit resets are available. `status` is shown as
-an icon from the dashboard's state
-mapping with the word as the cell's title; a word the mapping does not know
-gets the neutral fallback icon. A file that does not validate is shown as an error on that
+a ring with the word as `title` and accessible name; an unknown word shows as
+the idle ring. A file that does not validate is shown as an error on that
 page; the rest of the dashboard keeps working. `/api/state` delivers the joined
 rows as `subscriptions` (`configured`, `error`, `check_error`, `rows`).
 
@@ -1050,9 +1049,10 @@ section shows `not read`, unless another device recorded a snapshot for it. A
 provider with a `usage` section (`period`, `spend`, `windows` or `rpc`) shows
 `no data` when none of its snapshots has a
 headline percentage or another figure; a spend snapshot without a limit shows
-its USD usage instead. Neither is shown as 0 %, and both are shown as icons of
-the dashboard's state mapping. When `drivers.json` cannot be read, the page
-lists only the recorded providers and shows none of them as `not read`.
+its USD usage instead. Neither is shown as 0 %, and both show as the idle
+status ring, with the word as `title` and accessible name. When `drivers.json`
+cannot be read, the page lists only the recorded providers and shows none of
+them as `not read`.
 Opening a provider lists each quota window (`windows` and `rpc`: five hours,
 weekly, the weekly windows per model named in the snapshot and any window of
 another length as `<minutes> min`; `period`: the period and
@@ -1065,8 +1065,9 @@ change. With several accounts a provider window shows the highest use among
 them.
 `detailed` opens every provider, `sort by used` orders providers by the
 headline percentage. The main page shows one summary line, for example
-`Vendor A 32% 5 d 19 h · Vendor B ⊗ · Vendor D 12.5% 3 d 4 h`, where a status
-shows as its icon with the word as its title. On `/usage`, a listed account of
+`Vendor A 32% 5 d 19 h · Vendor B` followed by the idle status ring, then
+`· Vendor D 12.5% 3 d 4 h`, where a status shows as its status ring
+with the word as `title` and accessible name. On `/usage`, a listed account of
 a provider with a `usage` section and without any snapshot shows `No usage: no
 paired device polls this login` on its name, as in the table. The figures come
 only from stored `usage.snapshot` payloads, the inventory and `drivers.json`;

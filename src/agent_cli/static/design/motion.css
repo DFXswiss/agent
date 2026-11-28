@@ -1,0 +1,26 @@
+/*
+ * DFX Work: motion on top of motion-base.css.
+ * motion-base.css brings the five roles: press (.jk-press), state change with a travelling
+ * marker (.jk-state), value fill with count-up (.jk-value, .jk-value-arc-c), staggered entry
+ * (.jk-enter, --jk-i), hold to confirm (.jk-hold). This file adds only what work tools need.
+ *
+ * Exception to the design rule of no endless loops, decided by the maintainer on 2026-11-27: a ring may turn
+ * for as long as the agent really works. Nothing else loops.
+ *   .ring .spin       agent works (implementing, local check, review ...): arc turns once in 1.6 s
+ *   .ring .dash-spin  queued, not started (queued, pending): dashed ring turns once in 8 s
+ * Waiting for you, ready, done, failed, cancelled stand still.
+ * Reduced motion stops every loop; the arc still shows the phase.
+ */
+
+:root {
+  --work-spin: 1.6s;
+  --work-spin-slow: 8s;
+}
+
+.ring .spin { transform-origin: 8px 8px; animation: ring-spin var(--work-spin) linear infinite; }
+.ring .dash-spin { transform-origin: 8px 8px; animation: ring-spin var(--work-spin-slow) linear infinite; }
+@keyframes ring-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ring .spin, .ring .dash-spin { animation: none; }
+}

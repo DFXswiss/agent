@@ -1,101 +1,175 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="en" class="theme-light">
 <head>
-  <meta charset="utf-8">
-  <title>Agent</title>
-  <style>
-    :root { font-family: ui-sans-serif, system-ui, sans-serif; color: #1a1a1a; background: #f4f1ea; }
-    body { margin: 24px; max-width: 1200px; }
-    h1 { font-size: 1.4rem; margin: 0 0 4px; }
-    h2 { font-size: 1.05rem; margin: 28px 0 8px; }
-    .sub { color: #555; margin-bottom: 20px; }
-    table { width: 100%; border-collapse: collapse; background: #fff; margin-bottom: 8px; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 0.92rem; vertical-align: top; }
-    th { background: #efeae0; }
-    .failed { color: #c00; }
-    .implementing, .working, .open { color: #0b5; font-weight: 600; }
-    .done, .approved { color: #060; }
-    .merged { color: #6f5b24; }
-    code { font-size: 0.85em; }
-    .control-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
-    .control-form input[type="text"] { min-width: 180px; padding: 6px 8px; }
-    .control-form button { padding: 6px 12px; cursor: pointer; }
-    .watch-note { color: #555; margin-top: 10px; }
-    tr.order-row { cursor: pointer; }
-    tr.order-row:hover { background: #faf7f0; }
-    tr.order-row.selected { background: #ebe4d4; }
-    #order-detail { background: #fff; border: 1px solid #e0d8c8; padding: 14px 16px; margin: 12px 0 8px; }
-    #order-detail[hidden] { display: none; }
-    #od-question { background: #1a1a1a; color: #d8d8d8; padding: 12px; overflow: auto; max-height: 240px; font-size: 0.85rem; white-space: pre-wrap; }
-    #order-detail textarea { display: block; width: 100%; min-height: 96px; margin-top: 10px; padding: 6px 8px; box-sizing: border-box; font: inherit; }
-    a.button { display: inline-block; padding: 6px 12px; background: #efeae0; border: 1px solid #c9c0ad; color: #1a1a1a; text-decoration: none; }
-    a.button:hover { background: #e6dfd0; }
-    #orders td, #order-events td, #order-detail td { overflow-wrap: anywhere; }
-    nav { display: flex; flex-wrap: wrap; gap: 14px; margin: 22px 0 8px; }
-    button.copy-id { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; }
-    button.copy-id.copied { color: #060; }
-    button.copy-id.copy-failed { color: #c00; }
-    .state-unknown { color: #777; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DFX Work</title>
+<link rel="stylesheet" href="/design/tokens.css">
+<link rel="stylesheet" href="/design/brand.css">
+<link rel="stylesheet" href="/design/motion-base.css">
+<link rel="stylesheet" href="/design/work.css">
+<link rel="stylesheet" href="/design/motion.css">
+<style>
+button.copy-id { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline dotted; }
+button.copy-id.copied { color: var(--status-success); }
+button.copy-id.copy-failed { color: var(--red-600); }
+.olist h2 { margin: 0; padding: var(--sp-4) var(--sp-4) 0; font-size: var(--fs-md); font-weight: var(--fw-bold); letter-spacing: var(--ls-tight); }
+.page-head h2 { margin: 0; font-size: var(--fs-xl); font-weight: var(--fw-bold); letter-spacing: var(--ls-tight); }
+.olist .filter > #order-new { padding-top: 0; padding-bottom: 0; flex: none; }
+#order-detail { display: flex; flex-direction: column; gap: var(--sp-4); }
+#order-detail[hidden] { display: none; }
+#od-question { margin: 0; padding: 0 var(--sp-4) var(--sp-4); white-space: pre-wrap; font: inherit; background: none; color: inherit; border: 0; }
+#od-err, #err { color: var(--red-600); }
+#orders-note, #conv-empty { color: var(--text-secondary); margin: 0; }
+#orders-note { padding: 0 var(--sp-4) var(--sp-2); }
+#conv-empty { padding: var(--sp-4); }
+#err { margin: 0; padding: var(--sp-2) var(--sp-4); }
+#od-body { padding: var(--sp-4); }
+#od-body, #od-report-body { overflow-x: auto; }
+#od-report-body:empty { display: none; }
+</style>
 </head>
 <body>
-  <h1>Agent</h1>
-  <p class="sub">Local replica including teammates after sync. <span id="stamp"></span></p>
-  <p>Device <code id="dev"></code> · GitHub <b id="login"></b></p>
-  <p>Subscriptions: <span id="usage-summary">—</span></p>
-
-  <h2>Orders</h2>
-  <p id="orders-note" class="watch-note" hidden></p>
-  <div class="control-form">
-    <a class="button" id="order-new" href="/orders/new">New order</a>
-  </div>
-  <table id="orders"><thead><tr></tr></thead><tbody></tbody></table>
-
-  <div id="order-detail" hidden>
-    <h2>Order <code id="od-id"></code></h2>
-    <div id="od-body"></div>
-    <pre id="od-question" hidden></pre>
-    <div id="od-opinion"></div>
-    <textarea id="od-reply-body" placeholder="reply"></textarea>
-    <div class="control-form">
-      <button type="button" id="od-reply">Reply</button>
-      <select id="od-override-check"></select>
-      <input type="text" id="od-override-reason" placeholder="reason" />
-      <button type="button" id="od-override">Override</button>
-      <input type="text" id="od-cancel-reason" placeholder="reason" />
-      <button type="button" id="od-cancel">Cancel order</button>
-      <input type="text" id="od-done-reason" placeholder="reason" />
-      <button type="button" id="od-done">Mark done</button>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><img src="/design/logo-dark.svg" alt="DFX" width="70" height="22"><b>Agent</b></div>
+    <nav id="section-nav" aria-label="Sections">
+      <div class="marker jk-state" id="marker" aria-hidden="true"></div>
+      <div class="group">Work</div>
+      <a href="#orders" data-v="orders" class="active" title="Orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span class="t">Orders</span></a>
+      <a href="#events" data-v="events" title="Order events"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg><span class="t">Order events</span></a>
+      <a href="/tasks" title="Tasks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span class="t">Tasks</span></a>
+      <a href="/work" title="Open work"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span class="t">Open work</span></a>
+      <a href="/pings" title="Pings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></svg><span class="t">Pings</span></a>
+      <div class="group">Runs</div>
+      <a href="/sessions" title="Sessions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 9l3 3-3 3M12 15h6"/></svg><span class="t">Sessions</span></a>
+      <a href="/rounds" title="Rounds"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg><span class="t">Rounds</span></a>
+      <a href="/agents" title="Agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01"/></svg><span class="t">Agents</span></a>
+      <a href="/checks" title="Local checks"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><span class="t">Local checks</span></a>
+      <a href="/gates" title="Review gates"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21v-8h6v8"/></svg><span class="t">Review gates</span></a>
+      <div class="group">Accounts</div>
+      <a href="/usage" title="Subscriptions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg><span class="t">Subscriptions</span></a>
+    </nav>
+    <div class="who">
+      <span>GitHub <b id="login"></b></span>
+      <span>Device <code id="dev"></code></span>
+      <span class="sync">Synced <span id="stamp"></span></span>
+      <p>Subscriptions: <span id="usage-summary">—</span></p>
     </div>
-    <div id="order-report">
-      <div class="control-form"><button type="button" id="od-report">Load report</button></div>
-      <div id="od-report-body"></div>
-    </div>
-    <p id="od-err" class="failed" hidden></p>
-  </div>
+  </aside>
 
-  <h2>Order events</h2>
-  <div class="control-form">
-    <label><input type="checkbox" id="ev-wake" /> wake only</label>
-    <label><input type="checkbox" id="ev-unacked" /> unacknowledged</label>
-  </div>
-  <table id="order-events"><thead><tr></tr></thead><tbody></tbody></table>
+  <main id="main">
+    <p id="err" class="failed" hidden></p>
+    <section class="view on" id="v-orders">
+      <div class="orders-wrap fold-grid">
+        <div class="olist card" aria-label="Orders">
+          <h2>Orders</h2>
+          <div class="filter">
+            <div class="seg" id="seg">
+              <span class="knob jk-state" aria-hidden="true"></span>
+              <button type="button" class="on" data-f="open">Open</button>
+              <button type="button" data-f="all">All</button>
+            </div>
+            <a class="btn btn-primary btn-sm jk-press" id="order-new" href="/orders/new">New order</a>
+          </div>
+          <ul id="orders"></ul>
+          <p id="orders-note" hidden></p>
+        </div>
 
-  <nav id="section-nav">
-    <a href="/usage">Subscriptions</a>
-    <a href="/sessions">Sessions</a>
-    <a href="/tasks">Tasks</a>
-    <a href="/rounds">Rounds</a>
-    <a href="/agents">Agents</a>
-    <a href="/checks">Local checks</a>
-    <a href="/gates">Review gates</a>
-    <a href="/work">Open work</a>
-    <a href="/pings">Pings</a>
-  </nav>
+        <div class="conv card" id="conv">
+          <div class="conv-head" id="conv-head">
+            <div>
+              <h2 id="conv-title"></h2>
+              <div class="facts" id="conv-facts">
+                <code id="od-id"></code>
+                <span id="conv-repo"></span>
+                <span id="conv-pr"></span>
+                <span id="conv-round"></span>
+                <span id="conv-phase"></span>
+              </div>
+            </div>
+            <div id="conv-state"></div>
+          </div>
+          <form class="composer" id="composer" hidden>
+            <div class="box">
+              <textarea id="od-reply-body" aria-label="Reply" placeholder="reply"></textarea>
+              <div class="bar">
+                <span class="hint">Cmd Enter sends</span>
+                <span class="spacer"></span>
+                <details class="more">
+                  <summary class="btn btn-ghost jk-press">More</summary>
+                  <div class="menu">
+                    <div class="action">
+                      <b>Override</b>
+                      <div class="line">
+                        <select id="od-override-check" aria-label="Check"></select>
+                        <input type="text" id="od-override-reason" placeholder="reason" aria-label="Override reason">
+                      </div>
+                      <button type="button" class="btn btn-ghost btn-sm jk-press" id="od-override">Override</button>
+                    </div>
+                    <div class="action">
+                      <b>Mark done</b>
+                      <div class="line">
+                        <input type="text" id="od-done-reason" placeholder="reason" aria-label="Done reason">
+                      </div>
+                      <button type="button" class="btn btn-ghost btn-sm jk-press" id="od-done">Mark done</button>
+                    </div>
+                    <div class="action">
+                      <b>Load report</b>
+                      <button type="button" class="btn btn-ghost btn-sm jk-press" id="od-report">Load report</button>
+                    </div>
+                    <div class="action">
+                      <b>Cancel order</b>
+                      <div class="line">
+                        <input type="text" id="od-cancel-reason" placeholder="reason" aria-label="Cancel reason">
+                      </div>
+                      <button type="button" class="btn jk-hold" id="od-cancel"><span class="jk-hold-fill"></span><span>Hold to cancel</span></button>
+                    </div>
+                  </div>
+                </details>
+                <button class="btn btn-primary jk-press" type="button" id="od-reply">Send</button>
+              </div>
+            </div>
+          </form>
+          <div class="feed" id="feed" aria-live="polite">
+            <p id="conv-empty">Pick an order on the left.</p>
+            <div id="order-detail" hidden>
+              <div id="feed-events"></div>
+              <div class="card" id="od-body"></div>
+              <div id="order-report"><div id="od-report-body"></div></div>
+              <p id="od-err" hidden></p>
+              <div id="feed-park" hidden>
+                <div id="feed-ask">
+                  <pre id="od-question" hidden></pre>
+                  <div id="od-opinion"></div>
+                  <div id="ask-foot" aria-live="off"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
 
-  <p id="err" class="failed" hidden></p>
-  <script>
-    function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])); }
+    <section class="view" id="v-events">
+      <div class="page-head">
+        <h2>Order events</h2>
+        <div class="tools">
+          <label class="check"><input type="checkbox" id="ev-wake"> wake only</label>
+          <label class="check"><input type="checkbox" id="ev-unacked"> unacknowledged</label>
+        </div>
+      </div>
+      <div class="scroll">
+        <div class="card">
+          <table id="order-events"><thead><tr></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="/design/work.js"></script>
+<script>
     function empty(cols) { return `<tr><td colspan='${cols}'>—</td></tr>`; }
 
     /* DASHBOARD_COMMON_BEGIN */
@@ -105,25 +179,27 @@
     const COPY_FEEDBACK_MS = 1500;
     const copyFeedback = new Map();
     const shownHtml = new WeakMap();
-    // One icon for every state or status value the code produces, one family per line:
-    // running or active, task in progress, open or waiting, blocked, ready, merged or done,
-    // closed or superseded, failed, cancelled, check or CI (yes, no, pending, n/a,
-    // unavailable), usage without a figure (no data, not read) and unknown.
-    const STATE_ICONS = {
-      "running": "▶", "active": "▶", "working": "▶",
-      "implementing": "✎", "reviewing": "⌕", "local-check": "⚙", "pushing": "⇡", "pr-review": "⇄",
-      "open": "○", "queued": "⋯", "waiting": "⧖",
-      "gate-blocked": "⚠",
-      "ready": "⚑",
-      "merged": "✔", "done": "✔", "finished": "✔",
-      "closed": "■", "superseded": "↷",
-      "failed": "✖", "error": "✖",
-      "cancelled": "⊘",
-      "ja": "☑", "green": "☑", "nein": "☒", "pending": "☐", "n_a": "⊟", "unavailable": "⊡",
-      "no data": "∅", "not read": "⊗",
-      "unknown": "?"
+    // Words the shared ring list does not name, mapped onto its ring kinds.
+    const STATE_RING = {
+      "local-check": ["work", .5],
+      "pushing": ["work", .75],
+      "pr-review": ["work", .75],
+      "open": ["idle", 0],
+      "gate-blocked": ["wait", .5],
+      "finished": ["done", 1],
+      "closed": ["cancel", 0],
+      "superseded": ["cancel", 0],
+      "error": ["bad", 1],
+      "ja": ["ok", 1],
+      "green": ["ok", 1],
+      "nein": ["bad", 1],
+      "n_a": ["cancel", 0],
+      "unavailable": ["bad", 1],
+      "no data": ["idle", 0],
+      "not read": ["idle", 0],
+      "unknown": ["idle", 0]
     };
-    const STATE_FALLBACK_ICON = "◌";
+    Object.assign(RING, STATE_RING);
 
     // A UUID shows as its first 8 characters on a button that copies the full value.
     function idChip(value) {
@@ -142,18 +218,20 @@
       return esc(JSON.stringify(value, null, indent)).replace(QUOTED_UUID_PATTERN, (_, id) => `&quot;${idChip(id)}&quot;`);
     }
 
-    // The icon of a state or status word, labelled with the word; the cell that
-    // holds it carries stateCellAttributes of the same word.
+    // The ring of a state or status word; the cell that holds it carries
+    // stateCellAttributes of the same word. The word is the accessible name.
     function stateIcon(value) {
       if (value === null || value === undefined || value === "") return "—";
-      const word = String(value);
-      const known = Object.hasOwn(STATE_ICONS, word);
-      const icon = known ? STATE_ICONS[word] : STATE_FALLBACK_ICON;
-      return `<span class="${known ? "state-icon" : "state-icon state-unknown"}" role="img" aria-label="${esc(word)}">${icon}&#xFE0E;</span>`;
+      const word = String(value).toLowerCase();
+      const known = Object.hasOwn(RING, word);
+      const html = chip(word);
+      const svgEnd = html.indexOf("</svg>") + "</svg>".length;
+      const ring = html.slice(0, svgEnd) + "</span>";
+      return known ? ring : ring.replace('class="ring"', 'class="ring state-unknown"');
     }
 
-    // The word behind a state icon as the title and the accessible name of the
-    // cell that shows the icon; nothing for a missing word.
+    // The word behind a status ring as the title and the accessible name of the
+    // cell that shows the ring; nothing for a missing word.
     function stateCellAttributes(value) {
       if (value === null || value === undefined || value === "") return "";
       return ` title="${esc(value)}" aria-label="${esc(value)}"`;
@@ -250,7 +328,7 @@
     }
     /* DASHBOARD_COMMON_END */
 
-    // One figure per provider; a status word shows as its state icon.
+    // One figure per provider; a status word shows as its status ring.
     function usageSummaryHtml(providers) {
       return providers.map(p => p.status
         ? `${esc(p.name)} <span${stateCellAttributes(p.status)}>${stateIcon(p.status)}</span>`
@@ -275,8 +353,124 @@
     }
     tick();
     setInterval(tick, 2000);
-  </script>
-  <script>
+
+    // Drops the remembered HTML so the next setHtml rewrites a node that was moved.
+    function replaceHtml(el, html) {
+      shownHtml.delete(el);
+      setHtml(el, html);
+    }
+
+    // True when setHtml wrote. The same HTML is left in place.
+    function writeHtml(el, html) {
+      const changed = shownHtml.get(el) !== html;
+      setHtml(el, html);
+      return changed;
+    }
+
+    function showView(name) {
+      const view = name === "events" ? "events" : "orders";
+      document.querySelectorAll(".view").forEach(section => {
+        section.classList.toggle("on", section.id === "v-" + view);
+      });
+      document.querySelectorAll("#section-nav a").forEach(link => {
+        link.classList.toggle("active", link.dataset.v === view);
+      });
+      const active = document.querySelector('#section-nav a[data-v="' + view + '"]');
+      const marker = document.getElementById("marker");
+      if (active && marker) marker.style.setProperty("--y", active.offsetTop + "px");
+      const host = document.getElementById("v-" + view);
+      enter([...host.querySelectorAll(".order, .feed > *")].slice(0, 14));
+      fillRings(host);
+      fold();
+    }
+
+    document.getElementById("section-nav").addEventListener("click", event => {
+      const link = event.target.closest("a[data-v]");
+      if (!link) return;
+      event.preventDefault();
+      history.replaceState(null, "", "#" + link.dataset.v);
+      showView(link.dataset.v);
+    });
+
+    let anchor = null;
+    let resized = 0;
+    function placeKey(node) {
+      if (!node) return null;
+      if (node.dataset.eventId) return "event:" + node.dataset.eventId;
+      return "id:" + node.id;
+    }
+    function placeNode(key) {
+      if (!key) return null;
+      if (key.slice(0, 6) === "event:") {
+        const id = key.slice(6);
+        return [...document.getElementById("feed-events").children].find(node => node.dataset.eventId === id) || null;
+      }
+      return document.getElementById(key.slice(3));
+    }
+    function topMessage() {
+      const comp = document.getElementById("composer");
+      const feed = document.getElementById("feed");
+      const sticky = getComputedStyle(comp).position === "sticky";
+      const limit = Math.max(feed.getBoundingClientRect().top, sticky ? comp.getBoundingClientRect().bottom : 0, 0);
+      const park = document.getElementById("feed-park");
+      const nodes = [
+        ...document.getElementById("feed-events").children,
+        document.getElementById("od-body"),
+        document.getElementById("order-report"),
+      ];
+      if (!park.hidden) nodes.push(park);
+      return nodes.find(node => node.getBoundingClientRect().bottom > limit + 8) || null;
+    }
+    document.addEventListener("scroll", () => {
+      if (Date.now() - resized > 400) anchor = placeKey(topMessage());
+    }, { capture: true, passive: true });
+    function layoutKey() {
+      return [
+        getComputedStyle(document.getElementById("feed")).overflowY,
+        getComputedStyle(document.getElementById("composer")).position,
+        getComputedStyle(document.getElementById("orders")).display,
+        document.documentElement.dataset.fold || "",
+      ].join();
+    }
+    let lastLayout = "";
+    function keepPlace() {
+      const list = document.getElementById("orders");
+      const item = list.querySelector(".order.sel");
+      if (item) {
+        const itemRect = item.getBoundingClientRect();
+        const listRect = list.getBoundingClientRect();
+        if (itemRect.left < listRect.left || itemRect.right > listRect.right) list.scrollLeft += itemRect.left - listRect.left - 8;
+        if (itemRect.top < listRect.top || itemRect.bottom > listRect.bottom) list.scrollTop += itemRect.top - listRect.top - 8;
+      }
+      const place = placeNode(anchor);
+      if (place) {
+        const comp = document.getElementById("composer");
+        const sticky = getComputedStyle(comp).position === "sticky";
+        place.style.scrollMarginTop = sticky ? comp.offsetHeight + 8 + "px" : "";
+        place.scrollIntoView({ block: "start" });
+      }
+    }
+    function relayout() {
+      resized = Date.now();
+      const key = layoutKey();
+      if (key === lastLayout) return;
+      lastLayout = key;
+      requestAnimationFrame(keepPlace);
+    }
+    addEventListener("resize", () => {
+      const active = document.querySelector("#section-nav a.active");
+      const marker = document.getElementById("marker");
+      if (active && marker) marker.style.setProperty("--y", active.offsetTop + "px");
+      relayout();
+    });
+    addEventListener("hashchange", () => {
+      showView(location.hash.slice(1));
+    });
+    watchFold(relayout);
+    lastLayout = layoutKey();
+    showView(location.hash.slice(1));
+</script>
+<script>
 /* ORDER_VIEW_BEGIN */
 const ORDER_VIEW = {
   "submit": {"mode":"write","method":"POST","path":"/api/orders/submit","params":[{"name":"repo","flag":"--repo","kind":"line","required":true},{"name":"title","flag":"--title","kind":"line","required":true},{"name":"body","flag":"--body-file","kind":"body","required":true},{"name":"base","flag":"--base","kind":"line","required":false},{"name":"worker","flag":"--worker","kind":"line","required":false},{"name":"notify_session","flag":"--notify-session","kind":"line","required":false},{"name":"skip_checks","flag":"--skip-check","kind":"skips","required":false},{"name":"max_rounds","flag":"--max-rounds","kind":"int","required":false}],"fields":["order_id","repo","state","worker","round_limit","skipped_checks"],"nested":{"round_limit":["max_rounds","origin","model","limit"],"skipped_checks":["key","reason","by","at"]}},
@@ -298,6 +492,9 @@ let ordersLiveNote = "";
 let ordersStickyNote = "";
 let orderLiveError = "";
 let orderStickyError = "";
+let ordersOpenOnly = true;
+let cancelHoldTimer = 0;
+let feedHtml = "";
 const GITHUB = "https://github.com/";
 // The one timestamp shown as elapsed time, under its own label.
 const ELAPSED_LABELS = new Map([["updated_at", "updated_before"]]);
@@ -356,7 +553,7 @@ function repoPart(value, index) {
 
 // The columns (or rows) one field of an order operation shows as. The value
 // stays the full field value; only its display changes. A column with attributes
-// puts the word behind an icon (as title and accessible name), or the exact
+// puts the word behind a status ring (as title and accessible name), or the exact
 // timestamp behind an elapsed time (as title), on the cell itself.
 function orderColumns(field) {
   if (field === "repo") {
@@ -436,6 +633,129 @@ function showOrderNotes() {
   error.hidden = errorText === "";
 }
 
+// The yellow order state is labelled Waiting. Every other word is the one the API returned.
+function ringWord(state) {
+  if (state === "waiting") return "Waiting";
+  if (state === null || state === undefined) return "";
+  return String(state);
+}
+
+function setCount(view, count, attn) {
+  const link = document.querySelector('#section-nav a[data-v="' + view + '"]');
+  if (!link) return;
+  const existing = link.querySelector(".count");
+  if (existing) existing.remove();
+  if (!count) return;
+  const badge = document.createElement("span");
+  badge.className = attn ? "count attn" : "count";
+  badge.setAttribute("aria-label", String(count) + (attn ? " waiting" : ""));
+  badge.textContent = String(count);
+  link.appendChild(badge);
+}
+
+function listItemsHtml(orders) {
+  const fields = ORDER_VIEW.list.nested.orders.filter(field => field !== "head");
+  const elapsedField = [...ELAPSED_LABELS.keys()][0];
+  return orders.map(order => {
+    const title = fields.includes("title") ? esc(order.title) : "";
+    const repo = fields.includes("repo") ? esc(order.repo) : "";
+    const stamp = order[elapsedField];
+    const elapsed = fields.includes(elapsedField) && isTimestamp(stamp)
+      ? `<span class="since" data-at="${esc(stamp)}" title="${esc(stamp)}"></span>`
+      : "<span></span>";
+    const word = fields.includes("state") ? ringWord(order.state) : "";
+    const ring = word === "" ? "" : chip(word);
+    return `<li class="order"><b>${title}</b><div class="row"><span class="repo">${repo}</span>${elapsed}${ring}</div></li>`;
+  }).join("");
+}
+
+function eventBit(value) {
+  if (value === null || value === undefined || value === "") return "";
+  if (typeof value === "object") return "";
+  return esc(value);
+}
+
+function eventFact(ev) {
+  return [eventBit(ev.kind), eventBit(ev.phase), eventBit(ev.round), eventBit(ev.check)].filter(Boolean).join(" · ");
+}
+
+function eventArticle(ev, ask) {
+  const facts = eventFact(ev);
+  const fact = facts ? `<span>${facts}</span>` : "";
+  if (ask) {
+    return `<article class="msg ask" data-event-id="${esc(ev.id)}"><div class="avatar" aria-hidden="true">${BOT}</div><div class="bubble"><div class="body"><div class="who"><b>Agent</b>${fact}</div></div><div data-ask="1"></div></div></article>`;
+  }
+  const digest = typeof ev.digest === "string" && ev.digest !== "" ? `<pre>${esc(ev.digest)}</pre>` : "";
+  return `<article class="msg" data-event-id="${esc(ev.id)}"><div class="avatar" aria-hidden="true">${BOT}</div><div class="bubble"><div class="body"><div class="who"><b>Agent</b>${fact}</div>${digest}</div></div></article>`;
+}
+
+function askFootHtml(checkpoint, ev) {
+  const since = ev && isTimestamp(ev.at) ? esc(elapsedText(ev.at, Date.now())) : "";
+  const check = typeof checkpoint.check === "string" && checkpoint.check !== ""
+    ? `<span class="check">${esc(checkpoint.check)}</span>` : "";
+  const answers = Array.isArray(checkpoint.answers) ? checkpoint.answers.map(answer => esc(answer)).join(" ") : "";
+  return `<div class="foot"><span class="state">${WAIT_RING}Waiting for you</span><span class="since">${since}</span>${check}<span class="spacer"></span><span class="acts">${answers}</span></div>`;
+}
+
+function parkAsk() {
+  const park = document.getElementById("feed-park");
+  const ask = document.getElementById("feed-ask");
+  if (ask.parentElement !== park) park.appendChild(ask);
+}
+
+function renderFeed(events, checkpoint) {
+  const host = document.getElementById("feed-events");
+  const cpId = checkpoint ? checkpoint.event_id : null;
+  const sorted = events.slice().sort((a, b) => (Number(b.seq) || 0) - (Number(a.seq) || 0));
+  const found = sorted.some(ev => ev.id === cpId);
+  let html = sorted.map(ev => eventArticle(ev, Boolean(checkpoint) && ev.id === cpId)).join("");
+  if (checkpoint && !found) html = eventArticle({ id: cpId }, true) + html;
+  const foot = document.getElementById("ask-foot");
+  const ask = document.getElementById("feed-ask");
+  const article = ask.closest("article");
+  const current = article && article.dataset.eventId ? article.dataset.eventId : null;
+  const wanted = checkpoint && cpId !== null && cpId !== undefined ? String(cpId) : null;
+  if (html === feedHtml && current === wanted) {
+    setHtml(foot, checkpoint ? askFootHtml(checkpoint, sorted.find(item => item.id === cpId) || null) : "");
+    return;
+  }
+  parkAsk();
+  replaceHtml(host, html);
+  feedHtml = html;
+  const slot = host.querySelector("[data-ask]");
+  if (slot) {
+    slot.replaceWith(document.getElementById("feed-ask"));
+    const ev = sorted.find(item => item.id === cpId) || null;
+    setHtml(foot, askFootHtml(checkpoint, ev));
+  } else {
+    setHtml(foot, "");
+  }
+}
+
+function showHead(shown) {
+  const title = document.getElementById("conv-title");
+  const repo = document.getElementById("conv-repo");
+  const round = document.getElementById("conv-round");
+  const phase = document.getElementById("conv-phase");
+  const state = document.getElementById("conv-state");
+  if (!shown) {
+    title.textContent = "";
+    repo.textContent = "";
+    round.textContent = "";
+    phase.textContent = "";
+    setHtml(document.getElementById("conv-pr"), "");
+    writeHtml(state, "");
+    return;
+  }
+  title.textContent = shown.title || "";
+  repo.textContent = shown.repo || "";
+  round.textContent = shown.round === null || shown.round === undefined || shown.round === "" ? "" : "Round " + shown.round;
+  phase.textContent = shown.phase ? "Phase: " + shown.phase : "";
+  setHtml(document.getElementById("conv-pr"), "");
+  const word = ringWord(shown.state);
+  if (writeHtml(state, word === "" ? "" : chip(word))) fillRings(document.getElementById("conv-head"));
+}
+
 async function ordersTick() {
   let failure = "";
   try {
@@ -451,23 +771,33 @@ async function ordersTick() {
   }
 
   try {
-    const listed = await orderCall("list", {});
-    const table = document.getElementById("orders");
+    const openListed = await orderCall("list", { open_only: true });
+    const listed = ordersOpenOnly ? openListed : await orderCall("list", {});
+    const list = document.getElementById("orders");
     // The list leaves out head; the detail and the report still show it.
-    renderOrderTable(table, listed.orders, ORDER_VIEW.list.nested.orders.filter(field => field !== "head"));
-    const rows = table.tBodies[0].rows;
+    const listChanged = writeHtml(list, listItemsHtml(listed.orders));
+    const rows = list.querySelectorAll(".order");
     for (let i = 0; i < listed.orders.length; i += 1) {
-      rows[i].className = "order-row" + (listed.orders[i].order_id === selectedOrderId ? " selected" : "");
+      rows[i].className = "order" + (listed.orders[i].order_id === selectedOrderId ? " sel" : "");
       rows[i].dataset.id = listed.orders[i].order_id;
     }
+    const elapsedSpans = list.querySelectorAll("span.since");
+    for (let n = 0; n < elapsedSpans.length; n += 1) {
+      elapsedSpans[n].textContent = elapsedText(elapsedSpans[n].dataset.at, Date.now());
+    }
+    if (listChanged) fillRings(list);
+    const openOrders = openListed.orders;
+    setCount("orders", openOrders.length, openOrders.some(order => order.state === "waiting"));
   } catch (e) {
     if (!failure) failure = e.message;
   }
 
   try {
+    const wakeOnly = document.getElementById("ev-wake").checked;
+    const unackedOnly = document.getElementById("ev-unacked").checked;
     const page = await orderCall("events", {
-      wake_only: document.getElementById("ev-wake").checked,
-      unacked: document.getElementById("ev-unacked").checked,
+      wake_only: wakeOnly,
+      unacked: unackedOnly,
     });
     renderOrderTable(
       document.getElementById("order-events"),
@@ -477,6 +807,10 @@ async function ordersTick() {
         ? `<button type="button" data-event="${esc(row.id)}">Acknowledge</button>`
         : "",
     );
+    const unackedWake = wakeOnly && unackedOnly
+      ? page
+      : await orderCall("events", { wake_only: true, unacked: true });
+    setCount("events", unackedWake.events.length, false);
   } catch (e) {
     if (!failure) failure = e.message;
   }
@@ -490,7 +824,12 @@ async function ordersTick() {
     try {
       const shown = await orderCall("show", { order_id: id });
       if (selectedOrderId === id) {
+        showHead(shown);
         renderOrderObject(document.getElementById("od-body"), shown, "show");
+        const feedPage = await orderCall("events", {});
+        if (selectedOrderId === id) {
+          renderFeed(feedPage.events.filter(item => item.order_id === id), shown.checkpoint);
+        }
         const cp = shown.checkpoint;
         if (cp !== null) {
           const page = await orderCall("events", { after: cp.seq - 1 });
@@ -516,9 +855,13 @@ async function ordersTick() {
         if (selectedOrderId === id) {
           const answers = cp === null ? [] : cp.answers;
           document.getElementById("od-reply").disabled = cp === null || !answers.includes("reply");
+          document.getElementById("od-reply-body").disabled = document.getElementById("od-reply").disabled;
           document.getElementById("od-cancel").disabled = cp === null
             ? ["merged", "done", "failed", "cancelled"].includes(shown.state)
             : !answers.includes("cancel");
+          if (!document.getElementById("od-cancel").classList.contains("is-holding")) {
+            document.getElementById("od-cancel").classList.remove("is-done");
+          }
           document.getElementById("od-done").disabled = ["merged", "done"].includes(shown.state);
           document.getElementById("od-override").disabled = shown.overridable_checks.length === 0;
           const select = document.getElementById("od-override-check");
@@ -549,20 +892,33 @@ function selectOrder(id) {
     question.textContent = "";
     question.hidden = true;
     document.getElementById("od-reply").disabled = true;
+    document.getElementById("od-reply-body").disabled = true;
     document.getElementById("od-override").disabled = true;
     document.getElementById("od-cancel").disabled = true;
     document.getElementById("od-done").disabled = true;
+    clearTimeout(cancelHoldTimer);
+    const cancel = document.getElementById("od-cancel");
+    cancel.classList.remove("is-holding");
+    cancel.classList.remove("is-done");
+    cancel.dataset.held = "";
+    parkAsk();
+    replaceHtml(document.getElementById("feed-events"), "");
+    feedHtml = "";
+    setHtml(document.getElementById("ask-foot"), "");
+    showHead(null);
     orderLiveError = "";
     orderStickyError = "";
   }
   selectedOrderId = id;
   document.getElementById("order-detail").hidden = false;
+  document.getElementById("composer").hidden = false;
+  document.getElementById("conv-empty").hidden = true;
   setHtml(document.getElementById("od-id"), idOrText(id));
   ordersTick();
 }
 
 document.getElementById("orders").addEventListener("click", event => {
-  const row = event.target.closest("tr.order-row");
+  const row = event.target.closest("tr.order-row, .order");
   if (row) selectOrder(row.dataset.id);
 });
 
@@ -580,6 +936,29 @@ document.getElementById("order-events").addEventListener("click", async event =>
 
 document.getElementById("ev-wake").addEventListener("change", ordersTick);
 document.getElementById("ev-unacked").addEventListener("change", ordersTick);
+
+document.getElementById("seg").addEventListener("click", event => {
+  const button = event.target.closest("button");
+  if (!button || !button.dataset.f) return;
+  ordersOpenOnly = button.dataset.f !== "all";
+  document.querySelectorAll("#seg button").forEach(item => item.classList.toggle("on", item === button));
+  document.querySelector("#seg .knob").style.setProperty("--x", ordersOpenOnly ? "0" : "100%");
+  ordersTick().then(() => {
+    enter([...document.getElementById("orders").children]);
+  });
+});
+
+document.getElementById("composer").addEventListener("submit", event => {
+  event.preventDefault();
+});
+
+document.getElementById("od-reply-body").addEventListener("keydown", event => {
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    const send = document.getElementById("od-reply");
+    if (!send.disabled) send.click();
+  }
+});
 
 document.getElementById("od-reply").addEventListener("click", async event => {
   const id = selectedOrderId;
@@ -608,6 +987,8 @@ document.getElementById("od-override").addEventListener("click", async event => 
 });
 
 document.getElementById("od-cancel").addEventListener("click", async event => {
+  if (event.currentTarget.dataset.held !== "1") return;
+  event.currentTarget.dataset.held = "";
   const id = selectedOrderId;
   orderStickyError = "";
   event.currentTarget.disabled = true;
@@ -645,8 +1026,39 @@ document.getElementById("od-report").addEventListener("click", async () => {
   showOrderNotes();
 });
 
+function wireHold() {
+  const button = document.getElementById("od-cancel");
+  const start = () => {
+    if (button.disabled || button.classList.contains("is-done") || button.classList.contains("is-holding")) return;
+    button.classList.add("is-holding");
+    cancelHoldTimer = setTimeout(() => {
+      button.classList.remove("is-holding");
+      if (button.disabled) return;
+      button.classList.add("is-done");
+      button.dataset.held = "1";
+      button.click();
+    }, 1200);
+  };
+  const stop = () => {
+    clearTimeout(cancelHoldTimer);
+    button.classList.remove("is-holding");
+  };
+  button.addEventListener("pointerdown", start);
+  ["pointerup", "pointerleave", "pointercancel"].forEach(name => button.addEventListener(name, stop));
+  button.addEventListener("keydown", event => {
+    if ((event.key === " " || event.key === "Enter") && !event.repeat) {
+      event.preventDefault();
+      start();
+    }
+  });
+  button.addEventListener("keyup", stop);
+  button.addEventListener("blur", stop);
+  addEventListener("blur", stop);
+}
+wireHold();
+
 ordersTick();
 setInterval(ordersTick, 2000);
-  </script>
+</script>
 </body>
 </html>
