@@ -81,7 +81,7 @@
   --neutral-600: #566174;
   --neutral-900: #0b1426;
   --ink-tertiary: #5f6b7a;
-  /* Münzflächen der Tauschkarte, aus dfx-app-abstand.html. Keine Gestaltungsfarben. */
+  /* Asset colours of the swap card, not design colours. */
   --asset-btc: #e8b014;
   --asset-eth: #627eea;
 

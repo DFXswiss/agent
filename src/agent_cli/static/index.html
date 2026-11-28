@@ -386,6 +386,25 @@ button.copy-id.copy-failed { color: var(--red-600); }
 
     let anchor = null;
     let resized = 0;
+    function placeKey(node) {
+      if (!node) return null;
+      if (node.dataset && node.dataset.eventId) return "event:" + node.dataset.eventId;
+      if (node.id === "od-body" || node.id === "order-report" || node.id === "feed-park") return "id:" + node.id;
+      return null;
+    }
+    function placeNode(key) {
+      if (!key) return null;
+      if (key.slice(0, 6) === "event:") {
+        const id = key.slice(6);
+        const nodes = [...document.getElementById("feed-events").children];
+        return nodes.find(node => node.isConnected && node.dataset && node.dataset.eventId === id) || null;
+      }
+      if (key.slice(0, 3) === "id:") {
+        const node = document.getElementById(key.slice(3));
+        return node && node.isConnected ? node : null;
+      }
+      return null;
+    }
     function topMessage() {
       const comp = document.getElementById("composer");
       const feed = document.getElementById("feed");
@@ -401,7 +420,7 @@ button.copy-id.copy-failed { color: var(--red-600); }
       return nodes.find(node => node.getBoundingClientRect().bottom > limit + 8) || null;
     }
     document.addEventListener("scroll", () => {
-      if (Date.now() - resized > 400) anchor = topMessage();
+      if (Date.now() - resized > 400) anchor = placeKey(topMessage());
     }, { capture: true, passive: true });
     function layoutKey() {
       return [
@@ -421,11 +440,12 @@ button.copy-id.copy-failed { color: var(--red-600); }
         if (itemRect.left < listRect.left || itemRect.right > listRect.right) list.scrollLeft += itemRect.left - listRect.left - 8;
         if (itemRect.top < listRect.top || itemRect.bottom > listRect.bottom) list.scrollTop += itemRect.top - listRect.top - 8;
       }
-      if (anchor && anchor.isConnected) {
+      const place = placeNode(anchor);
+      if (place) {
         const comp = document.getElementById("composer");
         const sticky = getComputedStyle(comp).position === "sticky";
-        anchor.style.scrollMarginTop = sticky ? comp.offsetHeight + 8 + "px" : "";
-        anchor.scrollIntoView({ block: "start" });
+        place.style.scrollMarginTop = sticky ? comp.offsetHeight + 8 + "px" : "";
+        place.scrollIntoView({ block: "start" });
       }
     }
     function relayout() {
@@ -473,6 +493,7 @@ let orderLiveError = "";
 let orderStickyError = "";
 let ordersOpenOnly = true;
 let cancelHoldTimer = 0;
+let feedHtml = "";
 const GITHUB = "https://github.com/";
 // The one timestamp shown as elapsed time, under its own label.
 const ELAPSED_LABELS = new Map([["updated_at", "updated_before"]]);
@@ -661,10 +682,10 @@ function eventArticle(ev, ask) {
   const facts = eventFact(ev);
   const fact = facts ? `<span>${facts}</span>` : "";
   if (ask) {
-    return `<article class="msg ask"><div class="avatar" aria-hidden="true">${BOT}</div><div class="bubble"><div class="body"><div class="who"><b>Agent</b>${fact}</div></div><div data-ask="1"></div></div></article>`;
+    return `<article class="msg ask" data-event-id="${esc(ev.id)}"><div class="avatar" aria-hidden="true">${BOT}</div><div class="bubble"><div class="body"><div class="who"><b>Agent</b>${fact}</div></div><div data-ask="1"></div></div></article>`;
   }
   const digest = typeof ev.digest === "string" && ev.digest !== "" ? `<pre>${esc(ev.digest)}</pre>` : "";
-  return `<article class="msg"><div class="avatar" aria-hidden="true">${BOT}</div><div class="bubble"><div class="body"><div class="who"><b>Agent</b>${fact}</div>${digest}</div></div></article>`;
+  return `<article class="msg" data-event-id="${esc(ev.id)}"><div class="avatar" aria-hidden="true">${BOT}</div><div class="bubble"><div class="body"><div class="who"><b>Agent</b>${fact}</div>${digest}</div></div></article>`;
 }
 
 function askFootHtml(checkpoint, ev) {
@@ -682,16 +703,25 @@ function parkAsk() {
 }
 
 function renderFeed(events, checkpoint) {
-  parkAsk();
   const host = document.getElementById("feed-events");
   const cpId = checkpoint ? checkpoint.event_id : null;
   const sorted = events.slice().sort((a, b) => (Number(b.seq) || 0) - (Number(a.seq) || 0));
   const found = sorted.some(ev => ev.id === cpId);
   let html = sorted.map(ev => eventArticle(ev, Boolean(checkpoint) && ev.id === cpId)).join("");
   if (checkpoint && !found) html = eventArticle({ id: cpId }, true) + html;
-  replaceHtml(host, html);
-  const slot = host.querySelector("[data-ask]");
   const foot = document.getElementById("ask-foot");
+  const ask = document.getElementById("feed-ask");
+  const article = ask.closest("article");
+  const current = article && article.dataset.eventId ? article.dataset.eventId : null;
+  const wanted = checkpoint && cpId !== null && cpId !== undefined ? String(cpId) : null;
+  if (html === feedHtml && current === wanted) {
+    setHtml(foot, checkpoint ? askFootHtml(checkpoint, sorted.find(item => item.id === cpId) || null) : "");
+    return;
+  }
+  parkAsk();
+  replaceHtml(host, html);
+  feedHtml = html;
+  const slot = host.querySelector("[data-ask]");
   if (slot && checkpoint) {
     slot.replaceWith(document.getElementById("feed-ask"));
     const ev = sorted.find(item => item.id === cpId) || null;
@@ -869,6 +899,7 @@ function selectOrder(id) {
     cancel.dataset.held = "";
     parkAsk();
     replaceHtml(document.getElementById("feed-events"), "");
+    feedHtml = "";
     setHtml(document.getElementById("ask-foot"), "");
     showHead(null);
     orderLiveError = "";

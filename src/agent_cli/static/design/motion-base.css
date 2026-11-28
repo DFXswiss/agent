@@ -1,7 +1,6 @@
 /*
- * Fünf Bewegungsrollen. Quellen: praesentation.html, Tabelle „Die Werte dahinter“
- * und die Klassen .press, .track .ind, .meter, @keyframes rise, .hold.
- * Eintritt nutzt dieselbe Kurve wie der Messwert: cubic-bezier(.2, .72, .2, 1).
+ * Five motion roles: press, the track indicator, the meter, rise, and hold.
+ * Entry uses the same curve as the value: cubic-bezier(.2, .72, .2, 1).
  */
 
 :root {
