@@ -1015,6 +1015,25 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Umsetzung:** in Arbeit – Aufgabe auf agent mit Fable 5.2. Die Plattform kennt noch keine Modellwahl je Task; das
   Modell kam über die Modellvorgabe des Auftraggebers, die Sitzung hat es bestätigt.
 
+<a id="e-43"></a>
+
+### E-43 – Sitzungs-VMs starten einheitlich und klein, lieber mehrere: Größe nach Erfahrung nur als Konzept
+
+- **Datum:** 2026-11-27
+- **Regel:** Sitzungs-VMs für Claude starten vorerst alle in derselben, kleinen Größe. Braucht es mehr, kommen weitere
+  VMs dazu statt einer größeren, nach der Platzprüfung des Geräts, die HOT-32 baut. Später soll ein Workspace, der in
+  früheren Läufen nachweislich viel Speicher brauchte, direkt eine große VM bekommen, etwa nach dem gemessenen
+  Spitzenspeicher seiner früheren Läufe. „Workspace“ meint dabei das Repository beziehungsweise den Arbeitsbereich einer
+  Aufgabe. Dieser zweite Teil ist **nur ein Konzept**; gebaut wird er erst, wenn der Auftraggeber es beauftragt.
+- **Wortlaut:** „die grösse der vm sollten wir zum start immer gleich halten für claude sachen und eher klein, lieber
+  mehrere vm.“ und „später sollten wir das optimieren, ein Workspace von dem wir aus der vergangenheit wissen er braucht
+  viel Speicher dem kann man dann direkt eine grosse geben, das aber nur als Konzept erfassen, noch nicht jetzt
+  umsetzen“
+- **Bezug:** präzisiert [Idee 38](#k-idee-38) (automatische Ressourcenwahl; eine Workgroup kann mehrere VMs verwenden)
+  und [E-08](#e-08) (Arbeits-VM auf Anforderung): Die automatische Wahl nimmt eine einheitliche kleine Größe, mehr
+  Bedarf heißt mehr VMs. Die Messung des Spitzenspeichers nutzt das Monitoring ([§7](#k-7)).
+- **Umsetzung:** nicht beauftragt – nur Konzept.
+
 ## Teil C – Auslegungen, bis der Auftraggeber anders entscheidet
 
 **Dies sind Auslegungen, keine Entscheide des Auftraggebers.** Sie lösen Widersprüche zwischen Konzept und Regeln und
