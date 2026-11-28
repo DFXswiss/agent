@@ -589,6 +589,11 @@
     "body": "Diese Workgroup ist auf bestimmte Repositories begrenzt, und dieses gehört nicht dazu.",
     "action": "Füge es in den Workgroup-Einstellungen hinzu oder leere die Liste, um alle Repositories der GitHub-Verbindung zu erlauben."
   },
+  "repo_read_only": {
+    "title": "Repository für dieses Konto nur lesbar",
+    "body": "Das GitHub-Konto darf dieses Repository lesen, aber nicht schreiben, und ein Fork davon ist nicht möglich: Die Organisation erlaubt keine Forks, oder GitHub hat einen abgelehnt.",
+    "action": "Bitte die Verantwortlichen des Repositorys, dem Konto Schreibrecht zu geben oder Forks zu erlauben, und lass den Agenten es dann noch einmal versuchen."
+  },
   "request_invalid": {
     "title": "Ungültige Anfrage",
     "body": "Der Server hat eine Anfrage abgelehnt, die nicht dem erwarteten Format entspricht.",

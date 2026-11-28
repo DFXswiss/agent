@@ -19,4 +19,5 @@ void boot({
   credentials: navigator.credentials,
   indexedDB: window.indexedDB,
   storage: localStorageOrNull(),
+  locks: navigator.locks,
 });

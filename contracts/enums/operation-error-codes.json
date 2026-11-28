@@ -32,6 +32,7 @@
     "merge_pending",
     "merge_unsupported",
     "workspace_dirty",
-    "device_failed"
+    "device_failed",
+    "repo_read_only"
   ]
 }

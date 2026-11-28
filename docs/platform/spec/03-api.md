@@ -89,6 +89,7 @@ and send reminders and frames twice (HUB-15, HUB-16; AUD-01 D-03). The hub is op
 | `POST /v1/recovery/begin` | anon | `{recovery_id}` → `{user_id,bundle_ct,challenge}` |
 | `POST /v1/recovery/finish` | anon | `{user_id,challenge,proof}` → `{ceremony_id,options}` (registration of a new passkey; continue with `register/finish`, then login). A `recovery` ceremony carrying `hub_value` (the proof ceremony of `recovery/begin`) is refused by `register/finish` with `400 ceremony_invalid` before it is consumed (KOR-01, A-14). With `agent` (an account without a passkey, KOR-62): `proof` over the recover text and the new agent becomes the main orchestrator → `{user_id,agent_id}` (`11-agent-access.md` §4, §5.5) |
 | `POST /v1/session/end` | user | `{}` → `{}` |
+| `POST /v1/session/renew` | user | `{}` → `{key_id,expires_at}`; signed by the still valid session key, renews **that** session: `expires_at` = hub clock + 30 days (never earlier than before); key, statement and `created_at` stay; signed by an agent key (it does not expire) → `{key_id,expires_at:null}`, nothing changes; audited `auth.session_renew` (detail `key_id`). Rule E-40, [ADR-102](../adr/102-stay-signed-in.md) |
 | `GET /v1/me` | user | → `{user_id,identity:{kem_pub,sig_pub},settings,orgs:[{org_id,role,private,default_wg,log_head:{seq,hash}}],platform_roles,unread_notifications,passkeys:[{credential_id,created_at,last_used_at,prf_seen}],cred_holders:{epoch,devices}}` (`cred_holders`: the devices holding a wrap of the user's current `CK` epoch, KOR-04; IDs only) |
 | `GET /v1/me/bundles/recovery` | user | → `{bundle_ct}`; unlock without PRF (unlocking does not rotate the code; replacing it: `PUT /v1/me/bundles/recovery`) |
 | `POST /v1/me/recovery/begin` | user | `{}` → `{ceremony_id,challenge,options}` (ceremony `recovery_rotate`, 300 s, one attempt; `options` as for login; KOR-01) |
@@ -350,6 +351,7 @@ For the kinds `github` and `claude_subscription` (KOR-69, ADR-090: further Claud
 | `DELETE /v1/github-identities/{id}` | user | → `{}`: hard delete of an own record or, by an admin, of a company record; defaults naming it are removed; deleting the primary record promotes none |
 | `PUT /v1/github-identities/{id}/primary` | user | `{}` → `{}`: an own record becomes the caller's primary `github` record (audit `github.primary`) |
 | `GET /v1/me/subscriptions` | user | → `{subscriptions:[{id,owner_id,primary,version,epoch,created_at,updated_at,reading}]}`: every `claude_subscription` record of the caller (newest change first) with its newest reading `{fetched_at,device_id,unreadable,windows:[{window,used_percent,resets_at,severity}]}` or `null` (the primary record's from the owner's quota windows, a further one's from `subscription_quota`; KOR-69, ADR-090) |
+| `GET /v1/me/subscriptions/usage` | user | `?period=five_hour\|week\|range[&since&until]` → `{period,since?,until?,subscriptions:[{subscription_id,owner_id,primary,own,since,until,measured:{used_percent,resets_at,fetched_at}\|null,total\|null,people:[{user_id,requests,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,tokens,sessions,token_share,estimated_percent}]}]}`: who used how much of which Claude subscription (KOR-75, ADR-103). `five_hour`/`week`: the running window of each subscription by its newest reading (`measured`), else the last 5 h / 7 d (`measured` null); `range`: `since` required, `until` default now, at most 92 days, `measured` null. Every own subscription with every person and the `total`; another owner's subscription only when the caller used it in the span, with the caller's row only and `total` null. `estimated_percent` = `token_share` × `measured.used_percent` (an estimate; null without `measured`). Malformed query: `400 request_invalid` with the pointer |
 | `GET /v1/subscriptions/{id}` | user | → `{owner_id,primary,record}` for an own subscription record; otherwise `404` |
 | `PUT /v1/subscriptions/{id}` | user | `{record,expected_version,use?:{pool,orgs}}` (0 = create) → `{version}` (`use`: the plaintext mirror of the sealed use, ADR-090 §3; absent: the mirror stays): an own further subscription sealed under the caller's `CK`, author the caller or its own-identity agent; a new record is never primary; the primary record is `403 forbidden` (it is written through `PUT /v1/me/credentials/claude_subscription`); at most 40 records per user (`size_exceeded`) |
 | `DELETE /v1/subscriptions/{id}` | user | → `{}`: hard delete of an own subscription record (also the primary one) and its reading |
@@ -850,6 +852,21 @@ when a new credential of the acting user arrives, so the operation goes on by it
 after 15 minutes it is rejected with `repo_not_accessible`, the timeout text and the step. Any other GitHub failure of
 a pre-check stays `upstream_error`.
 
+Through the fork (HOT-33): an identity that reads the repository but may not push to it (`permissions.push` false of
+`GET /repos/{repo}`, the roles read and triage) is no access refusal and never held. `github.create_branch`,
+`github.commit` and `github.push` go to the identity's fork by themselves: the runner finds it (`GET
+/repos/{login}/{name}` when that is a fork of the repository, else the repository's fork list, so another name is
+found too) or, when there is none and the repository allows forks (`allow_forking`), creates it at execution (`POST
+/repos/{repo}/forks`, after the registration). Before a branch is created from a branch, the fork's branch of that
+name is brought to the repository's state (`POST /repos/{fork}/merge-upstream`; a missing or diverged branch is left
+as it is); the new branch starts at the repository's commit. `github.create_pull_request` opens the pull request from
+the fork (`head` = `<fork owner>:<head>`) when the identity may not push and its fork holds the head. The session
+always names the repository; the results of these four types carry `fork` when a fork was used. When no fork can be
+used - the repository does not allow forks and the identity has none, GitHub refuses to create one, or the
+connection may not write the fork either - the operation fails at once with `repo_read_only` and a message that names
+the account, its rights on the repository and the next step for a person (write access or allowing forks).
+`repo_not_accessible` stays for a repository the connection does not reach at all.
+
 Compatibility while the parts are rolled out one by one (KOR-25): a type the hub does not know is `rejected` with
 `unknown_type` (H3) and a type a guest does not know is forwarded with `local_check:"rejected"` and `unknown_type`;
 neither is ever executed in part. A new type is therefore rolled out hub first, then runners, then goldens: a new
@@ -901,7 +918,7 @@ All enumerations of this section are closed lists in `contracts/enums/` (`error-
 Operation codes (in operation results): `unknown_type`, `params_invalid`, `repo_not_allowed`,
 `repo_not_accessible`, `branch_protected`, `branch_exists`, `non_fast_forward`, `path_invalid`, `secret_detected`,
 `size_exceeded`, `github_not_connected`, `not_found`, `limit_exceeded`, `budget_exceeded`, `rights_denied`,
-`hub_unreachable`, `upstream_error`, `timeout`, `model_not_allowed`, `credit_exhausted` (`12-billing.md` §7). Session failure reasons (in `session.state_reason`):
+`hub_unreachable`, `upstream_error`, `timeout`, `model_not_allowed`, `credit_exhausted` (`12-billing.md` §7), `repo_read_only` (the identity may only read the repository and no fork can be used, HOT-33). Session failure reasons (in `session.state_reason`):
 `model_access_unavailable`, `vm_start_failed`, `guest_unreachable`, `sandbox_failed`, `agent_start_failed`,
 `agent_exited`, `prompt_refused`, `delivery_failed`, `device_offline`, `device_shutdown`, `capacity_exhausted`,
 `runtime_exceeded`, `budget_exceeded`, `credit_exhausted` (also a task's `scheduling` reason, `12-billing.md` §7), `oom`, `unassigned`. Additional operation codes: `tree_mismatch`, `no_changes`; `identity_forbidden` and `identity_unavailable` (KOR-47,

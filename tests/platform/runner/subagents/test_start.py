@@ -8,6 +8,7 @@ from typing import Any
 
 from agent_guest.schema import SchemaSet
 from agent_runner.crypto.ids import uuid7
+from agent_runner.prompts.resume import Resumer, desired_of
 from agent_runner.sessions import records
 
 from ..reconcile.rig import Rig
@@ -126,6 +127,43 @@ def test_a_requested_model_is_used_for_the_child(rig: Rig) -> None:
         assert op.state == "succeeded"
         (request,) = creates(found)
         assert request["model"]["model_id"] == "deepseek/deepseek-v4.1-flash-1017"
+
+    run(rig, body)
+
+
+def test_a_model_no_allowed_access_serves_fails_the_request_with_its_reason(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        found = await setup(env)
+        parent = await found.parent()  # on `platform`: the owner's preference is the parent's access here
+        op = await found.subagent(parent, model_id="claude-opus-5-5")
+        assert (op.state, op.error_code) == ("failed", "model_not_allowed")
+        assert op.answer is not None
+        assert op.answer["error"]["message"] == (
+            "The model claude-opus-5-5 is not served by any model access of the owner's preference platform."
+        )
+        assert creates(found) == []
+        assert "runner.subagents model_refused" in "\n".join(found.lines)
+
+    run(rig, body)
+
+
+def test_a_resumed_child_keeps_its_requested_model(rig: Rig) -> None:
+    async def body(env: Any) -> None:
+        found = await setup(env)
+        parent = await found.parent()
+        flash, plain = uuid7(), uuid7()
+        assert (await found.subagent(parent, child=flash, model_id="deepseek/deepseek-v4.1-flash-1017")).state == (
+            "succeeded"
+        )
+        assert (await found.subagent(parent, child=plain)).state == "succeeded"
+        senv = found.ops.kit.session_env
+        resumer = Resumer(senv)
+        kept = await resumer._child_model(desired_of(senv, await found.stored(flash)))
+        assert (kept.model_id_pref, kept.model_required) == ("deepseek/deepseek-v4.1-flash-1017", True)
+        unchanged = desired_of(senv, await found.stored(plain))
+        assert await resumer._child_model(unchanged) == unchanged
+        main = desired_of(senv, await found.stored(parent))
+        assert await resumer._child_model(main) == main
 
     run(rig, body)
 

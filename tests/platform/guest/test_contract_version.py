@@ -27,8 +27,8 @@ DIGESTS = {
     "0.5.0": "65bdd75600df0600fde3252bfd8e0ad2ef1abe4d35defc0a8d36d67de11c0d3f",
     "0.6.0": "bec16234c889a7b4ebff0d81c67707186d46421cb99c719ff80924540d98a8ed",  # KOR-53: the analysis reads
     "0.7.0": "5e4bd6d934bc0900b8e8f15b0aa97cedcc4f35716af57ec4dd88be887e127c25",  # KOR-74: the operation mail.find
-    # HOT-30: the operation github.update_pull_request
-    "0.8.0": "acde0a7b31ff9dcbe5537e29050a3bc92eedbef4aba08d7b665ee3236e4301e8",
+    "0.8.0": "42a9b683e8b84fe28145f2774e73ae4264bd91d3b41d0717eb882eb9c96d9ea0",  # HOT-33: repo_read_only, fork
+    "0.9.0": "3ffe7a6e0a6dd11f7790b898e3ea5736c75da7614abb864b213200fdc4275e68",  # HOT-30: github.update_pull_request
 }
 """Guest version -> SHA-256 over the sorted `<part> NUL <sha256 of its canonical JSON>` lines of `guest_contracts()`."""
 

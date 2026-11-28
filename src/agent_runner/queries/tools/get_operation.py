@@ -2,7 +2,8 @@
 operation of the session's task, from the operation pipeline (`Pipeline.wait_answer`, RUN-07): at once when it is
 final, else after `wait_seconds` (default 0) with `status:"pending"`. An operation of another task, or one this
 device does not know, is `not_found` - also of a task of another readable workgroup (ADR-089 section 3: parameters
-and results stay with the session's own task). Workgroup level.
+and results stay with the session's own task). Workgroup level. A guest before HOT-33 gets the answer in the form its
+contracts allow (`guest_features.older_answer`).
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 from agent_runner.operations.pipeline import pipeline_for
 from agent_runner.queries import common
 from agent_runner.queries.rights import ReadRefused
+from agent_runner.subagents import guest_features
 from agent_runner.subagents.extensions import QueryCall, QueryOutcome
 
 MAX_WAIT_S = 30
@@ -32,6 +34,9 @@ async def get_operation(call: QueryCall) -> QueryOutcome:
             raise NOT_FOUND
         answer = await pipeline.wait_answer(operation_id, wait)
         assert answer is not None
+        async with common.store(call.context) as (conn, _key):
+            if not await guest_features.current_guest(conn, call.session.vm_id, guest_features.FORKS):
+                answer = guest_features.older_answer(answer)  # a guest before HOT-33
         return common.ok(answer, 1, target_kind="operation", target_id=operation_id, read_wg_id=scope.wg_id)
 
     return await common.answered(read)

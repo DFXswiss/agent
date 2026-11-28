@@ -81,6 +81,7 @@ SPEC_OPERATION_ERRORS = (
     " conflict_markers conflicts_unresolved merge_outdated merge_pending merge_unsupported"
     " workspace_dirty"  # ADR-084 (contracts/changes/KOR-48.md)
     " device_failed"  # ADR-087 section 4 (contracts/changes/KOR-58.md)
+    " repo_read_only"  # HOT-33 (contracts/changes/HOT-33.md)
 )
 SPEC_SESSION_FAILURES = (
     "model_access_unavailable vm_start_failed guest_unreachable sandbox_failed agent_start_failed agent_exited"
@@ -182,6 +183,8 @@ KOR51_AUDIT = "agent_profile.set agent_profile.delete task.agent_profile"
 KOR56_AUDIT = "support.people support.write support.name"
 # ADR-099 section 7 (contracts/changes/KOR-74.md): a session read a mailbox; the reads come from INDEX.json.
 KOR74_AUDIT = "mail.read"
+# rule E-40, ADR-102 (KOR-76): the renewal of a browser session
+KOR76_AUDIT = "auth.session_renew"
 SPEC_TASK_STATES = "scheduling starting working idle failed closed"
 # 03-api.md section 4.6.2, ADR-075 section 7: reasons of a waiting task beyond the session failure reasons
 SPEC_WAITING_REASONS = "no_device platform_access_required wg_vm_limit placement_full placement_offline keys_pending"
@@ -315,7 +318,7 @@ def test_audit_actions(index: dict[str, Any]) -> None:
     expected = set(SPEC_AUDIT_FIXED.split()) | set(DECIDED_AUDIT.split()) | set(KOR31_AUDIT.split())
     expected |= set(KOR47_AUDIT.split()) | set(KOR50_AUDIT.split()) | set(KOR48_AUDIT.split())
     expected |= set(KOR58_AUDIT.split()) | set(KOR51_AUDIT.split()) | set(KOR56_AUDIT.split())
-    expected |= set(KOR74_AUDIT.split())
+    expected |= set(KOR74_AUDIT.split()) | set(KOR76_AUDIT.split())
     for prefix, values in SPEC_AUDIT_PATTERNS.items():
         expected |= {f"{prefix}.{value}" for value in values.split()}
     expected |= {f"read.{e['read_resource']}" for e in index["endpoints"] if e["read_resource"]}

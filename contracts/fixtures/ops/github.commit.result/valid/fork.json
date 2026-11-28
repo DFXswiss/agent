@@ -1,0 +1,7 @@
+{
+  "commit_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "parent_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "tree_sha": "cccccccccccccccccccccccccccccccccccccccc",
+  "files_changed": 2,
+  "fork": "example-user/example-repo"
+}

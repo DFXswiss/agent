@@ -26,6 +26,10 @@
       "group": "auth"
     },
     {
+      "action": "auth.session_renew",
+      "group": "auth"
+    },
+    {
       "action": "auth.refused",
       "group": "auth"
     },
@@ -963,6 +967,10 @@
     },
     {
       "action": "read.me.subscriptions",
+      "group": "read"
+    },
+    {
+      "action": "read.me.subscriptions.usage",
       "group": "read"
     },
     {

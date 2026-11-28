@@ -247,6 +247,8 @@ def test_mergeable_needs_the_same_billing_key_and_utc_day() -> None:
     assert not merge.mergeable(row, {**row, "model": FLASH})
     # KOR-46: consumption is booked to the person whose instruction caused it
     assert not merge.mergeable({**row, "triggered_by": "a"}, {**row, "triggered_by": "b"})
+    # ADR-103: the tokens are kept per subscription that served them
+    assert not merge.mergeable({**row, "subscription_id": "a"}, {**row, "subscription_id": None})
     # a delta (or a pending row) without a valid time has no day: it merges and keeps the known time
     assert merge.mergeable(row, {"model": OPUS, "access_origin": "platform"})
     assert merge.mergeable({"model": OPUS, "access_origin": "platform"}, row)

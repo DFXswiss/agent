@@ -3,5 +3,7 @@
   "explain": "Sign in with your passkey.",
   "submit": "Sign in with passkey",
   "working": "Waiting for your passkey…",
-  "cancelled": "Sign-in was cancelled – try again."
+  "cancelled": "Sign-in was cancelled – try again.",
+  "stay": "Stay signed in",
+  "stay.hint": "This browser stays signed in and opens your data after a reload or restart without your passkey, until you sign out. Do not use this on shared devices."
 }

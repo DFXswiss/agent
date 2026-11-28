@@ -128,6 +128,12 @@ Operation types and parameter examples:
   `{"type": "github.get_pull_request", "params": {"repo": "example-org/example-repo", "number": 42}}`
 - `github.create_branch` – create a branch from a branch, tag or commit:
   `{"type": "github.create_branch", "params": {"repo": "example-org/example-repo", "branch": "fix-typo", "from": "main"}}`
+  When the GitHub account may only read the repository (the roles read or triage), `github.create_branch`,
+  `github.commit` and `github.push` go to the account's fork by themselves: the platform finds the fork (also under
+  another name) or creates it when the repository allows forks, brings the fork's base branch up to date first, and
+  `github.create_pull_request` then opens the pull request from the fork. Always name the original repository; the
+  result names the fork it used (`fork`). When no fork can be used, the answer is `repo_read_only` at once with the
+  missing right and what a person can do; ask the person with `human.question` instead of trying another way.
 - `github.commit` – commit the files of `repos/<owner>/<name>` in your workspace to a branch (`paths` optional, the
   commit does not move the branch; protected branches are refused):
   `{"type": "github.commit", "params": {"repo": "example-org/example-repo", "branch": "fix-typo", "message": "Fix a typo in the README.", "paths": ["README.md"]}}`

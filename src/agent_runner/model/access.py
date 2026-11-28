@@ -26,7 +26,12 @@ owner has such a record (`owner_status` is not `MISSING`); then a `dfx` step is 
 `fallback.own_to_dfx` or the task's consent allows it (`model.policy`), never silently - neither because the own
 access is used up nor because it cannot be used right now. `platform` after a used-up operator pool needs
 `fallback.operator_to_platform` (default on). The result depends only on the stored limits, the latest quota
-readings, the bindings and the settings.
+readings, the bindings and the settings. A session the desired state does not list yet (a subagent right after its
+`subagent.request`) follows the settings of its parent's entry (`policy.settings`, HOT-31), so it crosses to a `dfx`
+access exactly when its main session would. A subagent that asked for a `model_id` (`Desired.model_required`) takes
+only steps whose catalog allows that model (`serves`): a DeepSeek model therefore goes to `platform` instead of
+silently running a Claude model on a subscription, under the same class rules; `refusal` names why a probe found no
+access for it.
 
 Nothing allowed is left: with a release time among the skipped accesses (an own credential that cannot be used now:
 `now + limits.RECHECK_S`) the result is a **wait** (`Wait`: `until` = the earliest release, `choice` = a `dfx` access
@@ -259,6 +264,12 @@ class Walk:
     releases: list[tuple[float, Build | None]] = field(default_factory=list)
     choice: bool = False
     unusable: bool = False
+    fitting: list[str] = field(default_factory=list)
+    """The steps whose access serves the required model (`Desired.model_required`; every step without one)."""
+    barred: bool = False
+    """A step that serves the required model was barred by the crossing rule."""
+    budget: bool = False
+    """A probe found the organization's platform budget spent."""
 
     def wait(self, state: Any, org_id: str) -> Wait | None:
         if not self.releases:
@@ -402,7 +413,7 @@ async def _platform_step(env: Any, desired: Desired, base: selection.Request, wa
     try:
         walk.found = await build()
     except AccessRefused:
-        return
+        walk.budget = True
 
 
 async def _offered(env: Any, desired: Desired, step: str) -> bool:
@@ -410,6 +421,37 @@ async def _offered(env: Any, desired: Desired, step: str) -> bool:
     if step == OPERATOR:
         return await operator.peek(env.context, desired.org_id) is not None
     return _key_held(env, desired.org_id) and _active(await _limits(env), _dfx_key(env)) is None
+
+
+def serves(env: Any, desired: Desired, step: str) -> bool:
+    """The access of `step` may run the session's model: always, unless the model is required
+    (`Desired.model_required`) and the catalog does not allow it for the step's access kind."""
+    if not desired.model_required:
+        return True
+    kind = "subscription" if step == OPERATOR else step
+    return desired.model_id_pref in env.catalog.policy(kind).allowed
+
+
+def refusal(env: Any, desired: Desired, found: Walk) -> tuple[str, str] | None:
+    """Why a subagent that requires its model gets no access for it (operation error code and sentence), None when it
+    gets one or only waits for a used-up access (the start then fails `model_quota_exhausted` as for any subagent).
+    Only a probe's walk (`walk(probe=True)`) is judged."""
+    if not desired.model_required or found.found is not None or found.releases:
+        return None
+    model = desired.model_id_pref
+    if found.budget:
+        return BUDGET, f"The model {model} needs DFX model access and the organization's platform budget is spent."
+    if found.barred:
+        return "model_not_allowed", (
+            f"The model {model} needs DFX model access: the owner's setting fallback.own_to_dfx or the task's"
+            " consent to DFX access must allow it."
+        )
+    if not found.fitting:
+        return "model_not_allowed", (
+            f"The model {model} is not served by any model access of the owner's preference"
+            f" {desired.model_access_pref}."
+        )
+    return "model_not_allowed", f"No model access that serves the model {model} is available on this device."
 
 
 async def walk(env: Any, desired: Desired, *, probe: bool = False) -> Walk:
@@ -427,25 +469,40 @@ async def walk(env: Any, desired: Desired, *, probe: bool = False) -> Walk:
         device_kind=env.device_kind,
         owner_id=desired.owner_id,
     )
-    settings = policy.settings(env.desired, desired.session_id)
+    settings = policy.settings(
+        env.desired,
+        desired.session_id,
+        task_id=desired.task_id,
+        owner_id=desired.owner_id,
+        parent_id=desired.parent_session_id,
+    )
     found = Walk()
     own = pool_used_up = False
     for step in plan(kinds):
-        if step in DFX_STEPS and own and not settings.crossing:
-            found.choice = found.choice or await _offered(env, desired, step)
-            continue
-        if step == OPERATOR:
-            pool_used_up = await _operator_step(env, desired, base, found, probe=probe)
-        elif step == "platform":
-            if pool_used_up and not settings.operator_to_platform:
-                continue
-            await _platform_step(env, desired, base, found, probe=probe)
-        else:
+        fits = serves(env, desired, step)
+        if step not in DFX_STEPS:
             status = await owner_status(env, desired.owner_id, provision.CREDENTIAL_KINDS[step])
             if status == MISSING:
                 continue
-            own = True
-            await _own_step(env, desired, base, step, status, walk=found)
+            own = True  # the owner belongs to `own` even when the required model needs another access
+            if fits:
+                found.fitting.append(step)
+                await _own_step(env, desired, base, step, status, walk=found)
+        elif not fits:
+            continue
+        elif own and not settings.crossing:
+            found.fitting.append(step)
+            found.barred = True
+            found.choice = found.choice or await _offered(env, desired, step)
+            continue
+        elif step == OPERATOR:
+            found.fitting.append(step)
+            pool_used_up = await _operator_step(env, desired, base, found, probe=probe)
+        else:
+            if pool_used_up and not settings.operator_to_platform:
+                continue
+            found.fitting.append(step)
+            await _platform_step(env, desired, base, found, probe=probe)
         if found.found is not None:
             break
     return found
