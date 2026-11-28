@@ -2073,7 +2073,7 @@ def test_shared_and_feed_functions_cover_each_branch() -> None:
     assert page["listEmpty"] == ""
     assert "A&lt;B" in page["listFull"] and "OWNER/NAME" in page["listFull"]
     assert 'aria-label="Waiting"' in page["listFull"]
-    assert '<span class="since" data-at="2026-11-14T00:00:00Z"></span>' in page["listFull"]
+    assert '<span class="since" data-at="2026-11-14T00:00:00Z" title="2026-11-14T00:00:00Z"></span>' in page["listFull"]
     assert "5 min" not in page["listFull"]
     assert "nope" not in page["listFull"]
     nope_row = page["listFull"].rsplit('<li class="order">', 1)[-1]

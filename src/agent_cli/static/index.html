@@ -55,11 +55,11 @@ button.copy-id.copy-failed { color: var(--red-600); }
       <span>Device <code id="dev"></code></span>
       <span class="sync">Synced <span id="stamp"></span></span>
       <p>Subscriptions: <span id="usage-summary">—</span></p>
-      <p id="err" hidden></p>
     </div>
   </aside>
 
   <main id="main">
+    <p id="err" class="failed" hidden></p>
     <section class="view on" id="v-orders">
       <div class="orders-wrap fold-grid">
         <div class="olist card" aria-label="Orders">
@@ -661,7 +661,7 @@ function listItemsHtml(orders) {
     const repo = fields.includes("repo") ? esc(order.repo) : "";
     const stamp = order[elapsedField];
     const elapsed = fields.includes(elapsedField) && isTimestamp(stamp)
-      ? `<span class="since" data-at="${esc(stamp)}"></span>`
+      ? `<span class="since" data-at="${esc(stamp)}" title="${esc(stamp)}"></span>`
       : "<span></span>";
     const word = fields.includes("state") ? ringWord(order.state) : "";
     const ring = word === "" ? "" : chip(word);

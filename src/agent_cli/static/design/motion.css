@@ -4,7 +4,7 @@
  * marker (.jk-state), value fill with count-up (.jk-value, .jk-value-arc-c), staggered entry
  * (.jk-enter, --jk-i), hold to confirm (.jk-hold). This file adds only what work tools need.
  *
- * Exception to "no endless loops" in the base motion file (motion-base.css), decided by the maintainer on 2026-11-27: a ring may turn
+ * Exception to the design rule of no endless loops, decided by the maintainer on 2026-11-27: a ring may turn
  * for as long as the agent really works. Nothing else loops.
  *   .ring .spin       agent works (implementing, local check, review ...): arc turns once in 1.6 s
  *   .ring .dash-spin  queued, not started (queued, pending): dashed ring turns once in 8 s

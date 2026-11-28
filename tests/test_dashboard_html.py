@@ -1431,6 +1431,19 @@ def test_orders_view_markup() -> None:
     assert ".reverse(" not in html
 
 
+def test_state_error_is_in_main_and_not_in_the_sidebar() -> None:
+    html = static_page("index.html")
+    element = '<p id="err" class="failed" hidden></p>'
+    assert html.count('id="err"') == 1
+    assert html.count(element) == 1
+    aside = html.split("<aside", 1)[1].split("</aside>", 1)[0]
+    assert 'id="err"' not in aside
+    who = aside.split('<div class="who">', 1)[1].split("</div>", 1)[0]
+    assert 'id="err"' not in who
+    main = html.split('<main id="main">', 1)[1].split("</main>", 1)[0]
+    assert main.lstrip().startswith(element)
+
+
 def test_top_message_reads_the_feed_messages_not_the_feed_children() -> None:
     body = section_function(static_page("index.html"), "topMessage")
     events = body.index('getElementById("feed-events").children')
