@@ -317,6 +317,7 @@ def test_an_expired_token_is_never_handed_out_from_the_device_copy(
         assert picked[:3] == (name, renewed, (0, 0, 2, 0))
         # the hub has nothing newer and that token expired as well: no entry, asked again only after FETCH_RETRY_S
         clock = Clock()
+        clock.now = pool.clock() + operator.FETCH_RETRY_S  # past the fetch for the first expiry, whatever the uptime
         pool.clock = clock
         pool.wall = lambda: now + 7200
         asked = hub.asked.count(record)
