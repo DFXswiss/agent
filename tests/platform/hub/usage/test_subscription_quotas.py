@@ -40,7 +40,7 @@ def _listed(owner: Actor) -> dict[str, object]:
 
 
 def test_the_device_state_announces_the_subscriptions_api(meter: Meter) -> None:
-    assert meter.state(meter.low)["subscriptions"] == {"api": 1, "shared": []}
+    assert meter.state(meter.low)["subscriptions"] == {"api": 2, "shared": []}
 
 
 def test_an_owner_with_only_further_subscriptions_is_polled(meter: Meter) -> None:

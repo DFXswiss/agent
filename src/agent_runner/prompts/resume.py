@@ -13,7 +13,9 @@
    only once the guest accepted that `POST /v1/sessions` (KOR-33 review no. 4): a retry after a failed create therefore
    sees the move again and restores again instead of sending `--resume` to a VM that never had the transcript;
 3. guest health assigned to the workgroup, model access and credential as for a start (the owner's preference from
-   the desired state, else the session's recorded access);
+   the desired state - for a session not listed yet that of an entry of the same task and owner, HOT-31 -, else the
+   session's recorded access; the fallback settings and the consent likewise, `model.policy.settings`; a child that
+   asked for a model at its start keeps it as a required model, `Desired.model_required`);
 4. `POST /v1/sessions` with the same session ID and `resume_claude_session_id` (the guest keeps user, directories and
    transcript and starts `claude --resume <id>`) - on another VM with what the amenders set instead (`restore`) -,
    then `PUT .../credential`, which starts the agent.
@@ -49,6 +51,7 @@ from typing import Any
 
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink.errors import GuestError, GuestRefused, GuestUnreachable
+from agent_runner.model import policy
 from agent_runner.prompts import queue
 from agent_runner.sessions import harness, records
 from agent_runner.sessions.desired import Desired, desired_sessions
@@ -57,6 +60,7 @@ from agent_runner.sessions.events import fail
 from agent_runner.sessions.records import LocalSession
 from agent_runner.sessions.start import Starter, StartFailed
 from agent_runner.sessions.stop import stop_guest
+from agent_runner.subagents import instructions
 from agent_runner.vm import records as vm_records
 
 Amend = Callable[[LocalSession, dict[str, Any]], Awaitable[None]]
@@ -88,13 +92,16 @@ def listed(env: SessionEnv, session_id: str) -> Mapping[str, Any] | None:
 
 def desired_of(env: SessionEnv, session: LocalSession) -> Desired:
     """The session as the start needs it: the hub's entry (owner preferences) when it is listed and well-formed,
-    else the local row with the recorded access as preference."""
+    else the local row with the owner's preference of an entry of the same task and owner (`model.policy.preference`,
+    a subagent the hub does not list yet: its parent's; HOT-31), without one the recorded access as preference."""
     entry = listed(env, session.id)
     if entry is not None:
         with contextlib.suppress(ValueError):
             for found in desired_sessions({"sessions": [entry]}):
                 if (found.task_id, found.org_id, found.wg_id) == (session.task_id, session.org_id, session.wg_id):
                     return found
+    owner = session.owner_id or ""
+    preference = policy.preference(env.desired, task_id=session.task_id, owner_id=owner, parent_id=session.parent_id)
     return Desired(
         session_id=session.id,
         task_id=session.task_id,
@@ -103,8 +110,8 @@ def desired_of(env: SessionEnv, session: LocalSession) -> Desired:
         state=session.state,
         parent_session_id=session.parent_id,
         depth=session.depth,
-        owner_id=session.owner_id or "",
-        model_access_pref=session.model_access or "auto",
+        owner_id=owner,
+        model_access_pref=preference or session.model_access or "auto",
         model_id_pref=session.model_id,
     )
 
@@ -127,7 +134,7 @@ class Resumer:
             # stopped (or failed) meanwhile: no guest session is started again
             env.line(f"resume_ended session_id={sid}")
             return ENDED
-        desired = desired_of(env, session)
+        desired = await self._child_model(desired_of(env, session))
         try:
             await self._resume(session, desired, amend)
         except StartFailed as exc:
@@ -144,6 +151,15 @@ class Resumer:
         self.attempts.pop(sid, None)
         env.line(f"resumed session_id={sid}")
         return RESUMED
+
+    async def _child_model(self, desired: Desired) -> Desired:
+        """A child that asked for a model at its start keeps it as a required model (the hub's entry names only the
+        owner's model; HOT-31)."""
+        if desired.depth == 0:
+            return desired
+        async with self.env.transaction() as conn:
+            model = await instructions.requested_model(conn, desired.session_id)
+        return desired if not model else replace(desired, model_id_pref=model, model_required=True)
 
     async def _resume(self, session: LocalSession, desired: Desired, amend: Amend | None = None) -> None:
         env = self.env

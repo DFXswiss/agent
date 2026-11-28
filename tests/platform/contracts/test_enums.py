@@ -81,6 +81,7 @@ SPEC_OPERATION_ERRORS = (
     " conflict_markers conflicts_unresolved merge_outdated merge_pending merge_unsupported"
     " workspace_dirty"  # ADR-084 (contracts/changes/KOR-48.md)
     " device_failed"  # ADR-087 section 4 (contracts/changes/KOR-58.md)
+    " repo_read_only"  # HOT-33 (contracts/changes/HOT-33.md)
 )
 SPEC_SESSION_FAILURES = (
     "model_access_unavailable vm_start_failed guest_unreachable sandbox_failed agent_start_failed agent_exited"

@@ -20,7 +20,9 @@ then null is passed on (a client shows it as "being checked", never as "no confl
 the same head and base ends the operation with it and `existing:true` (the pipeline answers MCP `duplicate`); otherwise
 `POST /repos/{r}/pulls {title, head, base, body?, draft}` (`draft` defaulted from the workgroup settings by the formal
 checks). A `422` because such a pull request was opened meanwhile is answered the same way; an unknown head or base is
-`not_found`; other refusals are `upstream_error`.
+`not_found`; other refusals are `upstream_error`. An identity that may only read the repository opens the pull request
+from its fork when the fork holds `head` (the pre-check's `fork`, HOT-33): `head` is then `<fork owner>:<head>` and the
+result names the fork (`fork`).
 """
 
 from __future__ import annotations
@@ -204,8 +206,9 @@ def _created(data: object, existing: bool) -> dict[str, Any]:
 
 
 async def _open_pull(client: GitHubClient, repo: str, head: str, base: str) -> dict[str, Any] | None:
-    owner = repo.split("/", 1)[0]
-    params = {"head": f"{owner}:{head}", "base": base, "state": "open"}
+    """The open pull request of `head` (a branch of `repo`, or `<owner>:<branch>` of a fork) into `base`."""
+    label = head if ":" in head else f"{repo.split('/', 1)[0]}:{head}"
+    params = {"head": label, "base": base, "state": "open"}
     answer = await client.request("GET", f"/repos/{repo}/pulls", params=params)
     if not isinstance(answer.data, list):
         raise ops.invalid()
@@ -215,9 +218,13 @@ async def _open_pull(client: GitHubClient, repo: str, head: str, base: str) -> d
 async def create_pull_request(ctx: OperationContext, client: GitHubClient) -> dict[str, Any]:
     params = ctx.params
     repo, head, base = str(params["repo"]), str(params["head"]), str(params["base"])
+    routed = ctx.data.get("fork")
+    forked: dict[str, str] = {}
+    if isinstance(routed, dict):  # the head is a branch of the identity's fork (HOT-33)
+        head, forked = str(routed["head"]), {"fork": ops.text(routed["repo"], ops.REPO_RE)}
     existing = await _open_pull(client, repo, head, base)
     if existing is not None:
-        return existing
+        return {**existing, **forked}
     body: dict[str, object] = {"title": params["title"], "head": head, "base": base, "draft": bool(params["draft"])}
     if "body" in params:
         body["body"] = params["body"]
@@ -229,11 +236,11 @@ async def create_pull_request(ctx: OperationContext, client: GitHubClient) -> di
         if EXISTS_TEXT in error.message.lower():
             found = await _open_pull(client, repo, head, base)
             if found is not None:
-                return found
+                return {**found, **forked}
         if "field:head" in error.message or "field:base" in error.message:
             raise OperationFailed("not_found", message="The head or base branch does not exist.") from None
         raise OperationFailed("upstream_error", message="GitHub refused to open the pull request.") from None
-    return _created(answer.data, False)
+    return {**_created(answer.data, False), **forked}
 
 
 execute_get = ops.executor(get_pull_request)

@@ -9,6 +9,7 @@ bounded by `analysis_api`. `list_operations` stays the read of the session's own
 from __future__ import annotations
 
 from agent_runner.queries import analysis_api, common, device_api
+from agent_runner.subagents import guest_features
 from agent_runner.subagents.extensions import QueryCall, QueryOutcome
 
 ARGUMENTS = frozenset({common.WORKGROUP_ID, "since", "until", "type", "state", "group_by", "before", "limit"})
@@ -31,7 +32,12 @@ async def list_workgroup_operations(call: QueryCall) -> QueryOutcome:
         scope.require_workgroup()
         wg_id = await common.workgroup(call, scope, found, figures=True)
         result = await analysis_api.operations(call.context, wg_id, query=query, grouped=grouped, limit=limit)
-        count = len(result["groups"] if grouped else result["operations"])
+        rows = result["groups"] if grouped else result["operations"]
+        async with common.store(call.context) as (conn, _key):
+            current = await guest_features.current_guest(conn, call.session.vm_id, guest_features.FORKS)
+        for row in [] if current else rows:  # a guest before HOT-33 knows no `repo_read_only`
+            row["error_code"] = guest_features.older_code(row["error_code"])
+        count = len(rows)
         return common.ok(result, count, target_kind="workgroup", target_id=wg_id, read_wg_id=wg_id)
 
     return await common.answered(read)

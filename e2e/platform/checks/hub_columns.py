@@ -216,6 +216,8 @@ usage_counter: metrics | session_id:uuid requests:number input_tokens:number out
   cache_read_tokens:number cache_write_tokens:number thinking_tokens:number cost_micro_usd:number cost_basis:code
   context_used_tokens:number context_window_tokens:number last_provider:code updated_at:time
 usage_daily: metrics | org_id:uuid day:time device_id:uuid cost_micro_usd:number
+subscription_usage: metrics | credential_id:uuid owner_id:uuid user_id:uuid org_id:uuid session_id:uuid slot:time
+  requests:number input_tokens:number output_tokens:number cache_read_tokens:number cache_write_tokens:number
 ui_health_daily: metrics | day:time version:code view:code reports:number blocks:number blocked_ms:number
   max_bucket:number
 price_list: billing | version:number valid_from:time document:operator created_at:time

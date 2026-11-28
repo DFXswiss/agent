@@ -1,0 +1,19 @@
+{
+  "description": "Endpoint of who used how much of which Claude subscription (ADR-103, KOR-75).",
+  "rights": [
+    "user"
+  ],
+  "auth": [
+    "browser"
+  ],
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/me/subscriptions/usage",
+      "rights": [
+        "user"
+      ],
+      "section": "4.8"
+    }
+  ]
+}

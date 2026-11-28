@@ -207,6 +207,21 @@ def test_list_workgroup_operations_pages_filters_and_groups(rig: Rig) -> None:
     analysis(rig, body)
 
 
+def test_a_guest_before_hot_33_sees_repo_read_only_as_repo_not_accessible(rig: Rig) -> None:
+    async def body(k: RKit, hub: AnalysisHub) -> None:
+        sid = await k.session(1)
+        await k.instruct(sid, ALICE)
+        group = {"type": "github.create_branch", "state": "failed", "error_code": "repo_read_only", "count": 2}
+        hub.raw["operations"] = (200, {"groups": [group], "truncated": False})
+        assert (await k.ok(sid, "list_workgroup_operations", {"group_by": "type"}))["groups"] == [group]
+        async with k.env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.golden SET guest_version = '0.7.0'")
+        found = await k.ok(sid, "list_workgroup_operations", {"group_by": "type"})
+        assert found["groups"] == [{**group, "error_code": "repo_not_accessible"}]
+
+    analysis(rig, body)
+
+
 def test_get_metrics_reads_a_series_of_an_entity_of_the_workgroup(rig: Rig) -> None:
     async def body(k: RKit, hub: AnalysisHub) -> None:
         sid = await k.session(1)

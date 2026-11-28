@@ -669,6 +669,10 @@
         },
         "sha": {
           "$ref": "#/$defs/sha"
+        },
+        "fork": {
+          "$ref": "#/$defs/repo",
+          "description": "the fork of the acting identity the branch was created in (HOT-33: the identity may not write the repository); absent when it was created in the repository itself"
         }
       },
       "required": [
@@ -695,6 +699,10 @@
         "merge_parent": {
           "$ref": "#/$defs/sha",
           "description": "the second parent of a merge commit (the merged base tip)"
+        },
+        "fork": {
+          "$ref": "#/$defs/repo",
+          "description": "the fork of the acting identity the commit was created in (HOT-33); absent for the repository itself"
         }
       },
       "required": [
@@ -716,6 +724,10 @@
         },
         "url": {
           "$ref": "#/$defs/url"
+        },
+        "fork": {
+          "$ref": "#/$defs/repo",
+          "description": "the fork of the acting identity the branch was pushed to (HOT-33); absent for the repository itself"
         }
       },
       "required": [
@@ -744,6 +756,10 @@
         "existing": {
           "type": "boolean",
           "const": true
+        },
+        "fork": {
+          "$ref": "#/$defs/repo",
+          "description": "the fork of the acting identity the head branch is in (HOT-33: head <fork owner>:<head>); absent when the head is a branch of the repository itself"
         }
       },
       "required": [

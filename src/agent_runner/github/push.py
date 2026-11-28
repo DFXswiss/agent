@@ -15,6 +15,10 @@ When GitHub refuses the creation or the update (`422`: the branch appeared or mo
 at the commit means an earlier attempt of this operation won (succeeded), anything else is `non_fast_forward`.
 Result `{branch, sha, url}` with `url` = `<html_url>/tree/<branch>`. The push of a merge commit marks its preparation
 `pushed` (`merge_prep`, ADR-084 section 4).
+
+An identity that may only read the repository pushes to its fork (HOT-33, the pre-check's `fork`; the fork is created
+at execution when there is none yet, `fork.ensure`): the same steps run against the fork, `url` is the fork's and the
+result names it (`fork`).
 """
 
 from __future__ import annotations
@@ -22,7 +26,7 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import quote
 
-from agent_runner.github import access, merge_prep, ops
+from agent_runner.github import access, fork, merge_prep, ops
 from agent_runner.github.client import GitHubClient, GitHubError
 from agent_runner.operations.extensions import OperationContext, OperationFailed, PrecheckRequest, PrecheckResult
 from agent_runner.orgs.db import session as store_session
@@ -32,9 +36,9 @@ NOT_FAST_FORWARD = "The branch is not an ancestor of the commit."
 
 async def check(request: PrecheckRequest) -> PrecheckResult:
     async with access.client(request) as github:
-        info = await access.repository(github, str(request.params["repo"]), write=True)
+        info, routed = await access.writable(github, str(request.params["repo"]))
         url = ops.text(info.get("html_url"), ops.URL_RE)
-    return PrecheckResult(data={"html_url": url})
+    return PrecheckResult(data={"html_url": url} if routed is None else {"html_url": url, "fork": routed})
 
 
 def _ref(branch: str) -> str:
@@ -79,6 +83,10 @@ async def push(ctx: OperationContext, github: GitHubClient) -> dict[str, Any]:
     repo, branch = str(ctx.params["repo"]), str(ctx.params["branch"])
     sha = ops.text(ctx.params["commit_sha"], ops.SHA_RE)
     url = ops.text(ctx.data.get("html_url"), ops.URL_RE)
+    routed, forked = ctx.data.get("fork"), None
+    if isinstance(routed, dict):
+        forked, url = await fork.ensure(github, repo, routed)
+        repo = forked
     current = await head(github, repo, branch)
     try:
         if current is None:
@@ -93,7 +101,8 @@ async def push(ctx: OperationContext, github: GitHubClient) -> dict[str, Any]:
         await _settled(github, repo, branch, sha)
     async with store_session(ctx.context.pool) as conn:
         await merge_prep.pushed(conn, ctx.session.id, branch, sha)
-    return {"branch": branch, "sha": sha, "url": f"{url}/tree/{_ref(branch)}"}
+    result = {"branch": branch, "sha": sha, "url": f"{url}/tree/{_ref(branch)}"}
+    return result if forked is None else {**result, "fork": forked}
 
 
 execute = ops.executor(push)

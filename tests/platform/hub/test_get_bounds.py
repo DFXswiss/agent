@@ -86,6 +86,10 @@ BOUNDS: dict[str, str] = {
     "/v1/me/invitees": "capped:1000",
     "/v1/me/quotas": "structural: one row per quota window",
     "/v1/me/subscriptions": "capped:40",
+    "/v1/me/subscriptions/usage": (
+        "structural: one entry per own subscription (at most 40) and per other person's subscription the caller used,"
+        " one row per person, over a span of at most 92 days"
+    ),
     "/v1/me/mailboxes": "capped:100",
     "/v1/monitoring/overview": "capped:2000",
     "/v1/tasks/{task}/logs/{object}": "structural: the metadata of one stored log object",

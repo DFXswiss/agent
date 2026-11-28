@@ -5,7 +5,13 @@
 - **Start** (`start_child`, the executor of `subagent.request`, `executors.py`): only after the hub accepted the
   operation and named the child (`child_session_id`). The child is started through the session start of RUN-04
   (`SessionService.schedule_start`) with `depth = parent.depth + 1`, the parent as `parent_session_id`, the parent's
-  task, owner, VM and model access (or the requested, checked `model_id`). The request amender (`amend`,
+  task, owner, VM and model (or the requested, checked `model_id`). The hub lists the child only later: its model
+  access follows the owner's preference, fallback settings and the task's consent of the parent's entry in the desired
+  state, so it moves to another allowed access exactly as its main session does (`child_desired`, HOT-31; without
+  that entry the parent's recorded access and the defaults). A requested `model_id` is required: the child takes only
+  an access whose catalog serves it (a DeepSeek model: `platform`), and when no allowed access can serve it the
+  operation fails before the start with the reason (`model_refusal`: `model_not_allowed`, or `budget_exceeded`); a
+  child that only waits for a used-up access fails `model_quota_exhausted` at its start. The request amender (`amend`,
   `session_request.py`) gives it the initial prompt `"Purpose: <purpose>\\n\\n<prompt>"` (prompt ID = operation ID)
   with the child's sender line (ADR-083 section 1, `prompts.speaker.for_child`: written by the parent session, which
   works on an instruction of the acting user of the `subagent.request`, `operation.actor_id`),
@@ -71,6 +77,7 @@ from typing import Any
 from agent_runner.errors import RunnerError
 from agent_runner.guestlink import cursor
 from agent_runner.guestlink.errors import GuestError, GuestRefused
+from agent_runner.model import access, policy
 from agent_runner.operations.extensions import OperationContext, OperationFailed
 from agent_runner.orgs.db import session as store_session
 from agent_runner.pings.send import stable_ping_id
@@ -127,6 +134,45 @@ def ping_id(child_session_id: str) -> str:
     """A stable ping ID per child, so a repeated ping is recognised by the guest (`ping_id` is idempotent);
     UUIDv7-shaped as the guest contract requires (`pings.send.stable_ping_id`, RUN-14)."""
     return stable_ping_id("subagent.finished", child_session_id)
+
+
+def child_desired(
+    state: Mapping[str, Any] | None, parent: LocalSession, child_id: str, model_id: object = None
+) -> Desired:
+    """The child's start as the session start needs it. The hub lists the child only with a later desired state, so
+    the owner's access preference comes from the parent's entry (`model.policy.preference`; without one the parent's
+    recorded access): the child walks the same steps as its main session, and the access resolution takes the owner's
+    fallback settings and the task's consent from that entry as well (HOT-31). The model is the requested one - then
+    required: only an access that serves it is taken (`Desired.model_required`) -, else the parent's."""
+    assert parent.owner_id is not None
+    assert parent.model_access is not None
+    preference = policy.preference(state, task_id=parent.task_id, owner_id=parent.owner_id, parent_id=parent.id)
+    requested = isinstance(model_id, str) and bool(model_id)
+    return Desired(
+        session_id=child_id,
+        task_id=parent.task_id,
+        org_id=parent.org_id,
+        wg_id=parent.wg_id,
+        state="requested",
+        parent_session_id=parent.id,
+        depth=parent.depth + 1,
+        owner_id=parent.owner_id,
+        model_access_pref=preference or parent.model_access,
+        model_id_pref=model_id if isinstance(model_id, str) and requested else parent.model_id,
+        model_required=requested,
+    )
+
+
+async def model_refusal(env: Any, desired: Desired) -> tuple[str, str] | None:
+    """Why the child cannot get an access for its requested model (`model.access.refusal` of a probe that binds
+    nothing), None when it can or when it did not ask for a model."""
+    if not desired.model_required:
+        return None
+    try:
+        found = await access.walk(env, desired, probe=True)
+    except access.AccessRefused:
+        return "model_not_allowed", f"The owner's model access preference {desired.model_access_pref} is unknown."
+    return access.refusal(env, desired, found)
 
 
 @dataclass(frozen=True)
@@ -201,18 +247,12 @@ class Subagents:
             if known.parent_id == parent.id and known.task_id == parent.task_id:
                 return {"session_id": child}
             raise OperationFailed("upstream_error", message="The hub named another session as the child.")
-        desired = Desired(
-            session_id=child,
-            task_id=parent.task_id,
-            org_id=parent.org_id,
-            wg_id=parent.wg_id,
-            state="requested",
-            parent_session_id=parent.id,
-            depth=parent.depth + 1,
-            owner_id=parent.owner_id,
-            model_access_pref=parent.model_access,
-            model_id_pref=ctx.params.get("model_id") or parent.model_id,
-        )
+        desired = child_desired(self.env.desired, parent, child, ctx.params.get("model_id"))
+        refused = await model_refusal(self.env, desired)
+        if refused is not None:
+            code, message = refused
+            self.line(f"model_refused child_session_id={child} parent_session_id={parent.id} code={code}")
+            raise OperationFailed(code, message=message)
         self.specs[child] = ChildSpec(
             operation_id=op.id,
             parent_id=parent.id,
