@@ -745,6 +745,7 @@ async function scenario() {
   const boot = {
     calls: calls.map((item) => ({ path: item.path, query: item.query, method: item.method })),
     ordersHtml: document.getElementById("orders").innerHTML,
+    ordersElapsed: [...document.getElementById("orders").querySelectorAll("span.since")].map((span) => span.textContent),
     eventsHtml: document.getElementById("order-events").innerHTML,
     ordersBadge: badge("orders"),
     eventsBadge: badge("events"),
@@ -1459,6 +1460,51 @@ async function scenario() {
   await ordersTick();
   flushRaf();
   flushRaf();
+  const elapsedSavedAt = OPEN[0].updated_at;
+  const elapsedSavedTitle = OPEN[0].title;
+  OPEN[0].updated_at = new NativeDate(nowMs - 30000).toISOString();
+  await ordersTick();
+  const elapsedBefore = list.querySelector("span.since").textContent;
+  flushRaf();
+  flushRaf();
+  const elapsedWrites = list._writes;
+  const elapsedRafs = rafs.length;
+  nowMs += 2000;
+  await ordersTick();
+  const elapsedTick = {
+    before: elapsedBefore,
+    after: list.querySelector("span.since").textContent,
+    writes: list._writes - elapsedWrites,
+    frames: rafs.length - elapsedRafs,
+  };
+  nowMs -= 2000;
+  OPEN[0].updated_at = elapsedSavedAt;
+  await ordersTick();
+  flushRaf();
+  flushRaf();
+  const titleWrites = list._writes;
+  const titleRafs = rafs.length;
+  OPEN[0].title = "Renamed title";
+  await ordersTick();
+  const titleTick = {
+    writes: list._writes - titleWrites,
+    frames: rafs.length - titleRafs,
+  };
+  OPEN[0].title = elapsedSavedTitle;
+  await ordersTick();
+  flushRaf();
+  flushRaf();
+  const headRafs = rafs.length;
+  await ordersTick();
+  const headUnchangedFrames = rafs.length - headRafs;
+  showExtra = { state: "running" };
+  const headChangeRafs = rafs.length;
+  await ordersTick();
+  const headChangedFrames = rafs.length - headChangeRafs;
+  showExtra = {};
+  await ordersTick();
+  flushRaf();
+  flushRaf();
   document.getElementById("od-reply-body").value = "kept";
   shownHtml.delete(document.getElementById("od-override-check"));
   document.getElementById("od-override-check").value = "lint";
@@ -1857,6 +1903,9 @@ async function scenario() {
     ignoredClick: ignoredClick,
     picked: picked,
     listPaint: { unchanged: unchangedList, changed: changedList },
+    elapsedTick: elapsedTick,
+    titleTick: titleTick,
+    headTick: { unchanged: headUnchangedFrames, changed: headChangedFrames },
     selected: selected,
     sameId: sameId,
     otherId: otherId,
@@ -1957,7 +2006,9 @@ def test_boot_lists_only_open_orders_and_counts_events() -> None:
     assert "Open &lt;one&gt;" in boot["ordersHtml"]
     assert "Running" in boot["ordersHtml"]
     assert "Done" not in boot["ordersHtml"]
-    assert "5 min" in boot["ordersHtml"]
+    assert boot["ordersElapsed"] == ["5 min"]
+    assert 'data-at="2026-11-14T00:00:00Z"' in boot["ordersHtml"]
+    assert "5 min" not in boot["ordersHtml"]
     assert 'aria-label="Waiting"' in boot["ordersHtml"]
     assert 'data-event="e1"' in boot["eventsHtml"]
     assert 'data-event="e2"' not in boot["eventsHtml"]
@@ -2021,8 +2072,13 @@ def test_shared_and_feed_functions_cover_each_branch() -> None:
     assert "A&lt;B" not in page["listBare"] and "5 min" not in page["listBare"]
     assert page["listEmpty"] == ""
     assert "A&lt;B" in page["listFull"] and "OWNER/NAME" in page["listFull"]
-    assert 'aria-label="Waiting"' in page["listFull"] and "5 min" in page["listFull"]
+    assert 'aria-label="Waiting"' in page["listFull"]
+    assert '<span class="since" data-at="2026-11-14T00:00:00Z"></span>' in page["listFull"]
+    assert "5 min" not in page["listFull"]
     assert "nope" not in page["listFull"]
+    nope_row = page["listFull"].rsplit('<li class="order">', 1)[-1]
+    assert '<span class="repo">OWNER/NAME</span><span></span>' in nope_row
+    assert 'class="since"' not in nope_row and "data-at" not in nope_row
     assert page["counts"]["missing"] is None
     assert page["counts"]["attn"] == {"text": "2", "className": "count attn", "label": "2 waiting"}
     assert page["counts"]["plain"] == {"text": "4", "className": "count", "label": "4"}
@@ -2195,6 +2251,9 @@ def test_views_filters_failures_selection_and_hold() -> None:
         "transition": "none",
         "dash": "0 37.70",
     }
+    assert page["elapsedTick"] == {"before": "30 s", "after": "32 s", "writes": 0, "frames": 0}
+    assert page["titleTick"] == {"writes": 1, "frames": 1}
+    assert page["headTick"] == {"unchanged": 0, "changed": 1}
     assert selected["title"] == "Order o-open" and selected["repo"] == "OWNER/NAME"
     assert selected["round"] == "Round 2" and selected["phase"] == "Phase: ask"
     assert 'aria-label="Waiting"' in selected["state"]

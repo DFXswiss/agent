@@ -1,6 +1,6 @@
 """Line and branch coverage for src/agent_cli/static/design/work.js.
 
-Covered functions: chip, fillRings, enter, foldSegments, fold, watchFold.
+Covered functions: esc, chip, fillRings, enter, foldSegments, fold, watchFold.
 """
 
 from __future__ import annotations
@@ -188,8 +188,9 @@ const scenario = String.raw`
 const chips = {};
 [
   "queued", "waiting", "implementing", "ready", "Done", "failed", "cancelled", "mystery",
-  "Review 2/5",
+  "Review 2/5", "constructor",
 ].forEach((word) => { chips[word] = chip(word); });
+const escaped = { nullish: esc(null), missing: esc(undefined), marks: esc('& < > "') };
 chips["a <\"b\""] = chip("a <\"b\"");
 chips["a <\"b\" 1/2"] = chip("a <\"b\" 1/2");
 
@@ -384,6 +385,7 @@ watchFold((value) => { postureCalls.push("unexpected"); });
 globalThis.report = {
   reduce: REDUCE_MATCHES,
   queries: queries.slice(),
+  escaped: escaped,
   chips: chips,
   fill: { sync: sync, outer: outer, inner: inner, emptyQueued: emptyQueued, emptyLeft: emptyLeft },
   enter: {
@@ -524,6 +526,16 @@ def test_chip_covers_every_kind_count_and_escape() -> None:
         '<path d="M4 12L12 4" stroke="var(--neutral-500)" stroke-width="2" stroke-linecap="round"/></svg>'
         '<span class="label">cancelled</span></span>'
     )
+    assert chips["constructor"] == _idle("constructor", "constructor")
+
+
+def test_esc_covers_null_undefined_and_markup() -> None:
+    report = _design_report()
+    assert report["off"]["escaped"] == report["on"]["escaped"]
+    escaped = report["off"]["escaped"]
+    assert escaped["nullish"] == ""
+    assert escaped["missing"] == ""
+    assert escaped["marks"] == "&amp; &lt; &gt; &quot;"
 
 
 def test_fill_rings_and_enter_follow_reduce() -> None:

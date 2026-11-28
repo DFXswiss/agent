@@ -230,8 +230,8 @@ button.copy-id.copy-failed { color: var(--red-600); }
       return known ? ring : ring.replace('class="ring"', 'class="ring state-unknown"');
     }
 
-    // The word behind a state icon as the title and the accessible name of the
-    // cell that shows the icon; nothing for a missing word.
+    // The word behind a status ring as the title and the accessible name of the
+    // cell that shows the ring; nothing for a missing word.
     function stateCellAttributes(value) {
       if (value === null || value === undefined || value === "") return "";
       return ` title="${esc(value)}" aria-label="${esc(value)}"`;
@@ -328,7 +328,7 @@ button.copy-id.copy-failed { color: var(--red-600); }
     }
     /* DASHBOARD_COMMON_END */
 
-    // One figure per provider; a status word shows as its state icon.
+    // One figure per provider; a status word shows as its status ring.
     function usageSummaryHtml(providers) {
       return providers.map(p => p.status
         ? `${esc(p.name)} <span${stateCellAttributes(p.status)}>${stateIcon(p.status)}</span>`
@@ -553,7 +553,7 @@ function repoPart(value, index) {
 
 // The columns (or rows) one field of an order operation shows as. The value
 // stays the full field value; only its display changes. A column with attributes
-// puts the word behind an icon (as title and accessible name), or the exact
+// puts the word behind a status ring (as title and accessible name), or the exact
 // timestamp behind an elapsed time (as title), on the cell itself.
 function orderColumns(field) {
   if (field === "repo") {
@@ -661,11 +661,11 @@ function listItemsHtml(orders) {
     const repo = fields.includes("repo") ? esc(order.repo) : "";
     const stamp = order[elapsedField];
     const elapsed = fields.includes(elapsedField) && isTimestamp(stamp)
-      ? esc(elapsedText(stamp, Date.now()))
-      : "";
+      ? `<span class="since" data-at="${esc(stamp)}"></span>`
+      : "<span></span>";
     const word = fields.includes("state") ? ringWord(order.state) : "";
     const ring = word === "" ? "" : chip(word);
-    return `<li class="order"><b>${title}</b><div class="row"><span class="repo">${repo}</span><span>${elapsed}</span>${ring}</div></li>`;
+    return `<li class="order"><b>${title}</b><div class="row"><span class="repo">${repo}</span>${elapsed}${ring}</div></li>`;
   }).join("");
 }
 
@@ -744,7 +744,7 @@ function showHead(shown) {
     round.textContent = "";
     phase.textContent = "";
     setHtml(document.getElementById("conv-pr"), "");
-    setHtml(state, "");
+    writeHtml(state, "");
     return;
   }
   title.textContent = shown.title || "";
@@ -753,8 +753,7 @@ function showHead(shown) {
   phase.textContent = shown.phase ? "Phase: " + shown.phase : "";
   setHtml(document.getElementById("conv-pr"), "");
   const word = ringWord(shown.state);
-  setHtml(state, word === "" ? "" : chip(word));
-  fillRings(document.getElementById("conv-head"));
+  if (writeHtml(state, word === "" ? "" : chip(word))) fillRings(document.getElementById("conv-head"));
 }
 
 async function ordersTick() {
@@ -781,6 +780,10 @@ async function ordersTick() {
     for (let i = 0; i < listed.orders.length; i += 1) {
       rows[i].className = "order" + (listed.orders[i].order_id === selectedOrderId ? " sel" : "");
       rows[i].dataset.id = listed.orders[i].order_id;
+    }
+    const elapsedSpans = list.querySelectorAll("span.since");
+    for (let n = 0; n < elapsedSpans.length; n += 1) {
+      elapsedSpans[n].textContent = elapsedText(elapsedSpans[n].dataset.at, Date.now());
     }
     if (listChanged) fillRings(list);
     const openOrders = openListed.orders;

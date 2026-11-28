@@ -34,7 +34,8 @@ const RC = 2 * Math.PI * 6;
 function chip(word) {
   const m = String(word).match(/^(.*?)\s+(\d+\/\d+)$/);
   const label = m ? m[1] : String(word), meta = m ? m[2] : "";
-  const [kind, frac] = RING[label.toLowerCase()] || ["idle", 0];
+  const key = label.toLowerCase();
+  const [kind, frac] = Object.hasOwn(RING, key) ? RING[key] : ["idle", 0];
   const col = RCOL[kind];
   let g;
   if (kind === "done") g = `<circle cx="8" cy="8" r="7" fill="${col}"/><path d="M5 8.2l2 2 4-4.2" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`;

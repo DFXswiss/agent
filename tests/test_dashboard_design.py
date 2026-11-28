@@ -62,6 +62,7 @@ def test_design_asset_refuses_a_bad_name() -> None:
         "/design/.hidden.css",
         "/design/foo..bar.css",
         "/design/../main.py",
+        "/design/a\x00.css",
         "/design/notes.bin",
         "/design/missing.css",
     )

@@ -1380,7 +1380,8 @@ Every route under `/api/orders/` accepts only `Host` equal to
 `Origin` must equal `http://` plus that Host. Otherwise it returns 403 and
 `cross-origin request refused`. `wait` has no dashboard route; the dashboard
 polls `events`. The new-order form lives on its own page, `/orders/new`; the
-main page (`/`) keeps the order table, detail and events and links to it.
+main page (`/`) keeps an order list and the selected order's conversation,
+with the order detail, events and report as tables, and links to it.
 
 ## Model output protocol
 

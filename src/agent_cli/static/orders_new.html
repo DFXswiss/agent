@@ -160,8 +160,8 @@
       return known ? ring : ring.replace('class="ring"', 'class="ring state-unknown"');
     }
 
-    // The word behind a state icon as the title and the accessible name of the
-    // cell that shows the icon; nothing for a missing word.
+    // The word behind a status ring as the title and the accessible name of the
+    // cell that shows the ring; nothing for a missing word.
     function stateCellAttributes(value) {
       if (value === null || value === undefined || value === "") return "";
       return ` title="${esc(value)}" aria-label="${esc(value)}"`;

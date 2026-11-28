@@ -210,8 +210,8 @@
       return known ? ring : ring.replace('class="ring"', 'class="ring state-unknown"');
     }
 
-    // The word behind a state icon as the title and the accessible name of the
-    // cell that shows the icon; nothing for a missing word.
+    // The word behind a status ring as the title and the accessible name of the
+    // cell that shows the ring; nothing for a missing word.
     function stateCellAttributes(value) {
       if (value === null || value === undefined || value === "") return "";
       return ` title="${esc(value)}" aria-label="${esc(value)}"`;
@@ -394,7 +394,7 @@
     }
 
     // One line: name, time until the reset, bar and percentage; without a
-    // percentage the status icon or the figure stands in place of the bar.
+    // percentage the status ring or the figure stands in place of the bar.
     // nameTitle is an optional tooltip of the name.
     function usageLineHtml(name, resetsIn, percent, text, status, nameTitle) {
       let bar;

@@ -330,6 +330,7 @@ def _design_asset(path: str) -> tuple[Path, str] | None:
         or "%" in name
         or name.startswith(".")
         or ".." in name
+        or "\x00" in name
     ):
         return None
     media = _DESIGN_TYPES.get(Path(name).suffix.lower())
