@@ -6,7 +6,7 @@
 // project runs with 4× CPU throttling (ADR-086 §4). No browser coverage here: the precise V8 counters would distort
 // the measurements (the gate measures the build as it is served); the CSP listener of the suite stays.
 import { type BrowserContext, type Page, test as base } from '@playwright/test';
-import { CSP_BINDING, type CspViolation, enterLane } from '../fixtures/test.ts';
+import { CSP_BINDING, type CspViolation, enterLane, stayOff } from '../fixtures/test.ts';
 import { addAuthenticator } from '../helpers/authenticator.ts';
 import { joinWithCode } from '../helpers/members.ts';
 import { onboard } from '../helpers/onboard.ts';
@@ -48,6 +48,8 @@ export const test = base.extend<{ volume: VolumeUser }, { lane: string; volumeUs
       const data = await seed(info.project.name);
       const use_ = info.project.use as Record<string, unknown>;
       const context: BrowserContext = await browser.newContext(contextOptions(use_));
+      // the measured sign-in flows of the volume gate are those of a browser that does not stay signed in (rule E-40)
+      await stayOff(context);
       const violations: CspViolation[] = [];
       await context.exposeBinding(CSP_BINDING, (_source, violation: CspViolation) => {
         violations.push(violation);

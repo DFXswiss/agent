@@ -38,8 +38,9 @@ Status: Accepted (2026-11-24)
    `new_token` (a pre-filled fine-grained token for the owner, or a classic token with `repo,workflow`),
    `check_access` (the account itself has no access: the repository's page). The person who gave the instruction
    (HOT-14) sees it as a card with one button or link (one card per owner of the step); types that write to the
-   repository itself (`create_branch`, `commit`, `push`) also need the right to push in the pre-check (a public
-   repository is readable with nearly any token), and a `403` access refusal that only the execution meets ends
+   repository itself (`create_branch`, `commit`, `push`) write through the identity's fork when it may only read the
+   repository (HOT-33: never held, `repo_read_only` at once when no fork can be used), and a `403` access refusal
+   that only the execution meets ends
    `repo_not_accessible` with the same step in its message (it is already registered and cannot be held). An agent
    sees `next` (command or link) in `task show`, and the session the same step in the error message. The runner checks the access again every 30 s and at once when a new
    credential arrives, so an installation, an approval or an authorisation at GitHub lets the operation go on by

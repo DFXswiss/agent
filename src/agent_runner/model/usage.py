@@ -27,6 +27,8 @@ page's transaction (`model.merge`: one item per session and 10 s, totals unchang
 - `triggered_by` (ADR-083 section 2), only towards a hub whose device state has the section `prompt_queue`: the person
   whose instruction the request follows from, `credentials.acting.stamp` when the record is handled (a main session:
   the acting user of its turn; a child: the acting user of its `subagent.request`); null when unknown.
+- `subscription_id` (ADR-103), only towards a hub whose device state has `subscriptions.api >= 2`: the Claude
+  subscription record that served the request (`model.served`); null for any other access.
 
 For a session bound to a token file of the operator's subscriptions the record's `status` is handed to the pool
 (`model.operator.observed`: `401`/`403` block the file the session was provisioned from, `429` defers it; KOR-23).
@@ -56,7 +58,7 @@ from psycopg import AsyncConnection
 from agent_runner.billing import state as billing
 from agent_runner.credentials import acting
 from agent_runner.guestlink.client import JournalRecord
-from agent_runner.model import access, exhaustion, merge, operator
+from agent_runner.model import access, exhaustion, merge, operator, served
 from agent_runner.prompts import hub_queue
 from agent_runner.sessions.journal import MAX_COUNT, JournalRecordInvalid
 from agent_runner.sessions.records import LocalSession
@@ -159,6 +161,8 @@ async def handle(journal: Any, conn: AsyncConnection[Any], record: JournalRecord
             item["at"] = record.ts
     if hub_queue.api(journal.env.desired):
         item["triggered_by"] = await acting.stamp(conn, session)
+    if served.api(journal.env.desired):
+        item["subscription_id"] = await served.subscription(conn, session)
     await merge.add(conn, journal.env, item)
     remembered.last[session.id] = (item["context_used_tokens"], item["context_window_tokens"])
     bound: tuple[str, bool] | None = None

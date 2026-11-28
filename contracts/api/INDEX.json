@@ -176,6 +176,23 @@
       "owner": "CTR-01"
     },
     {
+      "method": "POST",
+      "path": "/v1/session/renew",
+      "name": "session-renew",
+      "section": "4.1",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "body",
+      "request": "api/session-renew.request.json",
+      "response": "api/session-renew.response.json",
+      "read_resource": null,
+      "streaming": false,
+      "owner": "KOR-76"
+    },
+    {
       "method": "GET",
       "path": "/v1/me",
       "name": "me",
@@ -3001,6 +3018,23 @@
       "read_resource": "me.subscriptions",
       "streaming": false,
       "owner": "KOR-69"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/me/subscriptions/usage",
+      "name": "subscriptions-usage",
+      "section": "4.8",
+      "auth": "browser",
+      "rights": [
+        "user"
+      ],
+      "path_params": {},
+      "request_kind": "query",
+      "request": "api/subscriptions-usage.request.json",
+      "response": "api/subscriptions-usage.response.json",
+      "read_resource": "me.subscriptions.usage",
+      "streaming": false,
+      "owner": "KOR-75"
     },
     {
       "method": "GET",

@@ -107,6 +107,7 @@ OPERATION_ERROR_CODES = (
     "merge_unsupported",
     "workspace_dirty",
     "device_failed",
+    "repo_read_only",
 )
 """A copy of `contracts/enums/operation-error-codes.json` (a test compares them)."""
 
@@ -176,6 +177,7 @@ OperationErrorCode = Literal[
     "merge_unsupported",
     "workspace_dirty",
     "device_failed",
+    "repo_read_only",
 ]
 
 
@@ -367,6 +369,9 @@ class UsageBody(Strict):
     triggered_by: Uuid7 | None = None
     """The person whose turn made the request (ADR-083 section 2); null for several authors or none, absent from an
     older runner."""
+    subscription_id: Uuid7 | None = None
+    """The Claude subscription record that served the request (ADR-103 section 1); null when the access was no
+    subscription record, absent from an older runner."""
 
 
 class RuntimeBody(Strict):

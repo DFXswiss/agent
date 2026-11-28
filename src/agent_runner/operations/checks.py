@@ -24,9 +24,11 @@ booleans; the guest's `local_check:"passed"` is only a hint) and adds the rules 
    `github.list_identities`; `credentials.acting`; which identity, and whether the acting user may use it, the
    pre-check decides, KOR-47);
 6. `github.push`: the commit was created by an earlier `github.commit` of this task (`not_found`);
-7. `subagent.request`: `model_id` is allowed for the parent session's access kind by the model catalog
-   (`model_not_allowed`). Whether the `session_id` of `subagent.instruct` / `subagent.stop` names a running child of
-   the session is the subagent area's pre-check (`subagents/target_checks.py`).
+7. `subagent.request`: `model_id` is allowed by the model catalog for at least one access kind
+   (`model_not_allowed`); which access serves it - possibly another one than the parent's - and whether the owner's
+   preference, settings and the task's consent allow that access, the subagent area decides at the start
+   (`subagents.controller`, HOT-31). Whether the `session_id` of `subagent.instruct` / `subagent.stop` names a
+   running child of the session is the subagent area's pre-check (`subagents/target_checks.py`).
 
 The result is the **effective** parameter set: branch names without `refs/heads/`, and `draft` of a pull request
 taken from the settings' `pr_draft_default` when the session left it out. Checks that need GitHub or the workspace
@@ -41,6 +43,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from agent_runner.model.catalog import ACCESS_KINDS
 from agent_runner.model.selection import Catalog
 from agent_runner.operations import rules
 from agent_runner.operations.extensions import CheckFailed
@@ -542,8 +545,9 @@ def check(request: CheckRequest) -> dict[str, Any]:
     if op_type == "github.push" and out["commit_sha"] not in request.task_commits:
         raise CheckFailed("not_found", message="The commit was not created by a commit operation of this task.")
     if op_type == "subagent.request" and "model_id" in out:
-        kind = request.session.model_access
-        allowed = request.catalog.policy(kind).allowed if kind is not None else ()
-        if out["model_id"] not in allowed:
-            raise CheckFailed("model_not_allowed", message="The model is not allowed for this session.")
+        catalog = request.catalog
+        if request.session.model_access is None or not any(
+            out["model_id"] in catalog.policy(kind).allowed for kind in ACCESS_KINDS
+        ):
+            raise CheckFailed("model_not_allowed", message="The model is not in the model catalog of any model access.")
     return out

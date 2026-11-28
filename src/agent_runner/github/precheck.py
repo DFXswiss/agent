@@ -19,8 +19,11 @@ identity's token:
   token: an access refusal (`404`, SAML single sign-on, an organisation's restriction of OAuth Apps or classic tokens)
   -> `repo_not_accessible` with the one next step (`reach.refusal`, KOR-65: the pipeline holds the operation and asks
   the acting user to take that step), `401` -> `github_not_connected`; any other failure -> `upstream_error` (a
-  pre-check is not retried: the session may request the operation again). Types that write to the repository also
-  need the right to push (`reach.check_write`).
+  pre-check is not retried: the session may request the operation again). Types that write to the repository go
+  where the identity may write (`fork.route`, HOT-33): the repository itself (with the connection's reach,
+  `reach.check_write`), or the identity's fork when it may only read the repository (the data's `fork`), or
+  `repo_read_only` at once when no fork can be used. `github.create_pull_request` opens a pull request from that fork
+  when the identity may only read the repository and its fork holds the head (`fork.pull_route`).
 
 RUN-10 registers its own pre-checks for `github.checkout`, `github.commit` and `github.push` (the registry allows one
 per type) and calls `repo_access` first, so every `github.*` type gets the same connection and access checks.
@@ -28,11 +31,12 @@ per type) and calls `repo_access` first, so every `github.*` type gets the same 
 
 from __future__ import annotations
 
-from agent_runner.github import identity, ops, reach
+from agent_runner.github import fork, identity, ops, reach
 from agent_runner.github.client import GitHubClient, GitHubError
 from agent_runner.operations.extensions import CheckFailed, PrecheckRequest, PrecheckResult
 
 ACCESS_FAILED = "The repository could not be checked at GitHub."
+PULL_TYPE = "github.create_pull_request"
 
 
 async def connection(request: PrecheckRequest) -> PrecheckResult:
@@ -74,11 +78,18 @@ async def list_repositories(request: PrecheckRequest) -> PrecheckResult:
 async def repo_access(request: PrecheckRequest) -> PrecheckResult:
     repo = str(request.params["repo"])
     client: GitHubClient | None = None
+    data: dict[str, object] = {}
     try:
         async with ops.identity_client(request.context, request.operation, identity.current().data()) as client:
             answer = await client.request("GET", f"/repos/{repo}")
+            found = ops.obj(answer.data)
+            routed: dict[str, object] | None = None
             if request.operation.type in reach.PUSH_TYPES:
-                await reach.check_write(client, repo, ops.obj(answer.data))
+                routed = await fork.route(client, repo, found)
+            elif request.operation.type == PULL_TYPE:
+                routed = await fork.pull_route(client, repo, found, str(request.params["head"]))
+            if routed is not None:
+                data["fork"] = routed
     except ops.NotConnected:
         raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
     except GitHubError as error:
@@ -88,4 +99,4 @@ async def repo_access(request: PrecheckRequest) -> PrecheckResult:
         if error.kind == "unauthorized":
             raise CheckFailed("github_not_connected", message=ops.NOT_CONNECTED) from None
         raise CheckFailed("upstream_error", message=ACCESS_FAILED) from None
-    return PrecheckResult()
+    return PrecheckResult(data=data)

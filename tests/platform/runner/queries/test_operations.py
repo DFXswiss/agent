@@ -99,6 +99,27 @@ def test_list_operations_newest_first_with_contract_values_only(rig: Rig) -> Non
     run(rig, body)
 
 
+def test_a_guest_before_hot_33_reads_repo_read_only_as_repo_not_accessible(rig: Rig) -> None:
+    """HOT-33 (`subagents.guest_features.FORKS`): the guest's contracts of 0.7.0 know no `repo_read_only`."""
+
+    async def body(k: RKit) -> None:
+        sid = await k.session(1)
+        op_id = await _received(k, sid, "github.create_branch", error_code="repo_read_only")
+        error = {"code": "repo_read_only", "message": "The GitHub account may only read the repository."}
+        async with k.env.pool.connection() as conn:
+            answer = {"operation_id": op_id, "status": "rejected", "error": error}
+            await op_records.update(conn, op_id, answer=answer)
+        assert (await k.ok(sid, "get_operation", {"operation_id": op_id}))["error"] == error
+        assert (await k.ok(sid, "list_operations"))["operations"][0]["error_code"] == "repo_read_only"
+        async with k.env.pool.connection() as conn:
+            await conn.execute("UPDATE runner.golden SET guest_version = '0.7.0'")
+        older = {**error, "code": "repo_not_accessible"}
+        assert (await k.ok(sid, "get_operation", {"operation_id": op_id}))["error"] == older
+        assert (await k.ok(sid, "list_operations"))["operations"][0]["error_code"] == "repo_not_accessible"
+
+    run(rig, body)
+
+
 def test_get_operation_without_a_pipeline_is_unavailable(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(get_operation_module, "pipeline_for", lambda _context: None)
 

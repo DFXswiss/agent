@@ -525,23 +525,7 @@ def test_only_a_refused_access_of_a_repository_becomes_a_step() -> None:
     asyncio.run(main())
 
 
-# -- the right to push (KOR-65 review): a readable repository is not yet a writable one -------------------------------
-
-
-def test_a_branch_without_the_right_to_push_is_held_with_the_step(store_dsn: str, places: GitHub) -> None:
-    async def body(kit: OKit, connect: Connect) -> None:
-        sid = await kit.session()
-        await connect("ghp_double-gist", 2, "token")
-        held = await kit.run(sid, "github.create_branch", {"repo": OWN, "branch": "work", "from": "main"})
-        assert (held.state, held.held_reason) == ("received", "github_access")
-        assert held.held_next == {"action": "check_access", "owner": "octo-org", "url": f"{places.url}/{OWN}"}
-        assert "may read but not write" in reach.message({**held.held_next, "write": True}, OWN)
-
-    seeded = world()
-    seeded["users"][0]["tokens"].append({"token": "ghp_double-gist", "kind": "classic", "scopes": ["gist"]})
-    places.control.request("POST", "/_double/reset", {})
-    places.control.request("POST", "/_double/seed", seeded)
-    access_run(store_dsn, places, APP, body, oauth=OAUTH_ID)
+# -- the right to push (KOR-65 review; HOT-33: a read-only account writes through its fork, test_fork.py) -------------
 
 
 def mocked(answers: dict[str, tuple[int, object]]) -> GitHubClient:
@@ -575,18 +559,18 @@ def test_a_github_app_token_writes_only_where_an_installation_covers_the_reposit
             "/user/installations/7/repositories": (200, {"repositories": [{"full_name": "Third-Org/App"}, "junk"]}),
         }
         async with mocked(covered) as client:
-            await reach.check_write(client, THIRD, {"permissions": {"push": True}})
+            await reach.check_write(client, THIRD)
         elsewhere = {**covered, "/user/installations/7/repositories": (200, {"repositories": []})}
         async with mocked(elsewhere) as client:
             with pytest.raises(CheckFailed) as caught:
-                await reach.check_write(client, THIRD, {})
+                await reach.check_write(client, THIRD)
             assert caught.value.next_step == {"action": "connect", "owner": "third-org"}
         # not an App token after all (the endpoint refuses it): the write is left to GitHub
         async with mocked({"/user/installations": (403, {"message": "no"})}) as client:
-            await reach.check_write(client, THIRD, {"permissions": "unknown"})
+            await reach.check_write(client, THIRD)
         async with mocked({"/user/installations": (502, {"message": "down"})}) as client:
             with pytest.raises(GitHubError):
-                await reach.check_write(client, THIRD, {})
+                await reach.check_write(client, THIRD)
 
     asyncio.run(main())
 

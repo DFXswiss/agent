@@ -1,18 +1,20 @@
 // Start of the client (06-web.md sections 2.2, 2.6, 10.4, 12.6): locale, configuration check against the hub, browser
-// support, the persistence and the stored session (a reload is `locked`: the passkey is needed again), then the app
+// support, the persistence and the stored session (a reload is `locked`, or `unlocked` by the device key of a browser
+// that stays signed in, rule E-40), then the app
 // with its router – or the blocking error page / the unsupported-browser page. Once the hub is known, the long-task
 // early warning starts (ADR-086 section 5), signed in or not; its code is a lazy chunk (not in the first load).
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { Credentials } from '../../core/account/ceremony';
 import { Prefs, type PrefStorage } from '../../core/account/prefs';
-import { AppSession } from '../../core/account/session';
+import { AppSession, exclusiveOf } from '../../core/account/session';
 import { checkConfig, type ConfigResult } from '../../core/config/check';
 import { createI18n, pickLocale } from '../../core/i18n';
 import { Persist } from '../../core/persist';
 import { appStore, type Store } from '../../core/store';
 import { setConfig } from '../../core/store/slices/config';
 import { I18nProvider } from '../i18n';
+import { deviceKeys } from '../prf-missing/device';
 import { App } from '../shell/App';
 import { type Feature, missingFeatures } from '../shell/support';
 import { Unsupported } from '../screens/errors/Unsupported';
@@ -30,6 +32,8 @@ export interface BootInput {
   readonly indexedDB: IDBFactory;
   /** `localStorage` of the page (null if unavailable). */
   readonly storage: PrefStorage | null;
+  /** `navigator.locks` of the page: one tab renews a session that stays signed in (absent: each tab on its own). */
+  readonly locks?: Parameters<typeof exclusiveOf>[0];
   /** What the browser lacks (default: `missingFeatures` of the page). */
   readonly missing?: () => Promise<readonly Feature[]>;
   readonly store?: Store;
@@ -86,6 +90,8 @@ export async function boot(input: BootInput): Promise<ConfigResult> {
     rootKey,
     persist,
     prefs: new Prefs(input.storage),
+    device: () => deviceKeys(input.indexedDB),
+    exclusive: exclusiveOf(input.locks),
   });
   await app.restore();
   root.render(

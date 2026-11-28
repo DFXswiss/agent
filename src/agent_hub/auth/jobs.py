@@ -37,6 +37,7 @@ USER_ROWS = (
     "DELETE FROM hub.scope_epoch WHERE scope = 'cred' AND scope_id = %(user)s",
     "DELETE FROM hub.subscription_quota WHERE owner_id = %(user)s",
     "DELETE FROM hub.subscription_use WHERE owner_id = %(user)s",
+    "DELETE FROM hub.subscription_usage WHERE owner_id = %(user)s",
     "DELETE FROM hub.credential WHERE owner_id = %(user)s",
     "DELETE FROM hub.quota_snapshot WHERE owner_id = %(user)s",
     "DELETE FROM hub.quota_unreadable WHERE owner_id = %(user)s",
