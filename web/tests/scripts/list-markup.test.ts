@@ -224,7 +224,10 @@ const ALLOWED: Readonly<Record<string, Allowed>> = {
     count: 1,
     reason: 'the agents of one task, at most TREE_MAX shown and the rest counted (GET /v1/tasks/{task}: 100 sessions)',
   },
-  'src/ui/screens/tasks/OverviewScreen.tsx': { count: 1, reason: 'native <option>s of the readable workgroups' },
+  'src/ui/screens/tasks/OverviewScreen.tsx': {
+    count: 2,
+    reason: 'native <option>s of the four situations (closed list) and of the readable workgroups',
+  },
   'src/ui/screens/tasks/TaskTable.tsx': { count: 1, reason: 'the task states (closed list)' },
   'src/ui/screens/audit/AuditView.tsx': {
     count: 4,

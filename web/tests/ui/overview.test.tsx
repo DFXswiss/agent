@@ -12,16 +12,17 @@ import { setLog } from '../../src/core/store/slices/orgs';
 import { I18nProvider } from '../../src/ui/i18n';
 import { OverviewScreen } from '../../src/ui/screens/tasks/OverviewScreen';
 import { AppEnvProvider } from '../../src/ui/shell/context';
+import { record as attention } from '../core/attention/rows';
 import { idOf } from '../core/log/world';
 import { taskRow, type TaskWorld, taskWorld } from '../core/tasks/world';
 
-function mount(t: TaskWorld, locale: 'en' | 'de' = 'en') {
+function mount(t: TaskWorld, locale: 'en' | 'de' = 'en', query = '') {
   const router = createMemoryRouter(
     [
       { path: '/o/:org/tasks', element: <OverviewScreen /> },
       { path: '*', element: <p data-testid="elsewhere">elsewhere</p> },
     ],
-    { initialEntries: [`/o/${t.org}/tasks`] },
+    { initialEntries: [`/o/${t.org}/tasks${query}`] },
   );
   const app = { store: t.store, tasks: t.context } as never;
   render(
@@ -236,6 +237,63 @@ describe('task overview', () => {
     fireEvent.change(screen.getByTestId('tasks.search'), { target: { value: 'nothing' } });
     expect(await screen.findByTestId('tasks.empty')).toHaveTextContent('No task matches the filters.');
     expect(screen.queryByTestId('tasks.list-loading')).toBeNull();
+  });
+
+  it('shows the tasks of a counter of the situation view, chosen by the address or the filter', async () => {
+    const { t } = await world();
+    const asked: URLSearchParams[] = [];
+    t.client.on(`GET /v1/orgs/${t.org}/attention`, (_body, target) => {
+      const params = new URLSearchParams(target.split('?')[1]);
+      asked.push(params);
+      return params.get('category') === 'needs_decision'
+        ? { items: [{ task: taskRow(t, { task_id: 'd1' }), attention: attention('d1') }], next_before: null }
+        : { items: [], next_before: null };
+    });
+    const router = mount(t, 'en', '?situation=mine');
+    await waitFor(() => expect(screen.getAllByTestId('attention.item')).toHaveLength(1));
+    expect(screen.getByTestId('attention.group.needs_decision')).toHaveTextContent('Waiting for me');
+    expect(within(screen.getByTestId('attention.item')).getByTestId('tasks.row.title')).toHaveTextContent(
+      'Weekly report',
+    );
+    // "Waiting for me" asks for the decisions of the user's own tasks; the other filters give way to the situation
+    expect(asked[0]!.get('mine')).toBe('1');
+    expect(asked[0]!.get('since')).toBeNull();
+    expect(screen.getByTestId('tasks.filter.situation')).toHaveValue('mine');
+    expect(screen.queryByTestId('tasks.search')).toBeNull();
+    expect(screen.queryByTestId('tasks.table')).toBeNull();
+    // "Finished today": the records finished since local midnight, with its own empty text
+    fireEvent.change(screen.getByTestId('tasks.filter.situation'), { target: { value: 'done' } });
+    expect(await screen.findByTestId('attention.empty')).toHaveTextContent('Nothing finished today.');
+    expect(router.state.location.search).toBe('?situation=done');
+    const done = asked.at(-1)!;
+    expect([done.get('category'), done.get('mine')]).toEqual(['done', null]);
+    expect(new Date(done.get('since')!).getHours()).toBe(0);
+    fireEvent.change(screen.getByTestId('tasks.filter.situation'), { target: { value: 'blocked' } });
+    expect(await screen.findByTestId('attention.group.blocked')).toHaveTextContent('Stuck');
+    expect(asked.at(-1)!.get('category')).toBe('blocked');
+    // "All tasks" returns to the full list
+    fireEvent.change(screen.getByTestId('tasks.filter.situation'), { target: { value: '' } });
+    await waitFor(() => expect(titles()).toHaveLength(3));
+    expect(router.state.location.search).toBe('');
+    fireEvent.change(screen.getByTestId('tasks.filter.situation'), { target: { value: 'working' } });
+    expect(await screen.findByTestId('attention.group.working')).toHaveTextContent('Running');
+    expect(router.state.location.search).toBe('?situation=working');
+  });
+
+  it('ignores an unknown situation in the address, in German too', async () => {
+    const { t } = await world();
+    mount(t, 'de', '?situation=later');
+    await waitFor(() => expect(titles()).toHaveLength(3));
+    const select = screen.getByTestId('tasks.filter.situation');
+    expect(select).toHaveValue('');
+    expect(within(select).getAllByRole('option').map((node) => node.textContent)).toEqual([
+      'Alle Tasks',
+      'Wartet auf mich',
+      'Steckt fest',
+      'Läuft',
+      'Heute fertig',
+    ]);
+    expect(t.client.calls.some((call) => call.target.includes('/attention'))).toBe(false);
   });
 
   it('shows "Loading…" until every first page answered', async () => {

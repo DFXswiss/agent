@@ -13,11 +13,14 @@ import {
   flushAttention,
   frames,
   groupFailed,
+  type GroupFilter,
+  groupKey,
   groupLoading,
   groupPage,
   isAttentionRow,
   isCategory,
   isSummary,
+  matches,
   putSummary,
   queueAttention,
   staleRow,
@@ -189,6 +192,82 @@ describe('groups', () => {
     // a page row a newer frame moved to another category meanwhile stays out of the page's group
     page(store, 'needs_decision', [record('q', { since: at(1), updated_at: at(1), seq: 1 })]);
     expect(ids(store, 'needs_decision')).toEqual([]);
+  });
+});
+
+describe('narrowed groups', () => {
+  const MINE: GroupFilter = { owner: 'me', after: null };
+  const TODAY: GroupFilter = { owner: null, after: at(2) };
+  const narrowed = (store: Store, category: Category, filter: GroupFilter) =>
+    attentionGroup(store.getState().attention, 'o', category, filter);
+
+  it('are groups of their own: keyed, idle, loading and failing apart from the whole category', () => {
+    const store = createStore();
+    expect(groupKey('o', 'blocked')).not.toBe(groupKey('o', 'blocked', MINE));
+    expect(groupKey('o', 'done', TODAY)).not.toBe(groupKey('o', 'done', { owner: null, after: at(3) }));
+    expect(narrowed(store, 'needs_decision', MINE)).toMatchObject({ filter: MINE, status: 'idle', ids: [] });
+    groupLoading(store, 'o', 'needs_decision', MINE);
+    expect(narrowed(store, 'needs_decision', MINE).status).toBe('loading');
+    expect(attentionGroup(store.getState().attention, 'o', 'needs_decision').status).toBe('idle');
+    groupFailed(store, 'o', 'needs_decision', 'forbidden', MINE);
+    expect(narrowed(store, 'needs_decision', MINE)).toMatchObject({ status: 'error', code: 'forbidden' });
+    expect(attentionGroup(store.getState().attention, 'o', 'needs_decision').code).toBeNull();
+  });
+
+  it('match a record by category, known owner and the bound', () => {
+    const store = createStore();
+    const mine = narrowed(store, 'needs_decision', MINE);
+    const today = narrowed(store, 'done', TODAY);
+    expect(matches(mine, record('a'), { a: 'me' })).toBe(true);
+    expect(matches(mine, record('a'), { a: 'other' })).toBe(false);
+    expect(matches(mine, record('a'), {})).toBe(false);
+    expect(matches(mine, record('a', { category: 'blocked' }), { a: 'me' })).toBe(false);
+    expect(matches(today, record('d', { category: 'done', since: at(2) }), {})).toBe(true);
+    expect(matches(today, record('d', { category: 'done', since: at(1) }), {})).toBe(false);
+  });
+
+  it('page with the owners of their tasks and take in changed records only when they match', () => {
+    const store = createStore();
+    setActiveOrg(store, 'o');
+    const change = (row: AttentionRow) => {
+      queueAttention(store, row);
+      flushAttention(store);
+    };
+    groupPage(store, {
+      org: 'o',
+      category: 'needs_decision',
+      filter: MINE,
+      rows: [record('a', { since: at(1) })],
+      owners: { a: 'me' },
+      nextBefore: null,
+      first: true,
+    });
+    page(store, 'blocked', [record('b', { category: 'blocked' }), record('c', { category: 'blocked' })]);
+    groupPage(store, {
+      org: 'o',
+      category: 'blocked',
+      rows: [],
+      owners: { b: 'me', c: 'other' },
+      nextBefore: null,
+      first: false,
+    });
+    groupPage(store, { org: 'o', category: 'done', filter: TODAY, rows: [], nextBefore: null, first: true });
+    expect(narrowed(store, 'needs_decision', MINE).ids).toEqual(['a']);
+    expect(store.getState().attention.owners).toEqual({ a: 'me', b: 'me', c: 'other' });
+    // a task of the user's that comes to need a decision enters; one of another owner does not
+    change(record('b', { since: at(2), updated_at: at(2) }));
+    change(record('c', { since: at(3), updated_at: at(3) }));
+    change(record('u', { since: at(4), updated_at: at(4) }));
+    expect(narrowed(store, 'needs_decision', MINE).ids).toEqual(['a', 'b']);
+    expect(ids(store, 'needs_decision')).toEqual([]);
+    // a decision answered leaves the narrowed group
+    change(record('a', { category: 'working', since: at(5), updated_at: at(5) }));
+    expect(narrowed(store, 'needs_decision', MINE).ids).toEqual(['b']);
+    // "today": only records finished at or after the bound
+    change(record('b', { category: 'done', since: at(6), updated_at: at(6) }));
+    change(record('c', { category: 'done', since: at(1), updated_at: at(6) }));
+    expect(narrowed(store, 'done', TODAY).ids).toEqual(['b']);
+    expect(narrowed(store, 'needs_decision', MINE).ids).toEqual([]);
   });
 });
 

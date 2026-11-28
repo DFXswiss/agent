@@ -31,5 +31,11 @@
   "filter.reset": "Filter zurücksetzen",
   "search.scanned": "Die {scanned} neuesten Tasks durchsucht.",
   "search.scanned-of": "{scanned} von {total} Tasks durchsucht.",
-  "search.further": "Weiter suchen"
+  "search.further": "Weiter suchen",
+  "filter.situation": "Lage",
+  "filter.situation.all": "Alle Tasks",
+  "situation.empty.mine": "Keiner deiner Tasks wartet auf deine Entscheidung.",
+  "situation.empty.blocked": "Nichts steckt fest.",
+  "situation.empty.working": "Kein Agent läuft.",
+  "situation.empty.done": "Heute ist noch nichts fertig geworden."
 }

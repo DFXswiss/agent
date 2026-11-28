@@ -4,12 +4,51 @@
 // "only mine" and the title search (in the browser: titles are encrypted; bounded per request, `scan.ts`). The empty
 // state says how a task is created.
 // Filters live in the screen's state, not in the URL: a search text in the address would reach the hub on a reload.
+// The one exception is the situation (`?situation=mine|blocked|working|done`, the counters of the situation view link
+// here, `core/attention/situation.ts`): chosen, the list shows exactly the tasks its counter counts, as the hub's
+// attention list (across the readable workgroups, paged by the hub), and the other filters give way to it.
 import { useId, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { isSituation, type Situation, SITUATIONS, situationList } from '../../../core/attention/situation';
 import { readableWorkgroups } from '../../../core/tasks/overview';
+import { useNow } from '../../countdown/useNow';
 import { useI18n } from '../../i18n';
+import { AttentionGroup } from '../home/AttentionGroup';
 import { useDirectory, useOrgView } from './hooks';
 import { StateFilter, TaskTable } from './TaskTable';
+
+/** The situation filter: every task, or the tasks of one counter of the situation view. */
+function SituationFilter({
+  value,
+  onChange,
+}: {
+  readonly value: Situation | null;
+  readonly onChange: (value: Situation | null) => void;
+}) {
+  const { t } = useI18n();
+  const id = useId();
+  return (
+    <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+      <label htmlFor={id} className="text-sm">
+        {t('tasks.filter.situation')}
+      </label>
+      <select
+        id={id}
+        className="min-h-11 min-w-0 max-w-full flex-1 rounded border border-gray-300 px-2 sm:flex-none"
+        value={value ?? ''}
+        onChange={(event) => onChange(isSituation(event.target.value) ? event.target.value : null)}
+        data-testid="tasks.filter.situation"
+      >
+        <option value="">{t('tasks.filter.situation.all')}</option>
+        {SITUATIONS.map((name) => (
+          <option key={name} value={name}>
+            {t(`attention.counter.${name}`)}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 export function OverviewScreen() {
   const { org } = useParams() as { readonly org: string };
@@ -18,10 +57,20 @@ export function OverviewScreen() {
   const searchId = useId();
   const { state, userId } = useOrgView(org);
   const directory = useDirectory(org, state !== null);
+  const now = useNow(true, 30_000);
+  const [params, setParams] = useSearchParams();
+  const asked = params.get('situation');
+  const situation = isSituation(asked) ? asked : null;
   const [filter, setFilter] = useState<string | null>(null);
   const [chosen, setChosen] = useState('');
   const [mine, setMine] = useState(false);
   const [search, setSearch] = useState('');
+  const choose = (next: Situation | null) => {
+    const changed = new URLSearchParams(params);
+    if (next === null) changed.delete('situation');
+    else changed.set('situation', next);
+    setParams(changed, { replace: true });
+  };
   // until the log is verified and the user is known
   const loading = (
     <p className="p-4" data-testid="tasks.loading">
@@ -45,15 +94,41 @@ export function OverviewScreen() {
     return state.writable(id) ? label : t('tasks.overview.archived', { name: label });
   };
   const home = `/o/${encodeURIComponent(org)}`;
+  const heading = (
+    <div className="flex flex-col gap-1">
+      <h1 className="text-xl font-semibold" data-testid="tasks.overview.title">
+        {t('tasks.overview.title')}
+      </h1>
+      <p className="text-sm text-gray-700">{t('tasks.overview.intro')}</p>
+    </div>
+  );
+  if (situation !== null) {
+    const list = situationList(situation, userId, now);
+    return (
+      <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" data-testid="tasks.overview">
+        {heading}
+        <div className="flex flex-wrap items-end gap-x-4 gap-y-2" data-testid="tasks.filters">
+          <SituationFilter value={situation} onChange={choose} />
+        </div>
+        <AttentionGroup
+          org={org}
+          category={list.category}
+          filter={list.filter}
+          title={t(`attention.counter.${situation}`)}
+          empty={t(`tasks.situation.empty.${situation}`)}
+          state={state}
+          userId={userId}
+          directory={directory}
+          now={now}
+        />
+      </main>
+    );
+  }
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4" data-testid="tasks.overview">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold" data-testid="tasks.overview.title">
-          {t('tasks.overview.title')}
-        </h1>
-        <p className="text-sm text-gray-700">{t('tasks.overview.intro')}</p>
-      </div>
+      {heading}
       <div className="flex flex-wrap items-end gap-x-4 gap-y-2" data-testid="tasks.filters">
+        <SituationFilter value={null} onChange={choose} />
         <div className="flex w-full flex-col gap-1 sm:w-auto">
           <label htmlFor={searchId} className="text-sm">
             {t('tasks.search.label')}

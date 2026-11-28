@@ -160,6 +160,12 @@ describe('situation view', () => {
     expect(screen.getByTestId('attention.counter.blocked')).toHaveTextContent('3Stuck');
     expect(screen.getByTestId('attention.counter.working')).toHaveTextContent('1Running');
     expect(screen.getByTestId('attention.counter.done')).toHaveTextContent('4Finished today');
+    // each counter opens the task overview filtered to the tasks it counts
+    for (const name of ['mine', 'blocked', 'working', 'done'])
+      expect(screen.getByTestId(`attention.counter.${name}.link`)).toHaveAttribute(
+        'href',
+        `/o/${t.org}/tasks?situation=${name}`,
+      );
     const groups = screen
       .getAllByTestId(/^attention\.group\.(needs_decision|blocked|working|done)$/)
       .map((node) => node.dataset.testid);

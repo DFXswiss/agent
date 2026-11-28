@@ -1,9 +1,11 @@
 // Loading the situation view (06-web.md section 4.0, 03-api.md section 4.6, ADR-076 section 4):
 //
 // - `loadGroup` / `loadGroupMore`: the pages of one group (`GET /v1/orgs/{org}/attention?category=…&limit=50`, then
-//   `before` = the previous page's `next_before`); "Recently finished" asks for the last 7 days (`since`). The task
-//   rows of a page enter the `tasks` slice like the rows of a task list. Failures are recorded in the group, never
-//   thrown. `refresh` (after a reconnect, KOR-11) loads the first page again and keeps the further pages.
+//   `before` = the previous page's `next_before`); "Recently finished" asks for the last 7 days (`since`). A narrowed
+//   group (`GroupFilter`) asks for the user's own tasks (`mine=1`, its owner is the signed-in user) and for the records
+//   since its bound (`since`). The task rows of a page enter the `tasks` slice like the rows of a task list, their
+//   owners the group's slice. Failures are recorded in the group, never thrown. `refresh` (after a reconnect, KOR-11)
+//   loads the first page again and keeps the further pages.
 // - `refreshSummary`: the counters (`…/attention/summary?since=<local midnight>`), at most once per `SUMMARY_MS` per
 //   org: a call inside that time is answered by one load at its end (a burst of frames costs one request a second).
 // - `ensureTask`: the row of a task a live frame named before its row was known (`GET /v1/tasks/{task}`), once per
@@ -20,10 +22,12 @@ import {
   type AttentionRow,
   type Category,
   groupFailed,
+  type GroupFilter,
   groupLoading,
   groupPage,
   isAttentionRow,
   isSummary,
+  NO_FILTER,
   putSummary,
 } from '../store/slices/attention';
 import { isTaskRow, putTasks, type TaskRow } from '../store/slices/tasks';
@@ -47,9 +51,17 @@ export function localMidnight(now: number): number {
 }
 
 /** The request target of a page. */
-export function groupTarget(org: string, category: Category, before: string | null, now: number): string {
+export function groupTarget(
+  org: string,
+  category: Category,
+  before: string | null,
+  now: number,
+  filter: GroupFilter = NO_FILTER,
+): string {
   const params = new URLSearchParams({ category });
-  if (category === 'done') params.set('since', formatTime(now - DONE_DAYS * DAY_MS));
+  if (filter.owner !== null) params.set('mine', '1');
+  const since = filter.after ?? (category === 'done' ? formatTime(now - DONE_DAYS * DAY_MS) : null);
+  if (since !== null) params.set('since', since);
   if (before !== null) params.set('before', before);
   params.set('limit', String(PAGE_SIZE));
   return `/v1/orgs/${encodeURIComponent(org)}/attention?${params.toString()}`;
@@ -76,14 +88,15 @@ export async function loadGroup(
   category: Category,
   more = false,
   refresh = false,
+  filter: GroupFilter = NO_FILTER,
 ): Promise<number> {
   const { store } = context;
-  const group = attentionGroup(store.getState().attention, org, category);
+  const group = attentionGroup(store.getState().attention, org, category, filter);
   if (!refresh && (group.status === 'loading' || (more && group.nextBefore === null))) return 0;
   const generation = store.generation;
-  if (!refresh) groupLoading(store, org, category);
+  if (!refresh) groupLoading(store, org, category, filter);
   try {
-    const target = groupTarget(org, category, more ? group.nextBefore : null, context.now());
+    const target = groupTarget(org, category, more ? group.nextBefore : null, context.now(), filter);
     const body = await context.client.request('GET', target);
     const valid =
       isRecord(body) &&
@@ -99,17 +112,23 @@ export async function loadGroup(
       items.map((item) => item.task),
     );
     const rows = items.map((item) => item.attention);
-    groupPage(store, { org, category, rows, nextBefore: body.next_before as string | null, first: !more, refresh });
+    const owners = Object.fromEntries(items.map((item) => [item.task.task_id, item.task.owner_id]));
+    const nextBefore = body.next_before as string | null;
+    groupPage(store, { org, category, filter, rows, owners, nextBefore, first: !more, refresh });
     return rows.length;
   } catch (error) {
-    if (store.generation === generation && !refresh) groupFailed(store, org, category, sendErrorCode(error));
+    if (store.generation === generation && !refresh) groupFailed(store, org, category, sendErrorCode(error), filter);
     return 0;
   }
 }
 
 /** The next page of a group (no-op while it loads or has no further page). */
-export const loadGroupMore = (context: TasksContext, org: string, category: Category): Promise<number> =>
-  loadGroup(context, org, category, true);
+export const loadGroupMore = (
+  context: TasksContext,
+  org: string,
+  category: Category,
+  filter: GroupFilter = NO_FILTER,
+): Promise<number> => loadGroup(context, org, category, true, false, filter);
 
 /** Loads the counters now; failures leave the old ones. */
 export async function loadSummary(context: TasksContext, org: string): Promise<void> {
