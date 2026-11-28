@@ -131,6 +131,24 @@ def test_orders_page_loads_the_design() -> None:
         assert html.count(f'href="{href}"') == 1
 
 
+def test_table_card_scroll_shadows_use_local_and_scroll() -> None:
+    css = (DESIGN / "work.css").read_text(encoding="utf-8")
+    start = css.index(".card:has(table)")
+    rule = css[start:css.index("}", start)]
+    assert "background-attachment: local, local, scroll, scroll;" in rule
+
+
+def test_horizontal_order_rows_wrap() -> None:
+    css = (DESIGN / "work.css").read_text(encoding="utf-8")
+    start = css.index("@media (max-width: 860px)")
+    block = css[start:css.index("@media (max-width: 599px)")]
+    assert ".order { min-width: 230px; }\n  .order .row { flex-wrap: wrap; row-gap: 4px; }" in block
+    assert (
+        'html[data-fold="laptop"] .order { min-width: 230px; }\n'
+        'html[data-fold="laptop"] .order .row { flex-wrap: wrap; row-gap: 4px; }'
+    ) in css
+
+
 def test_package_data_ships_the_design_folder() -> None:
     parsed = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert "static/design/*" in parsed["tool"]["setuptools"]["package-data"]["agent_cli"]

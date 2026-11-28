@@ -68,8 +68,8 @@ const WAIT_RING = `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy
 
 /* Foldables. Reads the screen segments (Viewport Segments API; on iPhone Duo behind a Safari
  * feature flag) and sets html[data-fold] to "book" (two segments side by side) or "laptop"
- * (stacked), otherwise removes it. Every element with class fold-grid gets --fold-first: the
- * size of its first column or row so that it ends 16 px before the fold. --fold-gap is the
+ * (stacked), otherwise removes it. Every visible element with class fold-grid gets --fold-first;
+ * a grid that is not rendered (no client rects) keeps its previous value. --fold-gap is the
  * width of the fold itself. Without the API nothing changes.
  * ?fold=book|laptop[&hinge=px] simulates the two halves for previews and checks. */
 function foldSegments() {
@@ -91,6 +91,7 @@ function fold() {
   const at = book ? s[0].right : s[0].bottom;
   root.style.setProperty("--fold-gap", (book ? s[1].left - s[0].right : s[1].top - s[0].bottom) + "px");
   document.querySelectorAll(".fold-grid").forEach(el => {
+    if (el.getClientRects().length === 0) return;
     el.style.removeProperty("--fold-first");
     const r = el.getBoundingClientRect(), cs = getComputedStyle(el);
     const first = book ? at - r.left - parseFloat(cs.paddingLeft) - 16 : at - r.top - parseFloat(cs.paddingTop) - 16;

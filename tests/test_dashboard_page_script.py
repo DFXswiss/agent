@@ -34,7 +34,7 @@ for src/agent_cli/static/index.html, including the shared block:
 - composer submit handler
 - reply-body keydown handler
 - cancel click handler
-- wireHold, including start, stop, its keydown handler and the hold timer
+- wireHold, including start, stop, its keydown handler, the hold timer, button blur and window blur
 
 Top-level statements: STATE_RING assignment, let anchor, let resized,
 watchFold(relayout), lastLayout, showView(hash), ordersOpenOnly,
@@ -387,6 +387,14 @@ function make(tag) {
     return found.length ? found[0] : null;
   };
   el.getBoundingClientRect = () => el._rect;
+  el.getClientRects = () => {
+    let node = el;
+    while (node) {
+      if (node.classList && node.classList.contains("view") && !node.classList.contains("on")) return [];
+      node = node.parentElement;
+    }
+    return [el._rect];
+  };
   el.scrollIntoView = (opts) => {
     scrolled.push({
       id: el.id || "",
@@ -976,6 +984,21 @@ async function scenario() {
   fireWindow("hashchange");
   const hashOrders = document.getElementById("v-orders").classList.contains("on");
   location.hash = "";
+  const ordersFoldGrid = document.querySelector(".fold-grid");
+  ordersFoldGrid._style["--fold-first"] = "stale";
+  location.search = "?fold=book&hinge=40";
+  showView("events");
+  const ordersFoldHidden = Object.prototype.hasOwnProperty.call(ordersFoldGrid._style, "--fold-first")
+    ? ordersFoldGrid._style["--fold-first"]
+    : null;
+  showView("orders");
+  const ordersFoldShown = Object.prototype.hasOwnProperty.call(ordersFoldGrid._style, "--fold-first")
+    ? ordersFoldGrid._style["--fold-first"]
+    : null;
+  location.search = "";
+  delete document.documentElement.dataset.fold;
+  flushRaf();
+  flushRaf();
 
   link.offsetTop = 21;
   fireWindow("resize");
@@ -1781,6 +1804,25 @@ async function scenario() {
   orderStickyError = "";
   ordersStickyNote = "";
 
+  resetHold();
+  const holdButtonBlurFrom = since("/api/orders/cancel");
+  fire(cancelButton, "keydown", { key: " ", repeat: false });
+  fire(cancelButton, "blur");
+  const holdButtonBlur = {
+    holding: cancelButton.classList.contains("is-holding"),
+    fired: fireTimer(cancelHoldTimer),
+    cancels: holdButtonBlurFrom().length,
+  };
+  resetHold();
+  const holdWindowBlurFrom = since("/api/orders/cancel");
+  fire(cancelButton, "keydown", { key: " ", repeat: false });
+  fireWindow("blur");
+  const holdWindowBlur = {
+    holding: cancelButton.classList.contains("is-holding"),
+    fired: fireTimer(cancelHoldTimer),
+    cancels: holdWindowBlurFrom().length,
+  };
+
   const boxEl = document.getElementById("od-reply-body");
   const send = document.getElementById("od-reply");
   selectedOrderId = "o-open";
@@ -1841,6 +1883,7 @@ async function scenario() {
     nav: nav,
     hashEvents: hashEvents,
     hashOrders: hashOrders,
+    ordersFold: { hidden: ordersFoldHidden, shown: ordersFoldShown },
     resize: { y: resizeY, noActive: resizeNoActive, threw: resizeThrew },
     keysLayout: { base: baseKey, fold: foldKey, flow: flowKey, sticky: stickyKey, display: displayKey },
     relayout: { same: sameRaf, changed: changedRaf, second: secondRaf },
@@ -1938,6 +1981,8 @@ async function scenario() {
       clearedReason: clearedReason,
       failed: failedCancel,
       switched: switchedCancel,
+      buttonBlur: holdButtonBlur,
+      windowBlur: holdWindowBlur,
     },
     replyKeys: replyKeys,
     submit: submit,
@@ -2191,6 +2236,7 @@ def test_views_filters_failures_selection_and_hold() -> None:
     assert nav["eventsOn"] is True
     assert page["hashEvents"] == {"eventsOn": True, "ordersOn": False, "fold": ""}
     assert page["hashOrders"] is True
+    assert page["ordersFold"] == {"hidden": "stale", "shown": "464px"}
     assert page["resize"]["y"] == "21px"
     assert page["resize"]["noActive"] == "keep"
     assert page["resize"]["threw"] is False
@@ -2328,6 +2374,8 @@ def test_views_filters_failures_selection_and_hold() -> None:
     assert hold["failed"]["count"] == 2
     assert hold["switched"]["reason"] == "stay" and hold["switched"]["sticky"] == ""
     assert hold["switched"]["count"] == 3
+    assert hold["buttonBlur"] == {"holding": False, "fired": False, "cancels": 0}
+    assert hold["windowBlur"] == {"holding": False, "fired": False, "cancels": 0}
     reply = page["replyKeys"]
     assert reply["disabledPrevented"] is True and reply["disabledCalls"] == 0
     assert reply["plainPrevented"] is False and reply["letterPrevented"] is False

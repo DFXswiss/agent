@@ -93,7 +93,21 @@ tbody tr.sel { background: var(--primary-soft); }
 td .id { color: var(--text-tertiary); cursor: copy; transition: color .15s; }
 td .id:hover { color: var(--primary); }
 table a { color: var(--primary); text-decoration: none; font-family: var(--font-sans); font-weight: var(--fw-medium); }
-.card:has(table) { overflow-x: auto; max-width: 100%; min-width: 0; }
+.card:has(table) {
+  overflow-x: auto;
+  max-width: 100%;
+  min-width: 0;
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(to right, var(--surface), var(--surface)),
+    linear-gradient(to left, var(--surface), var(--surface)),
+    linear-gradient(to right, rgba(15, 23, 42, .12), transparent),
+    linear-gradient(to left, rgba(15, 23, 42, .12), transparent);
+  background-repeat: no-repeat;
+  background-size: 24px 100%, 24px 100%, 12px 100%, 12px 100%;
+  background-position: left center, right center, left center, right center;
+  background-attachment: local, local, scroll, scroll;
+}
 
 /* Status marker, design A (ring). The arc fills with the order phase. */
 .ring { display: inline-flex; align-items: center; gap: var(--sp-2); white-space: nowrap; }
@@ -142,6 +156,7 @@ label.check { display: inline-flex; gap: var(--sp-2); align-items: center; color
 .order b { font-weight: var(--fw-semibold); line-height: var(--lh-snug); }
 .order .row { display: flex; justify-content: space-between; align-items: center; gap: var(--sp-2); }
 .order .repo { font: 400 11px var(--font-mono); color: var(--text-tertiary); }
+.order .since { white-space: nowrap; }
 
 .conv { display: grid; grid-template-rows: auto auto 1fr; min-height: 0; overflow: hidden; }
 .conv-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-4) var(--sp-6); border-bottom: 1px solid var(--border); }
@@ -283,6 +298,7 @@ details.more .menu {
   .orders-wrap { grid-template-columns: 1fr; padding: var(--sp-4); }
   .olist ul { display: flex; overflow-x: auto; }
   .order { min-width: 230px; }
+  .order .row { flex-wrap: wrap; row-gap: 4px; }
   .conv { overflow: visible; }
   .conv-head { flex-direction: column; }
   .conv-head, .composer, .feed { padding-left: var(--sp-4); padding-right: var(--sp-4); }
@@ -392,3 +408,4 @@ html[data-fold="laptop"] .composer textarea { min-height: 72px; }
 html[data-fold="laptop"] .olist { grid-area: list; margin-top: var(--sp-4); min-height: 0; }
 html[data-fold="laptop"] .olist ul { display: flex; overflow-x: auto; overflow-y: hidden; }
 html[data-fold="laptop"] .order { min-width: 230px; }
+html[data-fold="laptop"] .order .row { flex-wrap: wrap; row-gap: 4px; }

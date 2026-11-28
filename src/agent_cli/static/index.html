@@ -18,7 +18,7 @@ button.copy-id.copy-failed { color: var(--red-600); }
 .olist .filter > #order-new { padding-top: 0; padding-bottom: 0; flex: none; }
 #order-detail { display: flex; flex-direction: column; gap: var(--sp-4); }
 #order-detail[hidden] { display: none; }
-#od-question { margin: 0; padding: 0 var(--sp-4); white-space: pre-wrap; font: inherit; background: none; color: inherit; border: 0; }
+#od-question { margin: 0; padding: 0 var(--sp-4) var(--sp-4); white-space: pre-wrap; font: inherit; background: none; color: inherit; border: 0; }
 #od-err, #err { color: var(--red-600); }
 #orders-note, #conv-empty { color: var(--text-secondary); margin: 0; }
 #orders-note { padding: 0 var(--sp-4) var(--sp-2); }
@@ -381,6 +381,7 @@ button.copy-id.copy-failed { color: var(--red-600); }
       const host = document.getElementById("v-" + view);
       enter([...host.querySelectorAll(".order, .feed > *")].slice(0, 14));
       fillRings(host);
+      fold();
     }
 
     document.getElementById("section-nav").addEventListener("click", event => {
@@ -464,7 +465,6 @@ button.copy-id.copy-failed { color: var(--red-600); }
     });
     addEventListener("hashchange", () => {
       showView(location.hash.slice(1));
-      fold();
     });
     watchFold(relayout);
     lastLayout = layoutKey();
@@ -1052,6 +1052,8 @@ function wireHold() {
     }
   });
   button.addEventListener("keyup", stop);
+  button.addEventListener("blur", stop);
+  addEventListener("blur", stop);
 }
 wireHold();
 

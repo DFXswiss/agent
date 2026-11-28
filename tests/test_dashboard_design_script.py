@@ -169,7 +169,11 @@ function make(tag) {
   Object.defineProperty(el, "offsetWidth", {
     get() { el.reads += 1; el.events.push("read"); return 8; },
   });
+  el.clientRects = null;
   el.getBoundingClientRect = function () { return el.rect; };
+  el.getClientRects = function () {
+    return el.clientRects == null ? [el.rect] : el.clientRects;
+  };
   el.querySelectorAll = function (selector) { return queryAll(el, selector); };
   el.appendChild = function (child) { el.children.push(child); return child; };
   return el;
@@ -347,6 +351,18 @@ const touchSnap = {
   fold: rootEl.dataset.fold,
   gap: rootEl.props["--fold-gap"],
 };
+grids[0].clientRects = [];
+grids[0].props["--fold-first"] = "kept-px";
+const hiddenRemoved = grids[0].removed.length;
+location.search = "?fold=book&hinge=40";
+const hiddenFold = fold();
+const hiddenSnap = {
+  value: hiddenFold,
+  first: Object.prototype.hasOwnProperty.call(grids[0].props, "--fold-first") ? grids[0].props["--fold-first"] : null,
+  removedGrew: grids[0].removed.length !== hiddenRemoved,
+  visible: Object.prototype.hasOwnProperty.call(grids[1].props, "--fold-first") ? grids[1].props["--fold-first"] : null,
+};
+grids[0].clientRects = null;
 
 location.search = "";
 window.viewport = undefined;
@@ -406,7 +422,7 @@ globalThis.report = {
     noSegments: noSegments,
     tablet: tablet,
   },
-  fold: { cleared: clearedSnap, book: bookSnap, laptop: laptopSnap, touch: touchSnap },
+  fold: { cleared: clearedSnap, book: bookSnap, laptop: laptopSnap, touch: touchSnap, hidden: hiddenSnap },
   watch: {
     calls: callsAfter,
     bareThrew: bareThrew,
@@ -640,6 +656,12 @@ def test_fold_sets_gap_and_first_or_clears() -> None:
         ],
     }
     assert fold["touch"] == {"value": "book", "fold": "book", "gap": "0px"}
+    assert fold["hidden"] == {
+        "value": "book",
+        "first": "kept-px",
+        "removedGrew": False,
+        "visible": "464px",
+    }
 
 
 def test_watch_fold_fires_only_when_the_value_changes() -> None:
