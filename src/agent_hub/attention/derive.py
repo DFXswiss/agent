@@ -95,6 +95,7 @@ BLOCKING_CODES: Mapping[str, Outcome] = MappingProxyType(
             (
                 "rights_denied",
                 "repo_not_accessible",
+                "repo_read_only",
                 "repo_not_allowed",
                 "branch_protected",
                 "secret_detected",

@@ -363,14 +363,18 @@ def test_push_needs_a_commit_of_this_task() -> None:
     assert failed.code == "not_found"
 
 
-def test_subagent_models_come_from_the_catalog_of_the_access_kind() -> None:
+def test_subagent_models_come_from_the_catalog_of_any_access_kind() -> None:
     checks.check(request("subagent.request", with_("subagent.request", model_id=None)))
+    # a model of another access kind than the parent's: the child's start finds the access that serves it (HOT-31)
     other = replace(SESSION, model_access="subscription")
-    assert refused("subagent.request", VALID["subagent.request"], session=other).code == "model_not_allowed"
+    checks.check(request("subagent.request", VALID["subagent.request"], session=other))
+    checks.check(request("subagent.request", with_("subagent.request", model_id="claude-opus-5-5")))
     unknown = replace(SESSION, model_access=None)
     assert refused("subagent.request", VALID["subagent.request"], session=unknown).code == "model_not_allowed"
-    params = with_("subagent.request", model_id="claude-opus-5-5")
-    assert refused("subagent.request", params).code == "model_not_allowed"
+    params = with_("subagent.request", model_id="vendor/not-in-catalog")
+    failed = refused("subagent.request", params, session=other)
+    assert failed.code == "model_not_allowed"
+    assert failed.message == "The model is not in the model catalog of any model access."
 
 
 def test_effective_parameters_normalise_branches_and_take_the_draft_default() -> None:

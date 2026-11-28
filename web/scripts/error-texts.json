@@ -1762,5 +1762,17 @@
       "body": "Das Gerät, auf dem dies lief, ist ausgefallen. Die Aufgabe läuft vom letzten gesicherten Stand aus weiter, sobald das Gerät zurück ist oder ein anderes passendes Gerät sie übernehmen kann.",
       "action": "Nichts zu tun – die Aufgabe geht von selbst weiter. Ist sie an dieses Gerät gebunden, lass die Plattform automatisch eines wählen."
     }
+  },
+  "repo_read_only": {
+    "en": {
+      "title": "Repository is read-only for this account",
+      "body": "The GitHub account may read this repository but not write to it, and no fork of it can be used: the organization does not allow forks, or GitHub refused one.",
+      "action": "Ask an owner of the repository to give the account write access or to allow forks, then let the agent try again."
+    },
+    "de": {
+      "title": "Repository für dieses Konto nur lesbar",
+      "body": "Das GitHub-Konto darf dieses Repository lesen, aber nicht schreiben, und ein Fork davon ist nicht möglich: Die Organisation erlaubt keine Forks, oder GitHub hat einen abgelehnt.",
+      "action": "Bitte die Verantwortlichen des Repositorys, dem Konto Schreibrecht zu geben oder Forks zu erlauben, und lass den Agenten es dann noch einmal versuchen."
+    }
   }
 }

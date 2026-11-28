@@ -51,6 +51,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | credential-rotate | jobs (CK re-wrap) | `credentials rotate` | done |
 | quotas | settings/quotas | `quotas` | done |
 | subscriptions-list | screens/subscriptions and the card "My subscriptions" of screens/home (every own subscription with status - also `relogin` when the device could not renew it -, use, expiry, plan and the remaining quota per window, for the operator also the token-file subscriptions; ADR-091, ADR-092, rules E-30, E-31) | `subscriptions list` (token files: `quotas --org`) | done |
+| subscriptions-usage | screens/subscriptions, section "Who used how much" (tokens, sessions, share of the tokens and the estimated share of the quota per person and subscription for the 5-hour window, the week or a chosen span; the owner sees everybody, everybody else their own use; usage through DFX access per person; ADR-103) | `subscriptions usage --period --since --until` (DFX access: `billing --org`) | done |
 | settings-subscriptions | settings/subscriptions (the link to the page "My subscriptions", ADR-091) | `subscriptions list` | done |
 | subscriptions-add | screens/subscriptions ("Add subscription") and settings/subscription-logins (a new subscription logged in on a platform device, ADR-090; with its own mailbox, use and registration, ADR-100) | `subscriptions add --name --note --automatic --email --mailbox-host --mailbox-user --mailbox-email --mailbox-password-stdin --org --register-name --birth-date --consent` | done |
 | subscriptions-add-many | screens/subscriptions ("Mehrere Abos hinzufügen": several subscriptions at once, each with its own mailbox, use and registration, progress per subscription; ADR-100, rule E-33) | `subscriptions add-many --file --wait` | done |
@@ -239,6 +240,7 @@ Alternatives in a command are written `a\|b` (an escaped bar, as a table cell ne
 | `GET /v1/me/devices` | github-connect, github-token, github-company-accounts, credential-claude-relay, credential-check, pr-view, pr-fix-conflicts |
 | `GET /v1/me/quotas` | quotas |
 | `GET /v1/me/subscriptions` | subscriptions-list |
+| `GET /v1/me/subscriptions/usage` | subscriptions-usage |
 | `GET /v1/subscriptions/{id}` | subscriptions-list, subscriptions-edit, subscriptions-use, subscriptions-logout |
 | `PUT /v1/subscriptions/{id}` | subscriptions-edit, subscriptions-use, subscriptions-logout, subscriptions-add, subscriptions-add-many, subscriptions-mailbox |
 | `DELETE /v1/subscriptions/{id}` | subscriptions-remove |

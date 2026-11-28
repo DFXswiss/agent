@@ -9,7 +9,11 @@ sections 1, 5 and 6).
   subscription with access to its model) of `session.model_switched`.
 - `settings(desired, session_id)`: the owner's fallback settings (`fallback.own_to_dfx`, default off;
   `fallback.operator_to_platform`, default on) and the task's consent (`model_consent`, default false) delivered with
-  the session's entry of `sessions`. A missing or malformed value means the default (an older hub delivers none).
+  the session's entry of `sessions`. A missing or malformed value means the default (an older hub delivers none). A
+  session the hub does not list yet - a subagent starts right after its `subagent.request`, before the next desired
+  state names it - takes them from the entry of its parent, else of another session of the same task and owner
+  (`kin`): the values are the owner's and the task's, the same for each of their sessions (HOT-31).
+- `preference(desired, ...)`: the owner's access preference from such an entry, for the same sessions.
 """
 
 from __future__ import annotations
@@ -17,6 +21,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+
+from agent_runner.sessions.desired import PREFERENCES
 
 
 @dataclass(frozen=True)
@@ -60,8 +66,48 @@ def _flag(source: Mapping[str, Any], name: str, default: bool) -> bool:
     return value if isinstance(value, bool) else default
 
 
-def settings(desired: Mapping[str, Any] | None, session_id: str) -> Settings:
-    found = entry(desired, session_id) or {}
+def kin(
+    desired: Mapping[str, Any] | None, *, task_id: str, owner_id: str, parent_id: str | None = None
+) -> Mapping[str, Any] | None:
+    """An entry of `sessions` of the same task and owner - the parent's first -, None when there is none. It stands in
+    for a session the hub does not list yet: a subagent is started at once after its `subagent.request`, before the
+    next desired state names it. The owner's settings (`fallback`, `model_access_pref`) are the same for every session
+    of the owner and the consent for every session of the task, so the entry carries the values of that session."""
+    listed = None if desired is None else desired.get("sessions")
+    same = [
+        item
+        for item in (listed if isinstance(listed, list) else [])
+        if isinstance(item, Mapping) and item.get("task_id") == task_id and item.get("owner_id") == owner_id
+    ]
+    for item in same:
+        if parent_id is not None and item.get("session_id") == parent_id:
+            return item
+    return same[0] if same else None
+
+
+def preference(
+    desired: Mapping[str, Any] | None, *, task_id: str, owner_id: str, parent_id: str | None = None
+) -> str | None:
+    """The owner's access preference from an entry of the same task and owner (`kin`), None without a valid one."""
+    found = kin(desired, task_id=task_id, owner_id=owner_id, parent_id=parent_id)
+    value = None if found is None else found.get("model_access_pref")
+    return value if isinstance(value, str) and value in PREFERENCES else None
+
+
+def settings(
+    desired: Mapping[str, Any] | None,
+    session_id: str,
+    *,
+    task_id: str | None = None,
+    owner_id: str | None = None,
+    parent_id: str | None = None,
+) -> Settings:
+    """The settings of the session's entry; for a session that is not listed (yet) those of an entry of the same task
+    and owner (`kin`), so a subagent or a resumed session follows the same crossing rules as its main session."""
+    found = entry(desired, session_id)
+    if found is None and task_id is not None and owner_id is not None:
+        found = kin(desired, task_id=task_id, owner_id=owner_id, parent_id=parent_id)
+    found = found or {}
     fallback = found.get("fallback")
     owner = fallback if isinstance(fallback, Mapping) else {}
     return Settings(

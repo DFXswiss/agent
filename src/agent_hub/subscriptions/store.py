@@ -12,7 +12,8 @@ and delete it. Further records are created without the mark and never get it.
 - `rows_for(connection, user)`: `GET /v1/me/subscriptions` - every record of the user, newest change first (then ID
   descending), each with its newest reading: the primary record's from the owner's `quota_snapshot` (the newest
   fetch and its device, every window of that device's newest report) or `quota_unreadable`; a further record's from
-  `subscription_quota`; `null` before the first reading.
+  `subscription_quota`; `null` before the first reading. `reading_of(...)`: that reading of one record (also of
+  another owner's record, for the usage overview of ADR-103).
 - `set_use(...)` / `shared_for(...)`: the plaintext mirror of a further subscription's `use` (ADR-090 section 3) and
   the subscriptions a device is told about (`GET /v1/device/state` `subscriptions.shared`).
 - `store_reading(connection, ...)`: the `quota` item of a further subscription (`agent_hub.usage.outbox`): kept when
@@ -113,21 +114,33 @@ def _primary_reading(connection: Connection, user: UUID) -> dict[str, Any] | Non
     }
 
 
-def rows_for(connection: Connection, user: UUID) -> list[dict[str, Any]]:
-    """`GET /v1/me/subscriptions` (module docstring)."""
-    readings = {
+FURTHER_READINGS = (
+    "SELECT credential_id, windows, unreadable, fetched_at, device_id FROM hub.subscription_quota WHERE {where}"
+)
+
+
+def _further_readings(connection: Connection, where: str, value: UUID) -> dict[UUID, dict[str, Any]]:
+    return {
         row[0]: {
             "fetched_at": format_time(row[3]),
             "device_id": str(row[4]),
             "unreadable": row[2],
             "windows": [] if row[1] is None else list(row[1]),
         }
-        for row in connection.execute(
-            "SELECT credential_id, windows, unreadable, fetched_at, device_id FROM hub.subscription_quota"
-            " WHERE owner_id = %s",
-            (user,),
-        ).fetchall()
+        for row in connection.execute(FURTHER_READINGS.format(where=where), (value,)).fetchall()
     }
+
+
+def reading_of(connection: Connection, record: UUID, owner: UUID, primary: bool) -> dict[str, Any] | None:
+    """The newest reading of one subscription record, as `rows_for` gives it (ADR-103 section 2)."""
+    if primary:
+        return _primary_reading(connection, owner)
+    return _further_readings(connection, "credential_id = %s", record).get(record)
+
+
+def rows_for(connection: Connection, user: UUID) -> list[dict[str, Any]]:
+    """`GET /v1/me/subscriptions` (module docstring)."""
+    readings = _further_readings(connection, "owner_id = %s", user)
     found = []
     for identity in owner_records(connection, user):
         reading = _primary_reading(connection, user) if identity.primary else readings.get(identity.id)

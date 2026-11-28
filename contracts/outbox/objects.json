@@ -418,6 +418,17 @@
             }
           ],
           "description": "the person whose instruction this follows from (ADR-083 section 2): the acting user of the turn, or of the subagent.request of a child session; null when the turn had several authors or none"
+        },
+        "subscription_id": {
+          "anyOf": [
+            {
+              "$ref": "../common.json#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "the Claude subscription record that served the requests (ADR-103 section 1): the primary record of the session's owner or the record of a shared pool entry sub-<id>; null for any other access; sent only to a hub whose device state has subscriptions.api >= 2"
         }
       },
       "required": [

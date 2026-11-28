@@ -520,7 +520,7 @@
             "api": {
               "type": "integer",
               "minimum": 1,
-              "description": "subscriptions interface version; KOR-69 sends 1"
+              "description": "subscriptions interface version; KOR-69 sends 1, KOR-75 sends 2 (the hub accepts usage.subscription_id, ADR-103)"
             },
             "shared": {
               "type": "array",

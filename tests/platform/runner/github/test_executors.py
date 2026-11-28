@@ -515,7 +515,7 @@ def test_prechecks_check_connection_and_repository_access(store_dsn: str, github
             "github.create_pull_request",
             "github.comment",
         ):
-            found = await PRECHECKS[op_type](precheck_request(env, op_type, {"repo": REPO}))
+            found = await PRECHECKS[op_type](precheck_request(env, op_type, {"repo": REPO, "head": "feature"}))
             assert (found.dedupe, found.data) == ({}, await own(env))
         assert github.paths() == ["GET /user"] + [f"GET /repos/{REPO}"] * 4
         assert await refused(env, "github.comment", {"repo": "octo-org/hidden"}) == "repo_not_accessible"

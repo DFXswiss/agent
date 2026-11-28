@@ -12,6 +12,8 @@ Routes (`ROUTES`, the REST subset the runner uses, 05-runner.md §11.4 and §12.
   ``sort``/``direction``; ``GET``/``PATCH …/issues/{number}``, ``POST …/issues``) and issue comments. A repository
   with ``has_issues: false`` answers the issue routes ``410 Issues are disabled for this repo`` (comments too, unless
   the number is a pull request).
+- Forks (HOT-33): ``GET``/``POST …/forks`` and ``POST …/merge-upstream`` as `agent_doubles.github.repos` describes
+  them; a pull request's ``head`` may name a branch of another account's fork (``<owner>:<branch>``).
 - Git Data commits (KOR-47, ADR-078 "Pre-study"): ``POST …/git/commits`` takes ``author`` and ``committer``
   (``{name, email, date?}``; ``date`` in ISO 8601, stored in UTC with ``+0000``; the author defaults to the
   authenticated user with its ``email``, else its ``<id>+<login>@users.noreply.github.com`` address, at the double's
@@ -210,6 +212,9 @@ ROUTES = (
     Route("GET", "/user/ssh_signing_keys/{key_id}", "api", "get_signing_key"),
     Route("DELETE", "/user/ssh_signing_keys/{key_id}", "api", "delete_signing_key"),
     Route("GET", "/repos/{owner}/{repo}", "api", "repository"),
+    Route("GET", "/repos/{owner}/{repo}/forks", "api", "list_forks"),
+    Route("POST", "/repos/{owner}/{repo}/forks", "api", "create_fork"),
+    Route("POST", "/repos/{owner}/{repo}/merge-upstream", "api", "merge_upstream"),
     Route("GET", "/repos/{owner}/{repo}/commits/{ref}/check-runs", "api", "list_check_runs"),
     Route("GET", "/repos/{owner}/{repo}/commits/{ref}/status", "api", "combined_status"),
     Route("GET", "/repos/{owner}/{repo}/commits/{ref}", "api", "commit"),
@@ -253,6 +258,7 @@ WRITE_PERMISSIONS = {
     "create_blob": "contents",
     "create_tree": "contents",
     "create_commit": "contents",
+    "merge_upstream": "contents",
     "create_pull": "pull_requests",
     "create_comment": "issues",
     "create_issue": "issues",
@@ -824,8 +830,9 @@ class _Handler(DoubleHandler):
         call.repo = repo = world.repo(owner, call.params["repo"])
         needed = WRITE_PERMISSIONS.get(call.route.name)
         self._check_policies(token, owner, repo, needed is not None)
+        read_only = repo is not None and needed == "contents" and repo.key in call.the_user.readonly
         if token.kind != "app":
-            if repo is None or not token.reaches(repo):
+            if repo is None or not token.reaches(repo) or read_only:
                 raise not_found()
             if needed is not None and not token.can_write(repo):
                 raise Reply(403, render.error_body(403, "Resource not accessible by personal access token"))
@@ -833,7 +840,7 @@ class _Handler(DoubleHandler):
         inst = world.installation_for(call.the_user, repo) if repo else None
         if inst is None:
             raise not_found()
-        if needed is not None and inst.permissions.get(needed) != "write":
+        if read_only or (needed is not None and inst.permissions.get(needed) != "write"):
             raise Reply(403, render.error_body(403, "Resource not accessible by integration"))
 
     def _check_policies(self, token: Token, owner: str, repo: Repo | None, write: bool) -> None:
@@ -849,6 +856,8 @@ class _Handler(DoubleHandler):
     def _can_push(self, call: Call, repo: Repo) -> bool:
         """Whether the token may push to `repo` (``permissions.push`` of repository answers)."""
         token = call.the_token
+        if repo.key in call.the_user.readonly:
+            return False
         if token.kind != "app":
             return token.can_write(repo)
         inst = self.double.world.installation_for(call.the_user, repo)
@@ -1017,8 +1026,47 @@ class _Handler(DoubleHandler):
     # --- repositories, commits, tarball -------------------------------------------------------------
 
     def _r_repository(self, call: Call) -> Result:
-        push = self._can_push(call, call.the_repo)
-        return 200, render.repository(self.double.urls, call.the_repo, push=push), []
+        return 200, self._repository(call, call.the_repo), []
+
+    def _repository(self, call: Call, repo: Repo) -> dict[str, Any]:
+        """A repository answer with the token's permissions (a ``readonly`` repository: the role triage)."""
+        push = self._can_push(call, repo)
+        triage = push or repo.key in call.the_user.readonly
+        return render.repository(self.double.urls, repo, push=push, triage=triage)
+
+    # --- forks (HOT-33) -------------------------------------------------------------------------------
+
+    def _r_list_forks(self, call: Call) -> Result:
+        world, token = self.double.world, call.the_token
+        reached = {found.key for found in world.token_repos(call.the_user, token)}
+        found = [repo for repo in world.forks(call.the_repo) if repo.key in reached]
+        page, headers = self._paginate(call, found)
+        return 200, [self._repository(call, repo) for repo in page], headers
+
+    def _r_create_fork(self, call: Call) -> Result:
+        repo, world = call.the_repo, self.double.world
+        if not repo.allow_forking and world.fork_of(repo, call.the_user.login) is None:
+            raise Reply(403, render.error_body(403, "Forking is disabled for this repository."))
+        made = world.add_fork(repo, call.the_user)
+        return 202, self._repository(call, made), []
+
+    def _r_merge_upstream(self, call: Call) -> Result:
+        repo = call.the_repo
+        branch = call.json_body().get("branch")
+        parent = repo.parent
+        ours = repo.branch(branch) if isinstance(branch, str) else None
+        theirs = parent.branch(branch) if parent is not None and isinstance(branch, str) else None
+        if parent is None or ours is None or theirs is None:
+            raise unprocessable("Branch could not be synced: it is missing in the fork or in its upstream.")
+        upstream = f"{parent.owner}:{branch}"
+        if theirs in repo.ancestors(ours):
+            payload = {"message": "This branch is not behind the upstream", "merge_type": "none"}
+            return 200, {**payload, "base_branch": upstream}, []
+        if ours not in repo.ancestors(theirs):
+            raise Reply(409, render.error_body(409, "There are merge conflicts"))
+        repo.refs[f"refs/heads/{branch}"] = theirs
+        payload = {"message": f"Successfully fetched and fast-forwarded from upstream {upstream}."}
+        return 200, {**payload, "merge_type": "fast-forward", "base_branch": upstream}, []
 
     def _resolve(self, call: Call, ref: str) -> str:
         sha = call.the_repo.resolve(ref)
@@ -1272,7 +1320,7 @@ class _Handler(DoubleHandler):
         found = [p for p in repo.pulls.values() if state in {"all", p.state}]
         if "head" in call.query:
             owner, _, branch = call.query["head"].partition(":")
-            found = [p for p in found if owner.lower() == repo.owner.lower() and p.head == branch]
+            found = [p for p in found if owner.lower() == (p.source or repo).owner.lower() and p.head == branch]
         if "base" in call.query:
             found = [p for p in found if p.base == call.query["base"]]
         page, headers = self._paginate(call, self._sorted(call, found, PULL_SORTS, default_desc=False))
@@ -1288,23 +1336,27 @@ class _Handler(DoubleHandler):
             raise Reply(422, render.validation_error("", "PullRequest", "title", code="missing_field"))
         if not isinstance(draft, bool) or (text is not None and not isinstance(text, str)):
             raise unprocessable("Invalid request.\n\nInvalid draft or body.")
+        world = self.double.world
+        source: Repo | None = repo
         if isinstance(head, str) and ":" in head:
             owner, _, head = head.partition(":")
-            head = head if owner.lower() == repo.owner.lower() else None
-        if not isinstance(head, str) or repo.branch(head) is None:
+            # another account's head is a branch of its fork of this repository (HOT-33)
+            source = repo if owner.lower() == repo.owner.lower() else world.fork_of(repo, owner)
+        if not isinstance(head, str) or source is None or source.branch(head) is None:
             raise Reply(422, render.validation_error("", "PullRequest", "head", code="invalid"))
         if not isinstance(base, str) or repo.branch(base) is None:
             raise Reply(422, render.validation_error("", "PullRequest", "base", code="invalid"))
-        if any(p.state == "open" and p.head == head and p.base == base for p in repo.pulls.values()):
-            message = f"A pull request already exists for {repo.owner}:{head}."
+        origin = None if source is repo else source
+        if any(p.state == "open" and (p.source, p.head, p.base) == (origin, head, base) for p in repo.pulls.values()):
+            message = f"A pull request already exists for {source.owner}:{head}."
             raise Reply(422, render.validation_error(message, "PullRequest"))
-        head_sha, base_sha = repo.branch(head), repo.branch(base)
+        head_sha, base_sha = source.branch(head), repo.branch(base)
         assert head_sha is not None
         assert base_sha is not None
         if not repo.history(head_sha, repo.ancestors(base_sha)):
             raise Reply(422, render.validation_error(f"No commits between {base} and {head}", "PullRequest"))
-        world = self.double.world
         pull = world.add_pull(repo, title=title, body=text, head=head, base=base, draft=draft, user=call.the_user.login)
+        pull.source = origin
         payload = render.pull(self.double.urls, world, repo, pull)
         return 201, payload, [("location", payload["url"])]
 
@@ -1330,7 +1382,7 @@ class _Handler(DoubleHandler):
 
     def _r_pull_commits(self, call: Call) -> Result:
         repo, pull = call.the_repo, self._pull(call)
-        head, base = repo.branch(pull.head) or "", repo.branch(pull.base) or ""
+        head, base = repo.head_of(pull) or "", repo.branch(pull.base) or ""
         shas = repo.history(head, repo.ancestors(base)) if head and base else []
         page, headers = self._paginate(call, shas)
         return 200, [render.git_commit(self.double.urls, repo, sha) for sha in page], headers
@@ -1346,7 +1398,7 @@ class _Handler(DoubleHandler):
         event, text = body.get("event"), body.get("body", "")
         if event not in REVIEW_EVENTS or not isinstance(text, str):
             raise invalid("PullRequestReview", "event")
-        head = repo.branch(pull.head) or ""
+        head = repo.head_of(pull) or ""
         commit = body.get("commit_id", head)
         if not isinstance(commit, str) or repo.objects.kind(commit) != "commit":
             raise unprocessable("Commit not found")
@@ -1362,7 +1414,7 @@ class _Handler(DoubleHandler):
         method = body.get("merge_method", "merge")
         if method not in MERGE_METHODS:
             raise invalid("PullRequest", "merge_method")
-        head, base = repo.branch(pull.head), repo.branch(pull.base)
+        head, base = repo.head_of(pull), repo.branch(pull.base)
         if pull.state != "open" or pull.draft or head is None or base is None or not repo.merges_cleanly(base, head):
             raise Reply(405, render.error_body(405, "Pull Request is not mergeable"))
         expected = body.get("sha")
@@ -1371,7 +1423,7 @@ class _Handler(DoubleHandler):
         world = self.double.world
         when = world.stamp()
         signature = Signature(call.the_user.name or call.the_user.login, noreply_email(call.the_user), when)
-        message = f"Merge pull request #{pull.number} from {repo.owner}/{pull.head}"
+        message = f"Merge pull request #{pull.number} from {(pull.source or repo).owner}/{pull.head}"
         commit = Commit(repo.merged_tree(base, head), (base, head), signature, signature, message, None)
         sha = repo.objects.put_commit(commit)
         repo.refs[f"refs/heads/{pull.base}"] = sha

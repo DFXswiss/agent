@@ -672,6 +672,11 @@ device withdrew.
 items carry `triggered_by`: the operation's stamp (`actor_id`), the session's acting user when the usage record is
 processed (a child: its inherited stamp), for a work VM the acting user when it was requested.
 
+**Served by (ADR-103 §1).** To a hub whose device state has `subscriptions.api >= 2`, `usage` items carry
+`subscription_id` (`model.served`): the record of a shared pool entry `sub-<id>`, the cached primary record of the
+session's owner for the own subscription, null for a token file of the operator, for a session once provisioned from
+the pool whose binding ended, and for any other access. Deltas of different subscriptions are not merged.
+
 ### 6.3 Control, idle, resume, stop
 
 - Interrupt: `tmux send-keys Escape`. Stop: `systemctl stop agent-session-<id>` (SIGTERM, 10 s, SIGKILL), close
@@ -988,7 +993,11 @@ platform budget counts the pending cost (§10.2), every pending item besides the
   only when the owner's `fallback.own_to_dfx` (default off) or the task's `model_consent` allows it. From the operator
   pool to `platform` only with `fallback.operator_to_platform` (default on). Both settings come with every session of
   the owner in `GET /v1/device/state` (`sessions[].fallback`, `sessions[].model_consent`); an older hub that sends
-  neither means the defaults. An explicit `api_key` or `platform` preference has no fallback.
+  neither means the defaults. An explicit `api_key` or `platform` preference has no fallback. A session the desired
+  state does not list yet – a subagent starts right after its `subagent.request`, before the hub names it in
+  `sessions` – takes the owner's preference, `fallback` and `model_consent` from its parent's entry, else from an entry
+  of the same task and owner (HOT-31): a subagent and a resumed session cross to `dfx` exactly when their main session
+  does, and never start on an access known to be used up while another allowed one is free.
 - **Exhaustion** (subscriptions only; access key `own:<owner_id>` or `operator:<file name>`). Trigger: a gateway
   `usage` record with status `429`. Readable quota: the runner reads the usage endpoint with the same token at once
   (at most once per access per 60 s); exhausted when `five_hour` or `seven_day` reports `used_percent >= 100` with
@@ -1343,7 +1352,13 @@ Pipeline for every `request_operation`:
    **Held for access (KOR-65, ADR-077).** A repository-level pre-check that GitHub refuses for access (`404`; `403`
    for an organisation's OAuth App restriction, its ban of classic tokens, or SAML single sign-on) fails with
    `repo_not_accessible` and the one next step (`github.reach`), and is held the same way with the reason
-   `github_access`; the `waiting` event carries `next {action, owner, url?}`. While the acting user's credential is
+   `github_access`; the `waiting` event carries `next {action, owner, url?}`. A repository the identity reads but may
+   not push to (`permissions.push` false) is no access refusal and never held (HOT-33, `github.fork`): the write types
+   go to the identity's fork (found by its parent, also under another name, or created at execution when the
+   repository allows forks; the result names it as `fork`), `github.create_pull_request` comes from that fork, and
+   without a usable fork the pre-check fails `repo_read_only` at once with the account, its rights and the next step.
+   The hold is for what a person can change and the runner then sees by itself (a connection, an installation, an
+   approval, an authorisation); a missing right to push is not such a state. While the acting user's credential is
    unchanged the access is checked again at most every 30 s (an installation, an approval or an authorisation at
    GitHub reaches the runner only through a new check); a new credential is checked at once; a changed reason or step
    is announced again. At `until` it is rejected with the timeout text followed by the step. A credential GitHub refused is remembered by its record
@@ -1384,7 +1399,7 @@ Pipeline for every `request_operation`:
 | `github.list_repositories` | `GET /user/installations` → `GET /user/installations/{id}/repositories` (paginated); a token without the GitHub App (`403` on `/user/installations`, ADR-053) lists `GET /user/repos` (paginated, same limits) instead - the same for a connection with an existing token (§11.4); mark `allowed` from settings (every entry when the workgroup sets no list, ADR-054) |
 | `github.checkout` | resolve ref (`GET /repos/{r}/commits/{ref}`) → `GET /repos/{r}/tarball/{sha}` streamed to scratch → safe extraction (regular files/dirs only; reject absolute, `..`, links, devices; strip the top directory; size limits) → re-tar → `files/import?dir=repos/<owner>/<name>&replace=true` (`<owner>/<name>` in lower case: GitHub names, the allow-list and the dedupe are case-insensitive; the result's `dir` names the path, KOR-10); remember base sha per (session, repo) |
 | `github.get_pull_request` | `GET /repos/{r}/pulls/{n}` (an open pull request whose `mergeable` is `null` – GitHub computes it asynchronously – is read again after 1 s and 2 s, then `null` is passed on with `mergeable_state`; KOR-48), `/files` (paginated), `/issues/{n}/comments` |
-| `github.create_branch` | `GET /repos/{r}/git/ref/heads/{from}` (or commit sha) → `POST /repos/{r}/git/refs` |
+| `github.create_branch` | `GET /repos/{r}/git/ref/heads/{from}` (or commit sha) → `POST /repos/{r}/git/refs`; through the fork (HOT-33, below): `POST /repos/{r}/forks` when there is none yet → `POST /repos/{fork}/merge-upstream {branch: from}` (a `from` that names a branch) → `POST /repos/{fork}/git/refs` |
 | `github.commit` | uses the snapshot taken in step 3 (no second export) → parent = head of `branch` at GitHub at check time, or the checkout commit if the branch does not exist → compare with the parent tree (`GET /repos/{r}/git/trees/{parent_tree}?recursive=1`; blob and tree SHA-1 computed locally in git object format) → dedupe fields include the local tree SHA → after acceptance `POST /git/blobs` for changed files → `POST /git/trees` with `base_tree` (+ deletions) → verify returned tree SHA = local (`tree_mismatch`) → `POST /git/commits` (parent as determined) |
 | `github.push` | check fast-forward (`GET /repos/{r}/compare/{head}...{sha}` status `ahead`/`identical`) → `PATCH /repos/{r}/git/refs/heads/{branch}` `force:false` or `POST /git/refs` if missing; the push of a merge commit marks its preparation `pushed` (KOR-48) |
 | `github.merge_base` (KOR-48, ADR-084 §4) | pre-check: `GET /repos/{r}/pulls/{n}` (open, head in the same repository) → base tip `GET /git/ref/heads/{base}` → merge base `GET /compare/{tip}...{head}` (`up_to_date` when equal) → workspace protection (one export, compared with the head's tree and the stored digest; `workspace_dirty`) · executor: the trees of merge base, head and tip (`GET /git/commits`, `GET /git/trees?recursive=1`) → `merge3.merge_entries` → contents from the head's, then the base's tarball, each member checked against its blob SHA (`GET /git/blobs/{sha}` for the rest, ≤ 1000) → line merges (diff3 style) → one plain tar → `files/import?…&replace=true` → merged blobs of protected names `POST /git/blobs` → `runner.merge_prep` (migration `0027_merge_prep`) and `runner.workspace_state`; both pruned after 7 days by `retention` |
@@ -1449,8 +1464,12 @@ A new need of sessions is checked against this rule before a VM tool is offered 
 - Created only after hub acceptance of `subagent.request` (the limits depth, running and total are settings of the
   hub, ADR-088 §2, enforced in check H4; the runner pre-checks them with the values of the device state's `limits`
   and the room of the parent's VM).
-- Same VM, new sandbox, `depth = parent.depth + 1`, `parent_session_id` set, same task, same model access as the
-  parent unless `model_id` given and allowed. Initial prompt = `"Purpose: <purpose>\n\n<prompt>"` (prompt ID = the
+- Same VM, new sandbox, `depth = parent.depth + 1`, `parent_session_id` set, same task. Model access as for the main
+  session (§10.7: the owner's preference, `fallback`, the task's `model_consent`, the freest allowed access first),
+  model of the parent. A given `model_id` must be in the catalog of some access kind (`model_not_allowed`) and is then
+  required: the child takes only an access whose catalog allows it (a DeepSeek model: `platform`), under the same
+  class rules; when no allowed access serves it, the operation fails before the start with `model_not_allowed` (or
+  `budget_exceeded`) and a sentence naming the reason. A resumed child keeps its requested model (HOT-31). Initial prompt = `"Purpose: <purpose>\n\n<prompt>"` (prompt ID = the
   operation ID: the child's first instruction); harness adds "You are a subagent session of session <parent> for task
   <task>; answer each instruction of your main agent with your last message of that turn; you keep running and
   receive further instructions until your main agent stops you; you may request further subagents only via
