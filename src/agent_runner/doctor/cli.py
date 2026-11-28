@@ -11,7 +11,7 @@ afterwards, `vm.cli.existing_store`); it makes no hub request. Facts, one per li
     runner.status.keys orgs=<verified org logs> scope_keys=<n>
     runner.status.vm vm_id=… lima_name=… state=… wg_id=<id|none> golden_version=…      (per VM, not deleted)
     runner.status.session session_id=… state=… wg_id=… vm_id=<id|none> depth=<n>        (per session not ended)
-    runner.status.pool size=<POOL_SIZE> ready=<n>
+    runner.status.pool size=1 ready=<n>              (the fixed POOL_SIZE; 0 only under TEST_POOL_EMPTY in test mode)
     runner.capacity budget_mib=… used_mib=… slots_total=… slots_free=… pool_ready=… capacity_low=yes|no
 
 `doctor` runs the checks of `doctor.checks` and prints `runner.doctor.check name=… result=ok|warn|fail detail=…

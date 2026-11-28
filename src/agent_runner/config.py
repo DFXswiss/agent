@@ -36,6 +36,12 @@ DEFAULT_CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 OPERATOR_GITHUB_ONE_USER = "OPERATOR_GITHUB_USERS:one_user_only"
 """The error name of an `OPERATOR_GITHUB_USERS` with more than one user (`doctor` and the daemon refuse it)."""
 DeviceKind = Literal["org", "platform"]
+POOL_SIZE = 1
+"""The warm pool of every device, platform and own devices alike: exactly one ready VM, fixed in the code and no
+setting (ADR-009 addendum of 2026-11-26)."""
+RETIRED_NAMES = ("POOL_SIZE",)
+"""Former settings that are no longer read: a set one is accepted (no `config_invalid`, so an old `runner.env` or plist
+still starts), listed in `Config.ignored` and reported once at the daemon's start."""
 
 # Every name of section 1.3 plus VM_PREFIX (ADR-027 section 7). A variable with the prefix that is not listed is
 # refused, so a typo never silently falls back to a default.
@@ -46,7 +52,6 @@ NAMES = (
     "VM_CPUS",
     "VM_MEMORY_MIB",
     "VM_DISK_GIB",
-    "POOL_SIZE",
     "MEMORY_RESERVE_MIB",
     "SESSIONS_PER_VM",
     "MAX_VMS",
@@ -71,6 +76,7 @@ NAMES = (
     "LOGIN_SANDBOX",
     "GOLDEN_TEMPLATE",
     "TEST_MODE",
+    "TEST_POOL_EMPTY",
     "VM_PREFIX",
     "OPERATOR_SUBSCRIPTION_DIR",
     "OPERATOR_SUBSCRIPTION_ORGS",
@@ -113,7 +119,6 @@ _INTEGERS: dict[str, tuple[int, int, int]] = {
     "VM_CPUS": (4, 1, 256),
     "VM_MEMORY_MIB": (8192, 1024, 4_194_304),
     "VM_DISK_GIB": (20, 5, 65_536),
-    "POOL_SIZE": (2, 0, 64),
     "MEMORY_RESERVE_MIB": (32768, 0, 4_194_304),
     # ADR-075 section 1: occupying sessions per VM and VMs of the device that occupy a slot; 0 = no such limit
     "SESSIONS_PER_VM": (16, 0, 1_000_000),
@@ -177,7 +182,6 @@ class Config:
     vm_cpus: int
     vm_memory_mib: int
     vm_disk_gib: int
-    pool_size: int
     memory_reserve_mib: int
     session_idle_seconds: int
     vm_idle_seconds: int
@@ -279,6 +283,16 @@ class Config:
     """`LOGIN_SANDBOX`: where the mailbox automation drives its browser (ADR-100 section 3): `vm` - a login VM per
     login (the work VMs), `process` - a Chromium process of the device per login (devices without work VMs, the
     hermetic end-to-end topology)."""
+    ignored: tuple[str, ...] = ()
+    """Retired settings (`RETIRED_NAMES`) that were set anyway; their values are not read."""
+    test_pool_empty: bool = False
+    """`TEST_POOL_EMPTY=1`, only together with `TEST_MODE=1`: the pool is held empty so the E2E suite can measure the
+    clone path (E2E-07, PERF-02). Never a production setting: without test mode it is `config_invalid`."""
+
+    @property
+    def pool_size(self) -> int:
+        """The warm pool of this runner: the fixed `POOL_SIZE` (0 only while a test holds it empty)."""
+        return 0 if self.test_pool_empty else POOL_SIZE
 
     @property
     def contexts_dir(self) -> Path:
@@ -308,13 +322,17 @@ def load_config(
     """
     check_platform(platform)
     for key in sorted(env):
-        if key.startswith(PREFIX) and key[len(PREFIX) :] not in NAMES:
+        if key.startswith(PREFIX) and key[len(PREFIX) :] not in NAMES + RETIRED_NAMES:
             raise RunnerError("config_invalid", key[len(PREFIX) :])
+    ignored = tuple(name for name in RETIRED_NAMES if PREFIX + name in env)
 
     def raw(name: str) -> str:
         return env.get(PREFIX + name, "")
 
     test_mode = _flag(raw("TEST_MODE"), "TEST_MODE")
+    test_pool_empty = _flag(raw("TEST_POOL_EMPTY"), "TEST_POOL_EMPTY")
+    if test_pool_empty and not test_mode:
+        raise RunnerError("config_invalid", "TEST_POOL_EMPTY")
     hub_url = _optional(raw("HUB_URL"), "HUB_URL", require, lambda v: _url(v, "HUB_URL", test_mode))
     root_key = _optional(raw("PLATFORM_ROOT_KEY"), "PLATFORM_ROOT_KEY", require, _root_key)
     integers = {name: _integer(raw(name), name, *limits) for name, limits in _INTEGERS.items()}
@@ -345,7 +363,6 @@ def load_config(
         vm_cpus=integers["VM_CPUS"],
         vm_memory_mib=integers["VM_MEMORY_MIB"],
         vm_disk_gib=integers["VM_DISK_GIB"],
-        pool_size=integers["POOL_SIZE"],
         memory_reserve_mib=integers["MEMORY_RESERVE_MIB"],
         sessions_per_vm=integers["SESSIONS_PER_VM"],
         max_vms=integers["MAX_VMS"],
@@ -400,6 +417,8 @@ def load_config(
         browser_idle_seconds=integers["BROWSER_IDLE_SECONDS"],
         browser_live_max_kbps=integers["BROWSER_LIVE_MAX_KBPS"],
         browser_search_url=_search_url(raw("BROWSER_SEARCH_URL")),
+        ignored=ignored,
+        test_pool_empty=test_pool_empty,
     )
 
 
@@ -502,10 +521,12 @@ def environment(config: Config) -> dict[str, str]:
         out[PREFIX + "CLAUDE_OAUTH_CLIENT_ID"] = config.claude_oauth_client_id
     if config.login_automation_set:
         out[PREFIX + "LOGIN_AUTOMATION"] = "on" if config.login_automation else "off"
-    if config.test_mode:
-        out[PREFIX + "TEST_MODE"] = "1"
-    if config.workvm_slots_self:
-        out[PREFIX + "WORKVM_SLOTS_SELF"] = "1"
+    switches = {
+        "TEST_MODE": config.test_mode,
+        "WORKVM_SLOTS_SELF": config.workvm_slots_self,
+        "TEST_POOL_EMPTY": config.test_pool_empty,
+    }
+    out.update({PREFIX + name: "1" for name, on in switches.items() if on})
     return out
 
 

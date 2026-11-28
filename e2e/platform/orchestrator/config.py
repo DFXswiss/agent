@@ -151,6 +151,9 @@ def build_config(  # noqa: PLR0912 - one validation per option
         numbers[name] = int(text)
     if not 1 <= numbers["E2E_RUNNERS"] <= 4:
         raise ConfigError("E2E_RUNNERS must be 1..4")
+    if numbers["E2E_POOL_SIZE"] > 1:
+        # The runner's warm pool is fixed at 1 (ADR-009 addendum); 0 holds it empty (AGENT_RUNNER_TEST_POOL_EMPTY).
+        raise ConfigError("E2E_POOL_SIZE must be 0 (pool held empty) or 1 (the runner's fixed pool)")
     budget_text = environ.get("E2E_VM_MEMORY_BUDGET_MIB")
     if budget_text is not None and not budget_text.isdigit():
         raise ConfigError("E2E_VM_MEMORY_BUDGET_MIB must be a number of MiB")

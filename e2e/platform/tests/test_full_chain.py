@@ -93,10 +93,10 @@ def test_pool_status(ctx: Context) -> None:  # noqa: F811
     assert isinstance(node, StubNode)
     node.runs["pool status"] = {
         "rc": 0,
-        "stdout": "runner.pool.vm vm_id=v\nrunner.pool size=2 ready=1 golden=g refill=pending\n",
+        "stdout": "runner.pool.vm vm_id=v\nrunner.pool size=1 ready=0 golden=g refill=pending\n",
         "stderr": "",
     }
-    assert call(ctx, "GET", "/pool") == (200, {"runner-1": {"size": 2, "ready": 1, "golden": "g", "refill": "pending"}})
+    assert call(ctx, "GET", "/pool") == (200, {"runner-1": {"size": 1, "ready": 0, "golden": "g", "refill": "pending"}})
     node.runs["pool status"] = {"rc": 1, "stdout": "", "stderr": "runner.error code=store_unavailable"}
     status, answer = call(ctx, "GET", "/pool")
     assert (status, answer["error"]) == (500, "failed")
@@ -113,29 +113,31 @@ def test_pool_drain_deletes_the_reported_pool_vms_and_sets_the_size(
     assert isinstance(node, StubNode)
     runner = ctx.runners["runner-1"]
     runner.env["AGENT_RUNNER_VM_PREFIX"] = "wp-t-e2e-r1-"
-    for body in ({"size": -1}, {"size": 9}, {"size": True}, ["x"]):
+    # The runner's pool is fixed at 1 (ADR-009 addendum): 0 holds it empty, 1 is its own pool, nothing else.
+    for body in ({"size": -1}, {"size": 2}, {"size": 9}, {"size": True}, ["x"]):
         assert call(ctx, "POST", "/pool/drain", body)[0] == 400
     listing = "runner.pool.vm vm_id=vm-1 lima_name=wp-t-e2e-r1-arp-1 golden_version=g created_at=t instance=Running\n"
     listing += "runner.pool.vm vm_id=vm-2 lima_name=foreign-arp-2 golden_version=g created_at=t instance=Running\n"
-    before = {"rc": 0, "stdout": listing + "runner.pool size=2 ready=2 golden=g refill=full\n", "stderr": ""}
+    before = {"rc": 0, "stdout": listing + "runner.pool size=1 ready=2 golden=g refill=full\n", "stderr": ""}
     node.runs["pool status"] = before
     # The restarted daemon's reconciliation removes the deleted rows; the foreign VM is not a pool VM of the run.
-    after = {"rc": 0, "stdout": "runner.pool size=0 ready=0 golden=g refill=full\n", "stderr": ""}
+    after = {"rc": 0, "stdout": "runner.pool size=0 ready=0 golden=g refill=disabled\n", "stderr": ""}
     monkeypatch.setattr(pool, "pause", lambda _seconds: node.runs.update({"pool status": after}))
     assert call(ctx, "POST", "/pool/drain") == (200, {"runner-1": {"deleted": ["wp-t-e2e-r1-arp-1"], "size": 0}})
     node.runs["pool status"] = before
     deletes = [args["argv"] for op, args in node.calls if op == "run" and args["argv"][0] == "limactl"]
     assert deletes == [["limactl", "delete", "-f", "wp-t-e2e-r1-arp-1"]]
-    assert runner.env["AGENT_RUNNER_POOL_SIZE"] == "0"
+    assert runner.env["AGENT_RUNNER_TEST_POOL_EMPTY"] == "1"
+    assert "AGENT_RUNNER_POOL_SIZE" not in runner.env
     assert [op for op, _ in node.calls if op in ("stop", "spawn")] == ["stop", "spawn"]
     # A stopped runner stays stopped; the size is set for its next start.
     runner.stop()
     node.calls.clear()
-    assert call(ctx, "POST", "/pool/drain", {"size": 2})[1] == {
-        "runner-1": {"deleted": ["wp-t-e2e-r1-arp-1"], "size": 2}
+    assert call(ctx, "POST", "/pool/drain", {"size": 1})[1] == {
+        "runner-1": {"deleted": ["wp-t-e2e-r1-arp-1"], "size": 1}
     }
     assert [op for op, _ in node.calls if op in ("stop", "spawn")] == []
-    assert runner.env["AGENT_RUNNER_POOL_SIZE"] == "2"
+    assert "AGENT_RUNNER_TEST_POOL_EMPTY" not in runner.env
     node.runs["pool status"] = {"rc": 1, "stdout": "", "stderr": "x"}
     assert call(ctx, "POST", "/pool/drain", {"size": 1})[1]["detail"] == "runner-1: pool status exited with 1"
 

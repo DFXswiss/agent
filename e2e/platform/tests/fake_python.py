@@ -179,7 +179,7 @@ if module == "agent_runner" and ARGS[2:] == ["pool", "status"]:
         print("runner.error code=store_unavailable", file=sys.stderr)
         sys.exit(1)
     print("runner.pool.vm vm_id=vm-00000001 lima_name=x golden_version=g created_at=t instance=Running")
-    print(f"runner.pool size=2 ready={switch('POOL_READY', '2')} golden=g refill=full")
+    print(f"runner.pool size=1 ready={switch('POOL_READY', '1')} golden=g refill=full")
     sys.exit(0)
 
 if module == "agent_runner" and ARGS[2:4] == ["image", "adopt"]:

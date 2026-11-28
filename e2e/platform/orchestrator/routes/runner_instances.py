@@ -7,7 +7,8 @@ runner instances with separate `AGENT_RUNNER_HOME`").
   and VM prefix `<run prefix>r<n>-` (the run's VM cleanup covers it), otherwise the environment of `runner-1`. It
   adopts the run's golden image when the run has one and starts waiting for enrollment (`POST
   /runners/{name}/enroll`). A different `AGENT_RUNNER_MEMORY_RESERVE_MIB` gives it a different capacity (E2E-38:
-  capacity-based scheduling); `pool_size` sets its warm pool (default: that of `runner-1`). An instance that will
+  capacity-based scheduling); `pool_size` 0 holds its warm pool empty (`AGENT_RUNNER_TEST_POOL_EMPTY`), 1 is the
+  runner's fixed pool of one VM (ADR-009 addendum; default: that of `runner-1`). An instance that will
   enroll as an org device (`"device": "org"`) gets no platform OpenRouter key file (the runner refuses it on org
   devices, 05-runner.md section 1.3). `session_idle_seconds` / `vm_idle_seconds` (60 s minimum) let an idle session
   be suspended and then its VM stop quickly (E2E-38: the scheduler's stopped-VM path). `sessions_per_vm` and
@@ -33,12 +34,12 @@ from typing import Any
 from orchestrator import vms
 from orchestrator.context import Context
 from orchestrator.control import Route, RouteError
-from orchestrator.services import Runner
+from orchestrator.services import Runner, pool_env
 
 TEMPLATE = "runner-1"
 MAX_INDEX = 9
 MAX_RESERVE_MIB = 4_194_304
-MAX_POOL = 8
+MAX_POOL = 1
 GOLDEN_NOTE = "golden image "
 CLI_COMMANDS = (("doctor",), ("status",), ("status", "--json"))
 CLI_TIMEOUT_S = 120.0
@@ -127,7 +128,7 @@ def post_spawn(ctx: Context, params: dict[str, str], body: Any) -> tuple[int, An
     if reserve is not None:
         env["AGENT_RUNNER_MEMORY_RESERVE_MIB"] = str(reserve)
     if pool is not None:
-        env["AGENT_RUNNER_POOL_SIZE"] = str(pool)
+        pool_env(env, pool)
     if kind == "org":
         env.pop(KEY_FILE, None)
     for key, variable in IDLE_VARIABLES.items():

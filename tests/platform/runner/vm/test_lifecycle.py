@@ -52,8 +52,8 @@ def test_pool_path_then_running_vm(harness: Harness) -> None:
     first, again = harness.run(body)
     assert first.id == again.id
     assert first.state == "running"
-    # The second call found the running VM: no further clone or assignment.
-    assert [argv[0] for argv, _ in harness.fake.calls].count("clone") == 2
+    # One clone for the pool of 1; the second call found the running VM: no further clone or assignment.
+    assert [argv[0] for argv, _ in harness.fake.calls].count("clone") == 1
     assert harness.sql("SELECT last_session_at FROM runner.vm WHERE id = %s", (first.id,))[0]["last_session_at"]
 
 
@@ -318,13 +318,12 @@ def test_stopped_vm_restarts_without_any_ready_golden(harness: Harness) -> None:
 
 def test_clone_gives_up_a_pool_vm_when_no_slot_is_free(harness: Harness) -> None:
     harness.add_golden()
-    harness.physical_mib = 32768 + 2 * 8192
-    harness.settings = settings(pool_size=2)
+    harness.physical_mib = 32768 + 8192  # one slot, held by the one pool VM of the fixed pool size
 
     async def body(manager: VmManager) -> Any:
         return await manager.refill()
 
-    harness.run(body)
+    assert harness.run(body) == 1
     harness.sql("UPDATE runner.golden SET state = 'retired'")
     harness.add_golden("g2", minute=5)
 
@@ -602,7 +601,7 @@ def test_health_of_a_guest_assigned_elsewhere_and_vanished_rows(harness: Harness
 
 def test_reconcile(harness: Harness) -> None:
     harness.add_golden()
-    harness.settings = settings(pool_size=3)
+    harness.settings = settings(pool_size=3)  # several pool VMs (more than the runner's 1) for every kind of leftover
     harness.physical_mib = 32768 + 8 * 8192
 
     async def setup(manager: VmManager) -> Any:
@@ -715,7 +714,7 @@ def test_touch_and_capacity(harness: Harness) -> None:
         return capacity, await records.get(manager.env.db, row.id)
 
     capacity, row = harness.run(body)
-    assert (capacity.slots_total, capacity.slots_free, capacity.pool_ready) == (4, 2, 2)
+    assert (capacity.slots_total, capacity.slots_free, capacity.pool_ready) == (4, 3, 1)
     assert row.last_session_at is not None
 
 
@@ -828,7 +827,7 @@ def test_restart_whose_row_changed_meanwhile(harness: Harness, monkeypatch: pyte
 def test_slot_from_a_pool_vm_that_was_taken_meanwhile(harness: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
     harness.add_golden()
     harness.physical_mib = 32768 + 2 * 8192
-    harness.settings = settings(pool_size=2)
+    harness.settings = settings(pool_size=2)  # two pool VMs (more than the runner's 1) to see the second one taken
 
     async def fill(manager: VmManager) -> Any:
         return await manager.refill()

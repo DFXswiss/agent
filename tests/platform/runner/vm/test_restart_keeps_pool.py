@@ -17,9 +17,9 @@ def test_pool_vms_survive_a_restart(harness: Harness) -> None:
     async def fill(manager: VmManager) -> Any:
         return await manager.refill()
 
-    assert harness.run(fill) == 2
+    assert harness.run(fill) == 1  # the fixed pool of 1 (ADR-009 addendum)
     before = harness.live()
-    assert [row["state"] for row in before] == ["pool", "pool"]
+    assert [row["state"] for row in before] == ["pool"]
 
     async def restart(manager: VmManager) -> Any:
         return await manager.reconcile()

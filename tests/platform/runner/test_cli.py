@@ -443,6 +443,37 @@ def test_run_until_sigterm(
     assert "runner.supervisor stopped" in err
 
 
+@pytest.mark.parametrize("left_over", ["0", "4"])
+def test_run_with_a_left_over_pool_setting_starts_and_reports_it_once(
+    make_host: Callable[..., Any],
+    *,
+    env_for: Callable[..., dict[str, str]],
+    runner_home: Path,
+    area_package: Callable[[dict[str, str]], str],
+    store_tools: tuple[ClusterTools, list[str]],
+    runner_dsn: str,
+    tmp_path: Path,
+    left_over: str,
+) -> None:
+    """ADR-009 addendum: an old AGENT_RUNNER_POOL_SIZE in runner.env is no config_invalid; the daemon starts, names
+    it once in its log and keeps the fixed pool of 1."""
+    tools, _ = store_tools
+    marker = tmp_path / "marker"
+    pkg = area_package({"probe/tasks.py": STOP_TASK})
+    env = run_env(env_for, runner_home, marker, runner_dsn, AGENT_RUNNER_POOL_SIZE=left_over)
+    captured = make_host(env, cluster=tools, package=pkg, install_signals=True)
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        assert run_cli(["run"], captured.host) == 0
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    assert captured.stdout.getvalue() == (
+        "runner.config_ignored name=POOL_SIZE pool_size=1\n"
+        f'runner.migrate result="{APPLIED}"\nrunner.run tasks=1 enrolled=no\n'
+    )
+    assert "config_invalid" not in captured.stderr.getvalue()
+
+
 def test_run_enrolled_json(
     make_host: Callable[..., Any],
     *,

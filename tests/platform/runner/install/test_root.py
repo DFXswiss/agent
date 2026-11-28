@@ -505,7 +505,7 @@ def test_postinstall_installs_enrolls_and_publishes(kit: Kit, keys: Keys) -> Non
     runner = plistlib.loads(layout.runner_plist.read_bytes())
     assert runner["UserName"] == "alice"
     assert runner["EnvironmentVariables"]["AGENT_RUNNER_HOME"] == str(home)
-    assert runner["EnvironmentVariables"]["AGENT_RUNNER_POOL_SIZE"] == "0"
+    assert "AGENT_RUNNER_POOL_SIZE" not in runner["EnvironmentVariables"]
     assert runner["EnvironmentVariables"]["AGENT_RUNNER_MEMORY_RESERVE_MIB"] == "4096"
     assert plistlib.loads(layout.maintenance_plist.read_bytes()) == daemons.maintenance_plist(kit.system)
     assert mode(layout.maintenance_file) == 0o600

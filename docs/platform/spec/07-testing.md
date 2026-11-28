@@ -118,7 +118,7 @@ the end: no outbound connection except to the doubles (egress log of the orchest
 | ID | Name | Pass criterion |
 |---|---|---|
 | PERF-01 | Time to working, warm pool | 20 first tasks in new orgs, runner device: p95 `first_working_at − created_at` < 10 s, max < 10 s; plus 10 runs "new workgroup in an existing org" with the same bounds |
-| PERF-02 | Time to working, clone fallback | pool size 0, 10 runs: max < 10 s and p95 < 10 s |
+| PERF-02 | Time to working, clone fallback | pool held empty (the runner's pool is fixed at 1; the suite holds it empty with `AGENT_RUNNER_TEST_POOL_EMPTY=1` in test mode, ADR-009 addendum), 10 runs: max < 10 s and p95 < 10 s |
 | PERF-03 | Event latency | runner outbox write → browser frame, 1000 events: p95 < 300 ms (T1 and T2) |
 | PERF-04 | Terminal live latency | recorder write → xterm render: p95 < 1 s |
 | PERF-05 | 30 parallel VMs | 30 workgroups with one session each on the runner device; all reach `working`; hub and runner stay responsive (PERF-03 holds) |

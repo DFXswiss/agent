@@ -67,7 +67,7 @@ def ctx(tmp_path: Path) -> Context:
         "AGENT_RUNNER_OPENROUTER_KEY_FILE": "/scratch/platform-openrouter.key",
         "AGENT_RUNNER_HOME": "/scratch/runner-1",
         "AGENT_RUNNER_VM_PREFIX": f"{PREFIX}r1-",
-        "AGENT_RUNNER_POOL_SIZE": "2",
+        "AGENT_RUNNER_TEST_POOL_EMPTY": "1",
     }
     context.runners["runner-1"] = Runner(node, "runner-1", "/agent/python", env)
     node.alive_names.add("runner-1")
@@ -88,7 +88,7 @@ def node_of(ctx: Context) -> InstanceNode:
 
 
 def test_spawn_copies_runner_1_with_own_home_prefix_and_capacity(ctx: Context) -> None:
-    ctx.notes += ["pool size 2", "golden image cache-golden-abc"]
+    ctx.notes += ["pool size 0", "golden image cache-golden-abc"]
     options = {
         "memory_reserve_mib": 0,
         "pool_size": 1,
@@ -111,7 +111,9 @@ def test_spawn_copies_runner_1_with_own_home_prefix_and_capacity(ctx: Context) -
     assert env["AGENT_RUNNER_VM_PREFIX"] == f"{PREFIX}r2-"
     assert (env["AGENT_RUNNER_SESSIONS_PER_VM"], env["AGENT_RUNNER_MAX_VMS"]) == ("1", "2")
     assert env["AGENT_RUNNER_MEMORY_RESERVE_MIB"] == "0"
-    assert env["AGENT_RUNNER_POOL_SIZE"] == "1"
+    # pool_size 1: the runner's own fixed pool, so the template's hold is not copied (ADR-009 addendum).
+    assert "AGENT_RUNNER_TEST_POOL_EMPTY" not in env
+    assert "AGENT_RUNNER_POOL_SIZE" not in env
     assert (env["AGENT_RUNNER_SESSION_IDLE_SECONDS"], env["AGENT_RUNNER_VM_IDLE_SECONDS"]) == ("60", "90")
     assert ctx.runners["runner-1"].env["AGENT_RUNNER_HOME"] == "/scratch/runner-1"
     adopt = [argv for argv, _ in node.runs if argv[3:5] == ["image", "adopt"]]
@@ -130,10 +132,13 @@ def test_spawn_defaults_without_golden(ctx: Context) -> None:
     assert env["AGENT_RUNNER_OPENROUTER_KEY_FILE"] == "/scratch/platform-openrouter.key"
     assert "AGENT_RUNNER_MEMORY_RESERVE_MIB" not in env
     assert "AGENT_RUNNER_VM_IDLE_SECONDS" not in env
-    assert env["AGENT_RUNNER_POOL_SIZE"] == "2"
+    assert env["AGENT_RUNNER_TEST_POOL_EMPTY"] == "1"  # runner-1's held pool
     assert node.runs == []
     assert call(ctx, "POST", "/runners/runner-4/spawn", {"device": "org"})[0] == 200
     assert "AGENT_RUNNER_OPENROUTER_KEY_FILE" not in node.spawned["runner-4"]
+    del ctx.runners["runner-1"].env["AGENT_RUNNER_TEST_POOL_EMPTY"]
+    assert call(ctx, "POST", "/runners/runner-5/spawn", {"pool_size": 0})[0] == 200
+    assert node.spawned["runner-5"]["AGENT_RUNNER_TEST_POOL_EMPTY"] == "1"
 
 
 @pytest.mark.parametrize(
@@ -147,8 +152,8 @@ def test_spawn_defaults_without_golden(ctx: Context) -> None:
         ("runner-2", {"device": "hub"}, "device must be platform or org"),
         ("runner-2", {"memory_reserve_mib": -1}, "memory_reserve_mib must be 0..4194304 or null"),
         ("runner-2", {"memory_reserve_mib": True}, "memory_reserve_mib must be 0..4194304 or null"),
-        ("runner-2", {"pool_size": 9}, "pool_size must be 0..8 or null"),
-        ("runner-2", {"pool_size": "1"}, "pool_size must be 0..8 or null"),
+        ("runner-2", {"pool_size": 2}, "pool_size must be 0..1 or null"),
+        ("runner-2", {"pool_size": "1"}, "pool_size must be 0..1 or null"),
         ("runner-2", {"sessions_per_vm": 1001}, "sessions_per_vm must be 0..1000 or null"),
         ("runner-2", {"max_vms": -1}, "max_vms must be 0..1000 or null"),
     ],

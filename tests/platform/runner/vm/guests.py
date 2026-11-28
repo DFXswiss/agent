@@ -194,7 +194,8 @@ WG_A = "01930002-0000-7000-8000-00000000000a"
 WG_B = "01930002-0000-7000-8000-00000000000b"
 WG_C = "01930002-0000-7000-8000-00000000000c"
 NOW = datetime(2026, 11, 21, 12, 0, 0, tzinfo=UTC)
-SETTINGS = VmSettings(cpus=4, memory_mib=8192, disk_gib=20, pool_size=2, memory_reserve_mib=32768, vm_idle_seconds=1800)
+# The runner's pool size: the default of `VmSettings`, fixed at 1 (ADR-009 addendum).
+SETTINGS = VmSettings(cpus=4, memory_mib=8192, disk_gib=20, memory_reserve_mib=32768, vm_idle_seconds=1800)
 
 
 @dataclass
