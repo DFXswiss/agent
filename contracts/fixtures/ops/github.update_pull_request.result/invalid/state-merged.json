@@ -1,0 +1,8 @@
+{
+  "number": 42,
+  "url": "https://github.com/example-org/example-repo/pull/42",
+  "title": "Fix the login on Safari",
+  "state": "merged",
+  "draft": false,
+  "labels": []
+}

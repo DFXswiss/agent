@@ -75,6 +75,12 @@
       "dedupe": false
     },
     {
+      "type": "github.update_pull_request",
+      "params": "ops/github.update_pull_request.params.json",
+      "result": "ops/github.update_pull_request.result.json",
+      "dedupe": false
+    },
+    {
       "type": "github.list_pull_requests",
       "params": "ops/github.list_pull_requests.params.json",
       "result": "ops/github.list_pull_requests.result.json",

@@ -32,6 +32,8 @@ SPEC_OPERATIONS: dict[str, tuple[set[str], set[str]]] = {
     "github.get_issue": ({"repo", "number"}, {"comments_page", "comments_per_page"}),
     "github.create_issue": ({"repo", "title"}, {"body", "labels"}),
     "github.update_issue": ({"repo", "number"}, {"state", "state_reason", "title", "body", "labels"}),
+    # HOT-30
+    "github.update_pull_request": ({"repo", "number"}, {"title", "body", "draft", "labels"}),
     "github.list_pull_requests": ({"repo"}, {"state", "base", "sort", "direction", "per_page", "page"}),
     "github.request_connection": (set(), set()),
     "subagent.request": ({"purpose", "prompt"}, {"model_id"}),

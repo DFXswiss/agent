@@ -7,7 +7,8 @@ Routes (`ROUTES`, the REST subset the runner uses, 05-runner.md §11.4 and §12.
   ``GET /login/device`` (an informational page; the decision is made through ``POST /_double/device``).
 - REST on the API host: user, installations and ``GET /user/repos``, repositories, commits, tarball (``302`` to the
   codeload-like route ``GET /codeload/{owner}/{repo}/legacy.tar.gz/{ref}``), refs, the Git Data API, compare, pull
-  requests (``GET …/pulls`` filters by ``state``, ``head``, ``base`` and sorts by ``sort``/``direction``), issues
+  requests (``GET …/pulls`` filters by ``state``, ``head``, ``base`` and sorts by ``sort``/``direction``;
+  ``PATCH …/pulls/{number}`` changes ``title``, ``body`` and ``state``, HOT-30), issues
   (``GET …/issues``: issues and pull requests in issue form, filtered by ``state`` and ``labels``, sorted by
   ``sort``/``direction``; ``GET``/``PATCH …/issues/{number}``, ``POST …/issues``) and issue comments. A repository
   with ``has_issues: false`` answers the issue routes ``410 Issues are disabled for this repo`` (comments too, unless
@@ -21,6 +22,9 @@ Routes (`ROUTES`, the REST subset the runner uses, 05-runner.md §11.4 and §12.
   commit id is the one git computes for the signed object). Wrong JSON types are ``422`` in GitHub's wording. The
   ``verification`` of commit answers (git commit, REST commit, compare) and the account attribution by email
   (``author``/``committer`` of the REST commit) follow `agent_doubles.github.repos`.
+- GraphQL (HOT-30): ``POST /graphql`` answers only the two mutations of a pull request's draft state
+  (``convertPullRequestToDraft``, ``markPullRequestReadyForReview``), with ``200`` and ``data`` or ``errors`` like
+  GitHub; the node's repository is checked like a REST write of pull requests.
 - SSH signing keys of the authenticated user: ``GET``/``POST /user/ssh_signing_keys``,
   ``GET``/``DELETE /user/ssh_signing_keys/{key_id}`` (``POST {title?, key}`` is ``201 {key, id, title,
   created_at}``; an invalid or already registered key ``422 Validation Failed``; another account's or an unknown key
@@ -233,6 +237,7 @@ ROUTES = (
     Route("GET", "/repos/{owner}/{repo}/pulls", "api", "list_pulls"),
     Route("POST", "/repos/{owner}/{repo}/pulls", "api", "create_pull"),
     Route("GET", "/repos/{owner}/{repo}/pulls/{number}", "api", "get_pull"),
+    Route("PATCH", "/repos/{owner}/{repo}/pulls/{number}", "api", "update_pull"),
     Route("GET", "/repos/{owner}/{repo}/pulls/{number}/files", "api", "pull_files"),
     Route("GET", "/repos/{owner}/{repo}/pulls/{number}/commits", "api", "pull_commits"),
     Route("GET", "/repos/{owner}/{repo}/pulls/{number}/reviews", "api", "list_reviews"),
@@ -247,6 +252,7 @@ ROUTES = (
     Route("GET", "/repos/{owner}/{repo}/issues/{number}/comments", "api", "list_comments"),
     Route("POST", "/repos/{owner}/{repo}/issues/{number}/comments", "api", "create_comment"),
     Route("POST", "/credentials/revoke", "revoke", "revoke_credentials"),
+    Route("POST", "/graphql", "api", "graphql"),
 )
 ROUTE_KEYS = frozenset(route.key for route in ROUTES)
 # What an API route handler returns: status, JSON payload (bytes for an empty redirect body) and extra headers.
@@ -260,12 +266,26 @@ WRITE_PERMISSIONS = {
     "create_commit": "contents",
     "merge_upstream": "contents",
     "create_pull": "pull_requests",
+    "update_pull": "pull_requests",
+    "graphql": "pull_requests",
     "create_comment": "issues",
     "create_issue": "issues",
     "update_issue": "issues",
 }
 SIGNING_SCOPES = ("read:ssh_signing_key", "write:ssh_signing_key", "admin:ssh_signing_key")
 """The classic scopes of SSH signing keys, each including the ones before it."""
+
+
+GRAPHQL_MUTATIONS = ("convertPullRequestToDraft", "markPullRequestReadyForReview")
+"""The GraphQL mutations the double answers (a pull request's draft state, HOT-30)."""
+
+
+def graphql_error(mutation: str | None, kind: str, message: str) -> dict[str, Any]:
+    """A GraphQL answer with one error, as GitHub sends it with status ``200``."""
+    error: dict[str, Any] = {"type": kind, "message": message, "locations": [{"line": 1, "column": 1}]}
+    if mutation is None:
+        return {"errors": [error]}
+    return {"data": {mutation: None}, "errors": [{**error, "path": [mutation]}]}
 
 
 def match_route(method: str, path: str) -> tuple[Route, dict[str, str]] | None:
@@ -1371,6 +1391,62 @@ class _Handler(DoubleHandler):
         repo = call.the_repo
         known = repo.read_mergeability(pull) and not (call.fault is not None and call.fault.kind == "mergeable_unknown")
         return 200, render.pull(self.double.urls, self.double.world, repo, pull, known=known), []
+
+    def _r_update_pull(self, call: Call) -> Result:
+        """``PATCH …/pulls/{number}``: ``title``, ``body`` and ``state`` as GitHub takes them. GitHub ignores ``draft``
+        here (only GraphQL changes it), so a request that sends it is a failure of the client."""
+        pull, body = self._pull(call), call.json_body()
+        if "draft" in body:
+            self.double.fail(f"{call.route.key}: draft is ignored by GitHub (GraphQL changes it)")
+        title = body.get("title", pull.title)
+        if not isinstance(title, str) or not title:
+            raise Reply(422, render.validation_error("", "PullRequest", "title", code="missing_field"))
+        text = self._issue_text(body, "body") if "body" in body else pull.body
+        state = body.get("state", pull.state)
+        if state not in {"open", "closed"}:
+            raise invalid("PullRequest", "state")
+        world = self.double.world
+        now = world.stamp()
+        if state != pull.state:
+            pull.closed = now if state == "closed" else None
+        pull.title, pull.body, pull.state, pull.updated = title, text, state, now
+        return 200, render.pull(self.double.urls, world, call.the_repo, pull), []
+
+    def _pull_of_node(self, node: object) -> tuple[Repo, Pull] | None:
+        """The repository and pull request of a GraphQL node id, None for an unknown one."""
+        for repo in self.double.world.repos.values():
+            for pull in repo.pulls.values():
+                if node == render.node_id("PullRequest", pull.id):
+                    return repo, pull
+        return None
+
+    def _r_graphql(self, call: Call) -> Result:
+        """``POST /graphql`` (HOT-30): the two mutations of a pull request's draft state,
+        ``convertPullRequestToDraft`` and ``markPullRequestReadyForReview`` with ``variables.id``, answered like GitHub:
+        ``200`` with ``data`` or ``errors`` (``NOT_FOUND`` for a node the token cannot see, ``FORBIDDEN`` without the
+        right to write pull requests, ``UNPROCESSABLE`` for a closed pull request). Any other query is a failure."""
+        body = call.json_body()
+        query, variables = body.get("query"), body.get("variables")
+        mutation = next((name for name in GRAPHQL_MUTATIONS if isinstance(query, str) and name in query), None)
+        if mutation is None or not isinstance(variables, dict):
+            self.double.fail(f"{call.route.key}: unsupported GraphQL request")
+            return 200, graphql_error(None, "UNSUPPORTED", "The double answers only the draft mutations."), []
+        node = variables.get("id")
+        found = self._pull_of_node(node)
+        if found is None:
+            message = f"Could not resolve to a node with the global id of '{node}'"
+            return 200, graphql_error(mutation, "NOT_FOUND", message), []
+        repo, pull = found
+        call.params.update(owner=repo.owner, repo=repo.name)
+        try:
+            self._check_repo_access(call)
+        except Reply as refused:
+            kind = "NOT_FOUND" if refused.status == 404 else "FORBIDDEN"
+            return 200, graphql_error(mutation, kind, "Resource not accessible by integration"), []
+        if pull.state != "open":
+            return 200, graphql_error(mutation, "UNPROCESSABLE", "Pull request is closed"), []
+        pull.draft, pull.updated = mutation == "convertPullRequestToDraft", self.double.world.stamp()
+        return 200, {"data": {mutation: {"pullRequest": {"isDraft": pull.draft}}}}, []
 
     def _r_pull_files(self, call: Call) -> Result:
         repo = call.the_repo

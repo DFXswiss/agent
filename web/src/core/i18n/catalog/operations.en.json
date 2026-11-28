@@ -16,6 +16,7 @@
   "type.github.get_issue": "Read issue",
   "type.github.create_issue": "Create issue",
   "type.github.update_issue": "Update issue",
+  "type.github.update_pull_request": "Update pull request",
   "type.github.list_pull_requests": "List pull requests",
   "type.github.request_connection": "Request GitHub connection",
   "type.subagent.request": "Start subagent",

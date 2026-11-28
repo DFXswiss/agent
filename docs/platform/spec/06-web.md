@@ -546,7 +546,8 @@ after a reconnect; without a switch, or when the audit cannot be read, nothing i
     "duplicate of …" linking the original. Listed issues and pull requests (`github.list_issues`,
     `github.list_pull_requests`) show number (linked), title, state, draft and labels, with "more on page n" and
     the size-limit notice; a read issue (`github.get_issue`) shows title, author, state reason, its text and its page of
-    comments; `github.update_issue` shows the new state and reason (KOR-25). Texts from GitHub are untrusted: they are
+    comments; `github.update_issue` shows the new state and reason (KOR-25), `github.update_pull_request` the pull
+    request (linked) and its state (HOT-30). Texts from GitHub are untrusted: they are
     rendered only as text (never as Markdown or HTML), and only `https:` URLs become links.
   - `session.file` – "Changed `path`" with an expandable patch (monospace, no syntax highlighting dependency). The
     patch is rendered only while expanded and at most 20 000 characters at a time ("Show more"). Two or more

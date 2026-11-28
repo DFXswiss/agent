@@ -1371,6 +1371,7 @@ Pipeline for every `request_operation`:
 | `github.get_issue` | `GET /repos/{r}/issues/{n}` → `GET /repos/{r}/issues/{n}/comments?per_page&page` (one page; `comments_total` from the issue's `comments`); cut to 200 KiB (newest comments of the page first, then the body; `truncated`) |
 | `github.create_issue` | `POST /repos/{r}/issues` `{title, body?, labels?}` |
 | `github.update_issue` | `PATCH /repos/{r}/issues/{n}` with the given fields only (`state_reason` with `state`; `labels` replaces all) |
+| `github.update_pull_request` (HOT-30) | `GET /repos/{r}/pulls/{n}` → `title`/`body`: `PATCH /repos/{r}/pulls/{n}` with exactly those fields → `labels`: `PATCH /repos/{r}/issues/{n} {labels}` (replaces all) → `draft` other than the current state: GraphQL `convertPullRequestToDraft` / `markPullRequestReadyForReview` with the node id (the one GraphQL call of the runner: REST cannot change the draft state; `POST <api>/graphql`, for an API URL `<host>/api/v3` `<host>/api/graphql`) → `GET /repos/{r}/pulls/{n}` for the result; never a merge, review or close |
 | `github.list_pull_requests` | `GET /repos/{r}/pulls?state&base&sort&direction&per_page&page` (one page; `next_page` from the `Link` header) |
 | `github.request_connection` | no GitHub call: `{login}` of the acting user's credential |
 | `subagent.request` | hub returns `child_session_id`; runner starts the child (§13) |

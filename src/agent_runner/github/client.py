@@ -1,7 +1,9 @@
 """GitHub HTTP client of the runner (05-runner.md section 12.1 "Rate limits" and headers, ADR-015).
 
-REST only, never the `git` binary. Every API request carries `Accept: application/vnd.github+json`,
-`X-GitHub-Api-Version: 2022-11-28` and, with a token, `Authorization: Bearer <token>`; the timeout is 30 s; redirects
+REST only, never the `git` binary; the one exception is `graphql` (HOT-30: GitHub changes a pull request's draft
+state only through GraphQL), which posts to GitHub's GraphQL endpoint with the same headers. Every API request
+carries `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28` and, with a token,
+`Authorization: Bearer <token>`; the timeout is 30 s; redirects
 are never followed, except by `download` (tarballs, RUN-10), which follows exactly one redirect to the codeload host of
 the configured web URL and never forwards the token there.
 
@@ -250,6 +252,13 @@ def _parse(raw: bytes) -> object:
         raise GitHubError("invalid_response") from None
 
 
+def graphql_url(api_url: str) -> str:
+    """GitHub's GraphQL endpoint of an API URL: `<api>/graphql` (github.com, the double), and `<host>/api/graphql`
+    for the API URL `<host>/api/v3` of a GitHub Enterprise Server."""
+    base = api_url.rstrip("/")
+    return base.removesuffix("/v3") + "/graphql" if base.endswith("/api/v3") else base + "/graphql"
+
+
 def codeload_allowed(web_url: str, location: str) -> bool:
     """A tarball redirect target on the codeload host of the configured web URL: `https://codeload.<host>/...`, or
     the double's `<web origin>/codeload/...` (the double serves codeload under its own origin)."""
@@ -393,6 +402,26 @@ class GitHubClient:
             except GitHubError:
                 data = None
             raise self._refusal(status, answer_headers, data, exhausted)
+
+    async def graphql(self, query: str, variables: Mapping[str, object]) -> dict[str, Any]:
+        """One GraphQL request (`graphql_url`, the same headers and refusals as `request`) and its `data`. GitHub
+        answers GraphQL failures with `200` and `errors`: an error of type `NOT_FOUND` is `not_found`, `FORBIDDEN`
+        `forbidden`, any other `unprocessable` (GitHub's messages kept for classification only); an answer without a
+        `data` object is `invalid_response`."""
+        body = {"query": query, "variables": dict(variables)}
+        answer = await self.request("POST", "", body=body, url=graphql_url(self.api_url))
+        data = answer.data if isinstance(answer.data, dict) else {}
+        errors = data.get("errors")
+        if errors:
+            items = [item for item in errors if isinstance(item, dict)] if isinstance(errors, list) else []
+            kinds = {item.get("type") for item in items}
+            kind = "not_found" if "NOT_FOUND" in kinds else "forbidden" if "FORBIDDEN" in kinds else "unprocessable"
+            message = "; ".join(str(item["message"]) for item in items if isinstance(item.get("message"), str))
+            raise GitHubError(kind, status=answer.status, message=message)
+        found = data.get("data")
+        if not isinstance(found, dict):
+            raise GitHubError("invalid_response", status=answer.status)
+        return found
 
     async def items(self, path: str, *, key: str | None = None, max_pages: int = 100) -> list[Any]:
         """Every item of a paginated list (`per_page=100`, `Link: rel="next"`); `key` names the array inside an object

@@ -9,7 +9,8 @@
 // (number, URL), the commit SHA, the pushed branch (SHA, URL), the comment URL, the created branch, the checkout
 // commit, the subagent session, the new task title (`task.set_title`: "renamed by session"), the number of listed
 // repositories, issues and pull requests, the issue (number, URL) of `github.get_issue`, `github.create_issue` and
-// `github.update_issue` with the new state, and the connected login of `github.request_connection`. The lists of
+// `github.update_issue` with the new state, the pull request of `github.update_pull_request` (HOT-30) with its state,
+// and the connected login of `github.request_connection`. The lists of
 // `github.list_issues` / `github.list_pull_requests` (`listing`) and the issue of `github.get_issue` with one page of
 // comments (`issue`) are read entry by entry: an entry without a number or title is left out. Text from GitHub is
 // untrusted and only ever rendered as text; URLs pass `httpsUrl` (`safeUrl` and https only, as the contracts allow).
@@ -270,6 +271,11 @@ export function factsOf(type: string, result: Readonly<Record<string, unknown>>,
         ...issueLink(result),
         ...link('state', known(result.state), null),
         ...link('state_reason', known(result.state_reason), null),
+      ];
+    case 'github.update_pull_request':
+      return [
+        ...link('pull_request', typeof result.number === 'number' ? `#${result.number}` : null, result.url),
+        ...link('state', known(result.state), null),
       ];
     case 'github.request_connection':
       return link('login', result.login, null);

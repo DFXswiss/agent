@@ -575,6 +575,14 @@ describe('subjectOf and factsOf', () => {
       { label: 'issue', text: '#4' },
     ]);
     expect(factsOf('github.request_connection', { login: 'octo' }, none)).toEqual([{ label: 'login', text: 'octo' }]);
+    const pull = 'https://github.com/a/b/pull/7';
+    expect(
+      factsOf('github.update_pull_request', { number: 7, url: pull, title: 'T', state: 'open', draft: false }, none),
+    ).toEqual([
+      { label: 'pull_request', text: '#7', href: pull },
+      { label: 'state', text: 'open' },
+    ]);
+    expect(factsOf('github.update_pull_request', { state: 'merged' }, none)).toEqual([]);
   });
 });
 

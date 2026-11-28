@@ -11,9 +11,9 @@ ADR-012).
 - `github.create_issue` (KOR-25): `repo`, `title` and `body` as `sha256_hex` (an issue left without body counts as
   the empty text), so the same issue is not opened twice within the window of `contracts/ops/dedupe-fields.json`;
 - types without dedupe fields (`github.list_repositories`, `github.get_pull_request`, the reading and connection types
-  of KOR-25, `github.update_issue` - setting values is idempotent -, `task.set_title`, `human.question`,
-  `human.approval`) have a slot only with an idempotency key: `{"idempotency_key": key, "task": task_id}`, which
-  the hub holds for 24 h.
+  of KOR-25, `github.update_issue` and `github.update_pull_request` (HOT-30) - setting values is idempotent -,
+  `task.set_title`, `human.question`, `human.approval`) have a slot only with an idempotency key:
+  `{"idempotency_key": key, "task": task_id}`, which the hub holds for 24 h.
 
 The content rule of a type with dedupe fields applies whether or not the session passes a key (KOR-28): the key never
 replaces the fields, so a new key cannot repeat the same operation. It can only mark a repetition as the same request:

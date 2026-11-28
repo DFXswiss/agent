@@ -14,7 +14,8 @@ booleans; the guest's `local_check:"passed"` is only a hint) and adds the rules 
    `merge`, each decided path once (`params_invalid`) and valid (`path_invalid`, KOR-48); `github.update_issue`
    names at least one of `state`, `title`, `body`, `labels`, and `state_reason` only together with a fitting
    `state` (`reopened` with `open`, `completed`/`not_planned` with `closed`; `params_invalid`; the contract leaves
-   this to the runner, KOR-25);
+   this to the runner, KOR-25); `github.update_pull_request` names at least one of `title`, `body`, `draft`,
+   `labels` (`params_invalid`, HOT-30; it has no field that merges, closes or approves);
 2. commit paths (`path_invalid`, with pointers): relative, no empty, `.`, `..` or `.git` segment;
 3. repository allow-list of the workgroup settings when it is set (`repo_not_allowed`; every type with `repo`, so
    not `github.list_repositories` and `github.request_connection`; without a list every repository passes, KOR-30);
@@ -72,6 +73,7 @@ EVIDENCE_REF_LENGTH = 1000
 CHOICES = ("head", "base", "deleted", "edited")
 ISSUE_TITLE_MAX = 256
 UPDATE_FIELDS = ("state", "title", "body", "labels")
+PULL_UPDATE_FIELDS = ("title", "body", "draft", "labels")
 
 Rule = Callable[[object], bool]
 
@@ -331,6 +333,19 @@ TYPES: Mapping[str, TypeRules] = {
         },
         ("repo", "number"),
     ),
+    # HOT-30: a pull request's title, text, draft state and labels; no state, merge or review field
+    "github.update_pull_request": TypeRules(
+        {
+            "repo": REPO,
+            "number": _number,
+            "title": _text(1, rules.PULL_REQUEST_LIMITS["title_max_length"]),
+            "body": _text(0, rules.PULL_REQUEST_LIMITS["body_max_length"]),
+            "draft": BOOL,
+            "labels": _labels,
+            "github_identity": UUID,
+        },
+        ("repo", "number"),
+    ),
     "github.list_pull_requests": TypeRules(
         {
             "repo": REPO,
@@ -512,6 +527,16 @@ def _update_check(params: Mapping[str, Any]) -> None:
         )
 
 
+def _pull_update_check(params: Mapping[str, Any]) -> None:
+    """`github.update_pull_request` changes something (one of `PULL_UPDATE_FIELDS`, HOT-30)."""
+    if not any(name in params for name in PULL_UPDATE_FIELDS):
+        raise CheckFailed(
+            "params_invalid",
+            pointers=sorted(_pointer(name) for name in PULL_UPDATE_FIELDS),
+            message="The update names none of title, body, draft and labels.",
+        )
+
+
 def effective(op_type: str, params: Mapping[str, Any], settings: WorkgroupSettings) -> dict[str, Any]:
     """Branch names without `refs/heads/`; a pull request's missing `draft` from the settings."""
     out = dict(params)
@@ -533,6 +558,8 @@ def check(request: CheckRequest) -> dict[str, Any]:
         _merge_check(params)
     if op_type == "github.update_issue":
         _update_check(params)
+    if op_type == "github.update_pull_request":
+        _pull_update_check(params)
     out = effective(op_type, params, settings)
     github = op_type.startswith("github.")
     if "repo" in out and not settings.allows(out["repo"]):
