@@ -34,6 +34,6 @@ asked for a better description waited for a person.
 7. **GitHub double:** `PATCH …/pulls/{number}` (`title`, `body`, `state`; a client that sends `draft` there is a
    failure, since GitHub ignores it) and `POST /graphql` with the two mutations (node of the pull request, write right
    of pull requests checked like a REST write; a closed pull request is `UNPROCESSABLE`; any other query is a failure).
-8. **Guest 0.8.0.** The guest checks operation types against its bundled contracts, so the new type needs a new golden
-   (as KOR-74 for `mail.find`); an older guest refuses it locally as `unknown_type`. The harness text
-   (`images/harness/RULES.md`) names the type with an example.
+8. **Guest 0.9.0.** The guest checks operation types against its bundled contracts, so the new type needs a new golden
+   (as KOR-74 for `mail.find`; 0.8.0 is HOT-33's); an older guest refuses it locally as `unknown_type`.
+   The harness text (`images/harness/RULES.md`) names the type with an example.

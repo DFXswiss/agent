@@ -171,7 +171,8 @@ def test_answers_outside_the_contract_and_graphql_refusals(store_dsn: str) -> No
                 "draft": True,
                 "labels": ["bug"],
             }
-            assert sent[1] == ("POST", "/graphql", {"query": pull_update.TO_READY, "variables": {"id": "PR_kwDOAbc123"}})
+            mutation = {"query": pull_update.TO_READY, "variables": {"id": "PR_kwDOAbc123"}}
+            assert sent[1] == ("POST", "/graphql", mutation)
             answers["pull"] = pull_answer(title="t" * 2000)
             assert len((await execute(env, "github.update_pull_request", {**params, "draft": True}))["title"]) == 1024
             refusals = [

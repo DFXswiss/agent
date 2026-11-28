@@ -17,5 +17,5 @@ neither close, merge nor approve a pull request (merging stays `github.merge`, a
 type; fixtures under `fixtures/ops/github.update_pull_request.{params,result}/` and
 `fixtures/events/operation.params/valid/variant-22.json`.
 
-The guest validates operation types against its bundled contracts, so the type needs the guest version 0.8.0 (a new
+The guest validates operation types against its bundled contracts, so the type needs the guest version 0.9.0 (a new
 golden); an older guest refuses it locally as `unknown_type`.

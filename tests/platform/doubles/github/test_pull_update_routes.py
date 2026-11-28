@@ -8,8 +8,9 @@ from typing import Any
 
 from .test_server import REPO, issue_seed
 
-TO_DRAFT = "mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"
-TO_READY = "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"
+SELECTION = "(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"
+TO_DRAFT = "mutation($id: ID!) { convertPullRequestToDraft" + SELECTION
+TO_READY = "mutation($id: ID!) { markPullRequestReadyForReview" + SELECTION
 
 
 def mutate(gh: Any, query: str, node: object, **kwargs: Any) -> Any:
