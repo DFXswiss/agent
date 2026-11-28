@@ -5,6 +5,16 @@
   anmelden, je mit eigenem Postfach und eigener Browser-Sandbox, Prüfung für Menschen durch den Inhaber,
   Registrierung neuer Konten). Damit ist E-33 auf `develop` gebaut (nicht live) und E-39 für die Abo-Anmeldung
   begonnen; Zählung und Tabellen unten bleiben beim Stand `232b3fa7ce`.
+- **Nachtrag 2026-11-27 (DOC-12):** Die Abweichungen aus
+  [Abschnitt 6](#6-abweichungen-der-dokumentation-vom-gebauten-stand) sind in der Dokumentation angeglichen, ohne eine
+  Regel zu ändern: KONZEPT.md Umsetzung von E-02, E-19, E-20 und E-37 (gebaut mit KOR-74, ADR-099, E2E-74); Teil D
+  ohne die geschlossenen Zeilen zu E-19/E-02, E-20, A5/A14, A8/A9, A10, A11 und A18; spec/01-requirements.md R-16
+  K-10.3, K-28, K-46, R-E E-02, E-19, E-20, E-26, E-28, E-37 und R-8.4 (ADR-024 ersetzt durch ADR-089, Rest KOR-55);
+  adr/README.md Linktext der Zeile 096 und die fehlenden Spalten der Zeile 101. E-37 bis E-42 stehen inzwischen auf
+  `develop`; das Konzept zum Agent-Tresor (E-38) ist dort [ADR-101](../adr/101-agent-vault.md), nicht ADR-099 wie in
+  Abschnitt 2.5 notiert. Wo Abschnitt 2.5 (E-39) und Abschnitt 4 (Kette 3) „ADR-101“ für die Fernsteuerung auf
+  `ad5f2026-vnc` nennen, ist das die Nummer jenes Branches; auf `develop` ist 101 der Tresor, die Fernsteuerung braucht
+  eine freie Nummer. Die Tabellen unten bleiben beim Stand vom 26.11.
 - **Produktion** (2026-11-26, 17 Uhr, Angabe des Auftraggebers): Hub und Weboberfläche auf `develop`-Commit
   `9273856bb`, Runner und Gast auf Release 34 (`682fc189`). Was danach auf `develop` kam, ist noch nicht live
   ([Abschnitt 5](#5-produktionsstand)).

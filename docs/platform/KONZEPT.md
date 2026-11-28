@@ -354,8 +354,9 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „keine technische anforderung sondern eine aussage die erklärt wie ich es nutzen will, es können auch
   10 sein, oder 1000“
 - **Bezug:** präzisiert [Idee 31](#k-idee-31) und [§16 Punkt 1](#k-16-b1).
-- **Umsetzung:** Grenzen als Einstellungen ([A5](#a-5), [A14](#a-14); offen – KOR-45); Volumenfestigkeit KOR-35
-  (offen).
+- **Umsetzung:** gebaut – Grenzen als Einstellungen ([A5](#a-5), [A14](#a-14);
+  [ADR-088](adr/088-full-subagents-and-limits-as-settings.md), KOR-45; Prüfung `tests/platform/fixed_limits.json`);
+  Volumenfestigkeit [ADR-086](adr/086-volume-resilience.md) (KOR-35; Volumentests `web/e2e/volume/`).
 
 <a id="e-03"></a>
 
@@ -615,7 +616,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   funktioniert, sowas darf nicht passieren können“
 - **Bezug:** gilt für jede Korrektur; erster Fall: Datenmenge legt eine Ansicht lahm ([§6 Punkt 3](#k-6-b3),
   [Idee 31](#k-idee-31), [Idee 32](#k-idee-32)).
-- **Umsetzung:** teils – Grundsatz für alle Pakete; erster Fall KOR-35 (offen).
+- **Umsetzung:** gilt für jedes Paket; erster Fall gebaut – [ADR-086](adr/086-volume-resilience.md) (KOR-35;
+  Vollständigkeitsprüfung `web/e2e/volume/completeness.ts`).
 
 <a id="e-20"></a>
 
@@ -626,7 +628,8 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
 - **Wortlaut:** „ich hätte gern auf agent.dfx.swiss einen "Community" Bereich, dort soll es einen Chat geben wo man
   als eine Art Gruppenchat mit allen Nutzern von agent.dfx.swiss chatten kann.“
 - **Bezug:** neu; das Konzept kennt keinen Bereich über Organizations hinweg ([§12](#k-12) gilt je Ebene).
-- **Umsetzung:** offen – KOR-26.
+- **Umsetzung:** gebaut – [ADR-069](adr/069-community-chat.md) (KOR-26; `src/agent_hub/community/`,
+  Tests `tests/platform/hub/community/`).
 
 <a id="e-21"></a>
 
@@ -922,7 +925,9 @@ das genannte Paket setzt sie um (auch in [Teil D](#d-offen) geführt).
   (als fünf Agenten für neue Abos je eine Arbeits-VM starten mussten, nur um ihre Anmeldemail zu lesen)
 - **Bezug:** ergänzt [E-33](#e-33) (parallel, jeder Vorgang in seiner eigenen Sandbox) und [§10 Punkt 3](#k-10-b3)
   (Sitzungen führen selbst nichts aus, alles über Plattform-Operationen).
-- **Umsetzung:** offen – Postfach als Werkzeug in KOR-74.
+- **Umsetzung:** gebaut für das Postfach – [ADR-099](adr/099-mailboxes-read-by-the-platform.md) (KOR-74,
+  [Entscheidungen](decisions/KOR-74.md)): Operation `mail.find` ohne VM, das Passwort bleibt auf dem Gerät; E2E-74
+  (`e2e/platform/specs/e2e-74-mailbox.spec.ts`).
 
 <a id="e-38"></a>
 
@@ -1166,21 +1171,14 @@ anders entscheidet; dahinter steht die Rangfolge (die jüngere ausdrückliche Au
 
 ### Offene Abweichungen
 
-Stand 2026-11-26. Was hier steht, widerspricht dem gebauten Stand noch und wird vom genannten Paket geschlossen.
+Stand 2026-11-27. Was hier steht, widerspricht dem gebauten Stand noch und wird vom genannten Paket geschlossen.
 
 | Regel / Stelle | Gebauter Stand heute | Schließt |
 |---|---|---|
 | [E-11](#e-11) übrige Freigaben | Team-Organisationen brauchen für DFX-Geräte weiter die Freigabe und Plattform-Einladungen die Rolle `inviter`, bis der Auftraggeber nennt, welche Schalter umgelegt werden (gebaut, [ADR-079](adr/079-no-approval-as-precondition.md); ein Startguthaben gibt es nicht, [E-14](#e-14), entschieden 2026-11-25); welche Organisationen die Betreiber-Abos nutzen, entscheidet er (Liste im Plattform-Log); das Betreiber-GitHub-Konto bleibt beim Betreiber | Entscheid des Auftraggebers, KOR-47 |
-| [E-19](#e-19), [E-02](#e-02) Datenmenge | Nicht jede Liste ist gegen beliebige Datenmengen geprüft | KOR-35 |
-| [E-20](#e-20) Community | Kein Community-Bereich | KOR-26 |
 | [E-34](#e-34), [A20](#a-20) CI-Runner | Kein CI-Dienst; selbst gehostete GitHub-Actions-Läufe laufen nicht über agent.dfx.swiss | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions)) |
 | [E-35](#e-35), [E-36](#e-36) Gemeinsame Kapazität ([A21](#a-21)) | Runner laufen auf eigenen Rechnern neben der Plattform; die Kapazität der Plattform zählt nur RAM | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions); [§6.6](spec/16-ci-runners.md#66-shared-capacity)) |
 | [E-34](#e-34), [E-35](#e-35) gerätegebundene Läufe | Gerätegebundene Läufe (Deploy) laufen heute auf einem Runner ausserhalb der Plattform; das widerspricht E-34 und E-35, und [A20](#a-20) erfasst sie nicht | Paket noch nicht vergeben (Entscheide [spec/16-ci-runners.md §13](spec/16-ci-runners.md#13-open-decisions), D-1) |
-| [A5](#a-5), [A14](#a-14) Grenzen | Subagenten je Task, Tiefe und Meldegrenzen sind feste Werte | KOR-45 |
-| [A8](#a-8), [A9](#a-9) Testläufe | Kein Testlauf als eigene Operation; getestet wird nur in der Arbeits-VM | KOR-43 |
-| [A10](#a-10) Subagenten | Ein Subagent endet nach einem Turn und bekommt keine Folge-Anweisung | KOR-45 |
-| [A11](#a-11) Lesen über Workgroups | Eine Session liest nur in ihrer eigenen Workgroup, andere sieht sie nur namentlich | KOR-45 |
 | [A13](#a-13) Default-Workgroup | Das Schreibrecht in der Default-Workgroup lässt sich nicht herabsetzen | KOR-55 |
-| [A18](#a-18) Blockierter Versuch | Ablehnungen durch den Kernel werden nicht je Session gezählt | KOR-60 |
 | [E-32](#e-32) Arbeitsweisen | Werkzeug `agent`, alter Hub und die Werkzeuge, mit denen die Plattform gebaut wird, laufen lokal; es gibt keine wählbare Arbeitsweise; A38 kann die Slots nicht auf Programme verschiedener Anbieter legen (nur Claude Code, [§4 Punkt 6](#k-4-b6)) | Pakete nach [ADR-098](adr/098-working-modes.md) §9 |
 | Ideen 27–47, §16 | Stand je Idee in [spec/01-requirements.md](spec/01-requirements.md) Block R-16 | dort genannt |
